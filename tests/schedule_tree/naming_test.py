@@ -1,10 +1,10 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+import pytest
+
 import dace
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.sdfg.analysis.schedule_tree.sdfg_to_tree import as_schedule_tree
 from dace.transformation.passes.constant_propagation import ConstantPropagation
-
-import pytest
 
 
 def _irreducible_loop_to_loop():

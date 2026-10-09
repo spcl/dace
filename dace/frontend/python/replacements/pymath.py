@@ -3,12 +3,11 @@
 Contains replacements of Python mathematical operations.
 """
 
+from numbers import Number
+
+from dace import SDFG, SDFGState, dtypes, symbolic
 from dace.frontend.common import op_repository as oprepo
 from dace.frontend.python.replacements.utils import ProgramVisitor, complex_to_scalar, simple_call
-from dace import dtypes, symbolic, SDFG, SDFGState
-
-from numbers import Number
-from typing import Union
 
 
 @oprepo.replaces("exp")
@@ -115,10 +114,10 @@ def _ndarray_conj(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str) ->
 
 
 @oprepo.replaces("abs")
-def _abs(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, input: Union[str, Number, symbolic.symbol]):
+def _abs(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, input: str | Number | symbolic.symbol):
     return simple_call(pv, sdfg, state, input, "abs")
 
 
 @oprepo.replaces("round")
-def _round(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, input: Union[str, Number, symbolic.symbol]):
+def _round(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, input: str | Number | symbolic.symbol):
     return simple_call(pv, sdfg, state, input, "round", dtypes.typeclass(int))

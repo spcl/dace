@@ -1,8 +1,9 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 
-import dace
-import pytest
 import numpy as np
+import pytest
+
+import dace
 
 N = dace.symbol("N")
 

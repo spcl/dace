@@ -1,8 +1,10 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
-import dace
+
 import numpy as np
 import pytest
+
+import dace
 
 
 def _test_kernel_transient(persistent: bool):

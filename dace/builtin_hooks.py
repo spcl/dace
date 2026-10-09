@@ -3,15 +3,16 @@
 A set of built-in hooks.
 """
 
-from contextlib import contextmanager
 import fnmatch
 import os
-from typing import Any, Callable, List, Optional, Tuple, TYPE_CHECKING, Union
+from collections.abc import Callable
+from contextlib import contextmanager
+from typing import TYPE_CHECKING, Any, Union
 
 if TYPE_CHECKING:
-    from dace.dtypes import InstrumentationType, DataInstrumentationType
     from dace.codegen.compiled_sdfg import CompiledSDFG
     from dace.codegen.instrumentation.data.data_report import InstrumentedDataReport
+    from dace.dtypes import DataInstrumentationType, InstrumentationType
     from dace.sdfg import SDFG
 
 
@@ -48,7 +49,7 @@ def profile(
     :note: Running functions multiple times may affect the results of the program.
     """
     from dace.frontend.operations import CompiledSDFGProfiler  # Avoid circular import
-    from dace.hooks import on_compiled_sdfg_call, _COMPILED_SDFG_CALL_HOOKS
+    from dace.hooks import _COMPILED_SDFG_CALL_HOOKS, on_compiled_sdfg_call
 
     # TODO: By default, do not profile every invocation
 
@@ -80,9 +81,7 @@ def profile(
     profiler.report.save(filename)
 
 
-def _make_filter_function(
-    filter: Optional[Union[str, Callable[[Any], bool]]], with_attr: bool = True
-) -> Callable[[Any], bool]:
+def _make_filter_function(filter: str | Callable[[Any], bool] | None, with_attr: bool = True) -> Callable[[Any], bool]:
     """
     Internal helper that makes a filtering function.
 
@@ -112,7 +111,7 @@ def _make_filter_function(
 @contextmanager
 def instrument(
     itype: "InstrumentationType",
-    filter: Optional[Union[str, Callable[[Any], bool]]],
+    filter: str | Callable[[Any], bool] | None,
     annotate_maps: bool = True,
     annotate_tasklets: bool = False,
     annotate_states: bool = False,
@@ -145,8 +144,8 @@ def instrument(
     :param annotate_states: If True, instruments states in the SDFGs.
     :param annotate_sdfgs: If True, instruments whole SDFGs and sub-SDFGs.
     """
-    from dace.hooks import on_call
     from dace.codegen.instrumentation.report import InstrumentationReport
+    from dace.hooks import on_call
     from dace.sdfg import SDFGState
     from dace.sdfg.nodes import EntryNode, Tasklet
 
@@ -155,7 +154,7 @@ def instrument(
 
     class Instrumenter:
         def __init__(self):
-            self.reports: List[InstrumentationReport] = []
+            self.reports: list[InstrumentationReport] = []
 
         @property
         def report(self):
@@ -198,8 +197,8 @@ def instrument(
 @contextmanager
 def instrument_data(
     ditype: "DataInstrumentationType",
-    filter: Optional[Union[str, Callable[[Any], bool]]],
-    restore_from: Optional[Union[str, "InstrumentedDataReport"]] = None,
+    filter: str | Callable[[Any], bool] | None,
+    restore_from: Union[str, "InstrumentedDataReport"] | None = None,
     verbose: bool = False,
 ):
     """
@@ -242,6 +241,7 @@ def instrument_data(
     :param verbose: If True, prints information about created and loaded instrumented data reports.
     """
     import ctypes
+
     from dace.codegen.instrumentation.data.data_report import InstrumentedDataReport
     from dace.dtypes import DataInstrumentationType
     from dace.hooks import on_call, on_compiled_sdfg_call
@@ -278,7 +278,7 @@ def instrument_data(
         # Restore data into compiled SDFG
         class DataRestoreHook:
             @contextmanager
-            def __call__(self, csdfg: "CompiledSDFG", args: Tuple[Any, ...]):
+            def __call__(self, csdfg: "CompiledSDFG", args: tuple[Any, ...]):
                 # Restore data from requested data report
                 set_report = csdfg.get_exported_function("__dace_set_instrumented_data_report")
                 if set_report is None:

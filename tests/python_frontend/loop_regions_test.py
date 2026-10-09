@@ -2,10 +2,10 @@
 import json
 import tempfile
 
-import dace
 import numpy as np
 import pytest
 
+import dace
 from dace.frontend.python.common import DaceSyntaxError
 from dace.sdfg.state import LoopRegion
 
@@ -17,7 +17,7 @@ def _assert_roundtrip_json_stable(sdfg):
         sdfg.save(path1, hash=False)
         dace.SDFG.from_file(path1).save(path2, hash=False)
 
-        with open(path1, "r") as fp1, open(path2, "r") as fp2:
+        with open(path1) as fp1, open(path2) as fp2:
             assert json.load(fp1) == json.load(fp2)
 
 

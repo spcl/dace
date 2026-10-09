@@ -1,9 +1,8 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-from dace.transformation import transformation
+from dace.sdfg import SDFGState, nodes, utils
 from dace.sdfg.graph import OrderedDiGraph
-from dace.sdfg import nodes, utils
-from dace.sdfg import SDFGState
 from dace.sdfg.propagation import propagate_memlet
+from dace.transformation import transformation
 
 
 class InMergeArrays(transformation.SingleStateTransformation):
@@ -58,7 +57,7 @@ class InMergeArrays(transformation.SingleStateTransformation):
 
         # Ensure arr1 and arr2 are the first two incoming nodes (avoid further
         # duplicates)
-        all_source_nodes = set(
+        all_source_nodes = {
             graph.node_id(e.src)
             for e in graph.in_edges(map)
             if e.src != arr1
@@ -67,7 +66,7 @@ class InMergeArrays(transformation.SingleStateTransformation):
             and e.dst_conn
             and e.dst_conn.startswith("IN_")
             and graph.in_degree(e.src) == 0
-        )
+        }
         if any(nid < arr1_id or nid < arr2_id for nid in all_source_nodes):
             return False
 
@@ -107,7 +106,7 @@ class InMergeArrays(transformation.SingleStateTransformation):
                     inner_edge._src_conn = "OUT_" + result_connector
 
         # Remove other nodes from state
-        graph.remove_nodes_from(set(e.src for e in source_edges))
+        graph.remove_nodes_from({e.src for e in source_edges})
 
         # Remove connectors from scope entry
         for c in connectors_to_remove:
@@ -168,7 +167,7 @@ class OutMergeArrays(transformation.SingleStateTransformation):
 
         # Ensure arr1 and arr2 are the first two sink nodes (avoid further
         # duplicates)
-        all_sink_nodes = set(
+        all_sink_nodes = {
             graph.node_id(e.dst)
             for e in graph.out_edges(map)
             if e.dst != arr1
@@ -177,7 +176,7 @@ class OutMergeArrays(transformation.SingleStateTransformation):
             and e.src_conn
             and e.src_conn.startswith("OUT_")
             and graph.out_degree(e.dst) == 0
-        )
+        }
         if any(nid < arr1_id or nid < arr2_id for nid in all_sink_nodes):
             return False
 
@@ -217,7 +216,7 @@ class OutMergeArrays(transformation.SingleStateTransformation):
                     inner_edge.dst_conn = "IN_" + result_connector
 
         # Remove other nodes from state
-        graph.remove_nodes_from(set(e.dst for e in dst_edges))
+        graph.remove_nodes_from({e.dst for e in dst_edges})
 
         # Remove connectors from scope entry
         for c in connectors_to_remove:

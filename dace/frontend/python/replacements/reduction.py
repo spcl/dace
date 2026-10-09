@@ -13,7 +13,8 @@ from dace import dtypes, nodes, subsets, symbolic, Memlet, SDFG, SDFGState
 import copy
 import functools
 from numbers import Integral, Number
-from typing import Any, Dict, Callable, Optional, Union
+from typing import Any
+from collections.abc import Callable
 
 
 @oprepo.replaces("dace.reduce")
@@ -128,7 +129,7 @@ def _mean(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str, axis=None):
     else:
         div_amount = sdfg.arrays[a].shape[axis]
 
-    return nest, nest(elementwise)("lambda x: x / ({})".format(div_amount), sum)
+    return nest, nest(elementwise)(f"lambda x: x / ({div_amount})", sum)
 
 
 @oprepo.replaces("numpy.max")
@@ -148,7 +149,7 @@ def _min(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str, axis=None, in
 @oprepo.replaces_method("Array", "max")
 @oprepo.replaces_method("Scalar", "max")
 @oprepo.replaces_method("View", "max")
-def _ndarray_max(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, kwargs: Dict[str, Any] = None) -> str:
+def _ndarray_max(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, kwargs: dict[str, Any] = None) -> str:
     from dace.frontend.python.replacements.ufunc import implement_ufunc_reduce  # Avoid import loop
 
     kwargs = kwargs or dict(axis=None)
@@ -158,7 +159,7 @@ def _ndarray_max(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, kwa
 @oprepo.replaces_method("Array", "min")
 @oprepo.replaces_method("Scalar", "min")
 @oprepo.replaces_method("View", "min")
-def _ndarray_min(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, kwargs: Dict[str, Any] = None) -> str:
+def _ndarray_min(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, kwargs: dict[str, Any] = None) -> str:
     from dace.frontend.python.replacements.ufunc import implement_ufunc_reduce  # Avoid import loop
 
     kwargs = kwargs or dict(axis=None)
@@ -194,7 +195,7 @@ def _minmax2(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str, b: str, i
         conn_b = symbolic.symstr(b)
 
     dtype_c, [cast_a, cast_b] = result_type([desc_a, desc_b])
-    arg_a, arg_b = "{in1}".format(in1=conn_a), "{in2}".format(in2=conn_b)
+    arg_a, arg_b = f"{conn_a}", f"{conn_b}"
     if cast_a:
         arg_a = "{ca}({in1})".format(ca=str(cast_a).replace("::", "."), in1=conn_a)
     if cast_b:
@@ -218,7 +219,7 @@ def _minmax2(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str, b: str, i
 # NOTE: We support only the version of Python max that takes scalar arguments.
 # For iterable arguments one must use the equivalent NumPy methods.
 @oprepo.replaces("max")
-def _pymax(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: Union[str, Number, symbolic.symbol], *args):
+def _pymax(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str | Number | symbolic.symbol, *args):
     left_arg = a
     current_state = state
     for i, b in enumerate(args):
@@ -233,7 +234,7 @@ def _pymax(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: Union[str, Numbe
 # NOTE: We support only the version of Python min that takes scalar arguments.
 # For iterable arguments one must use the equivalent NumPy methods.
 @oprepo.replaces("min")
-def _pymin(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: Union[str, Number, symbolic.symbol], *args):
+def _pymin(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str | Number | symbolic.symbol, *args):
     left_arg = a
     current_state = state
     for i, b in enumerate(args):
@@ -247,14 +248,14 @@ def _pymin(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: Union[str, Numbe
 
 @oprepo.replaces("numpy.argmax")
 def _argmax(
-    pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str, axis: Optional[int] = None, result_type=dtypes.int32
+    pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str, axis: int | None = None, result_type=dtypes.int32
 ):
     return _argminmax(pv, sdfg, state, a, axis, func="max", result_type=result_type)
 
 
 @oprepo.replaces("numpy.argmin")
 def _argmin(
-    pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str, axis: Optional[int] = None, result_type=dtypes.int32
+    pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str, axis: int | None = None, result_type=dtypes.int32
 ):
     return _argminmax(pv, sdfg, state, a, axis, func="min", result_type=result_type)
 
@@ -264,7 +265,7 @@ def _argminmax(
     sdfg: SDFG,
     state: SDFGState,
     a: str,
-    axis: Optional[int],
+    axis: int | None,
     func: str,
     result_type: dtypes.typeclass = dtypes.int32,
     return_both: bool = False,
@@ -287,7 +288,7 @@ def _argminmax(
     a_arr = sdfg.arrays[a]
 
     if not 0 <= axis < len(a_arr.shape):
-        raise SyntaxError("Expected 0 <= axis < len({}.shape), got {}".format(a, axis))
+        raise SyntaxError(f"Expected 0 <= axis < len({a}.shape), got {axis}")
 
     reduced_shape = list(copy.deepcopy(a_arr.shape))
     reduced_shape.pop(axis)
@@ -304,12 +305,12 @@ def _argminmax(
     )
 
     reduced_expr = ",".join("__i%d" % i for i in range(len(a_arr.shape)) if i != axis)
-    reduced_maprange = {"__i%d" % i: "0:%s" % n for i, n in enumerate(a_arr.shape) if i != axis}
+    reduced_maprange = {"__i%d" % i: f"0:{n}" for i, n in enumerate(a_arr.shape) if i != axis}
     if not reduced_expr:
         reduced_expr = "0"
         reduced_maprange = {"__i0": "0:1"}
     nest.add_state().add_mapped_tasklet(
-        name="_arg{}_convert_".format(func),
+        name=f"_arg{func}_convert_",
         map_ranges=reduced_maprange,
         inputs={},
         code=code,
@@ -318,8 +319,8 @@ def _argminmax(
     )
 
     nest.add_state().add_mapped_tasklet(
-        name="_arg{}_reduce_".format(func),
-        map_ranges={"__i%d" % i: "0:%s" % n for i, n in enumerate(a_arr.shape)},
+        name=f"_arg{func}_reduce_",
+        map_ranges={"__i%d" % i: f"0:{n}" for i, n in enumerate(a_arr.shape)},
         inputs={"__in": Memlet.simple(a, ",".join("__i%d" % i for i in range(len(a_arr.shape))))},
         code="__out = _val_and_idx(idx={}, val=__in)".format("__i%d" % axis),
         outputs={
@@ -339,7 +340,7 @@ def _argminmax(
         outval, outvalarr = pv.add_temp_transient(sdfg.arrays[reduced_structs].shape, a_arr.dtype, output_index=1)
 
         nest.add_state().add_mapped_tasklet(
-            name="_arg{}_extract_".format(func),
+            name=f"_arg{func}_extract_",
             map_ranges=reduced_maprange,
             inputs={"__in": Memlet.simple(reduced_structs, reduced_expr)},
             code="__out_val = __in.val\n__out_idx = __in.idx",

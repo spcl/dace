@@ -1,8 +1,9 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
-from dace.transformation.dataflow import GPUTransformMap
 import numpy as np
 import pytest
+
+import dace
+from dace.transformation.dataflow import GPUTransformMap
 
 # Symbols
 N = dace.symbol("N")
@@ -31,10 +32,7 @@ def highdim(A: dace.uint64[N, M, K, L, X, Y, Z, W, U], B: dace.uint64[N, M, K, L
 
 
 def makendrange(*args):
-    result = []
-    for i in range(0, len(args), 2):
-        result.append(slice(args[i], args[i + 1], 1))
-    return result
+    return [slice(args[i], args[i + 1], 1) for i in range(0, len(args), 2)]
 
 
 def _test(sdfg):
