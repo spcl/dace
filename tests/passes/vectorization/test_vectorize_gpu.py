@@ -19,6 +19,7 @@ import pytest
 import dace
 from dace.dtypes import ScheduleType
 from dace.libraries.tileops import TileBinop, TileMaskGen
+from dace.libraries.tileops.dispatch import TileGroup
 from dace.transformation.interstate import LoopToMap
 from dace.transformation.passes.canonicalize.finalize import offload_to_gpu
 from dace.transformation.passes.vectorization.config import VectorizeConfig
@@ -103,34 +104,37 @@ def _inner_maps(sdfg):
 
 
 def test_assume_even_single_strided_gpu_map_no_mask():
-    """``assume_even=True`` emits ONE ``0:N:2`` GPU_Device map per original map --
-    no remainder split, no ``TileMaskGen`` (so no mismatched thread-block sizes on
-    GPU). ``assume_even`` is opt-in: the GPU K=1 default is ``branched_masked_tail``."""
+    """``assume_even=True`` emits ONE ``0:N:256`` GPU_Device map per original map -- a block tile of two half2
+    lanes for each of the 128 threads of four warps -- with no remainder split and no ``TileMaskGen`` (so no
+    mismatched thread-block sizes on GPU). ``assume_even`` is opt-in: the GPU K=1 default is ``branched_masked_tail``."""
     sdfg = _prep(_add16)
     VectorizeGPU(VectorizeConfig(widths=(2,), assume_even=True)).apply_pass(sdfg, {})
     maps = _inner_maps(sdfg)
     assert len(maps) == 1, f"assume_even must not split the map; got {len(maps)} maps"
     m = maps[0]
     assert m.map.schedule == ScheduleType.GPU_Device
-    # innermost dim strided by the half2 width (2)
-    assert str(m.map.range.ranges[-1][2]) == "2"
+    # innermost dim strided by the block tile: the half2 width (2) per thread, 128 threads
+    assert str(m.map.range.ranges[-1][2]) == "256"
     assert not any(isinstance(n, TileMaskGen) for n, _ in sdfg.all_nodes_recursive()), (
         "assume_even must generate no iteration mask"
     )
 
 
-def test_deferred_tile_nodes_are_cuda_stamped():
+@pytest.mark.parametrize(
+    "group,implementation,lanes", [(TileGroup.BLOCK, "block", 2), (TileGroup.THREAD, "cuda", 1)]
+)
+def test_deferred_tile_nodes_are_cuda_stamped(group: TileGroup, implementation: str, lanes: int):
     """By default the GPU pipeline does NOT expand the tile lib nodes: the SDFG
     returns with ``TileBinop`` / ``TileGather`` present, each stamped with the
-    ``CUDA`` ISA + ``cuda`` implementation, ready for a later
-    ``expand_library_nodes()`` (or ``compile()``)."""
+    ``CUDA`` ISA, ready for a later ``expand_library_nodes()`` (or ``compile()``). A block tile lowers ``block``,
+    each thread running the half2 call on its two lanes; a thread tile is one thread's ``cuda`` call."""
     sdfg = _prep(_add16)
-    VectorizeGPU(VectorizeConfig(widths=(2,))).apply_pass(sdfg, {})
+    VectorizeGPU(VectorizeConfig(widths=(2,), tile_group=group)).apply_pass(sdfg, {})
     tiles = [n for n, node_state in sdfg.all_nodes_recursive() if isinstance(n, TILE_NODE_TYPES)]
     assert tiles, "expected tile lib nodes to remain (deferred expansion)"
     for n in tiles:
         assert n.target_isa is ISA.CUDA
-        assert n.implementation == "cuda"
+        assert (n.group, n.implementation, n.lanes_per_thread) == (group, implementation, lanes)
 
 
 def test_scalar_cast_constant_broadcasts():
@@ -379,7 +383,8 @@ def test_gpu_multidim_k2_runs():
 
 if __name__ == "__main__":
     test_assume_even_single_strided_gpu_map_no_mask()
-    test_deferred_tile_nodes_are_cuda_stamped()
+    test_deferred_tile_nodes_are_cuda_stamped(TileGroup.BLOCK, "block", 2)
+    test_deferred_tile_nodes_are_cuda_stamped(TileGroup.THREAD, "cuda", 1)
     test_scalar_cast_constant_broadcasts()
     test_gpu_half2_emits_tile_ops_in_device_tu()
     test_gpu_half2_compiles("add16", _add16)

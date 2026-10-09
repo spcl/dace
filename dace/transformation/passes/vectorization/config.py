@@ -8,6 +8,7 @@
 import dataclasses
 
 from dace.dtypes import DeviceType
+from dace.libraries.tileops.dispatch import TileGroup
 from dace.transformation.passes.vectorization.enums import ISA, BranchMode, RemainderStrategy
 
 
@@ -30,6 +31,10 @@ class VectorizeConfig:
         default: FMA rounds once vs. two roundings for separate ``*``/``+``, so results
         differ by up to 1 ULP from plain NumPy.
     :param device: Target device (CPU / GPU).
+    :param tile_group: The threads a GPU tile node runs on. ``BLOCK`` (the GPU default) makes the tile the block's:
+        ``widths`` are then the lanes each thread takes, and the tile is ``32 * num_warps`` times wider. ``THREAD``
+        is one thread's register tile of ``widths`` lanes. A CPU tile is one core's either way.
+    :param num_warps: The warps of the thread block a ``BLOCK`` tile spreads over.
     """
 
     widths: tuple[int, ...]
@@ -43,12 +48,15 @@ class VectorizeConfig:
     assume_even: bool = False
     fuse_multiply_add: bool = False
     device: DeviceType = DeviceType.CPU
+    tile_group: TileGroup = TileGroup.BLOCK
+    num_warps: int = 4
 
     def __post_init__(self) -> None:
         for name, enum_cls in (
             ("target_isa", ISA),
             ("remainder_strategy", RemainderStrategy),
             ("branch_mode", BranchMode),
+            ("tile_group", TileGroup),
         ):
             if not isinstance(getattr(self, name), enum_cls):
                 raise TypeError(

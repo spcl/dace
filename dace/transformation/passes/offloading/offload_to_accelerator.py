@@ -105,6 +105,10 @@ def in_a_loop(block) -> bool:
     return False
 
 
+#: Storage of a container that lives in the scope that allocates it, a register or a thread block's shared memory.
+SCOPE_LOCAL_STORAGE = (dtypes.StorageType.GPU_Shared, dtypes.StorageType.Register)
+
+
 @properties.make_properties
 @explicit_cf_compatible
 class OffloadToAccelerator(ppl.Pass):
@@ -1760,6 +1764,9 @@ class OffloadToAccelerator(ppl.Pass):
             # as it went in.
             for name in node.gpu_set:
                 assert name in sdfg.arrays
+                # A scope-local container lives where its scope runs, so it has no twin
+                if sdfg.arrays[name].storage in SCOPE_LOCAL_STORAGE:
+                    continue
                 if not is_array_stored_on_GPU(sdfg, name):  # starts on CPU, but this access is on GPU
                     rename_dict[name] = self._get_gpu_name(name)
 
@@ -1773,7 +1780,10 @@ class OffloadToAccelerator(ppl.Pass):
         traverse_IR(IR, _insert_copy_names_in_node)
 
     def _correct_transient_storage_locations(self, sdfg: SDFG, IR: OffloadingIRNode):
-        seen_transients: OrderedSet[str] = OrderedSet()
+        # A register or shared-memory transient keeps the scope-local storage it was given
+        seen_transients: OrderedSet[str] = OrderedSet(
+            name for name, desc in sdfg.arrays.items() if desc.storage in SCOPE_LOCAL_STORAGE
+        )
 
         def _correct_transients(node: OffloadingIRNode):
             for name in node.gpu_set:

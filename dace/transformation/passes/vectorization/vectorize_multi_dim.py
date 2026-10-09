@@ -32,7 +32,8 @@ import dace
 from dace import properties, symbolic
 from dace.config import Config
 from dace.dtypes import DeviceType
-from dace.libraries.tileops.dispatch import select_tile_implementation
+from dace.libraries.tileops.dispatch import TileGroup, select_tile_implementation
+from dace.transformation import helpers
 from dace.libraries.tileops.nodes import (
     MaskedCopyLibraryNode,
     TileBinop,
@@ -1040,6 +1041,10 @@ class VectorizeMultiDim(ppl.Pipeline):
         # ``target_isa=ISA.CUDA`` (GPU tile backend) implies device=GPU; an explicit
         # ``device=GPU`` also selects it. Everything else is CPU.
         self._device = DeviceType.GPU if (device == DeviceType.GPU or target_isa is ISA.CUDA) else DeviceType.CPU
+        # The GPU entry point sets the group of its tiles; a CPU tile is one thread's (one core's) register tile
+        self._tile_group = TileGroup.THREAD
+        self._lanes_per_thread = 1
+        self._num_warps = 4
         self._remainder_strategy = remainder_strategy
         self._branch_mode = branch_mode
         self._expand_tile_nodes = expand_tile_nodes
@@ -1285,7 +1290,15 @@ class VectorizeMultiDim(ppl.Pipeline):
                 node.target_isa = self._target_isa
                 # A host ISA's header backend is host functions, which device code cannot call; the
                 # pure expansion is the loop the kernel runs per thread (CloudSC fp64 x 2 on the GPU).
-                if host_isa and is_devicelevel_gpu(parent.sdfg, parent, node):
+                on_gpu = is_devicelevel_gpu(parent.sdfg, parent, node)
+                if on_gpu and self._tile_group is not TileGroup.THREAD:
+                    node.group, node.num_warps = self._tile_group, self._num_warps
+                    node.lanes_per_thread = self._lanes_per_thread
+                    # The thread-block maps of its tiles size the block, not the size the offload chose
+                    for entry, _ in helpers.get_parent_maps(parent, node):
+                        if entry.map.schedule == dace.ScheduleType.GPU_Device:
+                            entry.map.gpu_block_size = None
+                if host_isa and on_gpu and node.group is TileGroup.THREAD:
                     node.implementation = "pure"
                 else:
                     node.implementation = select_tile_implementation(node, parent)
@@ -1419,6 +1432,14 @@ class VectorizeGPUMultiDim(VectorizeMultiDim):
         # ``assume_even`` (which would instead RAISE on the provably-non-divisible case). Every
         # other strategy keeps the even-extent fast path (single strided map, no remainder).
         branched = resolved.remainder_strategy in _BRANCHED_REMAINDER
+        # A block tile: each thread takes the given innermost lanes, and the tile spans the block's threads
+        lanes_per_thread = resolved.widths[-1]
+        if resolved.tile_group is TileGroup.BLOCK:
+            threads = 32 * resolved.num_warps
+            resolved = dataclasses.replace(resolved, widths=(*resolved.widths[:-1], lanes_per_thread * threads))
         super().__init__(
             dataclasses.replace(resolved, device=DeviceType.GPU, target_isa=ISA.CUDA, assume_even=not branched)
         )
+        self._tile_group = resolved.tile_group
+        self._lanes_per_thread = lanes_per_thread
+        self._num_warps = resolved.num_warps
