@@ -58,6 +58,19 @@ def test_config_set_overrides_env_seeded_value():
             assert Config.get("compiler", "build_type") == "FromSet"
 
 
+def test_temporary_config_restores_a_value_set_over_the_environment():
+    """Leaving the context restores what was set before it, not what the environment says: pytest
+    workers each set their own build folder over an exported ``DACE_default_build_folder``."""
+    with temporary_config():
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setenv("DACE_compiler_build_type", "FromEnv")
+            reload_from()
+            Config.set("compiler", "build_type", value="FromSet")
+            with temporary_config():
+                Config.set("compiler", "build_type", value="Inner")
+            assert Config.get("compiler", "build_type") == "FromSet"
+
+
 def test_env_overrides_config_file():
     with temporary_config():
         with pytest.MonkeyPatch.context() as mp:
@@ -186,6 +199,7 @@ if __name__ == "__main__":
     test_set_temporary_overrides_env_seeded_value()
     test_temporary_config_overrides_env_seeded_value()
     test_config_set_overrides_env_seeded_value()
+    test_temporary_config_restores_a_value_set_over_the_environment()
     test_env_overrides_config_file()
     test_precedence_default_file_env_set()
     test_env_change_after_load_is_inert()

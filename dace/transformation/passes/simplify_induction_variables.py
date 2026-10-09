@@ -299,10 +299,6 @@ def simplify_loop(loop: LoopRegion, nested_carries: dict[str, tuple[LoopRegion, 
         basis = iv.basis
         if basis is None:
             continue
-        # A container sized by ``name`` that the fold below does not rewrite keeps reading it.
-        dead = symbol_is_dead_outside_loop(loop, name) and not loop_containers_use_symbol(loop, name)
-        if not dead and not loop_reads_symbol(loop, name):
-            continue  # already folded: only the kept assignment is left, so a rerun must not report a change
         # Build the replacement: scale * basis + offset, parenthesized so later
         # string-based substitutions don't capture adjacent operators.
         replacement = f"({iv.scale} * ({basis.name}) + ({iv.offset}))"
@@ -310,10 +306,13 @@ def simplify_loop(loop: LoopRegion, nested_carries: dict[str, tuple[LoopRegion, 
         # Substitute every use of ``name`` inside the loop. ``replace_keys=False``
         # preserves the defining assignment on the interstate edge so we can
         # decide afterwards whether it's dead.
-        loop.replace_dict({name: replacement}, replace_keys=False)
-        fold_into_loop_local_descriptors(loop, name, replacement)
+        reads = loop_reads_symbol(loop, name)
+        if reads:
+            loop.replace_dict({name: replacement}, replace_keys=False)
+        folded = fold_into_loop_local_descriptors(loop, name, replacement)
 
-        # Decide whether the defining assignment is dead.
+        # Dead once nothing outside the loop reads it and no container the fold cannot rewrite names it.
+        dead = symbol_is_dead_outside_loop(loop, name) and not loop_containers_use_symbol(loop, name)
         if dead:
             for edge in iv_edge_sites[name]:
                 edge.data.assignments.pop(name, None)
@@ -323,7 +322,9 @@ def simplify_loop(loop: LoopRegion, nested_carries: dict[str, tuple[LoopRegion, 
             # to mirror the symbol.
             remove_dead_scalar(loop, name)
 
-        applied += 1
+        # Only the kept assignment left is no change: a rerun counting it never lets simplify converge.
+        if reads or folded or dead:
+            applied += 1
 
     # A symbol carried by an immediately-nested inner loop can become a derived
     # IV of this loop once the inner loop's net per-iteration increment is known.
@@ -332,11 +333,13 @@ def simplify_loop(loop: LoopRegion, nested_carries: dict[str, tuple[LoopRegion, 
     return applied
 
 
-def fold_into_loop_local_descriptors(loop: LoopRegion, name: str, replacement: str) -> None:
+def fold_into_loop_local_descriptors(loop: LoopRegion, name: str, replacement: str) -> bool:
     """Substitute ``name`` in the descriptors of the transients only ``loop`` accesses, which it allocates.
 
-    ``LoopRegion.replace_dict`` leaves the SDFG's descriptors alone, so a view whose extent names the folded
-    variable kept it read inside the loop and the fold reported a change on every rerun (mixed_precision_ir).
+    ``LoopRegion.replace_dict`` leaves the SDFG's descriptors alone, so a view sized by the variable would keep
+    naming it inside the loop (mixed_precision_ir).
+
+    :returns: whether a descriptor named ``name``.
     """
     sdfg = loop.sdfg
     inside = OrderedSet(loop.states())
@@ -344,10 +347,13 @@ def fold_into_loop_local_descriptors(loop: LoopRegion, name: str, replacement: s
     for state in sdfg.states():
         if state not in inside:
             accessed -= OrderedSet(node.data for node in state.data_nodes())
+    folded = False
     for container in accessed:
         desc = sdfg.arrays[container]
         if desc.transient and name in {str(sym) for sym in desc.free_symbols}:
             replace_properties_dict(desc, {name: replacement}, sdfg=sdfg)
+            folded = True
+    return folded
 
 
 def collect_interstate_iv_sites(loop: LoopRegion) -> dict[str, list]:

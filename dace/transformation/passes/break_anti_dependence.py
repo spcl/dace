@@ -96,15 +96,16 @@ def _smt_loop_bounds(loop):
     )
 
 
-@lru_cache(maxsize=8192, typed=True)
-def _reparsed_index(raw):
+def reparsed_index(raw):
     """A memlet subset bound re-read through DaCe's own parser.
 
     The print-and-reparse round trip normalises the expression the way the rest of
     the pass expects (DaCe's converter maps ``/`` onto ``int_floor`` and friends).
-    Printing a SymPy expression is expensive and the same handful of index bounds
-    recurs across the whole read x write cross product, so the round trip is
-    memoized on the incoming expression.
+    Do not memoize it on ``raw``: the parse stamps each name with the dtype of the
+    symbol-dtype scope active at the call, so a result cached under one SDFG's scope
+    hands another SDFG an iterator of the wrong dtype, which then never matches its
+    own (TSVC s116 lost its snapshot after an unrelated canonicalization).
+    ``pystr_to_symbolic`` already caches the parse per text and scope.
     """
     return symbolic.pystr_to_symbolic(str(raw))
 
@@ -251,7 +252,7 @@ def point_index(subset):
     rb, re_, _ = nd[0]
     if rb != re_:
         return None
-    return _reparsed_index(rb)
+    return reparsed_index(rb)
 
 
 @properties.make_properties
@@ -368,8 +369,8 @@ class BreakAntiDependence(ppl.Pass):
         for (rb, re_, _), (wb, we_, _) in zip(rr, wr):
             if rb != re_ or wb != we_:
                 return ("complex", None)  # not a single-element (point) access
-            rb = _reparsed_index(rb)
-            wb = _reparsed_index(wb)
+            rb = reparsed_index(rb)
+            wb = reparsed_index(wb)
             if bindings:
                 rb = _index_under_bindings(rb, bindings)
                 wb = _index_under_bindings(wb, bindings)

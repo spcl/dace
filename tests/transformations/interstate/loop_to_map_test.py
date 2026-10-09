@@ -127,7 +127,7 @@ def run_loop_to_map(n, *args):
         raise ValueError("Validation failed.")
 
     with open(temp_path) as f:
-        numbers_written.extend(int(line.strip()) for line in f)
+        numbers_written = [int(line.strip()) for line in f]
     if not all(sorted(numbers_written) == np.arange(n)):
         raise ValueError("Validation failed.")
 

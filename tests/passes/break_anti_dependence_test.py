@@ -13,6 +13,7 @@ from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
 from dace.transformation.interstate.loop_to_map import LoopToMap
 from dace.transformation.passes import BreakAntiDependence
+from dace.transformation.passes.break_anti_dependence import reparsed_index
 
 N = dace.symbol("N")
 #: An int64 extent, so the frontend infers an int64 iterator and casts it to meet an int32 index array.
@@ -708,24 +709,6 @@ def test_forward_reads_snapshot_copies_only_the_swept_window():
     assert np.array_equal(got_d, ref_d)
 
 
-if __name__ == "__main__":
-    test_snapshot_copies_only_the_block_a_nested_loop_reads()
-    test_forward_reads_snapshot_copies_only_the_swept_window()
-    test_forward_reads_breaks_what_the_whole_array_policy_refuses()
-    test_forward_reads_preserves_values()
-    test_forward_reads_is_idempotent()
-    test_forward_reads_leaves_a_same_index_read_on_the_live_array()
-    test_forward_reads_symbolic_offset_guard_is_strictly_positive()
-    test_break_anti_dependence_read_ahead_parallelizes()
-    test_break_anti_dependence_read_behind_refused()
-    test_break_anti_dependence_out_of_place_noop()
-    test_break_anti_dependence_symbolic_positive_offset()
-    test_break_anti_dependence_symbolic_offset_uses_iter_var_refused()
-    test_break_anti_dependence_post_normalize_negative_stride_reverse_scan()
-    test_break_anti_dependence_alpha_minus_one_with_larger_offset()
-    test_break_anti_dependence_pure_positive_subs_doesnt_break_indirected()
-
-
 def test_smt_fallback_breaks_a_guarded_indirected_read_ahead():
     """``A[i] = A[IDX[i] * IDX[i-1]] + 1`` under the guard ``IDX[i] * IDX[i-1] > i``.
 
@@ -804,3 +787,40 @@ def test_smt_fallback_refuses_when_the_indirection_array_is_written_in_the_loop(
     before = sdfg.to_json()
     assert BreakAntiDependence().apply_pass(sdfg, {}) is None, "a loop-written indirection array must refuse"
     assert sdfg.to_json() == before, "a refusing pass must leave the SDFG bit-identical"
+
+
+def test_a_reparsed_index_takes_the_dtype_of_the_active_symbol_scope():
+    """The reparse must follow the symbol-dtype scope of each call: a result reused from another SDFG's
+    scope carries an iterator of the wrong dtype that never matches the loop's own (TSVC s116)."""
+    raw = dace.symbolic.pystr_to_symbolic("reparse_it + 1")
+    for dtype in (dace.int32, dace.int64, dace.int32):
+        with dace.symbolic.serialization_symbol_dtypes({"reparse_it": dtype}):
+            assert {sym.dtype for sym in reparsed_index(raw).free_symbols} == {dtype}
+
+
+if __name__ == "__main__":
+    test_break_anti_dependence_read_ahead_parallelizes()
+    test_break_anti_dependence_read_behind_refused()
+    test_break_anti_dependence_out_of_place_noop()
+    test_break_anti_dependence_symbolic_positive_offset()
+    test_break_anti_dependence_symbolic_guard_survives_full_canonicalize()
+    test_break_anti_dependence_refuses_symbolic_difference_offset()
+    test_break_anti_dependence_sum_of_symbols_offset_renames()
+    test_break_anti_dependence_data_indirected_offset_via_runtime_check()
+    test_break_anti_dependence_symbolic_offset_uses_iter_var_refused()
+    test_break_anti_dependence_post_normalize_negative_stride_reverse_scan()
+    test_break_anti_dependence_alpha_minus_one_with_larger_offset()
+    test_break_anti_dependence_cast_wrapped_iterator_in_indirected_chain()
+    test_break_anti_dependence_loop_invariant_array_offset_refused()
+    test_break_anti_dependence_pure_positive_subs_doesnt_break_indirected()
+    test_forward_reads_breaks_what_the_whole_array_policy_refuses()
+    test_forward_reads_preserves_values()
+    test_forward_reads_is_idempotent()
+    test_forward_reads_leaves_a_same_index_read_on_the_live_array()
+    test_forward_reads_symbolic_offset_guard_is_strictly_positive()
+    test_snapshot_copies_only_the_block_a_nested_loop_reads()
+    test_forward_reads_snapshot_copies_only_the_swept_window()
+    test_smt_fallback_breaks_a_guarded_indirected_read_ahead()
+    test_smt_fallback_refuses_the_same_shape_without_the_guard()
+    test_smt_fallback_refuses_when_the_indirection_array_is_written_in_the_loop()
+    test_a_reparsed_index_takes_the_dtype_of_the_active_symbol_scope()
