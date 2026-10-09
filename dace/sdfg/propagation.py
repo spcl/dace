@@ -330,10 +330,7 @@ class AffineSMemlet(SeparableMemletPattern):
                 candidate_skip = rs
                 candidate_tile = rt * node_rlen
                 candidate_lstart_pt = result_end - result_begin + 1 - candidate_tile
-                if (
-                    simplify(candidate_lstart_pt / (num_elements / candidate_tile - 1), symbolic.Facts.none())
-                    == candidate_skip
-                ):
+                if simplify(candidate_lstart_pt / (num_elements / candidate_tile - 1), facts) == candidate_skip:
                     result_skip = rs
                     result_tile = rt * node_rlen
                 else:
@@ -344,10 +341,10 @@ class AffineSMemlet(SeparableMemletPattern):
                 result_skip = 1
                 result_tile = 1
 
-        result_begin = simplify(result_begin, symbolic.Facts.none())
-        result_end = simplify(result_end, symbolic.Facts.none())
-        result_skip = simplify(result_skip, symbolic.Facts.none())
-        result_tile = simplify(result_tile, symbolic.Facts.none())
+        result_begin = simplify(result_begin, facts)
+        result_end = simplify(result_end, facts)
+        result_skip = simplify(result_skip, facts)
+        result_tile = simplify(result_tile, facts)
 
         return (result_begin, result_end, result_skip, result_tile)
 
@@ -1249,7 +1246,7 @@ def _merge_border_memlet(existing: Memlet, incoming: Memlet, array: data.Data, f
         result.dynamic = True
         result.volume = 0
     else:
-        result.volume = simplify(result.volume + incoming.volume, symbolic.Facts.none())
+        result.volume = simplify(result.volume + incoming.volume, facts)
         result.dynamic = result.dynamic or incoming.dynamic
 
     if incoming.subset is not None:
@@ -1302,7 +1299,7 @@ def _merge_border_memlet_upper_bound(
         result.dynamic = True
         result.volume = 0
     else:
-        result.volume = simplify(sympy.Max(result.volume, incoming.volume), symbolic.Facts.none())
+        result.volume = simplify(sympy.Max(result.volume, incoming.volume), facts)
         result.dynamic = result.dynamic or incoming.dynamic
 
     if incoming.subset is not None:
@@ -1369,7 +1366,7 @@ def _propagate_border_memlet_candidates(
         propagated.dynamic = True
         propagated.volume = 0
     elif not scale_by_range:
-        propagated.volume = simplify(sum(memlet.volume for memlet in memlets), symbolic.Facts.none())
+        propagated.volume = simplify(sum(memlet.volume for memlet in memlets), facts)
         propagated.dynamic = any(memlet.dynamic for memlet in memlets)
 
     propagated.other_subset = None
@@ -1431,7 +1428,7 @@ def _propagate_state_border_memlets(state: "SDFGState", border_memlets, arrays, 
             else:
                 propagated.volume = simplify(
                     sum(memlet.volume for memlet in candidates[direction][connector]) * state.executions,
-                    symbolic.Facts.none(),
+                    facts,
                 )
                 propagated.dynamic = propagated.dynamic or state.dynamic_executions
 
@@ -2047,7 +2044,7 @@ def propagate_subset(
     # Number of accesses in the propagated memlet is the sum of the internal
     # number of accesses times the size of the map range set (unbounded dynamic)
     new_memlet.volume = simplify(
-        sum(m.volume for m in memlets) * functools.reduce(lambda a, b: a * b, rng.size(), 1), symbolic.Facts.none()
+        sum(m.volume for m in memlets) * functools.reduce(lambda a, b: a * b, rng.size(), 1), facts
     )
     if any(m.dynamic for m in memlets):
         new_memlet.dynamic = True

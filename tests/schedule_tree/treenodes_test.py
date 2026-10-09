@@ -139,7 +139,6 @@ def test_scope_inputs_outputs() -> None:
     )
 
     stree = tn.ScheduleTreeRoot(
-        facts=dace.symbolic.Facts.none(),
         name="tester",
         containers={"A": data.Array(dace.float64, [20]), "scalar": data.Scalar(dace.float64)},
         children=[map_scope],

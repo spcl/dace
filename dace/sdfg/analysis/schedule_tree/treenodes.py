@@ -270,7 +270,7 @@ class ScheduleTreeRoot(ScheduleTreeScope):
         *,
         name: str,
         children: list[ScheduleTreeNode],
-        facts: symbolic.Facts,
+        facts: symbolic.Facts | None = None,
         containers: dict[str, data.Data] | None = None,
         symbols: Mapping[str, dtypes.typeclass | symbolic.symbol] | None = None,
         constants: dict[str, tuple[data.Data, Any]] | None = None,
@@ -280,7 +280,8 @@ class ScheduleTreeRoot(ScheduleTreeScope):
         super().__init__(children=children, parent=None)
 
         self.name = name
-        self.facts = facts
+        # Without facts nothing is assumed: answers stay sound, only less precise
+        self.facts = facts if facts is not None else symbolic.Facts.none()
         self.containers = containers if containers is not None else dict()
         self.symbols = symbols if symbols is not None else dict()
         self.constants = constants if constants is not None else dict()

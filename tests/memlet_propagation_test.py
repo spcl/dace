@@ -215,7 +215,8 @@ def test_multiplier_of_unknown_sign():
         (edge,) = [
             e for e in sdfg.start_state.edges() if e.data.data == "A" and isinstance(e.src, dace.nodes.AccessNode)
         ]
-        assert edge.data.subset.ranges == [expected], edge.data.subset
+        ((begin, end, step),) = edge.data.subset.ranges
+        assert all(sympy.expand(a - b) == 0 for a, b in zip((begin, end, step), expected)), edge.data.subset
 
 
 def test_strided_write_keeps_the_multiplier():

@@ -37,7 +37,6 @@ def test_stree_propagation_symassign():
     # Manually create a schedule tree
     N = dace.symbol("N")
     stree = tn.ScheduleTreeRoot(
-        facts=dace.symbolic.Facts.none(),
         name="tester",
         containers={
             "A": dace.data.Array(dace.float64, [20]),

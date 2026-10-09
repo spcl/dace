@@ -186,6 +186,21 @@ def test_numeric_divisibility_is_decided():
         facts_of(Relation(RelationKind.DIVIDES, sympy.Integer(3), sympy.Integer(7)))
 
 
+def test_simplify_keeps_names_of_its_scope():
+    """Facts of a nested SDFG relate its symbols to renamed outer ones, which have no name inside: simplifying
+    must not rewrite into them."""
+    N = symbolic.symbol("N")
+    outer = sympy.Symbol("outer:N")
+    facts = Facts(
+        (
+            Relation(RelationKind.EQ, N, outer),
+            Relation(RelationKind.LE, sympy.Integer(1), outer),
+        ),
+        frozenset({"N", "outer:N"}),
+    )
+    assert symbolic.simplify(2 * N + 1 - N, facts) == N + 1
+
+
 if __name__ == "__main__":
     test_positive_integer_is_at_least_one()
     test_strict_relation_implies_weak()
@@ -209,3 +224,4 @@ if __name__ == "__main__":
     test_divisibility_fact_proves_divisibility_by_a_factor()
     test_exact_division_folds()
     test_numeric_divisibility_is_decided()
+    test_simplify_keeps_names_of_its_scope()
