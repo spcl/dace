@@ -23,6 +23,8 @@ def nng(expr):
 def _names(expr) -> set[str]:
     if isinstance(expr, sp.Symbol):
         return {expr.name}
+    if isinstance(expr, symbolic.SymExpr):
+        return _names(expr.expr) | _names(expr.approx)
     return {str(sym) for sym in expr.free_symbols} if isinstance(expr, sp.Basic) else {str(expr)}
 
 
