@@ -84,11 +84,11 @@ def floating_factor(factor: dace.symbolic.SymbolicType) -> dace.symbolic.Symboli
     """``factor`` with every symbol cast to ``float64``, for the 1-D programs that splice it into a tasklet.
 
     ``1/N`` and ``sqrt(1/N)`` over an integer extent print as ``reciprocal(N)``, an integer division in C.
-    A constant factor is returned unchanged.
+    A constant factor becomes a ``float``: ``std::complex<double> * 1`` has no operator.
     """
     expr = dace.symbolic.pystr_to_symbolic(factor)
     if not expr.free_symbols:
-        return factor
+        return float(expr)
     return expr.xreplace({sym: dace.symbolic.float64(sym) for sym in expr.free_symbols})
 
 

@@ -399,6 +399,12 @@ def test_a_sequential_factorization_over_device_memory_touches_it_only_in_kernel
     assert_standalone_units(render_gpu(cholesky_plus_upper, "cpf_hip_cholesky"), "cpf_hip_cholesky")
 
 
+@dace.program
+def fft_round_trip(x: dace.complex128[N], y: dace.complex128[N], z: dace.complex128[N]):
+    y[:] = np.fft.fft(x)
+    z[:] = np.fft.ifft(y)
+
+
 NR, NQ, NP = (dace.symbol(name) for name in ("NR", "NQ", "NP"))
 
 
@@ -422,7 +428,12 @@ def test_a_matmul_an_offloaded_contraction_expands_to_is_a_kernel():
 @pytest.mark.gpu
 @pytest.mark.parametrize(
     ("program", "name"),
-    [(s255, "cpf_hip_s255_build"), (gramschmidt, "cpf_hip_nested_build"), (cholesky_plus_upper, "cpf_hip_chol_build")],
+    [
+        (s255, "cpf_hip_s255_build"),
+        (gramschmidt, "cpf_hip_nested_build"),
+        (cholesky_plus_upper, "cpf_hip_chol_build"),
+        (fft_round_trip, "cpf_hip_fft_build"),
+    ],
 )
 def test_the_units_build_with_hipcc(program, name, tmp_path):
     build_units(render_gpu(program, name), tmp_path, name)
@@ -521,6 +532,7 @@ if __name__ == "__main__":
     test_the_units_build_with_hipcc(s255, "cpf_hip_s255_build", pathlib.Path(tempfile.mkdtemp()))
     test_the_units_build_with_hipcc(gramschmidt, "cpf_hip_nested_build", pathlib.Path(tempfile.mkdtemp()))
     test_the_units_build_with_hipcc(cholesky_plus_upper, "cpf_hip_chol_build", pathlib.Path(tempfile.mkdtemp()))
+    test_the_units_build_with_hipcc(fft_round_trip, "cpf_hip_fft_build", pathlib.Path(tempfile.mkdtemp()))
     test_the_host_dialects_do_not_see_the_device_selection("c++")
     test_the_host_dialects_do_not_see_the_device_selection("c")
     test_the_device_object_is_found_however_the_backend_labels_it("cpp", "hip")
