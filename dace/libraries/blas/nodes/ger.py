@@ -1,17 +1,19 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-from dace.properties import SymbolicProperty
-from dace.transformation.transformation import ExpandTransformation
-from dace.frontend.common import op_repository as oprepo
-from dace.sdfg.nodes import LibraryNode
-import dace.library as library
-from dace.sdfg import SDFG, SDFGState, nodes
-from dace import data as dt, memlet as mm, subsets as sbs
-import dace
 import copy
 
+import dace
 import dace.library
 import dace.properties
 import dace.sdfg.nodes
+from dace import data as dt
+from dace import library
+from dace import memlet as mm
+from dace import subsets as sbs
+from dace.frontend.common import op_repository as oprepo
+from dace.properties import SymbolicProperty
+from dace.sdfg import SDFG, SDFGState, nodes
+from dace.sdfg.nodes import LibraryNode
+from dace.transformation.transformation import ExpandTransformation
 
 
 @library.expansion
@@ -52,9 +54,9 @@ class ExpandGerPure(ExpandTransformation):
         state = sdfg.add_state()
         state.add_mapped_tasklet(
             "ger",
-            {"_i": f"0:M", "_j": f"0:N"},
-            {"a": mm.Memlet("_A[_i, _j]"), "xin": mm.Memlet("_x[_i]"), "yin": mm.Memlet(f"_y[_j]")},
-            f"aout = alpha * xin * yin + a",
+            {"_i": "0:M", "_j": "0:N"},
+            {"a": mm.Memlet("_A[_i, _j]"), "xin": mm.Memlet("_x[_i]"), "yin": mm.Memlet("_y[_j]")},
+            "aout = alpha * xin * yin + a",
             {"aout": mm.Memlet("_res[_i, _j]")},
             external_edges=True,
         )

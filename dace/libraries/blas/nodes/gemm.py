@@ -1,17 +1,21 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-from copy import deepcopy as dc
-from dace import dtypes, memlet as mm, properties, data as dt
-from dace.symbolic import symstr, equal, equal_valued
-import dace.library
-from dace import SDFG, SDFGState
-from dace.frontend.common import op_repository as oprepo
-import dace.sdfg.nodes
-from dace.transformation.transformation import ExpandTransformation
-from dace.libraries.blas.blas_helpers import to_blastype, check_access, dtype_to_cudadatatype, to_cublas_computetype
-from dace.libraries.blas.nodes.matmul import _get_matmul_operands, _get_codegen_gemm_opts
-from .. import environments
-import numpy as np
+import itertools
 import warnings
+from copy import deepcopy as dc
+
+import numpy as np
+
+import dace.library
+import dace.sdfg.nodes
+from dace import SDFG, SDFGState, dtypes, properties
+from dace import data as dt
+from dace import memlet as mm
+from dace.frontend.common import op_repository as oprepo
+from dace.libraries.blas import environments
+from dace.libraries.blas.blas_helpers import check_access, dtype_to_cudadatatype, to_blastype, to_cublas_computetype
+from dace.libraries.blas.nodes.matmul import _get_codegen_gemm_opts, _get_matmul_operands
+from dace.symbolic import equal, equal_valued, symstr
+from dace.transformation.transformation import ExpandTransformation
 
 
 def _is_complex(dtype):
@@ -28,13 +32,9 @@ def _cast_to_dtype_str(value, dtype: dace.dtypes.typeclass) -> str:
     if _is_complex(dtype):
         cast_value = complex(value)
 
-        return "dace.{type}({real}, {imag})".format(
-            type=dace.dtype_to_typeclass(dtype).to_string(),
-            real=cast_value.real,
-            imag=cast_value.imag,
-        )
+        return f"dace.{dace.dtype_to_typeclass(dtype).to_string()}({cast_value.real}, {cast_value.imag})"
     else:
-        return "dace.{}({})".format(dace.dtype_to_typeclass(dtype).to_string(), value)
+        return f"dace.{dace.dtype_to_typeclass(dtype).to_string()}({value})"
 
 
 @dace.library.expansion
@@ -87,7 +87,7 @@ class ExpandGemmPure(ExpandTransformation):
         if equal_valued(1, node.alpha):
             mul_program = "__out = __a * __b"
         else:
-            mul_program = "__out = {} * __a * __b".format(_cast_to_dtype_str(node.alpha, dtype_a))
+            mul_program = f"__out = {_cast_to_dtype_str(node.alpha, dtype_a)} * __a * __b"
 
         if equal_valued(1, node.beta):
             state = sdfg.add_state(node.label + "_state")
@@ -102,7 +102,7 @@ class ExpandGemmPure(ExpandTransformation):
         if equal_valued(0, node.beta):
             init_state.add_mapped_tasklet(
                 "gemm_init",
-                {"_o%d" % i: "0:%s" % symstr(d) for i, d in enumerate(shape_c)},
+                {"_o%d" % i: f"0:{symstr(d)}" for i, d in enumerate(shape_c)},
                 {},
                 "out = 0",
                 {"out": dace.Memlet.simple(mul_out, ",".join(["_o%d" % i for i in range(len(shape_c))]))},
@@ -113,7 +113,7 @@ class ExpandGemmPure(ExpandTransformation):
             pass
         else:
             # Beta map
-            add_program = "__y = ({} * __c)".format(_cast_to_dtype_str(node.beta, dtype_a))
+            add_program = f"__y = ({_cast_to_dtype_str(node.beta, dtype_a)} * __c)"
 
             # manually broadcasting C to [M, N]
             if list(shape_c) == [M, N]:
@@ -125,11 +125,11 @@ class ExpandGemmPure(ExpandTransformation):
             elif list(shape_c) == [N]:
                 memlet_idx = "__i1"
             else:
-                raise ValueError("Could not broadcast input _c to ({}, {})".format(M, N))
+                raise ValueError(f"Could not broadcast input _c to ({M}, {N})")
 
             init_state.add_mapped_tasklet(
                 "gemm_init",
-                {"__i%d" % i: "0:%s" % s for i, s in enumerate([M, N])},
+                {"__i%d" % i: f"0:{s}" for i, s in enumerate([M, N])},
                 {
                     "__c": dace.Memlet.simple("_c", memlet_idx),
                 },
@@ -141,7 +141,7 @@ class ExpandGemmPure(ExpandTransformation):
         # Multiplication map
         state.add_mapped_tasklet(
             "gemm",
-            {"__i%d" % i: "0:%s" % s for i, s in enumerate([M, N, K])},
+            {"__i%d" % i: f"0:{s}" for i, s in enumerate([M, N, K])},
             {
                 "__a": dace.Memlet.simple("_a", "__i2, __i0" if node.transA else "__i0, __i2"),
                 "__b": dace.Memlet.simple("_b", "__i1, __i2" if node.transB else "__i2, __i1"),
@@ -609,9 +609,9 @@ class Gemm(dace.sdfg.nodes.LibraryNode):
             raise ValueError("Inputs to matrix-matrix product must agree in the k-dimension")
         size3 = out_memlet.subset.size()
         if size2 is not None:
-            res = [equal(s0, s1) for s0, s1 in zip(size2, size3)]
-            fail = any([r is False for r in res])
-            success = all([r is True for r in res])
+            res = list(itertools.starmap(equal, zip(size2, size3)))
+            fail = any(r is False for r in res)
+            success = all(r is True for r in res)
             if fail:
                 raise ValueError("Input C matrix must match output matrix.")
             elif not success:
@@ -619,9 +619,9 @@ class Gemm(dace.sdfg.nodes.LibraryNode):
         if len(size3) != 2:
             raise ValueError("matrix-matrix product only supported on matrices")
         if len(size3) == 2:
-            res = [equal(s0, s1) for s0, s1 in zip(size3, [size0[-2], size1[-1]])]
-            fail = any([r is False for r in res])
-            success = all([r is True for r in res])
+            res = list(itertools.starmap(equal, zip(size3, [size0[-2], size1[-1]])))
+            fail = any(r is False for r in res)
+            success = all(r is True for r in res)
             if fail:
                 raise ValueError("Output to matrix-matrix product must agree in the m and n dimensions")
             elif not success:

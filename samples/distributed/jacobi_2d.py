@@ -1,13 +1,14 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """Explicitly distributed Jacobi-2D sample."""
 
-import dace as dc
-import numpy as np
 import os
 import sys
 import timeit
-from dace.sdfg.utils import load_precompiled_sdfg
 
+import numpy as np
+
+import dace as dc
+from dace.sdfg.utils import load_precompiled_sdfg
 from dace.transformation.dataflow import MapFusionVertical
 
 lNx = dc.symbol("lNx", dtype=dc.int64, integer=True, positive=True)
@@ -230,7 +231,7 @@ if __name__ == "__main__":
 
     if rank == 0:
         ms_time = time_to_ms(raw_time)
-        print("Median is {}ms".format(ms_time))
+        print(f"Median is {ms_time}ms")
 
         refA, refB = init_data(N, np.float64)
         shared_sdfg = jacobi_2d_shared.compile()

@@ -1,11 +1,13 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests custom SDFG-convertible objects."""
 
-import dace
-import numpy as np
-from dace.frontend.python.common import SDFGConvertible
 from types import SimpleNamespace
+
+import numpy as np
 import pytest
+
+import dace
+from dace.frontend.python.common import SDFGConvertible
 
 
 def test_daceprogram_constants_in_signature():
@@ -91,15 +93,14 @@ def test_nested_convertible_parse_fail(raise_error, nested_decorator):
         with dace.config.set_temporary("frontend", "raise_nested_parsing_errors", value=True):
             with pytest.raises(RuntimeError):
                 program(A)
+    elif nested_decorator:
+        with pytest.raises(RuntimeError):
+            program(A)
     else:
-        if nested_decorator:
-            with pytest.raises(RuntimeError):
-                program(A)
-        else:
-            with pytest.raises(FileNotFoundError):
-                program(A)
-                if raised_exception is not None:
-                    raise raised_exception
+        with pytest.raises(FileNotFoundError):
+            program(A)
+            if raised_exception is not None:
+                raise raised_exception
 
 
 if __name__ == "__main__":

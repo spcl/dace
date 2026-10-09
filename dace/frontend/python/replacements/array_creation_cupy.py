@@ -3,14 +3,14 @@
 Adds CuPy support for array creation functions.
 """
 
-from dace.frontend.common import op_repository as oprepo
-import dace.frontend.python.memlet_parser as mem_parser
-from dace.frontend.python.replacements.utils import ProgramVisitor, Shape, sym_type
-from dace import dtypes, symbolic, Memlet, SDFG, SDFGState
-
 from numbers import Number
 
 import numpy as np
+
+import dace.frontend.python.memlet_parser as mem_parser
+from dace import SDFG, Memlet, SDFGState, dtypes, symbolic
+from dace.frontend.common import op_repository as oprepo
+from dace.frontend.python.replacements.utils import ProgramVisitor, Shape, sym_type
 
 
 @oprepo.replaces("cupy._core.core.ndarray")
@@ -40,16 +40,16 @@ def _cupy_full(
     elif symbolic.issymbolic(fill_value):
         vtype = sym_type(fill_value)
     else:
-        raise mem_parser.DaceSyntaxError(pv, None, "Fill value {f} must be a number!".format(f=fill_value))
+        raise mem_parser.DaceSyntaxError(pv, None, f"Fill value {fill_value} must be a number!")
     dtype = dtype or vtype
     name, _ = pv.add_temp_transient(shape, dtype, storage=dtypes.StorageType.GPU_Global)
 
     state.add_mapped_tasklet(
         "_cupy_full_",
-        {"__i{}".format(i): "0: {}".format(s) for i, s in enumerate(shape)},
+        {f"__i{i}": f"0: {s}" for i, s in enumerate(shape)},
         {},
-        "__out = {}".format(fill_value),
-        dict(__out=Memlet.simple(name, ",".join(["__i{}".format(i) for i in range(len(shape))]))),
+        f"__out = {fill_value}",
+        dict(__out=Memlet.simple(name, ",".join([f"__i{i}" for i in range(len(shape))]))),
         external_edges=True,
     )
 
@@ -74,7 +74,7 @@ def _cupy_empty_like(
     shape: Shape = None,
 ):
     if prototype not in sdfg.arrays.keys():
-        raise mem_parser.DaceSyntaxError(pv, None, "Prototype argument {a} is not SDFG data!".format(a=prototype))
+        raise mem_parser.DaceSyntaxError(pv, None, f"Prototype argument {prototype} is not SDFG data!")
     desc = sdfg.arrays[prototype]
     name, newdesc = sdfg.add_temp_transient_like(desc, name=pv.get_target_name())
     if dtype is not None:

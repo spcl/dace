@@ -1,9 +1,11 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 # Original application code: NPBench - https://github.com/spcl/npbench
-import dace.dtypes
+import argparse
+
 import numpy as np
 import pytest
-import argparse
+
+import dace.dtypes
 from dace.transformation.auto.auto_optimize import auto_optimize
 
 N = dace.symbol("N")

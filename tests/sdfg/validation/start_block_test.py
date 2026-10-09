@@ -3,7 +3,7 @@
 import pytest
 
 from dace import SDFG
-from dace.sdfg import InvalidSDFGError, InterstateEdge
+from dace.sdfg import InterstateEdge, InvalidSDFGError
 
 
 def test_validation_no_state():

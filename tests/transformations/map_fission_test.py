@@ -1,12 +1,15 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
-import dace
-import pytest
-from dace.sdfg import dealias, nodes, utils as sdutils
-from dace.transformation.dataflow import MapFission
-from dace.transformation.interstate import InlineSDFG
-from dace.transformation.helpers import nest_state_subgraph
+
 import numpy as np
+import pytest
+
+import dace
+from dace.sdfg import dealias, nodes
+from dace.sdfg import utils as sdutils
+from dace.transformation.dataflow import MapFission
+from dace.transformation.helpers import nest_state_subgraph
+from dace.transformation.interstate import InlineSDFG
 
 
 def mapfission_sdfg():
@@ -999,8 +1002,8 @@ def _fission_leaf(name, inp, in_shape, out, out_shape, code):
     state = sdfg.add_state()
     tasklet = state.add_tasklet("t", {"x"}, {"y"}, code)
     index = lambda shape: "0" if list(shape) == [1] else "i"
-    state.add_edge(state.add_read(inp), None, tasklet, "x", dace.Memlet("%s[%s]" % (inp, index(in_shape))))
-    state.add_edge(tasklet, "y", state.add_write(out), None, dace.Memlet("%s[%s]" % (out, index(out_shape))))
+    state.add_edge(state.add_read(inp), None, tasklet, "x", dace.Memlet(f"{inp}[{index(in_shape)}]"))
+    state.add_edge(tasklet, "y", state.add_write(out), None, dace.Memlet(f"{out}[{index(out_shape)}]"))
     return sdfg
 
 

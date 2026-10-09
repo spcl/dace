@@ -1,11 +1,10 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
 import numpy as np
-
-from dace.sdfg.graph import SubgraphView
-
-from dace.transformation.subgraph import SubgraphFusion
 from util import expand_maps, expand_reduce, fusion
+
+import dace
+from dace.sdfg.graph import SubgraphView
+from dace.transformation.subgraph import SubgraphFusion
 
 N, M, O = [dace.symbol(s) for s in ["N", "M", "O"]]
 
@@ -112,7 +111,7 @@ def _test_quantitatively(sdfg, graph):
 
     expand_reduce(sdfg, graph)
     expand_maps(sdfg, graph)
-    subgraph = SubgraphView(graph, [node for node in graph.nodes()])
+    subgraph = SubgraphView(graph, list(graph.nodes()))
     sf = SubgraphFusion()
     sf.setup_match(subgraph)
     assert sf.can_be_applied(sdfg, subgraph) == True

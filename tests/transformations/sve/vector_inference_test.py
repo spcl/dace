@@ -1,11 +1,11 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-from dace import data
-from dace.sdfg.graph import NodeNotFoundError
-import dace
-from dace import SDFG
-import dace.sdfg.nodes as nodes
-import dace.sdfg.analysis.vector_inference as vector_inference
 import pytest
+
+import dace
+from dace import SDFG, data
+from dace.sdfg import nodes
+from dace.sdfg.analysis import vector_inference
+from dace.sdfg.graph import NodeNotFoundError
 from dace.transformation.dataflow import MergeSourceSinkArrays
 
 N = dace.symbol("N")
@@ -26,7 +26,7 @@ def find_map_entry(sdfg: SDFG):
         if isinstance(node, nodes.MapEntry):
             return node
 
-    raise NodeNotFoundError(f"Could not find map entry")
+    raise NodeNotFoundError("Could not find map entry")
 
 
 def vectorize(sdfg: SDFG) -> vector_inference.VectorInferenceGraph:

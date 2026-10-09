@@ -1,7 +1,8 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import re
-import dace
 from collections import OrderedDict
+
+import dace
 
 
 class AST_Node:
@@ -69,8 +70,8 @@ class AST_Node:
 
     def search_vardef_in_scope(self, name):
         from .ast_assign import AST_Assign
-        from .ast_values import AST_Ident
         from .ast_loop import AST_ForLoop
+        from .ast_values import AST_Ident
 
         current_node = self
 
@@ -126,8 +127,7 @@ class AST_Node:
                 if isinstance(node, dace.sdfg.nodes.AccessNode):
                     m = re.match(TEMPVARS_PREFIX + r"(\d+)", node.label)
                     if m is not None:
-                        if maxvar < int(m.group(1)):
-                            maxvar = int(m.group(1))
+                        maxvar = max(maxvar, int(m.group(1)))
         newvar = maxvar + 1
         new_name = TEMPVARS_PREFIX + str(newvar)
         return new_name
@@ -194,8 +194,7 @@ class AST_Statements(AST_Node):
 
     def __repr__(self):
         res = ["Statements:"]
-        for s in self.statements:
-            res.append("    " + str(s))
+        res.extend("    " + str(s) for s in self.statements)
         return "\n".join(res)
 
     def get_children(self):
@@ -242,7 +241,7 @@ class AST_Statements(AST_Node):
             stmts = None
             func = None
             for c in self.get_children():
-                from .ast_function import AST_Function, AST_EndFunc
+                from .ast_function import AST_EndFunc, AST_Function
 
                 if isinstance(c, AST_Function):
                     func = c

@@ -1,9 +1,11 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
+import copy
+
+import numpy as np
+import pytest
+
 import dace
 from dace.transformation.dataflow import CopyToMap
-import copy
-import pytest
-import numpy as np
 
 
 def _copy_to_map(storage: dace.StorageType):

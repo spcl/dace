@@ -2,10 +2,10 @@
 """Contains classes that implement the trivial-tasklet-elimination transformation."""
 
 from dace import data
+from dace.properties import make_properties
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.transformation import transformation
-from dace.properties import make_properties
 
 
 @make_properties

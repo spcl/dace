@@ -1,8 +1,8 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import numpy as np
+from common import compare_numpy_output
 
 import dace
-from common import compare_numpy_output
 
 ### Left, match first pos ######################################################
 
