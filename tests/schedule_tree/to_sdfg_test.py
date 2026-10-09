@@ -3,16 +3,19 @@
 Tests components in conversion of schedule trees to SDFGs.
 """
 
-import dace
-from dace import data, subsets as sbs
-from dace.codegen import control_flow as cf
-from dace.properties import CodeBlock
-from dace.sdfg import nodes, utils as sdutils
-from dace.sdfg.analysis.schedule_tree import tree_to_sdfg as t2s, treenodes as tn
-from dace.sdfg.state import BreakBlock, ConditionalBlock, ContinueBlock, LoopRegion, SDFGState
-
 import numpy as np
 import pytest
+
+import dace
+from dace import data
+from dace import subsets as sbs
+from dace.codegen import control_flow as cf
+from dace.properties import CodeBlock
+from dace.sdfg import nodes
+from dace.sdfg import utils as sdutils
+from dace.sdfg.analysis.schedule_tree import tree_to_sdfg as t2s
+from dace.sdfg.analysis.schedule_tree import treenodes as tn
+from dace.sdfg.state import BreakBlock, ConditionalBlock, ContinueBlock, LoopRegion, SDFGState
 
 
 def test_state_boundaries_none() -> None:

@@ -1,16 +1,15 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """State fusion transformation"""
 
-from typing import Dict, List, Set
-
 import networkx as nx
 
-from dace import data as dt, sdfg, subsets, memlet
-from dace.symbolic import Truth
+from dace import data as dt
+from dace import memlet, sdfg, subsets
 from dace.config import Config
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.state import ControlFlowRegion, SDFGState, SymbolResolver
+from dace.symbolic import Truth
 from dace.transformation import transformation
 
 
@@ -18,10 +17,10 @@ from dace.transformation import transformation
 class CCDesc:
     def __init__(
         self,
-        first_input_nodes: Set[nodes.AccessNode],
-        first_output_nodes: Set[nodes.AccessNode],
-        second_input_nodes: Set[nodes.AccessNode],
-        second_output_nodes: Set[nodes.AccessNode],
+        first_input_nodes: set[nodes.AccessNode],
+        first_output_nodes: set[nodes.AccessNode],
+        second_input_nodes: set[nodes.AccessNode],
+        second_output_nodes: set[nodes.AccessNode],
     ) -> None:
         self.first_inputs = {n.data for n in first_input_nodes}
         self.first_input_nodes = first_input_nodes
@@ -66,7 +65,7 @@ class StateFusionExtended(transformation.MultiStateTransformation):
         self.connections_to_make = []
 
     @staticmethod
-    def find_fused_components(first_cc_input, first_cc_output, second_cc_input, second_cc_output) -> List[CCDesc]:
+    def find_fused_components(first_cc_input, first_cc_output, second_cc_input, second_cc_output) -> list[CCDesc]:
         # Make a bipartite graph out of the first and second components
         g = nx.DiGraph()
         g.add_nodes_from((0, i) for i in range(len(first_cc_output)))
@@ -97,10 +96,10 @@ class StateFusionExtended(transformation.MultiStateTransformation):
     @staticmethod
     def memlets_intersect(
         graph_a: SDFGState,
-        group_a: List[nodes.AccessNode],
+        group_a: list[nodes.AccessNode],
         inputs_a: bool,
         graph_b: SDFGState,
-        group_b: List[nodes.AccessNode],
+        group_b: list[nodes.AccessNode],
         inputs_b: bool,
     ) -> bool:
         """
@@ -144,7 +143,7 @@ class StateFusionExtended(transformation.MultiStateTransformation):
         self,
         first_state: SDFGState,
         second_state: SDFGState,
-        match_nodes: Dict[nodes.AccessNode, nodes.AccessNode],
+        match_nodes: dict[nodes.AccessNode, nodes.AccessNode],
         node_a: nodes.Node,
         node_b: nodes.Node,
     ) -> bool:
@@ -158,9 +157,9 @@ class StateFusionExtended(transformation.MultiStateTransformation):
         self,
         first_state: SDFGState,
         second_state: SDFGState,
-        match_nodes: Dict[nodes.AccessNode, nodes.AccessNode],
-        nodes_first: List[nodes.AccessNode],
-        nodes_second: List[nodes.AccessNode],
+        match_nodes: dict[nodes.AccessNode, nodes.AccessNode],
+        nodes_first: list[nodes.AccessNode],
+        nodes_second: list[nodes.AccessNode],
         first_read: bool,
         second_read: bool,
     ) -> bool:
@@ -180,10 +179,10 @@ class StateFusionExtended(transformation.MultiStateTransformation):
         self,
         first_state: SDFGState,
         second_state: SDFGState,
-        match_nodes: Dict[nodes.AccessNode, nodes.AccessNode],
-        nodes_first: List[nodes.AccessNode],
-        nodes_second: List[nodes.AccessNode],
-        second_input: Set[nodes.AccessNode],
+        match_nodes: dict[nodes.AccessNode, nodes.AccessNode],
+        nodes_first: list[nodes.AccessNode],
+        nodes_second: list[nodes.AccessNode],
+        second_input: set[nodes.AccessNode],
         first_read: bool,
         second_read: bool,
     ) -> bool:
@@ -294,8 +293,8 @@ class StateFusionExtended(transformation.MultiStateTransformation):
                 return False
 
             # Get connected components.
-            first_cc = [cc_nodes for cc_nodes in nx.weakly_connected_components(first_state._nx)]
-            second_cc = [cc_nodes for cc_nodes in nx.weakly_connected_components(second_state._nx)]
+            first_cc = list(nx.weakly_connected_components(first_state._nx))
+            second_cc = list(nx.weakly_connected_components(second_state._nx))
 
             # Find source/sink (data) nodes
             first_input = {node for node in first_state.source_nodes() if isinstance(node, nodes.AccessNode)}
@@ -340,7 +339,7 @@ class StateFusionExtended(transformation.MultiStateTransformation):
 
             # Recreate fused connected component correspondences, and then
             # check for hazards
-            resulting_ccs: List[CCDesc] = StateFusionExtended.find_fused_components(
+            resulting_ccs: list[CCDesc] = StateFusionExtended.find_fused_components(
                 first_cc_input, first_cc_output, second_cc_input, second_cc_output
             )
 
@@ -364,7 +363,7 @@ class StateFusionExtended(transformation.MultiStateTransformation):
                     if isinstance(x, nodes.AccessNode) and x.data in fused_cc.first_outputs
                 ]
                 # Those nodes will be the connection points upon fusion
-                match_nodes: Dict[nodes.AccessNode, nodes.AccessNode] = {
+                match_nodes: dict[nodes.AccessNode, nodes.AccessNode] = {
                     next(n for n in order if n.data == match): next(
                         n for n in fused_cc.second_input_nodes if n.data == match
                     )
@@ -592,7 +591,7 @@ class StateFusionExtended(transformation.MultiStateTransformation):
             for conn in self.connections_to_make:
                 if node in conn[1]:
                     for i in top2:
-                        if i not in [nodex for nodex in second_state.source_nodes()]:
+                        if i not in list(second_state.source_nodes()):
                             continue
                         paths = second_state.all_nodes_between(i, node)
                         direct_edges = second_state.edges_between(i, node)

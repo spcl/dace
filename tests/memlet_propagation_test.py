@@ -1,7 +1,8 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
-import sympy
 import numpy as np
+import sympy
+
+import dace
 from dace.sdfg.propagation import propagate_memlets_sdfg, propagate_subset
 from dace.sdfg.state import SymbolResolver
 

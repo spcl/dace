@@ -4,11 +4,11 @@ import copy
 import numpy as np
 
 import dace
-from dace.sdfg import nodes
 from dace.properties import CodeBlock
-from dace.sdfg.state import LoopRegion, ConditionalBlock, ControlFlowRegion
+from dace.sdfg import nodes
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.interstate import LoopToMap
-from dace.transformation.passes import SymbolPropagation, ScalarToSymbolPromotion
+from dace.transformation.passes import ScalarToSymbolPromotion, SymbolPropagation
 
 
 def _count_loops(sdfg: dace.SDFG):
@@ -538,11 +538,9 @@ def test_dead_iedge_assignment_eliminated_after_substitution():
 
     # The substitution must reach the memlet: the write to s2's ``out`` now indexes
     # ``klev + 1`` directly, not via the shorthand symbol.
-    seen = []
-    for st in sdfg.states():
-        for e in st.edges():
-            if e.data is not None and e.data.data == "out":
-                seen.append(str(e.data.subset))
+    seen = [
+        str(e.data.subset) for st in sdfg.states() for e in st.edges() if e.data is not None and e.data.data == "out"
+    ]
     assert "klev + 1" in seen, f"expected memlet subset to be substituted to klev+1; got {seen}"
 
 

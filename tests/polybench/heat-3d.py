@@ -1,6 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
 import polybench
+
+import dace
 
 N = dace.symbol("N")
 tsteps = dace.symbol("tsteps")
@@ -39,7 +40,7 @@ def heat3d(A: datatype[N, N, N], B: datatype[N, N, N]):  # , N, tsteps):
             )
 
         @dace.map
-        def a(i: _[1 : N - 1], j: _[1 : N - 1], k: _[1 : N - 1]):
+        def a_second(i: _[1 : N - 1], j: _[1 : N - 1], k: _[1 : N - 1]):
             a11 << B[i + 1, j, k]
             a12 << B[i - 1, j, k]
             a21 << B[i, j + 1, k]

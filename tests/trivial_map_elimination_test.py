@@ -1,7 +1,8 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+import unittest
+
 import dace
 from dace.transformation.dataflow import TrivialMapElimination
-import unittest
 
 
 def trivial_map_sdfg():

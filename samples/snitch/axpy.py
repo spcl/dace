@@ -47,7 +47,7 @@ if __name__ == "__main__":
     code, header = SnitchCodeGen.gen_code_snitch(sdfg)
 
     # Write code to files
-    with open(f"axpy.c", "w") as fd:
+    with open("axpy.c", "w") as fd:
         fd.write(code)
-    with open(f"axpy.h", "w") as fd:
+    with open("axpy.h", "w") as fd:
         fd.write(header)

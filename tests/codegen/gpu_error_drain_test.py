@@ -6,12 +6,11 @@ import importlib
 from ctypes.util import find_library
 
 import numpy as np
-
-import dace
 import pytest
 
-from dace.transformation.interstate import GPUTransformSDFG
+import dace
 from dace.codegen import common
+from dace.transformation.interstate import GPUTransformSDFG
 
 
 def _gpu_sdfg(name: str = "drain_probe") -> dace.SDFG:
@@ -87,9 +86,11 @@ def test_gpu_init_template_substitution_does_not_break_comments():
     for lineno, line in enumerate(source, 1):
         if not line.strip().startswith("//"):
             continue
-        for match in placeholder.finditer(line):
-            if match.group(1) != "backend":
-                offenders.append(f"{cuda_target.__file__}:{lineno}: {{{match.group(1)}}} in {line.strip()!r}")
+        offenders.extend(
+            f"{cuda_target.__file__}:{lineno}: {{{match.group(1)}}} in {line.strip()!r}"
+            for match in placeholder.finditer(line)
+            if match.group(1) != "backend"
+        )
 
     assert not offenders, (
         "a format placeholder inside a generated C++ comment is substituted there, "

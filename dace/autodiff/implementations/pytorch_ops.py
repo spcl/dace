@@ -2,17 +2,14 @@
 
 import copy
 import itertools
-from typing import List, Optional, Tuple
 
 import dace
-import dace.libraries.torch
-from dace.registry import autoregister_params
-from dace import nodes as nd
-
-from dace.libraries.onnx.converters import clean_onnx_name
-
 import dace.autodiff.utils as butils
-from dace.autodiff.base_abc import BackwardImplementation, BackwardContext, BackwardResult
+import dace.libraries.torch
+from dace import nodes as nd
+from dace.autodiff.base_abc import BackwardContext, BackwardImplementation, BackwardResult
+from dace.libraries.onnx.converters import clean_onnx_name
+from dace.registry import autoregister_params
 from dace.sdfg.utils import in_desc_with_name
 
 
@@ -33,9 +30,9 @@ class PyTorchConvBackward(BackwardImplementation):
     def backward(
         forward_node: nd.Node,
         context: BackwardContext,
-        given_gradients: List[Optional[str]],
-        required_gradients: List[Optional[str]],
-    ) -> Tuple[nd.Node, BackwardResult]:
+        given_gradients: list[str | None],
+        required_gradients: list[str | None],
+    ) -> tuple[nd.Node, BackwardResult]:
 
         nsdfg = dace.SDFG(forward_node.label + "_backward")
         X_desc = butils.forward_in_desc_with_name(forward_node, context, "X")
@@ -72,12 +69,7 @@ class PyTorchConvBackward(BackwardImplementation):
 
         # setup state
         nstate = nsdfg.add_state()
-        unique_id = "{}_{}_{}_{}_bwd".format(
-            clean_onnx_name(forward_node.name),
-            context.forward_sdfg.sdfg_id,
-            context.forward_sdfg.node_id(context.forward_state),
-            context.forward_state.node_id(forward_node),
-        )
+        unique_id = f"{clean_onnx_name(forward_node.name)}_{context.forward_sdfg.sdfg_id}_{context.forward_sdfg.node_id(context.forward_state)}_{context.forward_state.node_id(forward_node)}_bwd"
 
         init_code = ""
         finalize_code = ""
@@ -123,8 +115,8 @@ class PyTorchConvBackward(BackwardImplementation):
             nstate.add_read(result.given_grad_names["Y"]),
             None,
             tasklet,
-            f"_dY",
-            nsdfg.make_array_memlet((result.given_grad_names["Y"])),
+            "_dY",
+            nsdfg.make_array_memlet(result.given_grad_names["Y"]),
         )
         for name in sorted(required_forward_inputs):
             nstate.add_edge(nstate.add_read(name), None, tasklet, f"_{name}", nsdfg.make_array_memlet(name))

@@ -1,12 +1,13 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests for the DeduplicateAccess transformation."""
 
-import dace
 import numpy as np
+
+import dace
 from dace.subsets import Range
+from dace.transformation import helpers
 from dace.transformation.dataflow import DeduplicateAccess
 from dace.transformation.passes.consolidate_edges import ConsolidateEdges
-import dace.transformation.helpers as helpers
 
 N = dace.symbol("N")
 i = dace.symbol("i")
@@ -232,7 +233,7 @@ def _window_reader(name, code, offset):
     sdfg.add_array("o", [LEN], dace.float64)
     sdfg.add_symbol("i", dace.int64)
     state = sdfg.add_state()
-    tasklet = state.add_tasklet("t", {"x", "y"}, {"z"}, "z = %s" % code)
+    tasklet = state.add_tasklet("t", {"x", "y"}, {"z"}, f"z = {code}")
     state.add_edge(state.add_read("a"), None, tasklet, "x", dace.Memlet("a[i + %d]" % offset))
     state.add_edge(state.add_read("a"), None, tasklet, "y", dace.Memlet("a[i + %d]" % (offset + 1)))
     state.add_edge(tasklet, "z", state.add_write("o"), None, dace.Memlet("o[i]"))

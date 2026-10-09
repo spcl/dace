@@ -20,7 +20,8 @@ from dace.properties import CodeBlock
 from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState, SymbolResolver
 from dace.symbolic import ipow
-from dace.transformation import pass_pipeline as ppl, transformation
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation import transformation
 
 #: The facts at the expression being relaxed, derived only when it holds a power.
 FactsOf = Callable[[], symbolic.Facts]

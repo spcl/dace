@@ -1,21 +1,18 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Inline multi-state SDFGs."""
 
-from copy import deepcopy as dc
 import itertools
-from typing import Dict, List
+from copy import deepcopy as dc
 
-from dace import Memlet, symbolic
-from dace.sdfg import dealias, nodes
-from dace.sdfg.graph import MultiConnectorEdge
-from dace.sdfg import InterstateEdge, SDFG, SDFGState
-from dace.sdfg.sdfg import scope_bound_names
-from dace.sdfg import utils as sdutil
-from dace.sdfg.replace import replace_datadesc_names, replace_properties_dict
-from dace.transformation import transformation, helpers
+from dace import Memlet, data, symbolic
 from dace.properties import make_properties
-from dace import data
+from dace.sdfg import SDFG, InterstateEdge, SDFGState, dealias, nodes
+from dace.sdfg import utils as sdutil
+from dace.sdfg.graph import MultiConnectorEdge
+from dace.sdfg.replace import replace_datadesc_names, replace_properties_dict
+from dace.sdfg.sdfg import scope_bound_names
 from dace.sdfg.state import LoopRegion, ReturnBlock
+from dace.transformation import helpers, transformation
 
 
 @make_properties
@@ -39,8 +36,8 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
 
     @staticmethod
     def _check_strides(
-        inner_strides: List[symbolic.SymbolicType],
-        outer_strides: List[symbolic.SymbolicType],
+        inner_strides: list[symbolic.SymbolicType],
+        outer_strides: list[symbolic.SymbolicType],
         memlet: Memlet,
         nested_sdfg: nodes.NestedSDFG,
     ) -> bool:
@@ -175,10 +172,10 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
 
         # Find original source/destination edges (there is only one edge per
         # connector, according to match)
-        inputs: Dict[str, MultiConnectorEdge] = {}
-        outputs: Dict[str, MultiConnectorEdge] = {}
-        input_set: Dict[str, str] = {}
-        output_set: Dict[str, str] = {}
+        inputs: dict[str, MultiConnectorEdge] = {}
+        outputs: dict[str, MultiConnectorEdge] = {}
+        input_set: dict[str, str] = {}
+        output_set: dict[str, str] = {}
         for e in nsdfg_state.in_edges(nsdfg_node):
             inputs[e.dst_conn] = e
             input_set[e.data.data] = e.dst_conn
@@ -218,7 +215,7 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         # Loop variables bind their names without declaring them as symbols
         allnames = set(outer_symbols.keys()) | set(sdfg.arrays.keys()) | outer_assignments
         assignments_to_replace = inner_assignments & (outer_assignments | allnames)
-        sym_replacements: Dict[str, str] = {}
+        sym_replacements: dict[str, str] = {}
         for assign in assignments_to_replace:
             newname = data.find_new_name(assign, allnames)
             allnames.add(newname)
@@ -230,7 +227,7 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         # Collect and modify access nodes as necessary
 
         # Mapping from nested transient name to top-level name
-        transients: Dict[str, str] = {}
+        transients: dict[str, str] = {}
 
         # All transients become transients of the parent (if data already
         # exists, find new name). Their shapes may name symbols the inlined scopes bind, which are not declared.
@@ -283,7 +280,7 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         symbolic.safe_replace(repldict, lambda m: replace_datadesc_names(nsdfg, m), value_as_string=True)
 
         # Make unique names for all control-flow blocks
-        node_names = set(cfr.label for cfr in sdfg.all_control_flow_blocks(recursive=True))
+        node_names = {cfr.label for cfr in sdfg.all_control_flow_blocks(recursive=True)}
         for node in nsdfg.all_control_flow_blocks(recursive=True):
             if node.label in node_names:
                 node_name = data.find_new_name(node.label, node_names)

@@ -3,12 +3,12 @@
 
 import ast
 
-import dace
-from dace import InterstateEdge
-from dace.sdfg.sdfg import CodeBlock, ConditionalBlock
-from dace import ControlFlowRegion
-from dace.transformation.passes.lift_trivial_if import LiftTrivialIf
 import pytest
+
+import dace
+from dace import ControlFlowRegion, InterstateEdge
+from dace.sdfg.sdfg import CodeBlock, ConditionalBlock
+from dace.transformation.passes.lift_trivial_if import LiftTrivialIf
 
 # Conditions the pass must recognize as constant ``True``.
 _ALWAYS_TRUE = [

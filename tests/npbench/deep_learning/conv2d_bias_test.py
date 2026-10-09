@@ -1,12 +1,14 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 # Original application code: NPBench - https://github.com/spcl/npbench
-import dace.dtypes
-import numpy as np
-import dace as dc
-import pytest
 import argparse
-from dace.transformation.auto.auto_optimize import auto_optimize
+
+import numpy as np
+import pytest
+
+import dace as dc
+import dace.dtypes
 from dace.autodiff import add_backward_pass
+from dace.transformation.auto.auto_optimize import auto_optimize
 
 C_in, C_out, H, K, N, W = (dc.symbol(s, dc.int64) for s in ("C_in", "C_out", "H", "K", "N", "W"))
 
@@ -133,7 +135,7 @@ def run_conv2d_bias(device_type: dace.dtypes.DeviceType):
 def run_conv2d_bias_autodiff():
     import jax
     import jax.numpy as jnp
-    import jax.lax as lax
+    from jax import lax
 
     # Initialize data (npbench test size)
     N, C_in, C_out, K, H, W = 4, 3, 8, 2, 12, 12

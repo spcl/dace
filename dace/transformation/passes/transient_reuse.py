@@ -1,5 +1,4 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
-from typing import Optional, Set
 
 import networkx as nx
 
@@ -33,8 +32,8 @@ class TransientReuse(ppl.Pass):
         # If states changed
         return modified & (ppl.Modifies.Nodes | ppl.Modifies.Memlets)
 
-    def apply_pass(self, sdfg: SDFG, _) -> Optional[Set[str]]:
-        result: Set[str] = set()
+    def apply_pass(self, sdfg: SDFG, _) -> set[str] | None:
+        result: set[str] = set()
 
         memory_before = 0
         arrays = {}
@@ -115,9 +114,7 @@ class TransientReuse(ppl.Pass):
             # Find a final mapping, greedy coloring algorithm to find a mapping.
             # Only add a transient to a bucket if either there is a mapping from it to
             # all other elements of that bucket or there is a mapping from each element in the bucket to it.
-            buckets = []
-            for i in range(len(transients)):
-                buckets.append([])
+            buckets = [[] for _ in range(len(transients))]
 
             for n in transients:
                 for i in range(len(transients)):
@@ -149,11 +146,10 @@ class TransientReuse(ppl.Pass):
             # Construct final mapping (transient_reuse_i, some_transient)
             mapping = set()
             for i in range(len(buckets)):
-                for j in range(1, len(buckets[i])):
-                    mapping.add((buckets[i][0], buckets[i][j]))
+                mapping.update((buckets[i][0], buckets[i][j]) for j in range(1, len(buckets[i])))
 
             # For each mapping redirect edges and rename memlets in the state
-            for new, old in sorted(list(mapping)):
+            for new, old in sorted(mapping):
                 result.add(old)
                 for n in state.nodes():
                     if isinstance(n, nodes.AccessNode) and n.data == old:

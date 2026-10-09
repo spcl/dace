@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 
 import pytest
@@ -102,8 +101,9 @@ def test_undefined_symbol_propagation():
 def test_undefined_symbol_math_functions():
     """Tests that math functions with UndefinedSymbol propagate undefined status."""
 
-    from dace.symbolic import UndefinedSymbol, symbol, inequal_symbols, int_ceil
     import sympy
+
+    from dace.symbolic import UndefinedSymbol, inequal_symbols, int_ceil, symbol
 
     us = UndefinedSymbol()
     s = symbol("N")

@@ -1,19 +1,21 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Interchange conditional blocks with nested map regions."""
 
-from dace import sdfg as sd
-from dace import dtypes
-from dace.sdfg import dealias, utils as sdutil
-from dace.sdfg.state import ControlFlowRegion, ConditionalBlock, SymbolResolver
-from dace.properties import CodeBlock
-from dace.sdfg.nodes import MapEntry, MapExit, NestedSDFG
-from dace.memlet import Memlet
-from dace.transformation import transformation
-from dace.sdfg.sdfg import InterstateEdge
-from dace.sdfg.utils import set_nested_sdfg_parent_references
-from dace import subsets as sbs
 import copy
 import itertools
+
+from dace import dtypes
+from dace import sdfg as sd
+from dace import subsets as sbs
+from dace.memlet import Memlet
+from dace.properties import CodeBlock
+from dace.sdfg import dealias
+from dace.sdfg import utils as sdutil
+from dace.sdfg.nodes import MapEntry, MapExit, NestedSDFG
+from dace.sdfg.sdfg import InterstateEdge
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, SymbolResolver
+from dace.sdfg.utils import set_nested_sdfg_parent_references
+from dace.transformation import transformation
 
 
 @transformation.explicit_cf_compatible
@@ -42,10 +44,8 @@ class ConditionMapInterchange(transformation.MultiStateTransformation):
                     not isinstance(node, (MapEntry, MapExit))
                     and state.entry_node(node) is None
                     and any(
-                        [
-                            not isinstance(n, (MapEntry, MapExit))
-                            for n in set(state.successors(node)) | set(state.predecessors(node))
-                        ]
+                        not isinstance(n, (MapEntry, MapExit))
+                        for n in set(state.successors(node)) | set(state.predecessors(node))
                     )
                 ):
                     return False

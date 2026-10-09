@@ -1,11 +1,12 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import unittest
-import dace
+
 import numpy as np
+
+import dace
+import dace.transformation.helpers as xfh
 from dace.transformation.dataflow import MapTiling, OutLocalStorage
 from dace.transformation.dataflow.local_storage import InLocalStorage
-
-import dace.transformation.helpers as xfh
 
 N = dace.symbol("N")
 

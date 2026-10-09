@@ -2,7 +2,7 @@
 """``FillLibraryNode``: write one constant over a contiguous output subset, or broadcast a
 single-element value supplied through an input connector."""
 
-from typing import Any, Optional, Tuple
+from typing import Any
 
 import dace
 from dace import library, nodes, properties
@@ -41,14 +41,14 @@ class FillLibraryNode(nodes.LibraryNode):
         )
         self.value = value
 
-    def value_edge(self, state: dace.SDFGState) -> Optional[Any]:
+    def value_edge(self, state: dace.SDFGState) -> Any | None:
         """Return the edge carrying the dynamic fill value, or ``None`` if unwired."""
         in_edges = [
             e for e in state.in_edges(self) if e.dst_conn == self.VALUE_CONNECTOR_NAME and not e.data.is_empty()
         ]
         return in_edges[0] if len(in_edges) == 1 else None
 
-    def value_descriptor(self, state: dace.SDFGState) -> Optional[Tuple[str, dace.data.Data, dace.subsets.Range]]:
+    def value_descriptor(self, state: dace.SDFGState) -> tuple[str, dace.data.Data, dace.subsets.Range] | None:
         """Return ``(data_name, data, subset)`` for the dynamic fill value, or ``None``.
 
         :raises ValueError: If the value edge is not a single-element access-node subset, or if
@@ -83,7 +83,7 @@ class FillLibraryNode(nodes.LibraryNode):
 
         return name, desc, subset
 
-    def validate(self, sdfg: dace.SDFG, state: dace.SDFGState) -> Tuple[str, dace.data.Data, dace.subsets.Range]:
+    def validate(self, sdfg: dace.SDFG, state: dace.SDFGState) -> tuple[str, dace.data.Data, dace.subsets.Range]:
         """Validate wiring and resolve the output edge.
 
         :param sdfg: The SDFG owning the data descriptors.

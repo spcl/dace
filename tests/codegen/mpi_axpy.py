@@ -1,9 +1,11 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 
 import argparse
-import dace
+
 import numpy as np
 from mpi4py import MPI
+
+import dace
 from dace.transformation.dataflow import MPITransformMap
 
 N = dace.symbol("N")

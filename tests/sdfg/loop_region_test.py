@@ -1,9 +1,11 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
 import numpy as np
+
+import dace
+from dace.sdfg.analysis.schedule_tree import sdfg_to_tree as s2t
+from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.sdfg.sdfg import SDFG
 from dace.sdfg.state import LoopRegion
-from dace.sdfg.analysis.schedule_tree import sdfg_to_tree as s2t, treenodes as tn
 
 
 def _make_regular_for_loop() -> SDFG:
@@ -265,9 +267,9 @@ def test_loop_to_stree_regular_while():
 
     assert stree.as_string() == (
         f"{tn.INDENTATION}assign i = 0\n"
-        + f"{tn.INDENTATION}while (i < 10):\n"
-        + f"{2 * tn.INDENTATION}A[i] = tasklet()\n"
-        + f"{2 * tn.INDENTATION}assign i = (i + 1)"
+        f"{tn.INDENTATION}while (i < 10):\n"
+        f"{2 * tn.INDENTATION}A[i] = tasklet()\n"
+        f"{2 * tn.INDENTATION}assign i = (i + 1)"
     )
 
 
@@ -280,10 +282,10 @@ def test_loop_to_stree_do_while():
 
     assert stree.as_string() == (
         f"{tn.INDENTATION}assign i = 10\n"
-        + f"{tn.INDENTATION}do:\n"
-        + f"{2 * tn.INDENTATION}A[i] = tasklet()\n"
-        + f"{2 * tn.INDENTATION}assign i = (i + 1)\n"
-        + f"{tn.INDENTATION}while (i < 10)"
+        f"{tn.INDENTATION}do:\n"
+        f"{2 * tn.INDENTATION}A[i] = tasklet()\n"
+        f"{2 * tn.INDENTATION}assign i = (i + 1)\n"
+        f"{tn.INDENTATION}while (i < 10)"
     )
 
 
@@ -296,10 +298,10 @@ def test_loop_to_stree_do_for():
 
     assert stree.as_string() == (
         f"{tn.INDENTATION}i = 0\n"
-        + f"{tn.INDENTATION}do:\n"
-        + f"{2 * tn.INDENTATION}A[i] = tasklet()\n"
-        + f"{2 * tn.INDENTATION}i = (i + 1)\n"
-        + f"{tn.INDENTATION}while (i < 10)"
+        f"{tn.INDENTATION}do:\n"
+        f"{2 * tn.INDENTATION}A[i] = tasklet()\n"
+        f"{2 * tn.INDENTATION}i = (i + 1)\n"
+        f"{tn.INDENTATION}while (i < 10)"
     )
 
 
@@ -312,11 +314,11 @@ def test_loop_to_stree_do_for_inverted_cond():
 
     assert stree.as_string() == (
         f"{tn.INDENTATION}i = 0\n"
-        + f"{tn.INDENTATION}while True:\n"
-        + f"{2 * tn.INDENTATION}A[i] = tasklet()\n"
-        + f"{2 * tn.INDENTATION}if (not (i < 8)):\n"
-        + f"{3 * tn.INDENTATION}break\n"
-        + f"{2 * tn.INDENTATION}i = (i + 1)\n"
+        f"{tn.INDENTATION}while True:\n"
+        f"{2 * tn.INDENTATION}A[i] = tasklet()\n"
+        f"{2 * tn.INDENTATION}if (not (i < 8)):\n"
+        f"{3 * tn.INDENTATION}break\n"
+        f"{2 * tn.INDENTATION}i = (i + 1)\n"
     )
 
 

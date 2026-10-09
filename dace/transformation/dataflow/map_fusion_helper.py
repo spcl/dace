@@ -1,10 +1,12 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
-from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Union
+from collections.abc import Iterable
+from typing import Any
 
 import dace
 from dace import symbolic
-from dace.sdfg import graph, nodes as nodes, validation
+from dace.sdfg import graph, validation
+from dace.sdfg import nodes as nodes
 from dace.sdfg.state import SymbolResolver
 from dace.transformation import helpers
 
@@ -12,7 +14,7 @@ from dace.transformation import helpers
 def find_parameter_remapping(
     first_map: nodes.Map,
     second_map: nodes.Map,
-) -> Optional[Dict[str, str]]:
+) -> dict[str, str] | None:
     """Computes the parameter remapping for the parameters of the _second_ map.
 
     The returned `dict` maps the parameters of the second map (keys) to parameter
@@ -43,16 +45,16 @@ def find_parameter_remapping(
     """
 
     # The parameter names
-    first_params: List[str] = first_map.params
-    second_params: List[str] = second_map.params
+    first_params: list[str] = first_map.params
+    second_params: list[str] = second_map.params
 
     if len(first_params) != len(second_params):
         return None
 
-    first_rngs: Dict[str, Tuple[Any, Any, Any]] = {
+    first_rngs: dict[str, tuple[Any, Any, Any]] = {
         param: tuple(rng) for param, rng in zip(first_params, first_map.range)
     }
-    second_rngs: Dict[str, Tuple[Any, Any, Any]] = {
+    second_rngs: dict[str, tuple[Any, Any, Any]] = {
         param: tuple(rng) for param, rng in zip(second_params, second_map.range)
     }
 
@@ -62,12 +64,12 @@ def find_parameter_remapping(
     #  acts the issue that is described in the doc string. Using a list ensures
     #  that they indexes are matched in order. This assume that in real world
     #  code the order of the loop is not arbitrary but kind of matches.
-    unmapped_second_params: List[str] = list(second_params)
-    unused_first_params: List[str] = list(first_params)
+    unmapped_second_params: list[str] = list(second_params)
+    unused_first_params: list[str] = list(first_params)
 
     # This is the result (`second_param -> first_param`), note that if no renaming
     #  is needed then the parameter is not present in the mapping.
-    final_mapping: Dict[str, str] = {}
+    final_mapping: dict[str, str] = {}
 
     # First we identify the parameters that already have the correct name.
     for param in set(first_params).intersection(second_params):
@@ -125,7 +127,7 @@ def rename_map_parameters(
     :param state: The SDFGState on which we operate.
     """
     # Compute the replacement dict.
-    repl_dict: Dict[str, str] = find_parameter_remapping(  # type: ignore[assignment]  # Guaranteed to be not `None`.
+    repl_dict: dict[str, str] = find_parameter_remapping(  # type: ignore[assignment]  # Guaranteed to be not `None`.
         first_map=first_map,
         second_map=second_map,
     )
@@ -150,12 +152,12 @@ def rename_map_parameters(
 
 def get_new_conn_name(
     edge_to_move: graph.MultiConnectorEdge[dace.Memlet],
-    to_node: Union[nodes.MapExit, nodes.MapEntry],
+    to_node: nodes.MapExit | nodes.MapEntry,
     state: dace.SDFGState,
-    scope_dict: Dict,
+    scope_dict: dict,
     never_consolidate_edges: bool = False,
     consolidate_edges_only_if_not_extending: bool = True,
-) -> Tuple[str, bool]:
+) -> tuple[str, bool]:
     """Determine the new connector name that should be used.
 
     The function returns a pair. The first element is the name of the connector
@@ -223,11 +225,11 @@ def get_new_conn_name(
 
 
 def relocate_nodes(
-    from_node: Union[nodes.MapExit, nodes.MapEntry],
-    to_node: Union[nodes.MapExit, nodes.MapEntry],
+    from_node: nodes.MapExit | nodes.MapEntry,
+    to_node: nodes.MapExit | nodes.MapEntry,
     state: dace.SDFGState,
     sdfg: dace.SDFG,
-    scope_dict: Dict,
+    scope_dict: dict,
     never_consolidate_edges: bool = False,
     consolidate_edges_only_if_not_extending: bool = True,
 ) -> None:
@@ -256,7 +258,7 @@ def relocate_nodes(
 
     # We now ensure that there is only one empty Memlet from the `to_node` to any other node.
     #  Although it is allowed, we try to prevent it.
-    empty_targets: Set[nodes.Node] = set()
+    empty_targets: set[nodes.Node] = set()
     for empty_edge in list(filter(lambda e: e.data.is_empty(), state.all_edges(to_node))):
         if empty_edge.dst in empty_targets:
             state.remove_edge(empty_edge)
@@ -360,8 +362,8 @@ def is_node_reachable_from(
     def next_nodes(node: nodes.Node) -> Iterable[nodes.Node]:
         return (edge.dst for edge in graph.out_edges(node))
 
-    to_visit: List[nodes.Node] = [begin]
-    seen: Set[nodes.Node] = set()
+    to_visit: list[nodes.Node] = [begin]
+    seen: set[nodes.Node] = set()
 
     while len(to_visit) > 0:
         node: nodes.Node = to_visit.pop()
@@ -403,12 +405,12 @@ def is_parallel(
 def can_topologically_be_fused(
     first_map_entry: nodes.MapEntry,
     second_map_entry: nodes.MapEntry,
-    graph: Union[dace.SDFGState, dace.SDFG],
+    graph: dace.SDFGState | dace.SDFG,
     sdfg: dace.SDFG,
     permissive: bool = False,
     only_inner_maps: bool = False,
     only_toplevel_maps: bool = False,
-) -> Optional[Dict[str, str]]:
+) -> dict[str, str] | None:
     """Performs basic checks if the maps can be fused.
 
     This function only checks constrains that are common between serial and

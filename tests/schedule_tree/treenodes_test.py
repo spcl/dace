@@ -1,11 +1,10 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 
-from dace.sdfg.analysis.schedule_tree import treenodes as tn
-from dace import nodes, data, subsets
-from dace import Memlet
+import pytest
 
 import dace
-import pytest
+from dace import Memlet, data, nodes, subsets
+from dace.sdfg.analysis.schedule_tree import treenodes as tn
 
 
 @pytest.fixture

@@ -5,10 +5,10 @@ Tests the extensible attributed enum class.
 
 import pickle
 from dataclasses import dataclass
-from enum import auto, Enum
+from enum import Enum, auto
 
-from dace.attr_enum import ExtensibleAttributeEnum
 from dace import serialize
+from dace.attr_enum import ExtensibleAttributeEnum
 
 
 @dataclass(frozen=True)

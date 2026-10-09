@@ -1,30 +1,27 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Contains test cases for the work depth analysis."""
 
-from typing import Dict, List, Tuple
-
+import numpy as np
 import pytest
+import sympy as sp
+from pytest import raises
+
 import dace
 from dace import symbolic
-from dace.symbolic import pystr_to_symbolic, simplify, SymbolicType
 from dace.frontend.python.parser import DaceProgram
+from dace.sdfg.performance_evaluation.assumptions import assumption_relations
+from dace.sdfg.performance_evaluation.helpers import get_uuid
 from dace.sdfg.performance_evaluation.work_depth import (
     analyze_sdfg,
-    get_tasklet_work_depth,
-    get_tasklet_avg_par,
     count_arithmetic_ops_code,
     count_depth_code,
+    get_tasklet_avg_par,
+    get_tasklet_work_depth,
 )
-from dace.sdfg.performance_evaluation.helpers import get_uuid
-from dace.sdfg.performance_evaluation.assumptions import assumption_relations
-import sympy as sp
-import numpy as np
-
 from dace.sdfg.utils import inline_control_flow_regions
-from dace.transformation.interstate import NestSDFG
+from dace.symbolic import SymbolicType, pystr_to_symbolic, simplify
 from dace.transformation.dataflow import MapExpansion
-
-from pytest import raises
+from dace.transformation.interstate import NestSDFG
 
 N = dace.symbol("N")
 M = dace.symbol("M")
@@ -84,16 +81,15 @@ def nested_if_else(x: dace.int64[N], y: dace.int64[N], z: dace.int64[N], sum: da
         if x[9] > 40:
             z[:] = x + y  # N work, 1 depth
         z[:] += 2 * x  # 2*N work, 2 depth     --> total outer if: 3*N work, 3 depth
+    elif y[9] > 30:
+        for i in range(K):
+            sum += x[i]  # K work, K depth
     else:
-        if y[9] > 30:
-            for i in range(K):
-                sum += x[i]  # K work, K depth
-        else:
-            for j in range(M):
-                sum += x[j]  # M work, M depth
-            z[:] = x + y  # N work, depth 1       --> total inner else: M+N work, M+1 depth
-            # --> total outer else: Max(K, M+N) work, Max(K, M+1) depth
-            # --> total over both branches: Max(K, M+N, 3*N) work, Max(K, M+1, 3) depth
+        for j in range(M):
+            sum += x[j]  # M work, M depth
+        z[:] = x + y  # N work, depth 1       --> total inner else: M+N work, M+1 depth
+        # --> total outer else: Max(K, M+N) work, Max(K, M+1) depth
+        # --> total over both branches: Max(K, M+N, 3*N) work, Max(K, M+1, 3) depth
 
 
 @dace.program
@@ -211,7 +207,7 @@ def loop_var_dependent_work(x: dace.float64[N], y: dace.float64[N], z: dace.floa
 
 
 # (sdfg, (expected_work, expected_depth))
-work_depth_test_cases: Dict[str, Tuple[DaceProgram, Tuple[SymbolicType, SymbolicType]]] = {
+work_depth_test_cases: dict[str, tuple[DaceProgram, tuple[SymbolicType, SymbolicType]]] = {
     "single_map": (single_map, (N, 1)),
     "single_for_loop": (single_for_loop, (N, N)),
     "if_else": (if_else, (1000, 100)),
@@ -259,7 +255,7 @@ def test_work_depth(test_name):
     ]:
         pytest.skip("Malformed loop when not simplifying")
     test, correct = work_depth_test_cases[test_name]
-    w_d_map: Dict[str, sp.Expr] = {}
+    w_d_map: dict[str, sp.Expr] = {}
     sdfg = test.to_sdfg()
     if "nested_sdfg" in test.name:
         sdfg.apply_transformations(NestSDFG)
@@ -300,7 +296,7 @@ def test_avg_par(test_name: str):
         pytest.skip("Malformed loop when not simplifying")
 
     test, correct = tests_cases_avg_par[test_name]
-    w_d_map: Dict[str, Tuple[sp.Expr, sp.Expr]] = {}
+    w_d_map: dict[str, tuple[sp.Expr, sp.Expr]] = {}
     sdfg = test.to_sdfg()
     if "nested_sdfg" in test_name:
         sdfg.apply_transformations(NestSDFG)
@@ -318,7 +314,7 @@ def test_work_depth_bails_on_nonlocal_exit(prog: DaceProgram):
     """``break`` / ``continue`` / ``return`` are not supported (non-local exits are not modeled);
     the analysis must warn and produce a zero (work, depth) result rather than a wrong one."""
     sdfg = prog.to_sdfg()
-    w_d_map: Dict[str, sp.Expr] = {}
+    w_d_map: dict[str, sp.Expr] = {}
     with pytest.warns(UserWarning, match="structured control flow"):
         analyze_sdfg(sdfg, w_d_map, get_tasklet_work_depth, [], False)
     assert w_d_map[get_uuid(sdfg)] == (0, 0)
@@ -331,7 +327,7 @@ def test_work_depth_bails_on_unstructured_control_flow():
     inline_control_flow_regions(sdfg)
     for sd in sdfg.all_sdfgs_recursive():
         sd.using_explicit_control_flow = False
-    w_d_map: Dict[str, sp.Expr] = {}
+    w_d_map: dict[str, sp.Expr] = {}
     with pytest.warns(UserWarning, match="structured control flow"):
         analyze_sdfg(sdfg, w_d_map, get_tasklet_work_depth, [], False)
     assert w_d_map[get_uuid(sdfg)] == (0, 0)
@@ -366,7 +362,7 @@ tests_for_exception = [
 
 
 @pytest.mark.parametrize("expr,assums,res", assumptions_tests)
-def test_assumption_system(expr: sp.Expr, assums: List[str], res: sp.Expr):
+def test_assumption_system(expr: sp.Expr, assums: list[str], res: sp.Expr):
     facts = symbolic.Facts(assumption_relations(assums), frozenset())
     simplified, res = simplify(expr, facts), sp.sympify(res)
     # Equal under the assumptions, whichever of equal symbols the result is written in

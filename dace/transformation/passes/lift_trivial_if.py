@@ -4,16 +4,18 @@
 import ast
 import re
 from functools import lru_cache
-from dace.sdfg.state import BreakBlock, ContinueBlock, ReturnBlock, SymbolResolver
+from typing import Any
+
+import sympy
+
 import dace
-from typing import Any, Dict, Optional, Union
-from dace import SDFG, ControlFlowRegion
-from dace import symbolic
+from dace import SDFG, ControlFlowRegion, symbolic
 from dace.properties import CodeBlock
 from dace.sdfg.sdfg import ConditionalBlock
+from dace.sdfg.state import BreakBlock, ContinueBlock, ReturnBlock, SymbolResolver
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation import transformation
 from dace.transformation.helpers import move_branch_cfg_up_discard_conditions
-from dace.transformation import pass_pipeline as ppl, transformation
-import sympy
 
 
 @lru_cache(maxsize=16384, typed=True)
@@ -118,14 +120,14 @@ class LiftTrivialIf(ppl.Pass):
             return False
         return _trivial_cond_check_cached(code.as_string, val)
 
-    def _trivially_true(self, code: CodeBlock, cfb: Optional[ConditionalBlock] = None) -> bool:
+    def _trivially_true(self, code: CodeBlock, cfb: ConditionalBlock | None = None) -> bool:
         if self._trivial_cond_check(code, True):
             return True
         return cfb is not None and (
             self._range_verdict(code, cfb) == "true" or self._facts_verdict(code, cfb) is symbolic.Truth.TRUE
         )
 
-    def _trivially_false(self, code: CodeBlock, cfb: Optional[ConditionalBlock] = None) -> bool:
+    def _trivially_false(self, code: CodeBlock, cfb: ConditionalBlock | None = None) -> bool:
         if self._trivial_cond_check(code, False):
             return True
         return cfb is not None and (
@@ -312,7 +314,7 @@ class LiftTrivialIf(ppl.Pass):
                 return True
         return False
 
-    def _detect_and_remove_top_level_trivial_ifs(self, graph: Union[ControlFlowRegion, SDFG]) -> int:
+    def _detect_and_remove_top_level_trivial_ifs(self, graph: ControlFlowRegion | SDFG) -> int:
         """Process the conditionals directly in ``graph`` (one level, no recursion).
 
         :param graph: Region or SDFG whose top-level conditionals are simplified.
@@ -388,7 +390,7 @@ class LiftTrivialIf(ppl.Pass):
 
         return rmed_count
 
-    def _detect_trivial_ifs_and_rm_cfg(self, graph: Union[ControlFlowRegion, SDFG]) -> int:
+    def _detect_trivial_ifs_and_rm_cfg(self, graph: ControlFlowRegion | SDFG) -> int:
         """Simplify trivial conditionals in ``graph`` and all blocks nested below it.
 
         :param graph: Region or SDFG to simplify recursively.
@@ -414,7 +416,7 @@ class LiftTrivialIf(ppl.Pass):
 
         return rmed_count
 
-    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Dict[str, int]]:
+    def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> dict[str, int] | None:
         """Collapse every statically-decidable conditional in ``sdfg`` into its taken branch.
 
         :param sdfg: The SDFG to simplify in place.

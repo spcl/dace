@@ -1,13 +1,14 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests loop unrolling functionality."""
 
+import numpy as np
+import pytest
+
 import dace
 from dace.frontend.python import astutils
 from dace.frontend.python.common import SDFGConvertible
-from dace.frontend.python.preprocessing import LoopUnroller, DaceSyntaxError
+from dace.frontend.python.preprocessing import DaceSyntaxError, LoopUnroller
 from dace.sdfg.state import LoopRegion
-import numpy as np
-import pytest
 
 
 def test_native_unroll():
@@ -44,7 +45,7 @@ def test_dace_unroll_multistatement():
     def tounroll(A: dace.float64[1]):
         for i in dace.unroll(range(1, 4)):
             A[0] += i * i
-            if i in (3,):
+            if i in (3,):  # noqa: FURB171
                 A[0] += 2
 
     src_ast, fname, _, _ = astutils.function_to_ast(tounroll.f)

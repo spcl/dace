@@ -1,10 +1,11 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 from collections import defaultdict
-from typing import Any, Dict, Optional, Set
+from typing import Any
 
 from dace import SDFG
 from dace.sdfg.state import ControlFlowBlock
-from dace.transformation import pass_pipeline as ppl, transformation
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation import transformation
 from dace.transformation.passes import analysis as ap
 
 
@@ -25,7 +26,7 @@ class StrictSymbolSSA(ppl.ControlFlowRegionPass):
     def depends_on(self):
         return [ap.SymbolWriteScopes]
 
-    def apply(self, region, pipeline_results) -> Optional[Dict[str, Set[str]]]:
+    def apply(self, region, pipeline_results) -> dict[str, set[str]] | None:
         """
         Rename symbols in a restricted SSA manner.
 
@@ -35,7 +36,7 @@ class StrictSymbolSSA(ppl.ControlFlowRegionPass):
                                  pipeline, an empty dictionary is expected.
         :return: A dictionary mapping the original name to a set of all new names created for each symbol.
         """
-        results: Dict[str, Set[str]] = defaultdict(lambda: set())
+        results: dict[str, set[str]] = defaultdict(lambda: set())
         sdfg = region if isinstance(region, SDFG) else region.sdfg
 
         symbol_scope_dict: ap.SymbolScopeDict = pipeline_results[ap.SymbolWriteScopes.__name__][region.cfg_id]
@@ -62,11 +63,10 @@ class StrictSymbolSSA(ppl.ControlFlowRegionPass):
                     for read in shadowed_reads:
                         if isinstance(read, ControlFlowBlock):
                             read.replace(name, newname)
+                        elif read not in scope_dict:
+                            read.data.replace(name, newname)
                         else:
-                            if read not in scope_dict:
-                                read.data.replace(name, newname)
-                            else:
-                                read.data.replace(name, newname, replace_keys=False)
+                            read.data.replace(name, newname, replace_keys=False)
 
                     results[name].add(newname)
 
@@ -75,5 +75,5 @@ class StrictSymbolSSA(ppl.ControlFlowRegionPass):
         else:
             return results
 
-    def report(self, pass_retval: Any) -> Optional[str]:
+    def report(self, pass_retval: Any) -> str | None:
         return f"Renamed {len(pass_retval)} symbols: {pass_retval}."

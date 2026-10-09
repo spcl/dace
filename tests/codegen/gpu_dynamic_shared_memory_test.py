@@ -13,13 +13,13 @@ The tests that only inspect the generated code run without a GPU; the ones marke
 import json
 import re
 import warnings
-from typing import List, Optional
 
 import numpy as np
 import pytest
 
 import dace
-from dace import data as dt, nodes
+from dace import data as dt
+from dace import nodes
 from dace.codegen import common
 from dace.transformation.passes import gpu_shared_memory
 
@@ -49,7 +49,7 @@ def _cuda_code(sdfg: dace.SDFG, backend: str = "cuda", **config) -> str:
             common.get_gpu_backend.cache_clear()
 
 
-def _placement(sdfg: dace.SDFG, name: str) -> Optional[bool]:
+def _placement(sdfg: dace.SDFG, name: str) -> bool | None:
     """Returns where ``name`` was placed: True for dynamic, False for static shared memory."""
     for nsdfg in sdfg.all_sdfgs_recursive():
         if name in nsdfg.arrays:
@@ -60,7 +60,7 @@ def _placement(sdfg: dace.SDFG, name: str) -> Optional[bool]:
     raise KeyError(name)
 
 
-def _shared_warnings(record: List[warnings.WarningMessage]) -> List[str]:
+def _shared_warnings(record: list[warnings.WarningMessage]) -> list[str]:
     return [str(w.message) for w in record if "placed in dynamic shared memory" in str(w.message)]
 
 

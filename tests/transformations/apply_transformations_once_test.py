@@ -1,8 +1,10 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+from typing import Any
+
 import dace
-from dace import transformation as dace_transformation, properties as dace_properties
+from dace import properties as dace_properties
+from dace import transformation as dace_transformation
 from dace.sdfg import nodes as dace_nodes
-from typing import Any, Union
 
 N = dace.symbol("N")
 
@@ -20,7 +22,7 @@ class DummyTransformation(dace_transformation.SingleStateTransformation):
 
     def can_be_applied(
         self,
-        graph: Union[dace.SDFGState, dace.SDFG],
+        graph: dace.SDFGState | dace.SDFG,
         expr_index: int,
         sdfg: dace.SDFG,
         permissive: bool = False,
@@ -30,7 +32,7 @@ class DummyTransformation(dace_transformation.SingleStateTransformation):
 
     def apply(
         self,
-        graph: Union[dace.SDFGState, dace.SDFG],
+        graph: dace.SDFGState | dace.SDFG,
         sdfg: dace.SDFG,
     ) -> None:
         my_tasklet: dace_nodes.Tasklet = self.tasklet

@@ -1,5 +1,6 @@
-import dace
 import numpy
+
+import dace
 
 struct_str = """
 class interesting_type {

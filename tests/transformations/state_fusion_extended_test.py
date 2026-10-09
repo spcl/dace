@@ -1,6 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-from dace import SDFG, InterstateEdge, Memlet
-from dace import dtypes
+from dace import SDFG, InterstateEdge, Memlet, dtypes
 from dace.transformation.interstate import StateFusionExtended
 
 
