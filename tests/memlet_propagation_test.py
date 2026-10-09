@@ -179,6 +179,45 @@ def test_union_around_loop_does_not_assume_it_runs():
     assert edge.data.subset.ranges == [(1, sympy.Max(1, N - 1), 1)], edge.data.subset
 
 
+def test_wrapped_index_covers_the_modulo():
+    """``A[(i + 3) % N]`` over ``i in 0:N`` wraps, so it reads all of ``A[0:N]``, not ``A[3 % N:2 % N + 1]``."""
+    N = dace.symbol("N")
+
+    @dace.program
+    def wrapped_read(A: dace.float64[N], B: dace.float64[N]):
+        for i in dace.map[0:N]:
+            B[i] = A[(i + 3) % N]
+
+    sdfg = wrapped_read.to_sdfg(simplify=True)
+    (edge,) = [e for e in sdfg.start_state.edges() if e.data.data == "A" and isinstance(e.src, dace.nodes.AccessNode)]
+    assert edge.data.subset.ranges == [(0, N - 1, 1)], edge.data.subset
+
+
+def test_multiplier_of_unknown_sign():
+    """``A[K * i]`` may run either way through ``A``, so it reads all of it; ``A[P * i]`` with a positive ``P`` reads
+    every ``P``-th element up to ``P * (N - 1)``."""
+    N = dace.symbol("N")
+    K = dace.symbol("K")
+    P = dace.symbol("P", positive=True)
+
+    @dace.program
+    def unknown_sign_read(A: dace.float64[N], B: dace.float64[N]):
+        for i in dace.map[0:N]:
+            B[i] = A[K * i]
+
+    @dace.program
+    def positive_read(A: dace.float64[N], B: dace.float64[N]):
+        for i in dace.map[0:N]:
+            B[i] = A[P * i]
+
+    for program, expected in ((unknown_sign_read, (0, N - 1, 1)), (positive_read, (0, P * (N - 1), P))):
+        sdfg = program.to_sdfg(simplify=True)
+        (edge,) = [
+            e for e in sdfg.start_state.edges() if e.data.data == "A" and isinstance(e.src, dace.nodes.AccessNode)
+        ]
+        assert edge.data.subset.ranges == [expected], edge.data.subset
+
+
 def test_strided_write_keeps_the_multiplier():
     """``C[2 * i]`` covers every second element, not the first ``N``.
 
@@ -308,6 +347,8 @@ if __name__ == "__main__":
     test_nsdfg_memlet_propagation_with_one_sparse_dimension()
     test_nested_conditional_in_loop_in_map()
     test_union_around_loop_does_not_assume_it_runs()
+    test_wrapped_index_covers_the_modulo()
+    test_multiplier_of_unknown_sign()
     test_strided_write_keeps_the_multiplier()
     test_typed_parameter_symbol()
     test_nested_sdfg_connector_in_mapped_symbols()

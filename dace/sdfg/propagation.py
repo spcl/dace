@@ -5,11 +5,12 @@ from internal memory accesses and scope ranges).
 """
 
 import copy
+import enum
 import functools
 import itertools
 import warnings
 from collections import deque
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Optional, cast
 
 import sympy
 from sympy import Symbol
@@ -33,10 +34,10 @@ class MemletPattern:
     A pattern match on a memlet subset that can be used for propagation.
     """
 
-    def can_be_applied(self, expressions, variable_context, node_range, orig_edges):
+    def can_be_applied(self, expressions, variable_context, node_range, orig_edges, facts: symbolic.Facts):
         raise NotImplementedError
 
-    def propagate(self, array, expressions, node_range):
+    def propagate(self, array, expressions, node_range, facts: symbolic.Facts):
         raise NotImplementedError
 
 
@@ -45,10 +46,12 @@ class SeparableMemletPattern:
     """Memlet pattern that can be applied to each of the dimensions
     separately."""
 
-    def can_be_applied(self, dim_exprs, variable_context, node_range, orig_edges, dim_index, total_dims):
+    def can_be_applied(
+        self, dim_exprs, variable_context, node_range, orig_edges, dim_index, total_dims, facts: symbolic.Facts
+    ):
         raise NotImplementedError
 
-    def propagate(self, array, dim_exprs, node_range):
+    def propagate(self, array, dim_exprs, node_range, facts: symbolic.Facts):
         raise NotImplementedError
 
 
@@ -56,7 +59,7 @@ class SeparableMemletPattern:
 class SeparableMemlet(MemletPattern):
     """Meta-memlet pattern that applies all separable memlet patterns."""
 
-    def can_be_applied(self, expressions, variable_context, node_range, orig_edges):
+    def can_be_applied(self, expressions, variable_context, node_range, orig_edges, facts: symbolic.Facts):
         # Assuming correct dimensionality in each of the expressions
         data_dims = len(expressions[0])
         self.patterns_per_dim = [None] * data_dims
@@ -91,13 +94,15 @@ class SeparableMemlet(MemletPattern):
 
             for pattern_class in SeparableMemletPattern.extensions().keys():
                 smpattern = pattern_class()
-                if smpattern.can_be_applied(dexprs, variable_context, overapprox_range, orig_edges, dim, data_dims):
+                if smpattern.can_be_applied(
+                    dexprs, variable_context, overapprox_range, orig_edges, dim, data_dims, facts
+                ):
                     self.patterns_per_dim[dim] = smpattern
                     break
 
         return None not in self.patterns_per_dim
 
-    def propagate(self, array, expressions, node_range):
+    def propagate(self, array, expressions, node_range, facts: symbolic.Facts):
         result = [(None, None, None)] * len(self.patterns_per_dim)
 
         overapprox_range = subsets.Range(
@@ -129,7 +134,7 @@ class SeparableMemlet(MemletPattern):
                 else:
                     dexprs.append(expr_i)
 
-            result[i] = smpattern.propagate(array, dexprs, overapprox_range)
+            result[i] = smpattern.propagate(array, dexprs, overapprox_range, facts)
 
         # TODO(later): Not necessarily Range (general integer sets)
         return subsets.Range(result)
@@ -141,7 +146,9 @@ class AffineSMemlet(SeparableMemletPattern):
     of the form `a * {index} + b`.
     """
 
-    def can_be_applied(self, dim_exprs, variable_context, node_range, orig_edges, dim_index, total_dims):
+    def can_be_applied(
+        self, dim_exprs, variable_context, node_range, orig_edges, dim_index, total_dims, facts: symbolic.Facts
+    ):
 
         params = variable_context[-1]
         defined_vars = variable_context[-2]
@@ -151,7 +158,7 @@ class AffineSMemlet(SeparableMemletPattern):
 
         self.param = None
         self.paramind = None
-        self.mult = None
+        self.multiplier = None
         self.add_min = None
         self.add_max = None
         self.constant_min = None
@@ -199,7 +206,7 @@ class AffineSMemlet(SeparableMemletPattern):
                     return False  # A parameter must match
                 if self.param is not None and param != self.param:
                     return False  # There can only be one parameter
-                if self.mult is not None and multiplier != self.mult:
+                if self.multiplier is not None and multiplier != self.multiplier:
                     return False  # Multiplier must be the same
 
                 self.param = param
@@ -252,9 +259,11 @@ class AffineSMemlet(SeparableMemletPattern):
         if self.param is None:  # and self.constant_min is None:
             return False
 
-        return True
+        # The ends of the image swap with the sign of the multiplier
+        self.negative = _is_negative(self.multiplier, facts)
+        return self.negative is not symbolic.Truth.UNKNOWN
 
-    def propagate(self, array, dim_exprs, node_range):
+    def propagate(self, array, dim_exprs, node_range, facts: symbolic.Facts):
         # Compute last index in map according to range definition
         node_rb, node_re, node_rs = node_range[self.paramind]  # node_rs = 1
         node_rlen = node_re - node_rb + 1
@@ -284,7 +293,7 @@ class AffineSMemlet(SeparableMemletPattern):
         result_end = re.subs(self.param, node_re).expand()
 
         # Special case: multiplier < 0
-        if (self.multiplier < 0) == True:
+        if self.negative is symbolic.Truth.TRUE:
             result_begin, result_end = result_end, result_begin
 
         # Special case: a point access in a strided map accesses every ``multiplier * stride``-th element
@@ -352,53 +361,43 @@ class ModuloSMemlet(SeparableMemletPattern):
     Acts as a meta-pattern: Finds the underlying pattern for `f(x)`.
     """
 
-    def can_be_applied(self, dim_exprs, variable_context, node_range, orig_edges, dim_index, total_dims):
-        # Pattern does not support unions of expressions
+    def can_be_applied(
+        self, dim_exprs, variable_context, node_range, orig_edges, dim_index, total_dims, facts: symbolic.Facts
+    ):
+        # Pattern does not support unions of expressions or ranges
         if len(dim_exprs) > 1:
             return False
         dexpr = dim_exprs[0]
-        # Pattern does not support ranges
-        if not isinstance(dexpr, sympy.Basic):
+        if isinstance(dexpr, tuple) and dexpr[0] == dexpr[1]:
+            dexpr = dexpr[0]
+        if not isinstance(dexpr, sympy.Mod):
+            return False
+        params = variable_context[-1]
+        self.subexpr, self.modulo = cast(tuple[sympy.Expr, sympy.Expr], dexpr.args)
+        # A modulo of the parameters only; a constant one is a constant index
+        if self.modulo.has(*params) or not self.subexpr.has(*params):
+            return False
+        # A positive modulo wraps into [0, modulo - 1]
+        if symbolic.ask(symbolic.Relation(symbolic.RelationKind.LT, sympy.Integer(0), self.modulo), facts) is not (
+            symbolic.Truth.TRUE
+        ):
             return False
 
-        # Create wildcards
-        val = sympy.Wild("val")
-        mod = sympy.Wild("mod", exclude=variable_context[-1])
-
-        # Try to match an affine expression
-        matches = dexpr.match(val % mod)
-        if matches is None or len(matches) != 2:
-            return False
-
-        self.subexpr = matches[val]
-        self.modulo = matches[mod]
-
-        self.subpattern = None
-        for pattern_class in SeparableMemletPattern.s_smpatterns:
-            smpattern = pattern_class()
-            if smpattern.can_be_applied(
-                [self.subexpr], variable_context, node_range, orig_edges, dim_index, total_dims
+        for pattern_class in SeparableMemletPattern.extensions():
+            self.subpattern = pattern_class()
+            if self.subpattern.can_be_applied(
+                [self.subexpr], variable_context, node_range, orig_edges, dim_index, total_dims, facts
             ):
-                self.subpattern = smpattern
+                return True
+        return False
 
-        return self.subpattern is not None
-
-    def propagate(self, array, dim_exprs, node_range):
-        se_range = self.subpattern.propagate(array, [self.subexpr], node_range)
-
-        # Apply modulo on start and end ranges
-        try:
-            if se_range[0] < 0:
-                se_range = (0, self.modulo, se_range[2])
-        except TypeError:  # cannot determine truth value of Relational
-            print("WARNING: Cannot evaluate relational %s, assuming true." % (se_range[0] < 0))
-        try:
-            if se_range[1] > self.modulo:
-                se_range = (0, self.modulo, se_range[2])
-        except TypeError:  # cannot determine truth value of Relational
-            print("WARNING: Cannot evaluate relational %s, assuming true." % (se_range[1] > self.modulo))
-
-        return se_range
+    def propagate(self, array, dim_exprs, node_range, facts: symbolic.Facts):
+        se_range = self.subpattern.propagate(array, [self.subexpr], node_range, facts)
+        last = self.modulo - 1
+        # The image keeps its shape only if no index wraps
+        if symbolic.provably_nonnegative(se_range[0], facts) and symbolic.provably_le(se_range[1], last, facts):
+            return se_range
+        return (sympy.Integer(0), last, 1)
 
 
 @registry.autoregister
@@ -407,7 +406,9 @@ class ConstantSMemlet(SeparableMemletPattern):
     current scope) expressions.
     """
 
-    def can_be_applied(self, dim_exprs, variable_context, node_range, orig_edges, dim_index, total_dims):
+    def can_be_applied(
+        self, dim_exprs, variable_context, node_range, orig_edges, dim_index, total_dims, facts: symbolic.Facts
+    ):
         # Pattern does not support unions of expressions. TODO: Support
         if len(dim_exprs) > 1:
             return False
@@ -439,7 +440,7 @@ class ConstantSMemlet(SeparableMemletPattern):
 
         return True
 
-    def propagate(self, array, dim_exprs, node_range):
+    def propagate(self, array, dim_exprs, node_range, facts: symbolic.Facts):
         if isinstance(dim_exprs[0], tuple):
             return dim_exprs[0]  # Already in range format
         # Convert index to range format
@@ -451,7 +452,9 @@ class GenericSMemlet(SeparableMemletPattern):
     """Separable memlet pattern that detects any expression, and propagates
     interval bounds. Used as a last resort."""
 
-    def can_be_applied(self, dim_exprs, variable_context, node_range, orig_edges, dim_index, total_dims):
+    def can_be_applied(
+        self, dim_exprs, variable_context, node_range, orig_edges, dim_index, total_dims, facts: symbolic.Facts
+    ):
         dims = []
         for dim in dim_exprs:
             if isinstance(dim, tuple):
@@ -476,10 +479,17 @@ class GenericSMemlet(SeparableMemletPattern):
             # (e.g., dynamic map ranges).
             return False
 
-        # Always matches
-        return True
+        # The ends of the image are the images of the ends of a range of known direction under a monotone expression
+        if any(_is_negative(r[2], facts) is symbolic.Truth.UNKNOWN for r in node_range):
+            return False
+        dexpr = dim_exprs[0]
+        begin, end = (dexpr[0], dexpr[1]) if isinstance(dexpr, tuple) else (dexpr, dexpr)
+        begin, end = symbolic.pystr_to_symbolic(begin), symbolic.pystr_to_symbolic(end)
+        self.begin_trend = [_trend(begin, param, facts) for param in self.params]
+        self.end_trend = [_trend(end, param, facts) for param in self.params]
+        return Trend.UNKNOWN not in self.begin_trend + self.end_trend
 
-    def propagate(self, array, dim_exprs, node_range):
+    def propagate(self, array, dim_exprs, node_range, facts: symbolic.Facts):
 
         result_begin = None
         result_end = None
@@ -494,7 +504,7 @@ class GenericSMemlet(SeparableMemletPattern):
             else:
                 raise NotImplementedError
 
-            if (node_rs < 0) == True:
+            if _is_negative(node_rs, facts) is symbolic.Truth.TRUE:
                 node_rb, node_re, node_rs = node_re, node_rb, -node_rs
 
             # Get true range end
@@ -526,47 +536,75 @@ class GenericSMemlet(SeparableMemletPattern):
             else:
                 rb, re = (dim_exprs, dim_exprs)
 
-            # Support for affine expressions with a negative multiplier
-            firstindex = pos_firstindex
-            lastindex = pos_lastindex
-            if self._negative_affine_transform(rb if result_begin is None else result_begin, idx):
-                firstindex = neg_firstindex
-            if self._negative_affine_transform(re if result_end is None else result_end, idx):
-                lastindex = neg_lastindex
-
-            if result_begin is None:
-                result_begin = rb.subs(self.params[idx], firstindex)
-            else:
-                result_begin = result_begin.subs(self.params[idx], firstindex)
-            if result_end is None:
-                result_end = re.subs(self.params[idx], lastindex)
-            else:
-                result_end = result_end.subs(self.params[idx], lastindex)
+            # A decreasing expression reaches its ends at the opposite ends of the range
+            firstindex = neg_firstindex if self.begin_trend[idx] is Trend.DECREASING else pos_firstindex
+            lastindex = neg_lastindex if self.end_trend[idx] is Trend.DECREASING else pos_lastindex
+            result_begin = (rb if result_begin is None else result_begin).subs(self.params[idx], firstindex)
+            result_end = (re if result_end is None else result_end).subs(self.params[idx], lastindex)
 
         result_skip = 1
         result_tile = 1
 
         return (result_begin, result_end, result_skip, result_tile)
 
-    def _negative_affine_transform(self, expr: sympy.Basic, idx: int) -> bool:
-        """Returns true iff the expression matches an affine transformation with a negative multiplier."""
-        if not _maybe_affine_transform(expr):
-            return False
 
-        a = sympy.Wild("a", exclude=self.params)
-        b = sympy.Wild("b", exclude=self.params)
-        match = expr.match(a * self.params[idx] + b)
+class Trend(enum.Enum):
+    """How an expression changes as one parameter grows, the others fixed anywhere in their range."""
 
-        return match is not None and match[a] < 0 == True
+    CONSTANT = enum.auto()
+    INCREASING = enum.auto()
+    DECREASING = enum.auto()
+    UNKNOWN = enum.auto()
 
 
-def _maybe_affine_transform(expr: sympy.Basic) -> bool:
-    """Quickly judge whether the given expression might be an affine tranformation.
+_FLIPPED = {Trend.INCREASING: Trend.DECREASING, Trend.DECREASING: Trend.INCREASING}
 
-    Used as a guard before actually trying to sympy.match() affine transformation
-    coefficients. Matching is kind of slow compared to checking a couple
-    properties."""
-    return expr.is_Add and expr.args[0].is_Mul
+
+def _combined(trends: list[Trend]) -> Trend:
+    """The trend of a sum or extremum of terms with the given trends."""
+    varying = set(trends) - {Trend.CONSTANT}
+    if not varying:
+        return Trend.CONSTANT
+    return varying.pop() if len(varying) == 1 else Trend.UNKNOWN
+
+
+def _trend(expr: sympy.Expr, param: sympy.Symbol, facts: symbolic.Facts) -> Trend:
+    """The monotonicity of ``expr`` in ``param``, where ``facts`` hold; ``UNKNOWN`` unless proven."""
+    if not expr.has(param):
+        return Trend.CONSTANT
+    if expr == param:
+        return Trend.INCREASING
+    if isinstance(expr, (sympy.Add, sympy.Min, sympy.Max)):
+        return _combined([_trend(arg, param, facts) for arg in expr.args])
+    if isinstance(expr, (symbolic.int_floor, symbolic.int_ceil)):
+        numerator, denominator = cast(tuple[sympy.Expr, sympy.Expr], expr.args)
+        if denominator.has(param) or not symbolic.provably_le(sympy.Integer(1), denominator, facts):
+            return Trend.UNKNOWN
+        return _trend(numerator, param, facts)
+    if isinstance(expr, (sympy.floor, sympy.ceiling)):
+        return _trend(expr.args[0], param, facts)
+    if isinstance(expr, sympy.Mul):
+        varying = [arg for arg in expr.args if arg.has(param)]
+        if len(varying) != 1:
+            return Trend.UNKNOWN
+        trend = _trend(varying[0], param, facts)
+        coefficient = sympy.Mul(*(arg for arg in expr.args if not arg.has(param)))
+        sign = _is_negative(coefficient, facts)
+        if trend is Trend.UNKNOWN or sign is symbolic.Truth.UNKNOWN:
+            return Trend.UNKNOWN
+        return _FLIPPED.get(trend, trend) if sign is symbolic.Truth.TRUE else trend
+    if isinstance(expr, sympy.Pow) and expr.exp.is_Integer and expr.exp > 0:
+        # An odd power is increasing everywhere, an even one only where its base is nonnegative
+        if expr.exp % 2 == 1 or symbolic.provably_nonnegative(expr.base, facts):
+            return _trend(expr.base, param, facts)
+    return Trend.UNKNOWN
+
+
+def _is_negative(expr: symbolic.SymbolicType, facts: symbolic.Facts) -> symbolic.Truth:
+    """Whether ``expr`` is negative; ``FALSE`` when it is provably nonnegative."""
+    return symbolic.ask(
+        symbolic.Relation(symbolic.RelationKind.LT, cast(sympy.Expr, sympy.sympify(expr)), sympy.Integer(0)), facts
+    )
 
 
 def _subexpr(dexpr, repldict):
@@ -582,7 +620,7 @@ def _subexpr(dexpr, repldict):
 class ConstantRangeMemlet(MemletPattern):
     """Memlet pattern that matches arbitrary expressions with constant range."""
 
-    def can_be_applied(self, expressions, variable_context, node_range, orig_edges):
+    def can_be_applied(self, expressions, variable_context, node_range, orig_edges, facts: symbolic.Facts):
         constant_range = True
         for dim in node_range:
             for rngelem in dim:  # For (begin, end, skip)
@@ -597,7 +635,7 @@ class ConstantRangeMemlet(MemletPattern):
         return True
 
     # TODO: An integer set library should shine here (unify indices)
-    def propagate(self, array, expressions, node_range):
+    def propagate(self, array, expressions, node_range, facts: symbolic.Facts):
         rng = [(None, None, 1)] * len(array.shape)
         node_range_gen = itertools.starmap(range, node_range)
         for ndind in itertools.product(*tuple(node_range_gen)):
@@ -1956,8 +1994,8 @@ def propagate_subset(
 
         for pclass in MemletPattern.extensions():
             pattern = pclass()
-            if pattern.can_be_applied([subset], variable_context, rng, [md]):
-                tmp_subset = pattern.propagate(arr, [subset], rng)
+            if pattern.can_be_applied([subset], variable_context, rng, [md], facts):
+                tmp_subset = pattern.propagate(arr, [subset], rng, facts)
                 break
         else:
             # No patterns found. Propagate the entire array whenever symbols are used.
