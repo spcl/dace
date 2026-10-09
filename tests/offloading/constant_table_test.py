@@ -5,13 +5,10 @@ The shape of CloudSC's ``imelt[0:5] = 2, 3, 4, 3, -99``: filled by input-less ta
 kernels in later states. A constant is declared on both sides, so neither the host nor a kernel needs a copy.
 """
 
-from typing import Optional
-
 import numpy as np
 import pytest
 
 import dace
-
 from dace.sdfg.state import LoopRegion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.offloading import OffloadToAccelerator
@@ -20,7 +17,7 @@ N = 16
 TABLE = (1.0, 2.0, 0.5, -3.0)
 
 
-def fill_then_kernel(host_read: Optional[str] = None, looped: bool = False, scalar_entry: bool = False) -> dace.SDFG:
+def fill_then_kernel(host_read: str | None = None, looped: bool = False, scalar_entry: bool = False) -> dace.SDFG:
     """``table`` filled by tasklets in one state, read as ``table[i % 4]`` by a map in the next.
 
     ``host_read`` adds a host read: ``interstate`` of ``table[1]`` on the edge between the states, ``tasklet`` of

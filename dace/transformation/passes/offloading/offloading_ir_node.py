@@ -2,7 +2,7 @@
 
 from ordered_set import OrderedSet
 
-from dace.sdfg.state import ConditionalBlock, LoopRegion, ControlFlowBlock
+from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, LoopRegion
 
 #: Array names longer than this are left out of the IR dump.
 PRINT_NAMES = 500

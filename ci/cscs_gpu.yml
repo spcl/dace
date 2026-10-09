@@ -3,8 +3,9 @@ include:
 
 variables:
   PY_VERSION: '3.13'
-  CUDA_VERSION: '12.9.1'
+  CUDA_VERSION: '13.0.3'  # the gpu extra pins CUDA 13 wheels
   UBUNTU_VERSION: '24.04'
+  UV_HTTP_TIMEOUT: '180'
 
 workflow:
   auto_cancel:
@@ -57,13 +58,12 @@ build_cscs_gh200:
     - cd "${WORKDIR}/dace"
     - git fetch --depth 1 origin "${CI_COMMIT_SHA}"
     - git checkout "${CI_COMMIT_SHA}"
-    - uv pip install cutensor-cu12
+    - uv sync --frozen --no-dev --no-editable --group testing --extra gpu
     - CUTENSOR_DIR="${VIRTUAL_ENV}/lib/python${PY_VERSION}/site-packages/cutensor"
     - ln -sf libcutensor.so.2 "${CUTENSOR_DIR}/lib/libcutensor.so"
     - export CPATH="${CUTENSOR_DIR}/include:${CPATH:-}"
     - export LIBRARY_PATH="${CUTENSOR_DIR}/lib:${LIBRARY_PATH:-}"
     - export LD_LIBRARY_PATH="${CUTENSOR_DIR}/lib:${LD_LIBRARY_PATH:-}"
-    - uv pip install --group testing .
     - export DACE_cache=unique
     - pytest --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -n 32 -m "${TEST_VARIANTS}"
     - export COVERAGE_RCFILE=`pwd`/.coveragerc
@@ -73,7 +73,7 @@ build_cscs_gh200:
     - reachable=0
     - ping -W 2 -c 1 codecov.io || reachable=$?
     - if [ $reachable -eq 0 ]; then
-    -   codecovcli --verbose upload-process --disable-search -t ${CODECOV_TOKEN} -f coverage.xml
+    -   uvx --from codecov-cli codecovcli --verbose upload-process --disable-search -t ${CODECOV_TOKEN} -f coverage.xml
     - else
     -   echo "Codecov.io is unreachable"
     - fi

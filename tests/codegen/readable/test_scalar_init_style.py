@@ -19,7 +19,6 @@ import pytest
 import dace
 from dace import dtypes
 from dace.config import set_temporary
-
 from tests.codegen.readable.conftest import (
     EXPERIMENTAL,
     LEGACY,
@@ -187,7 +186,7 @@ def test_compiles_and_runs_bit_identical(require_experimental, style):
 
 if __name__ == "__main__":
     test_fused_folds_declaration_into_first_write(None)
-    test_default_style_is_fused(None)
+    test_default_style_is_split(None)
     test_legacy_byte_identical_across_style()
     test_braced_tasklet_falls_back_to_a_plain_declaration(None)
     test_fused_defers_a_declaration_it_cannot_fold_even_under_eager(None)

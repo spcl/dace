@@ -50,7 +50,7 @@ def myprogram(A, B, tol):
     while tol[0] < 4:
 
         @dace.map(_[0:W])
-        def something(i):
+        def something_while(i):
             a << A[0, i]
             b >> B[0, i]
             t >> tol(1, lambda x, y: x + y)

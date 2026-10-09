@@ -2,6 +2,7 @@
 """Tests deepcopying (nested) SDFGs."""
 
 import copy
+
 import dace
 
 

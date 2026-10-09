@@ -1,12 +1,13 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests automatic detection and baking of callbacks in the Python frontend."""
 
-from typing import Dict, Optional, Union
-import dace
-import numpy as np
-import pytest
 import re
 import time
+
+import numpy as np
+import pytest
+
+import dace
 from dace import config
 from dace.frontend.python.common import DaceSyntaxError
 
@@ -378,7 +379,7 @@ def test_gpu_callback_without_stream_warns():
         sdfg.generate_code()
 
 
-def stream_unaware_callback_code(nested: bool, simplify: Optional[bool]) -> list:
+def stream_unaware_callback_code(nested: bool, simplify: bool | None) -> list:
     """Generated code of a program handing a GPU array to a callback that ignores the stream."""
 
     @dace_inhibitor
@@ -885,7 +886,7 @@ def test_unknown_pyobject():
             return f"MyCustomObject(q={self.q})"
 
     @dace_inhibitor
-    def checkit(obj: Union[MyCustomObject, Dict[str, Union[int, str]]]):
+    def checkit(obj: MyCustomObject | dict[str, int | str]):
         nonlocal last_seen
         nonlocal success_counter
         if obj == {"a": 1, "b": "2"}:

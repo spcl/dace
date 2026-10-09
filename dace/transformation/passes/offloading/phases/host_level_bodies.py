@@ -1,20 +1,20 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """A nested SDFG at a host level is a level of its own: its body places its data after the level around it."""
 
+from collections.abc import Iterator
 from copy import deepcopy
-from typing import Iterator, Optional
 
 from ordered_set import OrderedSet
 
-from dace import data, dtypes, Memlet
+from dace import Memlet, data, dtypes
 from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES
-from dace.sdfg import nodes, SDFG
+from dace.sdfg import SDFG, nodes
 from dace.sdfg.scope import is_devicelevel_gpu
 from dace.sdfg.state import SDFGState
 
 
 def host_level_nested_sdfgs(
-    state: SDFGState, host_maps: OrderedSet[nodes.MapEntry], entry: Optional[nodes.MapEntry] = None
+    state: SDFGState, host_maps: OrderedSet[nodes.MapEntry], entry: nodes.MapEntry | None = None
 ) -> Iterator[nodes.NestedSDFG]:
     """Nested SDFGs at ``state``'s top level or under host maps only: one below a kernel is device code."""
     for node in state.scope_children().get(entry, ()):

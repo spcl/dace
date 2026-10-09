@@ -1,9 +1,10 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 
-import dace
 import numpy as np
 import pytest
 import scipy
+
+import dace
 
 # All tests in this file rely on the GPU_ThreadBlock_Dynamic schedule, which is
 # only supported by the legacy CUDA codegen.

@@ -9,7 +9,8 @@ from collections.abc import Iterator
 import dace
 from dace import data, dtypes
 from dace.libraries.standard.nodes import Reduce
-from dace.sdfg import nodes, utils as sdutil
+from dace.sdfg import nodes
+from dace.sdfg import utils as sdutil
 
 
 def gpu_auto_reduce_sdfg(name: str, view_storage: dtypes.StorageType | None = None) -> dace.SDFG:

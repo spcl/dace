@@ -2,20 +2,19 @@
 """Maps that stay on the host so the maps under them become the kernels (ICON's ``nblks`` over ``nproma``/``nlev``)."""
 
 import itertools
-from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
+from collections.abc import Iterable
+from typing import Any
 
 import sympy
-
 from ordered_set import OrderedSet
 
+import dace.transformation.passes.offloading.offloading_helpers as helpers
 from dace import subsets, symbolic
-from dace.sdfg import nodes, SDFG
+from dace.sdfg import SDFG, nodes
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
 
-import dace.transformation.passes.offloading.offloading_helpers as helpers
-
 #: ``False``/``None``/``[]``: no host maps; ``True``: derive them; a list: these map labels or ``MapEntry`` nodes.
-HostMapSpec = Optional[Union[bool, List[Union[str, nodes.MapEntry]]]]
+HostMapSpec = bool | list[str | nodes.MapEntry] | None
 
 
 def is_computation(node: nodes.Node) -> bool:
@@ -39,7 +38,7 @@ def sdfg_only_launches(sdfg: SDFG) -> bool:
     return only_launches(itertools.chain.from_iterable(state.scope_children()[None] for state in sdfg.states()))
 
 
-def body_extents_depend_on_entry(entry: nodes.MapEntry, scope_children: Dict) -> bool:
+def body_extents_depend_on_entry(entry: nodes.MapEntry, scope_children: dict) -> bool:
     """An inner map whose extent names one of ``entry``'s parameters, which a host launch cannot pass
     (npbench correlation's ``dim3(((M - __i) - 1), 1, 1)``). Refused even for a map the caller named."""
     params = OrderedSet(entry.map.params)
@@ -60,12 +59,12 @@ def body_extents_depend_on_entry(entry: nodes.MapEntry, scope_children: Dict) ->
 def is_host_map(
     state: SDFGState,
     entry: nodes.MapEntry,
-    scope_children: Dict,
+    scope_children: dict,
     auto: bool,
     pinned_labels: OrderedSet,
     pinned_entries: OrderedSet,
     sdfg: SDFG = None,
-    callback_names: Optional[OrderedSet] = None,
+    callback_names: OrderedSet | None = None,
 ) -> bool:
     """A named map, a map holding a callback, or with ``auto`` a map that only launches, stays on the host."""
     named = entry in pinned_entries or entry.map.label in pinned_labels
@@ -140,7 +139,7 @@ def host_code_containers(sdfg: SDFG, region: ControlFlowRegion) -> OrderedSet[st
     return touched
 
 
-def map_containers_and_traffic(state: SDFGState, entry: nodes.MapEntry) -> Tuple[OrderedSet[str], Any]:
+def map_containers_and_traffic(state: SDFGState, entry: nodes.MapEntry) -> tuple[OrderedSet[str], Any]:
     """The containers a top-level map reads or writes, and the elements it moves (dynamic memlets count 0)."""
     names: OrderedSet[str] = OrderedSet()
     traffic = 0
@@ -175,7 +174,7 @@ def provably_moves_less(traffic: Any, size: Any) -> bool:
     return provably_nonnegative(size - traffic) and not provably_nonnegative(traffic - size)
 
 
-def pinnable_maps(sdfg: SDFG, loop: LoopRegion) -> Optional[OrderedSet]:
+def pinnable_maps(sdfg: SDFG, loop: LoopRegion) -> OrderedSet | None:
     """The maps of ``loop`` to keep on the host, or None when ``loop`` is a device loop."""
     host = host_code_containers(sdfg, loop)
     candidates: OrderedSet = OrderedSet()

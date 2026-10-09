@@ -1,19 +1,18 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 
-from typing import Callable, Dict, List, Optional, Tuple
+from collections.abc import Callable
 
 from ordered_set import OrderedSet
 
-from dace import data, dtypes, subsets, symbolic
-from dace.sdfg import nodes, SDFG, SDFGState
-from dace.sdfg.state import ControlFlowRegion, ReturnBlock
-from dace.transformation.passes.offloading.offloading_ir_node import OffloadingIRNode
-from dace.sdfg.utils import get_last_view_node
+from dace import data, dtypes, subsets, symbolic, utils
 from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES
-from dace import utils
+from dace.sdfg import SDFG, SDFGState, nodes
+from dace.sdfg.state import ControlFlowRegion, ReturnBlock
+from dace.sdfg.utils import get_last_view_node
+from dace.transformation.passes.offloading.offloading_ir_node import OffloadingIRNode
 
 
-def remove_empty_return_entries(entries: List[Tuple[ControlFlowRegion, SDFGState]]) -> None:
+def remove_empty_return_entries(entries: list[tuple[ControlFlowRegion, SDFGState]]) -> None:
     """Remove each entry of ``separate_early_returns`` still empty, wiring its predecessors to its successor."""
     for region, entry in entries:
         successors = list(region.out_edges(entry))
@@ -29,9 +28,9 @@ def remove_empty_return_entries(entries: List[Tuple[ControlFlowRegion, SDFGState
         region.remove_node(entry)
 
 
-def separate_early_returns(sdfg: SDFG) -> List[Tuple[ControlFlowRegion, SDFGState]]:
+def separate_early_returns(sdfg: SDFG) -> list[tuple[ControlFlowRegion, SDFGState]]:
     """Put an empty state before each return, for its copy-backs; return the (region, state) pairs."""
-    entries: List[Tuple[ControlFlowRegion, SDFGState]] = []
+    entries: list[tuple[ControlFlowRegion, SDFGState]] = []
     for region in list(sdfg.all_control_flow_regions()):
         for block in [block for block in region.nodes() if isinstance(block, ReturnBlock)]:
             entry = region.add_state_before(block, "return_entry", is_start_block=block is region.start_block)
@@ -41,7 +40,7 @@ def separate_early_returns(sdfg: SDFG) -> List[Tuple[ControlFlowRegion, SDFGStat
 
 def link_early_returns(IR: OffloadingIRNode) -> None:
     """Tie each state leading into a return to the level's end, whose copy-backs the return must run first."""
-    entries: List[OffloadingIRNode] = []
+    entries: list[OffloadingIRNode] = []
 
     def collect(node: OffloadingIRNode) -> None:
         if (
@@ -57,7 +56,7 @@ def link_early_returns(IR: OffloadingIRNode) -> None:
             node.append_node(IR.close)
 
 
-def get_sdfg_scope_dict(sdfg: SDFG) -> Dict[SDFGState, Dict[nodes.Node, Optional[nodes.Node]]]:
+def get_sdfg_scope_dict(sdfg: SDFG) -> dict[SDFGState, dict[nodes.Node, nodes.Node | None]]:
     """``scope_dict`` of every state, built once: it is expensive."""
     return {state: state.scope_dict() for state in sdfg.states()}
 
@@ -76,7 +75,7 @@ def callback_symbol_names(sdfg: SDFG) -> OrderedSet[str]:
     return names
 
 
-def is_callback_tasklet(node: nodes.Node, sdfg: SDFG, callback_names: Optional[OrderedSet[str]] = None) -> bool:
+def is_callback_tasklet(node: nodes.Node, sdfg: SDFG, callback_names: OrderedSet[str] | None = None) -> bool:
     """A tasklet calling back into Python (``__pystate`` connectors or a ``dace.callback`` symbol): host only."""
     if not isinstance(node, nodes.Tasklet):
         return False
@@ -89,10 +88,10 @@ def is_callback_tasklet(node: nodes.Node, sdfg: SDFG, callback_names: Optional[O
 
 def scope_holds_callback(
     state: SDFGState,
-    entry: Optional[nodes.MapEntry],
-    scope_children: Dict[Optional[nodes.Node], List[nodes.Node]],
+    entry: nodes.MapEntry | None,
+    scope_children: dict[nodes.Node | None, list[nodes.Node]],
     sdfg: SDFG,
-    callback_names: Optional[OrderedSet[str]] = None,
+    callback_names: OrderedSet[str] | None = None,
 ) -> bool:
     """``entry``'s scope contains a callback, at any depth, so the scope is host code."""
     names = callback_symbol_names(sdfg) if callback_names is None else callback_names
@@ -131,7 +130,7 @@ def is_device_work(node: nodes.Node) -> bool:
     return isinstance(node, (nodes.MapEntry, nodes.LibraryNode)) and node.schedule in dtypes.GPU_SCHEDULES
 
 
-def scope_nodes(state: SDFGState, entry: nodes.MapEntry) -> List[nodes.Node]:
+def scope_nodes(state: SDFGState, entry: nodes.MapEntry) -> list[nodes.Node]:
     return state.scope_subgraph(entry, include_entry=False, include_exit=False).nodes()
 
 
@@ -255,7 +254,7 @@ def is_array(data_name: str, sdfg: SDFG) -> bool:
     )
 
 
-def enclosing_kernel(scopes: Dict[nodes.Node, Optional[nodes.Node]], node: nodes.Node) -> Optional[nodes.MapEntry]:
+def enclosing_kernel(scopes: dict[nodes.Node, nodes.Node | None], node: nodes.Node) -> nodes.MapEntry | None:
     """The nearest enclosing map with a GPU schedule, or None outside every kernel."""
     scope = scopes[node]
     while scope is not None:
@@ -269,7 +268,7 @@ def data_written_by_device_code(sdfg: SDFG) -> OrderedSet[str]:
     """Descriptors a kernel writes that outlive it: through its exit, or inside it and accessed elsewhere too."""
     through_the_exit: OrderedSet[str] = OrderedSet()
     written_inside: OrderedSet[str] = OrderedSet()
-    kernels_per_data: Dict[str, OrderedSet[Optional[nodes.MapEntry]]] = {}
+    kernels_per_data: dict[str, OrderedSet[nodes.MapEntry | None]] = {}
     for state in sdfg.states():
         scopes = state.scope_dict()
         for node in state.nodes():
@@ -313,7 +312,7 @@ def refuse_by_value_scalars_the_device_writes(sdfg: SDFG) -> None:
 def register_kernel_local_transients(sdfg: SDFG, placed_on_gpu: OrderedSet[str]) -> None:
     """Make a register of every transient (Default, or put on the device by this pass) that only one kernel accesses."""
     for nested in sdfg.all_sdfgs_recursive():
-        kernels: Dict[str, OrderedSet[Optional[nodes.MapEntry]]] = {}
+        kernels: dict[str, OrderedSet[nodes.MapEntry | None]] = {}
         for state in nested.states():
             scopes = state.scope_dict()
             for node in state.data_nodes():
@@ -333,7 +332,7 @@ def register_kernel_local_transients(sdfg: SDFG, placed_on_gpu: OrderedSet[str])
                 nested.arrays[name].storage = dtypes.StorageType.Register
 
 
-def view_origin(state: SDFGState, node: nodes.AccessNode) -> Optional[str]:
+def view_origin(state: SDFGState, node: nodes.AccessNode) -> str | None:
     """The container ``node`` ultimately aliases, following a chain of views, or None."""
     viewed = get_last_view_node(state, node)
     return viewed.data if viewed is not None else None
@@ -361,7 +360,7 @@ def traverse_IR(IR: OffloadingIRNode, method: Callable[[OffloadingIRNode], None]
 
 def traverse_IR_after_predecessors(IR: OffloadingIRNode, method: Callable[[OffloadingIRNode], None]) -> None:
     """Call ``method`` on each node after all its predecessors, so a join hears every arm first."""
-    waiting: Dict[OffloadingIRNode, int] = {}
+    waiting: dict[OffloadingIRNode, int] = {}
 
     def count(node: OffloadingIRNode) -> None:
         for next in node.next:
@@ -421,7 +420,7 @@ def get_data_used_by_access_nodes(
         if current in visited:
             continue
         visited.add(current)
-        children: List[nodes.Node] = []
+        children: list[nodes.Node] = []
         stops = False
         if isinstance(current, nodes.AccessNode):
             name = current.data
@@ -436,7 +435,7 @@ def get_data_used_by_access_nodes(
     return arrays
 
 
-def view_origin_nodes(sdfg: SDFG, state: SDFGState, node: nodes.AccessNode) -> List[nodes.AccessNode]:
+def view_origin_nodes(sdfg: SDFG, state: SDFGState, node: nodes.AccessNode) -> list[nodes.AccessNode]:
     """The access node a view aliases, or nothing: a chain that reaches no access node has no origin to place."""
     if not isinstance(sdfg.arrays[node.data], data.View):
         return []
@@ -446,7 +445,7 @@ def view_origin_nodes(sdfg: SDFG, state: SDFGState, node: nodes.AccessNode) -> L
 
 def neighboring_access_nodes(
     state: SDFGState, node: nodes.Node, downstream: bool, ordering: bool
-) -> List[nodes.AccessNode]:
+) -> list[nodes.AccessNode]:
     edges = state.out_edges(node) if downstream else state.in_edges(node)
     neighbors = [(edge.dst if downstream else edge.src, edge) for edge in edges]
     return [
@@ -456,7 +455,7 @@ def neighboring_access_nodes(
     ]
 
 
-def get_new_map_identifiers(state: SDFGState, map_label: str, map_param: str) -> Tuple[str, str]:
+def get_new_map_identifiers(state: SDFGState, map_label: str, map_param: str) -> tuple[str, str]:
     """A map label new to the state and a parameter new to every symbol, descriptor and map parameter in reach."""
     sdfg = state.sdfg
     taken: OrderedSet = OrderedSet()

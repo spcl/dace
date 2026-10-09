@@ -3,15 +3,13 @@
 
 from collections import deque
 from copy import deepcopy
-from typing import Dict, List, Optional, Tuple
 
 from ordered_set import OrderedSet
 
-from dace import data, dtypes, Memlet
-from dace.sdfg import nodes, SDFG
-from dace.sdfg.state import SDFGState
-
 import dace.transformation.passes.offloading.offloading_helpers as helpers
+from dace import Memlet, data, dtypes
+from dace.sdfg import SDFG, nodes
+from dace.sdfg.state import SDFGState
 
 
 def make_size1_map_wrappers(sdfg: SDFG, state: SDFGState, host_maps: OrderedSet[nodes.MapEntry]) -> None:
@@ -40,7 +38,7 @@ def make_size1_map_wrappers(sdfg: SDFG, state: SDFGState, host_maps: OrderedSet[
             forward_input_only_map_data(state, map_entry, map_exit)
 
 
-def scope_closed_partition(state: SDFGState, region: OrderedSet, boundary: OrderedSet) -> Optional[OrderedSet]:
+def scope_closed_partition(state: SDFGState, region: OrderedSet, boundary: OrderedSet) -> OrderedSet | None:
     """``region`` grown until every map scope it touches lies wholly inside it, or None.
 
     A size-1 map around half a scope is not a scope. None when closing would swallow a node of
@@ -67,7 +65,7 @@ def scope_closed_partition(state: SDFGState, region: OrderedSet, boundary: Order
     return closed
 
 
-def rewire_boundary(state: SDFGState, edges: List, scope_node: nodes.Node, prefix: str) -> None:
+def rewire_boundary(state: SDFGState, edges: list, scope_node: nodes.Node, prefix: str) -> None:
     """Route each edge crossing into or out of a new scope through ``scope_node``'s connectors.
 
     An empty memlet only orders, so it takes no connector.
@@ -87,7 +85,7 @@ def rewire_boundary(state: SDFGState, edges: List, scope_node: nodes.Node, prefi
         state.add_edge(scope_node, out_conn, edge.dst, edge.dst_conn, deepcopy(edge.data))
 
 
-def wrap_region_in_size1_map(state: SDFGState, region_nodes: OrderedSet) -> Tuple[nodes.MapEntry, nodes.MapExit]:
+def wrap_region_in_size1_map(state: SDFGState, region_nodes: OrderedSet) -> tuple[nodes.MapEntry, nodes.MapExit]:
     map_label, map_param = helpers.get_new_map_identifiers(state, "size1_wrap_region", "__wrap_i")
     map_entry, map_exit = state.add_map(
         name=map_label, ndrange={map_param: "0:1"}, schedule=dtypes.ScheduleType.GPU_Device
@@ -108,7 +106,7 @@ def wrap_region_in_size1_map(state: SDFGState, region_nodes: OrderedSet) -> Tupl
     return map_entry, map_exit
 
 
-def subgraphs_after_removing(state: SDFGState, partition_nodes: OrderedSet) -> List[OrderedSet]:
+def subgraphs_after_removing(state: SDFGState, partition_nodes: OrderedSet) -> list[OrderedSet]:
     """Weakly connected components of the state's top level once ``partition_nodes`` are removed."""
     visited: OrderedSet = OrderedSet()
     components = []
@@ -180,9 +178,9 @@ def forward_input_only_map_data(state: SDFGState, map_entry: nodes.MapEntry, map
 
 def last_access_nodes_in_map(
     state: SDFGState, map_entry: nodes.MapEntry, map_exit: nodes.MapExit, data_names: OrderedSet
-) -> Dict[str, nodes.AccessNode]:
+) -> dict[str, nodes.AccessNode]:
     """The access node of each name in ``data_names`` that a breadth-first walk from the entry reaches last."""
-    last_access: Dict[str, nodes.AccessNode] = {}
+    last_access: dict[str, nodes.AccessNode] = {}
     queue = deque([map_entry])
     visited = OrderedSet([map_entry])
     while data_names and queue:

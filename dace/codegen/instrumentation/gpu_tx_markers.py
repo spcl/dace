@@ -1,13 +1,12 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import os
-from typing import Union
 
 from dace import dtypes, registry
 from dace.codegen import common
-from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.instrumentation.provider import InstrumentationProvider
+from dace.codegen.prettycode import CodeIOStream
 from dace.memlet import Memlet
-from dace.sdfg import nodes, SDFG
+from dace.sdfg import nodes
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.scope import is_devicelevel_gpu_kernel
 from dace.sdfg.sdfg import SDFG
@@ -49,7 +48,7 @@ class GPUTXMarkersProvider(InstrumentationProvider):
             if self.enable_rocTX:
                 sdfg.append_global_code(self.ROCTX_HEADER_INCLUDE, "frame")
         else:
-            raise NameError('GPU backend "%s" not recognized' % self.backend)
+            raise NameError(f'GPU backend "{self.backend}" not recognized')
         self.include_generated = True
 
     def print_include(self, stream: CodeIOStream) -> None:
@@ -64,7 +63,7 @@ class GPUTXMarkersProvider(InstrumentationProvider):
             if self.enable_rocTX:
                 stream.write(self.ROCTX_HEADER_INCLUDE)
         else:
-            raise NameError('GPU backend "%s" not recognized' % self.backend)
+            raise NameError(f'GPU backend "{self.backend}" not recognized')
         self.include_generated = True
 
     def print_range_push(self, name: str, sdfg: SDFG, stream: CodeIOStream) -> None:
@@ -303,9 +302,7 @@ class GPUTXMarkersProvider(InstrumentationProvider):
             return
         self.print_range_pop(callsite_stream)
 
-    def on_allocation_begin(
-        self, sdfg: SDFG, scope: Union[nodes.EntryNode, SDFGState, SDFG], stream: CodeIOStream
-    ) -> None:
+    def on_allocation_begin(self, sdfg: SDFG, scope: nodes.EntryNode | SDFGState | SDFG, stream: CodeIOStream) -> None:
         if sdfg.instrument != dtypes.InstrumentationType.GPU_TX_MARKERS:
             return
         # We only want to instrument allocations at the SDFG or state level
@@ -316,9 +313,7 @@ class GPUTXMarkersProvider(InstrumentationProvider):
             return
         self.print_range_push(f"alloc_{sdfg.name}", sdfg, stream)
 
-    def on_allocation_end(
-        self, sdfg: SDFG, scope: Union[nodes.EntryNode, SDFGState, SDFG], stream: CodeIOStream
-    ) -> None:
+    def on_allocation_end(self, sdfg: SDFG, scope: nodes.EntryNode | SDFGState | SDFG, stream: CodeIOStream) -> None:
         if sdfg.instrument != dtypes.InstrumentationType.GPU_TX_MARKERS:
             return
         # We only want to instrument allocations at the SDFG or state level
@@ -330,7 +325,7 @@ class GPUTXMarkersProvider(InstrumentationProvider):
         self.print_range_pop(stream)
 
     def on_deallocation_begin(
-        self, sdfg: SDFG, scope: Union[nodes.EntryNode, SDFGState, SDFG], stream: CodeIOStream
+        self, sdfg: SDFG, scope: nodes.EntryNode | SDFGState | SDFG, stream: CodeIOStream
     ) -> None:
         if sdfg.instrument != dtypes.InstrumentationType.GPU_TX_MARKERS:
             return
@@ -342,9 +337,7 @@ class GPUTXMarkersProvider(InstrumentationProvider):
             return
         self.print_range_push(f"dealloc_{sdfg.name}", sdfg, stream)
 
-    def on_deallocation_end(
-        self, sdfg: SDFG, scope: Union[nodes.EntryNode, SDFGState, SDFG], stream: CodeIOStream
-    ) -> None:
+    def on_deallocation_end(self, sdfg: SDFG, scope: nodes.EntryNode | SDFGState | SDFG, stream: CodeIOStream) -> None:
         if sdfg.instrument != dtypes.InstrumentationType.GPU_TX_MARKERS:
             return
         # We only want to instrument allocations at the SDFG or state level

@@ -2,15 +2,13 @@
 """Move a single-element copy into the map that alone reads it: ``A -> s -> Map`` becomes ``A -> Map -> s``."""
 
 from copy import deepcopy
-from typing import List
 
 from ordered_set import OrderedSet
 
-from dace import data, Memlet
-from dace.sdfg import nodes, SDFG
-from dace.sdfg.state import SDFGState
-
 import dace.transformation.passes.offloading.offloading_helpers as helpers
+from dace import Memlet, data
+from dace.sdfg import SDFG, nodes
+from dace.sdfg.state import SDFGState
 
 
 def drop_stale_other_subset(memlet: Memlet, src_node: nodes.Node, dst_node: nodes.Node) -> None:
@@ -26,19 +24,17 @@ def single_element_copies_into_map(sdfg: SDFG) -> None:
         for map_entry in state.nodes():
             if not isinstance(map_entry, nodes.MapEntry):
                 continue
-            for access in OrderedSet(state.predecessors(map_entry)):
-                # Only a copy the map alone reads moves: another reader would be left reading a node
-                # inside this map's scope.
-                if (
-                    isinstance(access, nodes.AccessNode)
-                    and state.out_degree(access) == 1
-                    and (
-                        isinstance(sdfg.arrays[access.data], data.Scalar) or helpers.is_length1_array(access.data, sdfg)
-                    )
-                    and state.in_degree(access) == 1
-                    and isinstance(state.in_edges(access)[0].src, nodes.AccessNode)
-                ):
-                    changes.append((state, access, map_entry))
+            # Only a copy the map alone reads moves: another reader would be left reading a node
+            # inside this map's scope.
+            changes.extend(
+                (state, access, map_entry)
+                for access in OrderedSet(state.predecessors(map_entry))
+                if isinstance(access, nodes.AccessNode)
+                and state.out_degree(access) == 1
+                and (isinstance(sdfg.arrays[access.data], data.Scalar) or helpers.is_length1_array(access.data, sdfg))
+                and state.in_degree(access) == 1
+                and isinstance(state.in_edges(access)[0].src, nodes.AccessNode)
+            )
 
     for state, access, map_entry in changes:
         rewire_access_into_map(state, access, map_entry)
@@ -75,7 +71,7 @@ def rewire_access_into_map(state: SDFGState, access: nodes.AccessNode, map_entry
         state.remove_edge(edge)
 
 
-def passthrough_out_connectors(in_connector: str) -> List[str]:
+def passthrough_out_connectors(in_connector: str) -> list[str]:
     """``OUT_x`` for a map entry's ``IN_x``; none for a connector that is not a pass-through."""
     if in_connector is None or not in_connector.startswith("IN_"):
         return []

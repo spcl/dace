@@ -6,12 +6,11 @@ from dataclasses import dataclass, field
 
 import dace
 from dace.codegen.cppunparse import pyexpr2cpp
+from dace.libraries.tileops.kinds import SYMBOL, TILE
+from dace.libraries.tileops.operands import Operand, connected_edges, edge_ctype, input_connectors, output_edge
 from dace.sdfg import nodes
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.subsets import Subset
-
-from dace.libraries.tileops.kinds import SYMBOL, TILE
-from dace.libraries.tileops.operands import Operand, connected_edges, edge_ctype, input_connectors, output_edge
 
 
 def require_k1(node: nodes.LibraryNode) -> int:

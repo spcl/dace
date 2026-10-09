@@ -1,11 +1,12 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
 from dataclasses import dataclass
+
 import numpy as np
 import pytest
-
-from dace.transformation.auto.auto_optimize import auto_optimize
 from scipy import sparse
+
+import dace
+from dace.transformation.auto.auto_optimize import auto_optimize
 
 
 def test_read_structure():

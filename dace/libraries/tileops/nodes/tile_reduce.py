@@ -3,8 +3,6 @@
 
 import dace
 from dace import library, properties
-from dace.sdfg import nodes
-
 from dace.libraries.tileops.environments import (
     TileOpsAVX2,
     TileOpsAVX512,
@@ -16,9 +14,10 @@ from dace.libraries.tileops.environments import (
 from dace.libraries.tileops.expansions import ExpandTileIsa, ExpandTilePure
 from dace.libraries.tileops.isa import require_k1
 from dace.libraries.tileops.lanes import nested_loops, tile_offset
+from dace.libraries.tileops.nodes.tile_op import TileOp
 from dace.libraries.tileops.operands import connected_edges, edge_ctype, output_edge
 from dace.libraries.tileops.ops import BINARY_OPS, REDUCE_OPS
-from dace.libraries.tileops.nodes.tile_op import TileOp
+from dace.sdfg import nodes
 
 
 def identity_literal(op: str, ctype: str) -> str:

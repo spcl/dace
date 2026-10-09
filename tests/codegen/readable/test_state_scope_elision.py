@@ -16,14 +16,13 @@ import dace
 from dace.codegen.targets.framecode import DaCeCodeGenerator
 from dace.transformation.dataflow import MapFusion
 from dace.transformation.interstate import LoopToMap
-
 from tests.codegen.readable.conftest import (
-    LEGACY,
     EXPERIMENTAL,
-    use_implementation,
-    run_isolated,
+    LEGACY,
     assert_outputs_equivalent,
     experimental_available,
+    run_isolated,
+    use_implementation,
 )
 
 N = dace.symbol("N")

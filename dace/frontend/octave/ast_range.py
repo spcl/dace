@@ -44,8 +44,8 @@ class AST_RangeExpression(AST_Node):
 
     def generate_code(self, sdfg, state):
         # If lhs and rhs are constant, generate a matrix
+        from .ast_matrix import AST_Matrix, AST_Matrix_Row
         from .ast_values import AST_Constant
-        from .ast_matrix import AST_Matrix_Row, AST_Matrix
 
         if isinstance(self.lhs, AST_Constant) and isinstance(self.rhs, AST_Constant):
             lval = self.lhs.get_value()

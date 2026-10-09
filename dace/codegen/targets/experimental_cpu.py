@@ -14,7 +14,7 @@ kernels.
 
 import ast
 import re
-from typing import Dict, List, Optional, Set, Tuple, Union
+from typing import Optional
 
 import numpy
 from pygments.lexers import CppLexer
@@ -25,7 +25,6 @@ from dace import dtypes, symbolic
 from dace.codegen import cppunparse
 from dace.codegen.codeobject import CODE_ANNOTATION
 from dace.codegen.common import sym2cpp
-from dace.config import Config
 from dace.codegen.dispatcher import DefinedType
 from dace.codegen.targets import cpp
 from dace.codegen.targets.cpu import (
@@ -38,6 +37,7 @@ from dace.codegen.targets.cpu import (
     map_schedule_is_sequential,
     scalar_init_style,
 )
+from dace.config import Config
 from dace.frontend.python import astutils
 from dace.frontend.python.astutils import rname
 from dace.properties import CodeBlock
@@ -72,7 +72,7 @@ PREPROCESSOR_IF = re.compile(r"^\s*#\s*if")
 PREPROCESSOR_ENDIF = re.compile(r"^\s*#\s*endif")
 
 
-def loop_local_counter_ctype(name: str, dtype: dtypes.typeclass, sdfg: SDFG) -> Optional[str]:
+def loop_local_counter_ctype(name: str, dtype: dtypes.typeclass, sdfg: SDFG) -> str | None:
     """C++ type to declare a LoopRegion counter INSIDE its ``for``-init clause in the readable
     generator, ignoring the ``decl_placement`` knob (which otherwise leaves it hoisted by default).
 
@@ -129,7 +129,7 @@ def loop_variable_in_instrument_conditions(loop: LoopRegion, name: str) -> bool:
     return False
 
 
-def code_blocks_of(value) -> Tuple[CodeBlock, ...]:
+def code_blocks_of(value) -> tuple[CodeBlock, ...]:
     """The ``CodeBlock`` values reachable from one property value: bare, or inside a list / dict.
 
     Properties are how a DaCe node stores everything it lowers to code, so walking them finds the code
@@ -144,9 +144,9 @@ def code_blocks_of(value) -> Tuple[CodeBlock, ...]:
     return ()
 
 
-def identifiers_in(blocks) -> Set[str]:
+def identifiers_in(blocks) -> set[str]:
     """Identifier tokens of a sequence of ``CodeBlock``s."""
-    names: Set[str] = set()
+    names: set[str] = set()
     for block in blocks:
         text = block.as_string
         if text:
@@ -185,7 +185,7 @@ def size_qualifier(is_constant: bool) -> str:
     return SIZE_CONSTEVAL_QUALIFIER if standard >= 20 else INDEX_FUNCTION_QUALIFIER
 
 
-def format_index_access(ptrname: str, fnname: str, indices: List[str], extra: List[str]) -> str:
+def format_index_access(ptrname: str, fnname: str, indices: list[str], extra: list[str]) -> str:
     """C++ ``ptr[fn(idx.., extra..)]`` access through a registered ``<array>_idx`` index function."""
     call_args = [sym2cpp(symbolic.pystr_to_symbolic(ix)) for ix in indices] + list(extra)
     return "%s[%s(%s)]" % (ptrname, fnname, ", ".join(call_args))
@@ -211,7 +211,7 @@ def loop_access_form() -> str:
     return Config.get("compiler", "cpu", "codegen_params", "loop_access_form")
 
 
-def index_expr_nodes(slicenode: ast.AST) -> List[ast.AST]:
+def index_expr_nodes(slicenode: ast.AST) -> list[ast.AST]:
     """The per-dimension index AST expressions of a subscript's slice (a tuple's elements, else the
     single expression)."""
     node = slicenode
@@ -222,7 +222,7 @@ def index_expr_nodes(slicenode: ast.AST) -> List[ast.AST]:
     return [node]
 
 
-def subscript_index_strings(slicenode: ast.AST) -> List[str]:
+def subscript_index_strings(slicenode: ast.AST) -> list[str]:
     """The per-dimension index expressions of a subscript's slice as source strings. Shared by the
     walk-plan builder and the readable rewriter so both key an access on the identical strings."""
     return [ast.unparse(e) for e in index_expr_nodes(slicenode)]
@@ -242,9 +242,9 @@ def deduplicate_includes(code: str) -> str:
     Non-include lines are untouched and first-occurrence order is kept -- config-dependent headers
     need it.
     """
-    seen: Set[str] = set()
+    seen: set[str] = set()
     depth = 0
-    kept: List[str] = []
+    kept: list[str] = []
     for line in code.split("\n"):
         if PREPROCESSOR_IF.match(line):
             depth += 1
@@ -269,50 +269,50 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         super().__init__(frame, sdfg)
         # Helper name -> full C++ definition (deduplicated), for the ``<array>_idx`` index
         # functions and the ``<array>_size`` allocation-extent helpers respectively.
-        self._index_functions: Dict[str, str] = {}
-        self._size_functions: Dict[str, str] = {}
+        self._index_functions: dict[str, str] = {}
+        self._size_functions: dict[str, str] = {}
         # id(function_stream) -> helper names already flushed to THAT stream. Dedup is per stream
         # (= per output file), so an array used on both the host (.cpp) and a device kernel (.cu)
         # gets its definition in each file. Index and size helpers share the set (names never
         # collide: ``A_idx`` vs ``A_size``).
-        self._emitted_functions: Dict[int, Set[str]] = {}
+        self._emitted_functions: dict[int, set[str]] = {}
         # (base-name, signature) -> emitted function name, so one shape reuses a function while
         # two same-named arrays of different shape (e.g. a connector-derived ``_out`` that is 1-D
         # in one inlined SDFG and 2-D in another) get distinct helpers, not a colliding name with
         # wrong arity / strides. A plain name collision is disambiguated against _index_functions /
         # _size_functions (the emitted-name sets), so no separate name->sig maps are kept.
-        self._index_sig_to_name: Dict[tuple, str] = {}
-        self._size_sig_to_name: Dict[tuple, str] = {}
+        self._index_sig_to_name: dict[tuple, str] = {}
+        self._size_sig_to_name: dict[tuple, str] = {}
         # Per-tasklet cache of identifiers appearing in the (rewritten) body.
-        self._body_identifiers: Dict[int, Set[str]] = {}
+        self._body_identifiers: dict[int, set[str]] = {}
         # Per-native-tasklet cache of identifiers the C++ body DECLARES (see _declared_identifiers).
-        self._body_declarations: Dict[int, Set[str]] = {}
+        self._body_declarations: dict[int, set[str]] = {}
         # Per-native-tasklet cache: id(node) -> {connector_name: cpp_access}. An entry means the
         # connector is accessed directly (scalar index / base pointer) instead of via a copy-in/out.
-        self._cpp_inline: Dict[int, Dict[str, str]] = {}
+        self._cpp_inline: dict[int, dict[str, str]] = {}
         # ptr_increment (loop_access_form) support. ``_map_scope_stack`` is the chain of currently-open
         # MapEntry nodes (pushed before the base MapEntry emitter runs, popped after the matching
         # MapExit), so the scope-preamble / -postamble hooks and the readable rewriter can find the map
         # whose body they are inside. ``_walk_plans`` memoizes id(map) -> walk plan ({} when a pointer
         # walk is not provably equivalent). The two ``_walk_emitted_*`` sets guard the once-per-map
         # emission of the pointer declarations and increments.
-        self._map_scope_stack: List[nodes.MapEntry] = []
-        self._walk_plans: Dict[int, dict] = {}
-        self._walk_emitted_decls: Set[int] = set()
-        self._walk_emitted_incs: Set[int] = set()
+        self._map_scope_stack: list[nodes.MapEntry] = []
+        self._walk_plans: dict[int, dict] = {}
+        self._walk_emitted_decls: set[int] = set()
+        self._walk_emitted_incs: set[int] = set()
         # decl_placement = late: a mutable scope-lifetime value scalar whose ``T x;`` declaration
         # was deferred by allocate_array is held here until the first tasklet that uses it is emitted
         # (see late_declarable_scalar / emit_pending_late_decls). ptrname -> declaration info. Empty in
         # the default ``eager`` mode, so the emit hook is a no-op and the output stays byte-identical.
-        self._late_pending: Dict[str, dict] = {}
+        self._late_pending: dict[str, dict] = {}
         # Caches for the deferral gate (late_declarable_scalar), all keyed by id() of frozen codegen-
         # time objects. ``_eager_alloc_scopes`` is built once from the frame's allocation plan;
         # ``_node_references`` / ``_nested_free_names`` memoize the per-node and per-nested-SDFG name
         # sweeps, whose value is None for "not analysable" (which the gate reads as a refusal).
-        self._eager_alloc_scopes: Optional[Dict[Tuple[int, str], list]] = None
-        self._name_owners: Dict[int, Optional[Dict[str, Set[int]]]] = {}
-        self._node_references: Dict[int, Optional[Set[str]]] = {}
-        self._nested_free_names: Dict[int, Optional[Set[str]]] = {}
+        self._eager_alloc_scopes: dict[tuple[int, str], list] | None = None
+        self._name_owners: dict[int, dict[str, set[int]] | None] = {}
+        self._node_references: dict[int, set[str] | None] = {}
+        self._nested_free_names: dict[int, set[str] | None] = {}
 
     def emit_interstate_variable_declaration(self, name, dtype, callsite_stream, sdfg):
         """LoopRegion counters are declared inside their own ``for``-init clause in the readable
@@ -404,14 +404,14 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         for inc in plan["incs"]:
             inner_stream.write(inc + "\n", sdfg)
 
-    def _current_walk_plan(self) -> Optional[dict]:
+    def _current_walk_plan(self) -> dict | None:
         """The (non-empty) walk plan of the map currently being emitted, or None."""
         if not self._map_scope_stack:
             return None
         plan = self._walk_plans.get(id(self._map_scope_stack[-1].map))
         return plan or None
 
-    def current_walk_accesses(self) -> Optional[Dict[tuple, str]]:
+    def current_walk_accesses(self) -> dict[tuple, str] | None:
         """``{(array_name, index_string_tuple): pointer_name}`` for the map currently being emitted, or
         None. The readable rewriter consults this to replace a walked access with ``(*pointer)``."""
         plan = self._current_walk_plan()
@@ -478,16 +478,16 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         # Collect every array subscript; bail (whole construct falls back) on any array reference that
         # is not a plain affine subscript in the loop counter -- a bare (unsubscripted) array, a
         # gather / call inside an index, or a subscript whose arity does not match the descriptor.
-        records: List[tuple] = []  # (name, idx_tuple, desc)
+        records: list[tuple] = []  # (name, idx_tuple, desc)
         if not all(self._scan_walkable(stmt, sdfg, records) for stmt in body):
             return {}
         if not records:
             return {}
 
-        accesses: Dict[tuple, str] = {}
-        decls: List[str] = []
-        incs: List[str] = []
-        used_names: Set[str] = set()
+        accesses: dict[tuple, str] = {}
+        decls: list[str] = []
+        incs: list[str] = []
+        used_names: set[str] = set()
         for name, idx_tuple, desc in records:
             key = (name, idx_tuple)
             if key in accesses:
@@ -523,7 +523,7 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         flat += sum(offset[i] * strides[i] for i in range(len(strides)))
         return symbolic.pystr_to_symbolic(flat)
 
-    def _scan_walkable(self, astnode, sdfg, records: List[tuple]) -> bool:
+    def _scan_walkable(self, astnode, sdfg, records: list[tuple]) -> bool:
         """Walk ``astnode`` recording every plain-array subscript into ``records``; return False the
         moment an array is referenced in a way a simple pointer walk cannot express."""
         if isinstance(astnode, ast.Subscript):
@@ -548,7 +548,7 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
             return True
         return all(self._scan_walkable(child, sdfg, records) for child in ast.iter_child_nodes(astnode))
 
-    def _unique_walk_name(self, data_name: str, used: Set[str]) -> str:
+    def _unique_walk_name(self, data_name: str, used: set[str]) -> str:
         """A collision-free C++ name for a walking base pointer over ``data_name``."""
         base = "__walk_" + re.sub(r"\W", "_", data_name)
         name = base
@@ -583,7 +583,7 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         # connectors out of the body, so their names no longer appear.
         return conn in self._used_identifiers(node)
 
-    def _used_identifiers(self, node) -> Set[str]:
+    def _used_identifiers(self, node) -> set[str]:
         key = id(node)
         cached = self._body_identifiers.get(key)
         if cached is not None:
@@ -681,7 +681,7 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         inline = self._cpp_inline.get(id(node)) or {}
         if not inline:
             return body
-        out: List[str] = []
+        out: list[str] = []
         for tok_type, value in CppLexer().get_tokens(body):
             if tok_type in Token.Name and value in inline:
                 out.append(inline[value])
@@ -689,7 +689,7 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
                 out.append(value)
         return "".join(out)
 
-    def _compute_cpp_inline(self, sdfg, state_dfg, node) -> Dict[str, str]:
+    def _compute_cpp_inline(self, sdfg, state_dfg, node) -> dict[str, str]:
         """
         For a native (C++/library) tasklet, returns ``{connector_name: cpp_access}``
         for every connector that can be safely inlined -- a scalar connector as a
@@ -709,10 +709,10 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         # scalar). Keep the classic connector copy-in/out for the whole tasklet (as legacy does).
         if re.search(r"(?m)^[ \t]*#", node.code.as_string):
             return {}
-        in_map: Dict[str, str] = {}
-        out_map: Dict[str, str] = {}
-        in_edges: Dict[str, object] = {}
-        out_edges: Dict[str, object] = {}
+        in_map: dict[str, str] = {}
+        out_map: dict[str, str] = {}
+        in_edges: dict[str, object] = {}
+        out_edges: dict[str, object] = {}
         for edge in state_dfg.in_edges(node):
             access = self._cpp_connector_access(sdfg, state_dfg, node, edge, is_output=False)
             if access is not None:
@@ -729,7 +729,7 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         # identifier in the body cannot stand for two different things -> keep the
         # classic connector for both sides. (Mirrors InlineTaskletConnectors.)
         inout = set(node.in_connectors) & set(node.out_connectors)
-        inline: Dict[str, str] = {}
+        inline: dict[str, str] = {}
         for name in dict.fromkeys((*in_map, *out_map)):
             if name in inout:
                 if name in in_map and name in out_map and in_map[name] == out_map[name]:
@@ -753,7 +753,7 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
                 self._register_inlined_copy_target(sdfg, state_dfg, node, out_edges[name], is_output=True)
         return inline
 
-    def _drop_captured_inlines(self, node, inline: Dict[str, str]) -> None:
+    def _drop_captured_inlines(self, node, inline: dict[str, str]) -> None:
         """
         Removes from ``inline`` every connector whose access text would be CAPTURED by the tasklet
         body, i.e. whose access text names an identifier the body DECLARES as a local.
@@ -783,7 +783,7 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
             for conn in captured:
                 del inline[conn]
 
-    def _declared_identifiers(self, node) -> Set[str]:
+    def _declared_identifiers(self, node) -> set[str]:
         """
         Names the C++ tasklet body declares as its own, over-approximated from the pygments token
         stream: an identifier is taken as declared when the previous significant token is a keyword
@@ -800,7 +800,7 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         cached = self._body_declarations.get(key)
         if cached is not None:
             return cached
-        declared: Set[str] = set()
+        declared: set[str] = set()
         previous = None  # last significant token, with the declarator punctuation skipped
         in_declarator_list = False
         for token_type, value in CppLexer().get_tokens(node.code.as_string):
@@ -835,7 +835,7 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         if target is not None:
             self._dispatcher.used_targets.add(target)
 
-    def _cpp_connector_access(self, sdfg, state_dfg, node, edge, is_output: bool) -> Optional[str]:
+    def _cpp_connector_access(self, sdfg, state_dfg, node, edge, is_output: bool) -> str | None:
         """
         C++ access string for one native-tasklet connector, or None if it must
         keep the classic connector copy. Only ``memlet`` attributes are read
@@ -937,7 +937,7 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
 
     def fused_heap_declarator(
         self, sdfg, name: str, nodedesc: dt.Data, arrsize, declared: bool, declaration_stream, allocation_stream
-    ) -> Optional[str]:
+    ) -> str | None:
         """Declarator fusing ``T *p;`` + ``p = new T[...];`` into one ``T* __restrict__ p = new
         T[...];`` definition, or None to keep the classic split pair.
 
@@ -992,8 +992,8 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         arrsize: str,
         alignment: int = 0,
         sdfg: Optional["SDFG"] = None,
-        nodedesc: Optional[dt.Data] = None,
-        data_name: Optional[str] = None,
+        nodedesc: dt.Data | None = None,
+        data_name: str | None = None,
     ) -> str:
         # The base aligned ``operator new[]``, with the count through an ``<array>_size`` helper when one
         # is worthwhile (_register_size_function).
@@ -1068,7 +1068,7 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         }
         return True
 
-    def late_declarable_scalar(self, sdfg, dfg, node, desc) -> Optional[Tuple[Set[nodes.Tasklet], bool]]:
+    def late_declarable_scalar(self, sdfg, dfg, node, desc) -> tuple[set[nodes.Tasklet], bool] | None:
         """Whether ``desc`` (the scalar being allocated at ``node`` in state ``dfg``) may have its
         declaration deferred to first use, per ``decl_placement``. Returns ``(neighbor_tasklets,
         setzero)`` when deferrable, else ``None`` (keep the eager declaration).
@@ -1125,7 +1125,7 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         if len(scopes) != 1:
             return None
         scope = scopes.pop()
-        neighbor_tasklets: Set[nodes.Tasklet] = set()
+        neighbor_tasklets: set[nodes.Tasklet] = set()
         has_write = False
         for an in access_nodes:
             if state.in_degree(an) > 0:
@@ -1163,7 +1163,7 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
             return None
         return neighbor_tasklets, node.setzero
 
-    def eager_allocation_scope(self, sdfg: SDFG, name: str) -> Optional[Union[nodes.EntryNode, SDFGState, SDFG]]:
+    def eager_allocation_scope(self, sdfg: SDFG, name: str) -> nodes.EntryNode | SDFGState | SDFG | None:
         """The scope the frame's allocation planner picked for ``name``'s EAGER declaration in ``sdfg``
         (a ``MapEntry``, an ``SDFGState`` or an ``SDFG``), or ``None`` when it recorded no entry -- or
         more than one, a multi-site shape this generator does not model.
@@ -1190,7 +1190,7 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
             return None
         return found[0]
 
-    def name_owners(self, sdfg: SDFG) -> Optional[Dict[str, Set[int]]]:
+    def name_owners(self, sdfg: SDFG) -> dict[str, set[int]] | None:
         """Every name mentioned anywhere in ``sdfg`` mapped to the ``id``s of the dataflow nodes that
         may mention it, or ``None`` if some node could not be analysed (which refuses every candidate in
         that SDFG). Built once per SDFG: the graph is frozen for the whole code generation run.
@@ -1205,13 +1205,13 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         key = id(sdfg)
         if key in self._name_owners:
             return self._name_owners[key]
-        owners: Dict[str, Set[int]] = {}
+        owners: dict[str, set[int]] = {}
 
         def charge(names, owner_id: int) -> None:
             for used in names:
                 owners.setdefault(used, set()).add(owner_id)
 
-        result: Optional[Dict[str, Set[int]]] = owners
+        result: dict[str, set[int]] | None = owners
         for state in sdfg.states():
             for graph_node in state.nodes():
                 references = self.node_name_references(graph_node, sdfg)
@@ -1239,7 +1239,7 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         self._name_owners[key] = result
         return result
 
-    def node_name_references(self, graph_node: nodes.Node, sdfg: SDFG) -> Optional[Set[str]]:
+    def node_name_references(self, graph_node: nodes.Node, sdfg: SDFG) -> set[str] | None:
         """Every name the C++ lowered from ``graph_node`` may reference, or ``None`` when that cannot be
         decided. Property-driven rather than class-driven, so a node holding its body in a code property
         this file never heard of is still covered; a node whose body is NOT in a property it can read
@@ -1248,7 +1248,7 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         if key in self._node_references:
             return self._node_references[key]
         if isinstance(graph_node, nodes.AccessNode):
-            references: Optional[Set[str]] = {graph_node.data, graph_node.root_data}
+            references: set[str] | None = {graph_node.data, graph_node.root_data}
         elif isinstance(graph_node, nodes.NestedSDFG):
             # A nested SDFG is emitted as an inline block, so a name it does not define itself resolves
             # to the ENCLOSING scope's C++ -- exactly like a free name in a tasklet body. ``None`` (an
@@ -1273,14 +1273,14 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         self._node_references[key] = references
         return references
 
-    def nested_free_names(self, nested: SDFG) -> Optional[Set[str]]:
+    def nested_free_names(self, nested: SDFG) -> set[str] | None:
         """Names used anywhere inside ``nested`` that it does not define itself, so they resolve to the
         enclosing scope. ``None`` if any node in it could not be analysed."""
         key = id(nested)
         if key in self._nested_free_names:
             return self._nested_free_names[key]
-        names: Set[str] = set()
-        result: Optional[Set[str]] = names
+        names: set[str] = set()
+        result: set[str] | None = names
         for inner_state in nested.states():
             for graph_node in inner_state.nodes():
                 references = self.node_name_references(graph_node, nested)
@@ -1306,11 +1306,11 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         self._nested_free_names[key] = result
         return result
 
-    def code_property_names(self, holder) -> Set[str]:
+    def code_property_names(self, holder) -> set[str]:
         """Identifier tokens of every ``CodeBlock`` property of ``holder`` (a node or a control-flow
         block): the loop init / condition / update of a ``LoopRegion``, a library node's code, a
         tasklet's ``code_init`` / ``code_exit``, and whatever a future class stores the same way."""
-        names: Set[str] = set()
+        names: set[str] = set()
         for _, value in holder.properties():
             names |= identifiers_in(code_blocks_of(value))
         return names
@@ -1410,7 +1410,7 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
 
     # -- readable array size --------------------------------------------------
 
-    def _register_size_function(self, data_name: str, desc) -> Optional[Tuple[str, List[str]]]:
+    def _register_size_function(self, data_name: str, desc) -> tuple[str, list[str]] | None:
         """Registers (once per distinct name + size expression) the ``<array>_size`` helper for
         ``desc.total_size`` and returns ``(function_name, call_args)``, or ``None`` when not
         worthwhile.
@@ -1501,14 +1501,14 @@ class ReadableKeywordRemover(cpp.DaCeKeywordRemover):
         #: inlined one is gone from the body, so its access text stands in for it. The C++ printer
         #: needs this to type a bare numeric literal against a ``dace::float16`` operand
         #: (``cppunparse.CPPUnparser.dispatch_operand``).
-        self.operand_dtypes: Dict[str, dtypes.typeclass] = {
+        self.operand_dtypes: dict[str, dtypes.typeclass] = {
             conn: entry[3] for conn, entry in memlets.items() if conn is not None
         }
 
     def _is_bare_data(self, name: str) -> bool:
         return name not in self.memlets and name not in self.constants and name in self.sdfg.arrays
 
-    def _scalar_constant_name(self, name: str) -> Optional[str]:
+    def _scalar_constant_name(self, name: str) -> str | None:
         """``name`` if it is a 0-dimensional (scalar) SDFG constant, else None. PromoteConstantTransients promotes a
         literal-only scalar transient to such a constant, which framecode emits as a bare ``constexpr T
         name = v;`` (not ``T name[1]``). A subscript ``name[0]`` on it must lower to the bare ``name`` --
@@ -1518,7 +1518,7 @@ class ReadableKeywordRemover(cpp.DaCeKeywordRemover):
             return name
         return None
 
-    def _bare_access(self, node: ast.AST) -> Optional[str]:
+    def _bare_access(self, node: ast.AST) -> str | None:
         """C++ access string for a direct (inlined) access to an SDFG array."""
         name = rname(node)
         # ptr_increment: an access this map's walk plan covers is emitted as a pointer dereference
@@ -1587,6 +1587,6 @@ class ReadableKeywordRemover(cpp.DaCeKeywordRemover):
                 return ast.copy_location(ast.Name(id=ptrname), node)
         return super().visit_Name(node)
 
-    def _index_list(self, slicenode: ast.AST) -> List[str]:
+    def _index_list(self, slicenode: ast.AST) -> list[str]:
         lowerer = NestedMultiDimSubscriptLowerer(self)
         return [ast.unparse(lowerer.visit(astutils.copy_tree(e))) for e in index_expr_nodes(slicenode)]

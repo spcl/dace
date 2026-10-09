@@ -15,8 +15,6 @@ Only the readable-codegen preprocessing block runs this pass (see ``dace.codegen
 so the legacy generator is unaffected.
 """
 
-from typing import Dict, Optional, Set, Tuple
-
 from dace import data as dt
 from dace.sdfg.sdfg import SDFG
 from dace.transformation import pass_pipeline as ppl
@@ -32,7 +30,7 @@ class CanonicalizeNestedIndexNames(ppl.Pass):
     def should_reapply(self, modified: Modifies) -> bool:
         return False
 
-    def _signature(self, desc) -> Optional[Tuple]:
+    def _signature(self, desc) -> tuple | None:
         # Mirror ExperimentalCPUCodeGen._register_index_function's dedup key exactly: an ``<name>_idx``
         # body is a function of (ndim, strides, offset). Only Array-like descriptors get an index helper;
         # anything else (Scalar / Stream / Structure / ...) cannot collide on one.
@@ -40,15 +38,15 @@ class CanonicalizeNestedIndexNames(ppl.Pass):
             return None
         return (len(desc.shape), tuple(str(s) for s in desc.strides), tuple(str(o) for o in desc.offset))
 
-    def _all_names(self, sdfg: SDFG) -> Set[str]:
-        names: Set[str] = set()
+    def _all_names(self, sdfg: SDFG) -> set[str]:
+        names: set[str] = set()
         for sub in sdfg.all_sdfgs_recursive():
             names |= set(sub.arrays.keys())
             names |= set(sub.constants_prop.keys())
-            names |= set(str(s) for s in sub.free_symbols)
+            names |= {str(s) for s in sub.free_symbols}
         return names
 
-    def _unique(self, base: str, used: Set[str]) -> str:
+    def _unique(self, base: str, used: set[str]) -> str:
         i = 0
         while True:
             cand = "%s_v%d" % (base, i)
@@ -83,9 +81,9 @@ class CanonicalizeNestedIndexNames(ppl.Pass):
                 if e.src_conn == old:
                     e.src_conn = new
 
-    def apply_pass(self, sdfg: SDFG, _pipeline_results) -> Optional[int]:
-        registry: Dict[str, Tuple] = {}  # name -> signature that owns it
-        used: Set[str] = self._all_names(sdfg)
+    def apply_pass(self, sdfg: SDFG, _pipeline_results) -> int | None:
+        registry: dict[str, tuple] = {}  # name -> signature that owns it
+        used: set[str] = self._all_names(sdfg)
         renamed = 0
         # Top SDFG first (its argument / transient names win), then nested SDFGs depth-first, so a nested
         # occurrence is always the one renamed on a differing-signature collision.

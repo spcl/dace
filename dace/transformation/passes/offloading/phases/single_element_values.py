@@ -1,13 +1,13 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 from ordered_set import OrderedSet
 
+import dace.transformation.passes.offloading.offloading_helpers as helpers
 from dace import data, dtypes
 from dace.sdfg import SDFG
 from dace.transformation.passes.length_one_array_scalar_conversion import (
     ConvertLengthOneArraysToScalars,
     ConvertScalarsToLengthOneArrays,
 )
-import dace.transformation.passes.offloading.offloading_helpers as helpers
 
 
 def change_single_element_containers(sdfg: SDFG, exceptions: OrderedSet[str]) -> OrderedSet[str]:

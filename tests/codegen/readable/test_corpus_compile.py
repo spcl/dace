@@ -58,7 +58,7 @@ SYMBOL_SIZE = 13
 
 #: Kernels where the uniform SYMBOL_SIZE is too large. scattering_self is an 8-deep nest, so 13 per
 #: axis is ~8e8 iterations and took the CI worker down; two per axis still exercises the shape.
-SYMBOL_OVERRIDES = {"scattering_self": {s: 2 for s in ("Nkz", "NE", "Nqz", "Nw", "N3D", "NA", "NB", "Norb")}}
+SYMBOL_OVERRIDES = {"scattering_self": dict.fromkeys(("Nkz", "NE", "Nqz", "Nw", "N3D", "NA", "NB", "Norb"), 2)}
 
 #: Integer inputs that index an axis, as ``{kernel: {input: bounding symbol}}``; the generic integer
 #: range would read out of bounds once the axis is smaller.

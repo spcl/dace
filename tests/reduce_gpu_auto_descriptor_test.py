@@ -14,8 +14,8 @@ import pytest
 
 import dace
 from dace import data, dtypes
-from dace.sdfg import nodes
 from dace.libraries.standard.nodes import Reduce
+from dace.sdfg import nodes
 
 
 def gpu_auto_reduce_sdfg() -> dace.SDFG:

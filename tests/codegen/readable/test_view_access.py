@@ -17,7 +17,6 @@ kernels.
 """
 
 import copy
-
 import re
 
 import numpy as np

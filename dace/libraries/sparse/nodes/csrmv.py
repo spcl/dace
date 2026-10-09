@@ -1,15 +1,18 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 from copy import deepcopy as dc
-from dace import dtypes, memlet as mm, properties, data as dt, propagate_memlets_sdfg
-from dace.symbolic import symstr
+
+import numpy as np
+
 import dace.library
-from dace import SDFG, SDFGState
 import dace.sdfg.nodes
 import dace.sdfg.utils
-from dace.transformation.transformation import ExpandTransformation
-from dace.libraries.blas.blas_helpers import to_blastype, check_access, to_cublas_computetype
+from dace import SDFG, SDFGState, dtypes, propagate_memlets_sdfg, properties
+from dace import data as dt
+from dace import memlet as mm
+from dace.libraries.blas.blas_helpers import check_access, to_blastype, to_cublas_computetype
 from dace.libraries.sparse import environments
-import numpy as np
+from dace.symbolic import symstr
+from dace.transformation.transformation import ExpandTransformation
 
 
 def _is_complex(dtype):
@@ -26,13 +29,9 @@ def _cast_to_dtype_str(value, dtype: dace.dtypes.typeclass) -> str:
     if _is_complex(dtype):
         cast_value = complex(value)
 
-        return "dace.{type}({real}, {imag})".format(
-            type=dace.dtype_to_typeclass(dtype).to_string(),
-            real=cast_value.real,
-            imag=cast_value.imag,
-        )
+        return f"dace.{dace.dtype_to_typeclass(dtype).to_string()}({cast_value.real}, {cast_value.imag})"
     else:
-        return "dace.{}({})".format(dace.dtype_to_typeclass(dtype).to_string(), value)
+        return f"dace.{dace.dtype_to_typeclass(dtype).to_string()}({value})"
 
 
 def _get_csrmv_operands(
@@ -71,7 +70,7 @@ def _get_csrmv_operands(
             result[edge.src_conn] = (edge, outer_array, size, strides)
     for name, res in result.items():
         if res is None:
-            raise ValueError('Matrix multiplication connector "{}" not found.'.format(name))
+            raise ValueError(f'Matrix multiplication connector "{name}" not found.')
     return result
 
 
@@ -114,7 +113,7 @@ class ExpandCSRMVPure(ExpandTransformation):
             init_state = nsdfg.add_state_before(nstate, node.label + "_initstate")
             init_state.add_mapped_tasklet(
                 "csrmv_init",
-                {"_o%d" % i: "0:%s" % symstr(d) for i, d in enumerate(shape_c)},
+                {"_o%d" % i: f"0:{symstr(d)}" for i, d in enumerate(shape_c)},
                 {},
                 "out = 0",
                 {"out": dace.Memlet.simple("_c", ",".join(["_o%d" % i for i in range(len(shape_c))]))},
@@ -139,7 +138,7 @@ class ExpandCSRMVPure(ExpandTransformation):
 
             init_state.add_mapped_tasklet(
                 "csrmv_init",
-                {"_o%d" % i: "0:%s" % symstr(d) for i, d in enumerate(cdesc.shape)},
+                {"_o%d" % i: f"0:{symstr(d)}" for i, d in enumerate(cdesc.shape)},
                 {"_in": dace.Memlet.simple("_cin", ",".join(["_o%d" % i for i in range(len(cdesc.shape))]))},
                 f"_out = {node.beta} * _in",
                 {"_out": dace.Memlet.simple("_c", ",".join(["_o%d" % i for i in range(len(cdesc.shape))]))},
@@ -510,6 +509,13 @@ class ExpandCSRMVCuSPARSE(ExpandTransformation):
             nstate.add_edge(gb, None, tasklet, "_conn_b", dace.Memlet.from_array("_b_gpu", bdesc))
             nstate.add_edge(tasklet, "_conn_c", gc, None, dace.Memlet.from_array("_c_gpu", cdesc))
             nstate.add_nedge(gc, c, dace.Memlet.from_array("_c", cdesc))
+            if node.beta != 0.0:
+                # cuSPARSE accumulates beta * C in place, so C starts from the input values
+                cin_desc = dc(nsdfg.arrays["_c"])
+                nsdfg.add_datadesc("_cin", cin_desc)
+                gcin = nstate.add_access("_c_gpu")
+                nstate.add_nedge(nstate.add_read("_cin"), gcin, dace.Memlet.from_array("_cin", cin_desc))
+                nstate.add_edge(gcin, None, tasklet, "_conn_cin", dace.Memlet.from_array("_c_gpu", cdesc))
 
             return nsdfg
         # End of copy to GPU
@@ -588,9 +594,7 @@ class CSRMV(dace.sdfg.nodes.LibraryNode):
             raise ValueError("Expected exactly one output from matrix-vector product")
         if len(size_a_rowptr) != 1 or len(size_a_cols) != 1 or len(size_a_vals) != 1:
             raise ValueError(
-                "Expected rowptr,cols,vals of CSR matrix A as 1D array inputs, got {},{},{}".format(
-                    len(size_a_rowptr), len(size_a_cols), len(size_a_vals)
-                )
+                f"Expected rowptr,cols,vals of CSR matrix A as 1D array inputs, got {len(size_a_rowptr)},{len(size_a_cols)},{len(size_a_vals)}"
             )
         if len(size_b) != 1:
             raise ValueError("Matrix-vector product only supported on vector B")

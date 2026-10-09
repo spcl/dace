@@ -1,26 +1,26 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-from typing import Any, Dict, Optional, Tuple
+from typing import Any
 
 from ordered_set import OrderedSet
 
+import dace.transformation.passes.offloading.offloading_helpers as helpers
 from dace import dtypes, properties
 from dace.sdfg import SDFG
 from dace.sdfg.utils import require_structured_control_flow
 from dace.transformation import pass_pipeline as ppl
-from dace.transformation.transformation import explicit_cf_compatible
 from dace.transformation.passes import FullMapFusion
-from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising
-import dace.transformation.passes.offloading.offloading_helpers as helpers
+from dace.transformation.passes.fold_constant_tables import FoldConstantTables
 from dace.transformation.passes.offloading.host_maps import HostMapSpec, host_maps, maps_pinned_by_host_loops
 from dace.transformation.passes.offloading.offloading_ir_node import OffloadingIRNode
 from dace.transformation.passes.offloading.phases.copy_analysis import CopyAnalysis
 from dace.transformation.passes.offloading.phases.copy_insertion import CopyInsertion
-from dace.transformation.passes.fold_constant_tables import FoldConstantTables
 from dace.transformation.passes.offloading.phases.host_level_bodies import host_level_nested_sdfgs, prepare_body
 from dace.transformation.passes.offloading.phases.schedules import assign_schedules
 from dace.transformation.passes.offloading.phases.single_element_copy_optimization import single_element_copies_into_map
 from dace.transformation.passes.offloading.phases.single_element_values import change_single_element_containers
 from dace.transformation.passes.offloading.phases.single_iteration_maps import make_size1_map_wrappers
+from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising
+from dace.transformation.transformation import explicit_cf_compatible
 
 
 @properties.make_properties
@@ -49,9 +49,9 @@ class OffloadToAccelerator(ppl.Pass):
     def __init__(
         self,
         host_maps: HostMapSpec = False,
-        max_iterations: Optional[int] = None,
-        verbose: Optional[bool] = None,
-        pin_host_loop_maps: Optional[bool] = None,
+        max_iterations: int | None = None,
+        verbose: bool | None = None,
+        pin_host_loop_maps: bool | None = None,
         **kwargs: Any,
     ) -> None:
         """
@@ -82,7 +82,7 @@ class OffloadToAccelerator(ppl.Pass):
     def depends_on(self) -> OrderedSet[type[ppl.Pass]]:
         return OrderedSet([ControlFlowRaising])
 
-    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[OrderedSet[str]]:
+    def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> OrderedSet[str] | None:
         """
         :return: every container left in a GPU storage, qualified by its SDFG's id, or None if there is none.
         """
@@ -131,7 +131,7 @@ class OffloadToAccelerator(ppl.Pass):
                 placed_on_gpu |= self.offload_level(node.sdfg, host_map_entries)
         return placed_on_gpu
 
-    def place(self, sdfg: SDFG, host_map_entries: OrderedSet) -> Tuple[CopyAnalysis, OffloadingIRNode, bool]:
+    def place(self, sdfg: SDFG, host_map_entries: OrderedSet) -> tuple[CopyAnalysis, OffloadingIRNode, bool]:
         """Analyze, wrap hybrid states and re-type single elements to a fixpoint; also say if anything was wrapped."""
         converted: OrderedSet[str] = OrderedSet()
         wrapped = False

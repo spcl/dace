@@ -21,7 +21,7 @@ child (repo rule) via :func:`conftest.run_isolated`.
 
 import copy
 import re
-from typing import Callable, Dict
+from collections.abc import Callable
 
 import numpy as np
 
@@ -119,8 +119,8 @@ def nested_same_name_sdfg(name: str) -> dace.SDFG:
 # Equivalence + codegen-inspection helpers
 # --------------------------------------------------------------------------- #
 def run_variant(
-    build: Callable[[str], dace.SDFG], name: str, implementation: str, base: Dict[str, object]
-) -> Dict[str, np.ndarray]:
+    build: Callable[[str], dace.SDFG], name: str, implementation: str, base: dict[str, object]
+) -> dict[str, np.ndarray]:
     """Build + compile + run one variant on a deep copy of ``base``; return outputs.
 
     Runs in a forked child (repo rule) via ``run_isolated``.
@@ -132,7 +132,7 @@ def run_variant(
     :return: The ndarray outputs keyed by name.
     """
 
-    def work() -> Dict[str, np.ndarray]:
+    def work() -> dict[str, np.ndarray]:
         sdfg = build(name)
         arrays = copy.deepcopy(base)
         sdfg.compile()(**arrays)
@@ -143,8 +143,8 @@ def run_variant(
 
 
 def assert_bit_exact(
-    build: Callable[[str], dace.SDFG], base_name: str, base: Dict[str, object]
-) -> Dict[str, np.ndarray]:
+    build: Callable[[str], dace.SDFG], base_name: str, base: dict[str, object]
+) -> dict[str, np.ndarray]:
     """Run ``build`` under legacy and experimental; assert every output is bit-exact.
 
     :param build: Callable building the SDFG from a name.

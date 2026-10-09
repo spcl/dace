@@ -18,14 +18,13 @@ import pytest
 
 import dace
 from dace.config import set_temporary
-
 from tests.codegen.readable.conftest import (
-    LEGACY,
     EXPERIMENTAL,
-    use_implementation,
+    LEGACY,
+    experimental_available,
     generated_code,
     run_isolated,
-    experimental_available,
+    use_implementation,
 )
 
 N = dace.symbol("N")

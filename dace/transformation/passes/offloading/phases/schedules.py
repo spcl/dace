@@ -1,12 +1,10 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """``GPU_Device`` at a host level, ``Sequential`` below one; a host map keeps its body a host level."""
 
-from typing import Dict, List, Optional
-
 from ordered_set import OrderedSet
 
 from dace import dtypes
-from dace.sdfg import nodes, SDFG
+from dace.sdfg import SDFG, nodes
 
 
 def assign_schedules(
@@ -19,7 +17,7 @@ def assign_schedules(
     """
 
     def walk(
-        scope_children: Dict[Optional[nodes.Node], List[nodes.Node]], entry: Optional[nodes.MapEntry], host_level: bool
+        scope_children: dict[nodes.Node | None, list[nodes.Node]], entry: nodes.MapEntry | None, host_level: bool
     ) -> None:
         for node in scope_children.get(entry, ()):
             on_host = node in host_map_entries or node in pinned_maps

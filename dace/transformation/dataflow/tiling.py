@@ -3,7 +3,7 @@
 tiling transformation."""
 
 from dace import symbolic
-from dace.properties import make_properties, Property, ShapeProperty
+from dace.properties import Property, ShapeProperty, make_properties
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.sdfg import SDFG

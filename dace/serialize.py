@@ -1,18 +1,19 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
-from dataclasses import is_dataclass
 import enum
 import json
+import warnings
+from dataclasses import is_dataclass
+
 import numpy as np
 import sympy
-import warnings
-from dace import attr_enum
+
 import dace.dtypes
-from dace import config
+from dace import attr_enum, config
 from dace.utils import until
 
 
-class SerializableObject(object):
+class SerializableObject:
     json_obj = {}
     typename = None
 
@@ -291,9 +292,7 @@ def set_properties_from_json(object_with_properties, json_obj, context=None, ign
                     # objects. In the interest of time, we're not failing here, but
                     # should untangle this eventually
                     warnings.warn(
-                        "Failed to parse object {} for property {} of type {}. Error was: {}".format(
-                            val, prop_name, prop, err
-                        )
+                        f"Failed to parse object {val} for property {prop_name} of type {prop}. Error was: {err}"
                     )
                     raise
 
@@ -301,7 +300,7 @@ def set_properties_from_json(object_with_properties, json_obj, context=None, ign
 
     remaining_properties = source_properties - ignore_properties
     # Ignore all metadata "properties" saved for editing
-    remaining_properties = set(prop for prop in remaining_properties if not prop.startswith("_meta"))
+    remaining_properties = {prop for prop in remaining_properties if not prop.startswith("_meta")}
     if len(remaining_properties) > 0:
         # TODO: elevate to error once #28 is fixed.
         warnings.warn("Unused properties: {}".format(", ".join(sorted(remaining_properties))))

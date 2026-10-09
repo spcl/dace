@@ -1,12 +1,11 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Build the offloading IR: per block, which arrays are wanted on the host and which on the device."""
 
-from typing import Dict, List, Optional, Tuple
-
 from ordered_set import OrderedSet
 
+import dace.transformation.passes.offloading.offloading_helpers as helpers
 from dace import data, dtypes
-from dace.sdfg import nodes, SDFG
+from dace.sdfg import SDFG, nodes
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.state import (
     BreakBlock,
@@ -17,11 +16,9 @@ from dace.sdfg.state import (
     ReturnBlock,
     SDFGState,
 )
-
-import dace.transformation.passes.offloading.offloading_helpers as helpers
 from dace.transformation.passes.offloading.offloading_ir_node import OffloadingIRNode
 
-Locations = Tuple[OrderedSet[str], OrderedSet[str]]
+Locations = tuple[OrderedSet[str], OrderedSet[str]]
 
 
 class CopyAnalysis:
@@ -35,7 +32,7 @@ class CopyAnalysis:
     def __init__(
         self,
         sdfg: SDFG,
-        scopes: Dict[SDFGState, Dict[nodes.Node, Optional[nodes.Node]]],
+        scopes: dict[SDFGState, dict[nodes.Node, nodes.Node | None]],
         host_maps: OrderedSet[nodes.MapEntry],
     ) -> None:
         self.sdfg = sdfg
@@ -62,7 +59,7 @@ class CopyAnalysis:
         IR.close.cpu_set = initially_on_cpu
 
         # Snapshot before propagation: the names a node inherits are the ones the hoist may move.
-        own_use: Dict[OffloadingIRNode, OrderedSet[str]] = {}
+        own_use: dict[OffloadingIRNode, OrderedSet[str]] = {}
 
         def record(node: OffloadingIRNode) -> None:
             own_use[node] = node.cpu_set | node.gpu_set
@@ -306,7 +303,7 @@ def append(curr_node: OffloadingIRNode, node: OffloadingIRNode) -> OffloadingIRN
 
 def section_locations(IR: OffloadingIRNode, first: bool) -> Locations:
     """The first (or last) location of each array along the section ``IR`` opens, on its own level."""
-    location_on_gpu: Dict[str, bool] = {}
+    location_on_gpu: dict[str, bool] = {}
 
     def gather(node: OffloadingIRNode) -> None:
         for on_gpu, names in ((True, node.gpu_set), (False, node.cpu_set)):
@@ -321,7 +318,7 @@ def section_locations(IR: OffloadingIRNode, first: bool) -> Locations:
     )
 
 
-def hoist_device_copies(IR: OffloadingIRNode, own_use: Dict[OffloadingIRNode, OrderedSet[str]]) -> None:
+def hoist_device_copies(IR: OffloadingIRNode, own_use: dict[OffloadingIRNode, OrderedSet[str]]) -> None:
     """Move a host-to-device copy above the states that do not touch the array.
 
     Propagation walks forwards, so an array first used on the device late stays on the host until
@@ -330,7 +327,7 @@ def hoist_device_copies(IR: OffloadingIRNode, own_use: Dict[OffloadingIRNode, Or
     array does not care where it is, so the copy moves above it, but only when every successor wants
     the array on the device: a branch leaving it on the host must not pay for it.
     """
-    nodes_in_order: List[OffloadingIRNode] = []
+    nodes_in_order: list[OffloadingIRNode] = []
     helpers.traverse_IR(IR, nodes_in_order.append)
 
     # Hoisting can free the state above, so this runs to a fixpoint; names never move back.

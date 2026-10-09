@@ -2,14 +2,14 @@
 """Analysis pass that infers CUDA grid and block dimensions for GPU device maps."""
 
 import warnings
-from typing import Dict, List, Optional, Set, Tuple
 
 import sympy
 
 from dace import SDFG, SDFGState, dtypes, symbolic
 from dace.codegen.targets.cuda import default_block_size, gpu_scope_maps_recursive, thread_block_extent
 from dace.sdfg import nodes
-from dace.transformation import gpu_helpers, pass_pipeline as ppl
+from dace.transformation import gpu_helpers
+from dace.transformation import pass_pipeline as ppl
 from dace.transformation.dataflow.add_threadblock_map import to_3d_dims, validate_block_size_limits
 
 
@@ -20,13 +20,13 @@ class InferGPUGridAndBlockSize(ppl.Pass):
     """
 
     def apply_pass(
-        self, sdfg: SDFG, kernels_with_added_tb_maps: Set[nodes.MapEntry]
-    ) -> Dict[nodes.MapEntry, Tuple[List, List]]:
+        self, sdfg: SDFG, kernels_with_added_tb_maps: set[nodes.MapEntry]
+    ) -> dict[nodes.MapEntry, tuple[list, list]]:
         """Map each ``GPU_Device`` entry to ``(grid, block)``; ``kernels_with_added_tb_maps`` read ``gpu_block_size``.
 
         :raises ValueError: Explicit and inferred block sizes conflict.
         """
-        kernel_dimensions_map: Dict[nodes.MapEntry, Tuple[List, List]] = dict()
+        kernel_dimensions_map: dict[nodes.MapEntry, tuple[list, list]] = dict()
         for _, state, map_entry in gpu_helpers.gpu_kernels(sdfg):
             raw_grid = map_entry.map.range.size(True)[::-1]
             grid_size = to_3d_dims(raw_grid)
@@ -47,7 +47,7 @@ class InferGPUGridAndBlockSize(ppl.Pass):
 
         return kernel_dimensions_map
 
-    def get_inserted_gpu_block_size(self, kernel_map_entry: nodes.MapEntry) -> List:
+    def get_inserted_gpu_block_size(self, kernel_map_entry: nodes.MapEntry) -> list:
         """The ``gpu_block_size`` of a kernel whose thread-block map ``AddThreadBlockMap`` inserted."""
         gpu_block_size = kernel_map_entry.map.gpu_block_size
 
@@ -59,7 +59,7 @@ class InferGPUGridAndBlockSize(ppl.Pass):
 
         return gpu_block_size
 
-    def infer_gpu_block_size(self, state: SDFGState, kernel_map_entry: nodes.MapEntry) -> Optional[List]:
+    def infer_gpu_block_size(self, state: SDFGState, kernel_map_entry: nodes.MapEntry) -> list | None:
         """The block size over the nested ``GPU_ThreadBlock`` maps (a set ``gpu_block_size`` must match), or ``None``."""
         threadblock_maps = [
             (tb_map, sym_map)

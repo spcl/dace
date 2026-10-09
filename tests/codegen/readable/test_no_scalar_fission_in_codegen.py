@@ -17,7 +17,6 @@ import numpy as np
 
 import dace
 from dace import dtypes
-
 from tests.codegen.readable.conftest import (
     EXPERIMENTAL,
     LEGACY,

@@ -6,13 +6,13 @@ Tests related to try_parse_state_struct
 import ctypes
 import os
 
-import pytest
 import numpy as np
+import pytest
 
 import dace
 import dace.library
-from dace import dtypes, Config
-from dace.codegen import codeobject, targets, compiler, compiled_sdfg, common
+from dace import Config, dtypes
+from dace.codegen import codeobject, common, compiled_sdfg, compiler, targets
 
 
 @pytest.fixture

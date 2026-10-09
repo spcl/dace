@@ -1,9 +1,9 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 
-import pytest
-import dace
 import numpy as np
+import pytest
 
+import dace
 from dace.sdfg.state import ConditionalBlock
 from dace.transformation.pass_pipeline import FixedPointPipeline
 from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising

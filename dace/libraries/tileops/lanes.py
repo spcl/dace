@@ -110,10 +110,8 @@ def nested_loops(widths: Sequence[int], body: str, indent: str = "    ") -> str:
         if constant_trip_count(w):
             lines.append(f"{indent * d}#pragma unroll")
         lines.append(f"{indent * d}for (std::size_t __l{d} = 0; __l{d} < {w}; ++__l{d}) {{")
-    for line in body.splitlines():
-        lines.append(f"{indent * K}{line}")
-    for d in reversed(range(K)):
-        lines.append(f"{indent * d}}}")
+    lines.extend(f"{indent * K}{line}" for line in body.splitlines())
+    lines.extend(f"{indent * d}}}" for d in reversed(range(K)))
     return "\n".join(lines)
 
 

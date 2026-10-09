@@ -20,7 +20,6 @@ CPU generator instance -- inside ``__global__`` kernels.
 """
 
 import copy
-
 import re
 
 import numpy as np

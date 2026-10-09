@@ -1,9 +1,9 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Reconciling an explicit ``gpu_block_size`` with the sizes of nested ``GPU_ThreadBlock`` maps."""
 
-import dace
 import pytest
 
+import dace
 from dace.transformation.passes.analysis.infer_gpu_grid_and_block_size import InferGPUGridAndBlockSize
 
 

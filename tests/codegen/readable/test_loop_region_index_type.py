@@ -18,7 +18,6 @@ import pytest
 import dace
 from dace.config import set_temporary
 from dace.sdfg.state import LoopRegion
-
 from tests.codegen.readable.conftest import run_isolated
 
 

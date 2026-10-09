@@ -7,8 +7,8 @@ from dace.memlet import Memlet
 from dace.transformation.passes.gpu_specialization.gpu_specialization_pipeline import GPUStreamPipeline
 from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (
     get_gpu_stream_array_name,
-    is_stream_wiring_applied,
     is_inside_gpu_device_kernel,
+    is_stream_wiring_applied,
 )
 
 
