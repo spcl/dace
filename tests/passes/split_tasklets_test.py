@@ -1,12 +1,13 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
-import typing
-import dace
-import re
+import ast
 import copy
-from dace.transformation.passes.split_tasklets import SplitTasklets
+import re
+
 import numpy
 import pytest
-import ast
+
+import dace
+from dace.transformation.passes.split_tasklets import SplitTasklets
 
 example_expressions = [
     "cfl_w_limit_out = (0.85 / dtime_0_in)",
@@ -92,8 +93,7 @@ def _generate_double_tasklet_sdfg(expression_strs: typing.Tuple[str, str]) -> da
             assert var != "tmp"
             sdfg.add_array(name=var + "_ARR", shape=(1,), dtype=dace.float64)
         if i == len(expression_strs) - 1:
-            for var in lhs_vars:
-                out_accesses.add(state.add_access(var + "_ARR"))
+            out_accesses.update(state.add_access(var + "_ARR") for var in lhs_vars)
 
         for var in rhs_vars:
             if var == "tmp":

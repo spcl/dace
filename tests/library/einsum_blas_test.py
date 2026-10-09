@@ -4,11 +4,12 @@ These tests are mostly from daceml, testing that the einsums for the BERT encode
 nodes.
 """
 
-import pytest
 import numpy as np
+import pytest
+
 import dace
-from dace.library import change_default
 from dace.libraries import blas
+from dace.library import change_default
 
 MKL_AND_CUBLAS = [pytest.param("cuBLAS", marks=pytest.mark.gpu), pytest.param("MKL", marks=pytest.mark.mkl)]
 

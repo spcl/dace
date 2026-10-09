@@ -3,10 +3,11 @@
 
 import copy
 import functools
+import itertools
 import os
 import warnings
 from collections import defaultdict
-from typing import TYPE_CHECKING, Dict, List, Set
+from typing import TYPE_CHECKING
 
 import networkx as nx
 
@@ -38,14 +39,13 @@ def validate(graph: "dace.sdfg.graph.SubgraphView"):
 def validate_control_flow_region(
     sdfg: "SDFG",
     region: "ControlFlowRegion",
-    initialized_transients: Set[str],
+    initialized_transients: set[str],
     symbols: dict,
-    references: Set[int] = None,
+    references: set[int] = None,
     **context: bool,
 ):
-    from dace.sdfg.state import SDFGState, ControlFlowRegion, ConditionalBlock, LoopRegion
     from dace.sdfg.scope import is_in_scope
-    from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, SDFGState
+    from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
 
     if len(region.source_nodes()) > 1:
         try:
@@ -118,7 +118,7 @@ def validate_control_flow_region(
         if any(not dtypes.validate_name(s) for s in issyms):
             invalid = next(s for s in issyms if not dtypes.validate_name(s))
             eid = region.edge_id(edge)
-            raise InvalidSDFGInterstateEdgeError("Invalid interstate symbol name %s" % invalid, sdfg, eid)
+            raise InvalidSDFGInterstateEdgeError(f"Invalid interstate symbol name {invalid}", sdfg, eid)
 
         # Ensure accessed data containers in assignments and conditions are accessible in this context
         ise_memlets = edge.data.get_read_memlets(sdfg.arrays)
@@ -220,7 +220,7 @@ def validate_control_flow_region(
         issyms = edge.data.assignments.keys()
         if any(not dtypes.validate_name(s) for s in issyms):
             invalid = next(s for s in issyms if not dtypes.validate_name(s))
-            raise InvalidSDFGInterstateEdgeError("Invalid interstate symbol name %s" % invalid, sdfg, eid)
+            raise InvalidSDFGInterstateEdgeError(f"Invalid interstate symbol name {invalid}", sdfg, eid)
 
         # Ensure accessed data containers in assignments and conditions are accessible in this context
         ise_memlets = edge.data.get_read_memlets(sdfg.arrays)
@@ -247,7 +247,7 @@ def validate_control_flow_region(
     _no_writes_to_scalars_or_arrays_on_interstate_edges(sdfg)
 
 
-def validate_sdfg(sdfg: "dace.sdfg.SDFG", references: Set[int] = None, **context: bool):
+def validate_sdfg(sdfg: "dace.sdfg.SDFG", references: set[int] = None, **context: bool):
     """Verifies the correctness of an SDFG by applying multiple tests.
 
     :param sdfg: The SDFG to verify.
@@ -286,11 +286,11 @@ def validate_sdfg(sdfg: "dace.sdfg.SDFG", references: Set[int] = None, **context
             if isinstance(cfg, ConditionalBlock):
                 continue
             blocks = cfg.nodes()
-            if len(blocks) != len(set([s.label for s in blocks])):
+            if len(blocks) != len({s.label for s in blocks}):
                 raise InvalidSDFGError("Found multiple blocks with the same name in " + cfg.name, sdfg, None)
 
         # Check the names of data descriptors and co.
-        seen_names: Set[str] = set()
+        seen_names: set[str] = set()
         for obj_names in [sdfg.arrays.keys(), sdfg.symbols.keys()]:
             if not seen_names.isdisjoint(obj_names):
                 raise InvalidSDFGError(
@@ -404,7 +404,7 @@ def validate_sdfg(sdfg: "dace.sdfg.SDFG", references: Set[int] = None, **context
 
             # Validate array names
             if name is not None and not dtypes.validate_name(name):
-                raise InvalidSDFGError("Invalid array name %s" % name, sdfg, None)
+                raise InvalidSDFGError(f"Invalid array name {name}", sdfg, None)
             # Allocation lifetime checks
             if isinstance(desc, (dt.View, dt.Reference)) and desc.lifetime != dtypes.AllocationLifetime.Scope:
                 raise InvalidSDFGError(
@@ -418,8 +418,8 @@ def validate_sdfg(sdfg: "dace.sdfg.SDFG", references: Set[int] = None, **context
                 and desc.storage == dtypes.StorageType.Register
             ):
                 raise InvalidSDFGError(
-                    "Array %s cannot be both persistent/external and use Register as "
-                    "storage type. Please use a different storage location." % name,
+                    f"Array {name} cannot be both persistent/external and use Register as "
+                    "storage type. Please use a different storage location.",
                     sdfg,
                     None,
                 )
@@ -449,7 +449,7 @@ def validate_sdfg(sdfg: "dace.sdfg.SDFG", references: Set[int] = None, **context
         raise
 
 
-def _accessible(sdfg: "dace.sdfg.SDFG", container: str, context: Dict[str, bool]):
+def _accessible(sdfg: "dace.sdfg.SDFG", container: str, context: dict[str, bool]):
     """
     Helper function that returns False if a data container cannot be accessed in the current SDFG context.
     """
@@ -488,7 +488,7 @@ def _is_out_of_bounds_index(index, offset, size) -> bool:
     return ((index + offset) >= size) == True
 
 
-def _is_scalar(edge: "gr.MultiConnectorEdge[Memlet]", memlet_path: List["gr.MultiConnectorEdge[Memlet]"]):
+def _is_scalar(edge: "gr.MultiConnectorEdge[Memlet]", memlet_path: list["gr.MultiConnectorEdge[Memlet]"]):
     """
     Helper function that determines if a memlet is going to dereference a scalar value.
     Returns False in any case the memlet _may not_ be dereferenced (but could be).
@@ -524,9 +524,9 @@ def validate_state(
     state: "dace.sdfg.SDFGState",
     state_id: int = None,
     sdfg: "dace.sdfg.SDFG" = None,
-    symbols: Dict[str, dtypes.typeclass] = None,
-    initialized_transients: Set[str] = None,
-    references: Set[int] = None,
+    symbols: dict[str, dtypes.typeclass] = None,
+    initialized_transients: set[str] = None,
+    references: set[int] = None,
     **context: bool,
 ):
     """Verifies the correctness of an SDFG state by applying multiple
@@ -630,7 +630,7 @@ def validate_state(
             for iconn in node.in_connectors:
                 if iconn is not None and iconn.startswith("IN_") and ("OUT_" + iconn[3:]) not in node.out_connectors:
                     raise InvalidSDFGNodeError(
-                        "No match for input connector %s in output connectors" % iconn,
+                        f"No match for input connector {iconn} in output connectors",
                         state.parent_graph,
                         state_id,
                         nid,
@@ -638,7 +638,7 @@ def validate_state(
             for oconn in node.out_connectors:
                 if oconn is not None and oconn.startswith("OUT_") and ("IN_" + oconn[4:]) not in node.in_connectors:
                     raise InvalidSDFGNodeError(
-                        "No match for output connector %s in input connectors" % oconn,
+                        f"No match for output connector {oconn} in input connectors",
                         state.parent_graph,
                         state_id,
                         nid,
@@ -684,9 +684,7 @@ def validate_state(
                     and not isinstance(arr, dt.Stream)
                 ):
                     if node.setzero == False:
-                        warnings.warn(
-                            'WARNING: Use of uninitialized transient "%s" in state "%s"' % (node.data, state.label)
-                        )
+                        warnings.warn(f'WARNING: Use of uninitialized transient "{node.data}" in state "{state.label}"')
 
                 # Register initialized transients
                 if arr.transient and state.in_degree(node) > 0:
@@ -714,9 +712,9 @@ def validate_state(
                 if (not arr.transient) and (not only_empty_inputs):
                     if node_data not in nsdfg_node.out_connectors:
                         raise InvalidSDFGNodeError(
-                            "Data descriptor %s is "
+                            f"Data descriptor {node.data} is "
                             "written to, but only given to nested SDFG as an "
-                            "input connector" % node.data,
+                            "input connector",
                             state.parent_graph,
                             state_id,
                             nid,
@@ -752,7 +750,7 @@ def validate_state(
                 ):
                     if not isinstance(node, nd.EntryNode):  # Special case for dynamic map inputs
                         raise InvalidSDFGNodeError(
-                            "Connector name '%s' is already used as a symbol, constant, or array name" % conn,
+                            f"Connector name '{conn}' is already used as a symbol, constant, or array name",
                             state.parent_graph,
                             state_id,
                             nid,
@@ -767,7 +765,7 @@ def validate_state(
                     incoming_edges += 1
 
             if incoming_edges == 0:
-                raise InvalidSDFGNodeError("Dangling in-connector %s" % conn, state.parent_graph, state_id, nid)
+                raise InvalidSDFGNodeError(f"Dangling in-connector {conn}", state.parent_graph, state_id, nid)
             # Connectors may have only one incoming edge
             # Due to input connectors of scope exit, this is only correct
             # in some cases:
@@ -788,7 +786,7 @@ def validate_state(
                     outgoing_edges += 1
 
             if outgoing_edges == 0:
-                raise InvalidSDFGNodeError("Dangling out-connector %s" % conn, state.parent_graph, state_id, nid)
+                raise InvalidSDFGNodeError(f"Dangling out-connector {conn}", state.parent_graph, state_id, nid)
 
             # In case of scope exit or code node, only one outgoing edge per
             # connector is allowed.
@@ -1002,7 +1000,7 @@ def validate_state(
                     )
 
                 # Bounds
-                if any(_is_negative_index(minel, off) for minel, off in zip(e.data.subset.min_element(), arr.offset)):
+                if any(itertools.starmap(_is_negative_index, zip(e.data.subset.min_element(), arr.offset))):
                     # In case of dynamic memlet, only output a warning
                     if e.data.dynamic:
                         warnings.warn(f"Potential negative out-of-bounds memlet subset: {e}")
@@ -1033,9 +1031,7 @@ def validate_state(
                     )
 
                 # Bounds
-                if any(
-                    _is_negative_index(minel, off) for minel, off in zip(e.data.other_subset.min_element(), arr.offset)
-                ):
+                if any(itertools.starmap(_is_negative_index, zip(e.data.other_subset.min_element(), arr.offset))):
                     if e.data.dynamic:
                         warnings.warn(f"Potential negative out-of-bounds memlet other_subset: {e}")
                     else:
@@ -1060,13 +1056,13 @@ def validate_state(
                 undefs = e.data.subset.free_symbols - set(defined_symbols.keys())
                 if len(undefs) > 0:
                     raise InvalidSDFGEdgeError(
-                        "Undefined symbols %s found in memlet subset" % undefs, state.parent_graph, state_id, eid
+                        f"Undefined symbols {undefs} found in memlet subset", state.parent_graph, state_id, eid
                     )
                 if e.data.other_subset is not None:
                     undefs = e.data.other_subset.free_symbols - set(defined_symbols.keys())
                     if len(undefs) > 0:
                         raise InvalidSDFGEdgeError(
-                            "Undefined symbols %s found in memlet other_subset" % undefs,
+                            f"Undefined symbols {undefs} found in memlet other_subset",
                             state.parent_graph,
                             state_id,
                             eid,
@@ -1091,9 +1087,7 @@ def validate_state(
                 if e.data.is_empty():
                     if isinstance(dst_node, nd.ExitNode):
                         pass
-                    if isinstance(dst_node, nd.Tasklet) and all(
-                        {oe.data.is_empty() for oe in state.out_edges(dst_node)}
-                    ):
+                    if isinstance(dst_node, nd.Tasklet) and all(oe.data.is_empty() for oe in state.out_edges(dst_node)):
                         pass
                 else:
                     raise InvalidSDFGEdgeError(
@@ -1283,10 +1277,7 @@ class InvalidSDFGInterstateEdgeError(InvalidSDFGError):
     def __str__(self):
         if self.edge_id is not None:
             e = self.sdfg.edges()[self.edge_id]
-            edgestr = " (at edge %s -> %s)" % (
-                str(e.src),
-                str(e.dst),
-            )
+            edgestr = f" (at edge {str(e.src)} -> {str(e.dst)})"
             locinfo_src = self._getlineinfo(e.src)
             locinfo_dst = self._getlineinfo(e.dst)
         else:
@@ -1383,13 +1374,7 @@ class InvalidSDFGEdgeError(InvalidSDFGError):
         # A control flow block that is not a state has no edges to index into
         if self.edge_id is not None and isinstance(state, SDFGState):
             e = state.edges()[self.edge_id]
-            edgestr = ", edge %s (%s:%s -> %s:%s)" % (
-                str(e.data),
-                str(e.src),
-                e.src_conn,
-                str(e.dst),
-                e.dst_conn,
-            )
+            edgestr = f", edge {str(e.data)} ({str(e.src)}:{e.src_conn} -> {str(e.dst)}:{e.dst_conn})"
             locinfo = self._getlineinfo(e.data)
         else:
             edgestr = ""
@@ -1427,7 +1412,7 @@ def _no_writes_to_scalars_or_arrays_on_interstate_edges(cfg: "dace.ControlFlowRe
     for edge in cfg.edges():
         if edge.data is not None and isinstance(edge.data, InterstateEdge):
             # sdfg.arrays return arrays and scalars, it is invalid to write to them
-            if any([key in cfg.sdfg.arrays for key in edge.data.assignments]):
+            if any(key in cfg.sdfg.arrays for key in edge.data.assignments):
                 raise InvalidSDFGInterstateEdgeError(
                     f'Assignment to a scalar or an array detected in an interstate edge: "{edge}"',
                     cfg.sdfg,

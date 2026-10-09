@@ -1,6 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
 import numpy as np
+
+import dace
 
 
 @dace.program
@@ -48,7 +49,7 @@ def test_if_without_else():
     A[0] = 1
     noelse(A)
     if A[0] != 5:
-        raise AssertionError("ERROR in test: %f != 5" % A[0])
+        raise AssertionError(f"ERROR in test: {A[0]:f} != 5")
 
 
 def test_if_chain():
@@ -56,7 +57,7 @@ def test_if_chain():
     A[0] = 5
     ifchain(A)
     if A[0] != 9:
-        raise AssertionError("ERROR in test: %f != 9" % A[0])
+        raise AssertionError(f"ERROR in test: {A[0]:f} != 9")
 
 
 if __name__ == "__main__":

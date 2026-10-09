@@ -26,7 +26,7 @@ def test_consume_python():
     S = dace.stream(inputs)
     result = []
     for s in dace.consume(S):
-        result.append(s)
+        result.append(s)  # noqa: PERF402
 
     assert inputs == list(reversed(result))
 

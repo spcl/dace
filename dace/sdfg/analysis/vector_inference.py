@@ -1,17 +1,16 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+from collections import defaultdict
 from enum import Flag
+
 from networkx import DiGraph
-from dace.memlet import Memlet
-from dace.sdfg.utils import dfs_topological_sort
-from dace.sdfg.graph import MultiConnectorEdge
+
 import dace
-from dace import SDFG, SDFGState, subsets
-import dace.sdfg.nodes as nodes
-import dace.transformation.dataflow.sve.infer_types as infer_types
-import dace.dtypes as dtypes
-import dace.data as data
-import dace.symbolic as symbolic
-from typing import Dict, Set, Tuple, Union, DefaultDict
+from dace import SDFG, SDFGState, data, dtypes, subsets, symbolic
+from dace.memlet import Memlet
+from dace.sdfg import nodes
+from dace.sdfg.graph import MultiConnectorEdge
+from dace.sdfg.utils import dfs_topological_sort
+from dace.transformation.dataflow.sve import infer_types
 
 
 class VectorInferenceFlags(Flag):
@@ -76,7 +75,7 @@ class VectorInferenceGraph(DiGraph):
         state: SDFGState,
         map_entry: nodes.MapEntry,
         vec_len,
-        initial_constraints: Dict[Union[Tuple[nodes.Tasklet, str, bool], nodes.AccessNode], int] = None,
+        initial_constraints: dict[tuple[nodes.Tasklet, str, bool] | nodes.AccessNode, int] = None,
         flags: VectorInferenceFlags = None,
     ):
         """
@@ -113,9 +112,7 @@ class VectorInferenceGraph(DiGraph):
 
         # Stores a mapping from SDFG nodes/connectors to InferenceNode's
         # Used when constructing the internal inference graph
-        self.conn_to_node = DefaultDict[Union[Tuple[nodes.Tasklet, str, bool], nodes.AccessNode], InferenceNode](
-            lambda: None
-        )
+        self.conn_to_node = defaultdict[tuple[nodes.Tasklet, str, bool] | nodes.AccessNode, InferenceNode](lambda: None)
 
         self.flags = flags
 
@@ -126,7 +123,7 @@ class VectorInferenceGraph(DiGraph):
             for n, t in initial_constraints.items():
                 self.set_constraint(n, t)
 
-    def set_constraint(self, conn: Union[Tuple[nodes.Tasklet, str, bool], nodes.AccessNode], infer_type: int):
+    def set_constraint(self, conn: tuple[nodes.Tasklet, str, bool] | nodes.AccessNode, infer_type: int):
         """
         Allows to manually specify a constraint either on a Tasklet connector
         by providing a tuple `(node, connector, is_input)` or a Scalar AccessNode.
@@ -134,7 +131,7 @@ class VectorInferenceGraph(DiGraph):
         """
         self.conn_to_node[conn].infer_as(infer_type)
 
-    def get_constraint(self, conn: Union[Tuple[nodes.Tasklet, str, bool], nodes.AccessNode]) -> int:
+    def get_constraint(self, conn: tuple[nodes.Tasklet, str, bool] | nodes.AccessNode) -> int:
         """
         Allows to obtain the inferred constraint for a Tasklet connector or AccessNode.
         Should be done after calling `infer()`.
@@ -149,12 +146,12 @@ class VectorInferenceGraph(DiGraph):
         if node.inferred == InferenceNode.Unknown:
             # Nothing to propagate
             return
-        for _, dst, data in self.out_edges(node, data=True):
+        for _, dst, edge_data in self.out_edges(node, data=True):
             # In default mode, vector constraints are propagated forwards
-            if data["mode"] == VectorInferenceGraph.Propagate_Default and node.inferred == InferenceNode.Vector:
+            if edge_data["mode"] == VectorInferenceGraph.Propagate_Default and node.inferred == InferenceNode.Vector:
                 dst.infer_as(InferenceNode.Vector)
             # In WCR mode, scalar constraints are propagated forwards
-            if data["mode"] == VectorInferenceGraph.Propagate_WCR and node.inferred == InferenceNode.Scalar:
+            if edge_data["mode"] == VectorInferenceGraph.Propagate_WCR and node.inferred == InferenceNode.Scalar:
                 dst.infer_as(InferenceNode.Scalar)
 
             self._forward(dst)
@@ -163,12 +160,12 @@ class VectorInferenceGraph(DiGraph):
         if node.inferred == InferenceNode.Unknown:
             # Nothing to propagate
             return
-        for src, _, data in self.in_edges(node, data=True):
+        for src, _, edge_data in self.in_edges(node, data=True):
             # In default mode, scalar constraints are propagated backwards
-            if data["mode"] == VectorInferenceGraph.Propagate_Default and node.inferred == InferenceNode.Scalar:
+            if edge_data["mode"] == VectorInferenceGraph.Propagate_Default and node.inferred == InferenceNode.Scalar:
                 src.infer_as(InferenceNode.Scalar)
             # In WCR mode, vector constraints are propagated backwards
-            if data["mode"] == VectorInferenceGraph.Propagate_WCR and node.inferred == InferenceNode.Vector:
+            if edge_data["mode"] == VectorInferenceGraph.Propagate_WCR and node.inferred == InferenceNode.Vector:
                 src.infer_as(InferenceNode.Vector)
 
             self._backward(src)
@@ -209,7 +206,7 @@ class VectorInferenceGraph(DiGraph):
 
         return False
 
-    def _get_output_subsets(self, node: nodes.Tasklet) -> Dict[str, Set[str]]:
+    def _get_output_subsets(self, node: nodes.Tasklet) -> dict[str, set[str]]:
         """
         Computes for each output connector the set of input connectors for which
         if at least one of them is a vector, the output becomes a vector.
@@ -376,11 +373,10 @@ class VectorInferenceGraph(DiGraph):
                 return dtype
             else:
                 raise VectorInferenceException("Cannot make vector into scalar")
+        elif inf_type == InferenceNode.Vector:
+            return dtypes.vector(dtype, self.vec_len)
         else:
-            if inf_type == InferenceNode.Vector:
-                return dtypes.vector(dtype, self.vec_len)
-            else:
-                return dtype
+            return dtype
 
     def _carries_vector_data(self, edge: MultiConnectorEdge[Memlet]) -> bool:
         if edge.data.data is None:
@@ -503,7 +499,7 @@ def infer_vectors(
     state: SDFGState,
     map_entry: nodes.MapEntry,
     vec_len,
-    initial_constraints: Dict[Union[Tuple[nodes.Tasklet, str, bool], nodes.AccessNode], int] = None,
+    initial_constraints: dict[tuple[nodes.Tasklet, str, bool] | nodes.AccessNode, int] = None,
     flags: VectorInferenceFlags = None,
     apply: bool = True,
 ) -> VectorInferenceGraph:

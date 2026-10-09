@@ -1,10 +1,12 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests preprocessing of SDFG call tree and (nested) closure."""
 
-import dace
-import numpy as np
 import os
 import tempfile
+
+import numpy as np
+
+import dace
 
 
 def test_nested_objects_same_name():

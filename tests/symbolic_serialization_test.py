@@ -1,16 +1,17 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 
-import numpy as np
+import json
 import threading
+
+import numpy as np
 import pytest
+import sympy
 
 import dace
 from dace import subsets, symbolic
 from dace.codegen.common import sym2cpp
 from dace.properties import DictProperty, ListProperty
 from dace.sdfg.infer_types import infer_connector_types
-import sympy
-import json
 
 
 def test_symbolic_serialization_roundtrip_preserves_metadata():
