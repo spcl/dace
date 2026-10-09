@@ -6,14 +6,13 @@ import sympy as sp
 
 # DaCe imports
 import dace
-import dace.sdfg.nodes as nodes
 import dace.transformation.transformation as xf
 from dace import data as dt
 from dace import dtypes
 from dace.memlet import Memlet
 from dace.ordered import OrderedSet
 from dace.properties import CodeBlock
-from dace.sdfg import SDFG, SDFGState, dealias
+from dace.sdfg import SDFG, SDFGState, dealias, nodes
 from dace.sdfg import state as dstate
 from dace.sdfg import utils as dace_utils
 from dace.sdfg.state import LoopRegion
@@ -808,7 +807,7 @@ class BackwardPassGenerator:
         Gradients for these attributes should not be tracked since they represent control flow and not data flow.
         """
         attribute_to_remove = {"axis", "keepdims", "axes", "p", "dilations", "kernel_shape", "strides"}
-        for node in nodes_list[:]:  # Iterate over a copy of the list to avoid modification issues
+        for node in nodes_list.copy():  # Iterate over a copy of the list to avoid modification issues
             if isinstance(node, nodes.AccessNode):
                 out_edges = state.out_edges(node)
                 if out_edges and all(
@@ -825,7 +824,7 @@ class BackwardPassGenerator:
         This is because we might need to zero out the gradient of this node.
         If no zeroing out is necessary, the node will be removed in the reverse_subgraph function cleanup at the end.
         """
-        for node in nodes_list[:]:  # Iterate over a copy of the list to avoid modification issues
+        for node in nodes_list.copy():  # Iterate over a copy of the list to avoid modification issues
             if isinstance(node, nodes.MapEntry) and len(node.in_connectors) == 0:
                 nodes_list.remove(node)
                 # Remove the MapExit and everything in between

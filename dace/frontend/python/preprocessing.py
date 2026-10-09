@@ -182,13 +182,12 @@ class ConditionalCodeResolver(ast.NodeTransformer):
                 else:
                     # Any other case is indeterminate, fall back to generic visit
                     return node
-            else:  # If not symbolic, check value directly
-                if result:
-                    # Only return "if" body
-                    return node.body
-                elif not result:
-                    # Only return "else" body
-                    return node.orelse
+            elif result:
+                # Only return "if" body
+                return node.body
+            elif not result:
+                # Only return "else" body
+                return node.orelse
 
         except SyntaxError:
             # Cannot evaluate if condition at compile time
@@ -923,7 +922,7 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
             ]
             values = [astutils.unparse(v.value) for v in visited.values]
             return ast.copy_location(
-                ast.Constant(kind="", value="".join(("{%s}" % v) if not p else v for p, v in zip(parsed, values))), node
+                ast.Constant(kind="", value="".join((f"{{{v}}}") if not p else v for p, v in zip(parsed, values))), node
             )
 
 

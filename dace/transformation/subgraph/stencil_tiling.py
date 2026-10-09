@@ -8,8 +8,7 @@ from collections import defaultdict
 from copy import deepcopy as dcpy
 
 import dace
-import dace.subsets as subsets
-from dace import dtypes, symbolic
+from dace import dtypes, subsets, symbolic
 from dace.properties import Property, ShapeProperty, make_properties
 from dace.sdfg import nodes
 from dace.sdfg.propagation import propagate_node
@@ -335,8 +334,7 @@ class StencilTiling(transformation.SubgraphTransformation):
             element = next(e for e in queue if not children_dict[e] - set(topo_reversed))
             topo_reversed.append(element)
             queue.remove(element)
-            for parent in parent_dict[element]:
-                queue.add(parent)
+            queue.update(parent_dict[element])
 
         # main loop
         # first get coverage dicts for each map entry

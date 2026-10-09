@@ -659,7 +659,7 @@ class ExpandReduceOpenMP(pm.ExpandTransformation):
         outexpr = "%s[%s]" % (_OUT, " + ".join(out_offset))
 
         if node.identity is not None:
-            code += "%s = %s;\n" % (outexpr, sym2cpp(node.identity))
+            code += f"{outexpr} = {sym2cpp(node.identity)};\n"
 
         for i, axis in enumerate(outer_red):
             code += f"for (int _i{i} = 0; _i{i} < {sym2cpp(sizes[axis])}; ++_i{i}) {{\n"
@@ -797,7 +797,7 @@ class ExpandReduceCUDADevice(pm.ExpandTransformation):
             reduce_op = ""
         else:
             credtype = "dace::ReductionType::" + str(redtype)[str(redtype).find(".") + 1 :]
-            reduce_op = (", dace::_wcr_fixed<%s, %s>()" % (credtype, output_type)) + ", " + symstr(node.identity)
+            reduce_op = (f", dace::_wcr_fixed<{credtype}, {output_type}>()") + ", " + symstr(node.identity)
 
         # Obtain some SDFG-related information
         input_memlet = input_edge.data
@@ -874,7 +874,7 @@ class ExpandReduceCUDADevice(pm.ExpandTransformation):
             reduce_range_def = "size_t num_segments, size_t segment_size"
             iterator_use = "dace::stridedIterator(segment_size)"
             reduce_range_use = f"num_segments, {iterator_use}, {iterator_use} + 1"
-            reduce_range_call = "%s, %s" % (num_segments, segment_size)
+            reduce_range_call = f"{num_segments}, {segment_size}"
 
         # Reduce fn: query temp-storage size, fetch from per-stream ReduceTag pool
         # (lazy alloc new streams, grow in place on demand), then run CUB. Every step reports its
@@ -1063,19 +1063,19 @@ class ExpandReduceCUDABlock(pm.ExpandTransformation):
         if block_threads is None:
             raise ValueError("Block-wide GPU reduction must occur within a GPU kernel")
         if issymbolic(block_threads, sdfg.constants):
-            raise ValueError("Block size has to be constant for block-wide reduction (got %s)" % str(block_threads))
+            raise ValueError(f"Block size has to be constant for block-wide reduction (got {str(block_threads)})")
         if node.axes is not None and len(node.axes) < input_dims:
             raise ValueError("Only full reduction is supported for block-wide reduce, please use the pure expansion")
         if input_data.storage != dtypes.StorageType.Register or output_data.storage != dtypes.StorageType.Register:
             raise ValueError("Block-wise reduction only supports GPU register inputs and outputs")
         if redtype in ExpandReduceCUDABlock._SPECIAL_RTYPES:
-            raise ValueError("%s block reduction not supported" % redtype)
+            raise ValueError(f"{redtype} block reduction not supported")
 
         credtype = "dace::ReductionType::" + str(redtype)[str(redtype).find(".") + 1 :]
         if redtype == dtypes.ReductionType.Custom:
-            redop = "__reduce_%s()" % idstr
+            redop = f"__reduce_{idstr}()"
         else:
-            redop = "dace::_wcr_fixed<%s, %s>()" % (credtype, output_type)
+            redop = f"dace::_wcr_fixed<{credtype}, {output_type}>()"
 
         # Allocate shared memory for block reduce
         localcode.write(
@@ -1569,7 +1569,7 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
                     "reduce_init",
                     {"_o": "0:1"},
                     {},
-                    "__out = %s" % node.identity,
+                    f"__out = {node.identity}",
                     {"__out": dace.Memlet("_out[0]")},
                     external_edges=True,
                     schedule=dtypes.ScheduleType.GPU_Device,
@@ -1585,7 +1585,7 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
                     "reduce_init",
                     {f"_o{i}": subsets.Range([(0, sz - 1, 1)]) for i, sz in enumerate(schedule.out_shape)},
                     {},
-                    "__out = %s" % node.identity,
+                    f"__out = {node.identity}",
                     {"__out": outm},
                     external_edges=True,
                     schedule=dtypes.ScheduleType.GPU_Device,
@@ -1788,7 +1788,7 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
                     "reduce_init",
                     {f"_o{i}": subsets.Range([(0, sz - 1, 1)]) for i, sz in enumerate(schedule.out_shape)},
                     {},
-                    "__out = %s" % node.identity,
+                    f"__out = {node.identity}",
                     {"__out": reset_outm},
                     external_edges=True,
                     schedule=dtypes.ScheduleType.GPU_Device,

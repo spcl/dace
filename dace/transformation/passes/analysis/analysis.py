@@ -605,10 +605,9 @@ class SymbolWriteScopes(ppl.ControlFlowRegionPass):
                                 if a_state_or_edge in reach:
                                     coarsen = True
                                     break
-                            else:
-                                if a_state_or_edge.src in reach:
-                                    coarsen = True
-                                    break
+                            elif a_state_or_edge.src in reach:
+                                coarsen = True
+                                break
                         if coarsen:
                             other_accesses.update(accesses)
                             other_accesses.add(write)

@@ -9,11 +9,12 @@ so each topical `test_*.py` file imports them rather than redefining.
 import copy
 import os
 import re
+from collections.abc import Callable
 
 import numpy
 
 import dace
-from dace import InterstateEdge, Union
+from dace import InterstateEdge
 from dace.properties import CodeBlock
 from dace.sdfg import ControlFlowRegion
 from dace.sdfg.state import ConditionalBlock
@@ -205,7 +206,7 @@ def _tile_nodes_skip_reason(
 
 
 def run_vectorization_test(
-    dace_func: Union[dace.SDFG, callable],
+    dace_func: dace.SDFG | Callable,
     arrays,
     params,
     vector_width=8,

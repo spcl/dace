@@ -16,9 +16,8 @@ import dace
 
 # Utility imports
 import dace.autodiff.utils as ad_utils
-import dace.dtypes as dtypes
 import dace.libraries.standard.nodes
-from dace import SDFG, Memlet, SDFGState
+from dace import SDFG, Memlet, SDFGState, dtypes
 
 # Autodiff imports
 from dace.autodiff.base_abc import AutoDiffException, BackwardContext, BackwardImplementation, BackwardResult

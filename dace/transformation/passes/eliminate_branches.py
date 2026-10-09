@@ -2,7 +2,6 @@
 import copy
 
 from dace import SDFG, nodes, properties
-from dace.sdfg.nodes import Dict
 from dace.sdfg.state import ConditionalBlock
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.helpers import get_parent_map_and_loop_scopes
@@ -178,7 +177,7 @@ class EliminateBranches(ppl.Pass):
 
         return changed
 
-    def apply_pass(self, sdfg: SDFG, d: Dict) -> tuple[int, set[str]]:
+    def apply_pass(self, sdfg: SDFG, d: dict) -> tuple[int, set[str]]:
         if self.clean_only is True:
             self.try_clean = True
         cur_num_applied, cur_added_scalar_names = self._apply_eliminate_branches(sdfg, sdfg, None)

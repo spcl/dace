@@ -79,7 +79,7 @@ def simple_call(
     else:
         state.add_mapped_tasklet(
             name=func,
-            map_ranges={"__i%d" % i: "0:%s" % n for i, n in enumerate(inparr.shape)},
+            map_ranges={"__i%d" % i: f"0:{n}" for i, n in enumerate(inparr.shape)},
             inputs={"__inp": Memlet.simple(inpname, ",".join(["__i%d" % i for i in range(len(inparr.shape))]))},
             code=f"__out = {func}(__inp)",
             outputs={"__out": Memlet.simple(outname, ",".join(["__i%d" % i for i in range(len(inparr.shape))]))},
@@ -175,11 +175,10 @@ def broadcast_together(arr1_shape, arr2_shape, unidirectional=False):
             a1_idx.append(get_idx(i))
 
             all_idx_dict[get_idx(i)] = dim1
+        elif unidirectional:
+            raise IndexError(f"could not broadcast input array from shape {arr2_shape} into shape {arr1_shape}")
         else:
-            if unidirectional:
-                raise IndexError(f"could not broadcast input array from shape {arr2_shape} into shape {arr1_shape}")
-            else:
-                raise IndexError(f"operands could not be broadcast together with shapes {arr1_shape}, {arr2_shape}")
+            raise IndexError(f"operands could not be broadcast together with shapes {arr1_shape}, {arr2_shape}")
 
     def to_string(idx):
         return ", ".join(reversed(idx))

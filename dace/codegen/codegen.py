@@ -512,8 +512,8 @@ def lower_and_generate_code(sdfg: SDFG, validate: bool) -> list[CodeObject]:
 
     if "?" in frame.arglist.keys():
         raise exc.CodegenError(
-            "SDFG '%s' has undefined symbols in its arguments. "
-            "Please ensure all symbols are defined before generating code." % sdfg.name
+            f"SDFG '{sdfg.name}' has undefined symbols in its arguments. "
+            "Please ensure all symbols are defined before generating code."
         )
 
     # Instantiate CPU first (as it is used by the other code generators)

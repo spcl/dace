@@ -459,8 +459,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
 
         map_exits = [graph.exit_node(map_entry) for map_entry in map_entries]
         for map_entry, map_exit in zip(map_entries, map_exits):
-            for edge in graph.in_edges(map_entry):
-                in_nodes.add(edge.src)
+            in_nodes.update(edge.src for edge in graph.in_edges(map_entry))
             for edge in graph.out_edges(map_exit):
                 current_node = edge.dst
                 if len(graph.out_edges(current_node)) == 0:
@@ -1210,14 +1209,13 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                     storage=self.transient_allocation,
                 )
 
-            else:
-                # don't modify data container - array is needed outside
-                # of subgraph.
+            # don't modify data container - array is needed outside
+            # of subgraph.
 
-                # hack: set lifetime to State if allocation has only been
-                # scope so far to avoid allocation issues
-                if sdfg.data(data_name).lifetime == dtypes.AllocationLifetime.Scope:
-                    sdfg.data(data_name).lifetime = dtypes.AllocationLifetime.State
+            # hack: set lifetime to State if allocation has only been
+            # scope so far to avoid allocation issues
+            elif sdfg.data(data_name).lifetime == dtypes.AllocationLifetime.Scope:
+                sdfg.data(data_name).lifetime = dtypes.AllocationLifetime.State
 
         # do one pass to adjust strides and the memlets of in-between transients
         for node in intermediate_nodes:

@@ -220,7 +220,7 @@ class DaCeCodeGenerator:
                 const_str += "};\n"
                 callsite_stream.write(const_str, sdfg)
             else:
-                callsite_stream.write("constexpr %s %s = %s;\n" % (csttype.dtype.ctype, cstname, sym2cpp(cstval)), sdfg)
+                callsite_stream.write(f"constexpr {csttype.dtype.ctype} {cstname} = {sym2cpp(cstval)};\n", sdfg)
 
     def generate_fileheader(
         self, sdfg: SDFG, global_stream: CodeIOStream, backend: str = "frame", include_hash: bool = True
@@ -411,7 +411,8 @@ struct {mangle_dace_state_struct_name(sdfg)} {{
             i is not None and i.writes_to_report() for i in self._dispatcher.instrumentation.values()
         ):
             callsite_stream.write(
-                '__state->report.save("%s", __HASH_%s);' % (pathlib.Path(sdfg.build_folder) / "perf", sdfg.name), sdfg
+                '__state->report.save("{}", __HASH_{});'.format(pathlib.Path(sdfg.build_folder) / "perf", sdfg.name),
+                sdfg,
             )
 
         # Write closing brace of program
@@ -480,7 +481,7 @@ DACE_EXPORTED {mangle_dace_state_struct_name(sdfg)} *__dace_init_{sdfg.name}({in
         for target in self._dispatcher.used_targets:
             if target.has_initializer:
                 callsite_stream.write(
-                    "__result |= __dace_init_%s(__state%s);" % (target.target_name, initparamnames_comma), sdfg
+                    f"__result |= __dace_init_{target.target_name}(__state{initparamnames_comma});", sdfg
                 )
         # A failed target initializer leaves its part of the state struct unset, and everything below
         # allocates against it -- persistent GPU arrays dereference __state->gpu_context, which
@@ -548,7 +549,8 @@ DACE_EXPORTED int __dace_exit_{sdfg.name}({mangle_dace_state_struct_name(sdfg)} 
             i is not None and i.writes_to_report() for i in self._dispatcher.instrumentation.values()
         ):
             callsite_stream.write(
-                '__state->report.save("%s", __HASH_%s);' % (pathlib.Path(sdfg.build_folder) / "perf", sdfg.name), sdfg
+                '__state->report.save("{}", __HASH_{});'.format(pathlib.Path(sdfg.build_folder) / "perf", sdfg.name),
+                sdfg,
             )
 
         callsite_stream.write(self._exitcode.getvalue(), sdfg)
@@ -1100,7 +1102,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                     alloc_scope = curscope
                     alloc_state = curstate
             else:
-                raise TypeError('Unrecognized allocation lifetime "%s"' % desc.lifetime)
+                raise TypeError(f'Unrecognized allocation lifetime "{desc.lifetime}"')
 
             if alloc_scope is None:  # No allocation necessary
                 continue

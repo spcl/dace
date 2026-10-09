@@ -449,7 +449,7 @@ def emit_memlet_reference(
             typedef = defined_ctype
             defined_type = DefinedType.StreamArray
     else:
-        raise TypeError('Unsupported memlet type "%s"' % defined_type.name)
+        raise TypeError(f'Unsupported memlet type "{defined_type.name}"')
 
     # Cast as necessary
     expr = codegen.make_ptr_vector_cast(datadef + offset_expr, desc.dtype, conntype, is_scalar, defined_type)
@@ -659,7 +659,7 @@ def cpp_array_expr(
             ptrname = codegen.ptr(name, desc, sdfg, memlet.subset)
         else:
             ptrname = ptr(name, desc, sdfg, framecode=framecode)
-        return "%s[%s]" % (ptrname, offset_cppstr)
+        return f"{ptrname}[{offset_cppstr}]"
     else:
         return offset_cppstr
 
@@ -670,9 +670,9 @@ def make_ptr_vector_cast(dst_expr, dst_dtype, src_dtype, is_scalar, defined_type
     """
     if src_dtype != dst_dtype:
         if is_scalar:
-            dst_expr = "*(%s *)(&%s)" % (src_dtype.ctype, dst_expr)
+            dst_expr = f"*({src_dtype.ctype} *)(&{dst_expr})"
         elif src_dtype.base_type != dst_dtype:
-            dst_expr = "(%s)(&%s)" % (src_dtype.ctype, dst_expr)
+            dst_expr = f"({src_dtype.ctype})(&{dst_expr})"
         elif defined_type == DefinedType.Pointer:
             dst_expr = "&" + dst_expr
     elif not is_scalar:
@@ -707,7 +707,7 @@ def cpp_ptr_expr(
     if offset_cppstr == "0":
         return dname
     else:
-        return "%s + %s" % (dname, offset_cppstr)
+        return f"{dname} + {offset_cppstr}"
 
 
 def _check_range_conflicts(subset, a, itersym, b, step):
@@ -1066,7 +1066,7 @@ def unparse_cr(sdfg, wcr_ast, dtype):
     ctype = "auto" if dtype is None else dtype.ctype
 
     # Construct a C++ lambda function out of a function
-    return "[] (%s) { %s }" % (", ".join("const %s& %s" % (ctype, a) for a in args), body_cpp)
+    return "[] ({}) {{ {} }}".format(", ".join(f"const {ctype}& {a}" for a in args), body_cpp)
 
 
 def connected_to_gpu_memory(node: nodes.Node, state: SDFGState, sdfg: SDFG):
@@ -1574,13 +1574,7 @@ class DaCeKeywordRemover(ExtNodeTransformer):
                             target = f"{ptrname}[{index}]"
                         else:
                             target = ptrname
-                        newnode = ast.Name(
-                            id="%s.push(%s);"
-                            % (
-                                target,
-                                cppunparse.cppunparse(value, expr_semicolon=False),
-                            )
-                        )
+                        newnode = ast.Name(id=f"{target}.push({cppunparse.cppunparse(value, expr_semicolon=False)});")
                     else:
                         var_type, ctypedef = self.codegen._dispatcher.defined_vars.get(ptrname)
                         if var_type == DefinedType.Scalar:
@@ -1634,7 +1628,7 @@ class DaCeKeywordRemover(ExtNodeTransformer):
         # subscript), as otherwise the visitor will recursively descend into
         # the new expression and modify it erroneously.
         defined = set(self.memlets.keys()) | set(self.constants.keys())
-        newnode = ast.Name(id="%s[%s]" % (target, sym2cpp(subscript, defined)))
+        newnode = ast.Name(id=f"{target}[{sym2cpp(subscript, defined)}]")
 
         return ast.copy_location(newnode, node)
 
@@ -1759,7 +1753,7 @@ class StructInitializer(ExtNodeTransformer):
         ):
             fields = ", ".join(
                 [
-                    ".%s = %s" % (rname(arg.arg), cppunparse.pyexpr2cpp(arg.value))
+                    f".{rname(arg.arg)} = {cppunparse.pyexpr2cpp(arg.value)}"
                     for arg in sorted(node.keywords, key=lambda x: x.arg)
                 ]
             )
@@ -1768,7 +1762,7 @@ class StructInitializer(ExtNodeTransformer):
             if node.func.id.startswith("__DACESTRUCT_"):
                 tname = node.func.id[len("__DACESTRUCT_") :]
 
-            return ast.copy_location(ast.Name(id="%s { %s }" % (tname, fields), ctx=ast.Load), node)
+            return ast.copy_location(ast.Name(id=f"{tname} {{ {fields} }}", ctx=ast.Load), node)
 
         return self.generic_visit(node)
 
@@ -1889,7 +1883,7 @@ def synchronize_streams(sdfg, cfg, dfg, state_id, node, scope_exit, callsite_str
             ):
                 if not synced_host:
                     callsite_stream.write(
-                        "DACE_GPU_CHECK(%sStreamSynchronize(%s));" % (backend, cudastream),
+                        f"DACE_GPU_CHECK({backend}StreamSynchronize({cudastream}));",
                         cfg,
                         state_id,
                         [edge.src, edge.dst],
@@ -1915,7 +1909,7 @@ DACE_GPU_CHECK({backend}StreamWaitEvent({common.gpu_stream_expr(edge.dst._cuda_s
                     )
                 else:
                     callsite_stream.write(
-                        "DACE_GPU_CHECK(%sStreamSynchronize(%s));" % (backend, cudastream),
+                        f"DACE_GPU_CHECK({backend}StreamSynchronize({cudastream}));",
                         cfg,
                         state_id,
                         [edge.src, edge.dst],
@@ -1938,7 +1932,7 @@ DACE_GPU_CHECK({backend}StreamWaitEvent({common.gpu_stream_expr(edge.dst._cuda_s
                 # If no stream at destination: the consumer runs on the host, so wait for the stream.
                 if not hasattr(e.dst, "_cuda_stream"):
                     callsite_stream.write(
-                        "DACE_GPU_CHECK(%sStreamSynchronize(%s));" % (backend, cudastream),
+                        f"DACE_GPU_CHECK({backend}StreamSynchronize({cudastream}));",
                         cfg,
                         state_id,
                         [e.src, e.dst],
@@ -1958,7 +1952,7 @@ DACE_GPU_CHECK({backend}StreamWaitEvent({common.gpu_stream_expr(e.dst._cuda_stre
                         )
                     else:
                         callsite_stream.write(
-                            "DACE_GPU_CHECK(%sStreamSynchronize(%s));" % (backend, cudastream),
+                            f"DACE_GPU_CHECK({backend}StreamSynchronize({cudastream}));",
                             cfg,
                             state_id,
                             [e.src, e.dst],

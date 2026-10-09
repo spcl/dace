@@ -97,7 +97,7 @@ def infer_connector_types(sdfg: SDFG):
                         sconn = src_edge.src.out_connectors[src_edge.src_conn]
                         if sconn.type is None:
                             raise TypeError(
-                                'Ambiguous or uninferable type in connector "%s" of node "%s"' % (sconn, src_edge.src)
+                                f'Ambiguous or uninferable type in connector "{sconn}" of node "{src_edge.src}"'
                             )
                         ctype = sconn
                     node.in_connectors[cname] = ctype
@@ -123,7 +123,7 @@ def infer_connector_types(sdfg: SDFG):
             for e in state.out_edges(node):
                 cname = e.src_conn
                 if cname and node.out_connectors[cname] is None:
-                    raise TypeError('Ambiguous or uninferable type in connector "%s" of node "%s"' % (cname, node))
+                    raise TypeError(f'Ambiguous or uninferable type in connector "{cname}" of node "{node}"')
 
 
 def mapped_symbol_types(

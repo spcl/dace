@@ -1387,8 +1387,7 @@ class NestSDFG(transformation.MultiStateTransformation):
         # Remove from the parent SDFG the symbols that are defined in the nested one
         defined_syms = set()
 
-        for name, desc in nested_sdfg.arrays.items():
-            defined_syms.add(name)
+        defined_syms.update(nested_sdfg.arrays.keys())
 
         for e in nested_sdfg.edges():
             defined_syms |= set(e.data.new_symbols(sdfg, {}).keys())

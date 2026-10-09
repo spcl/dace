@@ -90,7 +90,7 @@ class DefinedMemlets:
 
     def add(self, name: str, dtype: DefinedType, ctype: str, ancestor: int = 0, allow_shadowing: bool = False):
         if not isinstance(name, str):
-            raise TypeError("Variable name type cannot be %s" % type(name).__name__)
+            raise TypeError(f"Variable name type cannot be {type(name).__name__}")
         if name.startswith("__state->"):
             return self.add_global(name, dtype, ctype)
 
@@ -111,7 +111,7 @@ class DefinedMemlets:
         Adds a global variable (top scope)
         """
         if not isinstance(name, str):
-            raise TypeError("Variable name type cannot be %s" % type(name).__name__)
+            raise TypeError(f"Variable name type cannot be {type(name).__name__}")
 
         self._scopes[0][1][name] = (dtype, ctype)
 
@@ -644,18 +644,16 @@ class TargetDispatcher:
             )
         elif num_satisfied == 1:
             target = satisfied_dispatchers[0]
-        else:  # num_satisfied == 0
-            # Otherwise use the generic copy dispatchers
-            if (src_storage, dst_storage, dst_schedule) in self._generic_copy_dispatchers:
-                target = self._generic_copy_dispatchers[(src_storage, dst_storage, dst_schedule)]
-            elif (src_storage, dst_storage, None) in self._generic_copy_dispatchers:
-                target = self._generic_copy_dispatchers[(src_storage, dst_storage, None)]
-            else:
-                raise RuntimeError(
-                    "Copy dispatcher for %s->%s with schedule %s"
-                    % (str(src_storage), str(dst_storage), str(dst_schedule))
-                    + " not found"
-                )
+        # Otherwise use the generic copy dispatchers
+        elif (src_storage, dst_storage, dst_schedule) in self._generic_copy_dispatchers:
+            target = self._generic_copy_dispatchers[(src_storage, dst_storage, dst_schedule)]
+        elif (src_storage, dst_storage, None) in self._generic_copy_dispatchers:
+            target = self._generic_copy_dispatchers[(src_storage, dst_storage, None)]
+        else:
+            raise RuntimeError(
+                f"Copy dispatcher for {str(src_storage)}->{str(dst_storage)} with schedule {str(dst_schedule)}"
+                " not found"
+            )
 
         return target
 

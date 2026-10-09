@@ -5,16 +5,15 @@ from typing import TYPE_CHECKING
 import sympy as sp
 
 import dace.autodiff.utils as ad_utils
-
-# DaCe imports
-import dace.sdfg.nodes as nodes
 from dace import data as dt
 from dace import dtypes, symbolic
 
 # Autodiff imports
 from dace.autodiff.base_abc import AutoDiffException
 from dace.memlet import Memlet
-from dace.sdfg import SDFGState
+
+# DaCe imports
+from dace.sdfg import SDFGState, nodes
 from dace.sdfg import graph as dgraph
 from dace.sdfg import state as dstate
 from dace.sdfg.state import LoopRegion

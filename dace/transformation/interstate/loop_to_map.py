@@ -11,7 +11,6 @@ from typing import Any, Optional
 
 import sympy as sp
 
-import dace.transformation.helpers as helpers
 from dace import data as dt
 from dace import dtypes, memlet, nodes, properties, subsets, symbolic
 from dace import sdfg as sd
@@ -30,6 +29,7 @@ from dace.sdfg.state import (
     ReturnBlock,
 )
 from dace.sdfg.type_inference import infer_expr_type
+from dace.transformation import helpers
 from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis, smt_dependence
 

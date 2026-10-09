@@ -16,7 +16,6 @@ import sympy as sp
 # DaCe imports
 import dace
 import dace.autodiff.utils as ad_utils
-import dace.sdfg.nodes as nodes
 from dace import dtypes
 
 # Autodiff imports

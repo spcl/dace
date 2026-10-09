@@ -109,7 +109,7 @@ def codeblock_to_cpp(cb: CodeBlock):
     elif cb.language == dtypes.Language.Python:
         return cppunparse.py2cpp(cb.code)
     else:
-        warnings.warn("Unrecognized language %s in codeblock" % cb.language)
+        warnings.warn(f"Unrecognized language {cb.language} in codeblock")
         return cb.as_string
 
 

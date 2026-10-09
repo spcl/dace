@@ -161,9 +161,9 @@ class MapReduceFusion(pm.SingleStateTransformation):
             init_state = graph.parent_graph.add_state_before(graph)
             init_state.add_mapped_tasklet(
                 "freduce_init",
-                [("o%d" % i, "%s:%s:%s" % (r[0], r[1] + 1, r[2])) for i, r in enumerate(array_edge.data.subset)],
+                [("o%d" % i, f"{r[0]}:{r[1] + 1}:{r[2]}") for i, r in enumerate(array_edge.data.subset)],
                 {},
-                "__out = %s" % reduce_node.identity,
+                f"__out = {reduce_node.identity}",
                 {
                     "__out": Memlet.simple(
                         array_edge.data.data, ",".join(["o%d" % i for i in range(len(array_edge.data.subset))])

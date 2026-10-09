@@ -169,7 +169,7 @@ def create_batch_gemm_sdfg(dtype, strides, alpha, beta):
     gY = state.add_read("Y")
     gZ = state.add_write("Z")
 
-    import dace.libraries.blas as blas  # Avoid import loop
+    from dace.libraries import blas  # Avoid import loop
 
     libnode = blas.MatMul("einsum_gemm")
     libnode.alpha = plain_coefficient(alpha)
@@ -264,7 +264,7 @@ def _create_einsum_internal(
     for inp, inpname in zip(einsum.inputs, arrays):
         inparr = sdfg.arrays[inpname]
         if len(inp) != len(inparr.shape):
-            raise ValueError('Dimensionality mismatch in input "%s"' % inpname)
+            raise ValueError(f'Dimensionality mismatch in input "{inpname}"')
         for char, shp in zip(inp, inparr.shape):
             # Equalized, not raw '!=': one name can reach here as several sympy instances (a
             # descriptor a layout pass rebuilt against one parsed from a string), which compare
@@ -284,8 +284,8 @@ def _create_einsum_internal(
             if symbolic.issymbolic(shp):
                 raise ValueError(
                     "Einsum optimization cannot be performed "
-                    'on symbolically-sized array dimension "%s" '
-                    'for subscript character "%s"' % (shp, char)
+                    f'on symbolically-sized array dimension "{shp}" '
+                    f'for subscript character "{char}"'
                 )
 
         # Create optimal contraction path
@@ -423,13 +423,13 @@ def _create_einsum_internal(
                     external_edges=True,
                 )
             else:  # Scalar output
-                t = init_state.add_tasklet("einsum_reset", inputs_scalar, {"out_%s" % output}, code)
+                t = init_state.add_tasklet("einsum_reset", inputs_scalar, {f"out_{output}"}, code)
                 onode = init_state.add_write(output)
-                init_state.add_edge(t, "out_%s" % output, onode, None, Memlet.simple(output, "0"))
+                init_state.add_edge(t, f"out_{output}", onode, None, Memlet.simple(output, "0"))
 
                 if not symbolic.equal_valued(0, beta):
                     inode = init_state.add_read(output)
-                    init_state.add_edge(inode, None, t, "inp_%s" % output, Memlet.simple(output, "0"))
+                    init_state.add_edge(inode, None, t, f"inp_{output}", Memlet.simple(output, "0"))
 
         wcr = "lambda a,b: a+b" if is_conflicted else None
         alphacode = "" if symbolic.equal_valued(1, alpha) else f"{alpha} * "

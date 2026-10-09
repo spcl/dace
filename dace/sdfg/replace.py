@@ -45,8 +45,7 @@ def _internal_replace(sym, symrepl):
     for s in set(fsyms):
         if "." in s:
             tokens = s.split(".")
-            for i in range(1, len(tokens)):
-                fsyms.add(".".join(tokens[:i]))
+            fsyms.update(".".join(tokens[:i]) for i in range(1, len(tokens)))
     newrepl = {k: v for k, v in symrepl.items() if _symbol_name(k) in fsyms}
     if not newrepl:
         return sym
@@ -276,7 +275,7 @@ def replace_in_codeblock(
 
         else:
             warnings.warn(
-                "Replacement of %s with %s was not made for string tasklet code of language %s" % (name, new_name, lang)
+                f"Replacement of {name} with {new_name} was not made for string tasklet code of language {lang}"
             )
 
     elif codeblock.code is not None:

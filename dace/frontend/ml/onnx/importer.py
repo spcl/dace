@@ -576,19 +576,18 @@ class ONNXModel:
         elif len(shape) == 0:
             # this is a scalar
             self.sdfg.add_scalar(name, dtype, storage=storage)
+        elif name not in self.sdfg.arrays:
+            self.sdfg.add_array(name, shape, dtype, storage=storage, transient=False)
         else:
-            if name not in self.sdfg.arrays:
-                self.sdfg.add_array(name, shape, dtype, storage=storage, transient=False)
-            else:
-                existing_arr = self.sdfg.arrays[name]
-                if existing_arr.dtype != dtype:
-                    raise ValueError(
-                        f"Invalid ONNX model; found two values with name '{name}', but different dtypes ({existing_arr.dtype} and {dtype})"
-                    )
-                if tuple(existing_arr.shape) != tuple(shape):
-                    raise ValueError(
-                        f"Invalid ONNX model; found two values with name '{name}', but different dimensions ({existing_arr.shape} and {shape})"
-                    )
+            existing_arr = self.sdfg.arrays[name]
+            if existing_arr.dtype != dtype:
+                raise ValueError(
+                    f"Invalid ONNX model; found two values with name '{name}', but different dtypes ({existing_arr.dtype} and {dtype})"
+                )
+            if tuple(existing_arr.shape) != tuple(shape):
+                raise ValueError(
+                    f"Invalid ONNX model; found two values with name '{name}', but different dimensions ({existing_arr.shape} and {shape})"
+                )
 
         # we need to copy here because the weight_arr tensor is not writable
         self.weights[unclean_name] = torch.from_numpy(np_array.copy())
@@ -833,7 +832,7 @@ class ONNXModel:
 
 def create_output_array(
     inferred_symbols: dict[str, int], desc: dt.Data, use_torch=False, zeros: bool = False
-) -> np.ndarray | torch.tensor:
+) -> np.ndarray | torch.Tensor:
     """Create the array for an output. This is either a numpy array or a torch tensor depending on `use_torch`
 
     When `self.force_torch_outputs` is True, the outputs will be tensors. Otherwise, the outputs will be tensors

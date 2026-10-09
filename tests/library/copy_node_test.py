@@ -2,6 +2,7 @@
 """Tests for ``CopyLibraryNode`` and its pure, CPU, CUDA, cross-storage, register, and shared-memory expansions."""
 
 import contextlib
+import math
 from collections.abc import Sequence
 from dataclasses import dataclass
 
@@ -1629,7 +1630,7 @@ def test_copy_single_element_h2d():
         libnode_name="copy_h2d",
     )
 
-    host = np.array([3.14159], dtype=np.float64)
+    host = np.array([math.pi], dtype=np.float64)
     dev = cp.zeros(1, dtype=cp.float64)
 
     _compile_no_copynd(sdfg)(host=host, dev=dev)
@@ -1668,7 +1669,7 @@ def test_copy_single_element_d2h():
         libnode_name="copy_d2h",
     )
 
-    dev = cp.array([2.71828], dtype=cp.float64)
+    dev = cp.array([math.e], dtype=cp.float64)
     host = np.zeros(1, dtype=np.float64)
 
     _compile_no_copynd(sdfg)(host=host, dev=dev)

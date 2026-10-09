@@ -41,7 +41,7 @@ def to_blastype(dtype):
     elif dtype == np.complex128:
         return "Z"
     else:
-        raise TypeError("Type %s not supported in BLAS operations" % dtype.__name__)
+        raise TypeError(f"Type {dtype.__name__} not supported in BLAS operations")
 
 
 def cublas_type_metadata(dtype: dtypes.typeclass) -> tuple[str, str, str]:
@@ -62,7 +62,7 @@ def cublas_type_metadata(dtype: dtypes.typeclass) -> tuple[str, str, str]:
     elif dtype == dtypes.complex128:
         return "Z", "cuDoubleComplex", "Complex128"
     else:
-        raise TypeError("Type %s not supported in BLAS operations" % str(dtype))
+        raise TypeError(f"Type {str(dtype)} not supported in BLAS operations")
 
 
 def rocblas_type(ctype: str) -> str:

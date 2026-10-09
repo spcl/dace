@@ -2,17 +2,16 @@
 import copy
 from typing import TYPE_CHECKING
 
-import dace.autodiff.data_forwarding as data_forwarding
 import dace.autodiff.utils as ad_utils
-
-# DaCe imports
-import dace.sdfg.nodes as nodes
 from dace import config
 from dace import data as dt
+from dace.autodiff import data_forwarding
 
 # Autodiff imports
 from dace.autodiff.base_abc import AutoDiffException
-from dace.sdfg import SDFGState
+
+# DaCe imports
+from dace.sdfg import SDFGState, nodes
 from dace.sdfg import graph as dgraph
 
 if TYPE_CHECKING:

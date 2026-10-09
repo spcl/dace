@@ -1,4 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+import itertools
 import warnings
 from collections.abc import Sequence
 from functools import reduce
@@ -243,7 +244,7 @@ class Subset:
             return False
 
     def __repr__(self):
-        return "%s (%s)" % (type(self).__name__, self.__str__())
+        return f"{type(self).__name__} ({self.__str__()})"
 
     def offset(self, other, negative, indices=None, offset_end=True):
         raise NotImplementedError
@@ -413,7 +414,9 @@ class Range(Subset):
         if not isinstance(obj, dict):
             raise TypeError(f"Expected dict, got {type(obj)}")
         if obj["type"] != "Range":
-            raise TypeError("from_json of class \"Range\" called on json with type %s (expected 'Range')" % obj["type"])
+            raise TypeError(
+                "from_json of class \"Range\" called on json with type {} (expected 'Range')".format(obj["type"])
+            )
 
         ranges = obj["ranges"]
 
@@ -847,13 +850,13 @@ class Range(Subset):
     def ndslice_to_string(slice, tile_sizes=None):
         if tile_sizes is None:
             return ", ".join([Range.dim_to_string(s) for s in slice])
-        return ", ".join([Range.dim_to_string(s, t) for s, t in zip(slice, tile_sizes)])
+        return ", ".join(itertools.starmap(Range.dim_to_string, zip(slice, tile_sizes)))
 
     @staticmethod
     def ndslice_to_string_list(slice, tile_sizes=None):
         if tile_sizes is None:
             return [Range.dim_to_string(s) for s in slice]
-        return [Range.dim_to_string(s, t) for s, t in zip(slice, tile_sizes)]
+        return list(itertools.starmap(Range.dim_to_string, zip(slice, tile_sizes)))
 
     def ndrange(self):
         return [(rb, re, rs) for rb, re, rs in self.ranges]
@@ -886,7 +889,7 @@ class Range(Subset):
 
         if isinstance(key, slice):
             indices = range(*key.indices(len(self.ranges)))
-            return self.ranges.__setitem__(key, [coerce(i, v) for i, v in zip(indices, value)])
+            return self.ranges.__setitem__(key, list(itertools.starmap(coerce, zip(indices, value))))
         return self.ranges.__setitem__(key, coerce(key, value))
 
     def __eq__(self, other):
@@ -935,11 +938,10 @@ class Range(Subset):
             for idx, ((rb, re, rs), rt) in enumerate(zip(self.ranges, self.tile_sizes)):
                 if re - rb == 0:
                     new_subset.append((rb, re, rs, rt))
+                elif isinstance(other[idx], tuple):
+                    new_subset.append((rb + rs * other[idx][0], rb + rs * other[idx][1], rs * other[idx][2], rt))
                 else:
-                    if isinstance(other[idx], tuple):
-                        new_subset.append((rb + rs * other[idx][0], rb + rs * other[idx][1], rs * other[idx][2], rt))
-                    else:
-                        new_subset.append(rb + rs * other[idx])
+                    new_subset.append(rb + rs * other[idx])
         elif other.data_dims() == 0 and all(r == (0, 0, 1) if isinstance(other, Range) else r == 0 for r in other):
             # NOTE: This is a special case where the other subset is the
             # (potentially multidimensional) index zero.
@@ -1298,7 +1300,7 @@ def _union_special_cases(
 def bounding_box_union(subset_a: Subset, subset_b: Subset) -> Range:
     """Perform union by creating a bounding-box of two subsets."""
     if subset_a.dims() != subset_b.dims():
-        raise ValueError("Dimension mismatch between %s and %s" % (str(subset_a), str(subset_b)))
+        raise ValueError(f"Dimension mismatch between {str(subset_a)} and {str(subset_b)}")
 
     # Check whether all expressions containing a symbolic value should
     # always be evaluated to positive. If so, union will yield
@@ -1375,9 +1377,7 @@ def union(subset_a: Subset, subset_b: Subset) -> Subset:
             # TODO(later): More involved Strided-Tiled Range union
             return bounding_box_union(subset_a, subset_b)
         else:
-            warnings.warn(
-                "Unrecognized Subset type %s in union, degenerating to bounding box" % type(subset_a).__name__
-            )
+            warnings.warn(f"Unrecognized Subset type {type(subset_a).__name__} in union, degenerating to bounding box")
             return bounding_box_union(subset_a, subset_b)
     except TypeError:  # cannot determine truth value of Relational
         return None

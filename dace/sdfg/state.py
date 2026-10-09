@@ -546,7 +546,7 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
                 visited.add(curedge)
                 assert curedge.src_conn.startswith("OUT_")
                 cname = curedge.src_conn[4:]
-                curedge = next(e for e in state.in_edges(curedge.src) if e.dst_conn == "IN_%s" % cname)
+                curedge = next(e for e in state.in_edges(curedge.src) if e.dst_conn == f"IN_{cname}")
                 if curedge in visited:
                     raise ValueError("Cycle encountered while reading memlet path")
         elif propagate_backward:
@@ -554,7 +554,7 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
                 visited.add(curedge)
                 assert curedge.dst_conn.startswith("IN_")
                 cname = curedge.dst_conn[3:]
-                curedge = next(e for e in state.out_edges(curedge.dst) if e.src_conn == "OUT_%s" % cname)
+                curedge = next(e for e in state.out_edges(curedge.dst) if e.src_conn == f"OUT_{cname}")
                 if curedge in visited:
                     raise ValueError("Cycle encountered while reading memlet path")
         tree_root = mm.MemletTree(curedge, downwards=propagate_forward)
@@ -572,7 +572,7 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
                 treenode.children = [
                     mm.MemletTree(e, downwards=True, parent=treenode)
                     for e in state.out_edges(treenode.edge.dst)
-                    if e.src_conn == "OUT_%s" % conn
+                    if e.src_conn == f"OUT_{conn}"
                 ]
             elif propagate_backward:
                 if not isinstance(treenode.edge.src, nd.ExitNode) or treenode.edge.src_conn is None:
@@ -581,7 +581,7 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
                 treenode.children = [
                     mm.MemletTree(e, downwards=False, parent=treenode)
                     for e in state.in_edges(treenode.edge.src)
-                    if e.dst_conn == "IN_%s" % conn
+                    if e.dst_conn == f"IN_{conn}"
                 ]
 
             for child in treenode.children:
@@ -702,13 +702,13 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
             if validate and len(eq) != 0:
                 cycles = list(self.find_cycles())
                 if cycles:
-                    raise ValueError("Found cycles in state %s: %s" % (self.label, cycles))
+                    raise ValueError(f"Found cycles in state {self.label}: {cycles}")
                 raise RuntimeError(f"Leftover nodes in queue: {eq}")
 
             if validate and len(result) != self.number_of_nodes():
                 cycles = list(self.find_cycles())
                 if cycles:
-                    raise ValueError("Found cycles in state %s: %s" % (self.label, cycles))
+                    raise ValueError(f"Found cycles in state {self.label}: {cycles}")
                 leftover_nodes = set(self.nodes()) - result.keys()
                 raise RuntimeError(f"Some nodes were not processed: {leftover_nodes}")
 
@@ -751,14 +751,14 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
             if validate and len(eq) != 0:
                 cycles = list(self.find_cycles())
                 if cycles:
-                    raise ValueError("Found cycles in state %s: %s" % (self.label, cycles))
+                    raise ValueError(f"Found cycles in state {self.label}: {cycles}")
                 raise RuntimeError(f"Leftover nodes in queue: {eq}")
 
             entry_nodes = {n for n in self.nodes() if isinstance(n, nd.EntryNode)} | {None}
             if validate and len(result) != len(entry_nodes):
                 cycles = list(self.find_cycles())
                 if cycles:
-                    raise ValueError("Found cycles in state %s: %s" % (self.label, cycles))
+                    raise ValueError(f"Found cycles in state {self.label}: {cycles}")
                 raise RuntimeError(f"Some nodes were not processed: {entry_nodes - result.keys()}")
 
             # Cache result
@@ -1733,15 +1733,15 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
 
     def add_edge(self, u, u_connector, v, v_connector, memlet):
         if not isinstance(u, nd.Node):
-            raise TypeError("Source node is not of type nd.Node (type: %s)" % str(type(u)))
+            raise TypeError(f"Source node is not of type nd.Node (type: {str(type(u))})")
         if u_connector is not None and not isinstance(u_connector, str):
-            raise TypeError("Source connector is not string (type: %s)" % str(type(u_connector)))
+            raise TypeError(f"Source connector is not string (type: {str(type(u_connector))})")
         if not isinstance(v, nd.Node):
-            raise TypeError("Destination node is not of type nd.Node (type: " + "%s)" % str(type(v)))
+            raise TypeError("Destination node is not of type nd.Node (type: " + f"{str(type(v))})")
         if v_connector is not None and not isinstance(v_connector, str):
-            raise TypeError("Destination connector is not string (type: %s)" % str(type(v_connector)))
+            raise TypeError(f"Destination connector is not string (type: {str(type(v_connector))})")
         if not isinstance(memlet, mm.Memlet):
-            raise TypeError("Memlet is not of type Memlet (type: %s)" % str(type(memlet)))
+            raise TypeError(f"Memlet is not of type Memlet (type: {str(type(memlet))})")
 
         # A library node with one fixed data connector per side (``Reduce``'s ``_in``/``_out``) is wired unnamed
         # where it declares none (main); bind such a data edge to that connector.

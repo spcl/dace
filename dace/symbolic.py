@@ -31,6 +31,7 @@ from dace.symbolic_engine import Basic as SymbolicBasic
 # Re-exported so a consumer asks `symbolic` for a backend-neutral head instead of naming sympy.
 # Unreferenced HERE, and `ruff-check --fix` runs in pre-commit -- without the noqa it deletes them.
 from dace.symbolic_engine import Boolean as SymbolicBoolean  # noqa: F401
+from dace.symbolic_engine import Expr as SymbolicExpr  # noqa: F401
 from dace.symbolic_engine import native_parse, to_sympy
 
 #: The OpenMP thread count, defined by frame code rather than passed in. Sizing a per-thread
@@ -377,9 +378,9 @@ class symbol(sympy.Symbol, metaclass=_SYMBOL_META):
                     fail = constraint
                     break
             except (AttributeError, TypeError, ValueError):
-                raise RuntimeError("Cannot validate constraint %s for symbol %s" % (str(constraint), self.name))
+                raise RuntimeError(f"Cannot validate constraint {str(constraint)} for symbol {self.name}")
         if fail is not None:
-            raise RuntimeError("Value %s invalidates constraint %s for symbol %s" % (str(value), str(fail), self.name))
+            raise RuntimeError(f"Value {str(value)} invalidates constraint {str(fail)} for symbol {self.name}")
 
     def __floordiv__(self, other: Any) -> sympy.Expr:
         """``//`` on a symbol yields ``int_floor``, as ``pystr_to_symbolic`` and :class:`SymExpr`
@@ -944,8 +945,9 @@ def symtype(expr):
         return stypes[0]
     else:
         raise TypeError(
-            'Cannot infer symbolic type from expression "%s"'
-            " with symbols [%s]" % (str(expr), ", ".join([str(s) + ": " + str(s.dtype) for s in symlist(expr)]))
+            'Cannot infer symbolic type from expression "{}" with symbols [{}]'.format(
+                str(expr), ", ".join([str(s) + ": " + str(s.dtype) for s in symlist(expr)])
+            )
         )
 
 
@@ -2806,12 +2808,11 @@ def evaluate_optional_arrays(expr, sdfg):
                 # Equivalent to `None is x` for a non-optional x
                 return False
 
-        else:  # elem.args[0] is not None
-            if elem.args[1] == none:
-                cand = str(elem.args[0])
-                if cand in sdfg.arrays and sdfg.arrays[cand].optional is False:
-                    # Equivalent to `x is None` for a non-optional x
-                    return False
+        elif elem.args[1] == none:
+            cand = str(elem.args[0])
+            if cand in sdfg.arrays and sdfg.arrays[cand].optional is False:
+                # Equivalent to `x is None` for a non-optional x
+                return False
 
         # Neither argument is None
         return None
@@ -4193,7 +4194,7 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
         base = name.removeprefix("__")
         as_operator = name.startswith("__") or self.cpp_mode
         if base == "bitwise_invert" and as_operator:
-            return "(~(%s))" % self._print(expr.args[0])
+            return f"(~({self._print(expr.args[0])}))"
         binop = {"bitwise_and": "&", "bitwise_or": "|", "bitwise_xor": "^", "left_shift": "<<", "right_shift": ">>"}
         if base in binop and as_operator:
             return "((%s) %s (%s))" % (self._print(expr.args[0]), binop[base], self._print(expr.args[1]))
@@ -4203,7 +4204,7 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
             if self.cpp_mode and not nonnegative_integers(*expr.args):
                 return self._print_binary_call("py_floor", expr)
             op = "/" if self.cpp_mode else "//"
-            return "((%s) %s (%s))" % (self._print(expr.args[0]), op, self._print(expr.args[1]))
+            return f"(({self._print(expr.args[0])}) {op} ({self._print(expr.args[1])}))"
         if str(expr.func) == "ipow" and self.cpp_mode:
             arguments = [self._print(a) for a in expr.args]
             lowered = self._mpr_call("ipow", arguments, self.c_argument_types(expr.args))
@@ -4468,10 +4469,10 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
         return "floor(%s)" % self._print(arg)
 
     def _print_Equality(self, expr):
-        return "((%s) == (%s))" % (self._print(expr.args[0]), self._print(expr.args[1]))
+        return f"(({self._print(expr.args[0])}) == ({self._print(expr.args[1])}))"
 
     def _print_Unequality(self, expr):
-        return "((%s) != (%s))" % (self._print(expr.args[0]), self._print(expr.args[1]))
+        return f"(({self._print(expr.args[0])}) != ({self._print(expr.args[1])}))"
 
     def _print_Not(self, expr):
         return "(%s (%s))" % ("!" if self.c_operators() else "not", self._print(expr.args[0]))
@@ -5285,13 +5286,12 @@ def name_tokens_in_code(code: str) -> frozenset[str]:
                         token_counts[token] -= 1
                         if token_counts[token] == 0:
                             tokens.discard(token)
-                else:
-                    if e < len(code) and s > 0:
-                        if code[s - 1].isdigit() and code[e] in "-+0123456789":
-                            # Discard only if the count of this token is now zero, as `e = 1e-5` will mean token e was found twice
-                            token_counts[token] -= 1
-                            if token_counts[token] == 0:
-                                tokens.discard(token)
+                elif e < len(code) and s > 0:
+                    if code[s - 1].isdigit() and code[e] in "-+0123456789":
+                        # Discard only if the count of this token is now zero, as `e = 1e-5` will mean token e was found twice
+                        token_counts[token] -= 1
+                        if token_counts[token] == 0:
+                            tokens.discard(token)
 
     return frozenset(tokens)
 

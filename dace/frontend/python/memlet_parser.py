@@ -289,7 +289,7 @@ def ParseMemlet(
     das = defined_arrays_and_symbols
     arrname = arrname or rname(node)
     if arrname not in das:
-        raise DaceSyntaxError(visitor, node, 'Use of undefined data "%s" in memlet' % arrname)
+        raise DaceSyntaxError(visitor, node, f'Use of undefined data "{arrname}" in memlet')
     array = das[arrname]
 
     # Determine number of accesses to the memlet (default is the slice size)

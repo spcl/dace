@@ -5,11 +5,10 @@ from typing import TYPE_CHECKING
 # DaCe imports
 import dace
 import dace.autodiff.utils as ad_utils
-import dace.sdfg.nodes as nodes
 
 # Autodiff imports
 from dace.autodiff.base_abc import AutoDiffException
-from dace.sdfg import SDFG, SDFGState
+from dace.sdfg import SDFG, SDFGState, nodes
 from dace.sdfg import state as dstate
 from dace.sdfg.state import LoopRegion
 

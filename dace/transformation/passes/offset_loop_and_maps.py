@@ -7,7 +7,7 @@ from collections.abc import Iterable
 import sympy
 
 import dace
-from dace import SDFG, ControlFlowRegion, Union, properties
+from dace import SDFG, ControlFlowRegion, properties
 from dace.optionals import required
 from dace.properties import Property
 from dace.sdfg.narrowing import as_basic, as_expr
@@ -210,7 +210,7 @@ class OffsetLoopsAndMaps(ppl.Pass):
     def __init__(
         self,
         offset_expr: str,
-        begin_expr: Union[str, None],
+        begin_expr: str | None,
         convert_leq_to_lt: bool = True,
         normalize_loops: bool = False,
         squeeze: bool = False,

@@ -187,7 +187,7 @@ def _replace_dict_keys(d, old, new):
         return
     if old in d:
         if new in d:
-            warnings.warn('"%s" already exists in SDFG' % new)
+            warnings.warn(f'"{new}" already exists in SDFG')
         d[new] = d[old]
         del d[old]
 
@@ -796,7 +796,7 @@ class SDFG(ControlFlowRegion):
         super().__init__()
         self.name = name
         if name is not None and not validate_name(name):
-            raise InvalidSDFGError('Invalid SDFG name "%s"' % name, self, None)
+            raise InvalidSDFGError(f'Invalid SDFG name "{name}"', self, None)
 
         self.constants_prop = {}
         if constants is not None:
@@ -1126,7 +1126,7 @@ class SDFG(ControlFlowRegion):
             return self.symbols[str(dataname)]
         if dataname in self.constants_prop:
             return self.constants_prop[dataname][0]
-        raise KeyError('Data descriptor with name "%s" not found in SDFG' % dataname)
+        raise KeyError(f'Data descriptor with name "{dataname}" not found in SDFG')
 
     def replace(self, name: str, new_name: str):
         """Finds and replaces all occurrences of a symbol or array name in SDFG.
@@ -1626,7 +1626,7 @@ class SDFG(ControlFlowRegion):
                 return value
             elif isinstance(dtype, dt.Scalar):
                 return dtype.dtype.type(value)
-            raise TypeError("Unsupported data type %s" % dtype)
+            raise TypeError(f"Unsupported data type {dtype}")
 
         result.update({k: cast(*v) for k, v in self.constants_prop.items()})
         return result
@@ -2172,7 +2172,7 @@ class SDFG(ControlFlowRegion):
             sdfg = symbolic.SympyAwareUnpickler(fp).load()
 
         if not isinstance(sdfg, SDFG):
-            raise TypeError("Loaded file is not an SDFG (loaded type: %s)" % type(sdfg).__name__)
+            raise TypeError(f"Loaded file is not an SDFG (loaded type: {type(sdfg).__name__})")
         return sdfg
 
     @staticmethod
@@ -2562,7 +2562,7 @@ class SDFG(ControlFlowRegion):
         :return: Name of the new data descriptor
         """
         if not isinstance(name, str):
-            raise TypeError("Data descriptor name must be a string. Got %s" % type(name).__name__)
+            raise TypeError(f"Data descriptor name must be a string. Got {type(name).__name__}")
 
         if find_new_name:
             # These characters might be introduced through the creation of views to members
@@ -2927,7 +2927,7 @@ class SDFG(ControlFlowRegion):
             for s in self.nodes():
                 if s.label == state_id_or_label:
                     return s
-            raise LookupError("State %s not found" % state_id_or_label)
+            raise LookupError(f"State {state_id_or_label} not found")
         elif isinstance(state_id_or_label, int):
             return self.nodes()[state_id_or_label]
         else:
@@ -3084,7 +3084,7 @@ class SDFG(ControlFlowRegion):
         if num_args_passed < num_args_expected:
             expected_kwargs = list(expected_args.keys())[len(args) :]
             missing_args = [k for k in expected_kwargs if k not in kwargs]
-            raise RuntimeError("Missing arguments to SDFG: '%s'" % (", ".join(missing_args)))
+            raise RuntimeError("Missing arguments to SDFG: '{}'".format(", ".join(missing_args)))
         elif num_args_passed > num_args_expected:
             unnecessary_args = []
             extra_args = len(args) - len(expected_args)
@@ -3093,7 +3093,9 @@ class SDFG(ControlFlowRegion):
                 unnecessary_args.extend(kwargs.keys())
             else:
                 unnecessary_args = [k for k in kwargs.keys() if k not in expected_args]
-            raise RuntimeError("Too many arguments to SDFG. Unnecessary arguments: %s" % ", ".join(unnecessary_args))
+            raise RuntimeError(
+                "Too many arguments to SDFG. Unnecessary arguments: {}".format(", ".join(unnecessary_args))
+            )
         positional_args = list(args)
         for i, arg in enumerate(expected_args):
             expected = expected_args[arg]
@@ -3106,7 +3108,7 @@ class SDFG(ControlFlowRegion):
             if types_only:
                 desc = dt.create_datadescriptor(passed)
                 if not expected.is_equivalent(desc):
-                    raise TypeError("Type mismatch for argument: expected %s, got %s" % (expected, desc))
+                    raise TypeError(f"Type mismatch for argument: expected {expected}, got {desc}")
                 else:
                     continue
             if isinstance(expected, dace.data.Array):

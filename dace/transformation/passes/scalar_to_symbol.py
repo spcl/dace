@@ -784,10 +784,10 @@ def remove_scalar_reads(sdfg: sd.SDFG, array_names: dict[str, str]):
                                 promo.visit(stmt)
                         elif dst.language is dtypes.Language.CPP:
                             # Replace whole-word matches (identifiers) in code
-                            dst.code.code = re.sub(r"\b%s\b" % re.escape(e.dst_conn), symname, dst.code.as_string)
+                            dst.code.code = re.sub(rf"\b{re.escape(e.dst_conn)}\b", symname, dst.code.as_string)
                     elif isinstance(dst, nodes.AccessNode):
                         # Step 3.3
-                        t = state.add_tasklet("symassign", {}, {"__out"}, "__out = %s" % symname)
+                        t = state.add_tasklet("symassign", {}, {"__out"}, f"__out = {symname}")
                         state.add_edge(
                             t, "__out", dst, e.dst_conn, mm.Memlet(data=dst.data, subset=e.data.dst_subset, volume=1)
                         )
@@ -832,7 +832,7 @@ def remove_scalar_reads(sdfg: sd.SDFG, array_names: dict[str, str]):
                         # Skip
                         continue
                     else:
-                        raise ValueError('Node type "%s" not supported for promotion' % type(dst).__name__)
+                        raise ValueError(f'Node type "{type(dst).__name__}" not supported for promotion')
 
                     # If nodes were disconnected, reconnect with empty memlet
                     if isinstance(e.src, nodes.EntryNode) and len(state.edges_between(e.src, dst)) == 0:
@@ -952,8 +952,8 @@ class ScalarToSymbolPromotion(passes.Pass):
                     for e in new_state.in_edges(input):
                         memlet_str: str = e.data.data
                         if e.data.subset is not None and not isinstance(sdfg.arrays[memlet_str], dt.Scalar):
-                            memlet_str += "[%s]" % e.data.subset
-                        newcode = re.sub(r"\b%s\b" % re.escape(e.dst_conn), memlet_str, newcode)
+                            memlet_str += f"[{e.data.subset}]"
+                        newcode = re.sub(rf"\b{re.escape(e.dst_conn)}\b", memlet_str, newcode)
                     # Add interstate edge assignment
                     new_isedge.data.assignments[node.data] = newcode
                 elif isinstance(input, nodes.AccessNode):

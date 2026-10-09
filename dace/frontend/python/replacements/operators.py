@@ -44,10 +44,10 @@ def _unop(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, opcode: st
 
     name, _ = pv.add_temp_transient(arr1.shape, restype, arr1.storage)
     state.add_mapped_tasklet(
-        "_%s_" % opname,
-        {"__i%d" % i: "0:%s" % s for i, s in enumerate(arr1.shape)},
+        f"_{opname}_",
+        {"__i%d" % i: f"0:{s}" for i, s in enumerate(arr1.shape)},
         {"__in1": Memlet.simple(op1, ",".join(["__i%d" % i for i in range(len(arr1.shape))]))},
-        "__out = %s __in1" % opcode,
+        f"__out = {opcode} __in1",
         {"__out": Memlet.simple(name, ",".join(["__i%d" % i for i in range(len(arr1.shape))]))},
         external_edges=True,
     )
@@ -71,7 +71,7 @@ def _makeunop(op, opcode):
         restype, _ = result_type([scalar1], op)
         op2 = visitor.get_target_name()
         op2, scalar2 = sdfg.add_scalar(op2, restype, transient=True, find_new_name=True)
-        tasklet = state.add_tasklet("_%s_" % op, {"__in"}, {"__out"}, "__out = %s __in" % opcode)
+        tasklet = state.add_tasklet(f"_{op}_", {"__in"}, {"__out"}, f"__out = {opcode} __in")
         node1 = state.add_read(op1)
         node2 = state.add_write(op2)
         state.add_edge(node1, None, tasklet, "__in", Memlet.from_array(op1, scalar1))
@@ -306,11 +306,10 @@ def result_type(
             elif operator in ("Heaviside", "Arctan2", "Hypot") and max(type1, type2) < 2:
                 restype = dtypes.float64
             # All other arithmetic operators and cases of the above operators
+            elif numpy_version >= "2.0.0":
+                restype = np_result_type(dtypes_for_result_np2)
             else:
-                if numpy_version >= "2.0.0":
-                    restype = np_result_type(dtypes_for_result_np2)
-                else:
-                    restype = np_result_type(dtypes_for_result)
+                restype = np_result_type(dtypes_for_result)
 
             if dtype1 != restype:
                 left_cast = cast_str(restype)
@@ -459,7 +458,7 @@ def _array_array_binop(
 
     if list(out_shape) == [1]:
         tasklet = state.add_tasklet(
-            "_%s_" % operator,
+            f"_{operator}_",
             {"__in1": None, "__in2": None},
             {"__out"},
             f"__out = {tasklet_args[0]} {opcode} {tasklet_args[1]}",
@@ -472,7 +471,7 @@ def _array_array_binop(
         state.add_edge(tasklet, "__out", n3, None, Memlet.from_array(out_operand, out_arr))
     else:
         state.add_mapped_tasklet(
-            "_%s_" % operator,
+            f"_{operator}_",
             all_idx_dict,
             {"__in1": Memlet.simple(left_operand, left_idx), "__in2": Memlet.simple(right_operand, right_idx)},
             f"__out = {tasklet_args[0]} {opcode} {tasklet_args[1]}",
@@ -538,7 +537,7 @@ def _array_const_binop(
             inp_conn = {"__in2"}
             n2 = state.add_read(right_operand)
         tasklet = state.add_tasklet(
-            "_%s_" % operator,
+            f"_{operator}_",
             inp_conn,
             {"__out"},
             f"__out = {tasklet_args[0]} {opcode} {tasklet_args[1]}",
@@ -555,7 +554,7 @@ def _array_const_binop(
         else:
             inp_memlets = {"__in2": Memlet.simple(right_operand, right_idx)}
         state.add_mapped_tasklet(
-            "_%s_" % operator,
+            f"_{operator}_",
             all_idx_dict,
             inp_memlets,
             f"__out = {tasklet_args[0]} {opcode} {tasklet_args[1]}",
@@ -621,7 +620,7 @@ def _array_sym_binop(
             inp_conn = {"__in2"}
             n2 = state.add_read(right_operand)
         tasklet = state.add_tasklet(
-            "_%s_" % operator,
+            f"_{operator}_",
             inp_conn,
             {"__out"},
             f"__out = {tasklet_args[0]} {opcode} {tasklet_args[1]}",
@@ -638,7 +637,7 @@ def _array_sym_binop(
         else:
             inp_memlets = {"__in2": Memlet.simple(right_operand, right_idx)}
         state.add_mapped_tasklet(
-            "_%s_" % operator,
+            f"_{operator}_",
             all_idx_dict,
             inp_memlets,
             f"__out = {tasklet_args[0]} {opcode} {tasklet_args[1]}",
@@ -686,7 +685,7 @@ def _scalar_scalar_binop(
     )
 
     tasklet = state.add_tasklet(
-        "_%s_" % operator,
+        f"_{operator}_",
         {"__in1": None, "__in2": None},
         {"__out"},
         f"__out = {tasklet_args[0]} {opcode} {tasklet_args[1]}",
@@ -746,7 +745,7 @@ def _scalar_const_binop(
         inp_conn = {"__in2"}
         n2 = state.add_read(right_operand)
     tasklet = state.add_tasklet(
-        "_%s_" % operator,
+        f"_{operator}_",
         inp_conn,
         {"__out"},
         f"__out = {tasklet_args[0]} {opcode} {tasklet_args[1]}",
@@ -810,7 +809,7 @@ def _scalar_sym_binop(
         inp_conn = {"__in2"}
         n2 = state.add_read(right_operand)
     tasklet = state.add_tasklet(
-        "_%s_" % operator,
+        f"_{operator}_",
         inp_conn,
         {"__out"},
         f"__out = {tasklet_args[0]} {opcode} {tasklet_args[1]}",

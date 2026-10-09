@@ -385,7 +385,7 @@ class ConstantRangeUnderapproximationMemlet(UnderapproximationMemletPattern):
 
     def propagate(self, array, expressions, node_range):
         rng = [(None, None, 1)] * len(array.shape)
-        node_range_gen = (range(rb, re, rs) for rb, re, rs in node_range)
+        node_range_gen = itertools.starmap(range, node_range)
         for ndind in itertools.product(*tuple(node_range_gen)):
             repldict = {p: ndind[i] for i, p in enumerate(self.params)}
             for expr in expressions:
@@ -1419,7 +1419,7 @@ class UnderapproximateWrites(ppl.Pass):
 
         if arr is None:
             if memlet.data not in sdfg.arrays:
-                raise KeyError('Data descriptor (Array, Stream) "%s" not defined in SDFG.' % memlet.data)
+                raise KeyError(f'Data descriptor (Array, Stream) "{memlet.data}" not defined in SDFG.')
 
             # FIXME: A memlet alone (without an edge) cannot figure out whether it is data<->data or data<->code
             #        so this test cannot be used
@@ -1445,7 +1445,7 @@ class UnderapproximateWrites(ppl.Pass):
             new_memlet.other_subset = None
             return new_memlet
         else:
-            raise NotImplementedError("Unimplemented primitive: %s" % type(entry_node))
+            raise NotImplementedError(f"Unimplemented primitive: {type(entry_node)}")
 
     def _underapproximate_subsets(
         self,
@@ -1543,7 +1543,7 @@ class UnderapproximateWrites(ppl.Pass):
                 old_subset = new_subset
                 new_subset = subsets.list_union(new_subset, subsets.SubsetUnion(_subsets))
                 if new_subset is None:
-                    warnings.warn("Subset union failed between %s and %s " % (old_subset, _subsets))
+                    warnings.warn(f"Subset union failed between {old_subset} and {_subsets} ")
                     break
 
         # Create new memlet

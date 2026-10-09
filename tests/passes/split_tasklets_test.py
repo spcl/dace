@@ -280,8 +280,7 @@ def _generate_double_tasklet_sdfg(expression_strs: tuple[str, str]) -> dace.SDFG
             assert var != "tmp"
             sdfg.add_array(name=var + "_ARR", shape=(1,), dtype=dace.float64 if not gen_integer else dace.int64)
         if i == len(expression_strs) - 1:
-            for var in lhs_vars:
-                out_accesses.add(state.add_access(var + "_ARR"))
+            out_accesses.update(state.add_access(var + "_ARR") for var in lhs_vars)
 
         for var in rhs_vars:
             if var == "tmp":

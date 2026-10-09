@@ -234,9 +234,9 @@ def eye(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, N, M=None, k=0, dtype=
 
     state.add_mapped_tasklet(
         "eye",
-        dict(__i0="0:%s" % N, __i1="0:%s" % M),
+        dict(__i0=f"0:{N}", __i1=f"0:{M}"),
         {},
-        "val = 1 if __i0 == (__i1 - %s) else 0" % k,
+        f"val = 1 if __i0 == (__i1 - {k}) else 0",
         dict(val=Memlet.simple(name, "__i0, __i1")),
         external_edges=True,
     )

@@ -8,7 +8,7 @@ import pytest
 import scipy
 
 import dace
-import dace.libraries.blas as blas
+from dace.libraries import blas
 from dace.memlet import Memlet
 
 

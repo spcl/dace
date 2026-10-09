@@ -379,11 +379,10 @@ class VectorInferenceGraph:
                 return dtype
             else:
                 raise VectorInferenceException("Cannot make vector into scalar")
+        elif inf_type == InferenceNode.Vector:
+            return dtypes.vector(dtype, self.vec_len)
         else:
-            if inf_type == InferenceNode.Vector:
-                return dtypes.vector(dtype, self.vec_len)
-            else:
-                return dtype
+            return dtype
 
     def _carries_vector_data(self, edge: MultiConnectorEdge[Memlet]) -> bool:
         if edge.data.data is None:

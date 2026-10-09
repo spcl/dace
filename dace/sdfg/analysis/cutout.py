@@ -452,8 +452,7 @@ class SDFGCutout(SDFG):
                         start_state = list(frontier)[0]
                         cutout_states.add(start_state)
                     else:
-                        for s in frontier:
-                            cutout_states.add(s)
+                        cutout_states.update(frontier)
                         bfs_queue.append(_stateset_predecessor_frontier(cutout_states))
 
         subgraph: SubgraphView = SubgraphView(sdfg, cutout_states)
@@ -586,8 +585,7 @@ def _transformation_determine_affected_nodes(
         #       transformation intents / transactions will need to solve.
         if isinstance(transformation, DetectLoop):
             if transformation.loop_guard is not None and transformation.loop_guard in target_sdfg.nodes():
-                for iedge in target_sdfg.in_edges(transformation.loop_guard):
-                    affected_nodes.add(iedge.src)
+                affected_nodes.update(iedge.src for iedge in target_sdfg.in_edges(transformation.loop_guard))
             if transformation.loop_begin is not None and transformation.loop_begin in target_sdfg.nodes():
                 to_visit = [transformation.loop_begin]
                 while to_visit:
@@ -605,8 +603,7 @@ def _transformation_determine_affected_nodes(
             target_sdfg = target_sdfg.cfg_list[transformation.cfg_id]
 
         subgraph = transformation.subgraph_view(target_sdfg)
-        for n in subgraph.nodes():
-            affected_nodes.add(n)
+        affected_nodes.update(subgraph.nodes())
 
     if strict:
         return affected_nodes
@@ -625,8 +622,7 @@ def _transformation_determine_affected_nodes(
 
             if scope_entry is not None:
                 scope = state.scope_subgraph(scope_entry, include_entry=True, include_exit=True)
-                for n in scope.nodes():
-                    expanded.add(n)
+                expanded.update(scope.nodes())
         return expanded
 
     return affected_nodes
@@ -702,8 +698,7 @@ def _reduce_in_configuration(
     # increase the size of the input configuration. Consequently, we can use the outer-most scope entry node as our
     # source node for the minimum cut, if there is such a unique outer entry node.
     source_candidates = set()
-    for n in subgraph_nodes:
-        source_candidates.add(state.entry_node(n))
+    source_candidates.update(state.entry_node(n) for n in subgraph_nodes)
 
     source = None
     scope_children = state.scope_children()

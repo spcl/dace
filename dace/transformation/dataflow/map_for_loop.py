@@ -267,10 +267,10 @@ class MapToForLoop(transformation.SingleStateTransformation):
         # Create a loop inside the nested SDFG
         loop_region = LoopRegion(
             "loop_" + map_entry.map.label,
-            "%s < %s" % (loop_idx, replace_param(loop_to + 1)),
+            f"{loop_idx} < {replace_param(loop_to + 1)}",
             loop_idx,
-            "%s = %s" % (loop_idx, replace_param(loop_from)),
-            "%s = %s + %s" % (loop_idx, loop_idx, replace_param(loop_step)),
+            f"{loop_idx} = {replace_param(loop_from)}",
+            f"{loop_idx} = {loop_idx} + {replace_param(loop_step)}",
         )
         nsdfg.add_node(loop_region, is_start_block=True)
         nsdfg.remove_node(nstate)

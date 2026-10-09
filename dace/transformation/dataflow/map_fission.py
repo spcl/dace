@@ -802,12 +802,11 @@ class MapFission(transformation.SingleStateTransformation):
                                         e.data.subset = subsets.Range(map_ranges)
                                     else:
                                         e.data.subset = subsets.Range(map_ranges + e.data.subset.ranges)
-                            else:
-                                if e.data.other_subset:
-                                    if is_scalar_like:
-                                        e.data.other_subset = subsets.Range(map_ranges)
-                                    else:
-                                        e.data.other_subset = subsets.Range(map_ranges + e.data.other_subset.ranges)
+                            elif e.data.other_subset:
+                                if is_scalar_like:
+                                    e.data.other_subset = subsets.Range(map_ranges)
+                                else:
+                                    e.data.other_subset = subsets.Range(map_ranges + e.data.other_subset.ranges)
 
         # If nested SDFG, reconnect nodes around map and modify memlets
         if self.expr_index == 1:

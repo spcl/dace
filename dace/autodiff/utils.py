@@ -11,7 +11,6 @@ import sympy as sp
 
 # DaCe imports
 import dace
-import dace.sdfg.utils as utils
 from dace import data as dt
 from dace import dtypes, symbolic
 
@@ -951,7 +950,7 @@ def check_edges_type_in_state(subgraph: dstate.StateSubgraphView) -> None:
 
         if edge.data.data:
             edge_type = parent_sdfg.arrays[edge.data.data].dtype
-            if edge_type == dace.string:
+            if edge_type is dace.string:
                 raise AutoDiffException(
                     f"Expected Subgraph to differentiate to only contain float, int, and bool edges, but data {edge.data}"
                     f" on edge {edge} has type {edge_type}"
@@ -1018,10 +1017,9 @@ def extract_loop_region_info(loop: LoopRegion) -> tuple[str, str]:
         end = end.replace("(", "")
         end = end.replace(")", "")
         end = end.replace(" ", "")
-    else:
-        if expression_to_remove.startswith("(") and not expression_to_remove.endswith(")") and expression.endswith(")"):
-            # Remove extra parenthesis
-            end = end[:-1]
+    elif expression_to_remove.startswith("(") and not expression_to_remove.endswith(")") and expression.endswith(")"):
+        # Remove extra parenthesis
+        end = end[:-1]
 
     # Get the start from the initialization code
     init_code = loop.init_statement.as_string

@@ -81,7 +81,7 @@ def _matmult(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op
                 UserWarning,
             )
         elif not res:
-            raise SyntaxError("Matrix dimension mismatch %s != %s" % (arr1.shape[-1], arr2.shape[-2]))
+            raise SyntaxError(f"Matrix dimension mismatch {arr1.shape[-1]} != {arr2.shape[-2]}")
 
         from dace.libraries.blas.nodes.matmul import _get_batchmm_opts
 

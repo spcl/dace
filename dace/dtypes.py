@@ -445,6 +445,14 @@ class typeclass:
     def __ne__(self, other):
         return other is not None and self.ctype != getattr(other, "ctype", False)
 
+    def __or__(self, other):
+        """Enables PEP 604 union type hints, e.g., ``dace.float64 | None``."""
+        # NOTE: ``self | other`` would recurse into this method
+        return Union[self, other]  # noqa: UP007
+
+    def __ror__(self, other):
+        return Union[other, self]  # noqa: UP007
+
     def __getitem__(self, s):
         """This is syntactic sugar that allows us to define an array type
         with the following syntax: ``dace.uint32[N,M]``
@@ -482,7 +490,7 @@ def max_value(dtype: typeclass):
     elif numpy.issubdtype(nptype, numpy.floating):
         return numpy.finfo(nptype).max
 
-    raise TypeError('Unsupported type "%s" for maximum' % dtype)
+    raise TypeError(f'Unsupported type "{dtype}" for maximum')
 
 
 def min_value(dtype: typeclass):
@@ -495,7 +503,7 @@ def min_value(dtype: typeclass):
     elif numpy.issubdtype(nptype, numpy.floating):
         return numpy.finfo(nptype).min
 
-    raise TypeError('Unsupported type "%s" for minimum' % dtype)
+    raise TypeError(f'Unsupported type "{dtype}" for minimum')
 
 
 def reduction_identity(dtype: typeclass, red: ReductionType) -> Any:
@@ -716,7 +724,7 @@ class vector(typeclass):
 
     @property
     def ctype(self):
-        return "dace::vec<%s, %s>" % (self.vtype.ctype, self.veclen)
+        return f"dace::vec<{self.vtype.ctype}, {self.veclen}>"
 
     @property
     def ctype_unaligned(self):
@@ -879,7 +887,7 @@ class struct(typeclass):
 {typ}
 }};""".format(
             name=self.name,
-            typ="\n".join(["    %s %s;" % (t.ctype, tname) for tname, t in self._data.items()]),
+            typ="\n".join([f"    {t.ctype} {tname};" for tname, t in self._data.items()]),
         )
 
 
@@ -1114,13 +1122,12 @@ class callback(typeclass):
                 ret_arraypos.append(index + offset)
                 ret_types_and_sizes.append((ctypes.py_object, []))
                 ret_converters.append(lambda a, *args: a)
+            elif not self.is_scalar_function():
+                ret_arraypos.append(index + offset)
+                ret_types_and_sizes.append((arg.dtype.as_ctypes(), arg.shape))
+                ret_converters.append(partial(_pyobject_converter, arg))
             else:
-                if not self.is_scalar_function():
-                    ret_arraypos.append(index + offset)
-                    ret_types_and_sizes.append((arg.dtype.as_ctypes(), arg.shape))
-                    ret_converters.append(partial(_pyobject_converter, arg))
-                else:
-                    ret_converters.append(lambda a, *args: a)
+                ret_converters.append(lambda a, *args: a)
         if len(inp_arraypos) == 0 and len(ret_arraypos) == 0:
             return pyfunc
 

@@ -799,7 +799,6 @@ def blockorder_topological_sort(
                     yield from blockorder_topological_sort(branch, recursive, ignore_nonstate_blocks)
         elif isinstance(block, SDFGState):
             yield block
-        else:
-            # Other control flow block.
-            if not ignore_nonstate_blocks:
-                yield block
+        # Other control flow block.
+        elif not ignore_nonstate_blocks:
+            yield block

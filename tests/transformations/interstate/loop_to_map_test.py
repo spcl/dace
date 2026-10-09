@@ -126,7 +126,6 @@ def run_loop_to_map(n, *args):
     if e[0] != n:
         raise ValueError("Validation failed.")
 
-    numbers_written = []
     with open(temp_path) as f:
         numbers_written.extend(int(line.strip()) for line in f)
     if not all(sorted(numbers_written) == np.arange(n)):

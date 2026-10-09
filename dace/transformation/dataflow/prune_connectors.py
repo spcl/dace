@@ -185,7 +185,7 @@ class PruneSymbols(pm.SingleStateTransformation):
             for node in nstate.nodes():
                 if isinstance(node, nodes.Tasklet) and node.language is dtypes.Language.CPP:
                     for candidate in candidates:
-                        if re.findall(r"\b%s\b" % re.escape(candidate), node.code.as_string):
+                        if re.findall(rf"\b{re.escape(candidate)}\b", node.code.as_string):
                             state_syms.add(candidate)
 
             # Any symbol used in this state is considered used

@@ -441,7 +441,7 @@ def _argminmax(
         reduced_shape = [1]
 
     reduced_expr = ",".join("__i%d" % i for i in range(len(a_arr.shape)) if i != axis)
-    reduced_maprange = {"__i%d" % i: "0:%s" % n for i, n in enumerate(a_arr.shape) if i != axis}
+    reduced_maprange = {"__i%d" % i: f"0:{n}" for i, n in enumerate(a_arr.shape) if i != axis}
     if not reduced_expr:
         reduced_expr = "0"
         reduced_maprange = {"__i0": "0:1"}

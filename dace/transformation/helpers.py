@@ -1399,8 +1399,8 @@ def unsqueeze_memlet(
         if len(result.subset) != len(external_memlet.subset):
             raise ValueError(
                 "Unexpected extra dimensions in internal memlet "
-                "while un-squeezing memlet.\nExternal memlet: %s\n"
-                "Internal memlet: %s" % (external_memlet, internal_memlet)
+                f"while un-squeezing memlet.\nExternal memlet: {external_memlet}\n"
+                f"Internal memlet: {internal_memlet}"
             )
         internal_offset = [internal_offset[idx] for idx in range(len(internal_offset)) if idx in remaining]
 
@@ -2564,10 +2564,9 @@ def _change_member_types(descriptor: data.Array, from_type: typeclass, to_type: 
     for member_descriptor in descriptor.members.values():
         if _is_structure(member_descriptor):
             swaps_count = _change_structure_type(member_descriptor, from_type, to_type, swaps_count)
-        else:
-            if member_descriptor.dtype == from_type:
-                member_descriptor.dtype = to_type
-                swaps_count += 1
+        elif member_descriptor.dtype == from_type:
+            member_descriptor.dtype = to_type
+            swaps_count += 1
     return swaps_count
 
 

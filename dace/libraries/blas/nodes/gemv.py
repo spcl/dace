@@ -99,7 +99,7 @@ class ExpandGemvPure(ExpandTransformation):
         # nested SDFG is inlined, a bare 'out' would collide with an outer array named 'out'.
         init_state.add_mapped_tasklet(
             "gemv_init",
-            {"_o%d" % i: "0:%s" % symbolic.symstr(d) for i, d in enumerate(shape_y)},
+            {"_o%d" % i: f"0:{symbolic.symstr(d)}" for i, d in enumerate(shape_y)},
             {},
             "__out = 0",
             {"__out": dace.Memlet("{}[{}]".format(mul_out, ",".join(["_o%d" % i for i in range(len(shape_y))])))},
@@ -109,7 +109,7 @@ class ExpandGemvPure(ExpandTransformation):
         # Multiplication map
         state.add_mapped_tasklet(
             "_GEMV_",
-            {"__i%d" % i: "0:%s" % s for i, s in enumerate([N, M])},
+            {"__i%d" % i: f"0:{s}" for i, s in enumerate([N, M])},
             {
                 "__A": dace.Memlet("_A[{}]".format("__i1, __i0" if node.transA else "__i0, __i1")),
                 "__x": dace.Memlet("_x[__i1]"),

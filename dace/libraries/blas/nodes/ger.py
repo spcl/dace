@@ -4,13 +4,12 @@ import warnings
 
 import dace
 import dace.library
-import dace.library as library
 import dace.properties
 import dace.sdfg.nodes
 from dace import data as dt
+from dace import library, symbolic
 from dace import memlet as mm
 from dace import subsets as sbs
-from dace import symbolic
 from dace.frontend.common import op_repository as oprepo
 from dace.libraries.blas import blas_helpers, environments, gpu_dialect
 from dace.ordered import OrderedSet

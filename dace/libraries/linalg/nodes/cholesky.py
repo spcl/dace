@@ -77,7 +77,7 @@ def _make_sdfg(node, parent_state, parent_sdfg, implementation):
     uzero_schedule = dtypes.ScheduleType.GPU_Device if storage in GPU_RESIDENT_STORAGES else dtypes.ScheduleType.Default
     _, me, mx = state.add_mapped_tasklet(
         "_uzero_",
-        dict(__i="0:%s" % out_shape[0], __j="0:%s" % out_shape[1]),
+        dict(__i=f"0:{out_shape[0]}", __j=f"0:{out_shape[1]}"),
         dict(_inp=Memlet.simple("_b", "__i, __j")),
         "_out = (__i < __j) ? 0 : _inp;",
         dict(_out=Memlet.simple("_b", "__i, __j")),

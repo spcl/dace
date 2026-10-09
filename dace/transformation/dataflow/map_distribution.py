@@ -67,8 +67,7 @@ class ElementWiseArrayOperation(pm.SingleStateTransformation):
                         return False
                     indices = a.min_element()
                     unmatched_indices = set(params)
-                    for idx in indices:
-                        unmatched_indices.discard(idx)
+                    unmatched_indices.difference_update(indices)
                     if len(unmatched_indices) > 0:
                         return False
             else:
@@ -269,8 +268,7 @@ class ElementWiseArrayOperation2D(pm.SingleStateTransformation):
                         return False
                     indices = a.min_element()
                     unmatched_indices = set(params)
-                    for idx in indices:
-                        unmatched_indices.discard(idx)
+                    unmatched_indices.difference_update(indices)
                     if len(unmatched_indices) > 0:
                         return False
             else:
@@ -813,8 +811,7 @@ class ReductionNOperation(pm.SingleStateTransformation):
                         return False
                     indices = a.min_element()
                     unmatched_indices = set(params)
-                    for idx in indices:
-                        unmatched_indices.discard(idx)
+                    unmatched_indices.difference_update(indices)
                     if len(unmatched_indices) == len(params):
                         return False
             else:

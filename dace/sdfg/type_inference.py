@@ -284,10 +284,9 @@ def _AugAssign(t, symbols, inferred_symbols):
             _dispatch(t.target, symbols, inferred_symbols)
             inferred_type = _dispatch(t.value, symbols, inferred_symbols)
             inferred_symbols[t.target.id] = inferred_type
-    else:
-        if not t.target.id in symbols and not t.target.id in inferred_symbols:
-            inferred_type = _dispatch(t.value, symbols, inferred_symbols)
-            inferred_symbols[t.target.id] = inferred_type
+    elif not t.target.id in symbols and not t.target.id in inferred_symbols:
+        inferred_type = _dispatch(t.value, symbols, inferred_symbols)
+        inferred_symbols[t.target.id] = inferred_type
 
 
 def _AnnAssign(t, symbols, inferred_symbols):

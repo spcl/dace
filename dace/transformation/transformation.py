@@ -397,7 +397,7 @@ class PatternTransformation(TransformationBase, Generic[GraphT]):
             state_id = graph.block_id
             cfg_id = graph.parent_graph.cfg_id
         else:
-            raise TypeError('Invalid node type "%s"' % type(sample_node).__name__)
+            raise TypeError(f'Invalid node type "{type(sample_node).__name__}"')
 
         # Check that all nodes in the pattern are set
         required_nodes = cls.expressions()[expr_index].nodes()
@@ -417,7 +417,7 @@ class PatternTransformation(TransformationBase, Generic[GraphT]):
         # Construct transformation parameters
         for optname, optval in options.items():
             if not optname in cls.__properties__:
-                raise ValueError('Property "%s" not found in transformation' % optname)
+                raise ValueError(f'Property "{optname}" not found in transformation')
             setattr(instance, optname, optval)
 
         if verify:
@@ -906,7 +906,7 @@ class SubgraphTransformation(TransformationBase):
                 self.cfg_id = subgraph.graph.cfg_id
                 self.state_id = -1
             else:
-                raise TypeError('Unrecognized graph type "%s"' % type(subgraph.graph).__name__)
+                raise TypeError(f'Unrecognized graph type "{type(subgraph.graph).__name__}"')
         else:
             self.subgraph = subgraph
             self.cfg_id = cfg_id
@@ -1010,7 +1010,7 @@ class SubgraphTransformation(TransformationBase):
                 graph = next(s for s in sdfg.nodes() if sample_node in s.nodes())
                 state_id = sdfg.node_id(graph)
             else:
-                raise TypeError('Invalid node type "%s"' % type(sample_node).__name__)
+                raise TypeError(f'Invalid node type "{type(sample_node).__name__}"')
 
             # Construct subgraph and instantiate transformation
             subgraph = gr.SubgraphView(graph, where)
@@ -1024,7 +1024,7 @@ class SubgraphTransformation(TransformationBase):
         # Construct transformation parameters
         for optname, optval in options.items():
             if not optname in cls.__properties__:
-                raise ValueError('Property "%s" not found in transformation' % optname)
+                raise ValueError(f'Property "{optname}" not found in transformation')
             setattr(instance, optname, optval)
 
         if verify:
@@ -1164,8 +1164,8 @@ def _subgraph_transformation_extract_sdfg_arg(*args) -> SDFG:
             return subgraph.graph.sdfg
         elif isinstance(subgraph.graph, SDFG):
             return subgraph.graph
-        raise TypeError('Unrecognized graph type "%s"' % type(subgraph.graph).__name__)
-    raise TypeError('Unrecognized graph type "%s"' % type(subgraph).__name__)
+        raise TypeError(f'Unrecognized graph type "{type(subgraph.graph).__name__}"')
+    raise TypeError(f'Unrecognized graph type "{type(subgraph).__name__}"')
 
 
 def single_level_sdfg_only(cls: type[PassT]) -> type[PassT]:

@@ -76,11 +76,10 @@ class StrictSymbolSSA(ppl.ControlFlowRegionPass):
                     for read in shadowed_reads:
                         if isinstance(read, ControlFlowBlock):
                             read.replace(name, newname)
+                        elif read not in scope_dict:
+                            read.data.replace(name, newname)
                         else:
-                            if read not in scope_dict:
-                                read.data.replace(name, newname)
-                            else:
-                                read.data.replace(name, newname, replace_keys=False)
+                            read.data.replace(name, newname, replace_keys=False)
 
                     results[name].add(newname)
 

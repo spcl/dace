@@ -1804,13 +1804,12 @@ def _validate_axis_kword(
             expected_out_shape = [d for i, d in enumerate(inp_shape) if i not in axis]
         expected_out_shape = expected_out_shape or [1]
         intermediate_shape = intermediate_shape or [1]
+    elif keepdims:
+        intermediate_shape = [1]
+        expected_out_shape = [1] * len(inp_shape)
     else:
-        if keepdims:
-            intermediate_shape = [1]
-            expected_out_shape = [1] * len(inp_shape)
-        else:
-            intermediate_shape = None
-            expected_out_shape = [1]
+        intermediate_shape = None
+        expected_out_shape = [1]
 
     return axis, intermediate_shape, expected_out_shape
 

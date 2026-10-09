@@ -13,7 +13,7 @@ import dataclasses
 from collections import OrderedDict
 from collections.abc import Sequence
 from numbers import Integral
-from typing import Any
+from typing import Any, Union
 
 import numpy as np
 import sympy as sp
@@ -167,6 +167,14 @@ class Data:
     def __hash__(self):
         # Compute hash using serialized value (i.e., with all properties included)
         return hash(serialize.dumps(self))
+
+    def __or__(self, other):
+        """Enables PEP 604 union type hints, e.g., ``dace.float64[N] | None``."""
+        # NOTE: ``self | other`` would recurse into this method
+        return Union[self, other]  # noqa: UP007
+
+    def __ror__(self, other):
+        return Union[other, self]  # noqa: UP007
 
     def as_arg(self, with_types=True, for_call=False, name=None):
         """Returns a string for a C++ function signature (e.g., `int *A`)."""
@@ -344,7 +352,7 @@ class Scalar(Data):
         return ret
 
     def __repr__(self):
-        return "Scalar (dtype=%s)" % self.dtype
+        return f"Scalar (dtype={self.dtype})"
 
     def is_packed_fortran_strides(self) -> bool:
         # A scalar is a single element; any layout question is trivially yes.
@@ -768,7 +776,7 @@ class Array(Data):
         self.validate()
 
     def __repr__(self):
-        return "%s (dtype=%s, shape=%s)" % (type(self).__name__, self.dtype, self.shape)
+        return f"{type(self).__name__} (dtype={self.dtype}, shape={self.shape})"
 
     def clone(self):
         return type(self)(
@@ -1155,7 +1163,7 @@ class Stream(Data):
         return ret
 
     def __repr__(self):
-        return "%s (dtype=%s, shape=%s)" % (type(self).__name__, self.dtype, self.shape)
+        return f"{type(self).__name__} (dtype={self.dtype}, shape={self.shape})"
 
     @property
     def total_size(self):
@@ -1219,13 +1227,13 @@ class Stream(Data):
         if not with_types or for_call:
             return name
         if self.storage in [dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared]:
-            return "dace::GPUStream<%s, %s> %s" % (
+            return "dace::GPUStream<{}, {}> {}".format(
                 str(self.dtype.ctype),
                 "true" if sp.log(self.buffer_size, 2).is_Integer else "false",
                 name,
             )
 
-        return "dace::Stream<%s> %s" % (str(self.dtype.ctype), name)
+        return f"dace::Stream<{str(self.dtype.ctype)}> {name}"
 
     def sizes(self):
         return [d.name if isinstance(d, symbolic.symbol) else str(d) for d in self.shape]
