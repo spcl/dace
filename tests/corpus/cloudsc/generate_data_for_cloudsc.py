@@ -71,7 +71,7 @@ CLOUDSC_SYMBOLS: dict[str, int] = {
 
 #: The species PARAMETERs (Fortran ``NCLV``, ``NCLDQL..NCLDQV``), passed as specialization constants so the
 #: species and LU loops are constant-trip; klev/klon/kidia/kfdia stay symbolic.
-SPECIES_CONSTANTS: Dict[str, int] = {
+SPECIES_CONSTANTS: dict[str, int] = {
     name: CLOUDSC_SYMBOLS[name] for name in ("nclv", "ncldql", "ncldqi", "ncldqr", "ncldqs", "ncldqv")
 }
 

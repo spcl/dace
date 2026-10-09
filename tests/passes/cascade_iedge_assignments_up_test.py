@@ -563,7 +563,7 @@ def _nested_loops(
     directly under ``sdfg``. Returns ``(outermost_loop, innermost_loop)``.
     """
     outer = None
-    parent: Any = sdfg
+    parent: object = sdfg
     inner = None
     for d in range(depth):
         lv = loop_vars[d]
@@ -643,7 +643,7 @@ def test_four_level_nest_transitive_chain_cascades_to_root():
     sdfg.add_symbol("K", dace.int64)
     for s in ("a", "b", "c"):
         sdfg.add_symbol(s, dace.int64)
-    parent: Any = sdfg
+    parent: object = sdfg
     outer = None
     for d, lv in enumerate(["i", "j", "k", "l"]):
         loop = LoopRegion(
