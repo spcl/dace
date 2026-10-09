@@ -70,6 +70,7 @@ def test_fft_axis_first_2d_fftw3():
 
 @pytest.mark.fftw
 def test_fft_axis_last_3d_fftw3():
+    """Two batch axes go as one: MKL's FFTW3 symbols, once an MKL program loaded them, plan one at most."""
     L, M, N = 4, 6, 8
 
     @dace.program
@@ -82,6 +83,8 @@ def test_fft_axis_last_3d_fftw3():
         sdfg.expand_library_nodes()
     finally:
         _restore(prev)
+    code = "".join(n.code.as_string for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.Tasklet))
+    assert "fftw_iodim64 __howmany[1] = {{24, 8, 8}};" in code
 
     rng = np.random.default_rng(2)
     x = (rng.standard_normal((L, M, N)) + 1j * rng.standard_normal((L, M, N))).astype(np.complex128)
@@ -109,6 +112,7 @@ def test_fftn_and_ifftn_over_any_axes_through_fftw3_match_numpy(shape, axes, dty
         return np.fft.fftn(x, axes=axes), np.fft.ifftn(x, axes=axes, norm="forward")
 
     sdfg = tester.to_sdfg()
+    sdfg.name = f"fftn_axes_{'_'.join(str(a % len(shape)) for a in axes)}_of_{len(shape)}d_{dtype.__name__}"
     prev = _expand("FFTW3", [fftlib.FFT, fftlib.IFFT])
     try:
         sdfg.expand_library_nodes()
@@ -129,4 +133,11 @@ if __name__ == "__main__":
     test_fft_axis_last_2d_fftw3()
     test_fft_axis_first_2d_fftw3()
     test_fft_axis_last_3d_fftw3()
-    print("FFT axis FFTW3 lowering tests PASS")
+    for shape, axes in [
+        ((3, 4, 5, 2), (1, 2, 3)),
+        ((4, 5, 6), (0, 2)),
+        ((4, 5, 6), (-1, -3)),
+        ((3, 4, 5, 2), (0, 1, 2, 3)),
+    ]:
+        for dtype, dace_type in [(np.complex128, dace.complex128), (np.complex64, dace.complex64)]:
+            test_fftn_and_ifftn_over_any_axes_through_fftw3_match_numpy(shape, axes, dtype, dace_type)
