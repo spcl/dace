@@ -3299,6 +3299,11 @@ class AbstractControlFlowRegion(
             elif isinstance(block, AbstractControlFlowRegion):
                 yield from block.states()
 
+    def num_states(self) -> int:
+        """The number of states in this control flow graph, nested control flow regions included."""
+        # ``len(list(self.states()))`` would build a list of every state only to count it
+        return sum(1 for _ in self.states())
+
     def all_control_flow_blocks(self, recursive=False) -> Iterator[ControlFlowBlock]:
         """Iterate over all control flow blocks in this control flow graph."""
         for cfg in self.all_control_flow_regions(recursive=recursive):

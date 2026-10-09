@@ -119,7 +119,7 @@ def test_single_data_multiple_intermediate_accesses():
             ZRATIO[0, i] = t0 / t1
 
     sdfg = sdmi_accesses.to_sdfg(simplify=True)
-    assert sum(1 for _ in sdfg.states()) == 1
+    assert sdfg.num_states() == 1
 
     rng = np.random.default_rng(42)
     ZSOLQA = rng.random((1, 5, 5))

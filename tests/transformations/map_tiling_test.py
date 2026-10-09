@@ -15,7 +15,7 @@ def test_map_tiling_with_strides():
 
     sdfg = vector_copy_strides.to_sdfg()
     sdfg.simplify()
-    assert sum(1 for _ in sdfg.states()) == 1
+    assert sdfg.num_states() == 1
 
     state = next(iter(sdfg.states()))
     state_nodes = state.nodes()

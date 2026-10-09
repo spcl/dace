@@ -476,7 +476,7 @@ def test_state_fission():
     helpers.state_fission(subg)
     sdfg.validate()
 
-    assert sum(1 for _ in sdfg.states()) == 2
+    assert sdfg.num_states() == 2
 
     # run the program
     vec_add = sdfg.compile()

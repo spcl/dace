@@ -397,7 +397,7 @@ def test_create_tasklet_raw() -> None:
     )
 
     sdfg = stree.as_sdfg(validate=True)
-    assert sum(1 for _ in sdfg.states()) == 1
+    assert sdfg.num_states() == 1
     state = next(iter(sdfg.states()))
     first_tasklet, write_read_node, second_tasklet, write_node = state.nodes()
 
@@ -429,7 +429,7 @@ def test_create_tasklet_waw() -> None:
     )
 
     sdfg = stree.as_sdfg(validate=True)
-    assert sum(1 for _ in sdfg.states()) == 2
+    assert sdfg.num_states() == 2
     s1, s2 = sdfg.states()
 
     s1_tasklet, s1_anode = s1.nodes()

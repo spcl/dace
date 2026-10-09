@@ -26,7 +26,7 @@ def change_strides_test():
 
     # Check that states are as expected
     changed_sdfg = change_strides(sdfg, ["N"], ScheduleType.Sequential)
-    assert sum(1 for _ in changed_sdfg.states()) == 3
+    assert changed_sdfg.num_states() == 3
     assert len(changed_sdfg.out_edges(changed_sdfg.start_state)) == 1
     work_state = changed_sdfg.out_edges(changed_sdfg.start_state)[0].dst
     nsdfg = None

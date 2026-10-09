@@ -420,7 +420,7 @@ def test_prune_connectors_with_dependencies():
 
     applied = sdfg.apply_transformations_repeated(PruneConnectors)
     assert applied == 1
-    assert sum(1 for _ in sdfg.states()) == 3
+    assert sdfg.num_states() == 3
     assert "B1" not in nsdfg_node.in_connectors
     assert "B2" not in nsdfg_node.out_connectors
 

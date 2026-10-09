@@ -741,7 +741,7 @@ def test_fusion_with_nested_sdfg_1():
     sdfg = fusion_with_nested_sdfg_1.to_sdfg(simplify=True)
     apply_fusion(sdfg)
 
-    if sum(1 for _ in sdfg.states()) != 1:
+    if sdfg.num_states() != 1:
         return
 
     for sd in sdfg.all_sdfgs_recursive():
