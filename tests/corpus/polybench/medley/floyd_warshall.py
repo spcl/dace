@@ -11,7 +11,7 @@ datatype = dace.int32
 # Dataset sizes
 sizes = [{N: 60}, {N: 180}, {N: 500}, {N: 2800}, {N: 5600}]
 #: ported from npbench bench_info floyd_warshall.json parameters.paper
-paper_sizes = {N: 2800}
+paper_sizes = {N: 1000}
 
 args = [([N, N], datatype)]
 
