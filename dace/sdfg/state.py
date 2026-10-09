@@ -3987,7 +3987,12 @@ class LoopRegion(ControlFlowRegion):
 
         def _propagate_range(start, stop, target_memlets: dict[str, dict[str, mm.Memlet | None]]) -> None:
             """Propagates all candidate memlets through one loop-iteration range."""
-            loop_range = Range([(start, stop, stride)])
+            # A backward loop covers its iteration space with a negative stride
+            # (e.g. ``i = 39; i >= 0; i = i - 1`` gives (39, 0, -1)); rewrite it
+            # into the equivalent positive-step form so that the propagated
+            # subsets stay canonical.
+            first, last, step = sdprop._positive_step_range(start, stop, stride)
+            loop_range = Range([(first, last, step)])
             for direction in target_memlets:
                 for connector in target_memlets[direction]:
                     propagated = sdprop._propagate_border_memlet_candidates(
