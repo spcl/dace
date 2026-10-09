@@ -3,6 +3,7 @@ import argparse
 import copy
 import os
 import tempfile
+import warnings
 
 import numpy as np
 import pytest
@@ -1266,6 +1267,29 @@ def test_transposed_read_and_write_alias_only_in_one_iteration():
     assert np.allclose(aa, ref)
 
 
+def test_symbolic_step_of_unknown_sign_warns():
+    """A step whose sign the facts cannot prove is assumed positive, with a warning; a declared sign is not."""
+    N = dace.symbol("N")
+    S = dace.symbol("S")
+    P = dace.symbol("P", positive=True)
+
+    @dace.program
+    def unknown_step(A: dace.float64[N]):
+        for i in range(0, N, S):
+            A[i] = A[i] + 1
+
+    @dace.program
+    def positive_step(A: dace.float64[N]):
+        for i in range(0, N, P):
+            A[i] = A[i] + 1
+
+    with pytest.warns(UserWarning, match="sign of step S"):
+        assert unknown_step.to_sdfg(simplify=True).apply_transformations(LoopToMap) == 1
+    with warnings.catch_warnings():
+        warnings.filterwarnings("error", message="LoopToMap: the sign of step")
+        assert positive_step.to_sdfg(simplify=True).apply_transformations(LoopToMap) == 1
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--N", default=16, type=int)
@@ -1309,6 +1333,7 @@ if __name__ == "__main__":
     test_loop_to_map_with_loop_invariant_if()
     test_dynamic_write_slab_separated_by_iteration_var()
     test_refuse_when_body_assigns_loop_range_symbol()
+    test_symbolic_step_of_unknown_sign_warns()
 
 
 def branchy_symbol_loop() -> dace.SDFG:

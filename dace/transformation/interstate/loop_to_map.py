@@ -734,6 +734,15 @@ class LoopToMap(xf.MultiStateTransformation):
         start = loop_analysis.get_init_assignment(self.loop)
         end = loop_analysis.get_loop_end(self.loop)
         step = loop_analysis.get_loop_stride(self.loop)
+        negative_step = symbolic.ask(
+            symbolic.Relation(symbolic.RelationKind.LT, sp.sympify(step), sp.Integer(0)),
+            SymbolResolver().facts_at(self.loop),
+        )
+        if negative_step is symbolic.Truth.UNKNOWN:
+            warnings.warn(
+                f"LoopToMap: the sign of step {step} of loop {self.loop.label} is not provable, assuming it is "
+                "positive; declare its symbols' signs to prove it."
+            )
 
         nsdfg = None
 
@@ -920,7 +929,7 @@ class LoopToMap(xf.MultiStateTransformation):
             if sym not in nsdfg.symbols and sym in sdfg.symbols:
                 nsdfg.symbol_repo.add(sym, sdfg.symbols[sym])
 
-        if (step < 0) == True:
+        if negative_step is symbolic.Truth.TRUE:
             # If step is negative, we have to flip start and end to produce a correct map with a positive increment.
             start, end, step = end, start, -step
 
