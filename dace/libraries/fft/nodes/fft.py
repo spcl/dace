@@ -239,21 +239,28 @@ def fftw3_call(src: data.Data, out: data.Data, transformed: list[int], is_invers
     prefix, complex_t = ("fftw_", "fftw_complex") if out.dtype == dtypes.complex128 else ("fftwf_", "fftwf_complex")
     batch = [d for d in range(len(src.shape)) if d not in transformed]
 
-    def iodims(dims: list[int]) -> str:
-        return ", ".join(
-            f"{{{cpp.sym2cpp(src.shape[d])}, {cpp.sym2cpp(src.strides[d])}, {cpp.sym2cpp(out.strides[d])}}}"
-            for d in dims
-        )
+    def iodim(extent: symbolic.SymbolicType, istride: symbolic.SymbolicType, ostride: symbolic.SymbolicType) -> str:
+        return f"{{{cpp.sym2cpp(extent)}, {cpp.sym2cpp(istride)}, {cpp.sym2cpp(ostride)}}}"
 
-    howmany = f"{prefix}iodim64 __howmany[{len(batch)}] = {{{iodims(batch)}}};" if batch else ""
+    dims = [iodim(src.shape[d], src.strides[d], out.strides[d]) for d in transformed]
+    # MKL's FFTW3 interface (the MKL expansion, or MKL's symbols loaded ahead of libfftw3) plans at most one
+    # batch dimension and returns no plan otherwise, so a batch that is one dense block goes as one dimension.
+    block = dense_block_order((src, out), batch) if len(batch) > 1 else None
+    if block is None:
+        howmany = [iodim(src.shape[d], src.strides[d], out.strides[d]) for d in batch]
+    else:
+        howmany = [iodim(functools.reduce(operator.mul, (src.shape[d] for d in batch), 1), *block[1])]
+    howmany_decl = f"{prefix}iodim64 __howmany[{len(howmany)}] = {{{', '.join(howmany)}}};" if howmany else ""
     direction = "FFTW_BACKWARD" if is_inverse else "FFTW_FORWARD"
     code = f"""
-    {prefix}iodim64 __dims[{len(transformed)}] = {{{iodims(transformed)}}};
-    {howmany}
+    {prefix}iodim64 __dims[{len(dims)}] = {{{", ".join(dims)}}};
+    {howmany_decl}
     {prefix}plan __plan;
     #pragma omp critical(dace_fftw_planner)
-    __plan = {prefix}plan_guru64_dft({len(transformed)}, __dims, {len(batch)}, {"__howmany" if batch else "NULL"},
+    __plan = {prefix}plan_guru64_dft({len(dims)}, __dims, {len(howmany)}, {"__howmany" if howmany else "NULL"},
                                     ({complex_t} *)__in, ({complex_t} *)__out, {direction}, FFTW_ESTIMATE);
+    if (!__plan)
+        throw std::runtime_error("FFTW returned no plan for this transform layout");
     {prefix}execute(__plan);
     #pragma omp critical(dace_fftw_planner)
     {prefix}destroy_plan(__plan);
