@@ -615,16 +615,36 @@ def nest_state_subgraph(
     # would reference data the parent no longer has, and its connector would be minted around the
     # moved descriptor (moved-in ``c2_0_0`` -> connector ``c2_0_0_0``, parent memlet still
     # ``c2_0_0`` -> ``KeyError`` in every consumer that resolves the memlet against the parent).
-    # Re-anchor such an edge on the AccessNode outside the subgraph. Only a single-element access
-    # is unambiguous -- a wider memlet naming the inner container does not carry which outer
-    # element it moves -- so leave those exactly as they are.
+    # Re-anchor such an edge on the AccessNode outside the subgraph. A wider memlet is unambiguous
+    # only when it carries the outer subset as its other subset (icon_scatter's per-iteration
+    # slice copy); then every edge from the outer node up to the boundary is restated in it. Any
+    # other wide memlet does not say which outer elements it moves, so it is left exactly as it is.
     # An empty boundary edge names no container, and a scope-binding one may carry a connector on one side only
-    outer_ends = [(e, state.memlet_path(e)[0].src) for e in inputs if e.data.data is not None]
-    outer_ends += [(e, state.memlet_path(e)[-1].dst) for e in outputs if e.data.data is not None]
-    for boundary_edge, outer_node in outer_ends:
-        if boundary_edge.data.data not in subgraph_transients:
+    outer_ends = []
+    for e in inputs:
+        if e.data.data is not None:
+            path = state.memlet_path(e)
+            outer_ends.append((e, path[0].src, path[: path.index(e) + 1], True))
+    for e in outputs:
+        if e.data.data is not None:
+            path = state.memlet_path(e)
+            outer_ends.append((e, path[-1].dst, path[path.index(e) :], False))
+    for boundary_edge, outer_node, outer_path, is_input in outer_ends:
+        inner_name = boundary_edge.data.data
+        if inner_name not in subgraph_transients:
             continue
         if not isinstance(outer_node, nodes.AccessNode):
+            continue
+        if boundary_edge.data.other_subset is not None:
+            for edge in outer_path:
+                memlet = edge.data
+                if memlet.data == inner_name and memlet.other_subset is not None:
+                    memlet.data, memlet.subset, memlet.other_subset = (
+                        outer_node.data,
+                        memlet.other_subset,
+                        memlet.subset,
+                    )
+                    memlet._is_data_src = is_input
             continue
         outer_desc = sdfg.arrays[outer_node.data]
         if outer_desc.total_size != 1 or boundary_edge.data.subset.num_elements() != 1:

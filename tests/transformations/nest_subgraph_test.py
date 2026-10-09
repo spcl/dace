@@ -620,6 +620,40 @@ def test_a_folded_input_keeps_the_moved_tasklets_connectors():
     assert out[0] == 3.0
 
 
+def test_a_wide_copy_named_by_a_moved_container_is_reanchored_on_the_source():
+    """icon_scatter: a map body copies a slice of ``A`` into the body-local ``tmp``, the copy named by ``tmp``
+    with ``A``'s subset as its other subset. ``tmp`` moves into the nested SDFG, so the parent edges must name
+    ``A`` -- they carry its subset exactly."""
+    sdfg = dace.SDFG("nest_wide_copy_named_by_moved_container")
+    sdfg.add_array("A", [4, 8], dace.float64)
+    sdfg.add_array("B", [4, 8], dace.float64)
+    sdfg.add_transient("tmp", [8], dace.float64)
+    state = sdfg.add_state("s", is_start_block=True)
+    entry, exit_node = state.add_map("rows", {"i": "0:4"})
+    tmp = state.add_access("tmp")
+    entry.add_in_connector("IN_A")
+    entry.add_out_connector("OUT_A")
+    state.add_edge(state.add_read("A"), None, entry, "IN_A", dace.Memlet("A[0:4, 0:8]"))
+    state.add_edge(entry, "OUT_A", tmp, None, dace.Memlet(data="tmp", subset="0:8", other_subset="i, 0:8"))
+    inner_entry, inner_exit = state.add_map("cols", {"j": "0:8"})
+    tasklet = state.add_tasklet("double", {"t"}, {"o"}, "o = 2.0 * t")
+    state.add_memlet_path(tmp, inner_entry, tasklet, dst_conn="t", memlet=dace.Memlet("tmp[j]"))
+    state.add_memlet_path(
+        tasklet, inner_exit, exit_node, state.add_write("B"), src_conn="o", memlet=dace.Memlet("B[i, j]")
+    )
+    sdfg.validate()
+
+    nest_state_subgraph(sdfg, state, state.scope_subgraph(entry, include_entry=False, include_exit=False))
+    sdfg.validate()
+    assert "tmp" not in sdfg.arrays
+    assert all(e.data.data in sdfg.arrays for e in state.edges() if not e.data.is_empty())
+
+    A = np.arange(32, dtype=np.float64).reshape(4, 8)
+    B = np.zeros((4, 8))
+    sdfg(A=A, B=B)
+    assert np.array_equal(B, 2.0 * A)
+
+
 def test_nest_two_loops_with_same_variable():
     """Nesting a second region that defines the same symbol must name its symbol output consistently."""
 
@@ -665,5 +699,6 @@ if __name__ == "__main__":
     test_input_edge_on_the_whole_container_gets_no_inner_copy()
     test_folded_write_ordering_is_not_reanchored_into_a_cycle()
     test_a_folded_input_keeps_the_moved_tasklets_connectors()
+    test_a_wide_copy_named_by_a_moved_container_is_reanchored_on_the_source()
 
     test_nest_two_loops_with_same_variable()
