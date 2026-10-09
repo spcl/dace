@@ -28,12 +28,13 @@ from collections.abc import Sequence
 from typing import Any
 
 import numpy as np
+import numpy.typing as npt
 import pytest
 
 import dace
 from dace import data as dt
 from dace.codegen import common
-from dace.codegen.cpf import Rendering, render
+from dace.codegen.cpf import EntrySignature, Rendering, render
 from dace.libraries.standard.nodes import Scan
 from dace.libraries.standard.nodes.scan import ScanOp
 from dace.transformation.passes.canonicalize.finalize import finalize_for_target, offload_to_gpu
@@ -308,7 +309,7 @@ def canonical_gpu_sdfg(program: Any, name: str) -> dace.SDFG:
     return sdfg
 
 
-def render_gpu(program: Any, name: str, language: str = "hip") -> Rendering:
+def render_gpu(program: Any, name: str, language: str = "hip", signature: EntrySignature | None = None) -> Rendering:
     """The rendering of a ``@dace.program`` taken through the GPU pipeline, as ``language``.
 
     The pipeline is the documented order and all three steps matter here: ``canonicalize`` leaves
@@ -319,7 +320,7 @@ def render_gpu(program: Any, name: str, language: str = "hip") -> Rendering:
     sdfg = canonical_gpu_sdfg(program, name)
     offload_to_gpu(sdfg)
     finalize_for_target(sdfg, "gpu", validate=True)
-    return render(sdfg, language=language)
+    return render(sdfg, language=language, signature=signature)
 
 
 def device_scan_sdfg(name: str, op: ScanOp, coefficients: bool = False, seed: bool = False) -> dace.SDFG:
@@ -524,7 +525,7 @@ def call_standalone(
     function(*values)
 
 
-def tolerance_for(dtype) -> Any:
+def tolerance_for(dtype: npt.DTypeLike) -> Any:
     """``(rtol, atol)`` matched to precision: fp64 tight, fp32 relaxed, ints exact."""
     dt_ = np.dtype(dtype)
     if dt_.kind in "iub":

@@ -37,6 +37,7 @@ kernel would still compile and still produce numbers, just not the SDFG's.
 
 import contextlib
 import copy
+import dataclasses
 import os
 import re
 import shutil
@@ -46,14 +47,14 @@ from collections import Counter
 from collections.abc import Callable, Sequence
 from typing import NamedTuple
 
-from dace import cpf_lowering, dtypes
+from dace import cpf_lowering, dtypes, symbolic
 from dace import data as dt
 from dace.codegen import codegen
 from dace.codegen.codeobject import CodeObject
 from dace.config import Config, set_temporary
 from dace.optionals import required
 from dace.ordered import OrderedSet
-from dace.sdfg import SDFG, nodes
+from dace.sdfg import SDFG, SDFGState, nodes
 from dace.transformation.passes.canonicalize.annotate_loop_kinds import AnnotateLoopKinds
 from dace.transformation.passes.canonicalize.finalize import explicit_accumulating_copies
 from dace.transformation.passes.scalar_promotion import PromoteScalarOutputsToArrays
@@ -345,7 +346,7 @@ def uses_device_code(sdfg: SDFG, dialect: cpf_lowering.Dialect | None = None) ->
     return found
 
 
-def description_of(node) -> str | None:
+def description_of(node: nodes.LibraryNode | type[nodes.LibraryNode]) -> str | None:
     """The one-line description of what library node ``node`` computes.
 
     :param node: the library node, or its class. Both are accepted because the emitter has a node
@@ -358,7 +359,7 @@ def description_of(node) -> str | None:
     return QUALIFIED_DESCRIPTIONS.get(qualified) or LIBRARY_NODE_DESCRIPTIONS.get(cls.__name__)
 
 
-def subtree_guids(node, state) -> set[str]:
+def subtree_guids(node: nodes.Node, state: SDFGState) -> set[str]:
     """GUIDs of ``node`` and, if it is a nested SDFG, of every node inside it.
 
     An expansion usually lands as a single nested SDFG, and the code the reader sees comes from the
@@ -370,7 +371,7 @@ def subtree_guids(node, state) -> set[str]:
     return guids
 
 
-def on_device_at_host_level(node: nodes.LibraryNode, state) -> bool:
+def on_device_at_host_level(node: nodes.LibraryNode, state: SDFGState) -> bool:
     """Whether ``node`` issues a DEVICE library call: device operands, host level.
 
     Both halves matter. Device operands are what makes a host expansion wrong -- it would
@@ -390,7 +391,7 @@ def on_device_at_host_level(node: nodes.LibraryNode, state) -> bool:
     return touches and not libnode_is_device_code(node, state, owner)
 
 
-def renderable_implementations(node: nodes.LibraryNode, state) -> tuple[str, ...]:
+def renderable_implementations(node: nodes.LibraryNode, state: SDFGState) -> tuple[str, ...]:
     """The implementations to try for ``node``, best first.
 
     :seealso: :data:`RENDERABLE_BY_NODE_DEVICE`, :data:`RENDERABLE_BY_NODE`,
@@ -402,7 +403,7 @@ def renderable_implementations(node: nodes.LibraryNode, state) -> tuple[str, ...
     return preferred + RENDERABLE_IMPLEMENTATIONS
 
 
-def schedule_host_level_device_node(node: nodes.LibraryNode, state) -> None:
+def schedule_host_level_device_node(node: nodes.LibraryNode, state: SDFGState) -> None:
     """Make a host-level node over device memory expand into a KERNEL rather than a host map.
 
     A library node whose operands live in device memory and which sits at host level
@@ -504,8 +505,8 @@ def force_renderable_expansions(sdfg: SDFG, provenance: dict[str, tuple[str, str
                     # with it any way to ask what it was.
                     described[id(state)] = (node, description, {existing.guid for existing in state.nodes()})
 
-        selected = {id(node) for node, _ in chosen}
-        sdfg.expand_library_nodes(recursive=False, predicate=lambda node: id(node) in selected)
+        expanded = {id(node) for node, _ in chosen}
+        sdfg.expand_library_nodes(recursive=False, predicate=lambda node: id(node) in expanded)
 
         for _, state in chosen:
             record = described.get(id(state))
@@ -751,7 +752,7 @@ def state_struct(frame: str, name: str) -> str:
     return match.group(0) + "\n" if match else ""
 
 
-def written_containers(sdfg: SDFG) -> OrderedSet:
+def written_containers(sdfg: SDFG) -> OrderedSet[str]:
     """The container names some state WRITES, at any nesting depth.
 
     An ``AccessNode`` with a data-carrying incoming edge is a write; an empty-memlet edge only orders
@@ -762,7 +763,7 @@ def written_containers(sdfg: SDFG) -> OrderedSet:
     :param sdfg: the SDFG to scan.
     :returns: the written names.
     """
-    written: OrderedSet = OrderedSet()
+    written: OrderedSet[str] = OrderedSet()
     for state in sdfg.states():
         for node in state.nodes():
             if isinstance(node, nodes.AccessNode) and any(not edge.data.is_empty() for edge in state.in_edges(node)):
@@ -772,7 +773,7 @@ def written_containers(sdfg: SDFG) -> OrderedSet:
     return written
 
 
-def readonly_entry_arrays(sdfg: SDFG, arglist: dict[str, dt.Data] | None = None) -> OrderedSet:
+def readonly_entry_arrays(sdfg: SDFG, arglist: dict[str, dt.Data] | None = None) -> OrderedSet[str]:
     """The entry point's ARRAY parameters that nothing writes -- the ones whose pointee is const.
 
     Read off the same SDFG the signature is generated from, so the qualifier and the argument list
@@ -869,21 +870,21 @@ def reorder_entry_parameters(code: str, entry: str, order: Sequence[str]) -> str
     the ``const`` :func:`qualify_readonly_pointers` added: C linkage ignores qualifiers, so
     re-spelling them to match a caller's own declaration would change nothing a compiler can see.
 
-    ``order`` must name exactly the parameters the entry takes. A disagreement is refused rather
-    than resolved by dropping or inventing one: the result would link and be called with its
+    ``order`` must name each parameter the entry takes exactly once. A disagreement is refused
+    rather than resolved by dropping, duplicating or inventing one: the result would link and be called with its
     arguments shifted, which no compiler catches across a rename.
 
     :param code: the rendered unit.
     :param entry: the entry point's name.
     :param order: the parameter names, in the order the caller will pass them.
     :returns: the unit with every declaration of ``entry`` reordered.
-    :raises ValueError: if ``order`` is not exactly the entry's parameter set.
+    :raises ValueError: if ``order`` does not name each of the entry's parameters exactly once.
     """
     wanted = list(order)
 
     def to_order(params: list[str]) -> list[str]:
         by_name = {entry_parameter_name(p): p for p in params}
-        if set(by_name) != set(wanted):
+        if sorted(by_name) != sorted(wanted):
             raise ValueError(
                 f"CPF cannot render {entry} in the requested order: the entry takes "
                 f"{sorted(by_name)} but the order names {sorted(wanted)}."
@@ -891,6 +892,46 @@ def reorder_entry_parameters(code: str, entry: str, order: Sequence[str]) -> str
         return [by_name[name] for name in wanted]
 
     return rewrite_entry_parameters(code, entry, to_order)
+
+
+@dataclasses.dataclass(frozen=True)
+class EntrySignature:
+    """The parameter list a caller requires of the entry point, when CPF's own will not do.
+
+    ``order`` names every parameter exactly once, in the order the caller passes them; it is
+    applied by :func:`reorder_entry_parameters`, so each parameter keeps CPF's type and qualifiers.
+    ``workspace`` / ``workspace_size`` add a caller-owned scratch buffer: a non-transient ``uint8_t``
+    array of ``workspace_size`` (``int64_t``) bytes, which ``order`` must name too. The body may
+    ignore it, and then it is a read-only pointer like any other (``const uint8_t *``).
+    """
+
+    order: Sequence[str]
+    workspace: str | None = None
+    workspace_size: str | None = None
+
+    def __post_init__(self) -> None:
+        if (self.workspace is None) != (self.workspace_size is None):
+            raise ValueError("EntrySignature takes workspace and workspace_size together or neither")
+
+
+def add_workspace(sdfg: SDFG, workspace: str, size: str) -> None:
+    """Add the caller-owned scratch pair to ``sdfg``'s entry, device-resident when any argument is.
+
+    :raises ValueError: if either name is already one of ``sdfg``'s data or symbols.
+    """
+    taken = [name for name in (workspace, size) if name in sdfg.arrays or name in sdfg.symbols]
+    if taken:
+        raise ValueError(f"CPF cannot add the workspace pair to {sdfg.name}: {taken} already name something in it")
+    on_device = any(
+        not desc.transient and desc.storage is dtypes.StorageType.GPU_Global for desc in sdfg.arrays.values()
+    )
+    sdfg.add_symbol(size, dtypes.int64)
+    sdfg.add_array(
+        workspace,
+        [symbolic.symbol(size, dtypes.int64)],
+        dtypes.uint8,
+        storage=dtypes.StorageType.GPU_Global if on_device else dtypes.StorageType.Default,
+    )
 
 
 #: ``language`` argument -> the dialect that renders it. ``'c++'`` is the default and stays the
@@ -1126,7 +1167,7 @@ def compile_check(code: str, name: str, dialect: cpf_lowering.Dialect) -> None:
         shutil.rmtree(workdir, ignore_errors=True)
 
 
-def device_backend(dialect: cpf_lowering.Dialect) -> contextlib.AbstractContextManager:
+def device_backend(dialect: cpf_lowering.Dialect) -> contextlib.AbstractContextManager[None]:
     """Generate for ``dialect``'s own GPU backend (:data:`~dace.cpf_lowering.DEVICE_BACKENDS`), not the machine's.
 
     :param dialect: the dialect being rendered.
@@ -1149,7 +1190,7 @@ class Rendering(NamedTuple):
     original's would silently drop that symbol and run the kernel on an uninitialized extent.
 
     ``arguments`` is the second half of that: it says what ORDER the rendered signature takes those
-    parameters in, which is the arglist's order unless the caller supplied one of its own.
+    parameters in, which is the arglist's order unless the caller supplied an :class:`EntrySignature`.
     """
 
     #: The self-contained translation unit; under a device dialect the HOST unit (``<name>.cpp``):
@@ -1171,7 +1212,7 @@ def render(
     sdfg: SDFG,
     validate: bool = True,
     language: str = "c++",
-    order: Sequence[str] | None = None,
+    signature: EntrySignature | None = None,
     check_compiles: bool = True,
 ) -> Rendering:
     """Render ``sdfg`` and return the text together with the SDFG it describes.
@@ -1184,10 +1225,10 @@ def render(
                      toolkit's own headers. A device entry has the ``'c++'`` prototype, takes device
                      pointers for ``GPU_Global`` arrays (the caller copies to and from the device) and
                      synchronizes the device before it returns.
-    :param order: the entry point's parameter names in the order the caller will pass them, for a
-                  caller whose calling convention is fixed elsewhere. ``None`` keeps CPF's own
-                  order (``arglist()``: arrays by name, then scalars by name). Must name exactly
-                  the parameters the prepared SDFG takes -- see :func:`reorder_entry_parameters`.
+    :param signature: the entry point's parameter order, and optionally a workspace pair, for a
+                      caller whose calling convention is fixed elsewhere (:class:`EntrySignature`).
+                      ``None`` keeps CPF's own order (``arglist()``: arrays by name, then scalars by
+                      name). The order must name each parameter of the prepared SDFG exactly once.
     :param check_compiles: compile the finished unit before returning it (:func:`compile_check`).
                            Default on: a form that renders clean text and does not compile is
                            served as good and read as good, which is the one failure CPF has no
@@ -1197,11 +1238,13 @@ def render(
     :raises NotImplementedError: if the SDFG needs anything the dialect's units cannot hold; the
                                  message names the construct.
     :raises RuntimeError: if a finished unit is not self-contained, or does not compile.
-    :raises ValueError: if ``language`` is neither, or if ``order`` is not the entry's parameter
-                        set.
+    :raises ValueError: if ``language`` is neither, or if ``signature`` does not fit the entry
+                        (see :class:`EntrySignature`).
     """
     dialect = dialect_for(language)
     prepared = copy.deepcopy(sdfg)
+    if signature is not None and signature.workspace is not None and signature.workspace_size is not None:
+        add_workspace(prepared, signature.workspace, signature.workspace_size)
     provenance: dict[str, tuple[str, str]] = {}
     # Under the dialect, because ``prepare`` EXPANDS library nodes and an expansion bakes its
     # tasklet text once and for good. A node that spells its own element transform -- ArgReduce
@@ -1246,8 +1289,8 @@ def render(
                 body = qualify_readonly_pointers(body, prepared, sdfg.name, entry_arglist)
                 # After the qualifier pass, so each declaration carries the ``const`` CPF decided
                 # on before it moves; only the order changes here.
-                if order is not None:
-                    body = reorder_entry_parameters(body, sdfg.name, order)
+                if signature is not None:
+                    body = reorder_entry_parameters(body, sdfg.name, signature.order)
                 if dialect is cpf_lowering.Dialect.STANDALONE_C:
                     # ``__restrict__`` is the GNU spelling ``Data.as_arg`` emits because C++ has no
                     # ``restrict`` keyword. C does, and it is the one a C23 unit should carry.
@@ -1262,7 +1305,7 @@ def render(
         verify(unit, sdfg.name, dialect)
         if check_compiles:
             compile_check(unit, sdfg.name, dialect)
-    arguments = tuple(order) if order is not None else tuple(entry_arglist)
+    arguments = tuple(signature.order) if signature is not None else tuple(entry_arglist)
     return Rendering(code, prepared, arguments, device_code)
 
 
@@ -1270,7 +1313,7 @@ def cpf(
     sdfg: SDFG,
     validate: bool = True,
     language: str = "c++",
-    order: Sequence[str] | None = None,
+    signature: EntrySignature | None = None,
     check_compiles: bool = True,
 ) -> str:
     """Render ``sdfg`` as one self-contained host translation unit.
@@ -1285,16 +1328,16 @@ def cpf(
     :param validate: validate the SDFG during code generation.
     :param language: ``'c++'`` (the default) or ``'c'``. A device dialect renders two units, which
                      :func:`render` returns.
-    :param order: the entry point's parameter names in the caller's own order; ``None`` keeps
-                  CPF's (see :func:`render`).
+    :param signature: the entry point's parameter order and workspace pair; ``None`` keeps CPF's
+                      (see :func:`render`).
     :param check_compiles: compile the finished unit before returning it (see :func:`render`).
     :returns: the translation unit, defining ``extern "C" void <sdfg.name>(<arglist>)`` in C++ and
               ``void <sdfg.name>(<arglist>)`` in C, whose ABI is the same.
     :raises NotImplementedError: if the SDFG needs anything a single host unit cannot hold; the
                                  message names the construct.
-    :raises ValueError: if ``language`` is neither, or if ``order`` is not the entry's parameter
-                        set.
+    :raises ValueError: if ``language`` is neither, or if ``signature`` does not fit the entry
+                        (see :class:`EntrySignature`).
     """
     if dialect_for(language) in cpf_lowering.DEVICE_DIALECTS:
         raise ValueError(f"CPF renders {language!r} as a host and a device unit: call render(), not cpf()")
-    return render(sdfg, validate=validate, language=language, order=order, check_compiles=check_compiles).code
+    return render(sdfg, validate=validate, language=language, signature=signature, check_compiles=check_compiles).code
