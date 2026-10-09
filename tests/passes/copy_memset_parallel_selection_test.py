@@ -49,7 +49,7 @@ def pin_threshold(func):
     return wrapper
 
 
-def _copy_libnode_sdfg(n):
+def copy_libnode_sdfg(n):
     sdfg = dace.SDFG(f"copy_{n}")
     sdfg.add_array("src", [n], dace.float64, dace.dtypes.StorageType.CPU_Heap)
     sdfg.add_array("dst", [n], dace.float64, dace.dtypes.StorageType.CPU_Heap)
@@ -61,7 +61,7 @@ def _copy_libnode_sdfg(n):
     return sdfg, ln
 
 
-def _memset_libnode_sdfg(n):
+def memset_libnode_sdfg(n):
     sdfg = dace.SDFG(f"memset_{n}")
     sdfg.add_array("dst", [n], dace.float64, dace.dtypes.StorageType.CPU_Heap)
     state = sdfg.add_state("s")
@@ -73,14 +73,14 @@ def _memset_libnode_sdfg(n):
 
 @pin_threshold
 def test_large_copy_selects_mapped():
-    sdfg, ln = _copy_libnode_sdfg(BIG_ELEMS)
+    sdfg, ln = copy_libnode_sdfg(BIG_ELEMS)
     sdfg.expand_library_nodes(recursive=True)
     assert ln.implementation == "MappedTasklet"
 
 
 @pin_threshold
 def test_small_copy_selects_memcpy():
-    sdfg, ln = _copy_libnode_sdfg(SMALL_ELEMS)
+    sdfg, ln = copy_libnode_sdfg(SMALL_ELEMS)
     sdfg.expand_library_nodes(recursive=True)
     assert ln.implementation == "MemcpyCPU"
 
@@ -89,28 +89,28 @@ def test_small_copy_selects_memcpy():
 def test_symbolic_copy_selects_mapped():
     """A symbolic extent cannot be proven small, so it takes the parallel element map. Reading it
     as "small" is what single-threaded every dynamically sized bulk copy."""
-    sdfg, ln = _copy_libnode_sdfg(N)
+    sdfg, ln = copy_libnode_sdfg(N)
     sdfg.expand_library_nodes(recursive=True)
     assert ln.implementation == "MappedTasklet"
 
 
 @pin_threshold
 def test_symbolic_memset_selects_pure():
-    sdfg, ln = _memset_libnode_sdfg(N)
+    sdfg, ln = memset_libnode_sdfg(N)
     sdfg.expand_library_nodes(recursive=True)
     assert ln.implementation == "pure"
 
 
 @pin_threshold
 def test_large_memset_selects_pure():
-    sdfg, ln = _memset_libnode_sdfg(BIG_ELEMS)
+    sdfg, ln = memset_libnode_sdfg(BIG_ELEMS)
     sdfg.expand_library_nodes(recursive=True)
     assert ln.implementation == "pure"
 
 
 @pin_threshold
 def test_small_memset_selects_cpu():
-    sdfg, ln = _memset_libnode_sdfg(SMALL_ELEMS)
+    sdfg, ln = memset_libnode_sdfg(SMALL_ELEMS)
     sdfg.expand_library_nodes(recursive=True)
     assert ln.implementation == "CPU"
 
@@ -121,10 +121,10 @@ def test_threshold_config_flips_selection():
     orig = dace.config.Config.get("compiler", "cpu", "parallel_transfer_min_elements")
     try:
         dace.config.Config.set("compiler", "cpu", "parallel_transfer_min_elements", value=4096)
-        below, ln_below = _copy_libnode_sdfg(2048)
+        below, ln_below = copy_libnode_sdfg(2048)
         below.expand_library_nodes(recursive=True)
         assert ln_below.implementation == "MemcpyCPU"
-        at, ln_at = _copy_libnode_sdfg(4096)
+        at, ln_at = copy_libnode_sdfg(4096)
         at.expand_library_nodes(recursive=True)
         assert ln_at.implementation == "MappedTasklet"
     finally:
@@ -152,7 +152,7 @@ def test_size_gate_defaults_to_parallel(count, expected):
 
 
 # Fork/join cost model: owned here, consumed by the CPU specialization band
-def _loop_nested_copy(name: str, trip: str):
+def loop_nested_copy(name: str, trip: str):
     """``for k in range(trip): dst[0:BIG_ELEMS, k] = src[:]`` with the copy as a libnode."""
     sdfg = dace.SDFG(name)
     sdfg.add_symbol("T", dace.int32)
@@ -174,18 +174,19 @@ def _loop_nested_copy(name: str, trip: str):
 
 def test_is_short_loop():
     """A provably short ascending loop is short; a symbolic bound is not (unknown is not small)."""
-    _, _, _, short = _loop_nested_copy("cost_short", "4")
-    _, _, _, long_loop = _loop_nested_copy("cost_long", "T")
+    _, _, _, short = loop_nested_copy("cost_short", "4")
+    _, _, _, long_loop = loop_nested_copy("cost_long", "T")
     assert is_short_loop(short) is True
     assert is_short_loop(long_loop) is False
 
 
+@pin_threshold
 def test_reentry_and_combined_verdict():
     """A long loop re-enters the transfer, a provably short one does not, and a top-level one has
     nothing above it. ``cpu_transfer_parallelizes`` is the size gate AND the re-entry verdict."""
-    _, long_state, long_ln, _ = _loop_nested_copy("cost_reentry_long", "T")
-    _, short_state, short_ln, _ = _loop_nested_copy("cost_reentry_short", "4")
-    top_sdfg, top_ln = _copy_libnode_sdfg(BIG_ELEMS)
+    _, long_state, long_ln, _ = loop_nested_copy("cost_reentry_long", "T")
+    _, short_state, short_ln, _ = loop_nested_copy("cost_reentry_short", "4")
+    top_sdfg, top_ln = copy_libnode_sdfg(BIG_ELEMS)
     top_state = top_sdfg.states()[0]
 
     assert is_reentered_cpu_transfer(long_ln, long_state) is True
@@ -231,11 +232,28 @@ def test_parallel_map_scope_is_reentry():
 def test_expansion_ignores_reentry():
     """The expansion delegates: a copy the cost model calls re-entered still expands to the
     parallel element map. Sequentializing it is the CPU specialization band's job."""
-    sdfg, state, ln, _ = _loop_nested_copy("expand_ignores_reentry", "T")
+    sdfg, state, ln, _ = loop_nested_copy("expand_ignores_reentry", "T")
     assert cpu_transfer_parallelizes(ln, state, BIG_ELEMS) is False
     sdfg.expand_library_nodes(recursive=True)
     assert ln.implementation == "MappedTasklet"
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    test_large_copy_selects_mapped()
+    test_small_copy_selects_memcpy()
+    test_symbolic_copy_selects_mapped()
+    test_symbolic_memset_selects_pure()
+    test_large_memset_selects_pure()
+    test_small_memset_selects_cpu()
+    test_threshold_config_flips_selection()
+    test_size_gate_defaults_to_parallel(SMALL_ELEMS, False)
+    test_size_gate_defaults_to_parallel(TEST_THRESHOLD - 1, False)
+    test_size_gate_defaults_to_parallel(TEST_THRESHOLD, True)
+    test_size_gate_defaults_to_parallel(BIG_ELEMS, True)
+    test_size_gate_defaults_to_parallel(N, True)
+    test_size_gate_defaults_to_parallel(2 * N, True)
+    test_size_gate_defaults_to_parallel(N * dace.symbol("M"), True)
+    test_is_short_loop()
+    test_reentry_and_combined_verdict()
+    test_parallel_map_scope_is_reentry()
+    test_expansion_ignores_reentry()
