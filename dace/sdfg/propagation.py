@@ -13,7 +13,6 @@ from collections import deque
 from typing import TYPE_CHECKING, Optional, cast
 
 import sympy
-from sympy import Symbol
 from sympy.concrete.summations import Sum
 
 from dace import data, dtypes, registry, subsets, symbolic
@@ -1012,13 +1011,11 @@ def propagate_states(sdfg: "SDFG", concretize_dynamic_unbounded: bool = False) -
                             traversal_q.append((oedge.dst, state.executions, False, itvar_stack))
                         if concretize_dynamic_unbounded:
                             # Here we introduce the num_exec symbol and propagate it down the loop.
-                            # We can always assume these symbols to be non-negative.
                             traversal_q.append(
                                 (
                                     unannotated_loop_edge.dst,
-                                    Symbol(
-                                        f"num_execs_{sdfg.cfg_id}_{sdfg.node_id(unannotated_loop_edge.dst)}",
-                                        nonnegative=True,
+                                    symbolic.symbol(
+                                        f"num_execs_{sdfg.cfg_id}_{sdfg.node_id(unannotated_loop_edge.dst)}"
                                     ),
                                     False,
                                     itvar_stack,
