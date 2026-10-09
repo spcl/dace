@@ -2,7 +2,7 @@
 import ast
 import copy
 from dataclasses import dataclass
-from typing import Any, Union
+from typing import Any
 
 from dace import data, dtypes, subsets
 from dace.frontend.python import astutils
@@ -11,7 +11,7 @@ from dace.frontend.python.common import DaceSyntaxError
 from dace.memlet import Memlet
 from dace.symbolic import SymbolicType, pystr_to_symbolic
 
-MemletType = Union[ast.Call, ast.Attribute, ast.Subscript, ast.Name]
+MemletType = ast.Call | ast.Attribute | ast.Subscript | ast.Name
 
 
 @dataclass
@@ -289,7 +289,7 @@ def ParseMemlet(
     das = defined_arrays_and_symbols
     arrname = arrname or rname(node)
     if arrname not in das:
-        raise DaceSyntaxError(visitor, node, 'Use of undefined data "%s" in memlet' % arrname)
+        raise DaceSyntaxError(visitor, node, f'Use of undefined data "{arrname}" in memlet')
     array = das[arrname]
 
     # Determine number of accesses to the memlet (default is the slice size)

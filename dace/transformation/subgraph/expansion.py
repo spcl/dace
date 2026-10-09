@@ -1,20 +1,17 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 """This module contains classes that implement the expansion transformation."""
 
-from dace import dtypes, symbolic, subsets
-from dace.sdfg import nodes
-from dace.sdfg import replace, SDFG, dynamic_map_inputs
-from dace.sdfg.state import SDFGState, StateSubgraphView
-from dace.transformation import transformation
-from dace.properties import make_properties, Property
-from dace.transformation.subgraph import helpers
+import itertools
+import warnings
 from collections import defaultdict
-
 from copy import deepcopy as dcpy
 
-import itertools
-
-import warnings
+from dace import dtypes, subsets, symbolic
+from dace.properties import Property, make_properties
+from dace.sdfg import SDFG, dynamic_map_inputs, nodes, replace
+from dace.sdfg.state import SDFGState, StateSubgraphView
+from dace.transformation import transformation
+from dace.transformation.subgraph import helpers
 
 
 def offset_map(state, map_entry):
@@ -104,7 +101,7 @@ class MultiExpansion(transformation.SubgraphTransformation):
                     # check every memlet for access
                     for e in itertools.chain(graph.out_edges(map_entry), graph.in_edges(graph.exit_node(map_entry))):
                         subset = dcpy(e.data.subset)
-                        subset.pop([i for i in range(subset.dims() - 1)])
+                        subset.pop(list(range(subset.dims() - 1)))
                         for s in subset.free_symbols:
                             if reassignment[map_entry][map_entry.map.params.index(s)] != -1:
                                 warnings.warn("MultiExpansion::Contiguity fusion violation detected")
@@ -145,7 +142,7 @@ class MultiExpansion(transformation.SubgraphTransformation):
         maps = [entry.map for entry in map_entries]
 
         # in case of maps where all params and ranges already conincide, we can skip the whole process
-        if all([m.params == maps[0].params for m in maps]) and all([m.range == maps[0].range for m in maps]):
+        if all(m.params == maps[0].params for m in maps) and all(m.range == maps[0].range for m in maps):
             return
 
         if self.allow_offset:

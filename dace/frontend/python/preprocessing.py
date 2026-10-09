@@ -1,6 +1,5 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
-import collections
 import copy
 import functools
 import inspect
@@ -9,7 +8,7 @@ import re
 import warnings
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, NamedTuple
 
 import numpy
 import sympy
@@ -172,13 +171,12 @@ class ConditionalCodeResolver(ast.NodeTransformer):
                 else:
                     # Any other case is indeterminate, fall back to generic visit
                     return node
-            else:  # If not symbolic, check value directly
-                if result:
-                    # Only return "if" body
-                    return node.body
-                elif not result:
-                    # Only return "else" body
-                    return node.orelse
+            elif result:
+                # Only return "if" body
+                return node.body
+            elif not result:
+                # Only return "else" body
+                return node.orelse
 
         except SyntaxError:
             # Cannot evaluate if condition at compile time
@@ -329,7 +327,7 @@ def _create_unflatten_instruction(arg: ast.AST, global_vars: dict[str, Any]) -> 
         def make_remake(kwnames):
 
             def remake_dict(args):
-                return {k: a for k, a in zip(kwnames, args)}
+                return dict(zip(kwnames, args))
 
             return remake_dict
 
@@ -411,7 +409,7 @@ def flatten_callback(func: Callable, node: ast.Call, global_vars: dict[str, Any]
                         unflattened.append(unflatten(all_args[i : i + skip]))
 
                 args = unflattened[:poscount]
-                kwargs = {kw: arg for kw, arg in zip(keywords, unflattened[poscount:])}
+                kwargs = dict(zip(keywords, unflattened[poscount:]))
                 return func(*args, **kwargs)
 
             return cb_func
@@ -421,7 +419,7 @@ def flatten_callback(func: Callable, node: ast.Call, global_vars: dict[str, Any]
 
             def cb_func(*all_args):
                 args = all_args[:poscount]
-                kwargs = {kw: arg for kw, arg in zip(keywords, all_args[poscount:])}
+                kwargs = dict(zip(keywords, all_args[poscount:]))
                 return func(*args, **kwargs)
 
             return cb_func
@@ -882,7 +880,7 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
             ]
             values = [astutils.unparse(v.value) for v in visited.values]
             return ast.copy_location(
-                ast.Constant(kind="", value="".join(("{%s}" % v) if not p else v for p, v in zip(parsed, values))), node
+                ast.Constant(kind="", value="".join((f"{{{v}}}") if not p else v for p, v in zip(parsed, values))), node
             )
 
 
@@ -1238,9 +1236,8 @@ class LoopUnroller(ast.NodeTransformer):
                     )
 
             elembody = [astutils.copy_tree(stmt) for stmt in node.body]
-            replace = astutils.ASTFindReplace({k: v for k, v in zip(to_replace, elem)})
-            for stmt in elembody:
-                new_body.append(replace.visit(stmt))
+            replace = astutils.ASTFindReplace(dict(zip(to_replace, elem)))
+            new_body.extend(replace.visit(stmt) for stmt in elembody)
 
         return new_body
 
@@ -1471,7 +1468,7 @@ class DisallowedAssignmentChecker(ast.NodeVisitor):
 
     def __init__(self, filename: str) -> None:
         super().__init__()
-        self.visitor = collections.namedtuple("Visitor", "filename")
+        self.visitor = NamedTuple("Visitor", [("filename", str)])
         self.visitor.filename = filename
 
     def _check_assignment_target(self, node: ast.expr, parent_node: ast.AST):

@@ -44,6 +44,10 @@ def promote_size_scalars_in_shape(pv: ProgramVisitor, sdfg: SDFG, shape: Shape) 
     return [e.subs(replacements) if isinstance(e, sympy.Basic) else e for e in resolved], True
 
 
+from dace import SDFG
+from dace.frontend.python.replacements.utils import ProgramVisitor, Shape
+
+
 @oprepo.replaces("dace.define_local")
 @oprepo.replaces("dace.ndarray")
 def _define_local_ex(

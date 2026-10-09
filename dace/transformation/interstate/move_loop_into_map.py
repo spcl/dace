@@ -6,15 +6,14 @@ import copy
 import networkx as nx
 from sympy import diff
 
-import dace.transformation.helpers as helpers
 from dace import Memlet, nodes, symbol, symbolic
 from dace import sdfg as sd
 from dace import subsets as sbs
-from dace.sdfg import nodes, propagation
+from dace.sdfg import propagation
 from dace.sdfg import utils as sdutil
 from dace.sdfg.scope import ScopeTree
 from dace.sdfg.state import ControlFlowRegion, LoopRegion, SDFGState
-from dace.transformation import transformation
+from dace.transformation import helpers, transformation
 from dace.transformation.passes.analysis import loop_analysis
 
 

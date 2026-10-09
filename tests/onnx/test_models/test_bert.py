@@ -16,9 +16,8 @@ import tempfile
 
 import onnx
 import onnxsim
-
 import torch
-from transformers import BertTokenizer, BertModel
+from transformers import BertModel, BertTokenizer
 
 import dace.libraries.onnx as donnx
 from tests.utils import torch_tensors_close

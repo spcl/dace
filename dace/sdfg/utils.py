@@ -1266,7 +1266,7 @@ def _attach_view_edges(state: SDFGState, node: nd.AccessNode, viewed: str, subse
         for e in [e for e in state.out_edges(node) if e.data.is_empty()]:
             state.remove_edge(e)
             state.add_edge(viewed_node, None, e.dst, e.dst_conn, e.data)
-        read_edges = [e for e in state.out_edges(node)]
+        read_edges = list(state.out_edges(node))
         node.add_out_connector("views", force=True)
         state.add_edge(node, "views", viewed_node, None, mm.Memlet(data=viewed, subset=copy.deepcopy(subset)))
         if not is_read:
@@ -1363,8 +1363,7 @@ def weakly_connected_component(dfg, node_in_component: Node) -> StateSubgraphVie
         if node in seen:
             continue
         seen.add(node)
-        for succ in dfg.successors(node):
-            to_search.append(succ)
+        to_search.extend(dfg.successors(node))
     to_search = [node_in_component]
     seen.remove(node_in_component)
     while to_search:
@@ -1411,9 +1410,7 @@ def concurrent_subgraphs(graph):
             if node in seen:
                 continue
             seen.add(node)
-            for e in graph.out_edges(node):
-                if e.dst not in seen:
-                    to_search.append(e.dst)
+            to_search.extend(e.dst for e in graph.out_edges(node) if e.dst not in seen)
         # If this component overlaps with any previously determined components,
         # fuse them
         to_delete = []
@@ -1522,7 +1519,7 @@ def local_transients(sdfg, dfg, entry_node, include_nested=False):
         current_scope = current_scope.parent
         defined_transients.update(_transients_in_scope(sdfg, current_scope, scope_children, False))
 
-    return sorted(list(transients - defined_transients))
+    return sorted(transients - defined_transients)
 
 
 def trace_nested_access(
@@ -2430,7 +2427,7 @@ def get_control_flow_block_dominators(
         #   dominator of that loop or conditional.
         # - If the immediate dominator is any other control flow region, change the immediate dominator to be the
         #   immediate dominator of that region's end / exit - or a virtual one if no single one exists.
-        for k, _ in idom.items():
+        for k in idom.keys():
             if k.parent_graph is not sdfg and k is k.parent_graph.start_block:
                 next_dom = idom[k.parent_graph]
                 while next_dom.parent_graph is not sdfg and next_dom is next_dom.parent_graph.start_block:
@@ -2443,11 +2440,10 @@ def get_control_flow_block_dominators(
                 if isinstance(v, AbstractControlFlowRegion):
                     if isinstance(v, (LoopRegion, ConditionalBlock)):
                         idom[k] = idom[v]
+                    elif v in added_sinks:
+                        idom[k] = idom[added_sinks[v]]
                     else:
-                        if v in added_sinks:
-                            idom[k] = idom[added_sinks[v]]
-                        else:
-                            idom[k] = v.sink_nodes()[0]
+                        idom[k] = v.sink_nodes()[0]
                     if idom[k] is not v:
                         changed = True
 
@@ -2486,7 +2482,7 @@ def get_control_flow_block_dominators(
 
         # Compute the transitive relationship of immediate postdominators, similar to how it works for immediate
         # dominators, but inverse.
-        for k, _ in ipostdom.items():
+        for k in ipostdom.keys():
             if k.parent_graph is not sdfg and (
                 k is sinks_per_cfg[k.parent_graph] or isinstance(k.parent_graph, ConditionalBlock)
             ):
@@ -2591,7 +2587,7 @@ def get_constant_data(
     """
 
     def _incoming_memlet(state: SDFGState, node: nd.AccessNode) -> bool:
-        return state.in_degree(node) > 0 and any([e.data is not None for e in state.in_edges(node)])
+        return state.in_degree(node) > 0 and any(e.data is not None for e in state.in_edges(node))
 
     if isinstance(scope, (SDFGState, ControlFlowRegion)):
         read_data, write_data = scope.read_and_write_sets()
@@ -2792,12 +2788,13 @@ def _specialize_scalar_impl(root: "dace.SDFG", sdfg: "dace.SDFG", scalars: dict[
     # Captured before the descriptors are removed below (see _scalar_literal).
     scalar_dtypes = {name: (sdfg.arrays[name].dtype if name in sdfg.arrays else None) for name in scalars}
 
-    nsdfgs = []
     # Before replacing anything collect all nested SDFGs and their in-out edges for recursion
-    for state in sdfg.all_states():
-        for node in state.nodes():
-            if isinstance(node, nd.NestedSDFG):
-                nsdfgs.append((node, state, state.in_edges(node), state.out_edges(node)))
+    nsdfgs = [
+        (node, state, state.in_edges(node), state.out_edges(node))
+        for state in sdfg.all_states()
+        for node in state.nodes()
+        if isinstance(node, nd.NestedSDFG)
+    ]
 
     # If we are the root SDFG then we need can't remove non-transient scalar (but will just not use it)
     # For nestedSDFGs we will remove
@@ -2862,15 +2859,13 @@ def _specialize_scalar_impl(root: "dace.SDFG", sdfg: "dace.SDFG", scalars: dict[
                 if isinstance(src, nd.MapEntry):
                     # Add a dep edge, to not invalidate the map
                     state.add_edge(src, None, dst, None, dace.memlet.Memlet())
-                else:
-                    if state.degree(src) == 0:
-                        state.remove_node(src)
+                elif state.degree(src) == 0:
+                    state.remove_node(src)
             if state.in_degree(dst) == 0:
                 if isinstance(dst, nd.MapExit):
                     state.add_edge(src, None, dst, None, dace.memlet.Memlet())
-                else:
-                    if state.degree(dst) == 0:
-                        state.remove_node(dst)
+                elif state.degree(dst) == 0:
+                    state.remove_node(dst)
 
         for node in state.nodes():
             if isinstance(node, nd.MapEntry):

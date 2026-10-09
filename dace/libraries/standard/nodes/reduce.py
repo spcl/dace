@@ -49,7 +49,7 @@ class ExpandReducePure(pm.ExpandTransformation):
             osqdim = [0]
 
         # Standardize and squeeze axes
-        axes = node.axes if node.axes is not None else [i for i in range(len(inedge.data.subset))]
+        axes = node.axes if node.axes is not None else list(range(len(inedge.data.subset)))
         axes = [axis for axis in axes if axis in isqdim]
 
         # Create nested SDFG
@@ -104,9 +104,9 @@ class ExpandReducePure(pm.ExpandTransformation):
             # Add initialization as a map
             init_state.add_mapped_tasklet(
                 "reduce_init",
-                {"_o%d" % i: "0:%s" % symstr(d) for i, d in enumerate(outedge.data.subset.size())},
+                {"_o%d" % i: f"0:{symstr(d)}" for i, d in enumerate(outedge.data.subset.size())},
                 {},
-                "__out = %s" % node.identity,
+                f"__out = {node.identity}",
                 {"__out": dace.Memlet.simple("_out", ",".join(["_o%d" % i for i in osqdim]))},
                 external_edges=True,
             )
@@ -128,7 +128,7 @@ class ExpandReducePure(pm.ExpandTransformation):
                     octr += 1
 
             ome, omx = nstate.add_map(
-                "reduce_output", {"_o%d" % i: "0:%s" % symstr(sz) for i, sz in enumerate(outsubset.size())}
+                "reduce_output", {"_o%d" % i: f"0:{symstr(sz)}" for i, sz in enumerate(outsubset.size())}
             )
             outm = dace.Memlet.simple("_out", ",".join(["_o%d" % i for i in range(output_dims)]), wcr_str=node.wcr)
             inmm = dace.Memlet.simple("_in", ",".join(input_subset))
@@ -141,7 +141,7 @@ class ExpandReducePure(pm.ExpandTransformation):
         # an identity tasklet
         ime, imx = nstate.add_map(
             "reduce_values",
-            {"_i%d" % i: "0:%s" % symstr(insubset.size()[isqdim.index(axis)]) for i, axis in enumerate(sorted(axes))},
+            {"_i%d" % i: f"0:{symstr(insubset.size()[isqdim.index(axis)])}" for i, axis in enumerate(sorted(axes))},
         )
 
         # Add identity tasklet for reduction
@@ -184,7 +184,7 @@ class ExpandReducePureSequentialDim(pm.ExpandTransformation):
         output_data = sdfg.arrays[outedge.data.data]
 
         # Standardize and squeeze axes
-        axes = node.axes if node.axes is not None else [i for i in range(len(inedge.data.subset))]
+        axes = node.axes if node.axes is not None else list(range(len(inedge.data.subset)))
         axes = [axis for axis in axes if axis in isqdim]
 
         if not axes:  # Degenerate reduction
@@ -409,12 +409,12 @@ class ExpandReduceOpenMP(pm.ExpandTransformation):
         # Get reduction type for OpenMP
         redtype = detect_reduction_type(node.wcr, openmp=True)
         if redtype not in ExpandReduceOpenMP._REDUCTION_TYPE_TO_OPENMP:
-            warnings.warn('Reduction type not supported for "%s"' % node.wcr)
+            warnings.warn(f'Reduction type not supported for "{node.wcr}"')
             return ExpandReducePure.expansion(node, state, sdfg)
         omptype, expr = ExpandReduceOpenMP._REDUCTION_TYPE_TO_OPENMP[redtype]
 
         # Standardize axes
-        axes = node.axes if node.axes is not None else [i for i in range(input_dims)]
+        axes = node.axes if node.axes is not None else list(range(input_dims))
         sqaxes = [axis for axis in axes if axis in isqdim]
 
         if not sqaxes:  # Degenerate reduction
@@ -439,11 +439,11 @@ class ExpandReduceOpenMP(pm.ExpandTransformation):
         else:
             out_offset.append("0")
 
-        outexpr = "%s[%s]" % (_OUT, " + ".join(out_offset))
+        outexpr = f"{_OUT}[{' + '.join(out_offset)}]"
 
         # Write identity value first
         if node.identity is not None:
-            code += "%s = %s;\n" % (outexpr, sym2cpp(node.identity))
+            code += f"{outexpr} = {sym2cpp(node.identity)};\n"
 
         # Reduction OpenMP clause
         code += f"#pragma omp parallel for collapse({len(axes)}) reduction({omptype}: {outexpr})\n"
@@ -463,11 +463,11 @@ class ExpandReduceOpenMP(pm.ExpandTransformation):
             else:
                 result = "_o%d" % octr
                 octr += 1
-            in_offset.append("%s * %s" % (result, sym2cpp(input_data.strides[i])))
+            in_offset.append(f"{result} * {sym2cpp(input_data.strides[i])}")
         in_offset = " + ".join(in_offset)
 
         # Reduction expression
-        code += expr.format(i="%s[%s]" % (_IN, in_offset), o=outexpr)
+        code += expr.format(i=f"{_IN}[{in_offset}]", o=outexpr)
         code += "\n"
 
         # Closing braces
@@ -523,7 +523,7 @@ class ExpandReduceCUDADevice(pm.ExpandTransformation):
         output_data = sdfg.arrays[output_edge.data.data]
 
         # Standardize axes
-        axes = node.axes if node.axes is not None else [i for i in range(input_dims)]
+        axes = node.axes if node.axes is not None else list(range(input_dims))
         sqaxes = [axis for axis in axes if axis in isqdim]
 
         if not sqaxes:  # Degenerate reduction
@@ -574,7 +574,7 @@ class ExpandReduceCUDADevice(pm.ExpandTransformation):
             reduce_op = ""
         else:
             credtype = "dace::ReductionType::" + str(redtype)[str(redtype).find(".") + 1 :]
-            reduce_op = (", dace::_wcr_fixed<%s, %s>()" % (credtype, output_type)) + ", " + symstr(node.identity)
+            reduce_op = (f", dace::_wcr_fixed<{credtype}, {output_type}>()") + ", " + symstr(node.identity)
 
         # Obtain some SDFG-related information
         input_memlet = input_edge.data
@@ -656,7 +656,7 @@ class ExpandReduceCUDADevice(pm.ExpandTransformation):
             reduce_range_def = "size_t num_segments, size_t segment_size"
             iterator_use = "dace::stridedIterator(segment_size)"
             reduce_range_use = f"num_segments, {iterator_use}, {iterator_use} + 1"
-            reduce_range_call = "%s, %s" % (num_segments, segment_size)
+            reduce_range_call = f"{num_segments}, {segment_size}"
 
         # Call CUB to get the storage size, allocate and free it. Every one of these is checked: CUB
         # reads a null workspace as "only report the size", so a failed query, a zero-byte allocation
@@ -802,7 +802,7 @@ class ExpandReduceCUDABlock(pm.ExpandTransformation):
             reduce_op = ""
         else:
             credtype = "dace::ReductionType::" + str(redtype)[str(redtype).find(".") + 1 :]
-            reduce_op = (", dace::_wcr_fixed<%s, %s>()" % (credtype, output_type)) + ", " + symstr(node.identity)
+            reduce_op = (f", dace::_wcr_fixed<{credtype}, {output_type}>()") + ", " + symstr(node.identity)
 
         # Try to obtain the number of threads in the block, or use the default
         # configuration
@@ -814,19 +814,19 @@ class ExpandReduceCUDABlock(pm.ExpandTransformation):
         if block_threads is None:
             raise ValueError("Block-wide GPU reduction must occur within a GPU kernel")
         if issymbolic(block_threads, sdfg.constants):
-            raise ValueError("Block size has to be constant for block-wide reduction (got %s)" % str(block_threads))
+            raise ValueError(f"Block size has to be constant for block-wide reduction (got {str(block_threads)})")
         if node.axes is not None and len(node.axes) < input_dims:
             raise ValueError("Only full reduction is supported for block-wide reduce, please use the pure expansion")
         if input_data.storage != dtypes.StorageType.Register or output_data.storage != dtypes.StorageType.Register:
             raise ValueError("Block-wise reduction only supports GPU register inputs and outputs")
         if redtype in ExpandReduceCUDABlock._SPECIAL_RTYPES:
-            raise ValueError("%s block reduction not supported" % redtype)
+            raise ValueError(f"{redtype} block reduction not supported")
 
         credtype = "dace::ReductionType::" + str(redtype)[str(redtype).find(".") + 1 :]
         if redtype == dtypes.ReductionType.Custom:
-            redop = "__reduce_%s()" % idstr
+            redop = f"__reduce_{idstr}()"
         else:
-            redop = "dace::_wcr_fixed<%s, %s>()" % (credtype, output_type)
+            redop = f"dace::_wcr_fixed<{credtype}, {output_type}>()"
 
         # Allocate shared memory for block reduce
         localcode.write(
@@ -1071,7 +1071,7 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
             return ExpandReducePure.expansion(node, state, sdfg)
 
         # Standardize and squeeze axes
-        axes = node.axes if node.axes is not None else [i for i in range(len(inedge.data.subset))]
+        axes = node.axes if node.axes is not None else list(range(len(inedge.data.subset)))
         # this removes reduction of size 1 axes from the list
         axes = [axis for axis in axes if axis in isqdim]
 
@@ -1137,7 +1137,7 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
                     "reduce_init",
                     {"_o": "0:1"},
                     {},
-                    "__out = %s" % node.identity,
+                    f"__out = {node.identity}",
                     {"__out": dace.Memlet("_out[0]")},
                     external_edges=True,
                     schedule=dtypes.ScheduleType.GPU_Device,
@@ -1153,7 +1153,7 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
                     "reduce_init",
                     {f"_o{i}": subsets.Range([(0, sz - 1, 1)]) for i, sz in enumerate(schedule.out_shape)},
                     {},
-                    "__out = %s" % node.identity,
+                    f"__out = {node.identity}",
                     {"__out": outm},
                     external_edges=True,
                     schedule=dtypes.ScheduleType.GPU_Device,
@@ -1344,7 +1344,7 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
                     "reduce_init",
                     {f"_o{i}": subsets.Range([(0, sz - 1, 1)]) for i, sz in enumerate(schedule.out_shape)},
                     {},
-                    "__out = %s" % node.identity,
+                    f"__out = {node.identity}",
                     {"__out": reset_outm},
                     external_edges=True,
                     schedule=dtypes.ScheduleType.GPU_Device,

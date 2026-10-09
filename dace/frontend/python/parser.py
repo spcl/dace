@@ -6,9 +6,10 @@ import copy
 import inspect
 import os
 import sys
+import types as pytypes
 import warnings
 from collections.abc import Callable, Sequence
-from typing import TYPE_CHECKING, Any, Union, get_args, get_origin
+from typing import TYPE_CHECKING, Any, ForwardRef, Union, get_args, get_origin
 
 import sympy
 
@@ -69,21 +70,18 @@ def _get_locals_and_globals(f):
 
     # grab the free variables (i.e. locals)
     if f.__closure__ is not None:
-        result.update(
-            {k: v for k, v in zip(f.__code__.co_freevars, [_get_cell_contents_or_none(x) for x in f.__closure__])}
-        )
+        result.update(dict(zip(f.__code__.co_freevars, [_get_cell_contents_or_none(x) for x in f.__closure__])))
 
     if sys.version_info >= (3, 14):
         # Python 3.14+: Also get locals from the annotate function
         if annotate_func is not None and annotate_func.__closure__ is not None:
             result.update(
-                {
-                    k: v
-                    for k, v in zip(
+                dict(
+                    zip(
                         annotate_func.__code__.co_freevars,
                         [_get_cell_contents_or_none(x) for x in annotate_func.__closure__],
                     )
-                }
+                )
             )
 
     return result
@@ -105,7 +103,7 @@ def infer_symbols_from_datadescriptor(
     :raise ValueError: If symbol values are ambiguous.
     """
     exclude = exclude or set()
-    exclude = set(symbolic.symbol(s) for s in exclude)
+    exclude = {symbolic.symbol(s) for s in exclude}
     equations = []
     symbols = set()
 
@@ -122,7 +120,7 @@ def infer_symbols_from_datadescriptor(
                 # NumPy arrays use bytes in strides
                 factor = getattr(arg_val, "itemsize", 1)
                 given_strides = [s // factor for s in arg_val.strides]
-            given_offset = [o for o in arg_val.offset] if hasattr(arg_val, "offset") else []
+            given_offset = list(arg_val.offset) if hasattr(arg_val, "offset") else []
             given_values += given_strides + given_offset
 
             for sym_dim, real_dim in zip(symbolic_values, given_values):
@@ -156,7 +154,7 @@ def infer_symbols_from_datadescriptor(
     # Solve for all at once
     results = sympy.solve(equations, *symbols, dict=True, exclude=exclude)
     if len(results) > 1:
-        raise ValueError("Ambiguous values for symbols in inference. Options: %s" % str(results))
+        raise ValueError(f"Ambiguous values for symbols in inference. Options: {str(results)}")
     if len(results) == 0:
         raise ValueError("Cannot infer values for symbols in inference.")
 
@@ -215,7 +213,7 @@ class DaceProgram(pycommon.SDFGConvertible):
         self.default_args = {
             pname: pval.default for pname, pval in self.signature.parameters.items() if not _is_empty(pval.default)
         }
-        self.symbols = set(k for k, v in self.global_vars.items() if isinstance(v, symbolic.symbol))
+        self.symbols = {k for k, v in self.global_vars.items() if isinstance(v, symbolic.symbol)}
         self.closure_arg_mapping: dict[str, Callable[[], Any]] = {}
         self.resolver: pycommon.SDFGClosure = None
 
@@ -229,9 +227,11 @@ class DaceProgram(pycommon.SDFGConvertible):
                 pval._annotation = arg
 
         # Keep a set of compile-time arguments to ignore
-        self.constant_args = set(
-            pname for pname, pval in self.signature.parameters.items() if pval.annotation is dtypes.compiletime
-        )
+        self.constant_args = {
+            pname
+            for pname, pval in self.signature.parameters.items()
+            if self._evaluate_annotation(pval.annotation) is dtypes.compiletime
+        }
 
         if self.argnames is None:
             self.argnames = []
@@ -600,14 +600,46 @@ class DaceProgram(pycommon.SDFGConvertible):
 
         return sdfg
 
-    def _evaluate_annotation(self, ann):
-        try:
-            return eval(ann.__forward_arg__, self.global_vars)
-        except AttributeError:
+    def _evaluate_annotation(self, ann: Any) -> Any:
+        """
+        Evaluates a string annotation (e.g., from ``from __future__ import annotations``) or a forward reference
+        (e.g., ``Optional["dace.float64[N]"]``) in the program's global scope.
+
+        :param ann: The annotation to evaluate.
+        :return: The evaluated annotation, the annotation itself if it is neither a string nor a forward reference,
+                 or ``inspect.Parameter.empty`` if evaluation failed.
+        """
+        if isinstance(ann, str):
+            expr = ann
+        elif isinstance(ann, ForwardRef):
+            expr = ann.__forward_arg__
+        else:
             return ann
+        try:
+            return eval(expr, self.global_vars)
         except:
-            # Evaluating arbitrary code - anything can happen. Good luck.
-            return dtypes.compiletime
+            # Evaluating arbitrary code - anything can happen. Treat as an unannotated argument.
+            return inspect.Parameter.empty
+
+    @staticmethod
+    def _split_optional_annotation(ann: Any) -> tuple[Any, bool]:
+        """
+        Splits a union type hint (``Optional[T]``, ``Union[T, None]``, ``T | None``) into its non-None type.
+
+        :param ann: The type hint.
+        :return: A 2-tuple of the type hint without ``None`` and whether ``None`` was part of the union.
+        :raises SyntaxError: If the union contains more than one type that is not ``None``.
+        """
+        if get_origin(ann) not in (Union, pytypes.UnionType):
+            return ann, False
+        hint_args = get_args(ann)
+        non_none_args = [arg for arg in hint_args if arg is not type(None)]
+        if len(non_none_args) != 1:
+            raise SyntaxError(
+                f"Unsupported type hint {ann}. Union type hints may only contain a single data type and None, "
+                "e.g., Optional[T], Union[T, None], or T | None."
+            )
+        return non_none_args[0], len(non_none_args) < len(hint_args)
 
     def _get_type_annotations(
         self, given_args: tuple[Any], given_kwargs: dict[str, Any]
@@ -639,7 +671,7 @@ class DaceProgram(pycommon.SDFGConvertible):
                 # Skip "self" argument
                 continue
 
-            ann = sig_arg.annotation
+            ann = self._evaluate_annotation(sig_arg.annotation)
             if self.ignore_type_hints:
                 ann = inspect._empty
 
@@ -693,29 +725,11 @@ class DaceProgram(pycommon.SDFGConvertible):
                         curarg = ann
 
                     try:
-                        # If annotation specifies a union, ensure it consists of only one type and NoneType
-                        if get_origin(ann) is Union:
-                            hint_args = get_args(ann)
-                            if len(hint_args) == 1:
-                                ann = hint_args[0]
-                            else:
-                                # Check for invalid Union type hints
-                                if (
-                                    len(hint_args) > 2
-                                    or len(hint_args) == 0
-                                    or (hint_args[0] is not type(None) and hint_args[1] is not type(None))
-                                ):
-                                    raise SyntaxError(
-                                        f'Argument "{aname}" can only have a type hint that can create a '
-                                        "data descriptor or use the Optional[T] or Union[T, None] type hints."
-                                    )
-                                # Set the annotation to be the not-None value, and the data descriptor to be optional
-                                ann = hint_args[1] if hint_args[0] is type(None) else hint_args[0]
-                                is_optional = True
-
-                            if not is_constant:  # Reset curarg
-                                curarg = ann
+                        # If annotation specifies a union, use the not-None type and make the data descriptor optional
+                        ann, is_optional = self._split_optional_annotation(ann)
                         ann = self._evaluate_annotation(ann)
+                        if not is_constant:  # Reset curarg
+                            curarg = None if _is_empty(ann) else ann
 
                         # If annotation specifies to skip its data descriptor and favor JIT types
                         if create_datadescriptor(ann) is None:
@@ -799,7 +813,7 @@ class DaceProgram(pycommon.SDFGConvertible):
                     types[aname].optional = True
 
         # Set __return* arrays from return type annotations
-        rettype = self.signature.return_annotation
+        rettype = self._evaluate_annotation(self.signature.return_annotation)
         if not self.ignore_type_hints and not _is_empty(rettype):
             if isinstance(rettype, tuple):
                 for i, subrettype in enumerate(rettype):

@@ -10,7 +10,7 @@ from collections import OrderedDict
 from dataclasses import dataclass
 from enum import Enum, auto
 from functools import wraps
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Union
 
 import ml_dtypes
 import numpy
@@ -41,12 +41,12 @@ class StorageType(ExtensibleAttributeEnum):
         Local data on registers, stack, or equivalent memory.
 
         ``StorageType.Register`` is a template that compares equal to every instance, so it can be used as before;
-        instantiate it to allow a symbolically-sized array on the stack, e.g., ``StorageType.Register(dynamic=True)``.
+        instantiate it to force stack allocation, e.g., ``StorageType.Register(force=True)``.
         """
 
-        #: Whether a symbolically-sized array is a variable-length array on the stack (``True``). ``False`` and
-        #: ``None`` are the same: the array is allocated on the heap. Constant sizes are unaffected.
-        dynamic: builtins.bool | None = None
+        #: Whether the array is always on the stack (``True``), a symbolically-sized one as a variable-length array.
+        #: Otherwise (``False``, also for the template) only constant sizes up to the stack size limit are.
+        force: bool = False
 
     CPU_Pinned = auto()  #: Host memory that can be DMA-accessed from accelerators
     CPU_Heap = auto()  #: Host memory allocated on heap
@@ -70,35 +70,6 @@ class StorageType(ExtensibleAttributeEnum):
     Snitch_TCDM = auto()  #: Cluster-private memory
     Snitch_L2 = auto()  #: External memory
     Snitch_SSR = auto()  #: Memory accessed by SSR streamer
-
-
-def is_dynamic_shared(storage: StorageType) -> bool | None:
-    """
-    Returns whether a ``GPU_Shared`` storage type is placed in dynamic shared memory.
-
-    :param storage: A ``GPU_Shared`` storage type, either the template or an instance of it.
-    :return: The ``dynamic`` attribute of the storage type, or None if it is left to the code generator (which is also
-             the case for the bare template).
-    """
-    if storage != StorageType.GPU_Shared:
-        raise ValueError(f"Expected a GPU_Shared storage type, got {storage}")
-    if storage._is_template:
-        return None
-    return storage.dynamic
-
-
-def is_dynamic_register(storage: StorageType) -> bool | None:
-    """
-    Returns whether a ``Register`` storage type places a symbolically-sized array on the stack.
-
-    :param storage: A ``Register`` storage type, either the template or an instance of it.
-    :return: The ``dynamic`` attribute of the storage type, or None for the bare template.
-    """
-    if storage != StorageType.Register:
-        raise ValueError(f"Expected a Register storage type, got {storage}")
-    if storage._is_template:
-        return None
-    return storage.dynamic
 
 
 class OMPScheduleType(Enum):
@@ -447,6 +418,14 @@ class typeclass:
     def __ne__(self, other):
         return other is not None and self.ctype != getattr(other, "ctype", False)
 
+    def __or__(self, other):
+        """Enables PEP 604 union type hints, e.g., ``dace.float64 | None``."""
+        # NOTE: ``self | other`` would recurse into this method
+        return Union[self, other]  # noqa: UP007
+
+    def __ror__(self, other):
+        return Union[other, self]  # noqa: UP007
+
     def __getitem__(self, s):
         """This is syntactic sugar that allows us to define an array type
         with the following syntax: ``dace.uint32[N,M]``
@@ -484,7 +463,7 @@ def max_value(dtype: typeclass):
     elif numpy.issubdtype(nptype, numpy.floating):
         return numpy.finfo(nptype).max
 
-    raise TypeError('Unsupported type "%s" for maximum' % dtype)
+    raise TypeError(f'Unsupported type "{dtype}" for maximum')
 
 
 def min_value(dtype: typeclass):
@@ -497,7 +476,7 @@ def min_value(dtype: typeclass):
     elif numpy.issubdtype(nptype, numpy.floating):
         return numpy.finfo(nptype).min
 
-    raise TypeError('Unsupported type "%s" for minimum' % dtype)
+    raise TypeError(f'Unsupported type "{dtype}" for minimum')
 
 
 def reduction_identity(dtype: typeclass, red: ReductionType) -> Any:
@@ -702,7 +681,7 @@ class vector(typeclass):
 
     @property
     def ctype(self):
-        return "dace::vec<%s, %s>" % (self.vtype.ctype, self.veclen)
+        return f"dace::vec<{self.vtype.ctype}, {self.veclen}>"
 
     @property
     def ctype_unaligned(self):
@@ -797,7 +776,7 @@ class struct(typeclass):
 
         ret = struct(json_obj["name"])
         ret._data = {k: json_to_typeclass(v, context) for k, v in json_obj["data"]}
-        ret._length = {k: v for k, v in json_obj["length"]}
+        ret._length = dict(json_obj["length"])
         ret.bytes = json_obj["bytes"]
 
         return ret
@@ -862,7 +841,7 @@ class struct(typeclass):
 {typ}
 }};""".format(
             name=self.name,
-            typ="\n".join(["    %s %s;" % (t.ctype, tname) for tname, t in self._data.items()]),
+            typ="\n".join([f"    {t.ctype} {tname};" for tname, t in self._data.items()]),
         )
 
 
@@ -1097,13 +1076,12 @@ class callback(typeclass):
                 ret_arraypos.append(index + offset)
                 ret_types_and_sizes.append((ctypes.py_object, []))
                 ret_converters.append(lambda a, *args: a)
+            elif not self.is_scalar_function():
+                ret_arraypos.append(index + offset)
+                ret_types_and_sizes.append((arg.dtype.as_ctypes(), arg.shape))
+                ret_converters.append(partial(_pyobject_converter, arg))
             else:
-                if not self.is_scalar_function():
-                    ret_arraypos.append(index + offset)
-                    ret_types_and_sizes.append((arg.dtype.as_ctypes(), arg.shape))
-                    ret_converters.append(partial(_pyobject_converter, arg))
-                else:
-                    ret_converters.append(lambda a, *args: a)
+                ret_converters.append(lambda a, *args: a)
         if len(inp_arraypos) == 0 and len(ret_arraypos) == 0:
             return pyfunc
 
@@ -1608,7 +1586,7 @@ def paramdec(dec):
 
 def deduplicate(iterable):
     """Removes duplicates in the passed iterable."""
-    return type(iterable)([i for i in sorted(set(iterable), key=lambda x: iterable.index(x))])
+    return type(iterable)(sorted(set(iterable), key=lambda x: iterable.index(x)))
 
 
 namere = re.compile(r"^[a-zA-Z_][a-zA-Z_0-9]*$")

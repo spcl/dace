@@ -2,8 +2,10 @@
 """Simple program showing the `dace.map` syntax and profiling."""
 
 import argparse
-import dace
+
 import numpy as np
+
+import dace
 
 try:
     import scipy.sparse as sp

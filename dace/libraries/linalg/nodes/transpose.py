@@ -68,7 +68,7 @@ class ExpandTransposePure(ExpandTransformation):
         else:
             state.add_mapped_tasklet(
                 name="transpose",
-                map_ranges={"__i%d" % i: "0:%s" % n for i, n in enumerate(in_array.shape)},
+                map_ranges={"__i%d" % i: f"0:{n}" for i, n in enumerate(in_array.shape)},
                 inputs={
                     "__inp": dace.memlet.Memlet.simple(
                         "_inp", ",".join(["__i%d" % i for i in range(len(in_array.shape))])

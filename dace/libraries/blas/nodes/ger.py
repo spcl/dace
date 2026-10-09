@@ -11,13 +11,11 @@ from dace import data as dt
 from dace import memlet as mm
 from dace import subsets as sbs
 from dace.frontend.common import op_repository as oprepo
-from dace.libraries.blas import blas_helpers
+from dace.libraries.blas import blas_helpers, environments
 from dace.properties import SymbolicProperty
 from dace.sdfg import SDFG, SDFGState, nodes
 from dace.sdfg.nodes import LibraryNode
 from dace.transformation.transformation import ExpandTransformation
-
-from .. import environments
 
 
 @library.expansion

@@ -207,12 +207,12 @@ class Property(Generic[T]):
             try:
                 dtype = self.dtype
                 if dtype is not None:
-                    self.__doc__ = "Object property of type %s" % dtype.__name__
+                    self.__doc__ = f"Object property of type {dtype.__name__}"
                 else:
-                    self.__doc__ = "Object property of type %s" % type(self).__name__
+                    self.__doc__ = f"Object property of type {type(self).__name__}"
             except (ImportError, AttributeError):
                 # Handle circular import case - defer docstring generation
-                self.__doc__ = "Object property of type %s" % type(self).__name__
+                self.__doc__ = f"Object property of type {type(self).__name__}"
 
     def __get__(self, obj, objtype=None) -> T:
         if obj is None:
@@ -582,7 +582,7 @@ class ListProperty(Property[list[T]]):
         if data is None:
             return data
         if not isinstance(data, list):
-            raise TypeError("ListProperty expects a list input, got %s" % data)
+            raise TypeError(f"ListProperty expects a list input, got {data}")
         if _is_symbolic_type(self.element_type):
             return [_symbolic_deserializer(elem, context=context) for elem in data]
         if _is_symbolic_converter(self.element_type):
@@ -620,7 +620,7 @@ class TransformationHistProperty(Property):
         if data is None:
             return data
         if not isinstance(data, list):
-            raise TypeError("TransformationHistProperty expects a list input, got %s" % data)
+            raise TypeError(f"TransformationHistProperty expects a list input, got {data}")
         return [dace.serialize.from_json(elem, context=context) for elem in data]
 
 
@@ -730,7 +730,7 @@ class DictProperty(Property):
             saved_dictionary = {k: self.value_type(v) for k, v in saved_dictionary.items()}
 
         # Sort by key before saving
-        return {k: v for k, v in sorted(saved_dictionary.items())} if None not in saved_dictionary else saved_dictionary
+        return dict(sorted(saved_dictionary.items())) if None not in saved_dictionary else saved_dictionary
 
     @staticmethod
     def from_string(s):
@@ -740,7 +740,7 @@ class DictProperty(Property):
         if data is None:
             return data
         if not isinstance(data, dict):
-            raise TypeError("DictProperty expects a dictionary input, got %s" % data)
+            raise TypeError(f"DictProperty expects a dictionary input, got {data}")
         # If element knows how to convert itself, let it
         key_json = hasattr(self.key_type, "from_json")
         value_json = hasattr(self.value_type, "from_json")
@@ -1010,14 +1010,14 @@ class SetProperty(Property):
         if isinstance(val, (frozenset, set)):
             pass
         elif len(val) != len(set(val)):
-            dups = set([x for x in val if val.count(x) > 1])
+            dups = {x for x in val if val.count(x) > 1}
             raise ValueError("Duplicates found in set: " + str(dups))
 
         # Cast to element type and ensure that it is a frozen set.
         try:
             new_set = frozenset(self._element_type(elem) for elem in val)
         except (TypeError, ValueError):
-            raise ValueError("Some elements could not be converted to %s" % (str(self._element_type)))
+            raise ValueError(f"Some elements could not be converted to {str(self._element_type)}")
 
         super().__set__(obj, new_set)
 

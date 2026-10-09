@@ -11,15 +11,13 @@ Operations implemented:
 """
 
 import copy
-import typing
 
 import dace
 from dace import SDFG, SDFGState
-from dace.sdfg.nodes import Node
-from dace.sdfg.utils import in_desc_with_name, out_desc_with_name
-
 from dace.libraries.onnx.forward_implementation_abc import ONNXForward
 from dace.libraries.onnx.op_implementations.utils import op_implementation
+from dace.sdfg.nodes import Node
+from dace.sdfg.utils import in_desc_with_name, out_desc_with_name
 
 
 @op_implementation(op="Resize", name="pure")
@@ -132,7 +130,7 @@ class PureResize(ONNXForward):
         return True
 
     @staticmethod
-    def forward(node: "ONNXOp", state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
+    def forward(node: "ONNXOp", state: SDFGState, sdfg: SDFG) -> Node | SDFG:
 
         inp_name = "X"
         out_name = "Y"
@@ -231,15 +229,16 @@ class PureResize(ONNXForward):
         """)
 
         # Create nested loops for each dimension
-        for i in range(len(out_data_desc.shape)):
-            tasklet_code.append(f"for (int i{i} = 0; i{i} < {out_data_desc.shape[i]}; i{i}++) {{")
+        tasklet_code.extend(
+            f"for (int i{i} = 0; i{i} < {out_data_desc.shape[i]}; i{i}++) {{" for i in range(len(out_data_desc.shape))
+        )
 
         # Calculate input indices
         tasklet_code.append(
-            """
+            f"""
         // Calculate input indices for each dimension
-        int inp_indices[{}];
-        """.format(num_dims)
+        int inp_indices[{num_dims}];
+        """
         )
 
         # Declare all size variables at the beginning
@@ -343,16 +342,14 @@ class PureResize(ONNXForward):
         // Calculate input index
         int inp_idx = 0;
         """)
-        for i in range(num_dims):
-            tasklet_code.append(f"inp_idx += inp_indices[{i}] * {inp_data_desc.strides[i]};")
+        tasklet_code.extend(f"inp_idx += inp_indices[{i}] * {inp_data_desc.strides[i]};" for i in range(num_dims))
 
         # Calculate output index
         tasklet_code.append("""
         // Calculate output index
         int out_idx = 0;
         """)
-        for i in range(num_dims):
-            tasklet_code.append(f"out_idx += i{i} * {out_data_desc.strides[i]};")
+        tasklet_code.extend(f"out_idx += i{i} * {out_data_desc.strides[i]};" for i in range(num_dims))
 
         # Perform interpolation based on mode
         if mode == "linear":
@@ -427,11 +424,10 @@ class PureResize(ONNXForward):
         """)
 
         # Close dimension loops
-        for i in range(len(out_data_desc.shape)):
-            tasklet_code.append("}")
+        tasklet_code.extend("}" for _ in range(len(out_data_desc.shape)))
 
         tasklet = nstate.add_tasklet(
-            f"tasklet_reshape",
+            "tasklet_reshape",
             tasklet_inputs,
             {"__out": dace.pointer(out_data_desc.dtype)},
             "\n".join(tasklet_code),

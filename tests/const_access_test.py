@@ -1,7 +1,8 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+import pytest
+
 import dace
 from dace.sdfg import InvalidSDFGError
-import pytest
 
 sdfg = dace.SDFG("const_access_test")
 sdfg.add_array("A", [1], dace.float64)

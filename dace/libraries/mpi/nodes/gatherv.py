@@ -1,12 +1,10 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 from dace import data, dtypes, library
-from dace.libraries.mpi import utils
+from dace.libraries.mpi import environments, utils
 from dace.libraries.mpi.nodes.node import MPINode, expanded_input_connectors, resolve_comm
 from dace.sdfg import nodes
 from dace.symbolic import symstr
 from dace.transformation.transformation import ExpandTransformation
-
-from .. import environments
 
 
 @library.expansion
@@ -79,9 +77,9 @@ class Gatherv(MPINode):
             raise ValueError("Gatherv _displs must be an int32 array!")
 
         in_count_str = "XXX"
-        for _, _, _, dst_conn, data in state.in_edges(self):
+        for _, _, _, dst_conn, memlet in state.in_edges(self):
             if dst_conn == "_inbuffer":
-                dims = [symstr(e) for e in data.subset.size_exact()]
+                dims = [symstr(e) for e in memlet.subset.size_exact()]
                 in_count_str = "*".join(dims)
 
         return (inbuffer, in_count_str), outbuffer, recvcounts, displs, root

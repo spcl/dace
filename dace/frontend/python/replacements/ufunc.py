@@ -978,7 +978,7 @@ def _validate_ufunc_outputs(
             visitor,
             ast_node,
             "You cannot specify 'out' in call to numpy.{f} as both a positional"
-            " and keyword argument (positional {p}, keyword {w}).".format(
+            " and keyword argument (positional {p}, keyword {k}).".format(
                 f=ufunc_name, p=args[num_outputs, :], k=kwargs["out"]
             ),
         )
@@ -1441,8 +1441,8 @@ def _create_subgraph(
 
                 codenode = state.add_nested_sdfg(
                     nested_sdfg,
-                    set([n for n, _ in nested_sdfg_inputs.values()]),
-                    set([n for n, _ in nested_sdfg_outputs.values()]),
+                    {n for n, _ in nested_sdfg_inputs.values()},
+                    {n for n, _ in nested_sdfg_outputs.values()},
                 )
                 me, mx = state.add_map(state.label + "_map", map_indices)
                 for arg in inputs + [where]:
@@ -1669,13 +1669,12 @@ def _validate_axis_kword(
             expected_out_shape = [d for i, d in enumerate(inp_shape) if i not in axis]
         expected_out_shape = expected_out_shape or [1]
         intermediate_shape = intermediate_shape or [1]
+    elif keepdims:
+        intermediate_shape = [1]
+        expected_out_shape = [1] * len(inp_shape)
     else:
-        if keepdims:
-            intermediate_shape = [1]
-            expected_out_shape = [1] * len(inp_shape)
-        else:
-            intermediate_shape = None
-            expected_out_shape = [1]
+        intermediate_shape = None
+        expected_out_shape = [1]
 
     return axis, intermediate_shape, expected_out_shape
 
@@ -2063,7 +2062,7 @@ def implement_ufunc_outer(
                 map_range.update({f"__i{i}_{j}": f"0:{sz}" for j, sz in enumerate(shape)})
                 input_idx = ",".join([f"__i{i}_{j}" for j in range(len(shape))])
                 if output_idx:
-                    output_idx = ",".join([output_idx, input_idx])
+                    output_idx = f"{output_idx},{input_idx}"
                 else:
                     output_idx = input_idx
             else:

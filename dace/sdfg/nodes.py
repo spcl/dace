@@ -428,7 +428,7 @@ class AccessNode(Node):
 
     def validate(self, sdfg, state):
         if self.data not in sdfg.arrays:
-            raise KeyError('Array "%s" not found in SDFG' % self.data)
+            raise KeyError(f'Array "{self.data}" not found in SDFG')
 
     def has_writes(self, state):
         for e in state.in_edges(self):
@@ -595,13 +595,13 @@ class Tasklet(CodeNode):
 
     def validate(self, sdfg: "dace.sdfg.SDFG", state: "dace.sdfg.SDFGState"):
         if not dtypes.validate_name(self.label):
-            raise NameError('Invalid tasklet name "%s"' % self.label)
+            raise NameError(f'Invalid tasklet name "{self.label}"')
         for in_conn in self.in_connectors:
             if not dtypes.validate_name(in_conn):
-                raise NameError('Invalid input connector "%s"' % in_conn)
+                raise NameError(f'Invalid input connector "{in_conn}"')
         for out_conn in self.out_connectors:
             if not dtypes.validate_name(out_conn):
-                raise NameError('Invalid output connector "%s"' % out_conn)
+                raise NameError(f'Invalid output connector "{out_conn}"')
         if self.language == dtypes.Language.Python and self.code.code:
             validator = tval.ConnectorDimensionalityValidator(
                 {e.dst_conn: e.data for e in state.in_edges(self)},
@@ -684,7 +684,7 @@ class Tasklet(CodeNode):
 
         if any(cval.type is None for cval in self.in_connectors.values()):
             raise TypeError(
-                'Cannot infer output connectors of tasklet "%s", not all input connectors have types' % str(self)
+                f'Cannot infer output connectors of tasklet "{str(self)}", not all input connectors have types'
             )
 
         # Get symbols defined at beginning of node, and infer all types in
@@ -696,7 +696,7 @@ class Tasklet(CodeNode):
             if oconn.type is None:
                 if cname not in new_syms:
                     raise TypeError(
-                        'Cannot infer type of tasklet %s output "%s", please specify manually.' % (self.label, cname)
+                        f'Cannot infer type of tasklet {self.label} output "{cname}", please specify manually.'
                     )
                 self.out_connectors[cname] = new_syms[cname]
 
@@ -804,7 +804,7 @@ class NestedSDFG(CodeNode):
         memo[id(self)] = result
         for k, v in self.__dict__.items():
             # Skip GUID.
-            if k in ("guid",):
+            if k == "guid":
                 continue
             setattr(result, k, dcpy(v, memo))
         if result._sdfg is not None:
@@ -892,13 +892,13 @@ class NestedSDFG(CodeNode):
 
     def validate(self, sdfg: "dace.SDFG", state: "dace.SDFGState", references: set[int] | None = None, **context: bool):
         if not dtypes.validate_name(self.label):
-            raise NameError('Invalid nested SDFG name "%s"' % self.label)
+            raise NameError(f'Invalid nested SDFG name "{self.label}"')
         for in_conn in self.in_connectors:
             if not dtypes.validate_name(in_conn):
-                raise NameError('Invalid input connector "%s"' % in_conn)
+                raise NameError(f'Invalid input connector "{in_conn}"')
         for out_conn in self.out_connectors:
             if not dtypes.validate_name(out_conn):
-                raise NameError('Invalid output connector "%s"' % out_conn)
+                raise NameError(f'Invalid output connector "{out_conn}"')
         if self.sdfg:
             if self.sdfg.parent_nsdfg_node is not self:
                 raise ValueError("Parent nested SDFG node not properly set")
@@ -954,9 +954,9 @@ class NestedSDFG(CodeNode):
 
             for dname, desc in self.sdfg.arrays.items():
                 if not desc.transient and dname not in connectors:
-                    raise NameError('Data descriptor "%s" not found in nested SDFG connectors' % dname)
+                    raise NameError(f'Data descriptor "{dname}" not found in nested SDFG connectors')
                 if dname in connectors and desc.transient:
-                    raise NameError('"%s" is a connector but its corresponding array is transient' % dname)
+                    raise NameError(f'"{dname}" is a connector but its corresponding array is transient')
 
         # Validate inout connectors
         from dace.sdfg import utils  # Avoids circular import
@@ -980,10 +980,10 @@ class NestedSDFG(CodeNode):
 
         # Validate undefined symbols
         if self.sdfg:
-            symbols = set(k for k in self.sdfg.used_symbols(False) if k not in connectors)
+            symbols = {k for k in self.sdfg.used_symbols(False) if k not in connectors}
             missing_symbols = [s for s in symbols if s not in self.symbol_mapping]
             if missing_symbols:
-                raise ValueError("Missing symbols on nested SDFG: %s" % (missing_symbols))
+                raise ValueError(f"Missing symbols on nested SDFG: {missing_symbols}")
             # A mapped symbol is given its value by the node, but its type by the nested SDFG
             undeclared_symbols = sorted(s for s in symbols if s not in self.sdfg.symbols)
             if undeclared_symbols:
@@ -1010,7 +1010,7 @@ class EntryNode(Node):
     @property
     def dynamic_input_connectors(self) -> set[str]:
         """Input connectors carrying dynamic scope inputs rather than a memlet path."""
-        return set(c for c in self.in_connectors if not c.startswith("IN_"))
+        return {c for c in self.in_connectors if not c.startswith("IN_")}
 
     def validate(self, sdfg, state):
         self.map.validate(sdfg, state, self)
@@ -1089,8 +1089,8 @@ class MapEntry(EntryNode):
 
     @property
     def free_symbols(self) -> set[str]:
-        dyn_inputs = set(c for c in self.in_connectors if not c.startswith("IN_"))
-        return set(k for k in self._map.range.free_symbols if k not in dyn_inputs)
+        dyn_inputs = {c for c in self.in_connectors if not c.startswith("IN_")}
+        return {k for k in self._map.range.free_symbols if k not in dyn_inputs}
 
     def new_symbols(self, sdfg, state, symbols) -> dict[str, dtypes.typeclass]:
         result = {}
@@ -1100,7 +1100,7 @@ class MapEntry(EntryNode):
         # by name, so an expression rebuilt from a string (any ``replace_dict`` substitution) mints
         # its names untyped, while deserialization rebuilds them from the declared table. The same
         # map would then report two different parameter types across a save/load round trip.
-        dyn_inputs = set(c for c in self.in_connectors if not c.startswith("IN_"))
+        dyn_inputs = {c for c in self.in_connectors if not c.startswith("IN_")}
         for e in state.in_edges(self):
             if e.dst_conn in dyn_inputs:
                 result[e.dst_conn] = self.in_connectors[e.dst_conn] or sdfg.arrays[e.data.data].dtype
@@ -1113,7 +1113,7 @@ class MapEntry(EntryNode):
         return result
 
     def new_symbol_names(self, sdfg, state) -> set[str]:
-        dyn_inputs = set(c for c in self.in_connectors if not c.startswith("IN_"))
+        dyn_inputs = {c for c in self.in_connectors if not c.startswith("IN_")}
         return set(self._map.params) | {e.dst_conn for e in state.in_edges(self) if e.dst_conn in dyn_inputs}
 
     def used_symbols_within_scope(self, parent_state: "dace.SDFGState", all_symbols: bool = False) -> set[str]:
@@ -1475,7 +1475,7 @@ class ConsumeEntry(EntryNode):
 
     @property
     def free_symbols(self) -> set[str]:
-        dyn_inputs = set(c for c in self.in_connectors if not c.startswith("IN_"))
+        dyn_inputs = {c for c in self.in_connectors if not c.startswith("IN_")}
         result = set(map(str, self._consume.num_pes.free_symbols))
         if self._consume.condition is not None:
             result |= set(self._consume.condition.get_free_symbols())
@@ -1489,7 +1489,7 @@ class ConsumeEntry(EntryNode):
         )
 
         # Add dynamic inputs
-        dyn_inputs = set(c for c in self.in_connectors if not c.startswith("IN_"))
+        dyn_inputs = {c for c in self.in_connectors if not c.startswith("IN_")}
 
         # Try to get connector type from connector
         for e in state.in_edges(self):
@@ -1604,18 +1604,15 @@ class Consume:
 
     def __str__(self):
         if self.condition is not None:
-            return "%s [%s=0:%s], Condition: %s" % (
-                self._label,
-                self.pe_index,
-                self.num_pes,
-                CodeProperty.to_string(self.condition),
+            return (
+                f"{self._label} [{self.pe_index}=0:{self.num_pes}], Condition: {CodeProperty.to_string(self.condition)}"
             )
         else:
-            return "%s [%s=0:%s]" % (self._label, self.pe_index, self.num_pes)
+            return f"{self._label} [{self.pe_index}=0:{self.num_pes}]"
 
     def validate(self, sdfg, state, node):
         if not dtypes.validate_name(self.label):
-            raise NameError('Invalid consume name "%s"' % self.label)
+            raise NameError(f'Invalid consume name "{self.label}"')
 
     def get_param_num(self):
         """Returns the number of consume dimension parameters/symbols."""
@@ -1846,9 +1843,9 @@ class UnregisteredLibraryNode(LibraryNode):
         # Start with original json, then update the modified parts
         for pname, prop in curjson.items():
             if isinstance(prop, dict):  # Dictionary property update (e.g., attributes)
-                jsonobj[pname].update(curjson[pname])
+                jsonobj[pname].update(prop)
             else:  # Direct property update
-                jsonobj[pname] = curjson[pname]
+                jsonobj[pname] = prop
 
         return jsonobj
 

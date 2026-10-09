@@ -1,6 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
 import numpy as np
+
+import dace
 
 # Declaration of symbolic variables
 M, N = (dace.symbol(name) for name in ["M", "N"])

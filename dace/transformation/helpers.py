@@ -10,8 +10,7 @@ from collections.abc import Iterable
 from networkx import MultiDiGraph
 from ordered_set import OrderedSet
 
-import dace.subsets as subsets
-from dace import data, dtypes, symbolic, typeclass
+from dace import data, dtypes, subsets, symbolic, typeclass
 from dace.memlet import Memlet
 from dace.properties import CodeBlock
 from dace.sdfg import SDFG, InterstateEdge, SDFGState, graph, nodes, utils
@@ -66,18 +65,15 @@ def nest_sdfg_subgraph(sdfg: SDFG, subgraph: SubgraphView, start: SDFGState | No
         for b in blocks:
             if isinstance(b, AbstractControlFlowRegion):
                 all_blocks.append(b)
-                for nb in b.all_control_flow_blocks():
-                    all_blocks.append(nb)
-                for e in b.all_interstate_edges():
-                    is_edges.append(e)
+                all_blocks.extend(b.all_control_flow_blocks())
+                is_edges.extend(b.all_interstate_edges())
             else:
                 all_blocks.append(b)
         states: list[SDFGState] = [b for b in all_blocks if isinstance(b, SDFGState)]
         for src in blocks:
             for dst in blocks:
-                for edge in graph.edges_between(src, dst):
-                    is_edges.append(edge)
-        return_blocks: set[ReturnBlock] = set([b for b in all_blocks if isinstance(b, ReturnBlock)])
+                is_edges.extend(graph.edges_between(src, dst))
+        return_blocks: set[ReturnBlock] = {b for b in all_blocks if isinstance(b, ReturnBlock)}
         if len(return_blocks) > 0:
             did_return_inner = "_did_ret_from_nsdfg"
             did_return_inner = sdfg._find_new_name(did_return_inner)
@@ -359,28 +355,24 @@ def nest_state_subgraph(
     inputs: list[MultiConnectorEdge] = []
     outputs: list[MultiConnectorEdge] = []
     for node in snodes:
-        for edge in state.in_edges(node):
-            if edge.src not in snodes:
-                inputs.append(edge)
-        for edge in state.out_edges(node):
-            if edge.dst not in snodes:
-                outputs.append(edge)
+        inputs.extend(edge for edge in state.in_edges(node) if edge.src not in snodes)
+        outputs.extend(edge for edge in state.out_edges(node) if edge.dst not in snodes)
 
     # Collect transients not used outside of subgraph (will be removed of
     # top-level graph)
-    data_in_subgraph = set(n.data for n in subgraph.nodes() if isinstance(n, nodes.AccessNode))
+    data_in_subgraph = {n.data for n in subgraph.nodes() if isinstance(n, nodes.AccessNode)}
     # Find other occurrences in SDFG
-    other_nodes = set(
+    other_nodes = {
         n.data
         for s in sdfg.states()
         for n in s.nodes()
         if isinstance(n, nodes.AccessNode) and n not in subgraph.nodes()
-    )
+    }
     subgraph_transients = set()
-    for data in data_in_subgraph:
-        datadesc = sdfg.arrays[data]
-        if datadesc.transient and data not in other_nodes:
-            subgraph_transients.add(data)
+    for dname in data_in_subgraph:
+        datadesc = sdfg.arrays[dname]
+        if datadesc.transient and dname not in other_nodes:
+            subgraph_transients.add(dname)
 
     # All transients of edges between code nodes are also added to nested graph
     for edge in subgraph.edges():
@@ -1034,8 +1026,8 @@ def unsqueeze_memlet(
         if len(result.subset) != len(external_memlet.subset):
             raise ValueError(
                 "Unexpected extra dimensions in internal memlet "
-                "while un-squeezing memlet.\nExternal memlet: %s\n"
-                "Internal memlet: %s" % (external_memlet, internal_memlet)
+                f"while un-squeezing memlet.\nExternal memlet: {external_memlet}\n"
+                f"Internal memlet: {internal_memlet}"
             )
         internal_offset = [internal_offset[idx] for idx in range(len(internal_offset)) if idx in remaining]
 
@@ -1217,7 +1209,7 @@ def find_contiguous_subsets(subset_list: list[subsets.Subset], dim: int = None) 
     :return: A list of contiguous subsets.
     """
     # Currently O(n^3) worst case. TODO: improve
-    subset_set = set(subsets.Range.from_indices(s) if isinstance(s, subsets.Indices) else s for s in subset_list)
+    subset_set = {subsets.Range.from_indices(s) if isinstance(s, subsets.Indices) else s for s in subset_list}
     while True:
         for sa, sb in itertools.product(subset_set, subset_set):
             if sa is sb:
@@ -2002,7 +1994,7 @@ def _change_sdfg_type(sdfg: SDFG, from_type: typeclass, to_type: typeclass, swap
             swaps_count += 1
 
     # Swap array types
-    for array_name, array_desc in sdfg.arrays.items():
+    for array_desc in sdfg.arrays.values():
         if array_desc.dtype == from_type:
             array_desc.dtype = to_type
             swaps_count += 1
@@ -2057,13 +2049,12 @@ def _change_member_types(descriptor: data.Array, from_type: typeclass, to_type: 
     if not isinstance(descriptor, data.Structure):
         raise TypeError(f"Expected type with member attr but got {descriptor}")
 
-    for member_name, member_descriptor in descriptor.members.items():
+    for member_descriptor in descriptor.members.values():
         if _is_structure(member_descriptor):
             swaps_count = _change_structure_type(member_descriptor, from_type, to_type, swaps_count)
-        else:
-            if member_descriptor.dtype == from_type:
-                member_descriptor.dtype = to_type
-                swaps_count += 1
+        elif member_descriptor.dtype == from_type:
+            member_descriptor.dtype = to_type
+            swaps_count += 1
     return swaps_count
 
 

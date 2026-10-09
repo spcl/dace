@@ -76,7 +76,7 @@ class SDFGBackwardRunner:
 
         self.sdfg(**inputs)
 
-        results = {name: arr for name, arr in inputs.items()}
+        results = dict(inputs.items())
         return results
 
 

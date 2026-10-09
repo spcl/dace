@@ -324,7 +324,7 @@ class Graph(Generic[NodeT, EdgeT]):
     def is_multigraph(self) -> bool:
         raise self._not_implemented_error()
 
-    def __iter__(self) -> Iterable[NodeT]:
+    def __iter__(self) -> Iterator[NodeT]:
         return iter(self.nodes())
 
     def __len__(self) -> int:

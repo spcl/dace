@@ -1,6 +1,7 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
 import math
+
+import dace
 
 N, M, K, L, unused = (dace.symbol(s) for s in "NMKLU")
 

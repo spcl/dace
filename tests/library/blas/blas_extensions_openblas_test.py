@@ -150,20 +150,8 @@ def test_ger_openblas():
 
 
 if __name__ == "__main__":
-    for fn in (
-        test_axpy_openblas,
-        test_scal_openblas,
-        test_copy_openblas,
-        test_swap_openblas,
-        test_trsv_openblas,
-        test_trmv_openblas,
-        test_symv_openblas,
-        test_trsm_openblas,
-        test_trmm_openblas,
-        test_symm_openblas,
-        test_syrk_openblas,
-        test_ger_openblas,
-    ):
-        fn()
-        print(f"  {fn.__name__}: PASS")
-    print("All BLAS extension OpenBLAS lowering tests pass.")
+    test_scal_openblas()
+    test_symv_openblas()
+    test_symm_openblas()
+    test_syrk_openblas()
+    test_ger_openblas()

@@ -250,7 +250,7 @@ def _generate_gpu_fft_code(
         """
 
     # Make plan in init if not symbolic or not data-dependent, otherwise make at callsite.
-    symbols_that_change = set(s for ise in sdfg.edges() for s in ise.data.assignments.keys())
+    symbols_that_change = {s for ise in sdfg.edges() for s in ise.data.assignments.keys()}
     symbols_that_change &= set(map(str, sdfg.symbols.keys()))
 
     def _fsyms(x):

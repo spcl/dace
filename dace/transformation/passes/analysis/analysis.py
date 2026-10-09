@@ -702,7 +702,7 @@ class SymbolWriteScopes(ppl.ControlFlowRegionPass):
         deg = len(in_edges)
         if deg == 0:
             return None
-        elif deg == 1 and any([sym == k for k in in_edges[0].data.assignments.keys()]):
+        elif deg == 1 and any(sym == k for k in in_edges[0].data.assignments.keys()):
             return in_edges[0]
 
         write_isedge = None
@@ -711,7 +711,7 @@ class SymbolWriteScopes(ppl.ControlFlowRegionPass):
             oedges = n_block.parent_graph.out_edges(n_block)
             odeg = len(oedges)
             if odeg == 1:
-                if any([sym == k for k in oedges[0].data.assignments.keys()]):
+                if any(sym == k for k in oedges[0].data.assignments.keys()):
                     write_isedge = oedges[0]
             else:
                 dom_edge = None
@@ -720,7 +720,7 @@ class SymbolWriteScopes(ppl.ControlFlowRegionPass):
                         if dom_edge is not None:
                             dom_edge = None
                             break
-                        elif any([sym == k for k in cand.data.assignments.keys()]):
+                        elif any(sym == k for k in cand.data.assignments.keys()):
                             dom_edge = cand
                 write_isedge = dom_edge
             n_block = block_idom[n_block] if block_idom[n_block] != n_block else None
@@ -763,10 +763,9 @@ class SymbolWriteScopes(ppl.ControlFlowRegionPass):
                                 if a_state_or_edge in reach:
                                     coarsen = True
                                     break
-                            else:
-                                if a_state_or_edge.src in reach:
-                                    coarsen = True
-                                    break
+                            elif a_state_or_edge.src in reach:
+                                coarsen = True
+                                break
                         if coarsen:
                             other_accesses.update(accesses)
                             other_accesses.add(write)
@@ -960,7 +959,7 @@ class ScalarWriteShadowScopes(ppl.Pass):
                         if other_write is None or other_write[0] in dominators:
                             noa = len(other_accesses)
                             if noa > 0 and (noa > 1 or list(other_accesses)[0] != other_write):
-                                if any([a_state in reach for a_state, _ in other_accesses]):
+                                if any(a_state in reach for a_state, _ in other_accesses):
                                     other_accesses.update(accesses)
                                     other_accesses.add(write)
                                     to_remove.add(write)
@@ -1093,7 +1092,7 @@ class FindReferenceSources(ppl.Pass):
 
             # Recursively add dependencies of reference dependencies
             if self.recursive:
-                for k, v in result.items():
+                for v in result.values():
                     for src in list(v):
                         if not isinstance(v, nd.CodeNode) and src.data in result:
                             v.update(result[src.data])

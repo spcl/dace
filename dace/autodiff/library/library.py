@@ -5,21 +5,19 @@ Dace library for autodiff
 Includes the BackwardPass library node, and the replacements for the python frontend
 """
 
-from typing import Dict, Set
-
 import dace
 import dace.library
 from dace import properties
-from dace.transformation import transformation as pm
-from dace.sdfg import SDFG, SDFGState, graph, nodes
-
-from dace.autodiff import backward_pass_generator as engine, analysis as autodiff_analysis
+from dace.autodiff import analysis as autodiff_analysis
+from dace.autodiff import backward_pass_generator as engine
 from dace.autodiff.utils import init_grad
-from dace.sdfg.utils import in_edge_with_name
-from dace.transformation.passes.analysis import AccessSets
 
 # Import ParameterArray from the data package for backward compatibility
 from dace.data.ml import ParameterArray  # noqa: F401
+from dace.sdfg import SDFG, SDFGState, graph, nodes
+from dace.sdfg.utils import in_edge_with_name
+from dace.transformation import transformation as pm
+from dace.transformation.passes.analysis import AccessSets
 
 
 @dace.library.expansion
@@ -146,12 +144,12 @@ class BackwardPass(nodes.LibraryNode):
         " buffer need to be with write-conflict-resolution. Note: this field is automatically populated upon expansion.",
     )
 
-    def __init__(self, name, given_gradients: Dict[str, str], *args, **kwargs):
+    def __init__(self, name, given_gradients: dict[str, str], *args, **kwargs):
         super().__init__(name, *args, **kwargs)
         self.given_gradients = given_gradients
         self.required_gradients = {}
 
-    def outer_names_given_gradients(self, state: SDFGState) -> Set[str]:
+    def outer_names_given_gradients(self, state: SDFGState) -> set[str]:
         """
         Returns the names of the arrays that are passed as given gradients.
         """
@@ -182,7 +180,7 @@ class BackwardPass(nodes.LibraryNode):
         all_inputs = set(self.in_connectors)
         for given_grad, tensor_name in self.given_gradients.items():
             if given_grad not in all_inputs:
-                raise ValueError("Given gradient '{}' is not an input of the node".format(given_grad))
+                raise ValueError(f"Given gradient '{given_grad}' is not an input of the node")
 
             all_inputs.remove(given_grad)
             all_inputs.remove(tensor_name)
@@ -194,4 +192,4 @@ class BackwardPass(nodes.LibraryNode):
 
         # Check that we are computing at least one gradient
         if len(self.out_connectors) == 0:
-            raise ValueError("BackwardPass node '{}' does not compute any gradients".format(self.name))
+            raise ValueError(f"BackwardPass node '{self.name}' does not compute any gradients")

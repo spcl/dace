@@ -2,7 +2,6 @@
 """Automatic optimization routines for SDFGs."""
 
 from collections.abc import Callable
-from typing import Union
 
 import sympy
 
@@ -18,6 +17,7 @@ from dace.sdfg import graph as gr
 from dace.sdfg.graph import SubgraphView
 from dace.sdfg.scope import is_devicelevel_gpu_kernel
 from dace.sdfg.state import ControlFlowRegion, SDFGState
+from dace.transformation import helpers as xfh
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.dataflow import MapCollapse, ReduceExpansion, TrivialMapElimination
 
@@ -30,7 +30,7 @@ from dace.transformation.passes import FullMapFusion, MakeTransientsPersistent
 from dace.transformation.subgraph import helpers as xfsh
 from dace.transformation.subgraph.composite import CompositeFusion
 
-GraphViewType = Union[SDFG, SDFGState, gr.SubgraphView, ControlFlowRegion]
+GraphViewType = SDFG | SDFGState | gr.SubgraphView | ControlFlowRegion
 
 
 def greedy_fuse(
@@ -210,7 +210,6 @@ def tile_wcrs(graph_or_subgraph: GraphViewType, validate_all: bool, prefer_parti
     from dace.codegen.targets import cpp
     from dace.frontend import operations
     from dace.transformation import dataflow
-    from dace.transformation import helpers as xfh
 
     # Determine on which nodes to run the operation
     graph = graph_or_subgraph
@@ -255,7 +254,7 @@ def tile_wcrs(graph_or_subgraph: GraphViewType, validate_all: bool, prefer_parti
     if prefer_partial_parallelism is None:
         prefer_partial_parallelism = config.Config.get_bool("optimizer", "autotile_partial_parallelism")
 
-    maps_to_consider: set[nodes.MapEntry] = set(me for _, me in edges_to_consider)
+    maps_to_consider: set[nodes.MapEntry] = {me for _, me in edges_to_consider}
 
     transformed: set[nodes.MapEntry] = set()
 

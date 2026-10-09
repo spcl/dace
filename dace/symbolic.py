@@ -185,10 +185,10 @@ class symbol(sympy.Symbol):
         elif name.startswith("__DACE"):
             raise NameError("Symbols cannot start with __DACE")
         elif not dtypes.validate_name(name):
-            raise NameError('Invalid symbol name "%s"' % name)
+            raise NameError(f'Invalid symbol name "{name}"')
 
         if not isinstance(dtype, dtypes.typeclass):
-            raise TypeError("dtype must be a DaCe type, got %s" % str(dtype))
+            raise TypeError(f"dtype must be a DaCe type, got {str(dtype)}")
 
         dkeys = [k for k, v in dtypes.dtype_to_typeclass().items() if v == dtype]
         is_integer = [issubclass(k, int) or issubclass(k, numpy.integer) for k in dkeys]
@@ -261,9 +261,9 @@ class symbol(sympy.Symbol):
                     fail = constraint
                     break
             except (AttributeError, TypeError, ValueError):
-                raise RuntimeError("Cannot validate constraint %s for symbol %s" % (str(constraint), self.name))
+                raise RuntimeError(f"Cannot validate constraint {str(constraint)} for symbol {self.name}")
         if fail is not None:
-            raise RuntimeError("Value %s invalidates constraint %s for symbol %s" % (str(value), str(fail), self.name))
+            raise RuntimeError(f"Value {str(value)} invalidates constraint {str(fail)} for symbol {self.name}")
 
     # Type stubs for arithmetic operators (inherited from sympy.Symbol at runtime)
     if TYPE_CHECKING:
@@ -704,7 +704,7 @@ def _symbol_serializer_kwargs(expr: symbol, dtype: "dtypes.typeclass") -> dict[s
 
 
 # Type hint for symbolic expressions
-SymbolicType = Union[sympy.Basic, SymExpr]
+SymbolicType = sympy.Basic | SymExpr
 
 
 # http://stackoverflow.com/q/3844948/
@@ -721,8 +721,9 @@ def symtype(expr):
         return stypes[0]
     else:
         raise TypeError(
-            'Cannot infer symbolic type from expression "%s"'
-            " with symbols [%s]" % (str(expr), ", ".join([str(s) + ": " + str(s.dtype) for s in symlist(expr)]))
+            'Cannot infer symbolic type from expression "{}" with symbols [{}]'.format(
+                str(expr), ", ".join([str(s) + ": " + str(s.dtype) for s in symlist(expr)])
+            )
         )
 
 
@@ -1706,12 +1707,11 @@ def evaluate_optional_arrays(expr, sdfg):
                 # Equivalent to `None is x` for a non-optional x
                 return False
 
-        else:  # elem.args[0] is not None
-            if elem.args[1] == none:
-                cand = str(elem.args[0])
-                if cand in sdfg.arrays and sdfg.arrays[cand].optional is False:
-                    # Equivalent to `x is None` for a non-optional x
-                    return False
+        elif elem.args[1] == none:
+            cand = str(elem.args[0])
+            if cand in sdfg.arrays and sdfg.arrays[cand].optional is False:
+                # Equivalent to `x is None` for a non-optional x
+                return False
 
         # Neither argument is None
         return None
@@ -1749,7 +1749,7 @@ def evaluate_optional_arrays(expr, sdfg):
 
 
 _SimpleASTNode = (ast.Constant, ast.Name)
-_SimpleASTNodeT = Union[ast.Constant, ast.Name]
+_SimpleASTNodeT = ast.Constant | ast.Name
 
 
 def __comp_convert_truthy_falsy(node: _SimpleASTNodeT):
@@ -2760,22 +2760,22 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
         base = name.removeprefix("__")
         as_operator = name.startswith("__") or self.cpp_mode
         if base == "bitwise_invert" and as_operator:
-            return "(~(%s))" % self._print(expr.args[0])
+            return f"(~({self._print(expr.args[0])}))"
         binop = {"bitwise_and": "&", "bitwise_or": "|", "bitwise_xor": "^", "left_shift": "<<", "right_shift": ">>"}
         if base in binop and as_operator:
-            return "((%s) %s (%s))" % (self._print(expr.args[0]), binop[base], self._print(expr.args[1]))
+            return f"(({self._print(expr.args[0])}) {binop[base]} ({self._print(expr.args[1])}))"
         # ``int_floor`` divides with ``//`` in Python and ``/`` in C++ (the bare name
         # keeps its ``int_floor(a, b)`` spelling in Python so it round-trips).
         if base == "int_floor" and as_operator:
             op = "/" if self.cpp_mode else "//"
-            return "((%s) %s (%s))" % (self._print(expr.args[0]), op, self._print(expr.args[1]))
+            return f"(({self._print(expr.args[0])}) {op} ({self._print(expr.args[1])}))"
         if str(expr.func) == "ipow" and self.cpp_mode:
-            return "dace::math::ipow(%s, %s)" % (self._print(expr.args[0]), self._print(expr.args[1]))
+            return f"dace::math::ipow({self._print(expr.args[0])}, {self._print(expr.args[1])})"
         if str(expr.func) == "IfExpr":
             cond, tval, fval = (self._print(a) for a in expr.args)
             if self.cpp_mode:
-                return "((%s) ? (%s) : (%s))" % (cond, tval, fval)
-            return "((%s) if (%s) else (%s))" % (tval, cond, fval)
+                return f"(({cond}) ? ({tval}) : ({fval}))"
+            return f"(({tval}) if ({cond}) else ({fval}))"
         return super()._print_Function(expr)
 
     def _print_ceiling(self, expr):
@@ -2787,26 +2787,26 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
         # and ``double`` overloads, so any wider integer type makes the call ambiguous.
         if expr.args[0].is_integer:
             return self._print(expr.args[0])
-        return "ceil(%s)" % self._print(expr.args[0])
+        return f"ceil({self._print(expr.args[0])})"
 
     def _print_Mod(self, expr):
         # Floored; ``%`` is C's and agrees only on a nonnegative dividend and a positive divisor.
         dividend, divisor = expr.args
         if dividend.is_nonnegative and divisor.is_positive:
-            return "((%s) %% (%s))" % (self._print(dividend), self._print(divisor))
-        return "%s(%s, %s)" % ("py_mod" if self.cpp_mode else "Mod", self._print(dividend), self._print(divisor))
+            return f"(({self._print(dividend)}) % ({self._print(divisor)}))"
+        return f"{'py_mod' if self.cpp_mode else 'Mod'}({self._print(dividend)}, {self._print(divisor)})"
 
     def _print_CMod(self, expr):
-        return "((%s) %% (%s))" % (self._print(expr.args[0]), self._print(expr.args[1]))
+        return f"(({self._print(expr.args[0])}) % ({self._print(expr.args[1])}))"
 
     def _print_Equality(self, expr):
-        return "((%s) == (%s))" % (self._print(expr.args[0]), self._print(expr.args[1]))
+        return f"(({self._print(expr.args[0])}) == ({self._print(expr.args[1])}))"
 
     def _print_Unequality(self, expr):
-        return "((%s) != (%s))" % (self._print(expr.args[0]), self._print(expr.args[1]))
+        return f"(({self._print(expr.args[0])}) != ({self._print(expr.args[1])}))"
 
     def _print_Not(self, expr):
-        return "(not (%s))" % self._print(expr.args[0])
+        return f"(not ({self._print(expr.args[0])}))"
 
     def _print_Infinity(self, expr):
         # Print as ``inf`` so it round-trips back to ``oo`` via ``pystr_to_symbolic``.
@@ -3110,7 +3110,7 @@ def equal(a: SymbolicType, b: SymbolicType, is_length: bool = True) -> bool | No
             if isinstance(atom, UndefinedSymbol):
                 return None
 
-    if any([args is None for args in args]):
+    if any(args is None for args in args):
         return False
 
     facts = []
@@ -3160,13 +3160,12 @@ def symbols_in_code(code: str, potential_symbols: set[str] = None, symbols_to_ig
                         token_counts[token] -= 1
                         if token_counts[token] == 0:
                             tokens.discard(token)
-                else:
-                    if e < len(code) and s > 0:
-                        if code[s - 1].isdigit() and code[e] in "-+0123456789":
-                            # Discard only if the count of this token is now zero, as `e = 1e-5` will mean token e was found twice
-                            token_counts[token] -= 1
-                            if token_counts[token] == 0:
-                                tokens.discard(token)
+                elif e < len(code) and s > 0:
+                    if code[s - 1].isdigit() and code[e] in "-+0123456789":
+                        # Discard only if the count of this token is now zero, as `e = 1e-5` will mean token e was found twice
+                        token_counts[token] -= 1
+                        if token_counts[token] == 0:
+                            tokens.discard(token)
 
     if symbols_to_ignore is None:
         return tokens

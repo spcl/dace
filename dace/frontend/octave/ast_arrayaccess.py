@@ -33,10 +33,10 @@ class AST_ArrayAccess(AST_Node):
         return vardef.get_basetype()
 
     def get_dims(self):
-        from .ast_matrix import AST_Matrix
         from .ast_loop import AST_ForLoop
-        from .ast_values import AST_Constant, AST_Ident
+        from .ast_matrix import AST_Matrix
         from .ast_range import AST_RangeExpression
+        from .ast_values import AST_Constant, AST_Ident
 
         # array indexing has many forms/cases in matlab, here we implement
         # the semantics we are sure about
@@ -112,9 +112,9 @@ class AST_ArrayAccess(AST_Node):
                 return True
 
     def generate_code(self, sdfg, state):
-        from .ast_values import AST_Ident
         from .ast_loop import AST_ForLoop
         from .ast_range import AST_RangeExpression
+        from .ast_values import AST_Ident
 
         # add a new variable to hold the result of this expression
         dims = self.get_dims()

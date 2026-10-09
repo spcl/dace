@@ -60,7 +60,7 @@ if TYPE_CHECKING:
     from dace.sdfg import SDFG
 
 NodeT = Union[nd.Node, "ControlFlowBlock"]
-EdgeT = Union[MultiConnectorEdge[mm.Memlet], Edge["dace.sdfg.InterstateEdge"]]
+EdgeT = MultiConnectorEdge[mm.Memlet] | Edge["dace.sdfg.InterstateEdge"]
 GraphT = Union["ControlFlowRegion", "SDFGState"]
 
 
@@ -88,7 +88,7 @@ def _make_iterators(ndrange):
     # Input can either be a dictionary or a list of pairs
     if isinstance(ndrange, list):
         params = [k for k, _ in ndrange]
-        ndrange = {k: v for k, v in ndrange}
+        ndrange = dict(ndrange)
     else:
         params = list(ndrange.keys())
 
@@ -489,7 +489,7 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
                 visited.add(curedge)
                 assert curedge.src_conn.startswith("OUT_")
                 cname = curedge.src_conn[4:]
-                curedge = next(e for e in state.in_edges(curedge.src) if e.dst_conn == "IN_%s" % cname)
+                curedge = next(e for e in state.in_edges(curedge.src) if e.dst_conn == f"IN_{cname}")
                 if curedge in visited:
                     raise ValueError("Cycle encountered while reading memlet path")
         elif propagate_backward:
@@ -497,7 +497,7 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
                 visited.add(curedge)
                 assert curedge.dst_conn.startswith("IN_")
                 cname = curedge.dst_conn[3:]
-                curedge = next(e for e in state.out_edges(curedge.dst) if e.src_conn == "OUT_%s" % cname)
+                curedge = next(e for e in state.out_edges(curedge.dst) if e.src_conn == f"OUT_{cname}")
                 if curedge in visited:
                     raise ValueError("Cycle encountered while reading memlet path")
         tree_root = mm.MemletTree(curedge, downwards=propagate_forward)
@@ -515,7 +515,7 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
                 treenode.children = [
                     mm.MemletTree(e, downwards=True, parent=treenode)
                     for e in state.out_edges(treenode.edge.dst)
-                    if e.src_conn == "OUT_%s" % conn
+                    if e.src_conn == f"OUT_{conn}"
                 ]
             elif propagate_backward:
                 if not isinstance(treenode.edge.src, nd.ExitNode) or treenode.edge.src_conn is None:
@@ -524,7 +524,7 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
                 treenode.children = [
                     mm.MemletTree(e, downwards=False, parent=treenode)
                     for e in state.in_edges(treenode.edge.src)
-                    if e.dst_conn == "IN_%s" % conn
+                    if e.dst_conn == f"IN_{conn}"
                 ]
 
             for child in treenode.children:
@@ -639,13 +639,13 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
             if validate and len(eq) != 0:
                 cycles = list(self.find_cycles())
                 if cycles:
-                    raise ValueError("Found cycles in state %s: %s" % (self.label, cycles))
+                    raise ValueError(f"Found cycles in state {self.label}: {cycles}")
                 raise RuntimeError(f"Leftover nodes in queue: {eq}")
 
             if validate and len(result) != self.number_of_nodes():
                 cycles = list(self.find_cycles())
                 if cycles:
-                    raise ValueError("Found cycles in state %s: %s" % (self.label, cycles))
+                    raise ValueError(f"Found cycles in state {self.label}: {cycles}")
                 leftover_nodes = set(self.nodes()) - result.keys()
                 raise RuntimeError(f"Some nodes were not processed: {leftover_nodes}")
 
@@ -682,14 +682,14 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
             if validate and len(eq) != 0:
                 cycles = list(self.find_cycles())
                 if cycles:
-                    raise ValueError("Found cycles in state %s: %s" % (self.label, cycles))
+                    raise ValueError(f"Found cycles in state {self.label}: {cycles}")
                 raise RuntimeError(f"Leftover nodes in queue: {eq}")
 
-            entry_nodes = set(n for n in self.nodes() if isinstance(n, nd.EntryNode)) | {None}
+            entry_nodes = {n for n in self.nodes() if isinstance(n, nd.EntryNode)} | {None}
             if validate and len(result) != len(entry_nodes):
                 cycles = list(self.find_cycles())
                 if cycles:
-                    raise ValueError("Found cycles in state %s: %s" % (self.label, cycles))
+                    raise ValueError(f"Found cycles in state {self.label}: {cycles}")
                 raise RuntimeError(f"Some nodes were not processed: {entry_nodes - result.keys()}")
 
             # Cache result
@@ -775,7 +775,7 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
         sdfg = state.sdfg
 
         # Start with SDFG global symbols
-        defined_syms = {k: v for k, v in sdfg.symbols.items()}
+        defined_syms = dict(sdfg.symbols.items())
 
         def update_if_not_none(dic, update):
             update = {k: v for k, v in update.items() if v is not None}
@@ -1530,15 +1530,15 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
 
     def add_edge(self, u, u_connector, v, v_connector, memlet):
         if not isinstance(u, nd.Node):
-            raise TypeError("Source node is not of type nd.Node (type: %s)" % str(type(u)))
+            raise TypeError(f"Source node is not of type nd.Node (type: {str(type(u))})")
         if u_connector is not None and not isinstance(u_connector, str):
-            raise TypeError("Source connector is not string (type: %s)" % str(type(u_connector)))
+            raise TypeError(f"Source connector is not string (type: {str(type(u_connector))})")
         if not isinstance(v, nd.Node):
-            raise TypeError("Destination node is not of type nd.Node (type: " + "%s)" % str(type(v)))
+            raise TypeError("Destination node is not of type nd.Node (type: " + f"{str(type(v))})")
         if v_connector is not None and not isinstance(v_connector, str):
-            raise TypeError("Destination connector is not string (type: %s)" % str(type(v_connector)))
+            raise TypeError(f"Destination connector is not string (type: {str(type(v_connector))})")
         if not isinstance(memlet, mm.Memlet):
-            raise TypeError("Memlet is not of type Memlet (type: %s)" % str(type(memlet)))
+            raise TypeError(f"Memlet is not of type Memlet (type: {str(type(memlet))})")
 
         if u_connector and isinstance(u, nd.AccessNode) and u_connector not in u.out_connectors:
             u.add_out_connector(u_connector, force=True)
@@ -1687,7 +1687,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         # Create dummy SDFG with this state as the only one
         from dace.sdfg import SDFG
 
-        arrays = set(n.data for n in self.data_nodes())
+        arrays = {n.data for n in self.data_nodes()}
         sdfg = SDFG(self.label)
         sdfg._arrays = dace.sdfg.NestedDict({k: self.sdfg.arrays[k] for k in arrays})
         sdfg.add_node(self)
@@ -3306,14 +3306,12 @@ class AbstractControlFlowRegion(
     def all_control_flow_blocks(self, recursive=False) -> Iterator[ControlFlowBlock]:
         """Iterate over all control flow blocks in this control flow graph."""
         for cfg in self.all_control_flow_regions(recursive=recursive):
-            for block in cfg.nodes():
-                yield block
+            yield from cfg.nodes()
 
     def all_interstate_edges(self, recursive=False) -> Iterator[Edge["dace.sdfg.InterstateEdge"]]:
         """Iterate over all interstate edges in this control flow graph."""
         for cfg in self.all_control_flow_regions(recursive=recursive):
-            for edge in cfg.edges():
-                yield edge
+            yield from cfg.edges()
 
     ###################################################################
     # Inherited / Overrides
@@ -3774,7 +3772,7 @@ class LoopRegion(ControlFlowRegion):
 
         # Check if we can normalize loop step
         # Iteration variable not altered in the loop body, increment not altered in body, step does not contain iteration variable, and Step is not one
-        step_free_syms = set([str(s) for s in step.free_symbols])
+        step_free_syms = {str(s) for s in step.free_symbols}
         can_norm_step = (
             itervar not in defined_syms
             and step_free_syms.isdisjoint(defined_syms)

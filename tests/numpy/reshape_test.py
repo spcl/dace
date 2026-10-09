@@ -1,9 +1,10 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests for reshaping and reinterpretation of existing arrays."""
 
-import dace
 import numpy as np
 import pytest
+
+import dace
 
 N = dace.symbol("N")
 

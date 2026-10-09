@@ -1,6 +1,9 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 from collections import defaultdict
-from typing import Any, Callable, Dict, List, Optional, Set
+from collections.abc import Callable
+from typing import Any
+
+from ordered_set import OrderedSet
 
 from dace import SDFG, SDFGState, data, properties
 from dace.memlet import Memlet
@@ -8,19 +11,19 @@ from dace.sdfg import nodes
 from dace.sdfg.analysis import cfg
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.validation import InvalidSDFGNodeError
-from dace.transformation import pass_pipeline as ppl, transformation
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation import transformation
 from dace.transformation.dataflow import (
     RedundantArray,
     RedundantReadSlice,
     RedundantSecondArray,
     RedundantWriteSlice,
+    RemoveSliceView,
     SqueezeViewRemove,
     UnsqueezeViewRemove,
-    RemoveSliceView,
 )
 from dace.transformation.passes import analysis as ap
 from dace.transformation.transformation import SingleStateTransformation
-from ordered_set import OrderedSet
 
 
 @properties.make_properties
@@ -42,7 +45,7 @@ class ArrayElimination(ppl.Pass):
     def depends_on(self):
         return [ap.StateReachability, ap.FindAccessStates]
 
-    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Set[str]]:
+    def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> set[str] | None:
         """
         Removes redundant arrays and access nodes.
 
@@ -52,10 +55,10 @@ class ArrayElimination(ppl.Pass):
                                  pipeline, an empty dictionary is expected.
         :return: A set of removed data descriptor names, or None if nothing changed.
         """
-        result: Set[str] = set()
-        reachable: Dict[SDFGState, Set[SDFGState]] = pipeline_results[ap.StateReachability.__name__][sdfg.cfg_id]
+        result: set[str] = set()
+        reachable: dict[SDFGState, set[SDFGState]] = pipeline_results[ap.StateReachability.__name__][sdfg.cfg_id]
         # Get access nodes and modify set as pass continues
-        access_sets: Dict[str, Set[SDFGState]] = pipeline_results[ap.FindAccessStates.__name__][sdfg.cfg_id]
+        access_sets: dict[str, set[SDFGState]] = pipeline_results[ap.FindAccessStates.__name__][sdfg.cfg_id]
 
         # Traverse SDFG backwards
         try:
@@ -69,7 +72,7 @@ class ArrayElimination(ppl.Pass):
             )
 
             # Find duplicate access nodes as an ordered list
-            access_nodes: Dict[str, List[nodes.AccessNode]] = defaultdict(list)
+            access_nodes: dict[str, list[nodes.AccessNode]] = defaultdict(list)
             for node in state.nodes():
                 if isinstance(node, nodes.AccessNode):
                     access_nodes[node.data].append(node)
@@ -107,19 +110,19 @@ class ArrayElimination(ppl.Pass):
 
         return result or None
 
-    def report(self, pass_retval: Set[str]) -> str:
+    def report(self, pass_retval: set[str]) -> str:
         return f"Eliminated {len(pass_retval)} arrays: {pass_retval}."
 
     def merge_access_nodes(
         self,
         state: SDFGState,
-        access_nodes: Dict[str, List[nodes.AccessNode]],
+        access_nodes: dict[str, list[nodes.AccessNode]],
         condition: Callable[[nodes.AccessNode], bool],
     ):
         """
         Merges access nodes that follow the same conditions together to the first access node.
         """
-        removed_nodes: Set[nodes.AccessNode] = set()
+        removed_nodes: set[nodes.AccessNode] = set()
         for data_container in access_nodes.keys():
             nodeset = access_nodes[data_container]
             if len(nodeset) > 1:
@@ -142,8 +145,8 @@ class ArrayElimination(ppl.Pass):
                     # If we are handling views, we do not want to add more than one edge going into a 'views' connector,
                     # so we only merge nodes if the memlets match exactly (which they should). But in that case without
                     # copying the edge.
-                    edges: List[MultiConnectorEdge[Memlet]] = state.all_edges(node)
-                    other_edges: List[MultiConnectorEdge[Memlet]] = []
+                    edges: list[MultiConnectorEdge[Memlet]] = state.all_edges(node)
+                    other_edges: list[MultiConnectorEdge[Memlet]] = []
                     for edge in edges:
                         if edge.dst is node:
                             if edge.dst_conn == "views":
@@ -161,33 +164,32 @@ class ArrayElimination(ppl.Pass):
                                     continue
                             else:
                                 state.add_edge(edge.src, edge.src_conn, first_node, edge.dst_conn, edge.data)
+                        elif edge.src_conn == "views":
+                            other_edges = list(state.out_edges_by_connector(first_node, "views"))
+                            if len(other_edges) != 1:
+                                raise InvalidSDFGNodeError(
+                                    "Multiple edges connected to views connector",
+                                    state.sdfg,
+                                    state.block_id,
+                                    state.node_id(first_node),
+                                )
+                            other_view_edge = other_edges[0]
+                            if other_view_edge.data != edge.data:
+                                # The memlets do not match, skip the node.
+                                continue
                         else:
-                            if edge.src_conn == "views":
-                                other_edges = list(state.out_edges_by_connector(first_node, "views"))
-                                if len(other_edges) != 1:
-                                    raise InvalidSDFGNodeError(
-                                        "Multiple edges connected to views connector",
-                                        state.sdfg,
-                                        state.block_id,
-                                        state.node_id(first_node),
-                                    )
-                                other_view_edge = other_edges[0]
-                                if other_view_edge.data != edge.data:
-                                    # The memlets do not match, skip the node.
-                                    continue
-                            else:
-                                state.add_edge(first_node, edge.src_conn, edge.dst, edge.dst_conn, edge.data)
+                            state.add_edge(first_node, edge.src_conn, edge.dst, edge.dst_conn, edge.data)
                     # Remove merged node and associated edges
                     state.remove_node(node)
                     removed_nodes.add(node)
                 access_nodes[data_container] = [n for n in nodeset if n not in removed_nodes]
         return removed_nodes
 
-    def remove_redundant_views(self, sdfg: SDFG, state: SDFGState, access_nodes: Dict[str, List[nodes.AccessNode]]):
+    def remove_redundant_views(self, sdfg: SDFG, state: SDFGState, access_nodes: dict[str, list[nodes.AccessNode]]):
         """
         Removes access nodes that contain views, which can be represented normally by memlets. For example, slices.
         """
-        removed_nodes: Set[nodes.AccessNode] = set()
+        removed_nodes: set[nodes.AccessNode] = set()
         xforms = [RemoveSliceView()]
         state_id = state.block_id
 
@@ -206,18 +208,18 @@ class ArrayElimination(ppl.Pass):
         return removed_nodes
 
     def remove_redundant_copies(
-        self, sdfg: SDFG, state: SDFGState, removable_data: Set[str], access_nodes: Dict[str, List[nodes.AccessNode]]
+        self, sdfg: SDFG, state: SDFGState, removable_data: set[str], access_nodes: dict[str, list[nodes.AccessNode]]
     ):
         """
         Removes access nodes that represent redundant copies and/or views.
         """
-        removed_nodes: Set[nodes.AccessNode] = set()
+        removed_nodes: set[nodes.AccessNode] = set()
         state_id = state.block_id
 
         # Transformations that remove the first access node
-        xforms_first: List[SingleStateTransformation] = [RedundantWriteSlice(), UnsqueezeViewRemove(), RedundantArray()]
+        xforms_first: list[SingleStateTransformation] = [RedundantWriteSlice(), UnsqueezeViewRemove(), RedundantArray()]
         # Transformations that remove the second access node
-        xforms_second: List[SingleStateTransformation] = [
+        xforms_second: list[SingleStateTransformation] = [
             RedundantReadSlice(),
             SqueezeViewRemove(),
             RedundantSecondArray(),

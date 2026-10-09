@@ -1,9 +1,10 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests comparison operators with communicator objects."""
 
-import dace
 import numpy as np
 import pytest
+
+import dace
 
 
 @pytest.mark.mpi

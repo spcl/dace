@@ -3,7 +3,13 @@ import collections
 
 import dace
 
-from ._common import *
+from ._common import (
+    generate_boundary_conditions,
+    make_iterator_mapping,
+    parse_accesses,
+    parse_connectors,
+    validate_vector_lengths,
+)
 
 
 @dace.library.expansion
@@ -51,7 +57,6 @@ class ExpandStencilCPU(dace.library.ExpandTransformation):
                 "\t" if len(oob_cond) > 0 else "",
                 field_accesses[output][tuple(0 for _ in range(len(shape)))],
                 field_accesses[output][tuple(0 for _ in range(len(shape)))],
-                output,
             )
             for output in outputs
         )
