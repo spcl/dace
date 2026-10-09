@@ -7,8 +7,8 @@ import sympy
 
 import dace
 from dace import subsets, symbolic
-from dace.symbolic import pystr_to_symbolic, symstr, arrays, free_symbols_and_functions, bitwise_or
 from dace.frontend.python.newast import _subset_has_indirection
+from dace.symbolic import arrays, bitwise_or, free_symbols_and_functions, pystr_to_symbolic, symstr
 
 
 def _roundtrip(s, cpp_mode=False):

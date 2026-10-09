@@ -2,34 +2,24 @@
 import ast
 import collections.abc
 import contextlib
-from collections import Counter
-from functools import lru_cache, cache
-import sympy
-import threading
 import pickle
 import re
+import threading
 import types
+from collections import Counter
+from collections.abc import Callable, Iterable, Iterator, Mapping
+from functools import cache, lru_cache
 from typing import (
-    Any,
-    Callable,
-    Dict,
-    FrozenSet,
-    Iterable,
-    Iterator,
-    Mapping,
-    Optional,
-    Set,
-    Tuple,
-    Union,
     TYPE_CHECKING,
-    List,
+    Any,
+    Union,
 )
-import numpy
 
+import numpy
+import packaging.version as packaging_version
+import sympy
 import sympy.abc
 import sympy.printing.str
-
-import packaging.version as packaging_version
 
 from dace import dtypes
 
@@ -65,7 +55,7 @@ class _SymbolDTypeContext(threading.local):
     def __init__(self):
 
         # The lowest level in the stack is reserved for "no stack active".
-        self.ctx_stack: List[Mapping[str, "dtypes.typeclass"]] = [types.MappingProxyType({})]
+        self.ctx_stack: list[Mapping[str, dtypes.typeclass]] = [types.MappingProxyType({})]
 
     def push(self, authority: Mapping[str, "dtypes.typeclass"]) -> Mapping[str, "dtypes.typeclass"]:
         """
@@ -113,7 +103,7 @@ _SERIALIZATION_SYMBOL_DTYPES = _SymbolDTypeContext()
 
 
 @contextlib.contextmanager
-def serialization_symbol_dtypes(authority: Dict[str, "dtypes.typeclass"]):
+def serialization_symbol_dtypes(authority: dict[str, "dtypes.typeclass"]):
     """
     Temporarily override, while serializing symbolic expressions, the dtype used for
     each scope-declared symbol, restoring the previous mapping on exit. Only concrete
@@ -162,7 +152,7 @@ def _is_sympy_number(expr) -> bool:
 # form {'N': sympy.abc.N, 'I': sympy.abc.I, 'pi': sympy.abc.pi}
 # Since version 1.9, the values of this dictionary are None. In the dictionary
 # below, we recreate it to be as in versions < 1.9.
-_sympy_clash = {k: v if v else getattr(sympy.abc, k) for k, v in sympy.abc._clash.items()}
+_sympy_clash = {k: v or getattr(sympy.abc, k) for k, v in sympy.abc._clash.items()}
 
 # SymPy 1.13 changes the behavior of `==` such that floats with different precisions
 # are always different.
@@ -194,10 +184,10 @@ class symbol(sympy.Symbol):
         elif name.startswith("__DACE"):
             raise NameError("Symbols cannot start with __DACE")
         elif not dtypes.validate_name(name):
-            raise NameError('Invalid symbol name "%s"' % name)
+            raise NameError(f'Invalid symbol name "{name}"')
 
         if not isinstance(dtype, dtypes.typeclass):
-            raise TypeError("dtype must be a DaCe type, got %s" % str(dtype))
+            raise TypeError(f"dtype must be a DaCe type, got {str(dtype)}")
 
         dkeys = [k for k, v in dtypes.dtype_to_typeclass().items() if v == dtype]
         is_integer = [issubclass(k, int) or issubclass(k, numpy.integer) for k in dkeys]
@@ -270,9 +260,9 @@ class symbol(sympy.Symbol):
                     fail = constraint
                     break
             except (AttributeError, TypeError, ValueError):
-                raise RuntimeError("Cannot validate constraint %s for symbol %s" % (str(constraint), self.name))
+                raise RuntimeError(f"Cannot validate constraint {str(constraint)} for symbol {self.name}")
         if fail is not None:
-            raise RuntimeError("Value %s invalidates constraint %s for symbol %s" % (str(value), str(fail), self.name))
+            raise RuntimeError(f"Value {str(value)} invalidates constraint {str(fail)} for symbol {self.name}")
 
     # Type stubs for arithmetic operators (inherited from sympy.Symbol at runtime)
     if TYPE_CHECKING:
@@ -463,10 +453,10 @@ class TypedConstant(sympy.AtomicExpr):
         return self.dtype(self.value)
 
 
-class SymExpr(object):
+class SymExpr:
     """Symbolic expressions with support for an overapproximation expression."""
 
-    def __init__(self, main_expr: Union[str, "SymExpr"], approx_expr: Optional[Union[str, "SymExpr"]] = None):
+    def __init__(self, main_expr: Union[str, "SymExpr"], approx_expr: Union[str, "SymExpr"] | None = None):
         self._main_expr = pystr_to_symbolic(main_expr)
         if approx_expr is None:
             self._approx_expr = self._main_expr
@@ -491,7 +481,7 @@ class SymExpr(object):
             if isinstance(main_expr, str):
                 return pystr_to_symbolic(main_expr)
             return main_expr
-        return super(SymExpr, cls).__new__(cls)
+        return super().__new__(cls)
 
     @property
     def expr(self):
@@ -678,7 +668,7 @@ def _typed_constant_to_string(expr: TypedConstant) -> str:
 
 
 @lru_cache(maxsize=None, typed=True)
-def _default_assumptions_of_type(dtype: "dtypes.typeclass") -> Dict[str, Any]:
+def _default_assumptions_of_type(dtype: "dtypes.typeclass") -> dict[str, Any]:
     """
     Returns the assumptions of a symbol of the given type created without explicit assumptions. They only depend on
     the type (not on the name), so they are computed once per type. The result must not be modified.
@@ -686,12 +676,12 @@ def _default_assumptions_of_type(dtype: "dtypes.typeclass") -> Dict[str, Any]:
     return symbol("x", dtype=dtype).assumptions0
 
 
-def _symbol_default_assumptions(expr: symbol) -> Dict[str, Any]:
+def _symbol_default_assumptions(expr: symbol) -> dict[str, Any]:
     return _default_assumptions_of_type(expr.dtype)
 
 
 @lru_cache(maxsize=16384, typed=True)
-def _symbol_serializer_kwargs(expr: symbol, dtype: "dtypes.typeclass") -> Dict[str, Any]:
+def _symbol_serializer_kwargs(expr: symbol, dtype: "dtypes.typeclass") -> dict[str, Any]:
     # Cached: the result only depends on the assumptions of the symbol (part of its equality) and on ``dtype``.
     # The returned dictionary must not be modified.
     kwargs = {}
@@ -708,7 +698,7 @@ def _symbol_serializer_kwargs(expr: symbol, dtype: "dtypes.typeclass") -> Dict[s
 
 
 # Type hint for symbolic expressions
-SymbolicType = Union[sympy.Basic, SymExpr]
+SymbolicType = sympy.Basic | SymExpr
 
 
 # http://stackoverflow.com/q/3844948/
@@ -725,8 +715,9 @@ def symtype(expr):
         return stypes[0]
     else:
         raise TypeError(
-            'Cannot infer symbolic type from expression "%s"'
-            " with symbols [%s]" % (str(expr), ", ".join([str(s) + ": " + str(s.dtype) for s in symlist(expr)]))
+            'Cannot infer symbolic type from expression "{}" with symbols [{}]'.format(
+                str(expr), ", ".join([str(s) + ": " + str(s.dtype) for s in symlist(expr)])
+            )
         )
 
 
@@ -765,9 +756,7 @@ def symlist(values):
     return result
 
 
-def evaluate(
-    expr: Union[sympy.Basic, int, float], symbols: Dict[Union[symbol, str], Union[int, float]]
-) -> Union[int, float, numpy.number]:
+def evaluate(expr: sympy.Basic | int | float, symbols: dict[symbol | str, int | float]) -> int | float | numpy.number:
     """
     Evaluates an expression to a constant based on a mapping from symbols
     to values.
@@ -825,7 +814,7 @@ def issymbolic(value, constants=None):
     return False
 
 
-def align(value: Union[SymbolicType, int], alignment: Union[SymbolicType, int]) -> Union[SymbolicType, int]:
+def align(value: SymbolicType | int, alignment: SymbolicType | int) -> SymbolicType | int:
     """
     Rounds a value up to the nearest multiple of an alignment.
 
@@ -842,7 +831,7 @@ def align(value: Union[SymbolicType, int], alignment: Union[SymbolicType, int]) 
     return ((int(value) + int(alignment) - 1) // int(alignment)) * int(alignment)
 
 
-def is_multiple(value: Union[SymbolicType, int], alignment: Union[SymbolicType, int]) -> bool:
+def is_multiple(value: SymbolicType | int, alignment: SymbolicType | int) -> bool:
     """
     Returns whether a value is provably a multiple of an alignment.
 
@@ -1045,7 +1034,7 @@ def contains_sympy_functions(expr):
     return False
 
 
-def free_symbols_and_functions(expr: Union[SymbolicType, str]) -> Set[str]:
+def free_symbols_and_functions(expr: SymbolicType | str) -> set[str]:
     """
     Return the names of the free symbols and (non-builtin) functions in an expression.
 
@@ -1070,7 +1059,7 @@ def free_symbols_and_functions(expr: Union[SymbolicType, str]) -> Set[str]:
     return result
 
 
-def arrays(expr: Union[SymbolicType, str]) -> Set[str]:
+def arrays(expr: SymbolicType | str) -> set[str]:
     """
     Return the names of the containers accessed via ``Subscript`` (e.g. ``A`` in ``A[i]``).
 
@@ -1087,7 +1076,7 @@ def arrays(expr: Union[SymbolicType, str]) -> Set[str]:
     return {str(node.args[0]) for node in expr.atoms(Subscript)}
 
 
-def scalars(expr: Union[SymbolicType, str], descriptors: Dict[str, Any]) -> Set[str]:
+def scalars(expr: SymbolicType | str, descriptors: dict[str, Any]) -> set[str]:
     """
     Return the names of the rank-0 scalar containers referenced by name.
 
@@ -1108,7 +1097,7 @@ def scalars(expr: Union[SymbolicType, str], descriptors: Dict[str, Any]) -> Set[
     return {str(s) for s in expr.free_symbols if isinstance(descriptors.get(str(s)), data.Scalar)}
 
 
-def is_undefined(expr: Union[SymbolicType, str]) -> bool:
+def is_undefined(expr: SymbolicType | str) -> bool:
     """
     Checks if a symbolic expression contains any UndefinedSymbol atoms.
 
@@ -1632,7 +1621,7 @@ def evaluate_optional_arrays(expr, sdfg):
 
     none = symbol("NoneSymbol")
 
-    def _process_is(elem: Union[Is, IsNot]):
+    def _process_is(elem: Is | IsNot):
         if elem.args[0] == none:
             if elem.args[1] == none:  # Both arguments are None
                 return True
@@ -1641,12 +1630,11 @@ def evaluate_optional_arrays(expr, sdfg):
                 # Equivalent to `None is x` for a non-optional x
                 return False
 
-        else:  # elem.args[0] is not None
-            if elem.args[1] == none:
-                cand = str(elem.args[0])
-                if cand in sdfg.arrays and sdfg.arrays[cand].optional is False:
-                    # Equivalent to `x is None` for a non-optional x
-                    return False
+        elif elem.args[1] == none:
+            cand = str(elem.args[0])
+            if cand in sdfg.arrays and sdfg.arrays[cand].optional is False:
+                # Equivalent to `x is None` for a non-optional x
+                return False
 
         # Neither argument is None
         return None
@@ -1684,7 +1672,7 @@ def evaluate_optional_arrays(expr, sdfg):
 
 
 _SimpleASTNode = (ast.Constant, ast.Name)
-_SimpleASTNodeT = Union[ast.Constant, ast.Name]
+_SimpleASTNodeT = ast.Constant | ast.Name
 
 
 def __comp_convert_truthy_falsy(node: _SimpleASTNodeT):
@@ -2345,7 +2333,7 @@ class DaceSympySerializer(sympy.printing.str.StrPrinter):
 _PLAIN_INTEGER_TYPES = (sympy.Integer, type(sympy.S.One), type(sympy.S.Zero), type(sympy.S.NegativeOne))
 
 
-def _serialize_symbolic_uncached(expr: Union[SymbolicType, int, float, numpy.number]) -> str:
+def _serialize_symbolic_uncached(expr: SymbolicType | int | float | numpy.number) -> str:
     if isinstance(expr, SymExpr):
         return f"SymExpr({serialize_symbolic(expr.expr)}, {serialize_symbolic(expr.approx)})"
     if isinstance(expr, TypedConstant):
@@ -2371,7 +2359,7 @@ def _serialize_symbolic_uncached(expr: Union[SymbolicType, int, float, numpy.num
 
 
 @lru_cache(maxsize=16384)
-def _serialize_sympy_expression(expr: sympy.Basic, symbol_dtypes: FrozenSet[Tuple[str, "dtypes.typeclass"]]) -> str:
+def _serialize_sympy_expression(expr: sympy.Basic, symbol_dtypes: frozenset[tuple[str, "dtypes.typeclass"]]) -> str:
     """
     Serializes a SymPy expression. The result only depends on the expression and on the dtypes its DaCe symbols are
     serialized with (``symbol_dtypes``, which the caller computes from the current scope), so it is cached.
@@ -2477,8 +2465,8 @@ _PYSTR2SYM_locals.update(_sympy_clash)
 
 
 def symbol_replacements(
-    symbol_mapping: Optional[Dict[Union[str, sympy.Basic], Any]],
-) -> Optional[Dict[str, sympy.Basic]]:
+    symbol_mapping: dict[str | sympy.Basic, Any] | None,
+) -> dict[str, sympy.Basic] | None:
     """
     Converts a symbol mapping (e.g., the ``symbol_mapping`` of a nested SDFG node) into a dictionary that
     ``replace_symbols`` replaces all at once. For example, ``{'N': 'M', 'M': 'N'}`` swaps the two symbols rather than
@@ -2503,7 +2491,7 @@ def symbol_replacements(
     return result or None
 
 
-def replace_symbols(expr: Any, replacements: Optional[Dict[str, sympy.Basic]]) -> Any:
+def replace_symbols(expr: Any, replacements: dict[str, sympy.Basic] | None) -> Any:
     """
     Replaces the symbols of an expression named in ``replacements`` (see ``symbol_replacements``), all at once and
     whatever their types.
@@ -2640,25 +2628,25 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
         # always print as the operator; the bare names do so only in C++ (Python keeps
         # the ``func(a, b)`` spelling so it round-trips).
         name = str(expr.func)
-        base = name[2:] if name.startswith("__") else name
+        base = name.removeprefix("__")
         as_operator = name.startswith("__") or self.cpp_mode
         if base == "bitwise_invert" and as_operator:
-            return "(~(%s))" % self._print(expr.args[0])
+            return f"(~({self._print(expr.args[0])}))"
         binop = {"bitwise_and": "&", "bitwise_or": "|", "bitwise_xor": "^", "left_shift": "<<", "right_shift": ">>"}
         if base in binop and as_operator:
-            return "((%s) %s (%s))" % (self._print(expr.args[0]), binop[base], self._print(expr.args[1]))
+            return f"(({self._print(expr.args[0])}) {binop[base]} ({self._print(expr.args[1])}))"
         # ``int_floor`` divides with ``//`` in Python and ``/`` in C++ (the bare name
         # keeps its ``int_floor(a, b)`` spelling in Python so it round-trips).
         if base == "int_floor" and as_operator:
             op = "/" if self.cpp_mode else "//"
-            return "((%s) %s (%s))" % (self._print(expr.args[0]), op, self._print(expr.args[1]))
+            return f"(({self._print(expr.args[0])}) {op} ({self._print(expr.args[1])}))"
         if str(expr.func) == "ipow" and self.cpp_mode:
-            return "dace::math::ipow(%s, %s)" % (self._print(expr.args[0]), self._print(expr.args[1]))
+            return f"dace::math::ipow({self._print(expr.args[0])}, {self._print(expr.args[1])})"
         if str(expr.func) == "IfExpr":
             cond, tval, fval = (self._print(a) for a in expr.args)
             if self.cpp_mode:
-                return "((%s) ? (%s) : (%s))" % (cond, tval, fval)
-            return "((%s) if (%s) else (%s))" % (tval, cond, fval)
+                return f"(({cond}) ? ({tval}) : ({fval}))"
+            return f"(({tval}) if ({cond}) else ({fval}))"
         return super()._print_Function(expr)
 
     def _print_ceiling(self, expr):
@@ -2670,19 +2658,19 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
         # and ``double`` overloads, so any wider integer type makes the call ambiguous.
         if expr.args[0].is_integer:
             return self._print(expr.args[0])
-        return "ceil(%s)" % self._print(expr.args[0])
+        return f"ceil({self._print(expr.args[0])})"
 
     def _print_Mod(self, expr):
-        return "((%s) %% (%s))" % (self._print(expr.args[0]), self._print(expr.args[1]))
+        return f"(({self._print(expr.args[0])}) % ({self._print(expr.args[1])}))"
 
     def _print_Equality(self, expr):
-        return "((%s) == (%s))" % (self._print(expr.args[0]), self._print(expr.args[1]))
+        return f"(({self._print(expr.args[0])}) == ({self._print(expr.args[1])}))"
 
     def _print_Unequality(self, expr):
-        return "((%s) != (%s))" % (self._print(expr.args[0]), self._print(expr.args[1]))
+        return f"(({self._print(expr.args[0])}) != ({self._print(expr.args[1])}))"
 
     def _print_Not(self, expr):
-        return "(not (%s))" % self._print(expr.args[0])
+        return f"(not ({self._print(expr.args[0])}))"
 
     def _print_Infinity(self, expr):
         # Print as ``inf`` so it round-trips back to ``oo`` via ``pystr_to_symbolic``.
@@ -2725,22 +2713,22 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
             negative = int_exp < 0
             if negative:
                 int_exp = -int_exp
-            res = "({})".format(base)
+            res = f"({base})"
             for _ in range(1, int_exp):
-                res += " * ({})".format(base)
+                res += f" * ({base})"
 
             if negative:
                 res = f"reciprocal({res})"
             return res
         except ValueError:
             if self.cpp_mode:
-                return "dace::math::pow({f}, {s})".format(f=self._print(expr.args[0]), s=self._print(expr.args[1]))
+                return f"dace::math::pow({self._print(expr.args[0])}, {self._print(expr.args[1])})"
             else:
                 return f"({self._print(expr.args[0])}) ** ({self._print(expr.args[1])})"
 
 
 @lru_cache(maxsize=16384, typed=True)
-def symstr(sym, arrayexprs: Optional[FrozenSet[str]] = None, cpp_mode=False) -> str:
+def symstr(sym, arrayexprs: frozenset[str] | None = None, cpp_mode=False) -> str:
     """
     Convert a symbolic expression to a compilable expression.
 
@@ -2791,8 +2779,8 @@ def symstr(sym, arrayexprs: Optional[FrozenSet[str]] = None, cpp_mode=False) -> 
 
 
 def safe_replace(
-    mapping: Dict[Union[SymbolicType, str], Union[SymbolicType, str]],
-    replace_callback: Callable[[Dict[str, str]], None],
+    mapping: dict[SymbolicType | str, SymbolicType | str],
+    replace_callback: Callable[[dict[str, str]], None],
     value_as_string: bool = False,
 ) -> None:
     """
@@ -2920,7 +2908,7 @@ def equalize_symbol(sym: sympy.Expr) -> sympy.Expr:
     return sym.subs(repldict)
 
 
-def equalize_symbols(a: sympy.Expr, b: sympy.Expr) -> Tuple[sympy.Expr, sympy.Expr]:
+def equalize_symbols(a: sympy.Expr, b: sympy.Expr) -> tuple[sympy.Expr, sympy.Expr]:
     """
     If the 2 input expressions use different symbols but with the same name,
     it substitutes the symbols of the second expressions with those of the
@@ -2939,7 +2927,7 @@ def equalize_symbols(a: sympy.Expr, b: sympy.Expr) -> Tuple[sympy.Expr, sympy.Ex
     return a, b
 
 
-def inequal_symbols(a: Union[sympy.Expr, Any], b: Union[sympy.Expr, Any]) -> bool:
+def inequal_symbols(a: sympy.Expr | Any, b: sympy.Expr | Any) -> bool:
     """
     Compares 2 symbolic expressions and returns True if they are not equal.
     """
@@ -2964,7 +2952,7 @@ def inequal_symbols(a: Union[sympy.Expr, Any], b: Union[sympy.Expr, Any]) -> boo
         return (a - b).simplify() != 0
 
 
-def equal(a: SymbolicType, b: SymbolicType, is_length: bool = True) -> Union[bool, None]:
+def equal(a: SymbolicType, b: SymbolicType, is_length: bool = True) -> bool | None:
     """
     Compares 2 symbolic expressions and returns True if they are equal, False if they are inequal,
     and None if the comparison is inconclusive.
@@ -2986,7 +2974,7 @@ def equal(a: SymbolicType, b: SymbolicType, is_length: bool = True) -> Union[boo
             if isinstance(atom, UndefinedSymbol):
                 return None
 
-    if any([args is None for args in args]):
+    if any(args is None for args in args):
         return False
 
     facts = []
@@ -2998,7 +2986,7 @@ def equal(a: SymbolicType, b: SymbolicType, is_length: bool = True) -> Union[boo
         return sympy.ask(sympy.Q.is_true(sympy.Eq(*args)))
 
 
-def symbols_in_code(code: str, potential_symbols: Set[str] = None, symbols_to_ignore: Set[str] = None) -> Set[str]:
+def symbols_in_code(code: str, potential_symbols: set[str] = None, symbols_to_ignore: set[str] = None) -> set[str]:
     """
     Tokenizes a code string for symbols and returns a set thereof.
 
@@ -3036,13 +3024,12 @@ def symbols_in_code(code: str, potential_symbols: Set[str] = None, symbols_to_ig
                         token_counts[token] -= 1
                         if token_counts[token] == 0:
                             tokens.discard(token)
-                else:
-                    if e < len(code) and s > 0:
-                        if code[s - 1].isdigit() and code[e] in "-+0123456789":
-                            # Discard only if the count of this token is now zero, as `e = 1e-5` will mean token e was found twice
-                            token_counts[token] -= 1
-                            if token_counts[token] == 0:
-                                tokens.discard(token)
+                elif e < len(code) and s > 0:
+                    if code[s - 1].isdigit() and code[e] in "-+0123456789":
+                        # Discard only if the count of this token is now zero, as `e = 1e-5` will mean token e was found twice
+                        token_counts[token] -= 1
+                        if token_counts[token] == 0:
+                            tokens.discard(token)
 
     if symbols_to_ignore is None:
         return tokens

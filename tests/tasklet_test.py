@@ -1,8 +1,10 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
 import math as mt
+
 import numpy as np
 import pytest
+
+import dace
 from dace.frontend.python.common import DaceSyntaxError
 
 

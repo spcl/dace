@@ -1,11 +1,11 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """An example and test for the DoubleBuffering transformation."""
 
-import dace
 import numpy as np
 
-from dace.transformation.passes.pattern_matching import match_patterns
+import dace
 from dace.transformation.dataflow import DoubleBuffering, InLocalStorage
+from dace.transformation.passes.pattern_matching import match_patterns
 
 
 @dace.program

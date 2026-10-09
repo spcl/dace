@@ -1,13 +1,12 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
+from collections.abc import Generator
+
 import dace
-
-from typing import Generator, Tuple, Dict, List
-
 from dace import dtypes
 from dace.optimization import cutout_tuner
+from dace.sdfg.analysis.cutout import SDFGCutout
 from dace.transformation import dataflow as df
 from dace.transformation import helpers as xfh
-from dace.sdfg.analysis.cutout import SDFGCutout
 
 try:
     from tqdm import tqdm
@@ -22,7 +21,7 @@ class MapTilingTuner(cutout_tuner.CutoutTuner):
         super().__init__(task="MapTiling", sdfg=sdfg)
         self.instrument = measurement
 
-    def cutouts(self) -> Generator[Tuple[dace.SDFG, str], None, None]:
+    def cutouts(self) -> Generator[tuple[dace.SDFG, str], None, None]:
         for node, state in self._sdfg.all_nodes_recursive():
             if isinstance(node, dace.nodes.MapEntry):
                 if xfh.get_parent_map(state, node) is not None:
@@ -34,7 +33,7 @@ class MapTilingTuner(cutout_tuner.CutoutTuner):
                 cutout = SDFGCutout.singlestate_cutout(state, *subgraph_nodes)
                 yield cutout, f"{state_id}.{node_id}.{node.label}"
 
-    def space(self, map_entry: dace.nodes.MapEntry) -> Generator[Tuple[int], None, None]:
+    def space(self, map_entry: dace.nodes.MapEntry) -> Generator[tuple[int], None, None]:
         choices = [
             None,
             (64, 8, 1),
@@ -42,13 +41,13 @@ class MapTilingTuner(cutout_tuner.CutoutTuner):
 
         return choices
 
-    def config_from_key(self, key: str, **kwargs) -> List[int]:
+    def config_from_key(self, key: str, **kwargs) -> list[int]:
         if key == "None":
             return None
 
-        return list(map(lambda k: int(k), key.split(".")))
+        return [int(k) for k in key.split(".")]
 
-    def apply(self, config: List[int], label: str, **kwargs) -> None:
+    def apply(self, config: list[int], label: str, **kwargs) -> None:
         if config is None:
             return
 
@@ -56,7 +55,7 @@ class MapTilingTuner(cutout_tuner.CutoutTuner):
         map_entry = self._sdfg.node(int(state_id)).node(int(node_id))
         df.MapTiling.apply_to(self._sdfg, map_entry=map_entry, options={"tile_sizes": config})
 
-    def pre_evaluate(self, cutout: dace.SDFG, measurements: int, **kwargs) -> Dict:
+    def pre_evaluate(self, cutout: dace.SDFG, measurements: int, **kwargs) -> dict:
         cutout.start_state.instrument = self.instrument
 
         map_entry = None
@@ -71,7 +70,7 @@ class MapTilingTuner(cutout_tuner.CutoutTuner):
             "cutout": cutout.to_json(),
             "map_entry_id": cutout.start_state.node_id(map_entry),
             "measurements": measurements,
-            "key": lambda point: "None" if point is None else ".".join(map(lambda p: str(p), point)),
+            "key": lambda point: "None" if point is None else ".".join(str(p) for p in point),
         }
         return new_kwargs
 

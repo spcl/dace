@@ -4,15 +4,16 @@
 import json
 import tempfile
 
-import dace
-from dace.sdfg import validation
-from dace.transformation.pass_pipeline import Pipeline
-from dace.transformation.helpers import modified_symbols_between
-from dace.transformation.passes.analysis import ControlFlowBlockReachability, FindReferenceSources, StateReachability
-from dace.transformation.passes.reference_reduction import ReferenceToView
+import networkx as nx
 import numpy as np
 import pytest
-import networkx as nx
+
+import dace
+from dace.sdfg import validation
+from dace.transformation.helpers import modified_symbols_between
+from dace.transformation.pass_pipeline import Pipeline
+from dace.transformation.passes.analysis import ControlFlowBlockReachability, FindReferenceSources, StateReachability
+from dace.transformation.passes.reference_reduction import ReferenceToView
 
 
 def _assert_roundtrip_json_stable(sdfg):
@@ -22,7 +23,7 @@ def _assert_roundtrip_json_stable(sdfg):
         sdfg.save(path1, hash=False)
         dace.SDFG.from_file(path1).save(path2, hash=False)
 
-        with open(path1, "r") as fp1, open(path2, "r") as fp2:
+        with open(path1) as fp1, open(path2) as fp2:
             assert json.load(fp1) == json.load(fp2)
 
 
@@ -456,7 +457,8 @@ def test_reference_tasklet_assignment_analysis():
 
 
 def test_reference_tasklet_assignment_stree():
-    from dace.sdfg.analysis.schedule_tree import sdfg_to_tree as s2t, treenodes as tn
+    from dace.sdfg.analysis.schedule_tree import sdfg_to_tree as s2t
+    from dace.sdfg.analysis.schedule_tree import treenodes as tn
 
     sdfg = _create_tasklet_assignment_sdfg()
     stree = s2t.as_schedule_tree(sdfg)

@@ -13,8 +13,8 @@ import json
 import os
 import shutil
 import subprocess
+from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
-from typing import Dict, List, Optional, Sequence
 
 #: Fields of a compile-database entry that carry paths.
 FIELDS = ("directory", "command", "file", "output")
@@ -24,7 +24,7 @@ def entry_path(cache_root: str, key: str) -> str:
     return os.path.join(cache_root, "commands", key + ".json")
 
 
-def load(cache_root: str, key: str) -> Optional[List[Dict[str, str]]]:
+def load(cache_root: str, key: str) -> list[dict[str, str]] | None:
     """The recorded build for ``key``, or ``None`` if there is none to replay."""
     try:
         with open(entry_path(cache_root, key)) as fp:
@@ -33,7 +33,7 @@ def load(cache_root: str, key: str) -> Optional[List[Dict[str, str]]]:
         return None
 
 
-def publish(cache_root: str, key: str, entries: Sequence[Dict[str, str]]) -> None:
+def publish(cache_root: str, key: str, entries: Sequence[dict[str, str]]) -> None:
     """Record ``entries`` under ``key``, never overwriting an entry another build got there first."""
     path = entry_path(cache_root, key)
     if not entries or os.path.exists(path):
@@ -59,7 +59,7 @@ def drop(cache_root: str, key: str) -> None:
         pass
 
 
-def capture(build_folder: str) -> List[Dict[str, str]]:
+def capture(build_folder: str) -> list[dict[str, str]]:
     """The commands Ninja just ran, or ``[]`` if they cannot be read."""
     try:
         report = subprocess.run(
@@ -72,7 +72,7 @@ def capture(build_folder: str) -> List[Dict[str, str]]:
     return [e for e in entries if e.get("command") and e.get("output") != "build.ninja"]
 
 
-def rewrite(entries: Sequence[Dict[str, str]], pairs: Sequence[Sequence[str]]) -> List[Dict[str, str]]:
+def rewrite(entries: Sequence[dict[str, str]], pairs: Sequence[Sequence[str]]) -> list[dict[str, str]]:
     """Apply ``(from, to)`` substitutions to every path-bearing field of every entry."""
     out = []
     for entry in entries:
@@ -86,8 +86,8 @@ def rewrite(entries: Sequence[Dict[str, str]], pairs: Sequence[Sequence[str]]) -
 
 
 def template(
-    entries: Sequence[Dict[str, str]], build_folder: str, program_folder: str, program_name: str
-) -> List[Dict[str, str]]:
+    entries: Sequence[dict[str, str]], build_folder: str, program_folder: str, program_name: str
+) -> list[dict[str, str]]:
     """Replace this program's identity with placeholders, leaving a recipe for its whole shape.
 
     Longest-first, since the build folder lies inside the program folder.
@@ -96,8 +96,8 @@ def template(
 
 
 def accepts(
-    entries: Sequence[Dict[str, str]], build_folder: str, program_folder: str, program_name: str, files: Sequence[str]
-) -> Optional[List[Dict[str, str]]]:
+    entries: Sequence[dict[str, str]], build_folder: str, program_folder: str, program_name: str, files: Sequence[str]
+) -> list[dict[str, str]] | None:
     """Substitute this program into ``entries``, or ``None`` if the recording is not about it.
 
     Every path in a recorded command came from one of the three placeholders, so a substitution that
@@ -112,10 +112,10 @@ def accepts(
     return concrete if compiled == {os.path.normpath(f) for f in files} else None
 
 
-def replay(entries: Sequence[Dict[str, str]], build_folder: str, jobs: int) -> bool:
+def replay(entries: Sequence[dict[str, str]], build_folder: str, jobs: int) -> bool:
     """Run an accepted recipe. ``False`` means it failed partway and the build folder needs clearing."""
 
-    def run(entry: Dict[str, str]) -> bool:
+    def run(entry: dict[str, str]) -> bool:
         directory = entry.get("directory") or build_folder
         os.makedirs(os.path.join(directory, os.path.dirname(entry["output"])), exist_ok=True)
         return subprocess.run(entry["command"], shell=True, cwd=directory, capture_output=True).returncode == 0
@@ -150,7 +150,7 @@ def replay(entries: Sequence[Dict[str, str]], build_folder: str, jobs: int) -> b
     return True
 
 
-def write_compile_commands(compiles: Sequence[Dict[str, str]], build_folder: str) -> None:
+def write_compile_commands(compiles: Sequence[dict[str, str]], build_folder: str) -> None:
     """Write ``compile_commands.json``, which CMake would have written had it run.
 
     Without it a build folder reached by a cache hit has no compile database, so clangd stops

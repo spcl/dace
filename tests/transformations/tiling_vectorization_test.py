@@ -1,8 +1,9 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
 import numpy as np
-from dace.transformation.dataflow import StripMining, Vectorization
+
+import dace
 from dace.libraries.standard.memory import aligned_ndarray
+from dace.transformation.dataflow import StripMining, Vectorization
 
 N = dace.symbol("N")
 

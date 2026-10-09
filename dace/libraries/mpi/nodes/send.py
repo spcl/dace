@@ -2,9 +2,9 @@
 import dace.library
 import dace.properties
 import dace.sdfg.nodes
-from dace.transformation.transformation import ExpandTransformation
-from .. import environments
+from dace.libraries.mpi import environments
 from dace.libraries.mpi.nodes.node import MPINode, validate_integer_descriptor
+from dace.transformation.transformation import ExpandTransformation
 
 
 @dace.library.expansion
@@ -35,7 +35,7 @@ class ExpandSendMPI(ExpandTransformation):
                 MPI_Send(&(_buffer[{buffer_offset}]), {count_str}, {mpi_dtype_str}, int(_dest), int(_tag), MPI_COMM_WORLD);
                 """
         if ddt is not None:
-            code += f"""// MPI_Type_free(&newtype);
+            code += """// MPI_Type_free(&newtype);
             """
 
         tasklet = dace.sdfg.nodes.Tasklet(

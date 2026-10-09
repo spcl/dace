@@ -1,11 +1,13 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 
-import dace
-import numpy as np
-import re
 import os
+import re
 import shutil
 import time
+
+import numpy as np
+
+import dace
 
 
 def _program_name(function) -> str:
@@ -83,7 +85,7 @@ def test_regenerate_code():
     assert os.path.exists(source_filename)
 
     # Rewrite source code
-    with open(source_filename, "r") as f:
+    with open(source_filename) as f:
         source = f.read()
         source = re.sub(r"\b3\b", "4", source)
 

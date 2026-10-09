@@ -1,10 +1,12 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import numpy as np
-import dace
-from common import compare_numpy_output
 import math
-from numpy import exp, sin, cos, sqrt, log, log10, conj, real, imag
+
+import numpy as np
 import pytest
+from common import compare_numpy_output
+from numpy import conj, cos, exp, imag, log, log10, real, sin, sqrt
+
+import dace
 
 M, N = 24, 24
 

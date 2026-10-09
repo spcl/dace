@@ -2,7 +2,6 @@
 """Tests that CPU map loops declare their parameters with the inferred iteration symbol type."""
 
 import re
-from typing import List
 
 import numpy as np
 
@@ -26,7 +25,7 @@ def _map_sdfg(name: str, bound_type: dace.typeclass, begin, end, step=1, size=No
     return sdfg
 
 
-def _loop_headers(sdfg: dace.SDFG, param: str = "i") -> List[str]:
+def _loop_headers(sdfg: dace.SDFG, param: str = "i") -> list[str]:
     code = sdfg.generate_code()[0].clean_code
     return [line.strip() for line in code.splitlines() if re.search(rf"for \([^;]*\b{param} = ", line)]
 
@@ -136,7 +135,7 @@ def default_conditional(out: dace.int64[M32]):
             out[i] = i
 
 
-def _nested_symbol_types(sdfg: dace.SDFG, name: str) -> List[dace.typeclass]:
+def _nested_symbol_types(sdfg: dace.SDFG, name: str) -> list[dace.typeclass]:
     return [n.sdfg.symbols[name] for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG)]
 
 

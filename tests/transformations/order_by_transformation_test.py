@@ -1,19 +1,20 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-from typing import Any, List, Tuple
+from typing import Any
 from unittest import mock
 
 import pytest
 
 import dace
 from dace.sdfg import validation
-from dace.transformation import dataflow, transformation as xf
+from dace.transformation import dataflow
+from dace.transformation import transformation as xf
 from dace.transformation.passes import pattern_matching
 
 # The transformations of the pass, in this order. Each one matches once in the SDFG of `_make_sdfg()`.
 _TRANSFORMATIONS = (dataflow.MapFusionVertical, dataflow.TrivialMapElimination)
 
 
-def _add_maps(state: dace.SDFGState, chain: List[Tuple[str, str]]) -> None:
+def _add_maps(state: dace.SDFGState, chain: list[tuple[str, str]]) -> None:
     """Adds a chain of maps to `state`, where each `(array, range)` pair writes `array` over `range`."""
     previous = state.add_access(chain[0][0])
     for target, rng in chain[1:]:
@@ -46,7 +47,7 @@ def _make_sdfg() -> dace.SDFG:
     return sdfg
 
 
-def _apply(sdfg: dace.SDFG, order_by_transformation: bool) -> Tuple[List[str], int]:
+def _apply(sdfg: dace.SDFG, order_by_transformation: bool) -> tuple[list[str], int]:
     """Returns the names of the applied transformations, in order, and the number of pattern enumerations."""
     applied = []
     original_apply = pattern_matching.PatternMatchAndApplyRepeated._apply_and_validate

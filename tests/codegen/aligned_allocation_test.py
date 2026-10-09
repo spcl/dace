@@ -7,8 +7,9 @@ bounds, so heap arrays are allocated with C++17 aligned ``operator new`` (when
 ``compiler.cpp_standard`` >= 17) or with no annotation at all (below 17).
 """
 
-import numpy as np
 import re
+
+import numpy as np
 
 import dace
 from dace.config import set_temporary

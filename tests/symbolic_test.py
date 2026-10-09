@@ -1,6 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 
-from sympy import Min, Max
+from sympy import Max, Min
 
 from dace.symbolic import simplify_ext, symbol
 

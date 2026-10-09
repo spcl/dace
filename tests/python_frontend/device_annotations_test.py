@@ -1,10 +1,10 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
-import pytest
 import numpy as np
+import pytest
 
-from dace.dtypes import StorageType, ScheduleType
+import dace
 from dace import dtypes
+from dace.dtypes import ScheduleType, StorageType
 
 try:
     import cupy

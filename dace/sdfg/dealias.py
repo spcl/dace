@@ -3,21 +3,23 @@
 This module contains functions for ensuring SDFGs and nested SDFGs share the same data descriptors.
 """
 
+import ast
+import copy
+from collections.abc import Callable
+
 from dace import data, dtypes, subsets, symbolic, utils
 from dace.frontend.python import astutils
 from dace.memlet import Memlet
-from dace.sdfg import nodes as nd, utils as sdutil
+from dace.sdfg import nodes as nd
+from dace.sdfg import utils as sdutil
 from dace.sdfg.memlet_utils import MemletReplacer
+from dace.sdfg.replace import replace_datadesc_names
 from dace.sdfg.sdfg import SDFG
 from dace.sdfg.state import SymbolResolver
-from dace.sdfg.replace import replace_datadesc_names
 from dace.transformation.helpers import unsqueeze_memlet
-from typing import Callable, Dict, List, Optional, Set, Tuple
-import ast
-import copy
 
 
-def names_in_subtree(sdfg: SDFG) -> Set[str]:
+def names_in_subtree(sdfg: SDFG) -> set[str]:
     """
     Collects every name that means something in an SDFG or in the SDFGs nested within it.
 
@@ -29,7 +31,7 @@ def names_in_subtree(sdfg: SDFG) -> Set[str]:
     :param sdfg: The SDFG at the root of the subtree to inspect.
     :return: The set of names that are already spoken for.
     """
-    names: Set[str] = set()
+    names: set[str] = set()
     for nsdfg in sdfg.all_sdfgs_recursive():
         names |= set(nsdfg.arrays.keys())
         names |= set(nsdfg.symbols.keys())
@@ -57,7 +59,7 @@ def dealias_sdfg_recursive(sdfg: SDFG):
         dealias_sdfg(nsdfg, symbols)
 
 
-def _covers_whole(node, connector: Optional[str], window: data.Data) -> bool:
+def _covers_whole(node, connector: str | None, window: data.Data) -> bool:
     """
     Says whether a nested SDFG's connector stands for the whole of a container, not a window of it.
 
@@ -76,7 +78,7 @@ def _covers_whole(node, connector: Optional[str], window: data.Data) -> bool:
     return inner is not None and inner.is_equivalent(window, symbol_mapping=node.symbol_mapping)
 
 
-def dealias_sdfg(sdfg: SDFG, symbols: Optional[SymbolResolver] = None):
+def dealias_sdfg(sdfg: SDFG, symbols: SymbolResolver | None = None):
     """
     Renames all data containers in an SDFG to match the same data descriptors
     as its parent SDFG, if exists. This function takes care of offsetting memlets and internal
@@ -102,8 +104,8 @@ def dealias_sdfg(sdfg: SDFG, symbols: Optional[SymbolResolver] = None):
     for edge in parent_state.all_edges(parent_node):
         if edge.data.data in parent_sdfg.arrays:
             parent_names.add(edge.data.data)
-    inner_replacements: Dict[str, str] = {}
-    taken_names: Optional[Set[str]] = None
+    inner_replacements: dict[str, str] = {}
+    taken_names: set[str] | None = None
     for name, desc in sdfg.arrays.items():
         if name in parent_names:
             replace = False
@@ -139,10 +141,10 @@ def dealias_sdfg(sdfg: SDFG, symbols: Optional[SymbolResolver] = None):
             elif e.dst_conn in inner_replacements:
                 e._dst_conn = inner_replacements[e.dst_conn]
 
-    replacements: Dict[str, str] = {}
-    inv_replacements: Dict[str, List[str]] = {}
-    parent_edges: Dict[str, Memlet] = {}
-    to_unsqueeze: Set[str] = set()
+    replacements: dict[str, str] = {}
+    inv_replacements: dict[str, list[str]] = {}
+    parent_edges: dict[str, Memlet] = {}
+    to_unsqueeze: set[str] = set()
 
     for name, desc in sdfg.arrays.items():
         if desc.transient:
@@ -332,7 +334,7 @@ def dealias_sdfg(sdfg: SDFG, symbols: Optional[SymbolResolver] = None):
 
 
 def _same_container(
-    parent_desc: data.Data, inner_desc: data.Data, available_symbols: Set[str], parent_node: nd.NestedSDFG
+    parent_desc: data.Data, inner_desc: data.Data, available_symbols: set[str], parent_node: nd.NestedSDFG
 ) -> bool:
     """
     Says whether a connector's descriptor already describes the container it is connected to.
@@ -363,8 +365,8 @@ def _same_container(
 
 
 def _view_strides(
-    container_strides: Tuple[symbolic.SymbolicType, ...], subset: subsets.Subset
-) -> Optional[List[symbolic.SymbolicType]]:
+    container_strides: tuple[symbolic.SymbolicType, ...], subset: subsets.Subset
+) -> list[symbolic.SymbolicType] | None:
     """
     Derives the strides a view of a container has from the part of it the view covers.
 
@@ -409,7 +411,7 @@ def _as_container(desc: data.Data) -> data.Data:
 
 def _rebase_views(
     sdfg: SDFG, name: str, old_desc: data.Data, new_desc: data.Data
-) -> List[Tuple[str, data.Data, data.Data]]:
+) -> list[tuple[str, data.Data, data.Data]]:
     """
     Restates every view of a container that was restated, so that it still covers the same elements.
 
@@ -423,7 +425,7 @@ def _rebase_views(
     :return: One entry per view that followed, with its name and its descriptions before and after.
     :note: This function operates in-place.
     """
-    followed: List[Tuple[str, data.Data, data.Data]] = []
+    followed: list[tuple[str, data.Data, data.Data]] = []
     for state in sdfg.all_states():
         for node in state.data_nodes():
             desc = sdfg.arrays[node.data]
@@ -496,8 +498,8 @@ def rebase_descendants(sdfg: SDFG, name: str, old_desc: data.Data, new_desc: dat
 
 
 def _strides_after_squeeze(
-    strides: Tuple[symbolic.SymbolicType, ...], window: subsets.Range, kept: int
-) -> Optional[List[symbolic.SymbolicType]]:
+    strides: tuple[symbolic.SymbolicType, ...], window: subsets.Range, kept: int
+) -> list[symbolic.SymbolicType] | None:
     """
     Selects the strides of a container that a window of it keeps.
 
@@ -562,7 +564,7 @@ def _plain_window(memlet: Memlet, outer: data.Data, inner: data.Data, parent_nod
     return all((a == b) == True for a, b in zip(strides, expected))
 
 
-def _widening_feasible(sdfg: SDFG, name: str, desc: data.Data, passed_symbols: Set[str]) -> bool:
+def _widening_feasible(sdfg: SDFG, name: str, desc: data.Data, passed_symbols: set[str]) -> bool:
     """
     Checks that every nested SDFG below describing container ``name`` can have its memlets offset.
 
@@ -608,8 +610,8 @@ def _restate_container(
     old_desc: data.Data,
     new_desc: data.Data,
     mover: Callable[[str, data.Data, data.Data], Callable[[Memlet], Memlet]],
-    passed_symbols: Set[str],
-    symbol_types: Dict[str, dtypes.typeclass],
+    passed_symbols: set[str],
+    symbol_types: dict[str, dtypes.typeclass],
 ) -> None:
     """
     Restates container ``name`` as ``new_desc`` and moves every access of it accordingly.
@@ -664,7 +666,7 @@ def _restate_container(
         for node in state.nodes():
             if not isinstance(node, nd.NestedSDFG) or node.sdfg is None:
                 continue
-            seen: Set[str] = set()
+            seen: set[str] = set()
             for edge in state.all_edges(node):
                 if edge.data.data != name:
                     continue
@@ -692,7 +694,7 @@ def _widen_container(
     old_desc: data.Data,
     new_desc: data.Data,
     window: Memlet,
-    symbol_types: Dict[str, dtypes.typeclass],
+    symbol_types: dict[str, dtypes.typeclass],
 ) -> None:
     """
     Restates container ``name`` as ``new_desc`` and adds the window's origin to every access of it
@@ -729,9 +731,9 @@ def _rebase_container(
     name: str,
     old_desc: data.Data,
     new_desc: data.Data,
-    offset: Optional[subsets.Range],
-    squeeze: Optional[List[int]],
-    symbol_types: Dict[str, dtypes.typeclass],
+    offset: subsets.Range | None,
+    squeeze: list[int] | None,
+    symbol_types: dict[str, dtypes.typeclass],
 ) -> None:
     """
     Restates container ``name`` as ``new_desc`` and subtracts the new container's origin from every
@@ -772,7 +774,7 @@ def _rebase_container(
 
 
 def rebase_connector(
-    node: nd.NestedSDFG, connector: str, offset: Optional[subsets.Range] = None, squeeze: Optional[List[int]] = None
+    node: nd.NestedSDFG, connector: str, offset: subsets.Range | None = None, squeeze: list[int] | None = None
 ) -> bool:
     """
     Restates a connector as the container it is now connected to, moving the memlets inside with it.
@@ -809,7 +811,7 @@ def rebase_connector(
 
     parent_sdfg = sdfg.parent_sdfg
     parent_state = sdfg.parent
-    outer_name: Optional[str] = None
+    outer_name: str | None = None
     for edge in parent_state.all_edges(node):
         conn = edge.dst_conn if edge.dst is node else edge.src_conn
         if conn != connector or edge.data.data not in parent_sdfg.arrays:
@@ -858,8 +860,8 @@ def reduce_connector(
     nsdfg: SDFG,
     connector: str,
     reduced_desc: data.Data,
-    offset: Optional[subsets.Range] = None,
-    squeeze: Optional[List[int]] = None,
+    offset: subsets.Range | None = None,
+    squeeze: list[int] | None = None,
 ) -> None:
     """
     Restates a connector as the smaller container a transformation put behind it.
@@ -888,7 +890,7 @@ def reduce_connector(
         offset = subsets.Range.from_indices(list(offset))
 
     parent_node = nsdfg.parent_nsdfg_node
-    symbol_types: Dict[str, dtypes.typeclass] = {}
+    symbol_types: dict[str, dtypes.typeclass] = {}
     if parent_node is not None and nsdfg.parent is not None:
         symbol_types = nsdfg.parent.symbols_defined_at(parent_node)
         # The offset and the reduced descriptor are written in the parent's symbols
@@ -931,7 +933,7 @@ def reduce_connector(
             desc.set_shape(new_shape=tuple(desc.shape), strides=tuple(strides))
 
 
-def rebase_reconnected_edges(edges, offset: Optional[subsets.Range] = None, squeeze: Optional[List[int]] = None):
+def rebase_reconnected_edges(edges, offset: subsets.Range | None = None, squeeze: list[int] | None = None):
     """
     Restates the connectors of the nested SDFGs the given edges reach, after their container changed.
 
@@ -950,7 +952,7 @@ def rebase_reconnected_edges(edges, offset: Optional[subsets.Range] = None, sque
                 rebase_connector(node, connector, offset, squeeze)
 
 
-def _windowed_edges(sdfg: SDFG, symbol_types: Dict[str, dtypes.typeclass]):
+def _windowed_edges(sdfg: SDFG, symbol_types: dict[str, dtypes.typeclass]):
     """
     Yields the parent edges whose connector describes something other than the container they connect.
 
@@ -975,7 +977,7 @@ def _windowed_edges(sdfg: SDFG, symbol_types: Dict[str, dtypes.typeclass]):
         yield connector, edge, outer
 
 
-def windowed_connectors(sdfg: SDFG, symbols: Optional[SymbolResolver] = None) -> Dict[str, str]:
+def windowed_connectors(sdfg: SDFG, symbols: SymbolResolver | None = None) -> dict[str, str]:
     """
     Collects the connectors of a nested SDFG that describe a window of the container they are
     connected to rather than the container itself, as legacy nested SDFGs do.
@@ -993,7 +995,7 @@ def windowed_connectors(sdfg: SDFG, symbols: Optional[SymbolResolver] = None) ->
     return {connector: edge.data.data for connector, edge, _ in _windowed_edges(sdfg, symbol_types)}
 
 
-def widen_windowed_connectors(sdfg: SDFG, symbols: Optional[SymbolResolver] = None) -> Set[str]:
+def widen_windowed_connectors(sdfg: SDFG, symbols: SymbolResolver | None = None) -> set[str]:
     """
     Restates connectors that describe only the window their edge memlet selects as the whole
     container they are connected to, offsetting the memlets inside to match.
@@ -1017,8 +1019,8 @@ def widen_windowed_connectors(sdfg: SDFG, symbols: Optional[SymbolResolver] = No
     parent_node = sdfg.parent_nsdfg_node
     symbol_types = symbols.defined_at(sdfg.parent, parent_node)
 
-    windows: Dict[str, Tuple[data.Data, Memlet]] = {}
-    rejected: Set[str] = set()
+    windows: dict[str, tuple[data.Data, Memlet]] = {}
+    rejected: set[str] = set()
     for connector, edge, outer in _windowed_edges(sdfg, symbol_types):
         if connector in rejected:
             continue
@@ -1035,7 +1037,7 @@ def widen_windowed_connectors(sdfg: SDFG, symbols: Optional[SymbolResolver] = No
             continue
         windows[connector] = (outer, edge.data)
 
-    widened: Set[str] = set()
+    widened: set[str] = set()
     for connector, (outer, memlet) in windows.items():
         old_desc = sdfg.arrays[connector]
         new_desc = copy.deepcopy(_as_container(outer))
@@ -1068,7 +1070,7 @@ def widen_windowed_connectors(sdfg: SDFG, symbols: Optional[SymbolResolver] = No
     return widened
 
 
-def fold_symbol_mapping(sdfg: SDFG, symbols: Optional[SymbolResolver] = None) -> Dict[str, str]:
+def fold_symbol_mapping(sdfg: SDFG, symbols: SymbolResolver | None = None) -> dict[str, str]:
     """
     Folds the entries of a nested SDFG's symbol mapping that map one of its symbols to a symbol of the parent into
     the nested SDFG, renaming the inner symbol to the parent's.
@@ -1091,7 +1093,7 @@ def fold_symbol_mapping(sdfg: SDFG, symbols: Optional[SymbolResolver] = None) ->
         return {}
     parent_arrays = sdfg.parent_sdfg.arrays if sdfg.parent_sdfg is not None else {}
 
-    def foldable() -> Dict[str, str]:
+    def foldable() -> dict[str, str]:
         used = set(map(str, sdfg.free_symbols))
         return {
             str(k): str(v)
@@ -1130,7 +1132,7 @@ def fold_symbol_mapping(sdfg: SDFG, symbols: Optional[SymbolResolver] = None) ->
     return folded
 
 
-def integrate_nested_sdfgs_within(sdfg: SDFG, symbols: Optional[SymbolResolver] = None) -> None:
+def integrate_nested_sdfgs_within(sdfg: SDFG, symbols: SymbolResolver | None = None) -> None:
     """
     Integrates every nested SDFG directly within ``sdfg`` (see ``integrate_nested_sdfg``).
 
@@ -1152,7 +1154,7 @@ def integrate_nested_sdfgs_within(sdfg: SDFG, symbols: Optional[SymbolResolver] 
                 integrate_nested_sdfg(node.sdfg, symbols)
 
 
-def integrate_nested_sdfg(sdfg: SDFG, symbols: Optional[SymbolResolver] = None):
+def integrate_nested_sdfg(sdfg: SDFG, symbols: SymbolResolver | None = None):
     """
     Integrates a nested SDFG into its parent SDFG, ensuring that all data descriptors that are connected to
     the nested SDFG are shared with the parent SDFG. This function adds data containers to the nested
@@ -1185,7 +1187,7 @@ def integrate_nested_sdfg(sdfg: SDFG, symbols: Optional[SymbolResolver] = None):
 
     # The parent's descriptors adopted below are written in the parent's symbols. An inner symbol of the same name
     # that the node binds to something else (e.g., ``{'N': 'N - 5'}``) is a different symbol, so it is renamed first
-    parent_desc_symbols: Set[str] = set()
+    parent_desc_symbols: set[str] = set()
     for edge in parent_state.all_edges(parent_node):
         if edge.data.data in parent_sdfg.arrays:
             parent_desc_symbols |= set(map(str, parent_sdfg.arrays[edge.data.data].used_symbols(all_symbols=True)))
@@ -1198,10 +1200,10 @@ def integrate_nested_sdfg(sdfg: SDFG, symbols: Optional[SymbolResolver] = None):
         remove_symbol_aliases(sdfg, {sym: sym for sym in shadowed})
 
     # Track which data containers need to be added and converted to views
-    to_add_and_view: Dict[
-        str, Tuple[str, data.Data]
+    to_add_and_view: dict[
+        str, tuple[str, data.Data]
     ] = {}  # Maps connector name -> (parent data name, parent data descriptor)
-    parent_mapping: Dict[str, str] = {}  # Maps connector name to parent data name
+    parent_mapping: dict[str, str] = {}  # Maps connector name to parent data name
 
     # A descriptor adopted from the parent may be written in symbols the nested SDFG does not hold
     # yet; the loop at the end of this function gives it the ones the parent defines here.
@@ -1263,15 +1265,13 @@ def integrate_nested_sdfg(sdfg: SDFG, symbols: Optional[SymbolResolver] = None):
                             )
                     to_add_and_view[connector] = (edge.data.data, parent_sdfg.arrays[edge.data.data], edge.data)
 
-    parent_names: Set[str] = set()  # The names of the parent containers being integrated
-    parent_symbols: Set[str] = set()  # The symbols their descriptors and memlets are written in
+    parent_names: set[str] = set()  # The names of the parent containers being integrated
+    parent_symbols: set[str] = set()  # The symbols their descriptors and memlets are written in
     for parent_name, parent_desc, parent_memlet in to_add_and_view.values():
         # The parent data name itself may not alias internally-defined names
         parent_names.add(parent_name)
-        for sym in parent_desc.used_symbols(all_symbols=True):
-            parent_symbols.add(str(sym))
-        for sym in parent_memlet.used_symbols(all_symbols=True):
-            parent_symbols.add(str(sym))
+        parent_symbols.update(str(sym) for sym in parent_desc.used_symbols(all_symbols=True))
+        parent_symbols.update(str(sym) for sym in parent_memlet.used_symbols(all_symbols=True))
 
     if parent_names or parent_symbols:
         # Rename internal names that would clash with the symbols introduced from the parent. Since the mapping is
@@ -1305,7 +1305,7 @@ def integrate_nested_sdfg(sdfg: SDFG, symbols: Optional[SymbolResolver] = None):
     # subtree are collected once and extended as names are minted, rather than re-walking the tree
     # for every container.
     taken_names = names_in_subtree(sdfg)
-    visited: Set[str] = set()
+    visited: set[str] = set()
     for inner_name, (parent_name, parent_desc, parent_memlet) in to_add_and_view.items():
         if inner_name in visited:
             continue
@@ -1450,9 +1450,7 @@ def integrate_nested_sdfg(sdfg: SDFG, symbols: Optional[SymbolResolver] = None):
     symbols.forget(sdfg)
 
 
-def convert_legacy_nested_sdfgs(
-    sdfg: SDFG, symbols: Optional[SymbolResolver] = None
-) -> List[Tuple[nd.NestedSDFG, str]]:
+def convert_legacy_nested_sdfgs(sdfg: SDFG, symbols: SymbolResolver | None = None) -> list[tuple[nd.NestedSDFG, str]]:
     """
     Restates the nested SDFGs below ``sdfg`` that were assembled under the earlier semantics so that
     they follow the nested SDFG contract.
@@ -1481,7 +1479,7 @@ def convert_legacy_nested_sdfgs(
     """
     if symbols is None:
         symbols = SymbolResolver()
-    converted: List[Tuple[nd.NestedSDFG, str]] = []
+    converted: list[tuple[nd.NestedSDFG, str]] = []
     for state in sdfg.all_states():
         for node in state.nodes():
             if not isinstance(node, nd.NestedSDFG) or node.sdfg is None:
@@ -1494,7 +1492,7 @@ def convert_legacy_nested_sdfgs(
     return converted
 
 
-def redirect_meta_accesses(sdfg: SDFG, integrated: Dict[str, Tuple[str, data.Data, Memlet]]) -> Set[str]:
+def redirect_meta_accesses(sdfg: SDFG, integrated: dict[str, tuple[str, data.Data, Memlet]]) -> set[str]:
     """
     Rewrites meta accesses of freshly integrated containers so that they address the parent container.
 
@@ -1514,9 +1512,9 @@ def redirect_meta_accesses(sdfg: SDFG, integrated: Dict[str, Tuple[str, data.Dat
     if not integrated:
         return set()
 
-    rewritten: Set[str] = set()
+    rewritten: set[str] = set()
 
-    def process(memlet: Memlet) -> Optional[Memlet]:
+    def process(memlet: Memlet) -> Memlet | None:
         entry = integrated.get(memlet.data)
         if entry is None:
             return None
@@ -1560,7 +1558,7 @@ def redirect_meta_accesses(sdfg: SDFG, integrated: Dict[str, Tuple[str, data.Dat
     return rewritten
 
 
-def remove_symbol_aliases(sdfg: SDFG, symbol_mapping: Dict[str, str]) -> Dict[str, str]:
+def remove_symbol_aliases(sdfg: SDFG, symbol_mapping: dict[str, str]) -> dict[str, str]:
     """
     Ensures that symbols introduced into the SDFG through the values of ``symbol_mapping`` will not
     alias unrelated names inside the SDFG. Only names that genuinely clash are renamed:
@@ -1588,7 +1586,7 @@ def remove_symbol_aliases(sdfg: SDFG, symbol_mapping: Dict[str, str]) -> Dict[st
         return {}
 
     # Names that are (re)defined inside the SDFG always clash with introduced symbols
-    defined_symbols: Set[str] = set()
+    defined_symbols: set[str] = set()
     for state in sdfg.all_states():
         for node in state.nodes():
             defined_symbols.update(map(str, node.new_symbols(sdfg, state, {}).keys()))
@@ -1608,7 +1606,7 @@ def remove_symbol_aliases(sdfg: SDFG, symbol_mapping: Dict[str, str]) -> Dict[st
     node_mapping = sdfg.parent_nsdfg_node.symbol_mapping if sdfg.parent_nsdfg_node is not None else {}
     replaced = {str(k) for k, v in symbol_mapping.items() if str(k) != str(v)}
 
-    clashing: Set[str] = set()
+    clashing: set[str] = set()
     for sym in target_symbols:
         if sym in defined_symbols or sym in sdfg.arrays or sym in sdfg.constants_prop:
             clashing.add(sym)
@@ -1631,7 +1629,7 @@ def remove_symbol_aliases(sdfg: SDFG, symbol_mapping: Dict[str, str]) -> Dict[st
         | set(symbol_mapping.keys())
         | names_in_subtree(sdfg)
     )
-    repl_dict: Dict[str, str] = {}
+    repl_dict: dict[str, str] = {}
     for sym in clashing:
         new_name = data.find_new_name(sym, taken_names)
         repl_dict[sym] = new_name
@@ -1644,14 +1642,14 @@ def remove_symbol_aliases(sdfg: SDFG, symbol_mapping: Dict[str, str]) -> Dict[st
     return repl_dict
 
 
-def _replace_dict_keys(target_dict: Dict[str, symbolic.SymbolicType], d: Dict[str, str]):
+def _replace_dict_keys(target_dict: dict[str, symbolic.SymbolicType], d: dict[str, str]):
     """
     Helper function to replace keys in a dictionary with other keys.
 
     :param d: The dictionary to replace keys in.
     :return: A new dictionary with keys replaced by the new keys in the input dictionary.
     """
-    tmp: Dict[str, symbolic.SymbolicType] = copy.copy(target_dict)
+    tmp: dict[str, symbolic.SymbolicType] = copy.copy(target_dict)
     target_dict.clear()
     for key, value in tmp.items():
         new_key = d.get(key, key)  # Replace key if it exists in d, otherwise keep original

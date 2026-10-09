@@ -1,12 +1,11 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """Implements the map-dim shuffle transformation."""
 
-from dace.sdfg import SDFG
-from dace.sdfg import nodes
+from dace.properties import ListProperty, make_properties
+from dace.sdfg import SDFG, nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.state import SDFGState
 from dace.transformation import transformation
-from dace.properties import make_properties, ListProperty
 
 
 @make_properties

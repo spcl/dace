@@ -1,10 +1,10 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
 import numpy as np
 
+import dace
 from dace import nodes
-from dace.transformation.dataflow import MapFusionVertical
 from dace.transformation.auto.auto_optimize import greedy_fuse
+from dace.transformation.dataflow import MapFusionVertical
 
 N = dace.symbol("N")
 

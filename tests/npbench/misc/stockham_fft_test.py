@@ -1,10 +1,12 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 # Original application code: NPBench - https://github.com/spcl/npbench
-import dace.dtypes
-import numpy as np
-import dace as dc
-import pytest
 import argparse
+
+import numpy as np
+import pytest
+
+import dace as dc
+import dace.dtypes
 from dace.transformation.auto.auto_optimize import auto_optimize
 
 R, K, M1, M2 = (dc.symbol(s, dtype=dc.int64, integer=True, positive=True) for s in ("R", "K", "M1", "M2"))
