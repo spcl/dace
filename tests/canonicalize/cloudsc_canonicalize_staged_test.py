@@ -56,6 +56,7 @@ import dace
 from dace.transformation.passes.canonicalize.pipeline import _build_stages
 from tests.corpus.cloudsc.generate_data_for_cloudsc import (
     IEEE_CPU_ARGS,
+    SPECIES_CONSTANTS,
     build_cloudsc_sdfg,
     compare_outputs,
     generate_cloudsc_inputs,
@@ -67,13 +68,6 @@ from tests.corpus.cloudsc.generate_data_for_cloudsc import (
 #: reductions and WCR accumulations fold in a different ORDER than the sequential reference; this
 #: bounds reassociation and nothing else, with the IEEE build strict on both sides.
 RTOL = ATOL = 1e-10
-
-#: CloudSC's species PARAMETER constants, the same set the sibling canonicalize / target-pipeline
-#: tests bake in. ``canonicalize`` specializes them BEFORE it builds its stages, so a walk that
-#: leaves them symbolic walks a different graph: the species and LU loops are constant-trip only
-#: once these are in, and a phase that is wrong on the constant-trip form need not misbehave on the
-#: symbolic one. ``klev`` / ``klon`` / ``kidia`` / ``kfdia`` stay symbolic.
-SPECIES_CONSTANTS = {"nclv": 5, "ncldql": 1, "ncldqi": 2, "ncldqr": 3, "ncldqs": 4, "ncldqv": 5}
 
 #: Tolerance for the sequential re-check. Same schedules as the reference and the same fold order, so
 #: canonicalization -- being value-preserving -- reproduces it bit-for-bit.

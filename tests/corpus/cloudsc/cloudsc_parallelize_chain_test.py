@@ -76,6 +76,7 @@ from dace.transformation.passes.unique_loop_iterators import UniqueLoopIterators
 from tests.corpus.cloudsc.generate_data_for_cloudsc import (
     IEEE_CPU_ARGS,
     O3_CPU_ARGS,
+    SPECIES_CONSTANTS,
     build_cloudsc_sdfg,
     compare_outputs,
     generate_cloudsc_inputs,
@@ -192,14 +193,11 @@ def _plus_one_index_assignments(sdfg: dace.SDFG):
     return found
 
 
-#: CloudSC species PARAMETER constants (Fortran NCLV=5, NCLDQL=1..NCLDQV=5). Baked
-#: in so the species/LU loops are constant-trip; klev/klon/kidia/kfdia stay symbolic.
-_SPECIES_CONSTANTS = {"nclv": 5, "ncldql": 1, "ncldqi": 2, "ncldqr": 3, "ncldqs": 4, "ncldqv": 5}
-_SPECIES_NAMES = frozenset(_SPECIES_CONSTANTS)
+_SPECIES_NAMES = frozenset(SPECIES_CONSTANTS)
 
 
 def _specialize(sdfg):
-    specialize_symbols(sdfg, _SPECIES_CONSTANTS)
+    specialize_symbols(sdfg, SPECIES_CONSTANTS)
 
 
 def _unroll_fixpoint(sdfg):

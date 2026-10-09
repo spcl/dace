@@ -34,7 +34,7 @@ import gc
 import pytest
 
 import dace
-from tests.corpus.cloudsc.generate_data_for_cloudsc import build_cloudsc_sdfg
+from tests.corpus.cloudsc.generate_data_for_cloudsc import SPECIES_CONSTANTS, build_cloudsc_sdfg
 from tests.corpus.cloudsc.pipelines import (
     VARIANTS,
     build_reference_outputs,
@@ -42,10 +42,6 @@ from tests.corpus.cloudsc.pipelines import (
     run_pipeline,
     uniquely_named,
 )
-
-#: Species PARAMETER constants baked in as the ``specialize`` phase (config propagation), so the
-#: species / LU loops are constant-trip. Matches the parallelize chain test's specialization.
-_CONSTANTS = {"nclv": 5}
 
 #: IEEE, single-core, deterministic -- value-preserving phases stay bit-exact to the reference.
 _REGIME = "ieee"
@@ -88,7 +84,7 @@ def test_pipeline_numeric_e2e(variant, reference_path, reference_bundle, tmp_pat
         sdfg,
         variant,
         tmp_path / "dump",
-        constants=_CONSTANTS,
+        constants=SPECIES_CONSTANTS,
         tag=f"{variant}_python",
         numeric_check=check,
         resume=False,

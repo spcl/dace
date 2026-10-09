@@ -771,7 +771,7 @@ def dump_root() -> Path:
 
 def _main() -> int:
     import argparse
-    from tests.corpus.cloudsc.generate_data_for_cloudsc import build_cloudsc_sdfg, CLOUDSC_SYMBOLS
+    from tests.corpus.cloudsc.generate_data_for_cloudsc import SPECIES_CONSTANTS, build_cloudsc_sdfg
 
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--variant", choices=VARIANTS, default="parallelize", help="canon_* are heavy (many phases)")
@@ -787,7 +787,7 @@ def _main() -> int:
     )
     args = ap.parse_args()
 
-    constants = {k: CLOUDSC_SYMBOLS[k] for k in ("nclv",) if k in CLOUDSC_SYMBOLS}
+    constants = SPECIES_CONSTANTS
 
     numeric = None
     if args.numeric:

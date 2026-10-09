@@ -26,6 +26,7 @@ from dace.transformation.passes.vectorization.vectorize_gpu import VectorizeGPU
 from tests.corpus.cloudsc.generate_data_for_cloudsc import (
     CLOUDSC_CONSTANTS,
     IEEE_CPU_ARGS,
+    SPECIES_CONSTANTS,
     build_cloudsc_sdfg,
     compare_outputs,
 )
@@ -34,12 +35,7 @@ from tests.corpus.cloudsc.pipelines import build_reference_outputs, run_candidat
 
 #: Species PARAMETERs and run-time flags baked in at the reference values; klev/klon stay symbolic.
 SPECIALIZE = {
-    "nclv": 5,
-    "ncldql": 1,
-    "ncldqi": 2,
-    "ncldqr": 3,
-    "ncldqs": 4,
-    "ncldqv": 5,
+    **SPECIES_CONSTANTS,
     **{name: int(CLOUDSC_CONSTANTS[name]) for name in ("yrecldp_nssopt", "yrecldp_laericesed")},
 }
 

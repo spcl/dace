@@ -70,6 +70,12 @@ CLOUDSC_SYMBOLS: Dict[str, int] = {
     "kfdia": 32,
 }
 
+#: The species PARAMETERs (Fortran ``NCLV``, ``NCLDQL..NCLDQV``), passed as specialization constants so the
+#: species and LU loops are constant-trip; klev/klon/kidia/kfdia stay symbolic.
+SPECIES_CONSTANTS: Dict[str, int] = {
+    name: CLOUDSC_SYMBOLS[name] for name in ("nclv", "ncldql", "ncldqi", "ncldqr", "ncldqs", "ncldqv")
+}
+
 #: Exact YDCST/YDTHF/YRECLDP constants from the dwarf-p-cloudsc ``input.h5``
 #: reference. The ``yrecldp_nssopt``/``ncldtop``/``laeri*`` entries are integer
 #: scalars (cast on use); the rest are doubles. Mirrored here so the harness
