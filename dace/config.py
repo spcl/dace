@@ -1,9 +1,9 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import contextlib
+import copy
 import io
 import os
 import platform
-import tempfile
 import threading
 import warnings
 from typing import Any
@@ -45,13 +45,13 @@ def temporary_config():
             Config.set("optimizer", "autooptimize", value=True)
             foo()
     """
-    with tempfile.TemporaryFile(mode="w+t") as fp:
-        Config.save(file=fp)
-        try:
-            yield Config
-        finally:
-            fp.seek(0)  # rewind to the beginning of the file.
-            Config.load(file=fp)
+    # Restore the exact values, not a save/load round trip: loading re-applies the ``DACE_*``
+    # environment, which would silently undo every value set before the context was entered.
+    saved = copy.deepcopy(Config._data._config)
+    try:
+        yield Config
+    finally:
+        Config._data._config = saved
 
 
 def _env2bool(envval):
