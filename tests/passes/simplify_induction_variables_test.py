@@ -105,6 +105,25 @@ def test_a_derived_iv_live_after_the_loop_folds_once_and_a_rerun_reports_no_chan
     assert any("j" in e.data.assignments for e in loop.all_interstate_edges())
 
 
+@pytest.mark.parametrize("live_after", [False, True])
+def test_a_derived_iv_sizing_a_container_keeps_its_assignment_and_converges(live_after: bool):
+    """mixed_precision_ir's backward solve sizes a row slice by the derived index. Folding rewrites the memlets,
+    not the descriptor, so the assignment must stay and a rerun must report no change (simplify spun forever)."""
+    sdfg, loop = _build_derived_iv_sdfg(f"derived_iv_sizes_container_{live_after}")
+    sdfg.add_transient("row", ["j"], dace.float64)
+    use_state = next(s for s in loop.states() if s.label == "use")
+    fill = use_state.add_tasklet("fill", {}, {"o"}, "o = 1.0")
+    use_state.add_edge(fill, "o", use_state.add_write("row"), None, dace.Memlet("row[0]"))
+    if live_after:
+        sdfg.add_edge(loop, sdfg.add_state("post"), dace.InterstateEdge(assignments={"out": "j"}))
+
+    p = SimplifyInductionVariables()
+    assert p.apply_pass(sdfg, {}) == 1
+    assert p.apply_pass(sdfg, {}) is None
+    assert any("j" in e.data.assignments for e in loop.all_interstate_edges())
+    sdfg.validate()
+
+
 def test_chained_derived_ivs():
     sdfg = dace.SDFG("chain_chained_derived_ivs")
     sdfg.add_symbol("N", dace.int64)
@@ -640,6 +659,26 @@ def test_counter_reseeded_without_reading_itself_is_not_folded():
 
 
 if __name__ == "__main__":
-    import pytest
-
-    pytest.main([__file__, "-v"])
+    test_folds_memlet_subset_and_removes_dead_assignment()
+    test_no_action_when_no_derived_iv()
+    test_keeps_assignment_when_iv_live_outside_loop()
+    test_a_derived_iv_live_after_the_loop_folds_once_and_a_rerun_reports_no_change()
+    test_a_derived_iv_sizing_a_container_keeps_its_assignment_and_converges(False)
+    test_a_derived_iv_sizing_a_container_keeps_its_assignment_and_converges(True)
+    test_chained_derived_ivs()
+    test_does_not_touch_basic_iv()
+    test_llmr_interaction_unlocks_derived_iv_pattern()
+    test_end_to_end_numerical_preservation()
+    test_llvm_symbolic_bounds_with_derived_iv()
+    test_llvm_multi_use_derived_iv()
+    test_llvm_non_unit_step_basic_with_derived()
+    test_llvm_negative_scale_derived_iv()
+    test_nested_self_referential_counter_iv_closes_to_closed_form()
+    test_llvm_nested_loop_outer_iv_as_invariant_inside_inner()
+    test_llvm_derived_iv_in_tasklet_code()
+    test_llvm_reverse_loop_with_derived_iv()
+    test_llvm_rejects_loop_carried_mid_body_assignment()
+    test_llvm_rejects_conflicting_branch_assignments()
+    test_llvm_two_independent_derived_ivs_same_basis()
+    test_does_not_fold_conditional_argmax_iv()
+    test_counter_reseeded_without_reading_itself_is_not_folded()

@@ -24,7 +24,8 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 import sympy
 
-from dace import SDFG, properties, symbolic
+from dace import SDFG, data, properties, symbolic
+from dace.sdfg import nodes
 from dace.ordered import OrderedSet
 from dace.properties import CodeBlock
 from dace.sdfg.state import ConditionalBlock, LoopRegion, SDFGState
@@ -66,7 +67,7 @@ def _loop_nesting_depth(loop: LoopRegion) -> int:
     while parent is not None:
         if isinstance(parent, LoopRegion):
             depth += 1
-        parent = getattr(parent, "parent_graph", None)
+        parent = parent.parent_graph
     return depth
 
 
@@ -298,7 +299,8 @@ def simplify_loop(loop: LoopRegion, nested_carries: Dict[str, Tuple[LoopRegion, 
         basis = iv.basis
         if basis is None:
             continue
-        dead = _symbol_is_dead_outside_loop(loop, name)
+        # A container sized by ``name`` keeps reading it: the fold rewrites uses, not descriptors.
+        dead = _symbol_is_dead_outside_loop(loop, name) and not loop_containers_use_symbol(loop, name)
         if not dead and not loop_reads_symbol(loop, name):
             continue  # already folded: only the kept assignment is left, so a rerun must not report a change
         # Build the replacement: scale * basis + offset, parenthesized so later
@@ -350,11 +352,11 @@ def _assignment_is_conditional_in_loop(loop: LoopRegion, edges: list) -> bool:
     """
     for edge in edges:
         for endpoint in (edge.src, edge.dst):
-            g = getattr(endpoint, "parent_graph", None)
+            g = endpoint.parent_graph
             while g is not None and g is not loop:
                 if isinstance(g, ConditionalBlock):
                     return True
-                g = getattr(g, "parent_graph", None)
+                g = g.parent_graph
     return False
 
 
@@ -412,29 +414,14 @@ def _assignment_dominates_uses(loop: LoopRegion, name: str, edges: list) -> bool
     return True
 
 
-def _state_reads_symbol(state, name: str) -> bool:
-    from dace.sdfg import nodes as _nodes
-
-    if not hasattr(state, "edges"):
-        return False
-    try:
-        edges_iter = state.edges()
-    except Exception:
-        return False
-    for e in edges_iter:
+def _state_reads_symbol(state: SDFGState, name: str) -> bool:
+    for e in state.edges():
         m = e.data
-        if m is None:
-            continue
         if m.subset is not None and name in {str(s) for s in m.subset.free_symbols}:
             return True
         if m.other_subset is not None and name in {str(s) for s in m.other_subset.free_symbols}:
             return True
-    for n in state.nodes():
-        if isinstance(n, _nodes.Tasklet):
-            code_str = n.code.as_string if hasattr(n.code, "as_string") else str(n.code)
-            if code_str and _name_in_expr_string(name, code_str):
-                return True
-    return False
+    return any(isinstance(n, nodes.Tasklet) and _name_in_expr_string(name, n.code.as_string) for n in state.nodes())
 
 
 def header_code(block: Any) -> List[CodeBlock]:
@@ -446,15 +433,29 @@ def header_code(block: Any) -> List[CodeBlock]:
     return [code for code in codes if code is not None]
 
 
+def loop_containers_use_symbol(loop: LoopRegion, name: str) -> bool:
+    """Whether a container accessed inside ``loop`` names ``name`` in its descriptor (a shape, a stride)."""
+    sdfg = loop.sdfg
+    return any(
+        name in {str(s) for s in node.desc(sdfg).used_symbols(all_symbols=True)}
+        for state in loop.states()
+        for node in state.data_nodes()
+    )
+
+
 def loop_reads_symbol(loop: LoopRegion, name: str) -> bool:
-    """Whether ``name`` is read inside ``loop``, nested SDFGs aside: by dataflow, by a loop or branch header, or
-    by an interstate edge's condition or assigned value. An assignment target is a write, not a read."""
+    """Whether ``name`` is read inside ``loop`` where a fold rewrites it, nested SDFGs aside: by a memlet or a
+    node, by a loop or branch header, or by an interstate edge's condition or assigned value. An assignment
+    target is a write, not a read, and a container descriptor is not rewritten (see
+    :func:`loop_containers_use_symbol`)."""
     if any(name in edge.data.read_symbols() for edge in loop.all_interstate_edges()):
         return True
     headers = [loop]
     for block in loop.all_control_flow_blocks():
         if isinstance(block, SDFGState):
-            if name in block.used_symbols(all_symbols=True):
+            if any(name in {str(s) for s in e.data.free_symbols} for e in block.edges()) or any(
+                name in {str(s) for s in n.free_symbols} for n in block.nodes() if not isinstance(n, nodes.AccessNode)
+            ):
                 return True
         elif isinstance(block, (LoopRegion, ConditionalBlock)):
             headers.append(block)
@@ -493,18 +494,13 @@ def _symbol_is_dead_outside_loop(loop: LoopRegion, name: str) -> bool:
             continue
         for e in state.edges():
             m = e.data
-            if m is None:
-                continue
             if m.subset is not None and name in {str(s) for s in m.subset.free_symbols}:
                 return False
             if m.other_subset is not None and name in {str(s) for s in m.other_subset.free_symbols}:
                 return False
         # Tasklet code reads.
         for n in state.nodes():
-            if not hasattr(n, "code") or n.code is None:
-                continue
-            code_str = n.code.as_string if hasattr(n.code, "as_string") else str(n.code)
-            if code_str and _name_in_expr_string(name, code_str):
+            if isinstance(n, nodes.Tasklet) and _name_in_expr_string(name, n.code.as_string):
                 return False
 
     return True
@@ -529,13 +525,10 @@ def _remove_dead_scalar(loop: LoopRegion, name: str) -> None:
         return
     # Only remove transient scalars with no remaining AccessNodes.
     desc = sdfg.arrays[name]
-    from dace import data as _data
-    from dace.sdfg import nodes as _nodes
-
-    if not isinstance(desc, _data.Scalar) or not desc.transient:
+    if not isinstance(desc, data.Scalar) or not desc.transient:
         return
     for state in sdfg.states():
         for n in state.nodes():
-            if isinstance(n, _nodes.AccessNode) and n.data == name:
+            if isinstance(n, nodes.AccessNode) and n.data == name:
                 return
     sdfg.remove_data(name, validate=False)
