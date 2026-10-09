@@ -24,7 +24,6 @@ from dace.transformation import helpers, pass_pipeline as ppl, transformation
 from dace.transformation.passes.length_one_array_scalar_conversion import rewrite_code_slots
 from dace.ordered import OrderedSet
 from dace.optionals import required
-from dace.sdfg.narrowing import as_basic
 
 logger = logging.getLogger(__name__)
 
@@ -36,14 +35,31 @@ Dim = tuple[symbolic.SymbolicType, symbolic.SymbolicType, symbolic.SymbolicType]
 Prefix = list[Dim]
 
 
-def tile_extent(max_elem: symbolic.SymbolicType, min_elem: symbolic.SymbolicType) -> symbolic.SymbolicType:
-    """Per-iteration extent of an inner-map range; a ``Min``-bounded tile yields its static width."""
-    if isinstance(max_elem, sympy.Min):
-        for arg in max_elem.args:
-            diff = symbolic.simplify(arg - min_elem)
-            if as_basic(diff).is_Integer and diff >= 0:
-                return diff + 1
-    return max_elem + 1 - min_elem
+def bound_over_levels(extent: symbolic.SymbolicType, levels: list[nodes.MapEntry]) -> symbolic.SymbolicType:
+    """``extent``'s maximum over the iterations of ``levels`` (innermost first): the lift allocates before they run.
+
+    :raises NotImplementedError: ``extent`` is not linear in each parameter, so no corner bounds it.
+    """
+    for level in levels:
+        names = {str(s) for s in symbolic.symlist(extent)}
+        bounds = {
+            param: (low, high)
+            for param, low, high in zip(
+                level.map.params, level.map.range.min_element(), level.map.range.max_element(), strict=True
+            )
+            if param in names
+        }
+        if not bounds:
+            continue
+        if any(symbolic.affine_coefficients(extent, param) is None for param in bounds):
+            raise NotImplementedError(f"Cannot bound the extent {extent} over the kernel parameters {list(bounds)}.")
+        corners = [
+            extent.subs({symbolic.pystr_to_symbolic(param): value for param, value in zip(bounds, corner)})
+            for corner in itertools.product(*bounds.values())
+        ]
+        # The range and the descriptor name one symbol through different instances.
+        extent = symbolic.simplify(sympy.Max(*symbolic.equalize_symbols_across(*corners)))
+    return extent
 
 
 def is_register_demotable(desc: dt.Data, max_elements: int) -> bool:
@@ -531,7 +547,7 @@ class MoveArrayOutOfKernel(ppl.Pass):
         new_offsets = list(array_desc.offset)
         for level in levels:
             extended_size = [
-                tile_extent(mx, mn)
+                symbolic.tile_extent(mx, mn)
                 for mx, mn in zip(level.map.range.max_element(), level.map.range.min_element(), strict=True)
             ] + extended_size
             new_offsets = [0 for _ in level.map.params] + new_offsets
@@ -540,7 +556,7 @@ class MoveArrayOutOfKernel(ppl.Pass):
         # ``strides_from_layout`` takes dimensions innermost-first: the own axes, then the prepended ones.
         layout = [d + prepended for d in inner_order] + list(reversed(range(prepended)))
         lifted = array_desc.clone()
-        lifted.set_shape(extended_size + list(array_desc.shape))
+        lifted.set_shape(extended_size + [bound_over_levels(extent, levels) for extent in array_desc.shape])
         new_strides, new_total_size = lifted.strides_from_layout(*layout)
         return list(lifted.shape), list(new_strides), new_total_size, new_offsets
 

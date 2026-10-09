@@ -1,8 +1,10 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 import pytest
 import numpy as np
+import sympy
 
 import dace
+from dace.libraries.fft.algorithms.dft import floating_factor
 
 
 @pytest.mark.parametrize("symbolic", (False, True))
@@ -110,6 +112,14 @@ def test_cufft_twoplans():
     assert np.allclose(d, np.fft.ifft(b, norm="forward"), rtol=1e-3, atol=1e-5)
 
 
+@pytest.mark.parametrize("factor", (1, sympy.Rational(1, 4)))
+def test_a_constant_1d_factor_is_spliced_as_a_float(factor):
+    """fft_1d on HIP: the unscaled transform multiplied a ``std::complex<double>`` by the int ``1``, which
+    has no operator outside DaCe's own complex type."""
+    assert isinstance(floating_factor(factor), float)
+    assert floating_factor(factor) == float(factor)
+
+
 if __name__ == "__main__":
     test_fft(False)
     test_fft(True)
@@ -119,3 +129,11 @@ if __name__ == "__main__":
     test_ifft("ortho")
     test_cufft()
     test_cufft_twoplans()
+    test_1d_fft_normalization_over_a_symbolic_extent("fft", "backward")
+    test_1d_fft_normalization_over_a_symbolic_extent("fft", "forward")
+    test_1d_fft_normalization_over_a_symbolic_extent("fft", "ortho")
+    test_1d_fft_normalization_over_a_symbolic_extent("ifft", "backward")
+    test_1d_fft_normalization_over_a_symbolic_extent("ifft", "forward")
+    test_1d_fft_normalization_over_a_symbolic_extent("ifft", "ortho")
+    test_a_constant_1d_factor_is_spliced_as_a_float(1)
+    test_a_constant_1d_factor_is_spliced_as_a_float(sympy.Rational(1, 4))

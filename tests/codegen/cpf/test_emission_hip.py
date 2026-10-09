@@ -388,8 +388,53 @@ def test_a_nested_function_passes_the_state_to_its_launchers():
     )
 
 
+@dace.program
+def cholesky_plus_upper(A: dace.float64[N, N]):
+    A[:] = np.linalg.cholesky(A) + np.triu(A, k=1)
+
+
+def test_a_sequential_factorization_over_device_memory_touches_it_only_in_kernels():
+    """cholesky2: the renderable Cholesky is a loop nest; at host level over device memory every statement
+    of it has to be a kernel, or its scratch factor is device memory the host loop reads."""
+    assert_standalone_units(render_gpu(cholesky_plus_upper, "cpf_hip_cholesky"), "cpf_hip_cholesky")
+
+
+@dace.program
+def fft_round_trip(x: dace.complex128[N], y: dace.complex128[N], z: dace.complex128[N]):
+    y[:] = np.fft.fft(x)
+    z[:] = np.fft.ifft(y)
+
+
+NR, NQ, NP = (dace.symbol(name) for name in ("NR", "NQ", "NP"))
+
+
+@dace.program
+def doitgen(A: dace.float64[NR, NQ, NP], C4: dace.float64[NP, NP]):
+    out = np.zeros((NR, NQ, NP), A.dtype)
+    for r in range(NR):
+        for q in range(NQ):
+            for p in range(NP):
+                for s in range(NP):
+                    out[r, q, p] = out[r, q, p] + A[r, q, s] * C4[s, p]
+    A[:] = out
+
+
+def test_a_matmul_an_offloaded_contraction_expands_to_is_a_kernel():
+    """doitgen: the contraction's expansion leaves its matmul at host level carrying the thread-block
+    schedule of the device scope it came from; its loops must still launch as a kernel."""
+    assert_standalone_units(render_gpu(doitgen, "cpf_hip_doitgen"), "cpf_hip_doitgen")
+
+
 @pytest.mark.gpu
-@pytest.mark.parametrize(("program", "name"), [(s255, "cpf_hip_s255_build"), (gramschmidt, "cpf_hip_nested_build")])
+@pytest.mark.parametrize(
+    ("program", "name"),
+    [
+        (s255, "cpf_hip_s255_build"),
+        (gramschmidt, "cpf_hip_nested_build"),
+        (cholesky_plus_upper, "cpf_hip_chol_build"),
+        (fft_round_trip, "cpf_hip_fft_build"),
+    ],
+)
 def test_the_units_build_with_hipcc(program, name, tmp_path):
     build_units(render_gpu(program, name), tmp_path, name)
 
@@ -458,3 +503,41 @@ def test_non_linkable_objects_do_not_count_as_a_split():
         code_object("kern_main", "cpp", "../../sample", linkable=False),
     ]
     assert cpf.split_units([frame] + extras, "kern") == (frame, None)
+
+
+if __name__ == "__main__":
+    import pathlib
+    import tempfile
+
+    test_the_host_unit_launches_and_the_device_unit_holds_the_kernels()
+    test_the_hip_unit_calls_hip_runtime_functions_whichever_gpu_the_rendering_host_has()
+    test_device_reduction_folds_without_a_runtime_functor()
+    test_each_gpu_scope_says_what_it_is_ahead_of_it()
+    test_a_block_tiled_reduction_folds_without_a_runtime_functor()
+    test_conflicting_device_wcr_is_an_atomic_and_never_an_omp_pragma()
+    test_a_library_node_over_device_memory_takes_its_device_implementation()
+    test_the_host_implementation_still_wins_over_host_memory()
+    test_a_host_level_node_over_device_memory_expands_into_a_kernel()
+    test_the_schedule_correction_is_confined_to_host_level_device_memory()
+    test_a_device_library_node_inside_a_kernel_keeps_the_device_code_implementation()
+    test_a_device_scan_renders_the_device_scan_and_its_scratch()
+    test_a_device_resident_scan_seed_is_read_where_it_lives()
+    test_a_device_scan_seed_is_read_at_its_type_inside_the_kernel()
+    test_a_device_product_scan_multiplies_through_a_typed_functor()
+    test_a_device_product_scan_unit_builds_with_hipcc(pathlib.Path(tempfile.mkdtemp()))
+    test_a_read_only_operand_behind_an_ordering_edge_is_const_in_both_units()
+    test_a_nested_function_passes_the_state_to_its_launchers()
+    test_a_sequential_factorization_over_device_memory_touches_it_only_in_kernels()
+    test_a_matmul_an_offloaded_contraction_expands_to_is_a_kernel()
+    test_the_units_build_with_hipcc(s255, "cpf_hip_s255_build", pathlib.Path(tempfile.mkdtemp()))
+    test_the_units_build_with_hipcc(gramschmidt, "cpf_hip_nested_build", pathlib.Path(tempfile.mkdtemp()))
+    test_the_units_build_with_hipcc(cholesky_plus_upper, "cpf_hip_chol_build", pathlib.Path(tempfile.mkdtemp()))
+    test_the_units_build_with_hipcc(fft_round_trip, "cpf_hip_fft_build", pathlib.Path(tempfile.mkdtemp()))
+    test_the_host_dialects_do_not_see_the_device_selection("c++")
+    test_the_host_dialects_do_not_see_the_device_selection("c")
+    test_the_device_object_is_found_however_the_backend_labels_it("cpp", "hip")
+    test_the_device_object_is_found_however_the_backend_labels_it("cu", "cuda")
+    test_the_device_object_is_found_however_the_backend_labels_it("cu", "")
+    test_the_device_object_is_found_however_the_backend_labels_it("cpp", "cuda")
+    test_a_split_that_is_not_a_device_object_is_still_refused()
+    test_non_linkable_objects_do_not_count_as_a_split()

@@ -916,3 +916,88 @@ def kernel_with_a_shared_tile() -> dace.SDFG:
     )
     sdfg.validate()
     return sdfg
+
+
+def host_tasklets_on_both_sides_of_a_kernel() -> dace.SDFG:
+    """``scale`` feeds a kernel whose sum ``divide`` reads; both host tasklets read ``C``, so they share one component."""
+    sdfg = dace.SDFG("placement_host_tasklets_on_both_sides_of_a_kernel")
+    sdfg.add_array("A", [LENGTH], dace.float64)
+    sdfg.add_array("C", [2], dace.float64)
+    sdfg.add_array("OUT", [2], dace.float64)
+    sdfg.add_transient("factor", [1], dace.float64)
+    sdfg.add_transient("total", [1], dace.float64)
+    state = sdfg.add_state("mixed")
+    c = state.add_read("C")
+    scale = state.add_tasklet("scale", {"c": None}, {"f": None}, "f = 2.0 * c")
+    factor = state.add_access("factor")
+    state.add_edge(c, None, scale, "c", dace.Memlet("C[0]"))
+    state.add_edge(scale, "f", factor, None, dace.Memlet("factor[0]"))
+    total = state.add_access("total")
+    state.add_mapped_tasklet(
+        "weighted_sum",
+        {"i": f"0:{LENGTH}"},
+        {"a": dace.Memlet("A[i]"), "f": dace.Memlet("factor[0]")},
+        "s = a * f",
+        {"s": dace.Memlet("total[0]", wcr="lambda x, y: x + y")},
+        input_nodes={"A": state.add_read("A"), "factor": factor},
+        output_nodes={"total": total},
+        external_edges=True,
+    )
+    divide = state.add_tasklet("divide", {"c": None, "t": None}, {"o": None}, "o = c / t")
+    state.add_edge(c, None, divide, "c", dace.Memlet("C[1]"))
+    state.add_edge(total, None, divide, "t", dace.Memlet("total[0]"))
+    state.add_edge(divide, "o", state.add_write("OUT"), None, dace.Memlet("OUT[0]"))
+    sdfg.validate()
+    return sdfg
+
+
+def test_host_tasklets_on_both_sides_of_a_kernel_get_separate_wrappers():
+    """bicgstab: one size-1 wrapper around ``scale`` and ``divide`` would feed the kernel and wait for it."""
+    sdfg = host_tasklets_on_both_sides_of_a_kernel()
+    sdfg.apply_gpu_transformations(validate=False, simplify=False)
+    sdfg.validate()
+    state = next(s for s in sdfg.states() if s.label == "mixed")
+    scopes = state.scope_dict()
+    scale, divide = (
+        next(n for n in state.nodes() if getattr(n, "label", None) == name) for name in ("scale", "divide")
+    )
+    assert scopes[scale] is not None and scopes[divide] is not None and scopes[scale] is not scopes[divide]
+
+
+@pytest.mark.gpu
+def test_host_tasklets_on_both_sides_of_a_kernel_compute_what_numpy_computes():
+    sdfg = host_tasklets_on_both_sides_of_a_kernel()
+    sdfg.name = "placement_host_tasklets_on_both_sides_of_a_kernel_run"
+    sdfg.apply_gpu_transformations()
+    out = np.zeros(2)
+    sdfg(A=np.arange(LENGTH, dtype=np.float64), C=np.array([3.0, 5.0]), OUT=out)
+    assert out[0] == 5.0 / (6.0 * np.arange(LENGTH).sum())
+
+
+if __name__ == "__main__":
+    test_an_interstate_read_does_not_hand_the_next_state_the_device_name()
+    test_fusing_the_wrappers_does_not_validate_before_the_copies_exist()
+    test_the_fused_wrappers_compute_what_the_host_tasklets_computed()
+    test_a_join_hands_on_the_locations_its_later_arm_carries()
+    test_a_join_hands_on_the_locations_its_later_arm_carries_and_computes()
+    test_a_wrapped_region_puts_every_root_under_its_entry()
+    test_a_copy_hands_its_destination_the_side_of_its_source()
+    test_a_copy_before_a_host_recurrence_computes_what_numpy_computes()
+    test_a_scalar_a_kernel_writes_and_a_later_state_reads_is_device_resident()
+    test_a_read_only_array_both_sides_read_is_copied_exactly_once()
+    test_a_host_only_array_is_staged_once_each_way_and_not_wrapped()
+    test_a_device_access_to_a_cpu_heap_array_is_renamed_to_the_device_copy()
+    test_the_ir_walk_does_not_recurse_once_per_block()
+    test_traverse_ir_does_not_recurse_once_per_block()
+    test_a_tail_contributes_none_of_its_remaining_siblings()
+    test_a_cpu_heap_array_survives_the_round_trip()
+    test_an_ordering_edge_does_not_make_a_scalar_device_written()
+    test_the_pass_reports_what_it_placed_on_the_device()
+    test_a_graph_with_nothing_to_offload_reports_no_change()
+    test_a_single_element_two_maps_read_stays_outside_both()
+    test_a_length_one_local_of_a_one_iteration_map_in_a_kernel_is_a_register()
+    test_a_length_one_local_of_a_one_iteration_map_computes_what_numpy_computes()
+    test_a_host_accumulator_beside_a_kernel_computes_what_numpy_computes(1)
+    test_a_host_accumulator_beside_a_kernel_computes_what_numpy_computes(4)
+    test_host_tasklets_on_both_sides_of_a_kernel_get_separate_wrappers()
+    test_host_tasklets_on_both_sides_of_a_kernel_compute_what_numpy_computes()

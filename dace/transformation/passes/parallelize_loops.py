@@ -86,6 +86,41 @@ def last_iteration(loop: LoopRegion) -> Optional[symbolic.SymbolicType]:
     return symbolic.simplify(start + symbolic.int_floor(end - start, step) * step)
 
 
+def writes_overlapping_slabs(loop: LoopRegion) -> bool:
+    """Whether a plain write in ``loop`` is identified by an ``a*i+b`` lower bound alone while its slab is wider
+    than the stride, so successive iterations write overlapping elements.
+
+    ``LoopToMap`` accepts a write whose lower bound in some dimension is ``a*i+b`` without looking at that
+    dimension's extent: householder_qr's ``Q[k:M, :]`` under the ``k`` loop passed and became a racing map. A
+    write is unique per iteration only through a dimension whose width fits in ``|a * step|``.
+    """
+    step = loop_analysis.get_loop_stride(loop)
+    if step is None:
+        return False
+    for state in loop.states():
+        for node in state.data_nodes():
+            for edge in state.in_edges(node):
+                if edge.data.is_empty() or edge.data.wcr is not None:
+                    continue
+                subset = edge.data.get_dst_subset(edge, state)
+                if subset is None:
+                    continue
+                indexed = partitioned = False
+                for begin, end, range_step in subset.ndrange():  # noqa: B007 -- `step` below is the loop's
+                    coefficients = symbolic.affine_coefficients(begin, loop.loop_variable)
+                    if coefficients is None or coefficients[0] == 0:
+                        continue
+                    indexed = True
+                    stride = symbolic.simplify(coefficients[0] * step)
+                    width = symbolic.simplify(symbolic.tile_extent(end, begin))
+                    if (stride - width).is_nonnegative or (-stride - width).is_nonnegative:
+                        partitioned = True
+                        break
+                if indexed and not partitioned:
+                    return True
+    return False
+
+
 def lifted_blocks(site: LiftSite, loop: LoopRegion, region: ControlFlowRegion) -> Optional[List[SDFGState]]:
     """The blocks the lift put in ``loop``'s place, if the region's block order is the old one with the loop
     replaced by them -- the one case in which the SDFG's block order can be patched instead of rebuilt."""
@@ -310,6 +345,8 @@ class ParallelizeLoops(ppl.Pass):
         xform.setup_match(sd, -1, -1, {LoopToMap.loop: loop}, 0, override=True)
         xform._pipeline_results = pipeline_results
         if not proven and not xform.can_be_applied(graph, 0, sd, permissive=self.permissive):
+            return False
+        if not proven and not self.permissive and writes_overlapping_slabs(loop):
             return False
         if before_apply is not None:
             before_apply()

@@ -16,6 +16,7 @@ from dace import dtypes, properties, data, Memlet, subsets, symbolic
 from dace.config import Config
 from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES
 from dace.sdfg import nodes, SDFG
+from dace.sdfg import utils as sdutil
 from dace.sdfg.state import (
     SDFGState,
     ConditionalBlock,
@@ -2203,6 +2204,33 @@ class OffloadToAccelerator(ppl.Pass):
                 queue.append(extra)
         return closed
 
+    def convex_pieces(self, state: SDFGState, partition: OrderedSet[nodes.Node]) -> list[OrderedSet[nodes.Node]]:
+        """``partition`` split so that no dataflow path leaves a piece and comes back into it.
+
+        Components are cut undirected, so two host tasklets joined only by a shared read can sit on
+        both sides of a kernel (bicgstab): one wrapper around both would feed the kernel and wait on it.
+        A node's piece is how many times a path from the partition to it re-enters the partition; a
+        path never lowers that count, and every re-entry raises it, so no path returns to a piece.
+        """
+        if not partition or not reenters(state, partition):
+            return [partition] if partition else []
+        reentries: dict[nodes.Node, int] = {}
+        for node in sdutil.dfs_topological_sort(state):
+            inside = node in partition
+            counts = [
+                reentries[e.src] + (1 if inside and e.src not in partition else 0)
+                for e in state.in_edges(node)
+                if e.src in reentries
+            ]
+            if inside or counts:
+                reentries[node] = max(counts, default=0)
+        pieces: dict[int, OrderedSet[nodes.Node]] = {}
+        for node in partition:
+            pieces.setdefault(reentries[node], OrderedSet()).add(node)
+        for piece in pieces.values():
+            self._remove_all_outer_access_nodes_from_group(state, piece)
+        return [pieces[key] for key in sorted(pieces) if pieces[key]]
+
     def _remove_all_outer_access_nodes_from_group(self, state: SDFGState, group: MutableSet[nodes.Node]):
         outer_nodes = self._get_entry_nodes(state, group) | self._get_exit_nodes(state, group)
         nodes_to_remove = OrderedSet(node for node in outer_nodes if isinstance(node, nodes.AccessNode))
@@ -2401,9 +2429,11 @@ class OffloadToAccelerator(ppl.Pass):
                 continue
             partition = closed_partition
 
-            # if anything is left, wrap it
-            if partition:
-                map_entry, map_exit = required(self._wrap_region_in_size1_map(state, partition))
+            # Wrap every piece before the fix-ups: two pieces of one partition can be adjacent.
+            wrappers = [
+                required(self._wrap_region_in_size1_map(state, piece)) for piece in self.convex_pieces(state, partition)
+            ]
+            for map_entry, map_exit in wrappers:
                 new_maps.add((map_entry, map_exit))
 
                 # Avoid illegal direct map-to-map connections by routing through an access node.
@@ -2482,3 +2512,19 @@ class OffloadToAccelerator(ppl.Pass):
                 preserve_abi=True,
                 filter=to_scalars,
             ).apply_pass(sdfg, {})
+
+
+def reenters(state: SDFGState, region: AbstractSet[nodes.Node]) -> bool:
+    """Whether a dataflow path leaves ``region`` and comes back into it."""
+    frontier = [e.dst for node in region for e in state.out_edges(node) if e.dst not in region]
+    seen: OrderedSet[nodes.Node] = OrderedSet()
+    while frontier:
+        node = frontier.pop()
+        if node in seen:
+            continue
+        seen.add(node)
+        for edge in state.out_edges(node):
+            if edge.dst in region:
+                return True
+            frontier.append(edge.dst)
+    return False

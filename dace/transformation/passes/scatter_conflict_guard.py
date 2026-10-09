@@ -214,13 +214,8 @@ def value_is_injective_affine(value_expr: str, loop_var: str) -> bool:
     :param loop_var: The producing loop's iteration variable.
     :returns: ``True`` iff ``value_expr`` is ``a*loop_var + b`` with a non-zero integer ``a``.
     """
-    j = symbolic.pystr_to_symbolic(str(loop_var))
-    expr = symbolic.pystr_to_symbolic(str(value_expr))
-    lead = as_expr(expr).coeff(as_expr(j), 1)
-    const = as_expr(expr).coeff(as_expr(j), 0)
-    if symbolic.simplify(expr - (required(lead) * j + const)) != 0:  # non-affine in loop_var
-        return False
-    return bool(required(lead).is_Integer) and lead != 0
+    coefficients = symbolic.affine_coefficients(str(value_expr), str(loop_var))
+    return coefficients is not None and bool(coefficients[0].is_Integer) and coefficients[0] != 0
 
 
 def insert_scatter_guard(
@@ -372,7 +367,7 @@ def build_guard_states(
             else:
                 ranges.append((index_slice.fixed[d], index_slice.fixed[d], 1))
         idx_subset = subsets.Range(ranges)
-    count_name, _ = sdfg.add_scalar(f"{_COUNT_PREFIX}{idx_name}", dtypes.int64, transient=True)
+    count_name = sdfg.add_scalar(f"{_COUNT_PREFIX}{idx_name}", dtypes.int64, transient=True, find_new_name=True)[0]
     trap_sym = f"__scatter_guard_check_{count_name}"
     sdfg.add_symbol(trap_sym, dtypes.int64)
 
@@ -508,6 +503,7 @@ def _wire_owner_scratch(
         transient=True,
         storage=dtypes.StorageType.CPU_Heap,
         lifetime=lifetime,
+        find_new_name=True,
     )
     check_node.add_out_connector(ScatterConflictCheck.SCRATCH_CONNECTOR_NAME)
     check_state.add_edge(

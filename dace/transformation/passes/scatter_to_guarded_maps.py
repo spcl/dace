@@ -32,8 +32,8 @@ This pass operationalises that contract end-to-end:
    so demanding a permutation of it would abort on inputs the program computes correctly.
 2. **Guard** each detected ``idx`` array via
    :func:`~dace.transformation.passes.scatter_conflict_guard.insert_scatter_guard`,
-   which inserts an ``IntegerSort`` + adjacent-equal-pair check + ``std::abort()``
-   at the earliest legal CFG state.
+   which inserts a ``ScatterConflictCheck`` + ``std::abort()`` at the earliest legal CFG state
+   (right before the scatter when an enclosing loop rewrites the index array).
 3. **Parallelize** by applying ``LoopToMap`` in ``permissive`` mode, which lifts
    the scatter loops (and any other previously refused permissive cases) into
    parallel Maps.
@@ -143,10 +143,7 @@ class ScatterToGuardedMaps(ppl.Pass):
                 parent = loop.parent_graph
                 if parent is None or loop not in parent.nodes():
                     continue
-                try:
-                    ParallelizeLoops(propagate=False).parallelize_loop(sdfg, loop, proven=True)
-                except Exception:
-                    pass
+                ParallelizeLoops(propagate=False).parallelize_loop(sdfg, loop, proven=True)
             if scatter_loops:
                 propagate_memlets_sdfg(sdfg)
             return (len(idx_arrays) + len(sliced_guards) + len(joint_writes)) or None
@@ -171,11 +168,26 @@ class ScatterToGuardedMaps(ppl.Pass):
                     # The count is bound where the guard was hoisted to, so the dispatch goes there too.
                     joint_anchors[id(loop)] = plan.anchor
 
+        # An index array rewritten inside a loop that also encloses its scatter is checked right
+        # before that scatter, on the window it reads: a guard hoisted to the definition would run
+        # once, after the enclosing loop, on a stale array (nfa_frontier).
+        rebuilt_guards = []
+        hoisted_names = set()
+        for loop in scatter_loops:
+            owner_sdfg = _owning_sdfg(sdfg, loop)
+            for idx_name, (targets, window) in _scatter_idx_targets_for_loop(loop, owner_sdfg, window_1d=True).items():
+                if idx_name not in idx_arrays:
+                    continue
+                if index_rebuilt_around(owner_sdfg, loop, idx_name):
+                    rebuilt_guards.append((loop, idx_name, window))
+                else:
+                    hoisted_names.add(idx_name)
+
         # Track each idx_array's duplicate-count symbol so the else-branch
         # dispatcher knows which symbol to gate on per scatter loop. None when
         # the trap mode is on.
         dup_count_syms: dict = {}
-        for idx_name in sorted(idx_arrays):
+        for idx_name in sorted(hoisted_names):
             try:
                 trap_sym = insert_scatter_guard(sdfg, idx_name, emit_trap=not self.emit_unparallelized_else_branch)
                 if trap_sym is not None:
@@ -216,6 +228,19 @@ class ScatterToGuardedMaps(ppl.Pass):
                 if "already exists" not in str(exc):
                     raise
 
+        for loop, idx_name, window in rebuilt_guards:
+            owner_sdfg = _owning_sdfg(sdfg, loop)
+            guard = build_guard_states(
+                owner_sdfg,
+                idx_name,
+                emit_trap=not self.emit_unparallelized_else_branch,
+                index_slice=window,
+                region=loop.parent_graph,
+            )
+            splice_guard_before(loop.parent_graph, loop, *guard)
+            if self.emit_unparallelized_else_branch:
+                sliced_dup_syms[(id(loop), idx_name)] = guard[3]
+
         for loop in scatter_loops:
             parent = loop.parent_graph
             if parent is None or loop not in parent.nodes():
@@ -244,10 +269,7 @@ class ScatterToGuardedMaps(ppl.Pass):
                     _wrap_loop_in_dispatcher(parent, loop, cond)
                     continue
 
-            try:
-                ParallelizeLoops(propagate=False).parallelize_loop(sdfg, loop, proven=True)
-            except Exception:
-                pass
+            ParallelizeLoops(propagate=False).parallelize_loop(sdfg, loop, proven=True)
         # One propagation for the whole pass: every lift above skips its own (45 whole-SDFG runs on ls3df_scf).
         if scatter_loops:
             propagate_memlets_sdfg(sdfg)
@@ -395,7 +417,7 @@ def _scatter_idx_arrays_for_loop(region: LoopRegion, sdfg: SDFG) -> Set[str]:
 
 
 def _scatter_idx_targets_for_loop(
-    region: LoopRegion, sdfg: SDFG
+    region: LoopRegion, sdfg: SDFG, window_1d: bool = False
 ) -> Dict[str, Tuple[Set[str], Optional[ScatterIndexSlice]]]:
     """Map each scatter index-array name driving an indirect WRITE in ``region`` to the arrays
     it writes through, plus (for a rank>=2 index array) the 1-D window the guard should scan.
@@ -416,7 +438,7 @@ def _scatter_idx_targets_for_loop(
        ``[f(i)]`` (``ext_scatter_store``, lowered from a ``dace.map`` scatter).
 
     A 1-D index array is always included (``index slice = None`` -- the guard scans the whole
-    declared array). A rank>=2 index array (forms 1/2 only -- form 3 has no subscript AST to
+    declared array; with ``window_1d``, the window the loop reads when it classifies). A rank>=2 index array (forms 1/2 only -- form 3 has no subscript AST to
     classify) is included only when :func:`_classify_index_slice` pins its subscript to a
     single contiguous varying dimension; otherwise it is dropped and the loop stays un-lifted
     for that array.
@@ -458,14 +480,15 @@ def _scatter_idx_targets_for_loop(
     result: Dict[str, Tuple[Set[str], Optional[ScatterIndexSlice]]] = {}
     for arr, tgts in loop_arrays.items():
         desc = sdfg.arrays[arr]
-        if len(desc.shape) == 1:
+        one_dim = len(desc.shape) == 1
+        dim_nodes = dim_nodes_by_arr.get(arr)
+        if one_dim and (not window_1d or dim_nodes is None):
             result[arr] = (tgts, None)
             continue
-        dim_nodes = dim_nodes_by_arr.get(arr)
         if dim_nodes is None:
             continue  # form 3 only -- no subscript AST to classify, stays excluded.
         index_slice = _classify_index_slice(desc, dim_nodes, region)
-        if index_slice is not None:
+        if index_slice is not None or one_dim:
             result[arr] = (tgts, index_slice)
     return result
 
@@ -496,12 +519,10 @@ def _classify_index_slice(
     if init is None or end is None or lstride is None:
         return None
 
-    j = symbolic.pystr_to_symbolic(loop_var)
-    dim_expr = symbolic.pystr_to_symbolic(astutils.unparse(dim_nodes[dim]))
-    coeff = as_expr(dim_expr).coeff(as_expr(j), 1)
-    const = as_expr(dim_expr).coeff(as_expr(j), 0)
-    if symbolic.simplify(dim_expr - (required(coeff) * j + const)) != 0:
-        return None  # not affine in the loop variable
+    coefficients = symbolic.affine_coefficients(astutils.unparse(dim_nodes[dim]), loop_var)
+    if coefficients is None:
+        return None
+    coeff, const = coefficients
 
     elem_stride = symbolic.simplify(coeff * lstride * desc.strides[dim])
     if symbolic.simplify(elem_stride - 1) != 0:
@@ -938,8 +959,22 @@ def guard_joint_scatter_write(root: SDFG, loop: LoopRegion, write: JointScatterW
     check_state, trap_state, count_name, trap_sym = build_guard_states(
         plan.host_sdfg, key_name, emit_trap=emit_trap, region=parent, domain=bound
     )
-    # ``joint_scatter_key`` already put the fill immediately before ``anchor``; splice the check
-    # (and trap) into that one edge, so the order is fill -> check -> [trap] -> anchor.
+    # ``joint_scatter_key`` already put the fill immediately before ``anchor``, so the order is
+    # fill -> check -> [trap] -> anchor.
+    splice_guard_before(parent, anchor, check_state, trap_state, count_name, trap_sym)
+    return None if emit_trap else trap_sym
+
+
+def splice_guard_before(
+    parent: ControlFlowRegion,
+    anchor: ControlFlowBlock,
+    check_state: SDFGState,
+    trap_state: Optional[SDFGState],
+    count_name: str,
+    trap_sym: str,
+) -> None:
+    """Route every edge into ``anchor`` through ``check -> [trap]``, binding the count to ``trap_sym``."""
+    was_start = parent.in_degree(anchor) == 0
     for e in list(parent.in_edges(anchor)):
         parent.remove_edge(e)
         parent.add_edge(e.src, check_state, e.data)
@@ -948,7 +983,26 @@ def guard_joint_scatter_write(root: SDFG, loop: LoopRegion, write: JointScatterW
     else:
         parent.add_edge(check_state, trap_state, dace.InterstateEdge(assignments={trap_sym: count_name}))
         parent.add_edge(trap_state, anchor, dace.InterstateEdge())
-    return None if emit_trap else trap_sym
+    if was_start:
+        parent.start_block = parent.node_id(check_state)
+
+
+def index_rebuilt_around(owner_sdfg: SDFG, loop: LoopRegion, idx_name: str) -> bool:
+    """Whether a loop enclosing ``loop`` also writes ``idx_name``, so its values change between scatters."""
+    enclosing = set()
+    region = loop.parent_graph
+    while not isinstance(region, SDFG):
+        enclosing.add(region)
+        region = region.parent_graph
+    for state in owner_sdfg.states():
+        if not any(n.data == idx_name and state.in_degree(n) > 0 for n in state.data_nodes()):
+            continue
+        region = state.parent_graph
+        while not isinstance(region, SDFG):
+            if region in enclosing:
+                return True
+            region = region.parent_graph
+    return False
 
 
 def _collect_indirect_bindings(region: LoopRegion, sdfg: SDFG) -> Dict[str, Tuple[str, List[ast.AST]]]:
@@ -1275,16 +1329,13 @@ def _wrap_loop_in_dispatcher(
         but a state holding the map nest ``loop`` sits in (a guard hoisted out of a trivial map
         wrapper, see :func:`joint_guard_plan`). ``loop`` is still the one lifted and pinned.
     """
-    import copy as _copy
-    from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
-
     block = loop if block is None else block
     if block not in parent.nodes():
         return
 
     in_edges = list(parent.in_edges(block))
     out_edges = list(parent.out_edges(block))
-    was_start = getattr(parent, "start_block", None) is block
+    was_start = parent.start_block is block
 
     # Pin the fallback so no later parallelizer re-lifts it, and so a parallelism
     # counter can treat this guarded region as fully parallel (the pinned clone is
@@ -1293,7 +1344,7 @@ def _wrap_loop_in_dispatcher(
     # only, so it also lands on the clone when ``loop`` sits inside ``block``.
     was_pinned = loop.pinned_sequential
     loop.pinned_sequential = True
-    sequential_clone = _copy.deepcopy(block)
+    sequential_clone = copy.deepcopy(block)
     loop.pinned_sequential = was_pinned
     sequential_clone.label = block.label + "_seq_fallback"
     if isinstance(sequential_clone, SDFGState):
@@ -1332,15 +1383,7 @@ def _wrap_loop_in_dispatcher(
     if block is not loop:
         # The clone brought its own nested sdfgs along.
         root.reset_cfg_list()
-    try:
-        ParallelizeLoops(propagate=False).parallelize_loop(
-            root, loop, proven=True
-        )  # ScatterToGuardedMaps propagates once
-    except Exception:
-        # If the lift fails on the parallel branch the sequential clone in the
-        # other branch still produces the right result; codegen will compile
-        # both arms unchanged.
-        pass
+    ParallelizeLoops(propagate=False).parallelize_loop(root, loop, proven=True)  # ScatterToGuardedMaps propagates once
 
 
 __all__ = [

@@ -38,12 +38,14 @@ def connect_through_scalar(
 
 
 def read_back_access(state: SDFGState, written: nodes.AccessNode) -> nodes.AccessNode:
-    """A new read of ``written``'s data in ``state``; a view is bound to what ``written`` views."""
+    """A new read of ``written``'s data in ``state``; a view is bound to what ``written`` views, through every
+    level of a view chain, or views nothing when ``written`` is unbound."""
     node = state.add_access(written.data)
     if isinstance(written.desc(state.sdfg), data.View):
         edge = sdutil.get_view_edge(state, written)
-        viewed = edge.dst if edge.src is written else edge.src
-        state.add_edge(read_back_access(state, viewed), None, node, "views", copy.deepcopy(edge.data))
+        if edge is not None:
+            viewed = edge.dst if edge.src is written else edge.src
+            state.add_edge(read_back_access(state, viewed), None, node, "views", copy.deepcopy(edge.data))
     return node
 
 
@@ -1121,6 +1123,12 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
             if isinstance(node.desc(state.sdfg), data.View):
                 chain = sdutil.get_all_view_edges(state, node)
                 boundary_nodes.update(n for e in chain for n in (e.src, e.dst) if n in nodes_to_move)
+
+        # A duplicated view needs the chain it views duplicated with it, or the copy views nothing.
+        for node in list(boundary_nodes):
+            if isinstance(node.desc(state.sdfg), data.View):
+                for edge in sdutil.get_all_view_edges(state, node):
+                    boundary_nodes.update(n for n in (edge.src, edge.dst) if n in nodes_to_move)
 
         # Duplicate boundary nodes
         new_nodes = {}

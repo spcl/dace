@@ -140,17 +140,20 @@ class ExpandCholeskyPure(ExpandTransformation):
         n = inp_shape[0]
         lower = node.lower
 
+        # Every statement under the column loop is a map, the pivot a one-point one, so that over
+        # device memory each one is a kernel and the host loop touches no element of ``factor``.
         @dace.program
         def cholesky_pure(_a: dtype[n, n], _b: dtype[n, n]):
             factor = dace.define_local([n, n], dtype)
             factor[:] = 0  # the strict upper triangle is never assigned, and is read back on the copy
             for j in range(n):
-                diagonal = _a[j, j]
-                for k in range(j):
-                    diagonal = diagonal - factor[j, k] * np.conj(factor[j, k])
-                # A Hermitian positive-definite pivot is real; its rounding residue must not reach the factor.
-                factor[j, j] = math.sqrt(np.real(diagonal))
-                for i in range(j + 1, n):
+                for single in dace.map[0:1]:
+                    diagonal = _a[j, j]
+                    for k in range(j):
+                        diagonal = diagonal - factor[j, k] * np.conj(factor[j, k])
+                    # A Hermitian positive-definite pivot is real; its rounding residue must not reach the factor.
+                    factor[j, j] = math.sqrt(np.real(diagonal))
+                for i in dace.map[j + 1 : n]:
                     off = _a[i, j]
                     for k in range(j):
                         off = off - factor[i, k] * np.conj(factor[j, k])
@@ -162,6 +165,9 @@ class ExpandCholeskyPure(ExpandTransformation):
                 _b[i, j] = factor[i, j] if lower else np.conj(factor[j, i])
 
         nsdfg = cholesky_pure.to_sdfg(simplify=True)
+        if node.schedule in dtypes.GPU_SCHEDULES:
+            # Left to the scope default, a device schedule makes the host-level scratch shared memory.
+            nsdfg.arrays["factor"].storage = dtypes.StorageType.GPU_Global
         # See ``restride``: a connector may be a strided slice of a bigger array, and a contiguous
         # reading of it is silently wrong rather than an error.
         restride(nsdfg, (("_a", inp_shape, inp_desc.strides), ("_b", out_shape, out_desc.strides)), dtype)

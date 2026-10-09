@@ -174,27 +174,27 @@ def test_detect_returns_empty_for_elementwise():
 # End-to-end tests
 
 
-@pytest.mark.parametrize(
-    "kernel,inputs_fn",
-    [
-        (
-            tsvc_s4113,
-            lambda n: {
-                "b": np.random.default_rng(10).random(n),
-                "c": np.random.default_rng(11).random(n),
-            },
-        ),
-        (
-            tsvc_s491,
-            lambda n: {
-                "b": np.random.default_rng(20).random(n),
-                "c": np.random.default_rng(21).random(n),
-                "d": np.random.default_rng(22).random(n),
-            },
-        ),
-        (tsvc_vas, lambda n: {"b": np.random.default_rng(30).random(n)}),
-    ],
-)
+SCATTER_KERNEL_CASES = [
+    (
+        tsvc_s4113,
+        lambda n: {
+            "b": np.random.default_rng(10).random(n),
+            "c": np.random.default_rng(11).random(n),
+        },
+    ),
+    (
+        tsvc_s491,
+        lambda n: {
+            "b": np.random.default_rng(20).random(n),
+            "c": np.random.default_rng(21).random(n),
+            "d": np.random.default_rng(22).random(n),
+        },
+    ),
+    (tsvc_vas, lambda n: {"b": np.random.default_rng(30).random(n)}),
+]
+
+
+@pytest.mark.parametrize("kernel,inputs_fn", SCATTER_KERNEL_CASES)
 def test_scatter_kernel_guarded_and_parallelized(kernel, inputs_fn):
     """Each TSVC scatter is guarded (1 ScatterConflictCheck node) and parallelized (>=1 MapEntry)."""
     sdfg = kernel.to_sdfg(simplify=True)
@@ -285,20 +285,20 @@ def _ref_s4113_ssym(a, ip, ssym, kw):
         a[ip[i * ssym]] = kw["b"][ip[i * ssym]] + kw["c"][i]
 
 
-@pytest.mark.parametrize(
-    "kernel,inputs_fn,ref",
-    [
-        (vas_ssym, lambda n: {"b": np.random.default_rng(40).random(n)}, _ref_vas_ssym),
-        (
-            s4113_ssym,
-            lambda n: {
-                "b": np.random.default_rng(41).random(n),
-                "c": np.random.default_rng(42).random(n),
-            },
-            _ref_s4113_ssym,
-        ),
-    ],
-)
+SYMBOLIC_STRIDE_CASES = [
+    (vas_ssym, lambda n: {"b": np.random.default_rng(40).random(n)}, _ref_vas_ssym),
+    (
+        s4113_ssym,
+        lambda n: {
+            "b": np.random.default_rng(41).random(n),
+            "c": np.random.default_rng(42).random(n),
+        },
+        _ref_s4113_ssym,
+    ),
+]
+
+
+@pytest.mark.parametrize("kernel,inputs_fn,ref", SYMBOLIC_STRIDE_CASES)
 def test_symbolic_stride_scatter_guarded_and_parallelized(kernel, inputs_fn, ref):
     """Each symbolic-stride scatter is guarded (1 ScatterConflictCheck) and lifted (>=1
     Map), and reproduces the sequential result bit-for-bit under a permutation
@@ -704,7 +704,73 @@ def test_a_sliced_guard_hoisted_out_of_a_map_feeds_the_dispatcher_inside_it(repe
     assert np.allclose(dst, level_scatter_reference(idx, src, level_step=2))
 
 
-if __name__ == "__main__":
-    import sys
+NW = dace.symbol("NW")
+NT = dace.symbol("NT")
 
-    sys.exit(pytest.main([__file__, "-v"]))
+
+@dace.program
+def scatter_through_index_rebuilt_every_round(a: dace.float64[N], b: dace.float64[N], shift: dace.int64[NT]):
+    ip = np.zeros(N, dtype=np.int64)
+    for t in range(NT):
+        for i in range(NW):
+            ip[i] = (i + shift[t]) % N
+        for k in range(NW):
+            a[ip[k]] = b[k] + t
+
+
+@pytest.mark.parametrize("dispatch", [False, True])
+def test_an_index_rebuilt_every_round_is_guarded_before_each_scatter(dispatch: bool):
+    """nfa_frontier rebuilds its index array inside the loop that also scatters through it: the guard
+    must run right before the scatter on the window it reads (the stale tail of ``ip`` repeats 0)."""
+    sdfg = scatter_through_index_rebuilt_every_round.to_sdfg(simplify=True)
+    sdfg.name = f"scatter_index_rebuilt_every_round_{dispatch}"
+    ScatterToGuardedMaps(emit_unparallelized_else_branch=dispatch).apply_pass(sdfg, {})
+    sdfg.validate()
+
+    check_state = next(s for n, s in sdfg.all_nodes_recursive() if isinstance(n, ScatterConflictCheck))
+    assert isinstance(check_state.parent_graph, LoopRegion) and check_state.parent_graph.loop_variable == "t"
+    check = next(n for n in check_state.nodes() if isinstance(n, ScatterConflictCheck))
+    assert str(check_state.in_edges(check)[0].data.subset) == "0:NW"
+
+    n, nw, nt = 16, 6, 3
+    b = np.random.default_rng(3).random(n)
+    shift = np.array([0, 5, 11], dtype=np.int64)
+    a = np.zeros(n)
+    sdfg(a=a, b=b, shift=shift, N=n, NW=nw, NT=nt)
+    ref = np.zeros(n)
+    for t in range(nt):
+        for k in range(nw):
+            ref[(k + shift[t]) % n] = b[k] + t
+    assert np.allclose(a, ref)
+
+
+if __name__ == "__main__":
+    test_detect_finds_single_scatter()
+    test_detect_finds_each_distinct_idx_array()
+    test_detect_returns_empty_for_elementwise()
+    test_scatter_kernel_guarded_and_parallelized(*SCATTER_KERNEL_CASES[0])
+    test_scatter_kernel_guarded_and_parallelized(*SCATTER_KERNEL_CASES[1])
+    test_scatter_kernel_guarded_and_parallelized(*SCATTER_KERNEL_CASES[2])
+    test_two_distinct_scatters_get_individual_guards()
+    test_detect_inline_subscript_symbolic_stride_scatter()
+    test_detect_strided_interstate_binding_scatter()
+    test_symbolic_stride_scatter_guarded_and_parallelized(*SYMBOLIC_STRIDE_CASES[0])
+    test_symbolic_stride_scatter_guarded_and_parallelized(*SYMBOLIC_STRIDE_CASES[1])
+    test_detect_and_lift_nested_map_scatter()
+    test_no_scatter_elementwise_no_op_modified_skips_global_permissive_lift()
+    test_carry_loop_not_permissively_lifted_by_scatter_pass()
+    test_idempotent_on_already_guarded_sdfg()
+    test_else_branch_permutation_takes_parallel_path()
+    test_else_branch_duplicate_idx_takes_sequential_path()
+    test_else_branch_dispatcher_emits_both_branches()
+    test_parallel_branch_keeps_loop_scratch_transients_private_to_each_iteration()
+    test_assume_no_conflicts_skips_guard_and_lifts_unconditionally()
+    test_no_conflict_guard_survives_full_canonicalize(tsvc_s4113)
+    test_no_conflict_guard_survives_full_canonicalize(tsvc_s491)
+    test_no_conflict_guard_survives_full_canonicalize(tsvc_vas)
+    test_a_scatter_inside_a_map_is_dispatched_outside_the_map(False)
+    test_a_scatter_inside_a_map_is_dispatched_outside_the_map(True)
+    test_a_sliced_guard_hoisted_out_of_a_map_feeds_the_dispatcher_inside_it(False)
+    test_a_sliced_guard_hoisted_out_of_a_map_feeds_the_dispatcher_inside_it(True)
+    test_an_index_rebuilt_every_round_is_guarded_before_each_scatter(False)
+    test_an_index_rebuilt_every_round_is_guarded_before_each_scatter(True)

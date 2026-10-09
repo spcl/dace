@@ -420,11 +420,13 @@ def schedule_host_level_device_node(node: nodes.LibraryNode, state) -> None:
     already makes for a node with NO device expansion; CPF reaches the same state by a different
     route -- a device expansion exists, but not one a standalone unit can compile.
 
-    A node already on a device schedule, a host-dialect rendering and a node inside a kernel are all
-    left alone: only the host-level device-memory case is wrong, and only in a device dialect. So is
-    a node whose implementation CPF did not choose -- its caller leaves that one's expansion alone.
+    A node already ``GPU_Device``, a host-dialect rendering and a node inside a kernel are all left
+    alone: only the host-level device-memory case is wrong, and only in a device dialect. So is a
+    node whose implementation CPF did not choose -- its caller leaves that one's expansion alone. Any
+    other device schedule at host level is corrected too: an offloaded node's expansion hands the
+    nodes it produces the thread-block schedule of the scope they would be in (doitgen's matmul).
     """
-    if not cpf_lowering.device() or node.schedule in DEVICE_SCHEDULES:
+    if not cpf_lowering.device() or node.schedule == dtypes.ScheduleType.GPU_Device:
         return
     if on_device_at_host_level(node, state):
         node.schedule = dtypes.ScheduleType.GPU_Device

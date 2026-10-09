@@ -299,7 +299,8 @@ def simplify_loop(loop: LoopRegion, nested_carries: Dict[str, Tuple[LoopRegion, 
         basis = iv.basis
         if basis is None:
             continue
-        dead = symbol_is_dead_outside_loop(loop, name)
+        # A container sized by ``name`` that the fold below does not rewrite keeps reading it.
+        dead = symbol_is_dead_outside_loop(loop, name) and not loop_containers_use_symbol(loop, name)
         if not dead and not loop_reads_symbol(loop, name):
             continue  # already folded: only the kept assignment is left, so a rerun must not report a change
         # Build the replacement: scale * basis + offset, parenthesized so later
@@ -452,15 +453,29 @@ def header_code(block: Any) -> List[CodeBlock]:
     return [code for code in codes if code is not None]
 
 
+def loop_containers_use_symbol(loop: LoopRegion, name: str) -> bool:
+    """Whether a container accessed inside ``loop`` names ``name`` in its descriptor (a shape, a stride)."""
+    sdfg = loop.sdfg
+    return any(
+        name in {str(s) for s in node.desc(sdfg).used_symbols(all_symbols=True)}
+        for state in loop.states()
+        for node in state.data_nodes()
+    )
+
+
 def loop_reads_symbol(loop: LoopRegion, name: str) -> bool:
-    """Whether ``name`` is read inside ``loop``, nested SDFGs aside: by dataflow, by a loop or branch header, or
-    by an interstate edge's condition or assigned value. An assignment target is a write, not a read."""
+    """Whether ``name`` is read inside ``loop`` where a fold rewrites it, nested SDFGs aside: by a memlet or a
+    node, by a loop or branch header, or by an interstate edge's condition or assigned value. An assignment
+    target is a write, not a read, and a container descriptor is not rewritten (see
+    :func:`loop_containers_use_symbol`)."""
     if any(name in edge.data.read_symbols() for edge in loop.all_interstate_edges()):
         return True
     headers = [loop]
     for block in loop.all_control_flow_blocks():
         if isinstance(block, SDFGState):
-            if name in block.used_symbols(all_symbols=True):
+            if any(name in {str(s) for s in e.data.free_symbols} for e in block.edges()) or any(
+                name in {str(s) for s in n.free_symbols} for n in block.nodes() if not isinstance(n, nodes.AccessNode)
+            ):
                 return True
         elif isinstance(block, (LoopRegion, ConditionalBlock)):
             headers.append(block)

@@ -743,14 +743,18 @@ class RedundantArray(pm.SingleStateTransformation):
         in_desc = sdfg.arrays[in_array.data]
         out_desc = sdfg.arrays[out_array.data]
 
-        # Nested SDFGs writing the removed container write the one behind it, so their connectors follow
-        to_integrate = [
-            e.src
-            for e in graph.in_edges(in_array)
-            if isinstance(e.src, nodes.NestedSDFG)
-            and e.src_conn in e.src.sdfg.arrays
-            and not e.src.sdfg.arrays[e.src_conn].is_equivalent(out_desc)
-        ]
+        # Nested SDFGs writing the removed container write the one behind it, so their connectors follow,
+        # also from inside a map scope
+        to_integrate = list(
+            dict.fromkeys(
+                leaf.src
+                for e in graph.in_edges(in_array)
+                for leaf in graph.memlet_tree(e).leaves()
+                if isinstance(leaf.src, nodes.NestedSDFG)
+                and leaf.src_conn in leaf.src.sdfg.arrays
+                and not leaf.src.sdfg.arrays[leaf.src_conn].is_equivalent(out_desc)
+            )
+        )
 
         # 1. Get edge e1 and extract subsets for arrays A and B
         e1 = graph.edges_between(in_array, out_array)[0]

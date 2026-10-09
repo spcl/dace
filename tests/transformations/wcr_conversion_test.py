@@ -1,7 +1,7 @@
 import numpy as np
 import dace
 
-from dace.transformation.dataflow import AugAssignToWCR
+from dace.transformation.dataflow import AugAssignToWCR, WCRToAugAssign
 
 
 def test_aug_assign_tasklet_lhs():
@@ -634,6 +634,38 @@ def test_aug_assign_fission_keeps_the_binding_of_a_view_left_behind():
     assert np.array_equal(y, expected), y
 
 
+def test_isolating_an_accumulate_read_through_a_shared_view_keeps_the_views_source():
+    """mixed_precision_ir's ``y[i] -= Alu[i, :i] @ y[:i]``: the accumulator is read through a view that also
+    feeds the other operand. Isolating the accumulate duplicates that view, and the copy needs its own source."""
+    sdfg = dace.SDFG("aug_assign_through_shared_view")
+    sdfg.add_array("y", [4], dace.float64)
+    sdfg.add_view("yv", [4], dace.float64)
+    sdfg.add_transient("t", [1], dace.float64)
+    state = sdfg.add_state()
+    yv_read = state.add_access("yv")
+    state.add_edge(state.add_read("y"), None, yv_read, "views", dace.Memlet("y[0:4]"))
+    peek = state.add_tasklet("peek", {"a"}, {"o"}, "o = 2.0 * a")
+    t = state.add_access("t")
+    state.add_edge(yv_read, None, peek, "a", dace.Memlet("yv[0]"))
+    state.add_edge(peek, "o", t, None, dace.Memlet("t[0]"))
+    sub = state.add_tasklet("sub", {"acc", "d"}, {"o"}, "o = acc - d")
+    state.add_edge(yv_read, None, sub, "acc", dace.Memlet("yv[1]"))
+    state.add_edge(t, None, sub, "d", dace.Memlet("t[0]"))
+    yv_write = state.add_access("yv")
+    state.add_edge(sub, "o", yv_write, None, dace.Memlet("yv[1]"))
+    state.add_edge(yv_write, "views", state.add_write("y"), None, dace.Memlet("y[0:4]"))
+    sdfg.validate()
+
+    assert sdfg.apply_transformations_repeated(AugAssignToWCR) == 1
+    sdfg.validate()
+    # Reverting the WCR (RevertNonReductionWCR) must find a write view, not a read view left behind.
+    assert sdfg.apply_transformations_repeated(WCRToAugAssign) == 1
+    sdfg.validate()
+    y = np.arange(1, 5, dtype=np.float64)
+    sdfg(y=y)
+    assert np.array_equal(y, [1.0, 0.0, 3.0, 4.0])
+
+
 if __name__ == "__main__":
     test_aug_assign_tasklet_lhs()
     test_aug_assign_tasklet_lhs_brackets()
@@ -660,3 +692,4 @@ if __name__ == "__main__":
     test_aug_assign_fissions_an_access_node_delta_when_the_accumulator_is_written()
     test_aug_assign_keeps_the_other_read_of_the_same_array()
     test_aug_assign_fission_keeps_the_binding_of_a_view_left_behind()
+    test_isolating_an_accumulate_read_through_a_shared_view_keeps_the_views_source()
