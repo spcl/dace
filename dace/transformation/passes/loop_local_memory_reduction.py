@@ -9,7 +9,7 @@ from dace import data as dt
 from dace import properties, symbolic
 from dace import sdfg as sd
 from dace.data import Scalar
-from dace.sdfg.state import LoopRegion
+from dace.sdfg.state import LoopRegion, SymbolResolver
 from dace.subsets import Range
 from dace.symbolic import issymbolic, pystr_to_symbolic
 from dace.transformation import pass_pipeline as ppl
@@ -107,13 +107,6 @@ class LoopLocalMemoryReduction(ppl.Pass):
         default=True,
         category="Memory",
         desc="Whether or not to round up the reduced memory size to the next power of two (enables bitmasking instead of modulo).",
-    )
-
-    assume_positive_symbols = properties.Property(
-        dtype=bool,
-        default=False,
-        category="Applicability",
-        desc="Assume symbols are positive when checking for applicability.",
     )
 
     num_applications = 0  # To track number of applications for testing
@@ -248,6 +241,7 @@ class LoopLocalMemoryReduction(ppl.Pass):
     ) -> list[int | None]:
         k_values = []
         max_indices = self._get_max_indices_before_loop(array_name, sdfg, loop)
+        facts = SymbolResolver().facts_at(loop)
 
         # For each dimension
         for dim in range(len(read_indices[0])):
@@ -288,15 +282,14 @@ class LoopLocalMemoryReduction(ppl.Pass):
                     if an.data == array_name
                 )
 
-            # Add positive symbol assumption
-            if self.assume_positive_symbols and issymbolic(cond):
-                pos_syms = {s: sp.Symbol(s.name, positive=True) for s in cond.free_symbols}
-                cond = cond.xreplace(pos_syms)
+            # A symbolic condition holds only where the facts prove it
+            if issymbolic(cond):
+                relation = symbolic.comparison_relation(cond)
+                cond = relation is not None and symbolic.ask(relation, facts) is symbolic.Truth.TRUE
 
             # Take maximum from previous accesses into account
             try:
                 k = sp.Max(span, max_indices[dim])
-                not cond  # XXX: This ensures the condition can be evaluated. Do not remove.
             except TypeError:
                 k_values.append(None)
                 continue

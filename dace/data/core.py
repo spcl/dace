@@ -389,22 +389,6 @@ class Scalar(Data):
     def sizes(self):
         return None
 
-    def covers_range(self, rng):
-        if len(rng) != 1:
-            return False
-
-        rng = rng[0]
-
-        try:
-            if (rng[1] - rng[0]) > rng[2]:
-                return False
-        except TypeError:  # cannot determine truth value of Relational
-            pass
-            # print('WARNING: Cannot evaluate relational expression %s, assuming true.' % ((rng[1] - rng[0]) > rng[2]),
-            #      'If this expression is false, please refine symbol definitions in the program.')
-
-        return True
-
 
 @make_properties
 class Array(Data):
@@ -639,42 +623,6 @@ class Array(Data):
             raise TypeError(f"Found negative strides in array, they were {self.strides}")
         if (self.total_size < 0) == True:
             raise TypeError(f"The total size of an array must be positive but it was negative {self.total_size}")
-
-    def covers_range(self, rng):
-        if len(rng) != len(self.shape):
-            return False
-
-        for s, (rb, re, rs) in zip(self.shape, rng):
-            # Shape has to be positive
-            if isinstance(s, sp.Basic):
-                olds = s
-                if "positive" in s.assumptions0:
-                    s = sp.Symbol(str(s), **s.assumptions0)
-                else:
-                    s = sp.Symbol(str(s), positive=True, **s.assumptions0)
-                if isinstance(rb, sp.Basic):
-                    rb = rb.subs({olds: s})
-                if isinstance(re, sp.Basic):
-                    re = re.subs({olds: s})
-                if isinstance(rs, sp.Basic):
-                    rs = rs.subs({olds: s})
-
-            try:
-                if rb < 0:  # Negative offset
-                    return False
-            except TypeError:  # cannot determine truth value of Relational
-                pass
-                # print('WARNING: Cannot evaluate relational expression %s, assuming true.' % (rb > 0),
-                #      'If this expression is false, please refine symbol definitions in the program.')
-            try:
-                if re > s:  # Beyond shape
-                    return False
-            except TypeError:  # cannot determine truth value of Relational
-                pass
-                # print('WARNING: Cannot evaluate relational expression %s, assuming true.' % (re < s),
-                #      'If this expression is false, please refine symbol definitions in the program.')
-
-        return True
 
     # Checks for equivalent shape and type
     def is_equivalent(self, other: Data, symbol_mapping: SymbolMapping | None = None) -> bool:
@@ -1026,42 +974,6 @@ class Stream(Data):
 
     def is_stream_array(self):
         return _prod(self.shape) != 1
-
-    def covers_range(self, rng):
-        if len(rng) != len(self.shape):
-            return False
-
-        for s, (rb, re, rs) in zip(self.shape, rng):
-            # Shape has to be positive
-            if isinstance(s, sp.Basic):
-                olds = s
-                if "positive" in s.assumptions0:
-                    s = sp.Symbol(str(s), **s.assumptions0)
-                else:
-                    s = sp.Symbol(str(s), positive=True, **s.assumptions0)
-                if isinstance(rb, sp.Basic):
-                    rb = rb.subs({olds: s})
-                if isinstance(re, sp.Basic):
-                    re = re.subs({olds: s})
-                if isinstance(rs, sp.Basic):
-                    rs = rs.subs({olds: s})
-
-            try:
-                if rb < 0:  # Negative offset
-                    return False
-            except TypeError:  # cannot determine truth value of Relational
-                pass
-                # print('WARNING: Cannot evaluate relational expression %s, assuming true.' % (rb > 0),
-                #      'If this expression is false, please refine symbol definitions in the program.')
-            try:
-                if re > s:  # Beyond shape
-                    return False
-            except TypeError:  # cannot determine truth value of Relational
-                pass
-                # print('WARNING: Cannot evaluate relational expression %s, assuming true.' % (re < s),
-                #      'If this expression is false, please refine symbol definitions in the program.')
-
-        return True
 
     def used_symbols(self, all_symbols: bool) -> set[symbolic.SymbolicType]:
         result = super().used_symbols(all_symbols)
