@@ -27,6 +27,8 @@ would hold only its own share of it).
 
 from typing import Any
 
+from ordered_set import OrderedSet
+
 from dace import SDFG, Memlet, SDFGState, dtypes, properties
 from dace import graphlib as nx
 from dace.libraries.standard.block_reduce import BLOCK_COLLECTIVE_THREADS
@@ -76,9 +78,39 @@ def strided_maps(state: SDFGState, kernel: nodes.MapEntry) -> list[tuple[SDFGSta
     ]
 
 
-def lane_private(sdfg: SDFG, name: str) -> bool:
+#: A container each lane of a block-tiled kernel holds its own copy of, as ``(owning SDFG, name)``.
+LanePrivate = OrderedSet[tuple[SDFG, str]]
+
+
+def per_thread_allocation(sdfg: SDFG, name: str) -> bool:
+    """A kernel holding every access to such a transient gives each thread a copy, ``GPU_Global`` included."""
     desc = sdfg.arrays[name]
-    return desc.transient and desc.storage in LANE_PRIVATE_STORAGE
+    return (
+        desc.transient
+        and desc.lifetime == dtypes.AllocationLifetime.Scope
+        and desc.storage != dtypes.StorageType.GPU_Shared
+    )
+
+
+def lane_private_containers(state: SDFGState, kernel: nodes.MapEntry) -> LanePrivate:
+    """Register and default-storage transients, and the kernel's per-thread allocations."""
+    inside = set(state.scope_subgraph(kernel).nodes())
+    accessed_outside = OrderedSet(
+        node.data for st in state.sdfg.states() for node in st.data_nodes() if node not in inside
+    )
+    owners = [(state.sdfg, accessed_outside)] + [
+        (nested, OrderedSet())
+        for node in inside
+        if isinstance(node, nodes.NestedSDFG)
+        for nested in node.sdfg.all_sdfgs_recursive()
+    ]
+    return OrderedSet(
+        (sdfg, name)
+        for sdfg, outside in owners
+        for name, desc in sdfg.arrays.items()
+        if desc.transient
+        and (desc.storage in LANE_PRIVATE_STORAGE or (name not in outside and per_thread_allocation(sdfg, name)))
+    )
 
 
 def reads_outside(sdfg: SDFG, name: str, inner: set[nodes.Node]) -> bool:
@@ -90,12 +122,12 @@ def reads_outside(sdfg: SDFG, name: str, inner: set[nodes.Node]) -> bool:
     )
 
 
-def strided_map_is_safe(state: SDFGState, entry: nodes.MapEntry) -> bool:
+def strided_map_is_safe(state: SDFGState, entry: nodes.MapEntry, private: LanePrivate) -> bool:
     """A strided map's outputs survive lane splitting: a lane-private output is one element reduced
     with a known identity (folded across the lanes), or nothing outside the map reads it."""
     inner = set(state.scope_subgraph(entry).nodes())
     for edge in state.out_edges(state.exit_node(entry)):
-        if edge.data.is_empty() or not lane_private(state.sdfg, edge.data.data):
+        if edge.data.is_empty() or (state.sdfg, edge.data.data) not in private:
             continue
         if edge.data.wcr is not None:
             if required(edge.data.subset).num_elements() != 1:
@@ -106,13 +138,13 @@ def strided_map_is_safe(state: SDFGState, entry: nodes.MapEntry) -> bool:
     return True
 
 
-def updates_shared(node: nodes.Tasklet, state: SDFGState) -> bool:
+def updates_shared(node: nodes.Tasklet, state: SDFGState, private: LanePrivate) -> bool:
     """Whether ``node`` writes a shared (not lane-private) container that it, or a node leading to it, reads:
     once per lane is wrong. The read may sit in an earlier tasklet (``s = acc[k] + t; acc[k] = s``)."""
     upstream = nx.ancestors(state._nx, node) | {node}
     read = {edge.data.data for edge in state.edges() if edge.dst in upstream and not edge.data.is_empty()}
     return any(
-        edge.data.data in read and not lane_private(state.sdfg, edge.data.data)
+        edge.data.data in read and (state.sdfg, edge.data.data) not in private
         for edge in state.out_edges(node)
         if not edge.data.is_empty()
     )
@@ -134,7 +166,8 @@ def single_lane_nodes(
     """The tasklets that must run on lane 0 alone for the kernel body to run once per lane, with ``strided``
     split across the lanes, and the other tasklets that read what the strided maps wrote, which must wait at a
     barrier for every lane's share; ``None`` if no such split is sound."""
-    if not strided or not all(strided_map_is_safe(s, entry) for s, entry in strided):
+    private = lane_private_containers(state, kernel)
+    if not strided or not all(strided_map_is_safe(s, entry, private) for s, entry in strided):
         return None
     # Nesting the lane body follows every edge into it back to its source; an ordering edge off the
     # kernel entry has no connector to follow. One that only binds an input-less node to the scope does not order.
@@ -150,7 +183,7 @@ def single_lane_nodes(
         (st.sdfg, edge.data.data)
         for st, entry in strided
         for edge in st.out_edges(st.exit_node(entry))
-        if not edge.data.is_empty() and not lane_private(st.sdfg, edge.data.data)
+        if not edge.data.is_empty() and (st.sdfg, edge.data.data) not in private
     }
     single: list[nodes.Tasklet] = []
     waiting: list[nodes.Tasklet] = []
@@ -167,7 +200,7 @@ def single_lane_nodes(
                     pending.append((inner, inner.nodes()))
             elif isinstance(node, nodes.LibraryNode):
                 return None
-            elif isinstance(node, nodes.Tasklet) and updates_shared(node, current):
+            elif isinstance(node, nodes.Tasklet) and updates_shared(node, current, private):
                 if any(edge.data.is_empty() for edge in current.all_edges(node)):
                     return None
                 single.append(node)
