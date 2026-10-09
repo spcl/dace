@@ -61,6 +61,20 @@ def test_lifted_dimensions_are_prepended_slowest_varying_keeping_the_own_layout(
     assert int(new_total) == int(np.prod(expected_shape)), new_total
 
 
+@pytest.mark.parametrize("extent", ["ROWS_P - i", "i + 1"])
+def test_an_extent_depending_on_the_kernel_parameter_is_bounded_over_the_kernel(extent):
+    """syrk: a per-row ``[i + 1]`` scratch is allocated before the kernel, where ``i`` does not exist."""
+    rows = dace.symbol("ROWS_P", dtype=dace.int64, positive=True)
+    state = dace.SDFG("move_array_triangular").add_state("s")
+    me, _ = state.add_map("kernel", dict(i="0:ROWS_P"), schedule=GPU_DEVICE)
+    i = dace.symbol("i", dtype=dace.int64)
+    arr = dace.data.Array(dace.float64, [rows - i if extent.startswith("ROWS") else i + 1])
+
+    new_shape, _, _, _ = MoveArrayOutOfKernel().get_new_shape_info(arr, [me])
+
+    assert [dace.symbolic.evaluate(extent, {"ROWS_P": 5}) for extent in new_shape] == [5, 5], new_shape
+
+
 def test_get_new_shape_info_rejects_unsupported_layout():
     """Neither packed-C nor packed-Fortran: refuse rather than silently re-lay-out the array."""
     sdfg = dace.SDFG("move_array_strides_bad")
@@ -979,6 +993,8 @@ if __name__ == "__main__":
         test_lifted_dimensions_are_prepended_slowest_varying_keeping_the_own_layout(
             ranges, shape, strides, expected_shape, expected_strides
         )
+    test_an_extent_depending_on_the_kernel_parameter_is_bounded_over_the_kernel("ROWS_P - i")
+    test_an_extent_depending_on_the_kernel_parameter_is_bounded_over_the_kernel("i + 1")
     test_get_new_shape_info_rejects_unsupported_layout()
     test_flat_transient_is_lifted_out_of_the_kernel()
     test_transient_behind_a_nested_sdfg_is_lifted_through_the_boundary()

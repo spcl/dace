@@ -46,6 +46,33 @@ def tile_extent(max_elem: symbolic.SymbolicType, min_elem: symbolic.SymbolicType
     return max_elem + 1 - min_elem
 
 
+def bound_over_levels(extent: symbolic.SymbolicType, levels: list[nodes.MapEntry]) -> symbolic.SymbolicType:
+    """``extent``'s maximum over the iterations of ``levels`` (innermost first): the lift allocates before they run.
+
+    :raises NotImplementedError: ``extent`` is not linear in each parameter, so no corner bounds it.
+    """
+    for level in levels:
+        names = {str(s) for s in symbolic.symlist(extent)}
+        bounds = {
+            param: (low, high)
+            for param, low, high in zip(
+                level.map.params, level.map.range.min_element(), level.map.range.max_element(), strict=True
+            )
+            if param in names
+        }
+        if not bounds:
+            continue
+        if any(symbolic.affine_coefficients(extent, param) is None for param in bounds):
+            raise NotImplementedError(f"Cannot bound the extent {extent} over the kernel parameters {list(bounds)}.")
+        corners = [
+            extent.subs({symbolic.pystr_to_symbolic(param): value for param, value in zip(bounds, corner)})
+            for corner in itertools.product(*bounds.values())
+        ]
+        # The range and the descriptor name one symbol through different instances.
+        extent = symbolic.simplify(sympy.Max(*symbolic.equalize_symbols_across(*corners)))
+    return extent
+
+
 def is_register_demotable(desc: dt.Data, max_elements: int) -> bool:
     """A literal shape of at most ``max_elements``; persistent and external arrays outlive a thread's registers."""
     if desc.lifetime in (dtypes.AllocationLifetime.Persistent, dtypes.AllocationLifetime.External):
@@ -540,7 +567,7 @@ class MoveArrayOutOfKernel(ppl.Pass):
         # ``strides_from_layout`` takes dimensions innermost-first: the own axes, then the prepended ones.
         layout = [d + prepended for d in inner_order] + list(reversed(range(prepended)))
         lifted = array_desc.clone()
-        lifted.set_shape(extended_size + list(array_desc.shape))
+        lifted.set_shape(extended_size + [bound_over_levels(extent, levels) for extent in array_desc.shape])
         new_strides, new_total_size = lifted.strides_from_layout(*layout)
         return list(lifted.shape), list(new_strides), new_total_size, new_offsets
 
