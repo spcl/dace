@@ -201,6 +201,7 @@ class TileGather(TileOp):
     INPUT_CONNECTOR_NAME = "_src"
     OUTPUT_CONNECTOR_NAME = "_dst"
 
+    lanes_independent = True
     implementations = {
         "pure": ExpandTileGatherPure,
         "scalar": ExpandTileGatherScalar,

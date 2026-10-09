@@ -41,6 +41,7 @@ for (size_t i = 0; i < M; ++i) {
 import dace
 from dace import library, properties
 from dace.libraries.tileops.expansions import ExpandTilePure
+from dace.libraries.tileops.lanes import distributed_element_loop
 from dace.libraries.tileops.nodes.tile_op import TileOp
 from dace.libraries.tileops.operands import edge_ctype, output_edge
 from dace.optionals import required
@@ -60,6 +61,7 @@ class TileMMA(TileOp):
     accumulation) and output (written in place).
     """
 
+    lanes_independent = True
     implementations = {"pure": ExpandTileMMAPure}
     default_implementation = "pure"
 
@@ -135,6 +137,10 @@ class TileMMA(TileOp):
             if len(shape) != 2 or tuple(int(s) for s in shape) != expected:
                 raise ValueError(f"{self.label}: {name!r} descriptor shape {shape} != expected {expected}")
 
+    def output_elements(self) -> int:
+        M, _, N = self.widths
+        return M * N
+
     def pure_tasklet(self, state: dace.SDFGState, sdfg: dace.SDFG) -> nodes.Tasklet:
         self.validate(sdfg, state)
         M, K_inner, N = self.widths
@@ -143,20 +149,6 @@ class TileMMA(TileOp):
         out_dtype = edge_ctype(sdfg, output_edge(state, self, "_c"))
         alpha = self.alpha
         beta = self.beta
-        # ``M`` / ``N`` / ``K_inner`` are compile-time-constant tile widths, so every loop
-        # (including the ``k`` dot-product accumulation) carries ``DACE_UNROLL`` -- the
-        # accumulator stays in a register and the compiler can re-vectorise the fold.
-        lines = [
-            "DACE_UNROLL",
-            f"for (std::size_t i = 0; i < {M}; ++i) {{",
-            "    DACE_UNROLL",
-            f"    for (std::size_t j = 0; j < {N}; ++j) {{",
-            f"        {out_dtype} acc = {out_dtype}(0);",
-            "        DACE_UNROLL",
-            f"        for (std::size_t k = 0; k < {K_inner}; ++k) {{",
-            f"            acc += _a[i * {K_inner} + k] * _b[k * {N} + j];",
-            "        }",
-        ]
         # Specialise the accumulator update at compile time -- avoid the
         # unnecessary ``* 1`` / ``+ 0`` arithmetic the compiler would otherwise
         # have to fold (and which obscures the generated code).
@@ -170,8 +162,32 @@ class TileMMA(TileOp):
             update = f"_c[i * {N} + j] = acc + {out_dtype}({beta}) * _cin[i * {N} + j];"
         else:
             update = f"_c[i * {N} + j] = {out_dtype}({alpha}) * acc + {out_dtype}({beta}) * _cin[i * {N} + j];"
-        lines += [f"        {update}", "    }", "}"]
-        code = "\n".join(lines)
+        # ``M`` / ``N`` / ``K_inner`` are compile-time-constant tile widths, so every loop
+        # (including the ``k`` dot-product accumulation) carries ``DACE_UNROLL`` -- the
+        # accumulator stays in a register and the compiler can re-vectorise the fold.
+        dot = [
+            f"{out_dtype} acc = {out_dtype}(0);",
+            "DACE_UNROLL",
+            f"for (std::size_t k = 0; k < {K_inner}; ++k) {{",
+            f"    acc += _a[i * {K_inner} + k] * _b[k * {N} + j];",
+            "}",
+            update,
+        ]
+        # Spread over a thread group, each thread computes the dot products of its own (i, j) elements
+        code = distributed_element_loop(
+            M * N, [f"const std::size_t i = __e / {N};", f"const std::size_t j = __e % {N};"], "\n".join(dot)
+        )
+        if code is None:
+            lines = [
+                "DACE_UNROLL",
+                f"for (std::size_t i = 0; i < {M}; ++i) {{",
+                "    DACE_UNROLL",
+                f"    for (std::size_t j = 0; j < {N}; ++j) {{",
+                *(f"        {line}" for line in dot),
+                "    }",
+                "}",
+            ]
+            code = "\n".join(lines)
 
         # Inputs: ``_a``, ``_b`` always; ``_cin`` only when ``beta`` is non-zero
         # (we read the accumulator in that case). Output: always ``_c``.

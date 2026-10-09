@@ -85,6 +85,7 @@ class TileUnop(TileOp):
     false are zero. An op named after a dtype is the explicit conversion to it.
     """
 
+    lanes_independent = True
     implementations = {
         "pure": ExpandTileUnopPure,
         "scalar": ExpandTileUnopScalar,

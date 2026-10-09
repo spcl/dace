@@ -10,6 +10,9 @@ from dace.sdfg.state import AbstractControlFlowRegion, ControlFlowBlock, SDFGSta
 from dace.sdfg.utils import get_view_node
 from dace.transformation.passes.offloading.offloading_ir_node import OffloadingIRNode
 
+#: Storage of a container that lives in the scope that allocates it, a register or a thread block's shared memory.
+SCOPE_LOCAL_STORAGE = (dtypes.StorageType.GPU_Shared, dtypes.StorageType.Register)
+
 
 class CopyInsertion:
     """One copy insertion into ``sdfg`` from its placement IR; run it with :meth:`apply`."""
@@ -46,9 +49,7 @@ class CopyInsertion:
         """A transient lives on the side of the first IR node that names it; a shared-memory or register one keeps
         the scope-local storage it was given."""
         seen: OrderedSet[str] = OrderedSet(
-            name
-            for name, desc in self.sdfg.arrays.items()
-            if desc.storage in (dtypes.StorageType.GPU_Shared, dtypes.StorageType.Register)
+            name for name, desc in self.sdfg.arrays.items() if desc.storage in SCOPE_LOCAL_STORAGE
         )
 
         def place(node: OffloadingIRNode) -> None:
@@ -90,6 +91,9 @@ class CopyInsertion:
         sdfg = self.sdfg
         rename_dict = {}
         for name in node.gpu_set:
+            # A scope-local container lives where its scope runs, so it has no twin
+            if sdfg.arrays[name].storage in SCOPE_LOCAL_STORAGE:
+                continue
             if not helpers.is_array_stored_on_GPU(sdfg, name):
                 rename_dict[name] = helpers.gpu_name(name)
         for name in node.cpu_set:

@@ -12,6 +12,7 @@ import platform
 
 import dace
 from dace.sdfg import nodes
+from dace.sdfg.scope import is_devicelevel_gpu
 
 
 class ISA(enum.Enum):
@@ -24,6 +25,18 @@ class ISA(enum.Enum):
     ARM_NEON = enum.auto()
     SCALAR = enum.auto()  #: portable scalar reference
     CUDA = enum.auto()  #: GPU half2 (implies device=GPU)
+
+
+class TileGroup(enum.Enum):
+    """The threads that execute a tile node together, which decides how it is lowered.
+
+    On a CPU one core runs the whole tile, so every group lowers as ``THREAD`` does. In a GPU kernel ``THREAD`` is one
+    thread's register tile, and ``WARP`` and ``BLOCK`` spread the lanes over the threads of a warp or a thread block.
+    """
+
+    THREAD = enum.auto()  #: one thread (one SIMD vector on a CPU); what the vectorizer emits
+    WARP = enum.auto()  #: the 32 threads of a warp
+    BLOCK = enum.auto()  #: the threads of a thread block (one core on a CPU); what ``dace.tile`` calls create
 
 
 #: Implementation each target ISA lowers a K=1 tile to; K>=2 is always ``pure``.
@@ -101,11 +114,15 @@ def select_tile_implementation(node: nodes.LibraryNode, parent_state: dace.SDFGS
     ISA: a packed multiply has no SIMD form, so the scalar loop over ``std::complex`` is the correct lowering
     everywhere. CUDA carries complex natively and keeps its path. The rest take the implementation of their ISA.
 
-    :param node: The tile library node (carries ``widths`` and ``target_isa``).
+    A ``WARP`` or ``BLOCK`` node in a GPU kernel lowers ``block``, spread over the threads of its group.
+
+    :param node: The tile library node (carries ``widths``, ``target_isa`` and ``group``).
     :param parent_state: The state holding ``node``.
     :returns: A name in ``node.implementations``.
     :raises ValueError: If the target ISA is a host ISA the host cannot execute.
     """
+    if node.group is not TileGroup.THREAD and is_devicelevel_gpu(parent_state.sdfg, parent_state, node):
+        return "block"
     target_isa = node.target_isa
     if target_isa is ISA.AUTO:
         target_isa = detect_host_isa()
