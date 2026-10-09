@@ -20,7 +20,6 @@ sync tasklets exist anywhere inside the NestedSDFG that lives inside the GPU ker
 """
 
 import dace
-
 from dace.codegen import common
 from dace.transformation.passes.gpu_specialization.gpu_specialization_pipeline import GPUStreamPipeline
 

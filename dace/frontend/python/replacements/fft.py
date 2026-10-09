@@ -3,14 +3,12 @@
 Contains replacements for the Discrete Fourier Transform numpy package (numpy.fft)
 """
 
+import sympy as sp
+
+from dace import SDFG, Memlet, SDFGState, data, dtypes, symbolic
 from dace.frontend.common import op_repository as oprepo
 from dace.frontend.python.common import StringLiteral
 from dace.frontend.python.replacements.utils import ProgramVisitor
-from dace import data, dtypes, symbolic, Memlet, SDFG, SDFGState
-
-from typing import Optional
-
-import sympy as sp
 
 
 def _real_to_complex(real_type: dtypes.typeclass):
@@ -27,7 +25,7 @@ def _fft_core(
     sdfg: SDFG,
     state: SDFGState,
     a: str,
-    n: Optional[symbolic.SymbolicType] = None,
+    n: symbolic.SymbolicType | None = None,
     axis=-1,
     norm: StringLiteral = StringLiteral("backward"),
     is_inverse: bool = False,
@@ -100,7 +98,7 @@ def _fft(
     sdfg: SDFG,
     state: SDFGState,
     a: str,
-    n: Optional[symbolic.SymbolicType] = None,
+    n: symbolic.SymbolicType | None = None,
     axis=-1,
     norm: StringLiteral = StringLiteral("backward"),
 ):

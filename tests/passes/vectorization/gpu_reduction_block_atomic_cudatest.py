@@ -33,12 +33,12 @@ import pytest
 
 import dace
 from dace import dtypes
-from dace.transformation.interstate import LoopToMap
-from dace.transformation.dataflow.wcr_conversion import AugAssignToWCR
-from dace.transformation.passes.vectorization.vectorize_gpu import VectorizeGPU
-from dace.transformation.passes.vectorization.config import VectorizeConfig
-from dace.transformation.passes.canonicalize.finalize import offload_to_gpu
 from dace.libraries.tileops import TileReduce
+from dace.transformation.dataflow.wcr_conversion import AugAssignToWCR
+from dace.transformation.interstate import LoopToMap
+from dace.transformation.passes.canonicalize.finalize import offload_to_gpu
+from dace.transformation.passes.vectorization.config import VectorizeConfig
+from dace.transformation.passes.vectorization.vectorize_gpu import VectorizeGPU
 
 N = dace.symbol("N")
 

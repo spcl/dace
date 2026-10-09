@@ -19,9 +19,9 @@ nothing about it is left in the initializer, where a symbol is frozen at the fir
 call and every grid after the first would silently be the first one.
 """
 
-import dace
 import pytest
 
+import dace
 from dace import Memlet
 from dace.libraries.mpi.nodes.comm_f2c import CommF2c
 from dace.libraries.pblas.environments import intel_mkl_mpich, intel_mkl_openmpi, ref_mpich, ref_openmpi

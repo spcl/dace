@@ -1,9 +1,10 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 import re
 
+import pytest
+
 import dace
 from dace.codegen import common
-import pytest
 
 
 def count_frees_on_stream_zero(code: str, name: str) -> int:

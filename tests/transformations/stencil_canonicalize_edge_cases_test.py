@@ -19,9 +19,9 @@ import numpy as np
 import pytest
 
 import dace
-from dace.sdfg.state import LoopRegion, ConditionalBlock
-from dace.transformation.passes.move_if_into_loop import MoveIfIntoLoop
+from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.transformation.passes.loop_fission import LoopFission
+from dace.transformation.passes.move_if_into_loop import MoveIfIntoLoop
 
 N = dace.symbol("N")
 M = dace.symbol("M")

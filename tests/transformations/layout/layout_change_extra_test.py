@@ -17,16 +17,16 @@ import numpy
 import pytest
 
 import dace
-from dace.sdfg import nodes as nd
-from dace.libraries.linalg import TensorTranspose
-from dace.libraries.layout.algebra import Permute, Block, Pad, simplify_ops
+from dace.libraries.layout.algebra import Block, Pad, Permute, simplify_ops
 from dace.libraries.layout.layout_change import (
-    LayoutChange,
-    ExpandPure,
     ExpandHPTT,
+    ExpandPure,
+    LayoutChange,
     add_layout_change,
     fold_layout_changes,
 )
+from dace.libraries.linalg import TensorTranspose
+from dace.sdfg import nodes as nd
 
 _counter = [0]
 

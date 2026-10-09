@@ -23,27 +23,26 @@ prefix params allowed); a pair whose bodies are not single fusable nested SDFGs 
 """
 
 import copy
-
-from typing import Any, Dict, Tuple
+from typing import Any
 
 import dace
 from dace import properties, symbolic
+from dace.libraries.tileops.alignment import TILE_MAIN_MARKER
+from dace.optionals import required
 from dace.properties import CodeBlock
+from dace.sdfg.narrowing import as_expr
 from dace.sdfg.nodes import MapEntry, NestedSDFG
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.analysis import scopes
 from dace.transformation.passes.vectorization.split_map_for_tile_remainder import MASKED_TAIL_MARKER, SCALAR_TAIL_MARKER
-from dace.libraries.tileops.alignment import TILE_MAIN_MARKER
-from dace.optionals import required
-from dace.sdfg.narrowing import as_expr
 
 #: Tail markers this pass folds into the ``else`` arm. ``__masked_tail`` is a tile body placed as
 #: is; ``__scalar_tail`` is a step-1 body that needs the lane loop around it.
-_TAIL_MARKERS: Tuple[str, ...] = (MASKED_TAIL_MARKER, SCALAR_TAIL_MARKER)
+_TAIL_MARKERS: tuple[str, ...] = (MASKED_TAIL_MARKER, SCALAR_TAIL_MARKER)
 
 
-def connector_symbol_mapping(nsdfg: NestedSDFG, mapping: Dict[str, Any]) -> Dict[str, Any]:
+def connector_symbol_mapping(nsdfg: NestedSDFG, mapping: dict[str, Any]) -> dict[str, Any]:
     """A copy of ``mapping`` that also maps, to itself, every symbol a connector's descriptor in ``nsdfg``
     names: a reused body is placed where those symbols carry the same name, and a No-View nested SDFG must
     map every symbol its boundary descriptors use."""
@@ -101,7 +100,7 @@ class FuseBranchedTailRemainder(ppl.Pass):
     @staticmethod
     def _base_label(label: str, marker: str) -> str:
         # Strip a tile-remainder marker suffix to recover the shared base label.
-        return label[: -len(marker)] if label.endswith(marker) else label
+        return label.removesuffix(marker)
 
     @staticmethod
     def _tail_marker(label: str) -> str | None:
@@ -157,7 +156,7 @@ class FuseBranchedTailRemainder(ppl.Pass):
         # out-edge writes nothing, which no ``__tile_main``/tail body does. Verified both ways on a body
         # carrying a write-only scratch scalar; see ``tile_mask_and_tail_fusion_see_write_only_sink_test.py``.
         exit_node = state.exit_node(entry)
-        body = [n for n in state.all_nodes_between(entry, required(exit_node))]
+        body = list(state.all_nodes_between(entry, required(exit_node)))
         nsdfgs = [n for n in body if isinstance(n, NestedSDFG)]
         if len(nsdfgs) == 1 and len(body) == 1:
             return nsdfgs[0]

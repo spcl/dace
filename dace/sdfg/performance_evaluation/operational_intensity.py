@@ -3,31 +3,29 @@
 or from the VS Code extension."""
 
 import argparse
-from dace.sdfg import nodes as nd
-from dace import dtypes, SDFG
-from dace.sdfg.state import SDFGState, ControlFlowRegion, LoopRegion, FunctionCallRegion, ConditionalBlock
-from typing import Tuple, Dict
 import os
-import sympy as sp
-from copy import deepcopy
-from dace.symbolic import pystr_to_symbolic, SymExpr, symbol, simplify
 import re
 import warnings
+from copy import deepcopy
 
-from dace.sdfg.performance_evaluation.helpers import (
-    get_uuid,
-    get_static_symbols,
-    subs_till_fixed_point,
-    has_unstructured_control_flow,
-)
-from dace.transformation.passes.symbol_ssa import StrictSymbolSSA
-from dace.transformation.pass_pipeline import FixedPointPipeline
+import sympy as sp
 
+from dace import SDFG, dtypes
 from dace.data import Array
-from dace.sdfg.performance_evaluation.op_in_helpers import CacheLineTracker, AccessStack, fit_curve, plot, compute_mape
+from dace.sdfg import nodes as nd
+from dace.sdfg.performance_evaluation.helpers import (
+    get_static_symbols,
+    get_uuid,
+    has_unstructured_control_flow,
+    subs_till_fixed_point,
+)
+from dace.sdfg.performance_evaluation.op_in_helpers import AccessStack, CacheLineTracker, compute_mape, fit_curve, plot
 from dace.sdfg.performance_evaluation.work_depth import analyze_sdfg, get_tasklet_work
-
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, FunctionCallRegion, LoopRegion, SDFGState
+from dace.symbolic import SymExpr, pystr_to_symbolic, simplify, symbol
+from dace.transformation.pass_pipeline import FixedPointPipeline
 from dace.transformation.passes.analysis import loop_analysis
+from dace.transformation.passes.symbol_ssa import StrictSymbolSSA
 
 
 class SymbolRange:
@@ -185,7 +183,7 @@ def update_map_iterators(map, mapping, symbols):
 
 def map_op_in(
     state: SDFGState,
-    op_in_map: Dict[str, sp.Expr],
+    op_in_map: dict[str, sp.Expr],
     entry,
     mapping,
     stack,
@@ -234,7 +232,7 @@ def _edge_miss(edge, clt: CacheLineTracker, array_names, mapping, symbols, stack
 
 def scope_misses(
     state: SDFGState,
-    op_in_map: Dict[str, sp.Expr],
+    op_in_map: dict[str, sp.Expr],
     mapping,
     stack: AccessStack,
     clt: CacheLineTracker,
@@ -351,7 +349,7 @@ def scope_misses(
 
 def cfr_misses(
     cfr: ControlFlowRegion,
-    op_in_map: Dict[str, Tuple[sp.Expr, sp.Expr]],
+    op_in_map: dict[str, tuple[sp.Expr, sp.Expr]],
     mapping,
     stack: AccessStack,
     clt: CacheLineTracker,
@@ -426,7 +424,7 @@ def cfr_misses(
             if len(possibilities) > 1:
                 print(f"\n\nWhich branch to take at {cfr.name}")
                 for i in range(len(possibilities)):
-                    print(f"({i}) for branch {possibilities[i] if possibilities[i] else 'else_branch'}")
+                    print(f"({i}) for branch {possibilities[i] or 'else_branch'}")
                 chosen = int(input("Choose an option from above: "))
                 # if the user chooses one, we check only that branch
                 branches = [possibilities[chosen]]
@@ -504,7 +502,7 @@ def cfr_misses(
 
 def cfg_misses(
     cfg: ControlFlowRegion,
-    op_in_map: Dict[str, Tuple[sp.Expr, sp.Expr]],
+    op_in_map: dict[str, tuple[sp.Expr, sp.Expr]],
     mapping,
     stack: AccessStack,
     clt: CacheLineTracker,
@@ -585,7 +583,7 @@ def cfg_misses(
 
 def analyze_sdfg_op_in(
     sdfg: SDFG,
-    op_in_map: Dict[str, sp.Expr],
+    op_in_map: dict[str, sp.Expr],
     C,
     L,
     assumptions,

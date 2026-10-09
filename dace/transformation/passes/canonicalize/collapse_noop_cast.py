@@ -19,27 +19,28 @@ so no conversion is ever silently dropped.
 """
 
 import ast
-from typing import Any, Dict, Optional, Tuple
+from typing import Any
 
 from dace import SDFG, dtypes
 from dace.frontend.python import astutils
+from dace.optionals import required
 from dace.properties import CodeBlock
 from dace.sdfg import nodes
 from dace.sdfg.state import SDFGState
-from dace.transformation import pass_pipeline as ppl, transformation
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation import transformation
 from dace.transformation.passes.analysis import scopes
-from dace.optionals import required
 
 
-def string_to_typeclass() -> Dict[str, dtypes.typeclass]:
+def string_to_typeclass() -> dict[str, dtypes.typeclass]:
     """Map every scalar dtype's bare spelling (``float64``, ``int32``, ...) back to its
     typeclass. Built from the registry so it tracks the dtype list -- never hardcoded."""
     return {tc.to_string(): tc for tc in dtypes.TYPECLASS_TO_STRING}
 
 
 def noop_cast_candidate(
-    code: CodeBlock, casts: Dict[str, dtypes.typeclass]
-) -> Optional[Tuple[str, ast.AST, dtypes.typeclass]]:
+    code: CodeBlock, casts: dict[str, dtypes.typeclass]
+) -> tuple[str, ast.AST, dtypes.typeclass] | None:
     """If ``code`` is a single ``x = cast(y)`` with ``y`` a data/symbol reference and
     ``cast`` a dtype conversion, return ``(target_conn, arg_ast, cast_dtype)``; else
     ``None``. The dtype-equality checks (a genuine no-op) are applied by the caller."""
@@ -110,7 +111,7 @@ class CollapseNoOpCast(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> int | None:
         casts = string_to_typeclass()
         # ONE resolver for the whole run: the pass rewrites tasklet CODE only, so no scope or
         # declaration it caches ever goes stale and nothing has to be invalidated.

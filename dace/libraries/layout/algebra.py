@@ -2,7 +2,6 @@
 """Layout algebra: mixed-radix digit-tuple DSL (Permute/Block/Unblock/Pad/Shuffle/Zip/Unzip) and its optimizer."""
 
 from dataclasses import dataclass, replace
-from typing import Dict, List, Optional, Tuple
 
 import sympy
 
@@ -42,16 +41,16 @@ class Digit:
 class LayoutMap:
     """A materialized layout: ordered digit tuple plus per-dim annotations (dim_sizes, shuffles, element)."""
 
-    dim_sizes: Dict[int, object]
-    digits: Tuple[Digit, ...]
-    shuffles: Tuple[Tuple[int, Tuple[Tuple[str, bool], ...]], ...] = ()
-    element: Optional[Tuple[str, ...]] = None
+    dim_sizes: dict[int, object]
+    digits: tuple[Digit, ...]
+    shuffles: tuple[tuple[int, tuple[tuple[str, bool], ...]], ...] = ()
+    element: tuple[str, ...] | None = None
 
-    def shape(self) -> Tuple[object, ...]:
+    def shape(self) -> tuple[object, ...]:
         return tuple(d.extent for d in self.digits)
 
 
-def identity_map(shape, dims: Optional[List[int]] = None) -> LayoutMap:
+def identity_map(shape, dims: list[int] | None = None) -> LayoutMap:
     """The packed-C identity layout for an array of the given ``shape``."""
     if dims is None:
         dims = list(range(len(shape)))
@@ -65,7 +64,7 @@ def identity_map(shape, dims: Optional[List[int]] = None) -> LayoutMap:
 class Permute:
     """Reorder digit-tuple positions: ``new[i] = old[perm[i]]``."""
 
-    perm: Tuple[int, ...]
+    perm: tuple[int, ...]
 
     def apply(self, m: LayoutMap) -> LayoutMap:
         assert len(self.perm) == len(m.digits), f"Permute {self.perm} does not match digit count {len(m.digits)}"
@@ -183,7 +182,7 @@ class Shuffle:
 class Zip:
     """Fuse the current arrays into a struct element with the given fields (boundary op)."""
 
-    fields: Tuple[str, ...]
+    fields: tuple[str, ...]
 
     def apply(self, m: LayoutMap) -> LayoutMap:
         if m.element is not None:
@@ -198,7 +197,7 @@ class Zip:
 class Unzip:
     """Project a struct element back to separate arrays (boundary op)."""
 
-    fields: Tuple[str, ...]
+    fields: tuple[str, ...]
 
     def apply(self, m: LayoutMap) -> LayoutMap:
         if m.element != tuple(self.fields):
@@ -210,7 +209,7 @@ class Unzip:
 
 
 # Optimizer: compose + simplify
-def compose_ops(ops: List, base: Optional[LayoutMap] = None, shape=None) -> LayoutMap:
+def compose_ops(ops: list, base: LayoutMap | None = None, shape=None) -> LayoutMap:
     """Apply ``ops`` in order to ``base`` (or ``identity_map(shape)``), returning one LayoutMap."""
     if base is None:
         if shape is None:
@@ -248,13 +247,13 @@ def _fuse_pair(a, b):
     return None
 
 
-def simplify_ops(ops: List) -> List:
+def simplify_ops(ops: list) -> list:
     """Normalize an op sequence to a minimal canonical form (peephole to a fixpoint)."""
     ops = list(ops)
     changed = True
     while changed:
         changed = False
-        out: List = []
+        out: list = []
         i = 0
         while i < len(ops):
             if i + 1 < len(ops):
@@ -274,12 +273,12 @@ def simplify_ops(ops: List) -> List:
     return ops
 
 
-def is_identity(ops: List) -> bool:
+def is_identity(ops: list) -> bool:
     """True iff ``ops`` reduces to a no-op under ``simplify_ops``."""
     return len(simplify_ops(ops)) == 0
 
 
-def physical_index_exprs(m: LayoutMap) -> List:
+def physical_index_exprs(m: LayoutMap) -> list:
     """Per-digit sympy index expression ``(idx[dim] // stride) % extent`` (for lowering)."""
     exprs = []
     for dg in m.digits:
@@ -289,7 +288,7 @@ def physical_index_exprs(m: LayoutMap) -> List:
 
 
 # Serialization: op sequence <-> JSON-safe list of dicts.
-def op_to_dict(op) -> Dict:
+def op_to_dict(op) -> dict:
     """Encode one op as a JSON-safe dict ``{'op': <name>, ...fields}``."""
     if isinstance(op, Permute):
         return {"op": "Permute", "perm": list(op.perm)}
@@ -308,7 +307,7 @@ def op_to_dict(op) -> Dict:
     raise TypeError(f"op_to_dict: unknown op {op!r}")
 
 
-def op_from_dict(d: Dict):
+def op_from_dict(d: dict):
     """Decode an op previously encoded by :func:`op_to_dict`."""
     kind = d["op"]
     if kind == "Permute":
@@ -328,11 +327,11 @@ def op_from_dict(d: Dict):
     raise ValueError(f"op_from_dict: unknown op kind {kind!r}")
 
 
-def ops_to_list(ops: List) -> List[Dict]:
+def ops_to_list(ops: list) -> list[dict]:
     """Encode an op sequence as a JSON-safe list of dicts (for a Property)."""
     return [op_to_dict(op) for op in ops]
 
 
-def ops_from_list(items: List[Dict]) -> List:
+def ops_from_list(items: list[dict]) -> list:
     """Decode an op sequence encoded by :func:`ops_to_list`."""
     return [op_from_dict(d) for d in items]

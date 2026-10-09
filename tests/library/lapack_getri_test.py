@@ -1,9 +1,10 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
-from dace.memlet import Memlet
-import dace.libraries.lapack as lapack
 import numpy as np
 import pytest
+
+import dace
+import dace.libraries.lapack as lapack
+from dace.memlet import Memlet
 
 ###############################################################################
 
@@ -12,7 +13,7 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default):
 
     n = dace.symbol("n")
 
-    sdfg = dace.SDFG("matrix_inv_getrf_getri_{}_{}".format(implementation, dtype))
+    sdfg = dace.SDFG(f"matrix_inv_getrf_getri_{implementation}_{dtype}")
     state = sdfg.add_state("dataflow")
 
     sdfg.add_array("x", [n, n], dtype, storage=storage, transient=False)
@@ -79,7 +80,7 @@ def test_getri(implementation, dtype):
     inv_sdfg(x=A1, result_getrf=lapack_status1, result_getri=lapack_status2, pivots=pivots, n=size)
 
     if np.allclose(A1, A3):
-        print("Test ran successfully for {}.".format(implementation))
+        print(f"Test ran successfully for {implementation}.")
     else:
         print(A1 - A3)
         raise ValueError("Validation error!")

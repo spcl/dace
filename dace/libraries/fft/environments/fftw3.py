@@ -14,7 +14,6 @@ import os
 
 import dace.library
 from dace.libraries.blas.environments.openblas import spack_install_prefix
-from typing import Dict, List
 
 #: Environment variables that may name an FFTW install prefix (``include`` + ``lib`` under it).
 FFTW_ENV_VARS = ("FFTW_ROOT", "FFTW_DIR", "FFTW3_DIR", "FFTW_HOME")
@@ -82,19 +81,19 @@ class FFTW3:
     """CMake + link wiring for the FFTW3 backend of the FFT lib node."""
 
     cmake_minimum_version = "3.6"
-    cmake_packages: List[str] = []
-    cmake_variables: Dict[str, str] = {}
-    cmake_compile_flags: List[str] = []
-    cmake_link_flags: List[str] = []
-    cmake_files: List[str] = []
+    cmake_packages: list[str] = []
+    cmake_variables: dict[str, str] = {}
+    cmake_compile_flags: list[str] = []
+    cmake_link_flags: list[str] = []
+    cmake_files: list[str] = []
 
     # Header forwarded into the codegen unit; complex types come from
     # ``<complex.h>`` and FFTW's own ``fftw_complex`` typedef.
     headers = ["fftw3.h"]
-    state_fields: List[str] = []
+    state_fields: list[str] = []
     init_code = ""
     finalize_code = ""
-    dependencies: List[str] = []
+    dependencies: list[str] = []
 
     @staticmethod
     def cmake_includes():

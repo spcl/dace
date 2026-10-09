@@ -33,15 +33,14 @@ to descend into opaque dataflow that the per-subset rewrite does not model.
 """
 
 import copy
-from typing import Any, List, Type, Union
+from typing import Any
 
 import dace
-from dace import SDFG
-from dace import dtypes
-from dace import subsets
+from dace import SDFG, dtypes, subsets
 from dace.memlet import Memlet
 from dace.sdfg.graph import MultiConnectorEdge
-from dace.transformation import pass_pipeline as ppl, transformation
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation import transformation
 from dace.transformation.passes.vectorization.utils.map_predicates import map_body_nodes
 from dace.transformation.passes.vectorization.utils.pass_invariants import (
     assert_invariant,
@@ -76,7 +75,7 @@ class StageGlobalArrayThroughScalars(ppl.Pass):
         """Idempotent: nothing left to stage after the first run."""
         return False
 
-    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+    def depends_on(self) -> list[type[ppl.Pass] | ppl.Pass]:
         """Standalone pass: no dependencies."""
         return []
 

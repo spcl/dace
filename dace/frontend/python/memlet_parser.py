@@ -1,15 +1,15 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
 import copy
-from typing import Any, Dict, List, Optional, Tuple, Union
 from dataclasses import dataclass
+from typing import Any, Union
 
 from dace import data, dtypes, subsets
 from dace.frontend.python import astutils
 from dace.frontend.python.astutils import rname
-from dace.memlet import Memlet
-from dace.symbolic import pystr_to_symbolic, shapes_equal, SymbolicType
 from dace.frontend.python.common import DaceSyntaxError
+from dace.memlet import Memlet
+from dace.symbolic import SymbolicType, pystr_to_symbolic, shapes_equal
 
 MemletType = Union[ast.Call, ast.Attribute, ast.Subscript, ast.Name]
 
@@ -18,13 +18,13 @@ MemletType = Union[ast.Call, ast.Attribute, ast.Subscript, ast.Name]
 class MemletExpr:
     name: str
     accesses: SymbolicType
-    wcr: Optional[ast.AST]
+    wcr: ast.AST | None
     subset: subsets.Range
-    new_axes: List[int]
-    arrdims: Dict[int, str]
+    new_axes: list[int]
+    arrdims: dict[int, str]
     #: ``subset`` indices of dims from a slice/full-range (kept as axes) vs a scalar index (collapsed).
     #: numpy: ``A[:, 1:2]`` keeps the axis, ``A[:, 1]`` drops it. ``None`` = untracked (squeeze all singletons).
-    slice_dims: Optional[List[int]] = None
+    slice_dims: list[int] | None = None
 
 
 def inner_eval_ast(defined, node, additional_syms=None):
@@ -49,7 +49,7 @@ def inner_eval_ast(defined, node, additional_syms=None):
         return pystr_to_symbolic(code)
 
 
-def pyexpr_to_symbolic(defined_arrays_and_symbols: Dict[str, Any], expr_ast: ast.AST):
+def pyexpr_to_symbolic(defined_arrays_and_symbols: dict[str, Any], expr_ast: ast.AST):
     """Converts a Python AST expression to a DaCe symbolic expression
     with error checks (raises `SyntaxError` on failure).
 
@@ -88,7 +88,7 @@ def _fill_missing_slices(das, ast_ndslice, array, indices):
     ndslice = [None] * len(array.shape)
     offsets = []
     new_axes = []
-    arrdims: Dict[int, str] = {}
+    arrdims: dict[int, str] = {}
     idx = 0
     new_idx = 0
     has_ellipsis = False
@@ -219,8 +219,8 @@ def _fill_missing_slices(das, ast_ndslice, array, indices):
 
 
 def parse_memlet_subset(
-    array: data.Data, node: Union[ast.Name, ast.Subscript], das: Dict[str, Any], parsed_slice: Any = None
-) -> Tuple[subsets.Range, List[int], Dict[int, str], Optional[List[int]]]:
+    array: data.Data, node: ast.Name | ast.Subscript, das: dict[str, Any], parsed_slice: Any = None
+) -> tuple[subsets.Range, list[int], dict[int, str], list[int] | None]:
     """
     Parses an AST subset and returns access range, as well as new dimensions to
     add.
@@ -236,7 +236,7 @@ def parse_memlet_subset(
     # Get memlet range
     ndslice = [(0, s - 1, 1) for s in array.shape]
     extra_dims = []
-    arrdims: Dict[int, str] = {}
+    arrdims: dict[int, str] = {}
     if isinstance(node, ast.Subscript):
         # Parse and evaluate ND slice(s) (possibly nested)
         if parsed_slice:
@@ -281,10 +281,10 @@ def parse_memlet_subset(
 # Parses a memlet statement
 def ParseMemlet(
     visitor,
-    defined_arrays_and_symbols: Dict[str, Any],
+    defined_arrays_and_symbols: dict[str, Any],
     node: MemletType,
     parsed_slice: Any = None,
-    arrname: Optional[str] = None,
+    arrname: str | None = None,
 ) -> MemletExpr:
     das = defined_arrays_and_symbols
     arrname = arrname or rname(node)
@@ -334,7 +334,7 @@ def ParseMemlet(
     return MemletExpr(arrname, num_accesses, write_conflict_resolution, subset, new_axes, arrdims, slice_dims)
 
 
-def parse_memlet(visitor, src: MemletType, dst: MemletType, defined_arrays_and_symbols: Dict[str, data.Data]):
+def parse_memlet(visitor, src: MemletType, dst: MemletType, defined_arrays_and_symbols: dict[str, data.Data]):
     srcexpr, dstexpr, localvar = None, None, None
     if isinstance(src, ast.Name) and rname(src) not in defined_arrays_and_symbols:
         localvar = rname(src)

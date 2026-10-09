@@ -12,12 +12,11 @@ representative without exploding compile time.
 """
 
 import time
-from typing import Dict, Tuple, Union
+from typing import Union
 
 import dace
 from dace.sdfg.utils import specialize_scalars
 from dace.transformation.interstate import LoopUnroll
-
 from tests.corpus.cloudsc.generate_data_for_cloudsc import CLOUDSC_SYMBOLS
 
 #: Shape/index symbols baked in via SDFG.specialize (compile-time constants).
@@ -40,7 +39,7 @@ def run_simplify(sdfg: dace.SDFG, backend: str) -> float:
     return t1 - t0
 
 
-def specialize_and_unroll(sdfg: dace.SDFG, backend: str) -> Tuple[float, int]:
+def specialize_and_unroll(sdfg: dace.SDFG, backend: str) -> tuple[float, int]:
     """Specialize :data:`SPECIALIZED_SYMBOLS` / :data:`SPECIALIZED_SCALARS` ("config-prop")
     and fully unroll every loop this makes constant-bounded, under the given graph backend.
     Mutates ``sdfg`` in place.
@@ -59,7 +58,7 @@ def specialize_and_unroll(sdfg: dace.SDFG, backend: str) -> Tuple[float, int]:
     return t1 - t0, applied
 
 
-def run_pipeline(sdfg: dace.SDFG, backend: str) -> Dict[str, float]:
+def run_pipeline(sdfg: dace.SDFG, backend: str) -> dict[str, float]:
     """Simplify, then config-prop (specialize_scalar/SDFG.specialize) and LoopUnroll. Mutates ``sdfg``
     in place and returns the two phase timings.
 
@@ -77,8 +76,8 @@ def run_pipeline(sdfg: dace.SDFG, backend: str) -> Dict[str, float]:
 
 
 def filtered_inputs(
-    sdfg: dace.SDFG, inputs: Dict[str, Union["object", int, float]]
-) -> Dict[str, Union["object", int, float]]:
+    sdfg: dace.SDFG, inputs: dict[str, Union["object", int, float]]
+) -> dict[str, Union["object", int, float]]:
     """Restrict a generated CloudSC input dict to the names ``sdfg`` actually still
     expects. ``specialize``/``specialize_scalar`` can remove a symbol/scalar from the
     compiled call signature entirely, so a stale full input dict (built once, shared

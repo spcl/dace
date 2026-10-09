@@ -1,15 +1,15 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 
-from typing import Tuple
-import dace
+
 import networkx as nx
 import numpy as np
+import pytest
+
+import dace
 from dace import subsets as dace_sbs
 from dace.sdfg import nodes as dace_nodes
 from dace.sdfg.state import SymbolResolver, sdfg_scope_symbols
 from dace.sdfg.utils import consolidate_edges
-
-import pytest
 
 from .transformations import utility
 
@@ -44,7 +44,7 @@ def test_consolidate_edges():
 
 def _make_write_merge_sdfg(
     sub1: str, sub2: str, n1: int, n2: int, array_size: int
-) -> Tuple[dace.SDFG, dace.SDFGState, dace_nodes.MapExit]:
+) -> tuple[dace.SDFG, dace.SDFGState, dace_nodes.MapExit]:
     # Two exit connectors of the same map, both writing directly into B, one connector
     # per tasklet so consolidate_edges_scope sees them as two independent write paths
     # to the same outer data container.
@@ -118,7 +118,7 @@ def test_consolidate_edges_merges_disjoint_writes():
     assert np.array_equal(res[6:10], np.full(4, 2.0))
 
 
-def _make_reanchor_cycle_sdfg() -> Tuple[dace.SDFG, dace.SDFGState]:
+def _make_reanchor_cycle_sdfg() -> tuple[dace.SDFG, dace.SDFGState]:
     # Map1 folds two disjoint writes to B into one connector. The stranded write target
     # ('stranded') still carries a happens-before edge into Map2's entry (a WAW guard: whatever
     # Map1's second write touched must finish before Map2 starts). Map2's own exit writes the
@@ -186,7 +186,7 @@ def test_consolidate_edges_never_reanchors_ordering_into_a_cycle():
 def _make_sdfg_multi_usage_input(
     use_inner_access_node: bool,
     use_non_standard_memlet: bool,
-) -> Tuple[dace.SDFG, dace.SDFGState, dace_nodes.AccessNode, dace_nodes.MapEntry]:
+) -> tuple[dace.SDFG, dace.SDFGState, dace_nodes.AccessNode, dace_nodes.MapEntry]:
 
     # Needs to be 5, to trigger the Memlet propagation bug (could actually also be
     #   less but greater than 2.
@@ -359,7 +359,7 @@ def test_multi_use_value_input(
 def _make_multi_use_value_output(
     use_inner_access_node: bool,
     use_non_standard_memlet: bool,
-) -> Tuple[dace.SDFG, dace.SDFGState, dace_nodes.AccessNode]:
+) -> tuple[dace.SDFG, dace.SDFGState, dace_nodes.AccessNode]:
 
     sdfg = dace.SDFG(utility.unique_name("multi_input_usage"))
     state = sdfg.add_state(is_start_block=True)

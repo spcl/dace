@@ -17,21 +17,22 @@ import ast
 import copy
 import math
 from numbers import Number, Integral
-from typing import Any, List, Optional, Sequence, Union
+from typing import Any
+from collections.abc import Sequence
 
 import numpy as np
 import sympy as sp
 
 
 @oprepo.replaces("numpy.copy")
-def _numpy_copy(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str, strides: Optional[Sequence[Any]] = None):
+def _numpy_copy(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str, strides: Sequence[Any] | None = None):
     """Creates a copy of array a.
 
     :param strides: Layout of the copy, e.g. packed in the order a reshape reads it. ``None`` keeps
                     the layout of ``a``.
     """
     if a not in sdfg.arrays.keys():
-        raise DaceSyntaxError(pv, None, "Prototype argument {a} is not SDFG data!".format(a=a))
+        raise DaceSyntaxError(pv, None, f"Prototype argument {a} is not SDFG data!")
     sample = sdfg.arrays[a]
     if strides is not None:
         name, desc = sdfg.add_transient(
@@ -72,7 +73,7 @@ def _numpy_full(
     sdfg: SDFG,
     state: SDFGState,
     shape: Shape,
-    fill_value: Union[sp.Expr, Number, data.Scalar],
+    fill_value: sp.Expr | Number | data.Scalar,
     dtype: dtypes.typeclass = None,
 ):
     """Creates and array of the specified shape and initializes it with
@@ -111,19 +112,19 @@ def _numpy_full(
     if is_data:
         state.add_mapped_tasklet(
             "_numpy_full_",
-            {"__i{}".format(i): "0: {}".format(s) for i, s in enumerate(shape)},
+            {f"__i{i}": f"0: {s}" for i, s in enumerate(shape)},
             dict(__inp=Memlet(data=fill_value, subset="0")),
             "__out = __inp",
-            dict(__out=Memlet.simple(name, ",".join(["__i{}".format(i) for i in range(len(shape))]))),
+            dict(__out=Memlet.simple(name, ",".join([f"__i{i}" for i in range(len(shape))]))),
             external_edges=True,
         )
     else:
         state.add_mapped_tasklet(
             "_numpy_full_",
-            {"__i{}".format(i): "0: {}".format(s) for i, s in enumerate(shape)},
+            {f"__i{i}": f"0: {s}" for i, s in enumerate(shape)},
             {},
-            "__out = {}".format(fill_value),
-            dict(__out=Memlet.simple(name, ",".join(["__i{}".format(i) for i in range(len(shape))]))),
+            f"__out = {fill_value}",
+            dict(__out=Memlet.simple(name, ",".join([f"__i{i}" for i in range(len(shape))]))),
             external_edges=True,
         )
 
@@ -144,7 +145,7 @@ def _numpy_full_like(
     with the fill value.
     """
     if a not in sdfg.arrays:
-        raise DaceSyntaxError(pv, None, "Prototype argument {a} is not SDFG data!".format(a=a))
+        raise DaceSyntaxError(pv, None, f"Prototype argument {a} is not SDFG data!")
     desc = sdfg.arrays[a]
     dtype = dtype or desc.dtype
     shape = shape or desc.shape
@@ -154,9 +155,7 @@ def _numpy_full_like(
 @oprepo.replaces_method("Array", "fill")
 @oprepo.replaces_method("Scalar", "fill")
 @oprepo.replaces_method("View", "fill")
-def _ndarray_fill(
-    pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, value: Union[str, Number, sp.Expr]
-) -> str:
+def _ndarray_fill(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, value: str | Number | sp.Expr) -> str:
     assert arr in sdfg.arrays
 
     if isinstance(value, sp.Expr):
@@ -254,7 +253,7 @@ def _numpy_identity(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, n, dtype=d
 @oprepo.replaces("numpy.arange")
 @oprepo.replaces("dace.arange")
 def _arange(
-    pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, *args, dtype: dtypes.typeclass = None, like: Optional[str] = None
+    pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, *args, dtype: dtypes.typeclass = None, like: str | None = None
 ):
     """Implementes numpy.arange"""
 
@@ -334,7 +333,7 @@ def _arange(
 
 def _add_axis_to_shape(
     shape: Sequence[symbolic.SymbolicType], axis: int, axis_value: Any
-) -> List[symbolic.SymbolicType]:
+) -> list[symbolic.SymbolicType]:
     if axis > len(shape):
         raise ValueError(f"axis {axis} is out of bounds for array of dimension {len(shape)}")
     if axis < 0:
@@ -361,9 +360,9 @@ def _linspace(
     pv: ProgramVisitor,
     sdfg: SDFG,
     state: SDFGState,
-    start: Union[Number, symbolic.SymbolicType, str],
-    stop: Union[Number, symbolic.SymbolicType, str],
-    num: Union[Integral, symbolic.SymbolicType] = 50,
+    start: Number | symbolic.SymbolicType | str,
+    stop: Number | symbolic.SymbolicType | str,
+    num: Integral | symbolic.SymbolicType = 50,
     endpoint: bool = True,
     retstep: bool = False,
     dtype: dtypes.typeclass = None,
@@ -499,11 +498,11 @@ def logspace(
     pv: ProgramVisitor,
     sdfg: SDFG,
     state: SDFGState,
-    start: Union[Number, symbolic.SymbolicType, str],
-    stop: Union[Number, symbolic.SymbolicType, str],
-    num: Union[Integral, symbolic.SymbolicType] = 50,
+    start: Number | symbolic.SymbolicType | str,
+    stop: Number | symbolic.SymbolicType | str,
+    num: Integral | symbolic.SymbolicType = 50,
     endpoint: bool = True,
-    base: Union[Number, symbolic.SymbolicType] = 10.0,
+    base: Number | symbolic.SymbolicType = 10.0,
     dtype: dtypes.typeclass | None = None,
     axis: int = 0,
 ) -> str:

@@ -24,8 +24,8 @@ from dace import subsets, symbolic
 from dace.sdfg import nodes
 from dace.sdfg.state import SDFGState
 from dace.transformation.passes.canonicalize.hoist_loop_range_calls import (
-    HoistLoopRangeCalls,
     RANGE_SYMBOL_PREFIX,
+    HoistLoopRangeCalls,
     contains_call,
 )
 

@@ -10,8 +10,8 @@ import ast
 from dataclasses import dataclass
 
 import dace
-from dace.memlet import Memlet
 from dace import typeclass
+from dace.memlet import Memlet
 from dace.optionals import required
 from dace.sdfg.narrowing import as_expr
 

@@ -18,16 +18,16 @@ import numpy as np
 import pytest
 
 import dace
-from dace.sdfg.dealias import convert_legacy_nested_sdfgs
-from dace.sdfg import nodes
 from dace.properties import CodeBlock
+from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
+from dace.sdfg.dealias import convert_legacy_nested_sdfgs
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
 from dace.transformation.dataflow.map_fusion_horizontal import MapFusionHorizontal
 from dace.transformation.interstate.loop_to_map import LoopToMap
 from dace.transformation.interstate.state_fusion_with_happens_before import StateFusionExtended
-from dace.transformation.passes.canonicalize.pipeline import canonicalize
 from dace.transformation.passes.canonicalize.normalize_map_body import NormalizeMapBody
+from dace.transformation.passes.canonicalize.pipeline import canonicalize
 from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
 from tests.cfg_tree import assert_tree_matches_a_reset, spy_on_resets
 

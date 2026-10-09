@@ -1,8 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests for :mod:`dace.transformation.passes.canonicalize.redundant_ordering_edge_elimination`."""
 
-from typing import Dict, Optional, Tuple
-
 import numpy as np
 
 import dace
@@ -12,7 +10,7 @@ from dace.transformation.passes.canonicalize.pipeline import canonicalize
 from dace.transformation.passes.canonicalize.redundant_ordering_edge_elimination import RedundantOrderingEdgeElimination
 
 
-def scope_ids(state: SDFGState) -> Dict[int, Optional[int]]:
+def scope_ids(state: SDFGState) -> dict[int, int | None]:
     """Identity view of the state's scope dict, so the comparison is by object and not by value."""
     return {id(n): (None if s is None else id(s)) for n, s in state.scope_dict().items()}
 
@@ -22,7 +20,7 @@ def tasklet_named(state: SDFGState, label: str) -> nodes.Tasklet:
     return next(n for n in state.nodes() if isinstance(n, nodes.Tasklet) and n.label == label)
 
 
-def build_chain(name: str) -> Tuple[dace.SDFG, SDFGState]:
+def build_chain(name: str) -> tuple[dace.SDFG, SDFGState]:
     """``A -> t1 -> B -> t2 -> C`` in one state, all scalars."""
     sdfg = dace.SDFG(name)
     for arr in ("A", "B", "C"):
@@ -38,7 +36,7 @@ def build_chain(name: str) -> Tuple[dace.SDFG, SDFGState]:
     return sdfg, state
 
 
-def build_two_chains(name: str) -> Tuple[dace.SDFG, SDFGState]:
+def build_two_chains(name: str) -> tuple[dace.SDFG, SDFGState]:
     """Two independent chains, ``A -> t1 -> B`` and ``C -> t2 -> D``, in one state."""
     sdfg = dace.SDFG(name)
     for arr in ("A", "B", "C", "D"):
@@ -53,7 +51,7 @@ def build_two_chains(name: str) -> Tuple[dace.SDFG, SDFGState]:
     return sdfg, state
 
 
-def build_map_state(name: str) -> Tuple[dace.SDFG, SDFGState]:
+def build_map_state(name: str) -> tuple[dace.SDFG, SDFGState]:
     """A map whose body holds a no-input ``seed`` tasklet attached to the entry by ordering only."""
     sdfg = dace.SDFG(name)
     sdfg.add_array("A", [8], dace.float64)

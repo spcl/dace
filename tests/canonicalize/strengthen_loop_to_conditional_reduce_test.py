@@ -23,8 +23,8 @@ import pytest
 
 import dace
 from dace.properties import CodeBlock
-from dace.sdfg.state import ControlFlowRegion, LoopRegion, ConditionalBlock
 from dace.sdfg import nodes as nd
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.passes.canonicalize.loop_to_conditional_reduce import LoopToConditionalReduce
 
 N = dace.symbol("N")
@@ -185,8 +185,8 @@ def test_lifts_through_the_full_canonicalize_pipeline():
     guarded atomic survives to codegen. Pin the end state: guard folded away, the
     reduction lowered WITHOUT a per-passing-thread ``reduce_atomic``, bit-exact.
     """
-    from dace.transformation.passes.canonicalize.pipeline import canonicalize
     from dace.transformation.passes.canonicalize.finalize import finalize_for_target
+    from dace.transformation.passes.canonicalize.pipeline import canonicalize
 
     @dace.program
     def sumsq(a: dace.float64[N], out: dace.float64[1]):

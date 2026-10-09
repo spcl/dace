@@ -7,37 +7,103 @@ computation.
 """
 
 import os
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Type, Union
+from collections.abc import Callable, Sequence
+from typing import Any
 
-from dace import SDFG, data, symbolic, properties
+from dace import SDFG, data, properties, symbolic
 from dace.ordered import OrderedSet
 from dace.sdfg.state import ControlFlowRegion
 from dace.transformation import helpers as xfh
-from dace.transformation import transformation
-from dace.transformation.passes.canonicalize.annotate_loop_kinds import AnnotateLoopKinds
-from dace.transformation.passes.canonicalize.empty_state_elimination import EmptyStateElimination
-from dace.transformation.passes.dead_state_elimination import DeadStateElimination
 from dace.transformation import pass_pipeline as ppl
-
+from dace.transformation import transformation
+from dace.transformation.dataflow.distribute_tasklet_into_map import DistributeTaskletIntoMap
+from dace.transformation.dataflow.lift_einsum import LiftEinsum
+from dace.transformation.dataflow.map_collapse import MapCollapse
+from dace.transformation.dataflow.map_for_loop import MapToForLoop
+from dace.transformation.dataflow.mapreduce import MapReduceFusion, MapWCRFusion
+from dace.transformation.dataflow.perf_loop_nesting import PerfLoopNesting
+from dace.transformation.dataflow.prune_connectors import PruneConnectors
+from dace.transformation.dataflow.redundant_array import RedundantArray
+from dace.transformation.dataflow.trivial_map_elimination import TrivialMapElimination
+from dace.transformation.interstate.move_if_into_map import MoveIfIntoMap
+from dace.transformation.interstate.move_loop_invariant_if_up import MoveLoopInvariantIfUp
+from dace.transformation.interstate.move_map_invariant_if_up import MoveMapInvariantIfUp
+from dace.transformation.interstate.trivial_loop_elimination import TrivialLoopElimination
 from dace.transformation.passes.array_elimination import ArrayElimination
-from dace.transformation.passes.optional_arrays import OptionalArrayInference
-from dace.transformation.passes.simplification.prune_empty_conditional_branches import PruneEmptyConditionalBranches
-from dace.transformation.passes.dead_dataflow_elimination import DeadDataflowElimination
-from dace.transformation.passes.relax_integer_powers import RelaxIntegerPowers
-from dace.transformation.passes.simplify import SimplifyPass
-from dace.transformation.passes.canonicalize.reorder_state_for_loop_fusion import ReorderStateForLoopFusion
+from dace.transformation.passes.assignment_and_copy_kernel_to_memset_and_memcpy import (
+    AssignmentAndCopyKernelToMemsetAndMemcpy,
+)
+from dace.transformation.passes.break_anti_dependence import BreakAntiDependence
+from dace.transformation.passes.buffer_expansion import BufferExpansion
+from dace.transformation.passes.canonicalize.annotate_loop_kinds import AnnotateLoopKinds
+from dace.transformation.passes.canonicalize.arg_max_lift import ArgMaxLift
+from dace.transformation.passes.canonicalize.assume_symbols_nonnegative import AssumeSymbolConstraints
+from dace.transformation.passes.canonicalize.cascade_iedge_assignments_up import CascadeInterstateEdgeAssignmentsUp
 from dace.transformation.passes.canonicalize.collapse_noop_cast import CollapseNoOpCast
-from dace.transformation.passes.canonicalize.require_structured_control_flow import RequireStructuredControlFlow
-from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising
+from dace.transformation.passes.canonicalize.dead_carried_store import DeadCarriedStoreElimination
+from dace.transformation.passes.canonicalize.distribute_producer_consumer import DistributeProducerConsumerLoop
+from dace.transformation.passes.canonicalize.eliminate_trivial_tasklets import EliminateTrivialTasklets
+from dace.transformation.passes.canonicalize.empty_state_elimination import EmptyStateElimination
+from dace.transformation.passes.canonicalize.fold_scalar_read_copies import FoldScalarReadCopies
+from dace.transformation.passes.canonicalize.forward_store_to_load import ForwardStoreToLoad
+from dace.transformation.passes.canonicalize.fuse_chained_scalar_reductions import FuseChainedScalarReductions
+from dace.transformation.passes.canonicalize.fuse_conditions import FuseConditions
+from dace.transformation.passes.canonicalize.fuse_consecutive_loops import FuseConsecutiveLoops
+from dace.transformation.passes.canonicalize.fuse_loops import FuseLoops
+from dace.transformation.passes.canonicalize.hoist_iv_updates import HoistInductionVariableUpdates
+from dace.transformation.passes.canonicalize.induction_variable_substitution import (
+    InductionVariableSubstitution,
+    LoopCarriedRotationSubstitution,
+)
+from dace.transformation.passes.canonicalize.lift_inv import LiftInv
+from dace.transformation.passes.canonicalize.lift_loop_carried_reduction import LiftLoopCarriedReduction
+from dace.transformation.passes.canonicalize.loop_to_conditional_reduce import LoopToConditionalReduce
+from dace.transformation.passes.canonicalize.loop_to_einsum import LoopToEinsum
+from dace.transformation.passes.canonicalize.loop_to_rank_k_update import LoopToRankKUpdate
+from dace.transformation.passes.canonicalize.loop_to_stream_compaction import LoopToStreamCompaction
+from dace.transformation.passes.canonicalize.loop_to_symm import LoopToSymm
+from dace.transformation.passes.canonicalize.loop_to_symmetrize import LoopToSymmetrize
 from dace.transformation.passes.canonicalize.loop_to_transpose import LoopToTranspose
+from dace.transformation.passes.canonicalize.materialize_loop_exit_symbols import MaterializeLoopExitSymbols
+from dace.transformation.passes.canonicalize.move_loop_into_map_gated import MoveLoopIntoMapGated
 from dace.transformation.passes.canonicalize.normalize_floor_division import NormalizeFloorDivision
 from dace.transformation.passes.canonicalize.normalize_loop_and_map_origin import NormalizeLoopAndMapOrigin
-from dace.transformation.passes.simplification.continue_to_condition import ContinueToCondition
-from dace.transformation.passes.vectorization.tasklet_preprocessing_passes import RewriteModuloToPyMod
-from dace.transformation.passes.canonicalize.cascade_iedge_assignments_up import CascadeInterstateEdgeAssignmentsUp
-from dace.transformation.passes.unique_loop_iterators import UniqueLoopIterators
-from dace.transformation.passes.loop_invariant_code_motion import LoopInvariantCodeMotion
+from dace.transformation.passes.canonicalize.normalize_map_body import NormalizeMapBody
+from dace.transformation.passes.canonicalize.normalize_negative_stride import NormalizeNegativeStride
+from dace.transformation.passes.canonicalize.perfect_loop_nesting import PerfectLoopNesting
+from dace.transformation.passes.canonicalize.prune_and_inline_nested_sdfgs import PruneAndInlineNestedSDFGs
+from dace.transformation.passes.canonicalize.prune_unreferenced_transients import PruneUnreferencedTransients
+from dace.transformation.passes.canonicalize.reconstruct_wavefront_nest import ReconstructWavefrontNest
+from dace.transformation.passes.canonicalize.redundant_ordering_edge_elimination import RedundantOrderingEdgeElimination
+from dace.transformation.passes.canonicalize.reorder_state_for_loop_fusion import ReorderStateForLoopFusion
+from dace.transformation.passes.canonicalize.require_structured_control_flow import RequireStructuredControlFlow
+from dace.transformation.passes.canonicalize.reroll_unrolled_loops import RerollUnrolledLoops
+from dace.transformation.passes.canonicalize.reverse_map_traversal import ReverseMapTraversal
+from dace.transformation.passes.canonicalize.revert_nonreduction_wcr import RevertNonReductionWCR
+from dace.transformation.passes.canonicalize.split_statements import SplitStatements
+from dace.transformation.passes.canonicalize.supply_num_threads import SupplyNumThreads
+from dace.transformation.passes.canonicalize.symbol_dedup import SymbolDedup
+from dace.transformation.passes.canonicalize.untile_loops import UntileLoops
+from dace.transformation.passes.canonicalize.wavefront_skew import WavefrontSkew
+from dace.transformation.passes.clean_access_node_to_scalar_slice_to_tasklet_pattern import (
+    CleanAccessNodeToScalarSliceToTaskletPattern,
+)
+from dace.transformation.passes.clean_tasklet_to_scalar_slice_to_access_node_pattern import (
+    CleanTaskletToScalarSliceToAccessNodePattern,
+)
+from dace.transformation.passes.constant_propagation import ConstantPropagation
+from dace.transformation.passes.dead_dataflow_elimination import DeadDataflowElimination
+from dace.transformation.passes.dead_state_elimination import DeadStateElimination
+from dace.transformation.passes.empty_loop_elimination import EmptyLoopElimination
+from dace.transformation.passes.equalize_symbol_dtypes import EqualizeSymbolDtypes, equalize
+from dace.transformation.passes.fuse_maps import FuseMaps
+from dace.transformation.passes.fusion_inline import FuseStates, InlineControlFlowRegions, InlineSDFGs
+from dace.transformation.passes.insert_assign_tasklets_at_map_boundary import InsertAssignTaskletsAtMapBoundary
+from dace.transformation.passes.length_one_array_scalar_conversion import ConvertLengthOneArraysToScalars
 from dace.transformation.passes.lift_preprocess import LiftPreprocess
+from dace.transformation.passes.lift_trivial_if import LiftTrivialIf
+from dace.transformation.passes.loop_invariant_code_motion import LoopInvariantCodeMotion
+from dace.transformation.passes.loop_stride_permutation import LoopStridePermutation
 from dace.transformation.passes.loop_to_reduce import (
     AccumulatorCopyChainToWCR,
     LoopToReduce,
@@ -45,106 +111,38 @@ from dace.transformation.passes.loop_to_reduce import (
     RetargetWCRAccumulator,
 )
 from dace.transformation.passes.loop_to_scan import LoopToScan
-from dace.transformation.passes.propagate_memlets import PropagateMemlets
-from dace.transformation.passes.equalize_symbol_dtypes import EqualizeSymbolDtypes, equalize
-from dace.transformation.passes.symbol_propagation import SymbolPropagation
-from dace.transformation.passes.constant_propagation import ConstantPropagation
+from dace.transformation.passes.minimize_stride_permutation import MinimizeStridePermutation
+from dace.transformation.passes.move_if_into_loop import MoveIfIntoLoop
+from dace.transformation.passes.normalize_wcr import NormalizeWCR
+from dace.transformation.passes.normalize_wcr_source import NormalizeWCRSource
+from dace.transformation.passes.optional_arrays import OptionalArrayInference
+from dace.transformation.passes.parallelization_prep import DEFAULT_UNROLL_LIMIT, BestEffortLoopPeeling, ShortLoopUnroll
+from dace.transformation.passes.parallelize_loops import ParallelizeLoops
+from dace.transformation.passes.parallelize_under_constraint import ParallelizeUnderConstraint
 from dace.transformation.passes.pattern_matching import (
     PatternApplyOnceEverywhere,
     PatternMatchAndApply,
     PatternMatchAndApplyRepeated,
 )
+from dace.transformation.passes.privatize_scatter_reduction import PrivatizeScatterReduction
+from dace.transformation.passes.promote_constant_index_access import PromoteConstantIndexAccess
+from dace.transformation.passes.propagate_memlets import PropagateMemlets
 from dace.transformation.passes.prune_symbols import RemoveUnusedSymbols
-from dace.transformation.passes.canonicalize.prune_unreferenced_transients import PruneUnreferencedTransients
-from dace.transformation.passes.canonicalize.redundant_ordering_edge_elimination import RedundantOrderingEdgeElimination
-from dace.transformation.passes.fusion_inline import FuseStates, InlineControlFlowRegions, InlineSDFGs
-from dace.transformation.passes.fuse_maps import FuseMaps
-from dace.transformation.passes.canonicalize.supply_num_threads import SupplyNumThreads
-from dace.transformation.passes.canonicalize.split_statements import SplitStatements
-from dace.transformation.passes.length_one_array_scalar_conversion import ConvertLengthOneArraysToScalars
-from dace.transformation.passes.canonicalize.normalize_map_body import NormalizeMapBody
-from dace.transformation.passes.canonicalize.lift_loop_carried_reduction import LiftLoopCarriedReduction
-from dace.transformation.passes.canonicalize.fuse_chained_scalar_reductions import FuseChainedScalarReductions
-from dace.transformation.passes.canonicalize.symbol_dedup import SymbolDedup
-from dace.transformation.passes.lift_trivial_if import LiftTrivialIf
-from dace.transformation.passes.move_if_into_loop import MoveIfIntoLoop
-from dace.transformation.passes.symbol_ssa import SymbolSSA
-from dace.transformation.passes.loop_stride_permutation import LoopStridePermutation
-from dace.transformation.passes.canonicalize.reverse_map_traversal import ReverseMapTraversal
-from dace.transformation.passes.minimize_stride_permutation import MinimizeStridePermutation
-from dace.transformation.passes.canonicalize.move_loop_into_map_gated import MoveLoopIntoMapGated
-from dace.transformation.passes.insert_assign_tasklets_at_map_boundary import InsertAssignTaskletsAtMapBoundary
-
-from dace.transformation.dataflow.lift_einsum import LiftEinsum
-from dace.transformation.passes.assignment_and_copy_kernel_to_memset_and_memcpy import (
-    AssignmentAndCopyKernelToMemsetAndMemcpy,
-)
-from dace.transformation.dataflow.map_for_loop import MapToForLoop
-from dace.transformation.dataflow.perf_loop_nesting import PerfLoopNesting
-from dace.transformation.dataflow.map_collapse import MapCollapse
-from dace.transformation.dataflow.distribute_tasklet_into_map import DistributeTaskletIntoMap
-from dace.transformation.dataflow.mapreduce import MapReduceFusion, MapWCRFusion
-from dace.transformation.dataflow.redundant_array import RedundantArray
-from dace.transformation.passes.canonicalize.eliminate_trivial_tasklets import EliminateTrivialTasklets
-from dace.transformation.passes.canonicalize.fold_scalar_read_copies import FoldScalarReadCopies
-from dace.transformation.passes.canonicalize.revert_nonreduction_wcr import RevertNonReductionWCR
-from dace.transformation.passes.canonicalize.prune_and_inline_nested_sdfgs import PruneAndInlineNestedSDFGs
+from dace.transformation.passes.relax_integer_powers import RelaxIntegerPowers
 from dace.transformation.passes.rematerialize_derived_temporaries import RematerializeDerivedTemporaries
 from dace.transformation.passes.remove_views import RemoveViews
-from dace.transformation.passes.clean_access_node_to_scalar_slice_to_tasklet_pattern import (
-    CleanAccessNodeToScalarSliceToTaskletPattern,
-)
-from dace.transformation.passes.clean_tasklet_to_scalar_slice_to_access_node_pattern import (
-    CleanTaskletToScalarSliceToAccessNodePattern,
-)
 from dace.transformation.passes.scalar_fission import ArrayFission, PrivatizeArrays, PrivatizeScalars, ScalarFission
-from dace.transformation.passes.parallelization_prep import BestEffortLoopPeeling, ShortLoopUnroll, DEFAULT_UNROLL_LIMIT
-from dace.transformation.passes.break_anti_dependence import BreakAntiDependence
-from dace.transformation.passes.canonicalize.hoist_iv_updates import HoistInductionVariableUpdates
-from dace.transformation.passes.canonicalize.induction_variable_substitution import (
-    InductionVariableSubstitution,
-    LoopCarriedRotationSubstitution,
-)
-from dace.transformation.passes.canonicalize.perfect_loop_nesting import PerfectLoopNesting
 from dace.transformation.passes.scalar_to_symbol import ScalarToSymbolPromotion
-from dace.transformation.passes.vectorization.propagate_index_subsets import PropagateIndexSubsets
-from dace.transformation.passes.canonicalize.materialize_loop_exit_symbols import MaterializeLoopExitSymbols
-from dace.transformation.passes.canonicalize.normalize_negative_stride import NormalizeNegativeStride
-from dace.transformation.passes.canonicalize.reroll_unrolled_loops import RerollUnrolledLoops
-from dace.transformation.passes.canonicalize.fuse_consecutive_loops import FuseConsecutiveLoops
-from dace.transformation.passes.normalize_wcr_source import NormalizeWCRSource
-from dace.transformation.passes.normalize_wcr import NormalizeWCR
 from dace.transformation.passes.scatter_to_guarded_maps import ScatterToGuardedMaps
-from dace.transformation.passes.privatize_scatter_reduction import PrivatizeScatterReduction
-from dace.transformation.passes.parallelize_under_constraint import ParallelizeUnderConstraint
-from dace.transformation.passes.promote_constant_index_access import PromoteConstantIndexAccess
-from dace.transformation.passes.buffer_expansion import BufferExpansion
-from dace.transformation.passes.canonicalize.dead_carried_store import DeadCarriedStoreElimination
-from dace.transformation.passes.canonicalize.forward_store_to_load import ForwardStoreToLoad
-from dace.transformation.passes.canonicalize.wavefront_skew import WavefrontSkew
-from dace.transformation.passes.canonicalize.fuse_loops import FuseLoops
-from dace.transformation.passes.canonicalize.reconstruct_wavefront_nest import ReconstructWavefrontNest
-from dace.transformation.passes.canonicalize.untile_loops import UntileLoops
-from dace.transformation.passes.canonicalize.arg_max_lift import ArgMaxLift
-from dace.transformation.passes.canonicalize.loop_to_conditional_reduce import LoopToConditionalReduce
-from dace.transformation.passes.canonicalize.loop_to_stream_compaction import LoopToStreamCompaction
-from dace.transformation.passes.canonicalize.loop_to_symmetrize import LoopToSymmetrize
-from dace.transformation.passes.canonicalize.loop_to_symm import LoopToSymm
-from dace.transformation.passes.canonicalize.loop_to_rank_k_update import LoopToRankKUpdate
-from dace.transformation.passes.canonicalize.lift_inv import LiftInv
-from dace.transformation.passes.canonicalize.loop_to_einsum import LoopToEinsum
-from dace.transformation.passes.canonicalize.distribute_producer_consumer import DistributeProducerConsumerLoop
-from dace.transformation.passes.canonicalize.assume_symbols_nonnegative import AssumeSymbolConstraints
-from dace.transformation.interstate.trivial_loop_elimination import TrivialLoopElimination
-from dace.transformation.dataflow.trivial_map_elimination import TrivialMapElimination
-from dace.transformation.passes.empty_loop_elimination import EmptyLoopElimination
-
-from dace.transformation.passes.parallelize_loops import ParallelizeLoops
-from dace.transformation.interstate.move_if_into_map import MoveIfIntoMap
-from dace.transformation.interstate.move_loop_invariant_if_up import MoveLoopInvariantIfUp
-from dace.transformation.interstate.move_map_invariant_if_up import MoveMapInvariantIfUp
-from dace.transformation.passes.canonicalize.fuse_conditions import FuseConditions
-from dace.transformation.dataflow.prune_connectors import PruneConnectors
+from dace.transformation.passes.simplification.continue_to_condition import ContinueToCondition
+from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising
+from dace.transformation.passes.simplification.prune_empty_conditional_branches import PruneEmptyConditionalBranches
+from dace.transformation.passes.simplify import SimplifyPass
+from dace.transformation.passes.symbol_propagation import SymbolPropagation
+from dace.transformation.passes.symbol_ssa import SymbolSSA
+from dace.transformation.passes.unique_loop_iterators import UniqueLoopIterators
+from dace.transformation.passes.vectorization.propagate_index_subsets import PropagateIndexSubsets
+from dace.transformation.passes.vectorization.tasklet_preprocessing_passes import RewriteModuloToPyMod
 
 
 def disable_openmp_sections(sdfg: SDFG) -> None:
@@ -164,7 +162,7 @@ def disable_openmp_sections(sdfg: SDFG) -> None:
         nested.openmp_sections = False
 
 
-def _structural_cleanup(label: str) -> List[Tuple[str, ppl.Pass]]:
+def _structural_cleanup(label: str) -> list[tuple[str, ppl.Pass]]:
     """Tidy symbols, then the state machine, between phases; never ``SimplifyPass`` mid-pipeline.
 
     Symbol phase: ``SymbolDedup``, ``SymbolPropagation``, ``ConstantPropagation``,
@@ -209,10 +207,10 @@ class PropagateAndPrune(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return True
 
-    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+    def depends_on(self) -> list[type[ppl.Pass] | ppl.Pass]:
         return []
 
-    def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> int | None:
         changed = 0
         for round_index in range(self.ROUNDS):
             # A Pipeline per round, not bare passes: DeadDataflowElimination declares a
@@ -250,10 +248,10 @@ class StructuralCleanup(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return True
 
-    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+    def depends_on(self) -> list[type[ppl.Pass] | ppl.Pass]:
         return []
 
-    def units(self) -> List[ppl.Pass]:
+    def units(self) -> list[ppl.Pass]:
         """The block's members, in order. Symbols are folded before the state machine is rewritten,
         then ``FuseStates`` walks the region's edges to fuse what it can.
 
@@ -283,7 +281,7 @@ class StructuralCleanup(ppl.Pass):
             PruneUnreferencedTransients(),
         ]
 
-    def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> int | None:
         changed = 0
         for unit in self.units():
             if unit.apply_pass(sdfg, {}) is not None:
@@ -305,7 +303,7 @@ def run_structural_cleanup(sdfg: SDFG) -> None:
         unit.apply_pass(sdfg, {})
 
 
-def _inline_single_state(label: str) -> List[Tuple[str, ppl.Pass]]:
+def _inline_single_state(label: str) -> list[tuple[str, ppl.Pass]]:
     """Flatten single-state NestedSDFG bodies; un-inlined, they report whole-array memlets and
     every dependence test refuses on the box (seidel_2d). ``PruneConnectors`` shares the fixpoint
     because a dead connector is a hard ``InlineSDFG`` refusal.
@@ -316,7 +314,7 @@ def _inline_single_state(label: str) -> List[Tuple[str, ppl.Pass]]:
     return [(label, PruneAndInlineNestedSDFGs())]
 
 
-def _fold_scalar_slices(label: str) -> List[Tuple[str, ppl.Pass]]:
+def _fold_scalar_slices(label: str) -> list[tuple[str, ppl.Pass]]:
     """Fold the frontend scalar-slice bridge; behind the transient a matcher has no index to shift,
     which costs tsvc s252 its ``_remat`` clone and its map.
 
@@ -329,7 +327,7 @@ def _fold_scalar_slices(label: str) -> List[Tuple[str, ppl.Pass]]:
     ]
 
 
-def _coalesce() -> List[Tuple[str, ppl.Pass]]:
+def _coalesce() -> list[tuple[str, ppl.Pass]]:
     """Graph preparation for maximal map fusion, run after the first ``LoopToMap``.
 
     Maps fuse only within a state, so each blocker goes first, cheapest and most enabling first:
@@ -349,7 +347,7 @@ def _coalesce() -> List[Tuple[str, ppl.Pass]]:
 
     :returns: ``(stage_label, pass)`` pairs for the phase, in order.
     """
-    s: List[Tuple[str, ppl.Pass]] = [
+    s: list[tuple[str, ppl.Pass]] = [
         ("coalesce", CascadeInterstateEdgeAssignmentsUp()),
         ("coalesce", EmptyStateElimination()),
         ("coalesce", PatternApplyOnceEverywhere([TrivialMapElimination()])),
@@ -444,7 +442,7 @@ class IvSubstitutionFissionFixpoint(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def round_units(self) -> Tuple[ppl.Pass, ...]:
+    def round_units(self) -> tuple[ppl.Pass, ...]:
         """The passes one round runs, in order.
 
         A method rather than a literal buried in ``apply_pass`` because this round OWNS a
@@ -461,7 +459,7 @@ class IvSubstitutionFissionFixpoint(ppl.Pass):
             SplitStatements(),
         )
 
-    def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> int | None:
         """Run the round up to ``max_rounds`` times, stopping early on a no-op round.
 
         :returns: the number of rounds actually run, or ``None`` if the first round did nothing.
@@ -496,8 +494,8 @@ class IvSubstitutionFissionFixpoint(ppl.Pass):
         :returns: Whether any simplification pass changed ``sdfg``.
         """
         names = simplify._pass_names
-        state: Dict[str, Any] = {}
-        settled: Dict[str, None] = {}
+        state: dict[str, Any] = {}
+        settled: dict[str, None] = {}
         changed = False
         sweep_changed = True
         while sweep_changed and len(settled) < len(names):
@@ -544,7 +542,7 @@ class _PrivatizeScalarsStage(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+    def depends_on(self) -> list[type[ppl.Pass] | ppl.Pass]:
         return []
 
     def privatizer(self) -> ppl.Pipeline:
@@ -554,7 +552,7 @@ class _PrivatizeScalarsStage(ppl.Pass):
         """
         return PrivatizeScalars()
 
-    def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[Any]:
+    def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> Any | None:
         # ``PrivatizeScalars`` resolves a ``FindAccessNodes`` analysis (keyed by
         # ``cfg_id``) and a reachability analysis that calls ``reset_cfg_list`` mid-
         # pipeline; a stale control-flow-region list (left by a prior stage's inliner)
@@ -601,7 +599,7 @@ class _PrivatizeArraysStage(_PrivatizeScalarsStage):
 #   safe but never fires on the corpus yet (range offsets do not line up).
 # ``normalize_loop_and_map_origin``: rebase ranges to 0 keeping the stride (``NormalizeLoopsAndMaps``
 #   folded it and lost TSVC s172's map); see the AB note at its wiring below.
-CPU_DEFAULTS: Dict[str, Any] = {
+CPU_DEFAULTS: dict[str, Any] = {
     "interchange_carry_with_map": True,
     "peel_limit": 4,
     "break_anti_dependence": True,
@@ -610,7 +608,7 @@ CPU_DEFAULTS: Dict[str, Any] = {
     "reconstruct_wavefront_nest": False,
     "normalize_loop_and_map_origin": False,
 }
-GPU_DEFAULTS: Dict[str, Any] = {
+GPU_DEFAULTS: dict[str, Any] = {
     "interchange_carry_with_map": False,
     "peel_limit": 4,
     "break_anti_dependence": True,
@@ -619,10 +617,10 @@ GPU_DEFAULTS: Dict[str, Any] = {
     "reconstruct_wavefront_nest": False,
     "normalize_loop_and_map_origin": False,
 }
-TARGET_DEFAULTS: Dict[str, Dict[str, Any]] = {"cpu": CPU_DEFAULTS, "gpu": GPU_DEFAULTS}
+TARGET_DEFAULTS: dict[str, dict[str, Any]] = {"cpu": CPU_DEFAULTS, "gpu": GPU_DEFAULTS}
 
 
-def _resolve_target_default(target: str, knob: str, explicit: Optional[Any], fallback: Any) -> Any:
+def _resolve_target_default(target: str, knob: str, explicit: Any | None, fallback: Any) -> Any:
     """Pick ``explicit`` if not ``None``, else the per-target preset, else
     ``fallback``. Used to resolve every per-target knob in one place."""
     if explicit is not None:
@@ -646,7 +644,7 @@ def _build_stages(
     lift: bool = True,
     lift_copy: bool = True,
     semantic_lifting: bool = True,
-) -> List[Tuple[str, ppl.Pass]]:
+) -> list[tuple[str, ppl.Pass]]:
     """Build the loop-centric canonicalization recipe as one flat list.
 
     Every map is lowered to a ``LoopRegion`` up front so canonicalization runs on one
@@ -663,7 +661,7 @@ def _build_stages(
     :param normalize_loop_and_map_origin: Rebase ranges to 0 before the ``LoopTo*`` lifts.
     :returns: ``(stage_label, pass)`` pairs with fresh instances each call.
     """
-    s: List[Tuple[str, ppl.Pass]] = []
+    s: list[tuple[str, ppl.Pass]] = []
 
     # Canonicalization runs UniqueLoopIterators with the post-value epilogue
     # OFF: it is a Fortran-frontend convenience (materialise ``<i> = post``
@@ -1407,10 +1405,10 @@ def disable_unit_validation(unit: ppl.Pass) -> None:
 
 
 #: A stage factory returns that stage's fresh passes, in order.
-StageFactory = Callable[[], List[ppl.Pass]]
+StageFactory = Callable[[], list[ppl.Pass]]
 
 
-def _stage_runs() -> List[Tuple[str, int, int]]:
+def _stage_runs() -> list[tuple[str, int, int]]:
     """Split the flat recipe into contiguous runs of one stage label.
 
     A label may appear in several places in the recipe (``clean``,
@@ -1423,7 +1421,7 @@ def _stage_runs() -> List[Tuple[str, int, int]]:
 
     :returns: ``(label, start, stop)`` index ranges into the flat recipe.
     """
-    runs: List[List] = []
+    runs: list[list] = []
     for i, (lbl, unit) in enumerate(_build_stages()):
         if runs and runs[-1][0] == lbl and runs[-1][2] == i:
             runs[-1][2] = i + 1
@@ -1448,7 +1446,7 @@ def _stage_factory(start: int, stop: int) -> StageFactory:
 #: truth used by the pipeline; this view exists for callers that iterate
 #: stage-by-stage (``for name, factory in CANONICALIZE_STAGES:
 #: for unit in factory(): ...``).
-CANONICALIZE_STAGES: List[Tuple[str, StageFactory]] = [
+CANONICALIZE_STAGES: list[tuple[str, StageFactory]] = [
     (label, _stage_factory(start, stop)) for label, start, stop in _stage_runs()
 ]
 
@@ -1649,22 +1647,22 @@ class CanonicalizationPipeline(ppl.Pass):
         validate: bool = False,
         validate_all: bool = False,
         unroll_limit: int = DEFAULT_UNROLL_LIMIT,
-        peel_limit: Optional[int] = None,
-        break_anti_dependence: Optional[bool] = None,
+        peel_limit: int | None = None,
+        break_anti_dependence: bool | None = None,
         target: str = "cpu",
-        interchange_carry_with_map: Optional[bool] = None,
-        scatter_to_guarded_maps: Optional[bool] = None,
-        privatize_scatter_reductions: Optional[bool] = None,
-        reconstruct_wavefront_nest: Optional[bool] = None,
-        normalize_loop_and_map_origin: Optional[bool] = None,
+        interchange_carry_with_map: bool | None = None,
+        scatter_to_guarded_maps: bool | None = None,
+        privatize_scatter_reductions: bool | None = None,
+        reconstruct_wavefront_nest: bool | None = None,
+        normalize_loop_and_map_origin: bool | None = None,
         assume_parallel_guards: bool = False,
         perfect_loop_nesting: bool = True,
-        specialize_constants: Optional[Dict[str, int]] = None,
+        specialize_constants: dict[str, int] | None = None,
         lift: bool = True,
         lift_copy: bool = True,
         semantic_lifting: bool = True,
-        dump_dir: Optional[str] = None,
-        stages: Optional[Sequence[str]] = None,
+        dump_dir: str | None = None,
+        stages: Sequence[str] | None = None,
     ) -> None:
         if target not in TARGET_DEFAULTS:
             raise ValueError(f"target must be one of {sorted(TARGET_DEFAULTS)}; got {target!r}")
@@ -1707,10 +1705,10 @@ class CanonicalizationPipeline(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+    def depends_on(self) -> list[type[ppl.Pass] | ppl.Pass]:
         return []
 
-    def build_stages(self) -> List[Tuple[str, ppl.Pass]]:
+    def build_stages(self) -> list[tuple[str, ppl.Pass]]:
         """Build this pipeline's flat recipe, honoring every knob property.
 
         :returns: ``(stage_label, pass)`` pairs, in recipe order, fresh instances each call.
@@ -1732,7 +1730,7 @@ class CanonicalizationPipeline(ppl.Pass):
             semantic_lifting=self.semantic_lifting,
         )
 
-    def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> int | None:
         """Canonicalize ``sdfg`` in place.
 
         :param sdfg: The SDFG to canonicalize.
@@ -1803,7 +1801,7 @@ class CanonicalizationPipeline(ppl.Pass):
         return len(stages)
 
 
-def stage_labels(target: str = "cpu") -> List[str]:
+def stage_labels(target: str = "cpu") -> list[str]:
     """Ordered, de-duplicated stage labels of the canonicalization recipe for ``target``.
 
     Lets a caller slice :func:`canonicalize` -- run every stage up to (not including) a chosen
@@ -1821,22 +1819,22 @@ def canonicalize(
     validate: bool = False,
     validate_all: bool = False,
     unroll_limit: int = DEFAULT_UNROLL_LIMIT,
-    peel_limit: Optional[int] = None,
-    break_anti_dependence: Optional[bool] = None,
+    peel_limit: int | None = None,
+    break_anti_dependence: bool | None = None,
     target: str = "cpu",
-    interchange_carry_with_map: Optional[bool] = None,
-    scatter_to_guarded_maps: Optional[bool] = None,
-    privatize_scatter_reductions: Optional[bool] = None,
-    reconstruct_wavefront_nest: Optional[bool] = None,
-    normalize_loop_and_map_origin: Optional[bool] = None,
+    interchange_carry_with_map: bool | None = None,
+    scatter_to_guarded_maps: bool | None = None,
+    privatize_scatter_reductions: bool | None = None,
+    reconstruct_wavefront_nest: bool | None = None,
+    normalize_loop_and_map_origin: bool | None = None,
     assume_parallel_guards: bool = False,
     perfect_loop_nesting: bool = True,
-    specialize_constants: Optional[Dict[str, int]] = None,
+    specialize_constants: dict[str, int] | None = None,
     lift: bool = True,
     lift_copy: bool = True,
     semantic_lifting: bool = True,
-    dump_dir: Optional[str] = None,
-    stages: Optional[Sequence[str]] = None,
+    dump_dir: str | None = None,
+    stages: Sequence[str] | None = None,
 ) -> SDFG:
     """Canonicalize ``sdfg`` in place and return it.
 
@@ -1956,22 +1954,22 @@ def canonicalize_under_authority(
     validate: bool,
     validate_all: bool,
     unroll_limit: int,
-    peel_limit: Optional[int],
-    break_anti_dependence: Optional[bool],
+    peel_limit: int | None,
+    break_anti_dependence: bool | None,
     target: str,
-    interchange_carry_with_map: Optional[bool],
-    scatter_to_guarded_maps: Optional[bool],
-    privatize_scatter_reductions: Optional[bool],
-    reconstruct_wavefront_nest: Optional[bool],
-    normalize_loop_and_map_origin: Optional[bool],
+    interchange_carry_with_map: bool | None,
+    scatter_to_guarded_maps: bool | None,
+    privatize_scatter_reductions: bool | None,
+    reconstruct_wavefront_nest: bool | None,
+    normalize_loop_and_map_origin: bool | None,
     assume_parallel_guards: bool,
     perfect_loop_nesting: bool,
-    specialize_constants: Optional[Dict[str, int]],
+    specialize_constants: dict[str, int] | None,
     lift: bool,
     lift_copy: bool,
     semantic_lifting: bool,
-    dump_dir: Optional[str],
-    stages: Optional[Sequence[str]] = None,
+    dump_dir: str | None,
+    stages: Sequence[str] | None = None,
 ) -> SDFG:
     """The body of :func:`canonicalize`, run with the SDFG's symbol dtypes already in scope."""
     CanonicalizationPipeline(

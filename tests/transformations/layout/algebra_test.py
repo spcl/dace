@@ -3,21 +3,21 @@
 
 import sympy
 
-from dace.symbolic import int_ceil, symstr
 from dace.libraries.layout.algebra import (
-    Digit,
-    Permute,
     Block,
-    Unblock,
+    Digit,
     Pad,
+    Permute,
     Shuffle,
-    Zip,
+    Unblock,
     Unzip,
-    identity_map,
+    Zip,
     compose_ops,
-    simplify_ops,
+    identity_map,
     is_identity,
+    simplify_ops,
 )
+from dace.symbolic import int_ceil, symstr
 
 N = sympy.Symbol("N", nonnegative=True, integer=True)
 M = sympy.Symbol("M", nonnegative=True, integer=True)

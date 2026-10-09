@@ -9,7 +9,6 @@ os.environ.setdefault("OMPI_MCA_pml", "ob1")
 os.environ.setdefault("OMPI_MCA_btl", "self,vader")
 os.environ.setdefault("UCX_VFS_ENABLE", "n")
 
-from typing import List, Optional, Tuple
 
 import numpy as np
 import pytest
@@ -42,7 +41,7 @@ def s319(
     out[0] = s
 
 
-def chain_state(sdfg: dace.SDFG) -> Optional[Tuple[SDFGState, List[nodes.Tasklet]]]:
+def chain_state(sdfg: dace.SDFG) -> tuple[SDFGState, list[nodes.Tasklet]] | None:
     """The loop-body state holding the chained accumulations, with its foldable binops."""
     for state in sdfg.states():
         binops = [n for n in state.nodes() if isinstance(n, nodes.Tasklet) and _binop_op(n) is not None]

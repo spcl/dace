@@ -7,13 +7,13 @@ import numpy
 import dace
 from dace.sdfg.dealias import convert_legacy_nested_sdfgs
 from dace.sdfg.state import ConditionalBlock
-from dace.transformation.layout.split_dimensions import SplitDimensions
 from dace.transformation.layout.split_array import (
     SplitArray,
-    resolve_aliases,
     copy_state_contents,
+    resolve_aliases,
     reverse_bfs_assignments,
 )
+from dace.transformation.layout.split_dimensions import SplitDimensions
 
 nphase = dace.symbol("nphase", dtype=dace.int32)
 ncol = dace.symbol("ncol", dtype=dace.int32)

@@ -29,9 +29,9 @@ import copy
 
 import numpy as np
 
+from dace.libraries.standard.nodes.scan import Scan
 from dace.sdfg import nodes as nd
 from dace.sdfg.state import LoopRegion
-from dace.libraries.standard.nodes.scan import Scan
 from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.canonicalize.finalize import finalize_for_target
 from tests.corpus.measure_parallelization import cpu_params, guarded_fallback_loops

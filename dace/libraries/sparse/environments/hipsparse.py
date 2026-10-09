@@ -7,7 +7,6 @@ import pathlib
 import shutil
 
 import dace.library
-from typing import Dict, List
 
 
 @dace.library.environment
@@ -22,19 +21,19 @@ class hipSPARSE:
     """
 
     cmake_minimum_version = None
-    cmake_packages: List[str] = []
-    cmake_variables: Dict[str, str] = {}
+    cmake_packages: list[str] = []
+    cmake_variables: dict[str, str] = {}
     cmake_libraries = ["hipsparse"]
     # The HIP headers require a platform macro when the compiler is not hipcc.
     cmake_compile_flags = ["-D__HIP_PLATFORM_AMD__"]
-    cmake_link_flags: List[str] = []
-    cmake_files: List[str] = []
+    cmake_link_flags: list[str] = []
+    cmake_files: list[str] = []
 
     headers = {"frame": ["../include/dace_hipsparse.h"], "cuda": ["../include/dace_hipsparse.h"]}
     state_fields = ["dace::sparse::HipsparseHandle hipsparse_handle;"]
     init_code = ""
     finalize_code = ""
-    dependencies: List[str] = []
+    dependencies: list[str] = []
 
     @staticmethod
     def cmake_includes():

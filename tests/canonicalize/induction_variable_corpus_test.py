@@ -37,7 +37,6 @@ import contextlib
 import copy
 import io
 import pathlib
-from typing import Dict, List, Tuple
 
 import networkx as nx
 import numpy as np
@@ -51,7 +50,6 @@ from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.canonicalize import induction_variable_substitution as ivs
 from dace.transformation.passes.canonicalize.induction_variable_substitution import InductionVariableSubstitution
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
-
 from tests.corpus.tsvc import tsvc
 from tests.corpus.tsvc.tsvc_numpy import REFERENCES
 from tests.corpus.tsvc_2_5 import tsvc_2_5, tsvc_2_5_numpy
@@ -84,7 +82,7 @@ def strip_casts(expr):
     return expr.replace(lambda n: isinstance(n, sympy.Function) and n.func.__name__ in _CAST_FUNCS, lambda n: n.args[0])
 
 
-def single_element_reads(sdfg: dace.SDFG, array_name: str) -> List[Tuple["dace.SDFGState", object]]:
+def single_element_reads(sdfg: dace.SDFG, array_name: str) -> list[tuple["dace.SDFGState", object]]:
     """``(state, edge)`` for every edge reading exactly one element of ``array_name``."""
     return [
         (state, e)
@@ -97,7 +95,7 @@ def single_element_reads(sdfg: dace.SDFG, array_name: str) -> List[Tuple["dace.S
     ]
 
 
-def enclosing_map_params(state, node) -> Dict[str, tuple]:
+def enclosing_map_params(state, node) -> dict[str, tuple]:
     """``{param: (start, stop, step)}`` for every ``MapEntry`` enclosing ``node`` in ``state``."""
     scope = state.scope_dict()
     out = {}
@@ -109,7 +107,7 @@ def enclosing_map_params(state, node) -> Dict[str, tuple]:
     return out
 
 
-def binding_before(target_node) -> Dict[str, str]:
+def binding_before(target_node) -> dict[str, str]:
     """Interstate-edge assignments accumulated, in execution order, up to (not including)
     ``target_node`` within its own immediate parent region.
 
@@ -121,7 +119,7 @@ def binding_before(target_node) -> Dict[str, str]:
     loop-carried recurrence -- the REFUSE half of this corpus -- never goes through this helper.
     """
     region = target_node.parent_graph
-    subs: Dict[str, str] = {}
+    subs: dict[str, str] = {}
     for node in nx.topological_sort(region.nx):
         if node is target_node:
             break
@@ -157,11 +155,11 @@ def isolated_apply(sdfg: dace.SDFG):
     return result, sdfg.to_json() == before
 
 
-def canonicalize_recording(sdfg: dace.SDFG) -> List[str]:
+def canonicalize_recording(sdfg: dace.SDFG) -> list[str]:
     """Run the production ``canonicalize`` recipe with IVS's five entry points monkeypatched to
     record firings, so the verdict is attributed to IVS itself and not confounded with whatever
     else the recipe does (LoopToMap, BreakAntiDependence, ArgReduce lifting, ...)."""
-    fired: List[str] = []
+    fired: list[str] = []
     originals = {ep: vars(ivs)[ep] for ep in IVS_ENTRY_POINTS}
 
     def wrap(entry_point, base):
@@ -376,7 +374,7 @@ def test_true_induction_variable_closes(name, bare_fires, check_closed):
     sdfg = tsvc.to_sdfg(kernel, "full_" + name, simplify=True)
     if bare_fires is None:
         # nothing for IVS to do; check the closed form is already there, pre-compile.
-        fired: List[str] = []
+        fired: list[str] = []
         check_closed(sdfg)
     elif name == "s124_d_single":
         # verified once right after the single isolated call (still has the invariant j==-1

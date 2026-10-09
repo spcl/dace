@@ -7,14 +7,14 @@ Imported by both the node and its expansions, so it must not import either.
 import functools
 import operator
 from dataclasses import dataclass
-from typing import List, Optional, Tuple, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
 import dace
-from dace import data, nodes, dtypes, subsets, symbolic
-from dace.codegen.common import sym2cpp, get_gpu_backend
+from dace import data, dtypes, nodes, subsets, symbolic
+from dace.codegen.common import get_gpu_backend, sym2cpp
 from dace.libraries.standard.helper import (
-    CURRENT_STREAM_NAME,
     CPU_RESIDENT_STORAGES,
+    CURRENT_STREAM_NAME,
     GPU_RESIDENT_STORAGES,
     collapse_shape_and_strides,
     collapse_to_elements,
@@ -41,8 +41,8 @@ class CopyExpansion:
     out_name: str
     out: data.Data
     out_subset: dace.subsets.Range
-    in_shape_collapsed: List[symbolic.SymExpr]
-    out_shape_collapsed: List[symbolic.SymExpr]
+    in_shape_collapsed: list[symbolic.SymExpr]
+    out_shape_collapsed: list[symbolic.SymExpr]
 
 
 def _is_cross_cpu_gpu(
@@ -81,7 +81,7 @@ def _both_packed_same_layout(inp: data.Data, out: data.Data) -> bool:
     )
 
 
-def _delinearized_index(b_i: symbolic.symbol, shape: List[symbolic.SymExpr], layout: str) -> List[symbolic.SymExpr]:
+def _delinearized_index(b_i: symbolic.symbol, shape: list[symbolic.SymExpr], layout: str) -> list[symbolic.SymExpr]:
     """Multi-dim index for a 1-D walker into a packed-layout array. Only C (row-major) and
     F (column-major) layouts are supported.
 
@@ -102,8 +102,8 @@ def _delinearized_index(b_i: symbolic.symbol, shape: List[symbolic.SymExpr], lay
 
 
 def cuda2d_pitch_params(
-    copy_shape: List[symbolic.SymExpr], src_strides: List[symbolic.SymExpr], dst_strides: List[symbolic.SymExpr]
-) -> Optional[Tuple[symbolic.SymExpr, symbolic.SymExpr, symbolic.SymExpr, symbolic.SymExpr]]:
+    copy_shape: list[symbolic.SymExpr], src_strides: list[symbolic.SymExpr], dst_strides: list[symbolic.SymExpr]
+) -> tuple[symbolic.SymExpr, symbolic.SymExpr, symbolic.SymExpr, symbolic.SymExpr] | None:
     """Element-count ``cudaMemcpy2DAsync`` pitch params ``(dpitch, spitch, width, height)`` for a
     2D (or ``(N, 1)``-promoted) copy, or ``None`` if not a single ``cudaMemcpy2DAsync``. Single
     source of truth for the ``MemcpyCUDA2D`` selector gate and the expander, so the two can't
@@ -373,7 +373,7 @@ def _make_memcpy_tasklet(node: "CopyLibraryNode", parent_state: dace.SDFGState, 
     )
 
 
-def _thread_block_maps(graph) -> List[nodes.Map]:
+def _thread_block_maps(graph) -> list[nodes.Map]:
     """Every ``GPU_ThreadBlock`` map in ``graph``, descending into nested SDFGs."""
     found = []
     for n in graph.nodes():
@@ -385,7 +385,7 @@ def _thread_block_maps(graph) -> List[nodes.Map]:
     return found
 
 
-def _block_size_to_3d(size: List[symbolic.SymExpr]) -> Tuple[symbolic.SymExpr, ...]:
+def _block_size_to_3d(size: list[symbolic.SymExpr]) -> tuple[symbolic.SymExpr, ...]:
     """Codegen's block-size normalization: flatten past the third dimension, pad up to three."""
     size = list(size)
     if len(size) > 3:
@@ -395,7 +395,7 @@ def _block_size_to_3d(size: List[symbolic.SymExpr]) -> Tuple[symbolic.SymExpr, .
 
 def _collective_block_dims(
     parent_state: dace.SDFGState, node: "CopyLibraryNode"
-) -> Optional[Tuple[symbolic.SymExpr, ...]]:
+) -> tuple[symbolic.SymExpr, ...] | None:
     """Thread-block geometry the collective will actually run under, or ``None`` outside a kernel.
 
     ``devicelevel_block_size`` only walks UP the scope chain, so a copy that is a SIBLING of the
@@ -444,7 +444,7 @@ def _collective_block_dims(
     return devicelevel_block_size(parent_state.sdfg, parent_state, node)
 
 
-def _collective_axis_order(ndims: int, lead_strides: List[symbolic.SymExpr]) -> List[int]:
+def _collective_axis_order(ndims: int, lead_strides: list[symbolic.SymExpr]) -> list[int]:
     """Loop-axis order for the block collective: the stride-1 axis of the coalescing side moves last.
 
     Permuting is legal because both endpoints carry the same collapsed shape, so reordering the loop

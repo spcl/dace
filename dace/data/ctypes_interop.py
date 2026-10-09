@@ -7,8 +7,7 @@ This module contains functions for converting data descriptors to ctypes.
 
 import ctypes
 import warnings
-
-from typing import Any, Dict, List, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import sympy as sp
@@ -74,11 +73,11 @@ def contradicts_packed_order(arg: np.ndarray, argtype: "Data") -> bool:
 def make_ctypes_argument(
     arg: Any,
     argtype: "Data",
-    name: Optional[str] = None,
-    allow_views: Optional[bool] = None,
-    symbols: Optional[Dict[str, Any]] = None,
-    callback_retval_references: Optional[List[Any]] = None,
-    argument_to_pyobject: Optional[Dict[Any, Any]] = None,
+    name: str | None = None,
+    allow_views: bool | None = None,
+    symbols: dict[str, Any] | None = None,
+    callback_retval_references: list[Any] | None = None,
+    argument_to_pyobject: dict[Any, Any] | None = None,
 ) -> Any:
     """
     Converts a given argument to the expected ``ctypes`` type for passing to compiled SDFG functions.

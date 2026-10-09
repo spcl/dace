@@ -29,34 +29,33 @@ original ``init (op) fold``.
 
 import ast
 import copy
-
-from typing import Any, Dict
+from typing import Any
 
 import dace
 from dace import dtypes, nodes, symbolic
 from dace.memlet import Memlet
+from dace.optionals import required
+from dace.ordered import OrderedSet
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.vectorization.utils.map_predicates import map_body_nodes
-from dace.transformation.passes.vectorization.utils.tasklets import single_assignment
 from dace.transformation.passes.vectorization.utils.reductions import (
     IDENTITY,
     MapReductionInfo,
     recognize_map_reduction,
 )
-from dace.ordered import OrderedSet
-from dace.optionals import required
+from dace.transformation.passes.vectorization.utils.tasklets import single_assignment
 
 #: Reduction-op token for each ``add_reduce``-friendly ``ReductionType``. Mirrors
 #: the ``+`` / ``*`` restriction of :data:`_WCR_LAMBDA` (see its docstring).
-_REDTYPE_OP: Dict[dtypes.ReductionType, str] = {
+_REDTYPE_OP: dict[dtypes.ReductionType, str] = {
     dtypes.ReductionType.Sum: "+",
     dtypes.ReductionType.Product: "*",
 }
 
 #: Reduction-op token -> ``Reduce`` WCR lambda. Only ``+`` / ``*``: their identities are finite;
 #: ``max`` / ``min`` / bitwise fail the finite-float gate below.
-_WCR_LAMBDA: Dict[str, str] = {
+_WCR_LAMBDA: dict[str, str] = {
     "+": "lambda a, b: a + b",
     "*": "lambda a, b: a * b",
 }

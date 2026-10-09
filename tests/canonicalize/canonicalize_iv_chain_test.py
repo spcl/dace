@@ -20,10 +20,9 @@ import pytest
 
 import dace
 from dace import symbolic
-from dace.sdfg.state import LoopRegion
 from dace.sdfg import nodes
+from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
-
 from tests.corpus.tsvc import tsvc
 from tests.corpus.tsvc.tsvc_numpy import REFERENCES
 

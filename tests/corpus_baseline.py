@@ -32,7 +32,6 @@ import subprocess
 import sys
 import tempfile
 import xml.etree.ElementTree as ET
-from typing import Dict, List, Tuple
 
 #: Repository root, so the tool works from any working directory.
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -84,15 +83,15 @@ def run_corpus(report_path: str) -> int:
     return subprocess.run(command, cwd=ROOT, env=dict(os.environ, **PINNED_ENV)).returncode
 
 
-def read_report(report_path: str) -> Tuple[List[str], Dict[str, Dict[str, str]]]:
+def read_report(report_path: str) -> tuple[list[str], dict[str, dict[str, str]]]:
     """``(collected ids, {failing id: signature})`` from a JUnit report.
 
     The node id is rebuilt as ``file::name`` so it is the same string pytest takes back on the
     command line. The signature is the exception type plus the first line of its message -- enough
     to notice that a test still fails but for a NEW reason, which a bare id would hide.
     """
-    collected: List[str] = []
-    failing: Dict[str, Dict[str, str]] = {}
+    collected: list[str] = []
+    failing: dict[str, dict[str, str]] = {}
     for case in ET.parse(report_path).getroot().iter("testcase"):
         path, name = case.get("file"), case.get("name")
         if not path or not name:
@@ -111,7 +110,7 @@ def read_report(report_path: str) -> Tuple[List[str], Dict[str, Dict[str, str]]]
     return collected, failing
 
 
-def assert_not_truncated(collected: List[str], failing: Dict[str, Dict[str, str]]) -> None:
+def assert_not_truncated(collected: list[str], failing: dict[str, dict[str, str]]) -> None:
     """Refuse to use a run that ``--maxfail`` cut short -- its untested tail is not evidence."""
     if len(failing) >= int(CONFIG["maxfail"]):
         sys.exit(

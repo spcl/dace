@@ -1,8 +1,9 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
 
-import dace
 import numpy as np
+
+import dace
 from dace import Memlet
 from dace.sdfg import SDFG
 from dace.sdfg.utils import concurrent_subgraphs

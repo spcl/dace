@@ -21,31 +21,111 @@ Every other combo -> ``NotImplementedError``.
 """
 
 import copy
+import dataclasses
 import warnings
 from collections.abc import Sequence
-from typing import Any, List, Tuple, Type, Union
+from typing import Any
 
 import sympy
 
 import dace
 from dace import properties, symbolic
-from dace.sdfg.nodes import LibraryNode
-from dace.sdfg.state import ControlFlowRegion
 from dace.config import Config
 from dace.dtypes import DeviceType
+from dace.libraries.tileops.dispatch import select_tile_implementation
+from dace.libraries.tileops.nodes import (
+    MaskedCopyLibraryNode,
+    TileBinop,
+    TileFMA,
+    TileGather,
+    TileIota,
+    TileITE,
+    TileMaskGen,
+    TileMMA,
+    TileReduce,
+    TileScatter,
+    TileUnop,
+)
+from dace.optionals import required
 from dace.ordered import OrderedSet
-import dataclasses
-from dace.transformation.passes.vectorization.config import VectorizeConfig
-from dace.transformation.passes.vectorization.enums import ISA, BranchMode, RemainderStrategy
-from dace.transformation.passes.vectorization.fuse_branched_tail_remainder import FuseBranchedTailRemainder
+from dace.sdfg.narrowing import as_map_entry
+from dace.sdfg.nodes import LibraryNode
+from dace.sdfg.state import ControlFlowRegion
 from dace.transformation import pass_pipeline as ppl
+
+# Walker-primary pipeline. The walker (InsertTileLoadStore + PreparePerLaneIndices) stages tile
+# transients and emits the TileGather / TileScatter / TileMaskGen boundary; ConvertTaskletsToTileOps
+# then rewrites the raw tasklets between staged tiles into TileBinop / TileITE / TileReduce.
+from dace.transformation.dataflow import MapCollapse, MapFission, WCRToAugAssign
+from dace.transformation.interstate import InlineMultistateSDFG, InlineSDFG, StateFusionExtended
+from dace.transformation.interstate.expand_nested_sdfg_inputs import ExpandNestedSDFGInputs
 from dace.transformation.passes.analysis import scopes
+from dace.transformation.passes.canonicalize import prune_and_inline_nested_sdfgs as prune_and_inline
+from dace.transformation.passes.canonicalize.assume_symbols_nonnegative import (
+    SetSymbolNonnegativeAssumptions,
+    insert_assumption_guards,
+)
+from dace.transformation.passes.canonicalize.empty_state_elimination import EmptyStateElimination
+from dace.transformation.passes.canonicalize.normalize_loops_and_maps import NormalizeStridedMaps
+from dace.transformation.passes.canonicalize.pipeline import disable_openmp_sections
+from dace.transformation.passes.eliminate_branches import EliminateBranches
 from dace.transformation.passes.equalize_symbol_dtypes import equalized
 from dace.transformation.passes.length_one_array_scalar_conversion import (
     ConvertLengthOneArraysToScalars,
 )
+from dace.transformation.passes.normalize_wcr import NormalizeWCR
+from dace.transformation.passes.pattern_matching import collapse_multigraph_to_nx
+from dace.transformation.passes.split_tasklets import SplitTasklets
 from dace.transformation.passes.symbol_propagation import SymbolPropagation
+from dace.transformation.passes.vectorization.branch_normalization import BranchNormalization
 from dace.transformation.passes.vectorization.bypass_trivial_assign_tasklets import BypassTrivialAssignTasklets
+from dace.transformation.passes.vectorization.config import VectorizeConfig
+from dace.transformation.passes.vectorization.convert_tasklets_to_tile_ops import ConvertTaskletsToTileOps
+from dace.transformation.passes.vectorization.demote_data_reading_interstate_symbols import (
+    DemoteDataReadingInterstateSymbols,
+)
+from dace.transformation.passes.vectorization.enums import ISA, BranchMode, RemainderStrategy
+from dace.transformation.passes.vectorization.fuse_branched_tail_remainder import FuseBranchedTailRemainder
+from dace.transformation.passes.vectorization.fuse_multiply_add import FuseMultiplyAdd
+from dace.transformation.passes.vectorization.generate_tile_iteration_mask import (
+    GenerateTileIterationMask,
+)
+from dace.transformation.passes.vectorization.insert_tile_load_store import InsertTileLoadStore
+from dace.transformation.passes.vectorization.lower_interstate_conditional_assignments_to_tasklets import (
+    LowerInterstateConditionalAssignmentsToTasklets,
+)
+from dace.transformation.passes.vectorization.lower_ite_to_fp_factor import LowerITEToFpFactor
+from dace.transformation.passes.vectorization.mark_tile_dims import MarkTileDims
+from dace.transformation.passes.vectorization.nest_innermost_map_body import (
+    NestInnermostMapBodyIntoNSDFG,
+)
+from dace.transformation.passes.vectorization.normalize_masked_write_tasklets import NormalizeMaskedWriteTasklets
+from dace.transformation.passes.vectorization.propagate_index_subsets import PropagateIndexSubsets
+from dace.transformation.passes.vectorization.reduction_scalar_local_prep import PrepareReductionForWidening
+from dace.transformation.passes.vectorization.resolve_mixed_dtype_binops import (
+    CastScalarIteLiteralArms,
+    ResolveMixedDtypeBinops,
+)
+from dace.transformation.passes.vectorization.restore_untiled_map_stride import RestoreUntiledMapStride
+from dace.transformation.passes.vectorization.same_write_set_if_else_to_ite_cfg import (
+    SameWriteSetIfElseToITECFG,
+)
+from dace.transformation.passes.vectorization.split_map_for_tile_remainder import (
+    SplitMapForTileRemainder,
+    source_map_label,
+)
+from dace.transformation.passes.vectorization.stage_global_array_through_scalars import (
+    StageGlobalArrayThroughScalars,
+)
+from dace.transformation.passes.vectorization.stride_map_by_tile_widths import (
+    StrideMapByTileWidths,
+)
+from dace.transformation.passes.vectorization.tasklet_preprocessing_passes import (
+    PowerOperatorExpansion,
+    RemoveMathCall,
+)
+from dace.transformation.passes.vectorization.utils.arrays import demote_connector_views
+from dace.transformation.passes.vectorization.utils.errors import VectorizeUnsupported
 from dace.transformation.passes.vectorization.utils.map_predicates import (
     innermost_enclosing_map_label,
     mark_maps_no_vectorize,
@@ -57,93 +137,13 @@ from dace.transformation.passes.vectorization.utils.pass_invariants import (
     no_wcr_inside_nested_sdfgs,
     no_widened_scalar_tasklets,
 )
-from dace.transformation.passes.vectorization.convert_tasklets_to_tile_ops import ConvertTaskletsToTileOps
-from dace.transformation.passes.vectorization.generate_tile_iteration_mask import (
-    GenerateTileIterationMask,
-)
-from dace.transformation.passes.vectorization.demote_data_reading_interstate_symbols import (
-    DemoteDataReadingInterstateSymbols,
-)
-from dace.transformation.passes.vectorization.mark_tile_dims import MarkTileDims
-from dace.transformation.passes.vectorization.nest_innermost_map_body import (
-    NestInnermostMapBodyIntoNSDFG,
-)
-from dace.transformation.passes.vectorization.same_write_set_if_else_to_ite_cfg import (
-    SameWriteSetIfElseToITECFG,
-)
-from dace.transformation.passes.vectorization.branch_normalization import BranchNormalization
-from dace.transformation.passes.split_tasklets import SplitTasklets
-from dace.transformation.passes.vectorization.resolve_mixed_dtype_binops import (
-    CastScalarIteLiteralArms,
-    ResolveMixedDtypeBinops,
-)
-from dace.transformation.passes.eliminate_branches import EliminateBranches
-from dace.transformation.passes.vectorization.lower_ite_to_fp_factor import LowerITEToFpFactor
-from dace.transformation.passes.vectorization.lower_interstate_conditional_assignments_to_tasklets import (
-    LowerInterstateConditionalAssignmentsToTasklets,
-)
-from dace.transformation.passes.vectorization.stage_global_array_through_scalars import (
-    StageGlobalArrayThroughScalars,
-)
-from dace.transformation.passes.vectorization.insert_tile_load_store import InsertTileLoadStore
 
 # Unified WidenAccesses pass (replaces InferBodyTransientShapes + WidenScalarsToTiles
 # per user direction 2026-06-10). See the pass docstring for the 5-step algorithm.
 from dace.transformation.passes.vectorization.widen_accesses import WidenAccesses
-from dace.transformation.passes.vectorization.tasklet_preprocessing_passes import (
-    PowerOperatorExpansion,
-    RemoveMathCall,
-)
-from dace.transformation.passes.canonicalize.pipeline import disable_openmp_sections
-from dace.transformation.passes.vectorization.utils.arrays import demote_connector_views
-from dace.transformation.passes.canonicalize.assume_symbols_nonnegative import (
-    SetSymbolNonnegativeAssumptions,
-    insert_assumption_guards,
-)
-from dace.transformation.passes.canonicalize.empty_state_elimination import EmptyStateElimination
-from dace.transformation.passes.vectorization.stride_map_by_tile_widths import (
-    StrideMapByTileWidths,
-)
-from dace.transformation.passes.vectorization.split_map_for_tile_remainder import (
-    SplitMapForTileRemainder,
-    source_map_label,
-)
-
-# Walker-primary pipeline. The walker (InsertTileLoadStore + PreparePerLaneIndices) stages tile
-# transients and emits the TileGather / TileScatter / TileMaskGen boundary; ConvertTaskletsToTileOps
-# then rewrites the raw tasklets between staged tiles into TileBinop / TileITE / TileReduce.
-from dace.transformation.dataflow import MapCollapse, MapFission, WCRToAugAssign
-from dace.transformation.passes.normalize_wcr import NormalizeWCR
-from dace.transformation.passes.vectorization.reduction_scalar_local_prep import PrepareReductionForWidening
-from dace.transformation.passes.canonicalize.normalize_loops_and_maps import NormalizeStridedMaps
-from dace.transformation.passes.vectorization.propagate_index_subsets import PropagateIndexSubsets
-from dace.transformation.interstate import InlineMultistateSDFG, InlineSDFG, StateFusionExtended
-from dace.transformation.passes.canonicalize import prune_and_inline_nested_sdfgs as prune_and_inline
-from dace.transformation.interstate.expand_nested_sdfg_inputs import ExpandNestedSDFGInputs
-from dace.transformation.passes.pattern_matching import collapse_multigraph_to_nx
-from dace.transformation.passes.vectorization.normalize_masked_write_tasklets import NormalizeMaskedWriteTasklets
-from dace.libraries.tileops.nodes import (
-    MaskedCopyLibraryNode,
-    TileBinop,
-    TileFMA,
-    TileIota,
-    TileITE,
-    TileGather,
-    TileMaskGen,
-    TileMMA,
-    TileReduce,
-    TileScatter,
-    TileUnop,
-)
-from dace.libraries.tileops.dispatch import select_tile_implementation
-from dace.transformation.passes.vectorization.fuse_multiply_add import FuseMultiplyAdd
-from dace.transformation.passes.vectorization.restore_untiled_map_stride import RestoreUntiledMapStride
-from dace.transformation.passes.vectorization.utils.errors import VectorizeUnsupported
-from dace.optionals import required
-from dace.sdfg.narrowing import as_map_entry
 
 #: Tile lib-node types -- all of them, used by the implementation selector.
-TILE_NODE_TYPES: Tuple[Type[LibraryNode], ...] = (
+TILE_NODE_TYPES: tuple[type[LibraryNode], ...] = (
     MaskedCopyLibraryNode,
     TileBinop,
     TileFMA,
@@ -256,7 +256,7 @@ class _MultiOutputReductionMapFission(MapFission):
 #: The GPU-only one-kernel strategies: ``SplitMapForTileRemainder`` peels a ``__tile_main``
 #: interior + a tail, and ``FuseBranchedTailRemainder`` folds the pair into one branched map. They
 #: differ only in the tail they peel (masked tile vs step-1 scalar), hence the shared handling.
-_BRANCHED_REMAINDER: Tuple[RemainderStrategy, ...] = (
+_BRANCHED_REMAINDER: tuple[RemainderStrategy, ...] = (
     RemainderStrategy.BRANCHED_MASKED_TAIL,
     RemainderStrategy.BRANCHED_TAIL,
 )
@@ -449,7 +449,7 @@ class _RunExpandNestedSDFGInputs(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+    def depends_on(self) -> list[type[ppl.Pass] | ppl.Pass]:
         return []
 
     def apply_pass(self, sdfg: dace.SDFG, pipeline_results: dict[str, Any]) -> dict[str, Any] | None:
@@ -522,7 +522,7 @@ class AssertNoNestedSDFGWCR(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+    def depends_on(self) -> list[type[ppl.Pass] | ppl.Pass]:
         return []
 
     def apply_pass(self, sdfg: dace.SDFG, pipeline_results: dict[str, Any]) -> dict[str, Any] | None:
@@ -543,7 +543,7 @@ class _AssertNoBodyWCR(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+    def depends_on(self) -> list[type[ppl.Pass] | ppl.Pass]:
         return []
 
     def apply_pass(self, sdfg: dace.SDFG, pipeline_results: dict[str, Any]) -> dict[str, Any] | None:
@@ -568,7 +568,7 @@ class _AssertTileOpsLowered(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+    def depends_on(self) -> list[type[ppl.Pass] | ppl.Pass]:
         return []
 
     def apply_pass(self, sdfg: dace.SDFG, pipeline_results: dict[str, Any]) -> dict[str, Any] | None:
@@ -640,7 +640,7 @@ class _RunInlineBranchLoweredNSDFGs(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+    def depends_on(self) -> list[type[ppl.Pass] | ppl.Pass]:
         return []
 
     def apply_pass(self, sdfg: dace.SDFG, pipeline_results: dict[str, Any]) -> dict[str, Any] | None:
@@ -1181,7 +1181,7 @@ class VectorizeMultiDim(ppl.Pipeline):
     #: ``ConvertTaskletsToTileOps`` completes. ``NestInnermostMapBodyIntoNSDFG`` is NOT
     #: listed: it clears the stale scalar-staging ``other_subset`` on its boundary edges, so
     #: it leaves a VALID SDFG. The final ``sdfg.validate()`` re-checks the end state.
-    _SKIP_VALIDATE_AFTER: Tuple[Type[ppl.Pass], ...] = (
+    _SKIP_VALIDATE_AFTER: tuple[type[ppl.Pass], ...] = (
         WidenAccesses,
         GenerateTileIterationMask,
         InsertTileLoadStore,

@@ -5,10 +5,10 @@ Each case here was accepted by ``can_be_applied`` and then either crashed
 mid-rewrite or produced a silently wrong / invalid SDFG.
 """
 
-import dace
 import numpy as np
 import pytest
 
+import dace
 from dace.properties import CodeBlock
 from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion

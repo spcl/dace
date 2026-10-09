@@ -2,8 +2,8 @@
 """LogP/LogGP parameters (L, o, g, G) of a memory level, and the fit extracting them from microbenchmarks."""
 
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import List, Sequence
 
 import sympy
 
@@ -142,9 +142,9 @@ def validate(
     knee_concurrency: float,
     latency_tol: float = 0.10,
     gap_tol: float = 0.20,
-) -> List[str]:
+) -> list[str]:
     """Reasons to reject the parametrization; empty means accept. Cross-checks each parameter two independent ways."""
-    reasons: List[str] = []
+    reasons: list[str] = []
     if p.L <= 0 or p.G <= 0 or p.g <= 0:
         reasons.append("non-positive L, G, or g")
         return reasons

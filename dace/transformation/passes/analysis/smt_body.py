@@ -25,7 +25,7 @@ the width, do the truncating.
 """
 
 import ast
-from typing import Any, Dict, Optional
+from typing import Any
 
 from dace.frontend.python import astutils
 from dace.optionals import required
@@ -81,7 +81,7 @@ def truth(term: Any) -> Any:
     return term != 0
 
 
-def encode_expr(node: ast.AST, env: Dict[str, Any], width: int) -> Optional[Any]:
+def encode_expr(node: ast.AST, env: dict[str, Any], width: int) -> Any | None:
     """Translate one expression to a z3 term under ``env``, or ``None`` if unsupported."""
     if isinstance(node, ast.Constant):
         if isinstance(node.value, bool) or not isinstance(node.value, int):
@@ -134,7 +134,7 @@ def encode_expr(node: ast.AST, env: Dict[str, Any], width: int) -> Optional[Any]
     return None
 
 
-def merge_branches(cond: Any, then_env: Dict[str, Any], else_env: Dict[str, Any]) -> Dict[str, Any]:
+def merge_branches(cond: Any, then_env: dict[str, Any], else_env: dict[str, Any]) -> dict[str, Any]:
     """One environment from two, selecting per name on ``cond``.
 
     A name assigned on only one side keeps the other side's incoming value, which is what the
@@ -147,7 +147,7 @@ def merge_branches(cond: Any, then_env: Dict[str, Any], else_env: Dict[str, Any]
     return merged
 
 
-def encode_statements(body, env: Dict[str, Any], width: int) -> Optional[Dict[str, Any]]:
+def encode_statements(body, env: dict[str, Any], width: int) -> dict[str, Any] | None:
     """Run a statement list over ``env``, returning the environment after it, or ``None``."""
     for stmt in body:
         if isinstance(stmt, ast.Pass):
@@ -186,7 +186,7 @@ def encode_statements(body, env: Dict[str, Any], width: int) -> Optional[Dict[st
     return env
 
 
-def encode_body(code: str, env: Dict[str, Any], width: int = DEFAULT_WIDTH) -> Optional[Dict[str, Any]]:
+def encode_body(code: str, env: dict[str, Any], width: int = DEFAULT_WIDTH) -> dict[str, Any] | None:
     """Symbolically execute ``code`` over ``env``.
 
     :param code: the tasklet body, as Python source.

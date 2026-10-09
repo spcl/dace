@@ -17,10 +17,11 @@ everywhere (no TBLIS needed). Execution is marked ``tblis`` (needs the TBLIS lib
 
 import numpy as np
 import pytest
+
 import dace
-from dace.memlet import Memlet
 from dace.libraries.blas.nodes.gemm import Gemm
 from dace.libraries.linalg.nodes.tensordot import TensorDot
+from dace.memlet import Memlet
 from dace.transformation.layout.rewrite_libnodes import GemmToTensorDot
 from dace.transformation.layout.select_lowering import select_layout_lowering, tblis_is_linkable
 

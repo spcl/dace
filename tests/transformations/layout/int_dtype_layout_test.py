@@ -17,12 +17,12 @@ import itertools
 
 import numpy
 import pytest
-import dace
 
-from dace.transformation.layout.permute_dimensions import PermuteDimensions
-from dace.transformation.layout.split_dimensions import SplitDimensions
+import dace
 from dace.transformation.layout.normalize_schedule import normalize_schedule_for_layout
+from dace.transformation.layout.permute_dimensions import PermuteDimensions
 from dace.transformation.layout.prepare import prepare_for_layout
+from dace.transformation.layout.split_dimensions import SplitDimensions
 
 N = dace.symbol("N", dtype=dace.int64)
 

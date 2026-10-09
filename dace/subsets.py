@@ -1,10 +1,13 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+import warnings
+from collections.abc import Sequence
+from functools import reduce
+from typing import Any
+
+import sympy as sp
+
 import dace.serialize
 from dace import symbolic
-import sympy as sp
-from functools import reduce
-from typing import Any, Dict, List, Optional, Sequence, Set, Tuple, Union
-import warnings
 from dace.config import Config
 
 
@@ -12,7 +15,7 @@ def nng(expr):
     # When dealing with set sizes, assume symbols are non-negative
     if hasattr(expr, "free_symbols"):
         # TODO: Fix in symbol definition, not here
-        return expr.subs(((sym, sp.Symbol(sym.name, nonnegative=True)) for sym in list(expr.free_symbols)))
+        return expr.subs((sym, sp.Symbol(sym.name, nonnegative=True)) for sym in list(expr.free_symbols))
     return expr
 
 
@@ -145,7 +148,7 @@ def _hashable_bound(bound):
     return bound.xreplace({s: sp.Symbol(s.name) for s in free})
 
 
-class Subset(object):
+class Subset:
     """Defines a subset of a data descriptor."""
 
     def ndrange(self) -> list[tuple[symbolic.SymbolicType, symbolic.SymbolicType, symbolic.SymbolicType]]:
@@ -252,7 +255,7 @@ class Subset(object):
         """Returns the number of elements of this subset."""
         raise NotImplementedError
 
-    def replace(self, repl_dict: Dict[str, Any]) -> None:
+    def replace(self, repl_dict: dict[str, Any]) -> None:
         """Substitutes the symbols of this subset in place."""
         raise NotImplementedError
 
@@ -283,12 +286,12 @@ class Subset(object):
         raise NotImplementedError
 
     @property
-    def free_symbols(self) -> Set[str]:
+    def free_symbols(self) -> set[str]:
         """Returns a set of undefined symbols in this subset."""
         return set(self.symbols)
 
     @property
-    def symbols(self) -> Dict[str, "symbolic.symbol"]:
+    def symbols(self) -> dict[str, "symbolic.symbol"]:
         """Returns the symbol instance this subset carries for each of its undefined symbol names."""
         raise NotImplementedError('symbols not implemented by "%s"' % type(self).__name__)
 
@@ -364,8 +367,8 @@ def symbolic_range_tuple(value):
 
 
 def equalize_range_entry(
-    bounds: Union[Tuple[symbolic.SymbolicType, ...], symbolic.SymbolicType],
-) -> Union[Tuple[symbolic.SymbolicType, ...], symbolic.SymbolicType]:
+    bounds: tuple[symbolic.SymbolicType, ...] | symbolic.SymbolicType,
+) -> tuple[symbolic.SymbolicType, ...] | symbolic.SymbolicType:
     """``symbolic.equalize_symbol`` on one range entry: a ``(begin, end, step)`` tuple or a single index."""
     if isinstance(bounds, tuple):
         return tuple(symbolic.equalize_symbol(entry) for entry in bounds)
@@ -408,7 +411,7 @@ class Range(Subset):
         from dace.properties import _symbolic_deserializer  # Avoid circular import
 
         if not isinstance(obj, dict):
-            raise TypeError("Expected dict, got {}".format(type(obj)))
+            raise TypeError(f"Expected dict, got {type(obj)}")
         if obj["type"] != "Range":
             raise TypeError("from_json of class \"Range\" called on json with type %s (expected 'Range')" % obj["type"])
 
@@ -649,7 +652,7 @@ class Range(Subset):
         return "[" + ", ".join(map(Range._range_pystr, self.ranges)) + "]"
 
     @property
-    def free_symbols(self) -> Set[str]:
+    def free_symbols(self) -> set[str]:
         result = set()
         for dim in self.ranges:
             for d in dim:
@@ -663,14 +666,14 @@ class Range(Subset):
         return result
 
     @property
-    def symbols(self) -> Dict[str, "symbolic.symbol"]:
+    def symbols(self) -> dict[str, "symbolic.symbol"]:
         result = {}
         for dim in self.ranges:
             for d in dim:
                 result.update(symbolic.symlist(d))
         return result
 
-    def get_free_symbols_by_indices(self, indices: List[int]) -> Set[str]:
+    def get_free_symbols_by_indices(self, indices: list[int]) -> set[str]:
         """
         Get set of free symbols by only looking at the dimension given by the indices list
 
@@ -796,7 +799,7 @@ class Range(Subset):
                 # return Range(ranges)
             # If dimension has more than 4 tokens, the range is invalid
             if len(uni_dim_tokens) > 4:
-                raise SyntaxError("Invalid range: {}".format(multi_dim_tokens))
+                raise SyntaxError(f"Invalid range: {multi_dim_tokens}")
             # Support for SymExpr
             tokens = []
             for token in uni_dim_tokens:
@@ -806,7 +809,7 @@ class Range(Subset):
                 elif len(expr) == 2:
                     tokens.append((expr[0].strip(), expr[1].strip()))
                 else:
-                    raise SyntaxError("Invalid range: {}".format(multi_dim_tokens))
+                    raise SyntaxError(f"Invalid range: {multi_dim_tokens}")
             # Parse tokens
             try:
                 if isinstance(tokens[0], tuple):
@@ -835,7 +838,7 @@ class Range(Subset):
                 else:
                     tsize = 1
             except sp.SympifyError:
-                raise SyntaxError("Invalid range: {}".format(string))
+                raise SyntaxError(f"Invalid range: {string}")
             # Append range
             ranges.append((begin, end, step, tsize))
 
@@ -938,7 +941,7 @@ class Range(Subset):
                         new_subset.append((rb + rs * other[idx][0], rb + rs * other[idx][1], rs * other[idx][2], rt))
                     else:
                         new_subset.append(rb + rs * other[idx])
-        elif other.data_dims() == 0 and all([r == (0, 0, 1) if isinstance(other, Range) else r == 0 for r in other]):
+        elif other.data_dims() == 0 and all(r == (0, 0, 1) if isinstance(other, Range) else r == 0 for r in other):
             # NOTE: This is a special case where the other subset is the
             # (potentially multidimensional) index zero.
             # For example, A[i, j] -> tmp[0]. The result of such a
@@ -964,7 +967,7 @@ class Range(Subset):
         else:
             raise NotImplementedError
 
-    def squeeze(self, ignore_indices: Optional[List[int]] = None, offset: bool = True) -> List[int]:
+    def squeeze(self, ignore_indices: list[int] | None = None, offset: bool = True) -> list[int]:
         """
         Removes size-1 ranges from the subset and returns a list of dimensions that remain.
 
@@ -1001,7 +1004,7 @@ class Range(Subset):
             self.offset(self, True, indices=offset_indices)
         return non_ones
 
-    def unsqueeze(self, axes: Sequence[int]) -> List[int]:
+    def unsqueeze(self, axes: Sequence[int]) -> list[int]:
         """Adds 0:1 ranges to the subset, in the indices contained in axes.
 
         The method is mostly used to restore subsets that had their length-1
@@ -1256,7 +1259,7 @@ class SubsetUnion(Subset):
             return None
 
     @property
-    def symbols(self) -> Dict[str, "symbolic.symbol"]:
+    def symbols(self) -> dict[str, "symbolic.symbol"]:
         result = {}
         for subset in self.subset_list:
             result.update(subset.symbols)
@@ -1411,7 +1414,7 @@ def list_union(subset_a: Subset, subset_b: Subset) -> Subset:
         return None
 
 
-def intersects(subset_a: Subset, subset_b: Subset) -> Union[bool, None]:
+def intersects(subset_a: Subset, subset_b: Subset) -> bool | None:
     """
     Returns True if two subsets intersect, False if they do not, or
     None if the answer cannot be determined.

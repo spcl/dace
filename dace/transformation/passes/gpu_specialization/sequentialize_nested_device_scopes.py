@@ -19,7 +19,7 @@ Runs on the offloaded graph, after schedule inference: ``canonicalize`` leaves t
 place and device-neutral, and this is where the GPU target resolves it.
 """
 
-from typing import Any, Dict, Optional
+from typing import Any
 
 from dace import SDFG, dtypes, properties
 from dace.sdfg import nodes
@@ -39,7 +39,7 @@ class SequentializeNestedDeviceScopes(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> int | None:
         """Sequentialize every re-entered device scope.
 
         :param sdfg: the offloaded SDFG to specialize, in place.

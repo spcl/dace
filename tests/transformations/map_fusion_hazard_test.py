@@ -14,8 +14,8 @@ import numpy as np
 import pytest
 
 import dace
-from dace.sdfg.dealias import convert_legacy_nested_sdfgs
 from dace.sdfg import nodes
+from dace.sdfg.dealias import convert_legacy_nested_sdfgs
 from dace.transformation import dataflow as dftrans
 
 from .map_fusion_vertical_test import count_nodes, unique_name

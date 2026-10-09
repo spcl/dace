@@ -1,12 +1,13 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 
-from typing import Dict, Iterator, Optional, Set, Tuple
+from collections.abc import Iterator
 
 from dace import SDFG, data, properties
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState
-from dace.transformation import pass_pipeline as ppl, transformation
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation import transformation
 
 
 @properties.make_properties
@@ -31,9 +32,7 @@ class OptionalArrayInference(ppl.Pass):
         # If connectivity or any edges were changed, some new descriptors may be marked as optional
         return modified & (ppl.Modifies.States)
 
-    def apply_pass(
-        self, sdfg: SDFG, _, parent_arrays: Optional[Dict[str, bool]] = None
-    ) -> Optional[Set[Tuple[int, str]]]:
+    def apply_pass(self, sdfg: SDFG, _, parent_arrays: dict[str, bool] | None = None) -> set[tuple[int, str]] | None:
         """
         Infers the ``optional`` property of arrays in the SDFG and its nested SDFGs.
 
@@ -44,7 +43,7 @@ class OptionalArrayInference(ppl.Pass):
         :param parent_arrays: If not None, contains values of determined arrays from the parent SDFG.
         :return: A set of the modified array names as a 2-tuple (CFG ID, name), or None if nothing was changed.
         """
-        result: Set[Tuple[int, str]] = set()
+        result: set[tuple[int, str]] = set()
         parent_arrays = parent_arrays or {}
 
         cfg_id = sdfg.cfg_id
@@ -78,7 +77,7 @@ class OptionalArrayInference(ppl.Pass):
             for node in state.nodes():
                 if isinstance(node, nodes.NestedSDFG):
                     # Create information about parent arrays
-                    pinfo: Dict[str, bool] = {}
+                    pinfo: dict[str, bool] = {}
                     for e in state.in_edges(node):
                         if e.data.is_empty():
                             continue
@@ -132,5 +131,5 @@ class OptionalArrayInference(ppl.Pass):
         elif isinstance(curblock, SDFGState):
             yield curblock
 
-    def report(self, pass_retval: Set[Tuple[int, str]]) -> str:
+    def report(self, pass_retval: set[tuple[int, str]]) -> str:
         return f"Inferred {len(pass_retval)} optional arrays."

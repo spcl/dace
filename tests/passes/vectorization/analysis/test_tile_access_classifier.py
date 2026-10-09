@@ -335,6 +335,7 @@ def test_replicate_float_divisor_refused():
     """Float divisor in an access expression is illegal -- the classifier
     refuses (no silent truncation to int) so the dim falls to AFFINE/GATHER."""
     import sympy
+
     from dace.transformation.passes.vectorization.utils.tile_access import _detect_replicate_factor
 
     # _detect_replicate_factor should refuse a float divisor.

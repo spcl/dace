@@ -1,7 +1,8 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import pytest
-import dace
 import numpy as np
+import pytest
+
+import dace
 
 # All tests in this file fuse GPU_Device kernels with nested GPU_Device children.
 # The experimental codegen rejects nested GPU_Device schedules (dynamic

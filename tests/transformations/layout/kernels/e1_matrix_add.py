@@ -24,8 +24,8 @@ ICS'99 (blocked layout).
 """
 
 import numpy
-import dace
 
+import dace
 from dace.transformation.layout.brute_force import block_candidates, permutation_candidates
 
 N = dace.symbol("N")

@@ -810,6 +810,7 @@ def test_symbolic_tile_nonunit_inner_stride_collapses_under_assumption():
     AssumeSymbolConstraints trap. The source nest already requires it (else its
     own inner tile overshoots). Value-preserving when the tile divides evenly."""
     import sympy
+
     from dace.transformation.passes.canonicalize.tracked_assumptions import tracked_assumptions
 
     BS = dace.symbol("BS")
@@ -1049,7 +1050,8 @@ def jacobi_reference(A, B, n, tsteps):
 
 def run_against_flat_stencil(prog, n=96, tsteps=3):
     """Canonicalize, run, and compare against the flat nest. Returns the surviving loops."""
-    from dace.transformation.passes.canonicalize import finalize, pipeline as canon
+    from dace.transformation.passes.canonicalize import finalize
+    from dace.transformation.passes.canonicalize import pipeline as canon
 
     rng = np.random.default_rng(5)
     a0, b0 = rng.random((n, n)), rng.random((n, n))

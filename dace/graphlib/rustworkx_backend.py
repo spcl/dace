@@ -24,6 +24,7 @@ import collections.abc
 import copy
 
 from networkx.exception import NetworkXError, NetworkXNoCycle, NetworkXNoPath, NetworkXUnfeasible, NodeNotFound
+
 from dace.optionals import required
 
 

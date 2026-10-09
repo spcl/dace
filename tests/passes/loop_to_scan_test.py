@@ -1790,8 +1790,8 @@ def test_fuse_body_states_refuses_carry_through_state_boundary():
     ``StateFusionExtended.can_be_applied`` (cross-state RAW/WAW hazards); slice 2.4b-B.
     Pinned with the real s252 kernel, verified end-to-end.
     """
-    from tests.corpus.tsvc.tsvc import s252_d_single
     from dace.transformation.passes.canonicalize.pipeline import canonicalize
+    from tests.corpus.tsvc.tsvc import s252_d_single
 
     sdfg = s252_d_single.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)

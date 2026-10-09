@@ -28,8 +28,8 @@ pulls in no extra dependency.
 import importlib
 import inspect
 import pkgutil
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -73,11 +73,11 @@ def program(kernel: PolybenchKernel) -> DaceProgram:
     return _program(_module(kernel))
 
 
-def collect(name: Optional[str] = None) -> List[PolybenchKernel]:
+def collect(name: str | None = None) -> list[PolybenchKernel]:
     """Discover polybench kernels recursively across the category subfolders
     (datamining / linear_algebra / medley / stencils); skips the loader + ``__init__``."""
     pkg = importlib.import_module(_this_package())
-    kernels: List[PolybenchKernel] = []
+    kernels: list[PolybenchKernel] = []
     for info in pkgutil.walk_packages(pkg.__path__, prefix=pkg.__name__ + "."):
         if info.name.rsplit(".", 1)[-1] in ("polybench", "polybench_numpy", "__init__"):
             continue
@@ -97,7 +97,7 @@ def collect(name: Optional[str] = None) -> List[PolybenchKernel]:
     return kernels
 
 
-def paper_size_row(mod) -> Dict[str, int]:
+def paper_size_row(mod) -> dict[str, int]:
     """The module's ``paper_sizes`` row, or its largest ``sizes`` entry as a fallback.
 
     polybench's own five sizes are mini..extra-large, none of which is the shape the papers
@@ -108,8 +108,8 @@ def paper_size_row(mod) -> Dict[str, int]:
 
 
 def make_inputs(
-    kernel: PolybenchKernel, size_index: int = DEFAULT_SIZE_INDEX, cap: Optional[int] = SIZE_CAP, paper: bool = False
-) -> Tuple[Dict[str, np.ndarray], Dict[str, int]]:
+    kernel: PolybenchKernel, size_index: int = DEFAULT_SIZE_INDEX, cap: int | None = SIZE_CAP, paper: bool = False
+) -> tuple[dict[str, np.ndarray], dict[str, int]]:
     """Allocate + initialize one input set; return ``(call_arrays, symbol_values)``.
 
     ``call_arrays`` maps each kernel parameter name to its ndarray (``args`` order is
@@ -131,7 +131,7 @@ def make_inputs(
         concrete = [psize[str(s)] if isinstance(s, dace.symbol) else s for s in shape]
         arrays.append(dace.ndarray(concrete, dtype))
     mod.init_array(*arrays, **{k.lower(): v for k, v in psize.items()})
-    call_arrays = {n: a for n, a in zip(program.argnames, arrays)}
+    call_arrays = dict(zip(program.argnames, arrays))
     return call_arrays, psize
 
 
@@ -143,8 +143,8 @@ def fresh_sdfg(kernel: PolybenchKernel, *, simplify: bool = True) -> dace.SDFG:
 
 
 def reference(
-    kernel: PolybenchKernel, call_arrays: Dict[str, np.ndarray], psize: Dict[str, int]
-) -> Dict[str, np.ndarray]:
+    kernel: PolybenchKernel, call_arrays: dict[str, np.ndarray], psize: dict[str, int]
+) -> dict[str, np.ndarray]:
     """Run the untransformed baseline SDFG on copies of the inputs; return the
     resulting arrays (the value-preserving ground truth)."""
     base = fresh_sdfg(kernel)
@@ -154,8 +154,8 @@ def reference(
 
 
 def numpy_call(
-    kernel: PolybenchKernel, call_arrays: Dict[str, np.ndarray], psize: Dict[str, int]
-) -> Tuple[Callable[..., None], Dict[str, object]]:
+    kernel: PolybenchKernel, call_arrays: dict[str, np.ndarray], psize: dict[str, int]
+) -> tuple[Callable[..., None], dict[str, object]]:
     """``(fn, kwargs)`` for repeated *timed* invocation of this kernel's numpy reference.
 
     Shaped like :func:`tests.corpus.corpus_suite.compiled_call` so a perf harness can treat the
@@ -169,11 +169,11 @@ def numpy_call(
     WARNING: Time it WITHOUT pinning BLAS threads: the agreed baseline is *parallel* numpy.
     """
     fn = polybench_numpy.REFERENCES[kernel.name]
-    pool: Dict[str, object] = {**{n: a.copy() for n, a in call_arrays.items()}, **psize}
+    pool: dict[str, object] = {**{n: a.copy() for n, a in call_arrays.items()}, **psize}
     return fn, {p: pool[p] for p in inspect.signature(fn).parameters}
 
 
-def restore_inputs(kwargs: Dict[str, object], call_arrays: Dict[str, np.ndarray]) -> None:
+def restore_inputs(kwargs: dict[str, object], call_arrays: dict[str, np.ndarray]) -> None:
     """Reset the array arguments in ``kwargs`` to their pristine input values, IN PLACE.
 
     In place rather than re-copying so a timing loop reuses one allocation per array; run it
@@ -190,8 +190,8 @@ def restore_inputs(kwargs: Dict[str, object], call_arrays: Dict[str, np.ndarray]
 
 
 def numpy_reference(
-    kernel: PolybenchKernel, call_arrays: Dict[str, np.ndarray], psize: Dict[str, int]
-) -> Dict[str, np.ndarray]:
+    kernel: PolybenchKernel, call_arrays: dict[str, np.ndarray], psize: dict[str, int]
+) -> dict[str, np.ndarray]:
     """Run the numpy reference on copies of the inputs; return the resulting arrays.
 
     The second ground truth, alongside :func:`reference`'s untransformed SDFG: same inputs, same
@@ -199,19 +199,19 @@ def numpy_reference(
     """
     out = {n: a.copy() for n, a in call_arrays.items()}
     fn = polybench_numpy.REFERENCES[kernel.name]
-    pool: Dict[str, object] = {**out, **psize}
+    pool: dict[str, object] = {**out, **psize}
     fn(**{p: pool[p] for p in inspect.signature(fn).parameters})
     return out
 
 
-def run(sdfg: dace.SDFG, call_arrays: Dict[str, np.ndarray], psize: Dict[str, int]) -> Dict[str, np.ndarray]:
+def run(sdfg: dace.SDFG, call_arrays: dict[str, np.ndarray], psize: dict[str, int]) -> dict[str, np.ndarray]:
     """Compile + run ``sdfg`` on copies of the inputs; return the resulting arrays."""
     out = {n: a.copy() for n, a in call_arrays.items()}
     sdfg.compile()(**out, **psize)
     return out
 
 
-def _tol_for(dtype) -> Tuple[float, float]:
+def _tol_for(dtype) -> tuple[float, float]:
     """``(rtol, atol)`` appropriate to an array's numeric precision. Integers / bools
     compare exactly (``0, 0`` -> ``array_equal``); ``float32`` (e.g. ``deriche``) uses an
     fp32-appropriate tolerance so vectorization reassociation is not flagged as a bug;
@@ -251,7 +251,7 @@ def atol_for(ra: np.ndarray, at: float) -> float:
 
 
 def outputs_match(
-    ref: Dict[str, np.ndarray], got: Dict[str, np.ndarray], *, rtol: float = None, atol: float = None
+    ref: dict[str, np.ndarray], got: dict[str, np.ndarray], *, rtol: float = None, atol: float = None
 ) -> bool:
     """Compare two result dicts with a DTYPE-AWARE tolerance (:func:`_tol_for`): fp64
     tight, fp32 fp32-appropriate, integers exact. The default absolute term is raised to

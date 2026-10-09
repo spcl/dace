@@ -13,13 +13,13 @@ import copy
 
 import pytest
 
+import tests.corpus.measure_parallelization as mp
 from dace.libraries.blas.nodes.matmul import MatMul
 from dace.sdfg.nodes import LibraryNode
 from dace.transformation.dataflow.lift_einsum import LiftEinsum
 from dace.transformation.passes.parallelize import ParallelizePipeline
 from dace.transformation.passes.parallelize_loops import ParallelizeLoops
 from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
-import tests.corpus.measure_parallelization as mp
 
 N = 16
 
@@ -91,6 +91,7 @@ def test_gemver_vectorizes_correctly_both_pipelines():
     Skipped if the corpus harness is unavailable.
     """
     import copy
+
     from dace.transformation.passes.canonicalize.finalize import finalize_for_target
 
     base, checker = mp.CORPORA["poly"][1]("gemver")

@@ -7,10 +7,11 @@ pytest.importorskip(
 )
 import torch
 import torch.nn as nn
-from transformers import LlamaForCausalLM, LlamaConfig
+from transformers import LlamaConfig, LlamaForCausalLM
+
 from dace.ml import DaceModule
-from tests.utils import torch_tensors_close
 from tests.ml_gpu_utils import DEVICES, experimental_cuda, is_gpu, torch_device
+from tests.utils import torch_tensors_close
 
 
 class LlamaWrapper(nn.Module):

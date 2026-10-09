@@ -27,9 +27,9 @@ import numpy as np
 import pytest
 
 import dace
-from dace.sdfg.dealias import convert_legacy_nested_sdfgs
 from dace.config import set_temporary
 from dace.sdfg import nodes
+from dace.sdfg.dealias import convert_legacy_nested_sdfgs
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.passes.normalize_wcr import NormalizeWCR
 from tests.corpus import corpus_suite as CS
@@ -405,8 +405,8 @@ def test_two_independent_reductions_through_nest_body_and_expand():
     (``ExpandNestedSDFGInputs``). Running ``NormalizeWCR`` in between must keep BOTH scalar
     reductions valid + bit-exact -- the ``nsdfg -> AN -[wcr]-> MapExit -> [wcr]`` shape must
     survive the extra nesting + boundary expansion."""
-    from dace.transformation.passes.vectorization.nest_innermost_map_body import NestInnermostMapBodyIntoNSDFG
     from dace.transformation.interstate.expand_nested_sdfg_inputs import ExpandNestedSDFGInputs
+    from dace.transformation.passes.vectorization.nest_innermost_map_body import NestInnermostMapBodyIntoNSDFG
 
     sdfg = _build_two_independent_reductions()
     NestInnermostMapBodyIntoNSDFG(nest_provably_divisible=True).apply_pass(sdfg, {})

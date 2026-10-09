@@ -9,7 +9,7 @@ import operator
 import warnings
 from collections.abc import Callable, Sequence
 
-from dace import data, dtypes, Memlet, SDFG, SDFGState, symbolic, library, nodes, properties
+from dace import SDFG, Memlet, SDFGState, data, dtypes, library, nodes, properties, symbolic
 from dace import transformation as xf
 from dace.libraries.fft import environments as env
 from dace.libraries.fft.gpu_dialect import CUFFT, HIPFFT, GpuFftDialect

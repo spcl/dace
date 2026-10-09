@@ -23,7 +23,7 @@ always run on real networkx regardless of backend, since there's nothing to lowe
 """
 
 import contextlib
-from typing import KeysView
+from collections.abc import KeysView
 
 import dace.config
 import dace.graphlib.resolve as resolve

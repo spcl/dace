@@ -2,33 +2,33 @@
 """SDFG diff tool."""
 
 import argparse
-from hashlib import sha256
 import json
 import os
 import platform
 import tempfile
-from typing import Dict, Set, Tuple, Union
+from hashlib import sha256
+from typing import Union
 
 try:
     from typing import Literal
 except ImportError:
-    from typing_extensions import Literal
+    from typing import Literal
 
 import dace
+import dace.serialize
 from dace import memlet as mlt
 from dace.sdfg import nodes as nd
 from dace.sdfg.graph import Edge, MultiConnectorEdge
 from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.state import ControlFlowBlock
-import dace.serialize
 
 DiffableT = Union[ControlFlowBlock, nd.Node, MultiConnectorEdge[mlt.Memlet], Edge[InterstateEdge]]
-DiffSetsT = Tuple[Set[str], Set[str], Set[str]]
+DiffSetsT = tuple[set[str], set[str], set[str]]
 
 
 def _print_diff(sdfg_A: dace.SDFG, sdfg_B: dace.SDFG, diff_sets: DiffSetsT) -> None:
-    all_id_elements_A: Dict[str, DiffableT] = dict()
-    all_id_elements_B: Dict[str, DiffableT] = dict()
+    all_id_elements_A: dict[str, DiffableT] = dict()
+    all_id_elements_B: dict[str, DiffableT] = dict()
 
     all_id_elements_A[sdfg_A.guid] = sdfg_A
     for n, _ in sdfg_A.all_nodes_recursive():
@@ -52,14 +52,14 @@ def _print_diff(sdfg_A: dace.SDFG, sdfg_B: dace.SDFG, diff_sets: DiffSetsT) -> N
         no_removed = False
     if len(diff_sets[1]) > 0:
         if not no_removed:
-            print("")
+            print()
         print("Added elements:")
         for k in diff_sets[1]:
             print(all_id_elements_B[k])
         no_added = False
     if len(diff_sets[2]) > 0:
         if not no_removed or not no_added:
-            print("")
+            print()
         print("Changed elements:")
         for k in diff_sets[2]:
             print(all_id_elements_B[k])
@@ -70,8 +70,8 @@ def _print_diff(sdfg_A: dace.SDFG, sdfg_B: dace.SDFG, diff_sets: DiffSetsT) -> N
 
 
 def _sdfg_diff(sdfg_A: dace.SDFG, sdfg_B: dace.SDFG, eq_strategy=Union[Literal["hash", "=="]]) -> DiffSetsT:
-    all_id_elements_A: Dict[str, DiffableT] = dict()
-    all_id_elements_B: Dict[str, DiffableT] = dict()
+    all_id_elements_A: dict[str, DiffableT] = dict()
+    all_id_elements_B: dict[str, DiffableT] = dict()
 
     all_id_elements_A[sdfg_A.guid] = sdfg_A
     for n, _ in sdfg_A.all_nodes_recursive():
@@ -160,7 +160,7 @@ def main():
         dest="hash",
         action="store_true",
         help="If set, use the hash of JSON serialized properties for change checks instead of "
-        + "Python's dictionary equivalence checks. This makes changes order sensitive.",
+        "Python's dictionary equivalence checks. This makes changes order sensitive.",
         default=False,
     )
 

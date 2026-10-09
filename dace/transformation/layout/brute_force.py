@@ -4,8 +4,9 @@
 import contextlib
 import itertools
 import time as _time
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any
 
 import numpy
 
@@ -19,9 +20,9 @@ class SweepResult:
 
     name: str
     correct: bool
-    time: Optional[float] = None
-    error: Optional[str] = None
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    time: float | None = None
+    error: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
     order: int = 0
 
 
@@ -66,19 +67,19 @@ def single_default_stream():
 
 
 def sweep(
-    candidates: Dict[str, Callable[[], dace.SDFG]],
-    run: Callable[[dace.SDFG], Dict[str, numpy.ndarray]],
-    reference: Dict[str, numpy.ndarray],
+    candidates: dict[str, Callable[[], dace.SDFG]],
+    run: Callable[[dace.SDFG], dict[str, numpy.ndarray]],
+    reference: dict[str, numpy.ndarray],
     compare: Callable[[numpy.ndarray, numpy.ndarray], bool] = numpy.allclose,
     reps: int = 5,
     warmup: int = 1,
     do_time: bool = True,
     device: str = "cpu",
-    timer: Optional[Callable[[dace.SDFG, Callable, int, int], Optional[float]]] = None,
-    attempt_log: Optional[str] = None,
+    timer: Callable[[dace.SDFG, Callable, int, int], float | None] | None = None,
+    attempt_log: str | None = None,
     isolate: bool = False,
     isolate_timeout: float = 900.0,
-) -> List[SweepResult]:
+) -> list[SweepResult]:
     """Compile, run, verify, and (optionally) time each candidate; return results ranked (correct first, then by time). ``isolate`` forks each candidate (CPU only) so a crash doesn't kill the sweep, giving each child at most ``isolate_timeout`` seconds -- lower it for a wide sweep of small kernels, where the default would stall 15 min per hang."""
     if device not in ("cpu", "gpu"):
         raise ValueError(f"device must be 'cpu' or 'gpu', got {device!r}")
@@ -93,11 +94,11 @@ def sweep(
 
     default_timer = time_gpu if device == "gpu" else time_cpu
 
-    def verify_and_time(sdfg: dace.SDFG) -> Dict[str, Any]:
+    def verify_and_time(sdfg: dace.SDFG) -> dict[str, Any]:
         """Run, verify, and (if correct) time one compiled candidate; JSON-able for :func:`run_isolated`."""
         out = run(sdfg)
         correct = all(name_ in out and compare(out[name_], ref) for name_, ref in reference.items())
-        verdict: Dict[str, Any] = {"correct": bool(correct), "time": None, "metadata": {}}
+        verdict: dict[str, Any] = {"correct": bool(correct), "time": None, "metadata": {}}
         if do_time and correct:
             try:
                 t = (
@@ -113,7 +114,7 @@ def sweep(
                 verdict["metadata"]["timing_error"] = f"{type(ex).__name__}: {ex}"
         return verdict
 
-    def fold(result: SweepResult, verdict: Dict[str, Any]) -> None:
+    def fold(result: SweepResult, verdict: dict[str, Any]) -> None:
         if "error" in verdict:
             result.error = verdict["error"]
             return
@@ -122,11 +123,11 @@ def sweep(
         result.metadata.update(verdict["metadata"])
 
     stream_ctx = single_default_stream() if device == "gpu" else contextlib.nullcontext()
-    results: List[SweepResult] = []
+    results: list[SweepResult] = []
     with stream_ctx:  # GPU: compile inside the single-stream context
         if isolate:
             # phase 1: compile in the parent; phase 2: run/verify/time in a forked child (segfault-safe)
-            staged: List[Tuple[SweepResult, dace.SDFG]] = []
+            staged: list[tuple[SweepResult, dace.SDFG]] = []
             for order, (name, make) in enumerate(candidates.items()):
                 log_attempt("compile", name)
                 try:
@@ -144,7 +145,7 @@ def sweep(
                 fold(result, run_isolated(lambda sdfg=sdfg: verify_and_time(sdfg), timeout=isolate_timeout))
         else:
             # phase 1: verify all (compiles on first run); phase 2: time the verified ones back-to-back
-            verified: List[Tuple[SweepResult, dace.SDFG]] = []
+            verified: list[tuple[SweepResult, dace.SDFG]] = []
             for order, (name, make) in enumerate(candidates.items()):
                 log_attempt("verify", name)
                 try:
@@ -178,7 +179,7 @@ def sweep(
     return results
 
 
-def best(results: List[SweepResult], noise_floor: Optional[float] = None) -> Optional[SweepResult]:
+def best(results: list[SweepResult], noise_floor: float | None = None) -> SweepResult | None:
     """The winning candidate: correct candidates within ``noise_floor`` (relative) of the fastest tie, resolved to the earliest-enumerated. Defaults to :data:`timing.SPREAD_CONTENDED_THRESHOLD`; ``None`` if nothing verified."""
     if noise_floor is None:
         from dace.transformation.layout.timing import SPREAD_CONTENDED_THRESHOLD
@@ -211,10 +212,10 @@ def permutation_candidates(array: str, ndim: int):
         yield f"permute_{array}_{''.join(map(str, perm))}", apply
 
 
-def block_candidates(array: str, ndim: int, factors: Tuple[int, ...] = (8, 16, 32)):
+def block_candidates(array: str, ndim: int, factors: tuple[int, ...] = (8, 16, 32)):
     """Yield ``(name, apply)`` for blocking one dimension of ``array`` by each factor (plus unblocked identity); ``apply`` runs ``SplitDimensions`` then ``normalize_schedule_for_layout``."""
-    from dace.transformation.layout.split_dimensions import SplitDimensions
     from dace.transformation.layout.normalize_schedule import normalize_schedule_for_layout
+    from dace.transformation.layout.split_dimensions import SplitDimensions
 
     yield f"noblock_{array}", (lambda sdfg: None)
     for dim in range(ndim):
@@ -244,9 +245,9 @@ def shuffle_candidates(array: str, dim: int, shuffle_names):
 
 def indirection_candidates(index_array: str, data_array: str, dim: int, ndim: int, shuffle_names, prepare: bool = True):
     """Yield ``(name, apply)`` layout candidates for a DATA array reached through indirection (``data_array[index_array[f(i)]]``): Shuffle/Permute candidates on ``data_array`` plus the ``noindir`` baseline. Each ``apply`` runs :func:`prepare_for_layout` first (unless ``prepare=False``); every candidate is transparent, so all verify."""
-    from dace.transformation.layout.shuffle_elements import ShuffleElements
     from dace.transformation.layout.permute_dimensions import PermuteDimensions
     from dace.transformation.layout.prepare import prepare_for_layout
+    from dace.transformation.layout.shuffle_elements import ShuffleElements
 
     def prepared(fn):
 

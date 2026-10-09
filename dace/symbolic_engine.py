@@ -110,7 +110,9 @@ if _BACKEND_NAME == "idxalg":
     # only when a caller explicitly opts in. Do not fall back silently -- an opt-in that quietly
     # ran on the other engine would make a backend A/B meaningless -- but do say what is missing.
     try:
-        from idxalg import sympy_compat as _idx  # type: ignore[import-not-found]  # optional backend, opt-in via DACE_SYMBOLIC_BACKEND
+        from idxalg import (
+            sympy_compat as _idx,  # type: ignore[import-not-found]  # optional backend, opt-in via DACE_SYMBOLIC_BACKEND
+        )
     except ImportError as ex:
         raise ImportError(
             'DACE_SYMBOLIC_BACKEND=idxalg requires the "idxalg" package, which is '
@@ -559,7 +561,7 @@ if _BACKEND_NAME == "idxalg":
 
         # Not the `symbol` FACTORY: here it builds one of ours, so the converter would answer a
         # sympy request with an idxalg value and recurse through `_sympy_()` forever.
-        return dsym.sympy_symbol(name, dtype=_dtype_tc(dstr), **{k: True for k in flags})
+        return dsym.sympy_symbol(name, dtype=_dtype_tc(dstr), **dict.fromkeys(flags, True))
 
     def _from_idx_bool(name: str, e):
         """`And`/`Or`/`Not` rendered the way DaCe spells them.

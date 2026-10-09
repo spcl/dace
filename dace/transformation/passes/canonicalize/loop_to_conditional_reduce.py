@@ -66,24 +66,24 @@ Refusals leave the loop unmodified so downstream stages still see it.
 
 import ast
 import copy
-from typing import Any, Dict, List, NamedTuple, Optional, Tuple, Type, Union
+from typing import Any, NamedTuple
 
 import numpy as np
 
 from dace import SDFG, data, dtypes, properties
 from dace import memlet as mm
-from dace.sdfg import nodes
-from dace.sdfg.sdfg import InterstateEdge
-from dace.sdfg.state import ControlFlowBlock, LoopRegion, SDFGState, ControlFlowRegion, ConditionalBlock
-from dace.subsets import Subset
 from dace.frontend import operations
+from dace.sdfg import nodes
+from dace.sdfg.narrowing import as_range
+from dace.sdfg.sdfg import InterstateEdge
+from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState
+from dace.subsets import Subset
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 from dace.transformation.passes.canonicalize.split_statements import value_edges
-from dace.sdfg.narrowing import as_range
 
 #: AST binop class -> associative reduction operator string.
-BINOP_TO_OP: Dict[type, str] = {
+BINOP_TO_OP: dict[type, str] = {
     ast.Add: "+",
     ast.Sub: "-",
     ast.Mult: "*",
@@ -95,7 +95,7 @@ BINOP_TO_OP: Dict[type, str] = {
 #: hand-maintained per-op identity table. ``-`` maps to ``+`` because
 #: ``acc - x1 - x2`` masks against the SAME additive identity ``0``
 #: (``acc - 0 == acc``).
-OP_TO_WCR: Dict[str, str] = {
+OP_TO_WCR: dict[str, str] = {
     "+": "lambda a, b: a + b",
     "-": "lambda a, b: a + b",
     "*": "lambda a, b: a * b",
@@ -147,10 +147,10 @@ class LoopToConditionalReduce(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+    def depends_on(self) -> list[type[ppl.Pass] | ppl.Pass]:
         return []
 
-    def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> int | None:
         rewritten = 0
         for sd in sdfg.all_sdfgs_recursive():
             for region in list(sd.all_control_flow_regions()):
@@ -168,7 +168,7 @@ class LoopToConditionalReduce(ppl.Pass):
 
     # match
 
-    def _match(self, loop: LoopRegion, sdfg: SDFG) -> Optional[_Match]:
+    def _match(self, loop: LoopRegion, sdfg: SDFG) -> _Match | None:
         # Find exactly one ConditionalBlock; other body blocks must be empty SDFGStates.
         cond_blocks = []
         for b in loop.nodes():
@@ -331,7 +331,7 @@ class LoopToConditionalReduce(ppl.Pass):
                 return True
         return False
 
-    def _walk_back_to_update_tasklet(self, state: SDFGState, sink_an: nodes.AccessNode) -> Optional[nodes.Tasklet]:
+    def _walk_back_to_update_tasklet(self, state: SDFGState, sink_an: nodes.AccessNode) -> nodes.Tasklet | None:
         """Walk back from ``sink_an`` through intermediate transient
         AccessNodes and identity tasklets (``__out = __inp``) until the
         update tasklet (whose body is an associative binop on two inputs).
@@ -367,7 +367,7 @@ class LoopToConditionalReduce(ppl.Pass):
                 continue
             return upstream
 
-    def _trace_back_to_source_an(self, state: SDFGState, start: nodes.Node) -> Optional[nodes.AccessNode]:
+    def _trace_back_to_source_an(self, state: SDFGState, start: nodes.Node) -> nodes.AccessNode | None:
         """Walk back from ``start`` through transient intermediate AccessNodes
         to the source AccessNode (the AN with ``in_degree == 0``). Returns
         ``None`` on ambiguity (multi-in)."""
@@ -382,7 +382,7 @@ class LoopToConditionalReduce(ppl.Pass):
                 return None
             cur = ins[0].src
 
-    def _addend_gather(self, m: _Match) -> Optional[Tuple[str, Optional[Subset]]]:
+    def _addend_gather(self, m: _Match) -> tuple[str, Subset | None] | None:
         """Return ``(array_name, subset)`` for the addend read, or ``None`` if
         the shape is unrecognized. Handles BOTH the raw transient-hop form
         (``arr -> arr_index(transient) -> tasklet``, as the frontend emits) AND
@@ -419,7 +419,7 @@ class LoopToConditionalReduce(ppl.Pass):
         # The mask tasklet's addend input connector is ``__addend``; the cond
         # resolution rewrites the addend gather to that connector name, and every
         # OTHER array read the guard names becomes a wired ``__guardN`` input.
-        guard_inputs: Dict[str, Tuple[str, str]] = {}
+        guard_inputs: dict[str, tuple[str, str]] = {}
         cond_expr_resolved = self._resolve_cond(m, sdfg, addend_conn_name="__addend", guard_inputs=guard_inputs)
         if cond_expr_resolved is None:
             return False  # a guard read is not expressible as a mask input -- leave the loop untouched
@@ -510,8 +510,8 @@ class LoopToConditionalReduce(ppl.Pass):
         m: _Match,
         sdfg: SDFG,
         addend_conn_name: str = "__addend",
-        guard_inputs: Optional[Dict[str, Tuple[str, str]]] = None,
-    ) -> Optional[str]:
+        guard_inputs: dict[str, tuple[str, str]] | None = None,
+    ) -> str | None:
         """Rewrite the cond expression over tasklet input connectors only.
 
         Substitutes iedge-bound symbols by their RHS and subscripts matching an input edge by its
@@ -524,7 +524,7 @@ class LoopToConditionalReduce(ppl.Pass):
             guard_inputs = {}
 
         # Step 1: collect iedge bindings (parsed as ASTs once).
-        binding_asts: Dict[str, ast.AST] = {}
+        binding_asts: dict[str, ast.AST] = {}
         for e in m.loop.all_interstate_edges():
             for lhs, rhs in (e.data.assignments or {}).items():
                 try:
@@ -537,7 +537,7 @@ class LoopToConditionalReduce(ppl.Pass):
         # -- and map the matching ``(arr, idx)`` to ``addend_conn_name`` (the new
         # accumulator tasklet's input connector, so a cond that reads the SAME
         # element as the addend, e.g. ``a[i] > K``, resolves to ``__addend``).
-        connector_for_access: Dict[tuple, str] = {}
+        connector_for_access: dict[tuple, str] = {}
         gather = self._addend_gather(m)
         if gather is not None:
             arr_name, sub = gather
@@ -630,7 +630,7 @@ class LoopToConditionalReduce(ppl.Pass):
         written = (n.data for n in m.true_state.data_nodes() if m.true_state.in_degree(n) > 0)
         return arr_name not in written
 
-    def _available_symbols(self, m: _Match, sdfg: SDFG) -> Dict[str, None]:
+    def _available_symbols(self, m: _Match, sdfg: SDFG) -> dict[str, None]:
         """Names usable in a memlet subset at the update tasklet, taken from the
         DEFINED-symbol API rather than ``sdfg.symbols`` membership. ``sdfg.symbols``
         holds only the SDFG's GLOBAL symbols, so it sees none of the three binders a

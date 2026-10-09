@@ -7,37 +7,39 @@ graph, and only then materializes copies -- so a copy is emitted where the locat
 changes rather than around every kernel.
 """
 
+from collections.abc import MutableSet
 from copy import deepcopy
-from typing import AbstractSet, Any, MutableSet, Optional
+from typing import AbstractSet, Any
 
-from dace.ordered import OrderedSet
-
-from dace import dtypes, properties, data, Memlet, subsets, symbolic
+from dace import Memlet, data, dtypes, properties, subsets, symbolic
 from dace.config import Config
 from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES
-from dace.sdfg import nodes, SDFG
+from dace.optionals import required
+from dace.ordered import OrderedSet
+from dace.sdfg import SDFG, nodes
 from dace.sdfg import utils as sdutil
+from dace.sdfg.narrowing import as_expr
+from dace.sdfg.scope import is_devicelevel_gpu
 from dace.sdfg.state import (
-    SDFGState,
+    AbstractControlFlowRegion,
+    BreakBlock,
     ConditionalBlock,
+    ContinueBlock,
+    ControlFlowBlock,
     ControlFlowRegion,
     LoopRegion,
     ReturnBlock,
-    ContinueBlock,
-    BreakBlock,
-    ControlFlowBlock,
-    AbstractControlFlowRegion,
+    SDFGState,
 )
-from dace.sdfg.scope import is_devicelevel_gpu
 from dace.sdfg.utils import require_structured_control_flow
 from dace.transformation import pass_pipeline as ppl
-from dace.transformation.transformation import explicit_cf_compatible
 from dace.transformation.dataflow import TrivialMapElimination
 from dace.transformation.passes import FuseMaps
 from dace.transformation.passes.length_one_array_scalar_conversion import (
     ConvertLengthOneArraysToScalars,
     ConvertScalarsToLengthOneArrays,
 )
+from dace.transformation.passes.offloading.host_maps import HostMapSpec, host_maps, maps_pinned_by_host_loops
 from dace.transformation.passes.offloading.offloading_helpers import (
     enclosing_kernel,
     get_data_used_by_incoming_access_nodes,
@@ -58,13 +60,10 @@ from dace.transformation.passes.offloading.offloading_helpers import (
     traverse_IR,
     traverse_same_level,
 )
-from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising
-from dace.transformation.passes.offloading.taskloop import is_device_wide_libnode, sdfg_only_launches, taskloop_maps
-from dace.transformation.passes.offloading.host_maps import HostMapSpec, host_maps, maps_pinned_by_host_loops
-
 from dace.transformation.passes.offloading.offloading_ir_node import OffloadingIRNode
-from dace.optionals import required
-from dace.sdfg.narrowing import as_expr
+from dace.transformation.passes.offloading.taskloop import is_device_wide_libnode, sdfg_only_launches, taskloop_maps
+from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising
+from dace.transformation.transformation import explicit_cf_compatible
 
 
 def in_sequential_specialization_arm(block) -> bool:
@@ -329,7 +328,7 @@ class OffloadToAccelerator(ppl.Pass):
         """
         through_the_exit: OrderedSet[str] = OrderedSet()
         written_inside: OrderedSet[str] = OrderedSet()
-        kernels_per_data: dict[str, OrderedSet[Optional[nodes.MapEntry]]] = {}
+        kernels_per_data: dict[str, OrderedSet[nodes.MapEntry | None]] = {}
         for state in sdfg.states():
             scopes = state.scope_dict()
             for node in state.nodes():
@@ -653,7 +652,7 @@ class OffloadToAccelerator(ppl.Pass):
         if regions:
             self.cache_scopes(sdfg)
 
-    def device_tables(self, sdfg: SDFG) -> dict[str, tuple[SDFGState, OrderedSet[nodes.Tasklet], Optional[list]]]:
+    def device_tables(self, sdfg: SDFG) -> dict[str, tuple[SDFGState, OrderedSet[nodes.Tasklet], list | None]]:
         """Tables to fill on the device: ``name -> (fill state, fill tasklets, device-side states or None)``.
 
         A table is a transient array longer than one element; a length-1 one becomes a by-value
@@ -842,7 +841,7 @@ class OffloadToAccelerator(ppl.Pass):
                     return True
         return False
 
-    def host_level_nested_sdfgs(self, state: SDFGState, entry: Optional[nodes.MapEntry]):
+    def host_level_nested_sdfgs(self, state: SDFGState, entry: nodes.MapEntry | None):
         """Nested SDFGs under ``entry`` reached through taskloops only -- one below a kernel is device code."""
         for node in self.cached_scope_children[state].get(entry, ()):
             if isinstance(node, nodes.NestedSDFG):
@@ -1923,7 +1922,7 @@ class OffloadToAccelerator(ppl.Pass):
                 target_graph.start_block = target_graph.node_id(copy_state)  # copy state becomes new start block
 
         elif state1 is not None:
-            target_graph = state1.parent_graph if state1.parent_graph else state1
+            target_graph = state1.parent_graph or state1
             assert target_graph is not None, "copy insertion requires a parent control-flow graph (s1)"
 
             # copy_state = self.add_state_after(target_graph, state1, label)

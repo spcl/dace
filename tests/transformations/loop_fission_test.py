@@ -16,7 +16,8 @@ import numpy as np
 import pytest
 
 import dace
-from dace.sdfg import nodes, utils as sdutil
+from dace.sdfg import nodes
+from dace.sdfg import utils as sdutil
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.loop_fission import LoopFission
 
@@ -937,11 +938,11 @@ def test_dependence_aware_grouping_disjoint_same_data():
     """Two independent statement chains that touch the same transient at disjoint
     ranges must be allowed to fission once the grouping uses dependence distance
     instead of container-name equality."""
-    from dace.transformation.passes.loop_fission import _independent_groups
     from dace import SDFG, dtypes, symbolic
     from dace.memlet import Memlet
-    from dace.sdfg.state import SDFGState, LoopRegion
+    from dace.sdfg.state import LoopRegion, SDFGState
     from dace.subsets import Range
+    from dace.transformation.passes.loop_fission import _independent_groups
 
     sdfg = SDFG("disjoint_same_data")
     sdfg.add_array("tmp", [20], dtypes.float64, transient=True)

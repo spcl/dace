@@ -3,14 +3,14 @@
 
 import copy
 import sys
-from typing import Callable, List, Tuple
+from collections.abc import Callable
 
 import dace
 from dace.sdfg.state import AbstractControlFlowRegion
 from tests.sdfg.cfg_list_in_place_test import assert_tree_consistent, conditional, inner_sdfg
 
 
-def cfg_rows(sdfg: dace.SDFG) -> List[Tuple[str, str, int]]:
+def cfg_rows(sdfg: dace.SDFG) -> list[tuple[str, str, int]]:
     return [(type(region).__name__, region.label, region.cfg_id) for region in sdfg.cfg_list]
 
 
@@ -23,9 +23,9 @@ def assert_cfg_list_as_after_a_reset(sdfg: dace.SDFG) -> None:
     assert cfg_rows(sdfg) == cfg_rows(fresh)
 
 
-def record_tree_resets(monkeypatch, root: Callable[[dace.SDFG], bool]) -> List[str]:
+def record_tree_resets(monkeypatch, root: Callable[[dace.SDFG], bool]) -> list[str]:
     """From now on, the function that asked for each reset of a whole tree whose root ``root`` accepts."""
-    callers: List[str] = []
+    callers: list[str] = []
     original = AbstractControlFlowRegion.reset_cfg_list
     depth = [0]
 

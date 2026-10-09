@@ -1,9 +1,11 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 
 import copy
-import pytest
-import dace
+
 import numpy as np
+import pytest
+
+import dace
 from dace.sdfg.state import ConditionalBlock, LoopRegion, UnstructuredControlFlow
 from dace.sdfg.utils import inline_control_flow_regions
 from dace.transformation.pass_pipeline import FixedPointPipeline

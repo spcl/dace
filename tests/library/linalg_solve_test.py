@@ -1,13 +1,14 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+import re
+
+import numpy as np
+import pytest
+
 import dace
 from dace import Memlet
 from dace.libraries.lapack import Getrf, Getrs
 from dace.libraries.linalg import Solve
 from dace.libraries.linalg.nodes.transpose import Transpose
-import re
-
-import numpy as np
-import pytest
 
 n = dace.symbol("n", dace.int64)
 id = -1
@@ -33,7 +34,7 @@ def make_sdfg(
     implementation, dtype, id=0, in_shape=[n, n], out_shape=[n, n], in_subset="0:n, 0:n", out_subset="0:n, 0:n"
 ):
 
-    sdfg = dace.SDFG("linalg_solve_{}_{}_{}".format(implementation, dtype.__name__, id))
+    sdfg = dace.SDFG(f"linalg_solve_{implementation}_{dtype.__name__}_{id}")
     sdfg.add_symbol("n", dace.int64)
     state = sdfg.add_state("dataflow")
 
@@ -120,12 +121,8 @@ def test_solve(implementation, dtype, size, shape):
     in_subset = tuple([slice(o, o + size) if i in in_dims else o for i, o in enumerate(in_offset)])
     out_subset = tuple([slice(o, o + size) if i in out_dims else o for i, o in enumerate(out_offset)])
 
-    in_subset_str = ",".join(
-        ["{b}:{e}".format(b=o, e=o + size) if i in in_dims else str(o) for i, o in enumerate(in_offset)]
-    )
-    out_subset_str = ",".join(
-        ["{b}:{e}".format(b=o, e=o + size) if i in out_dims else str(o) for i, o in enumerate(out_offset)]
-    )
+    in_subset_str = ",".join([f"{o}:{o + size}" if i in in_dims else str(o) for i, o in enumerate(in_offset)])
+    out_subset_str = ",".join([f"{o}:{o + size}" if i in out_dims else str(o) for i, o in enumerate(out_offset)])
 
     sdfg = make_sdfg(implementation, dtype, id, in_shape, out_shape, in_subset_str, out_subset_str)
     if implementation == "cuSolverDn":
@@ -163,7 +160,7 @@ SINGLE_RHS_SHAPES = {"vector": [n], "column": [n, 1]}
 def make_rhs_sdfg(implementation, dtype, rhs_shape, uid):
     """``bout = solve(ain, bin)`` with a right-hand side of the given shape."""
 
-    sdfg = dace.SDFG("linalg_solve_rhs_{}_{}_{}".format(implementation, dtype.__name__, uid))
+    sdfg = dace.SDFG(f"linalg_solve_rhs_{implementation}_{dtype.__name__}_{uid}")
     sdfg.add_symbol("n", dace.int64)
     state = sdfg.add_state("dataflow")
 
@@ -171,7 +168,7 @@ def make_rhs_sdfg(implementation, dtype, rhs_shape, uid):
     sdfg.add_array("bin", rhs_shape, dtype)
     sdfg.add_array("bout", rhs_shape, dtype)
 
-    subset = "0:n" if len(rhs_shape) == 1 else "0:n, 0:{}".format(rhs_shape[1])
+    subset = "0:n" if len(rhs_shape) == 1 else f"0:n, 0:{rhs_shape[1]}"
     solve_node = Solve("solve")
     solve_node.implementation = implementation
 
@@ -320,7 +317,7 @@ def test_single_rhs_strided_slice_values(implementation):
     global id
     id += 1
     size = 6
-    sdfg = dace.SDFG("linalg_solve_strided_{}_{}".format(implementation, id))
+    sdfg = dace.SDFG(f"linalg_solve_strided_{implementation}_{id}")
     sdfg.add_symbol("n", dace.int64)
     state = sdfg.add_state("dataflow")
     sdfg.add_array("ain", [n, n], np.float64)

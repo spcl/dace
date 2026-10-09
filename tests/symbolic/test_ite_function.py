@@ -25,7 +25,7 @@ import numpy as np
 import sympy
 
 import dace
-from dace.symbolic import DaceSympyPrinter, SymExpr, ITE
+from dace.symbolic import ITE, DaceSympyPrinter, SymExpr
 
 
 def test_ite_parses_via_symexpr():

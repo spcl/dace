@@ -27,14 +27,14 @@ import numpy as np
 import pytest
 
 import dace
-from dace.config import set_temporary
 from dace import nodes
+from dace.config import set_temporary
+from dace.transformation.passes.canonicalize.pipeline import canonicalize
 from dace.transformation.passes.privatize_scatter_reduction import (
+    SCATTER_REDUCIBLE_OPS,
     PrivatizeScatterReduction,
     scatter_wcr_op,
-    SCATTER_REDUCIBLE_OPS,
 )
-from dace.transformation.passes.canonicalize.pipeline import canonicalize
 
 N, bins, npt = (dace.symbol(s, dtype=dace.int64) for s in ("N", "bins", "npt"))
 

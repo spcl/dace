@@ -10,9 +10,9 @@ that admits ``M == 0``, leaving SymPy unable to decide the sign of ``-floor(LEN_
 measured 3.1x slower on CPU and 84x slower on GPU than the same kernel with a constant divisor.
 """
 
-import dace
 import pytest
 
+import dace
 from dace.sdfg import nodes as dnodes
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.canonicalize.pipeline import canonicalize

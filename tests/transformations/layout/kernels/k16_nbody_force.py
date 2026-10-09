@@ -20,8 +20,8 @@ JOSS'22); SC26 layout paper (Permute over an O(N^2) reduction).
 """
 
 import numpy
-import dace
 
+import dace
 from dace.transformation.layout.brute_force import permutation_candidates
 
 N = dace.symbol("N")

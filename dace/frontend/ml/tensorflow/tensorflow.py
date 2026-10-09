@@ -2,18 +2,20 @@
 
 # TODO: This code should undergo major refactoring
 
-from functools import partial
-import numpy as np
 import re
-from typing import Any
 import warnings
+from functools import partial
+from typing import Any
+
+import numpy as np
 
 import dace
-from dace.memlet import Memlet
 from dace import SDFG, SDFGState, dtypes
 from dace.data import Scalar
-from dace.sdfg.nodes import Tasklet, NestedSDFG
+from dace.memlet import Memlet
+from dace.sdfg.nodes import NestedSDFG, Tasklet
 from dace.symbolic import symstr
+
 from .winograd import winograd_convolution
 
 try:
@@ -467,7 +469,7 @@ class TFSession:
         # Compile the SDFG
         if gpu:
             #    self.graph.apply_gpu_transformations()
-            for aname, array in self.graph.arrays.items():
+            for array in self.graph.arrays.values():
                 if array is None:
                     continue
                 if array.storage in [
@@ -1082,7 +1084,7 @@ class TFSession:
         if node.get_attr("keep_dims"):
             outputParams = [params[i] if outputShape[i] != 1 else "0" for i in range(len(mapParams))]
         else:
-            temp = set(mapParams[a] for a in reduction_axes)
+            temp = {mapParams[a] for a in reduction_axes}
             outputParams = list(set(mapParams) - temp)
             outputParams.sort()
         if len(outputParams) == 0:
@@ -3600,7 +3602,7 @@ class TFSession:
         for count, out in enumerate(node.outputs):
             label = string_builder(out.name)
             if "?" in str(_tensorshape(out)):
-                raise ValueError("Invalid shape {} for tensor {}".format(_tensorshape(out), label))
+                raise ValueError(f"Invalid shape {_tensorshape(out)} for tensor {label}")
             # Iterate over all output nodes
             # Try to find node in DaCe graph
             try:

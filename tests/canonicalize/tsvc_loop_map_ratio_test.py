@@ -23,7 +23,6 @@ os.environ.setdefault("UCX_VFS_ENABLE", "n")
 from dace.sdfg import nodes as nd
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
-
 from tests.corpus.tsvc import tsvc
 from tests.corpus.tsvc_2_5 import tsvc_2_5
 

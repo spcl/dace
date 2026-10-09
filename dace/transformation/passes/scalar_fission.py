@@ -1,11 +1,12 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 from collections import defaultdict
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Optional
 
 from dace import SDFG, InterstateEdge
 from dace.sdfg import nodes as nd
 from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState
-from dace.transformation import pass_pipeline as ppl, transformation
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation import transformation
 from dace.transformation.passes import analysis as ap
 
 
@@ -19,11 +20,11 @@ class CarrierIndex:
     __slots__ = ("node_states", "edge_sources")
 
     def __init__(self, sdfg: SDFG) -> None:
-        self.node_states: Dict[str, List[SDFGState]] = defaultdict(list)
+        self.node_states: dict[str, list[SDFGState]] = defaultdict(list)
         for state in sdfg.states():
             for node in state.data_nodes():
                 self.node_states[node.data].append(state)
-        self.edge_sources: Dict[str, List[ControlFlowBlock]] = defaultdict(list)
+        self.edge_sources: dict[str, list[ControlFlowBlock]] = defaultdict(list)
         for edge in sdfg.all_interstate_edges():
             for symbol_name in dict.fromkeys(str(s) for s in edge.data.free_symbols):
                 self.edge_sources[symbol_name].append(edge.src)
@@ -65,7 +66,7 @@ class ScalarFission(ppl.Pass):
     def depends_on(self):
         return [self.shadow_analysis()]
 
-    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Dict[str, Set[str]]]:
+    def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> dict[str, set[str]] | None:
         """
         Rename scalars and arrays of size 1 based on dominated scopes.
 
@@ -75,7 +76,7 @@ class ScalarFission(ppl.Pass):
                                  pipeline, an empty dictionary is expected.
         :return: A dictionary mapping the original name to a set of all new names created for each data container.
         """
-        results: Dict[str, Set[str]] = defaultdict(lambda: set())
+        results: dict[str, set[str]] = defaultdict(lambda: set())
 
         shadow_scope_dict: ap.WriteScopeDict = pipeline_results[self.shadow_analysis().__name__][sdfg.cfg_id]
 
@@ -87,7 +88,7 @@ class ScalarFission(ppl.Pass):
         # a dataflow edge, so it is invisible to the write-shadow analysis and to
         # the rename below), orphaning the reference into an undefined symbol. Treat
         # condition-referenced scalars as used and leave them untouched.
-        cond_referenced: Set[str] = set()
+        cond_referenced: set[str] = set()
         for region in sdfg.all_control_flow_regions():
             for cb in region.get_meta_codeblocks():
                 cond_referenced |= cb.get_free_symbols()
@@ -97,9 +98,9 @@ class ScalarFission(ppl.Pass):
         # loop-carried value whose read and write share one storage location (the
         # connector); versioning its two sides into different containers is invalid
         # (see ``_inout_nsdfg_carried``). Leave it untouched, like ``cond_referenced``.
-        inout_carried: Set[str] = self._inout_nsdfg_carried(sdfg)
+        inout_carried: set[str] = self._inout_nsdfg_carried(sdfg)
 
-        carriers: Optional[CarrierIndex] = None
+        carriers: CarrierIndex | None = None
         for name, write_scope_dict in shadow_scope_dict.items():
             desc = sdfg.arrays[name]
 
@@ -162,7 +163,7 @@ class ScalarFission(ppl.Pass):
                     self.rename_node_memlets(write[0], write_node, aliases, newname)
 
                     # Replace all dominated reads and connected memlets.
-                    affected_states: Set[SDFGState] = {write[0]} if isinstance(write[0], SDFGState) else set()
+                    affected_states: set[SDFGState] = {write[0]} if isinstance(write[0], SDFGState) else set()
                     for read in shadowed_reads:
                         if isinstance(read[1], nd.AccessNode):
                             read_node = read[1]
@@ -180,7 +181,7 @@ class ScalarFission(ppl.Pass):
                     results[name].add(newname)
         return results
 
-    def report(self, pass_retval: Any) -> Optional[str]:
+    def report(self, pass_retval: Any) -> str | None:
         return f"Renamed {len(pass_retval)} scalars: {pass_retval}."
 
     @staticmethod
@@ -210,7 +211,7 @@ class ScalarFission(ppl.Pass):
         return ap.has_wcr_in_edge(state, node)
 
     @staticmethod
-    def _inout_nsdfg_carried(sdfg: SDFG) -> Set[str]:
+    def _inout_nsdfg_carried(sdfg: SDFG) -> set[str]:
         """Names threaded through a single ``NestedSDFG`` inout connector.
 
         A connector present in BOTH ``in_connectors`` and ``out_connectors`` reads
@@ -228,7 +229,7 @@ class ScalarFission(ppl.Pass):
         fires, while ``_rename_memlet_path`` still renames the pass-through memlets.
         Collect such names so the caller leaves them for the carry handling.
         """
-        carried: Set[str] = set()
+        carried: set[str] = set()
         for state in sdfg.states():
             for n in state.nodes():
                 if not isinstance(n, nd.NestedSDFG):
@@ -247,7 +248,7 @@ class ScalarFission(ppl.Pass):
                     carried |= in_arrays & out_arrays
         return carried
 
-    def rename_node_memlets(self, state: SDFGState, node: nd.AccessNode, aliases: Set[str], new: str) -> None:
+    def rename_node_memlets(self, state: SDFGState, node: nd.AccessNode, aliases: set[str], new: str) -> None:
         """Point every memlet on ``node``'s edges that still names one of ``aliases`` at ``new``.
 
         A node renamed twice in one pass no longer names the ORIGINAL container, so a guard on that
@@ -308,7 +309,7 @@ class ScalarFission(ppl.Pass):
     # #
 
     def _privatize_loop_local_undominated(
-        self, sdfg: SDFG, name: str, accesses: Set[Tuple], results, carriers: Optional["CarrierIndex"] = None
+        self, sdfg: SDFG, name: str, accesses: set[tuple], results, carriers: Optional["CarrierIndex"] = None
     ):
         """Give a separate container to each loop's copy of a scalar whose reads
         are not dominated by a single write (the ``None`` write-scope), when it
@@ -332,7 +333,7 @@ class ScalarFission(ppl.Pass):
         if not self._carrier_free(sdfg, name, carriers):
             return
 
-        by_loop: Dict[LoopRegion, List[Tuple]] = defaultdict(list)
+        by_loop: dict[LoopRegion, list[tuple]] = defaultdict(list)
         for block, node in accesses:
             # ``_carrier_free`` already established that every access sits inside a loop and that
             # no loop reads ``name`` before defining it, which is this group's legality condition.
@@ -340,7 +341,7 @@ class ScalarFission(ppl.Pass):
 
         for loop_accesses in by_loop.values():
             newname = sdfg.add_datadesc(name, sdfg.arrays[name].clone(), find_new_name=True)
-            affected_states: Set[SDFGState] = set()
+            affected_states: set[SDFGState] = set()
             for block, node in loop_accesses:
                 if isinstance(node, nd.AccessNode):
                     node.data = newname
@@ -401,7 +402,7 @@ class ScalarFission(ppl.Pass):
         """
         if carriers is None:
             carriers = CarrierIndex(sdfg)
-        loops: Set[LoopRegion] = set()
+        loops: set[LoopRegion] = set()
         # Interstate-edge reads are accesses too, and one at non-loop scope consumes whatever the
         # loops left behind just as a top-level AccessNode would.
         for block in (*carriers.node_states.get(name, ()), *carriers.edge_sources.get(name, ())):
@@ -520,7 +521,7 @@ class ScalarFission(ppl.Pass):
                 ScalarFission._propagate_rename_into_nsdfgs(set(inner.states()), old_name, new_name)
 
     @staticmethod
-    def _innermost_loop(block) -> Optional[LoopRegion]:
+    def _innermost_loop(block) -> LoopRegion | None:
         """Find the innermost loop enclosing a block.
 
         :param block: The control-flow block to search from.
@@ -547,7 +548,7 @@ class ScalarFission(ppl.Pass):
         """
         return self._analyze_region(region, name, defined_on_entry)[1]
 
-    def _analyze_region(self, region: ControlFlowRegion, name: str, defined_on_entry: bool) -> Tuple[bool, bool]:
+    def _analyze_region(self, region: ControlFlowRegion, name: str, defined_on_entry: bool) -> tuple[bool, bool]:
         """Forward must-def analysis of ``name`` over ``region``.
 
         The fixpoint is seeded pessimistically (``False`` off the entry), so
@@ -564,7 +565,7 @@ class ScalarFission(ppl.Pass):
             return defined_on_entry, True
         bdef = {b: self._block_defines(b, name) for b in blocks}
         start = region.start_block
-        defn = {b: False for b in blocks}
+        defn = dict.fromkeys(blocks, False)
         for _ in range(len(blocks) + 1):
             changed = False
             for b in blocks:
@@ -704,7 +705,7 @@ class ArrayFission(ScalarFission):
         # full-overwrite proof for everything else it reports.
         return desc.transient and desc.total_size != 1
 
-    def report(self, pass_retval: Any) -> Optional[str]:
+    def report(self, pass_retval: Any) -> str | None:
         return f"Renamed {len(pass_retval)} arrays: {pass_retval}."
 
 

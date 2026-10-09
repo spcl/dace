@@ -2,14 +2,14 @@
 """Tests for __dace_init_cuda: the inherited-error drain, and one-GPU-per-process."""
 
 import ctypes
-from dace.codegen import common
 import importlib
 from ctypes.util import find_library
 
 import numpy as np
+import pytest
 
 import dace
-import pytest
+from dace.codegen import common
 
 
 def _gpu_sdfg(name: str = "drain_probe") -> dace.SDFG:

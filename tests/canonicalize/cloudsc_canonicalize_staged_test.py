@@ -43,7 +43,6 @@ import copy
 import json
 import os
 import time
-from typing import Dict, List, Optional, Tuple
 
 os.environ.setdefault("MPI4PY_RC_INITIALIZE", "0")
 os.environ.setdefault("OMPI_MCA_pml", "ob1")
@@ -104,9 +103,9 @@ def quiet():
             yield
 
 
-def phase_order() -> List[str]:
+def phase_order() -> list[str]:
     """The pipeline's phase labels, in order, de-duplicated."""
-    order: List[str] = []
+    order: list[str] = []
     for label, _ in _build_stages():
         if not order or order[-1] != label:
             if label not in order:
@@ -114,7 +113,7 @@ def phase_order() -> List[str]:
     return order
 
 
-def build_reference() -> Tuple[dace.SDFG, Dict, Dict]:
+def build_reference() -> tuple[dace.SDFG, dict, dict]:
     """The un-canonicalized CloudSC reference, its pristine inputs, and its outputs.
 
     :returns: ``(reference_sdfg, pristine_inputs, reference_outputs)``. Driving an SDFG mutates the
@@ -131,8 +130,8 @@ def build_reference() -> Tuple[dace.SDFG, Dict, Dict]:
 
 
 def drive(
-    candidate: dace.SDFG, pristine: Dict, reference_outputs: Dict, rtol: float, atol: float, sequential: bool
-) -> Dict[str, Tuple[float, float]]:
+    candidate: dace.SDFG, pristine: dict, reference_outputs: dict, rtol: float, atol: float, sequential: bool
+) -> dict[str, tuple[float, float]]:
     """Run a COPY of ``candidate`` on the reference's inputs; return the arrays that disagree.
 
     The copy is what ``make_sequential`` may mutate, so the caller's SDFG keeps its real schedules.
@@ -150,7 +149,7 @@ def drive(
     return {name: (abs_err, rel_err) for name, (abs_err, rel_err, ok) in report.items() if not ok}
 
 
-def verify(candidate: dace.SDFG, pristine: Dict, reference_outputs: Dict) -> Tuple[bool, str]:
+def verify(candidate: dace.SDFG, pristine: dict, reference_outputs: dict) -> tuple[bool, str]:
     """Check the phase the way the kernel is actually RUN: Maps as OpenMP regions, multicore.
 
     A sequential check cannot see the failure that matters most here. Canonicalization's whole job
@@ -179,10 +178,10 @@ def verify(candidate: dace.SDFG, pristine: Dict, reference_outputs: Dict) -> Tup
 def run_staged(
     cache_dir: str,
     verify_numerics: bool = True,
-    stop_after: Optional[str] = None,
+    stop_after: str | None = None,
     resume: bool = True,
-    specialize_constants: Optional[Dict[str, int]] = None,
-) -> List[Dict]:
+    specialize_constants: dict[str, int] | None = None,
+) -> list[dict]:
     """Apply the pipeline phase by phase, validating / verifying / timing / caching each.
 
     :param cache_dir: Directory holding ``phase-<NN>-<label>.sdfgz`` snapshots and ``timings.json``.
@@ -226,11 +225,11 @@ def run_staged(
             specialize_symbols(sdfg, specialize_constants)
         sdfg.validate()
 
-    records: List[Dict] = []
+    records: list[dict] = []
     for index, label in enumerate(order):
         if index < start_index:
             continue
-        stage_times: List[Tuple[str, float]] = []
+        stage_times: list[tuple[str, float]] = []
         phase_start = time.perf_counter()
         error = None
         for stage_label, unit in stages:
@@ -304,7 +303,7 @@ def run_staged(
     return records
 
 
-def report(records: List[Dict]) -> str:
+def report(records: list[dict]) -> str:
     lines = ["", f"{'phase':30s} {'total(s)':>9s} {'verify(s)':>9s}  slowest stage", "-" * 92]
     for r in records:
         lines.append(

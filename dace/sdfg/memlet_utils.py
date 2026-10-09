@@ -1,15 +1,17 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
-from collections import defaultdict
 import copy
-from dace import data, Memlet, subsets, symbolic, dtypes
-from dace.frontend.python import memlet_parser
-from dace.sdfg import SDFGState, SDFG, nodes, utils as sdutil
-from dace.sdfg.scope import is_devicelevel_gpu
-from dace.sdfg.graph import MultiConnectorEdge
-from dace.frontend.python import memlet_parser
 import itertools
-from typing import AbstractSet, Callable, Dict, Iterable, Optional, Set, TypeVar, Tuple, Union, Generator, Any
+from collections import defaultdict
+from collections.abc import Callable, Generator, Iterable
+from typing import AbstractSet, Any, TypeVar
+
+from dace import Memlet, data, dtypes, subsets, symbolic
+from dace.frontend.python import memlet_parser
+from dace.sdfg import SDFG, SDFGState, nodes
+from dace.sdfg import utils as sdutil
+from dace.sdfg.graph import MultiConnectorEdge
+from dace.sdfg.scope import is_devicelevel_gpu
 
 
 class MemletReplacer(ast.NodeTransformer):
@@ -20,9 +22,9 @@ class MemletReplacer(ast.NodeTransformer):
 
     def __init__(
         self,
-        arrays: Dict[str, data.Data],
-        process: Callable[[Memlet], Union[Memlet, None]],
-        array_filter: Optional[AbstractSet[str]] = None,
+        arrays: dict[str, data.Data],
+        process: Callable[[Memlet], Memlet | None],
+        array_filter: AbstractSet[str] | None = None,
     ) -> None:
         """
         Create a new memlet replacer.
@@ -35,7 +37,7 @@ class MemletReplacer(ast.NodeTransformer):
         self.arrays = arrays
         self.array_filter = array_filter or self.arrays.keys()
 
-    def _parse_memlet(self, node: Union[ast.Name, ast.Subscript]) -> Memlet:
+    def _parse_memlet(self, node: ast.Name | ast.Subscript) -> Memlet:
         """
         Parses a memlet from a subscript or name node.
 
@@ -67,7 +69,7 @@ class MemletReplacer(ast.NodeTransformer):
         """
         return ast.parse(f"{memlet.data}[{memlet.subset}]").body[0].value
 
-    def _replace(self, node: Union[ast.Name, ast.Subscript]) -> ast.Subscript:
+    def _replace(self, node: ast.Name | ast.Subscript) -> ast.Subscript:
         cur_memlet = self._parse_memlet(node)
         new_memlet = self.process(cur_memlet)
         if new_memlet is None:
@@ -87,13 +89,13 @@ class MemletReplacer(ast.NodeTransformer):
         return self.generic_visit(node)
 
 
-class MemletSet(Set[Memlet]):
+class MemletSet(set[Memlet]):
     """
     Implements a set of memlets that considers subsets that intersect or are covered by its other memlets.
     Set updates and unions also perform unions on the contained memlet subsets.
     """
 
-    def __init__(self, iterable: Optional[Iterable[Memlet]] = None, *, intersection_is_contained: bool = True) -> None:
+    def __init__(self, iterable: Iterable[Memlet] | None = None, *, intersection_is_contained: bool = True) -> None:
         """
         Initializes a memlet set.
 
@@ -102,7 +104,7 @@ class MemletSet(Set[Memlet]):
                                           only intersects with the contents of the set. If False, only completely
                                           covered subsets would return True.
         """
-        self.internal_set: Dict[str, Set[Memlet]] = {}
+        self.internal_set: dict[str, set[Memlet]] = {}
         self.intersection_is_contained = intersection_is_contained
         if iterable is not None:
             self.update(iterable)
@@ -190,15 +192,15 @@ class MemletSet(Set[Memlet]):
 T = TypeVar("T")
 
 
-class MemletDict(Dict[Memlet, T]):
+class MemletDict(dict[Memlet, T]):
     """
     Implements a dictionary with memlet keys that considers subsets that intersect
     or are covered by its other memlets.
     """
 
     def __init__(self, **kwargs) -> None:
-        self.internal_dict: Dict[str, Dict[Memlet, T]] = defaultdict(dict)
-        self.covers_cache: Dict[Tuple, bool] = defaultdict()
+        self.internal_dict: dict[str, dict[Memlet, T]] = defaultdict(dict)
+        self.covers_cache: dict[tuple, bool] = defaultdict()
 
         if kwargs:
             self.update(kwargs)
@@ -206,7 +208,7 @@ class MemletDict(Dict[Memlet, T]):
     def __len__(self) -> int:
         return len(self.internal_dict)
 
-    def _getkey(self, elem: Memlet) -> Optional[Memlet]:
+    def _getkey(self, elem: Memlet) -> Memlet | None:
         """
         Returns the corresponding key (exact, covered, intersecting, or indeterminately intersecting memlet)
         if it exists in the dictionary, or None if it does not.
@@ -240,7 +242,7 @@ class MemletDict(Dict[Memlet, T]):
     def clear(self) -> None:
         self.internal_dict.clear()
 
-    def update(self, mapping: Dict[Memlet, T]) -> None:
+    def update(self, mapping: dict[Memlet, T]) -> None:
         for key, value in mapping.items():
             actual_key = self._getkey(key)
             if actual_key is None:
@@ -274,7 +276,7 @@ def memlet_to_map(
     state: SDFGState,
     sdfg: SDFG,
     ignore_strides: bool = True,
-) -> Tuple[nodes.MapEntry, nodes.MapExit]:
+) -> tuple[nodes.MapEntry, nodes.MapExit]:
     """Change a Memlet into a Map.
 
     The function returns a pair consisting of the new Map entry and exit.
@@ -429,8 +431,8 @@ def can_memlet_be_turned_into_a_map(
 
 
 def _memlet_to_copy_delinearize_linearize(
-    desc: data.Array, copy_shape: Tuple[symbolic.SymbolicType], rng: subsets.Range
-) -> Tuple[symbolic.SymbolicType]:
+    desc: data.Array, copy_shape: tuple[symbolic.SymbolicType], rng: subsets.Range
+) -> tuple[symbolic.SymbolicType]:
     indices = [symbolic.pystr_to_symbolic(f"__i{i}") for i in range(len(copy_shape))]
 
     # Special case for when both dimensionalities are equal

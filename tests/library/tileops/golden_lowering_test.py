@@ -4,7 +4,6 @@
 import json
 
 import pytest
-
 from golden_lowering import DIGEST_FILE, ShardKey, digest, lowerings, shard_keys
 
 

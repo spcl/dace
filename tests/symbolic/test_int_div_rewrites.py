@@ -15,7 +15,7 @@ import sympy
 
 import dace
 from dace import dtypes
-from dace.symbolic import deserialize_symbolic, int_ceil, int_floor, pystr_to_symbolic, symbol, symstr, sympy_intdiv_fix
+from dace.symbolic import deserialize_symbolic, int_ceil, int_floor, pystr_to_symbolic, symbol, sympy_intdiv_fix, symstr
 
 N = pystr_to_symbolic("N")
 M = pystr_to_symbolic("M")

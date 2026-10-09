@@ -2,16 +2,15 @@
 """Jupyter Notebook support for DaCe."""
 
 import os
-import urllib.request
 import urllib.error
-import socket
+import urllib.request
 
 
 def _connected():
     try:
         urllib.request.urlopen("https://spcl.github.io/dace-webclient/dist/sdfv.js", timeout=1)
         return True
-    except (urllib.error.URLError, TimeoutError, socket.timeout):
+    except (urllib.error.URLError, TimeoutError):
         return False
 
 
@@ -54,7 +53,7 @@ def preamble():
 
 
 def enable():
-    from IPython.display import display, HTML
+    from IPython.display import HTML, display
 
     display(HTML(preamble()))
 

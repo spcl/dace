@@ -30,7 +30,7 @@ never on unrelated adjacent loops.
 """
 
 import re
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import sympy
 
@@ -39,12 +39,12 @@ from dace import symbolic
 from dace.ordered import OrderedSet
 from dace.sdfg import nodes
 from dace.sdfg.graph import Edge
+from dace.sdfg.narrowing import as_expr
 from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
-from dace.transformation.transformation import explicit_cf_compatible
 from dace.transformation.passes.analysis import loop_analysis
-from dace.sdfg.narrowing import as_expr
+from dace.transformation.transformation import explicit_cf_compatible
 
 #: Per-SDFG context: data name -> states referencing an AccessNode for it. A merge deletes a
 #: whole body state, which changes this, so it is rebuilt once per sweep rather than cached
@@ -52,11 +52,11 @@ from dace.sdfg.narrowing import as_expr
 ScratchIndex = dict[str, OrderedSet[SDFGState]]
 
 #: Iterator- and scratch-name-independent key of a body node: ``(kind, payload)``.
-NodeKey = Tuple[str, str]
+NodeKey = tuple[str, str]
 #: ``(src key, src connector, dst key, dst connector, data, subset, other subset, wcr)``.
-EdgeKey = Tuple[NodeKey, str, NodeKey, str, str, str, str, str]
+EdgeKey = tuple[NodeKey, str, NodeKey, str, str, str, str, str]
 #: Sorted node keys and sorted edge descriptors of a body state.
-StateSignature = Tuple[Tuple[NodeKey, ...], Tuple[EdgeKey, ...]]
+StateSignature = tuple[tuple[NodeKey, ...], tuple[EdgeKey, ...]]
 
 #: Placeholder the iteration variable is normalised to when comparing two loop
 #: bodies, so ``a[_loop_it_0]`` and ``a[_loop_it_1]`` compare equal.
@@ -111,13 +111,13 @@ def _normalize(text: str, loop_var: str) -> str:
     return re.sub(r"\b%s\b" % re.escape(loop_var), ITER_PLACEHOLDER, text)
 
 
-def _canon_data(name: str, local_scratch: Dict[str, None]) -> str:
+def _canon_data(name: str, local_scratch: dict[str, None]) -> str:
     """Map a body-local scratch transient to the canonical placeholder; leave
     carried / external names (accumulator, arrays) untouched."""
     return SCRATCH_PLACEHOLDER if name in local_scratch else name
 
 
-def _node_key(node: nodes.Node, loop_var: str, local_scratch: Dict[str, None]) -> NodeKey:
+def _node_key(node: nodes.Node, loop_var: str, local_scratch: dict[str, None]) -> NodeKey:
     """A structural key for a body node, iterator- and scratch-name-independent."""
     if isinstance(node, nodes.AccessNode):
         return ("access", _canon_data(node.data, local_scratch))
@@ -140,7 +140,7 @@ class FuseConsecutiveLoops(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return bool(modified & ppl.Modifies.CFG)
 
-    def apply_pass(self, sdfg: dace.SDFG, _: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: dace.SDFG, _: dict[str, Any]) -> int | None:
         """Fuse every matching consecutive-loop pair in ``sdfg`` and its nested
         SDFGs, repeating until no pair matches (a chain of tiles collapses one
         adjacency per sweep).
@@ -224,7 +224,7 @@ class FuseConsecutiveLoops(ppl.Pass):
             return False
         return self._bodies_match(first, second, scratch_index)
 
-    def _single_body_state(self, loop: LoopRegion) -> Optional[SDFGState]:
+    def _single_body_state(self, loop: LoopRegion) -> SDFGState | None:
         """The loop's one non-empty body state, or ``None`` if the body is not a
         single compute state (empty connective states are tolerated)."""
         blocks = list(loop.nodes())
@@ -247,7 +247,7 @@ class FuseConsecutiveLoops(ppl.Pass):
         sig2 = self._state_signature(s2, second.loop_variable, self._local_scratch(second, s2, scratch_index))
         return sig1 == sig2
 
-    def _local_scratch(self, loop: LoopRegion, body_state: SDFGState, scratch_index: ScratchIndex) -> Dict[str, None]:
+    def _local_scratch(self, loop: LoopRegion, body_state: SDFGState, scratch_index: ScratchIndex) -> dict[str, None]:
         """Transient data names used ONLY inside ``body_state`` -- i.e. not
         referenced by any other block of the owning SDFG (not carried across
         iterations, not read/written outside the loop). These are frontend
@@ -256,7 +256,7 @@ class FuseConsecutiveLoops(ppl.Pass):
         root = loop
         while root.parent_graph is not None:
             root = root.parent_graph
-        local: Dict[str, None] = {}
+        local: dict[str, None] = {}
         for n in body_state.nodes():
             if isinstance(n, nodes.AccessNode) and len(scratch_index.get(n.data, ())) == 1:
                 desc = root.arrays.get(n.data)
@@ -264,12 +264,12 @@ class FuseConsecutiveLoops(ppl.Pass):
                     local[n.data] = None
         return local
 
-    def _state_signature(self, state: SDFGState, loop_var: str, local_scratch: Dict[str, None]) -> StateSignature:
+    def _state_signature(self, state: SDFGState, loop_var: str, local_scratch: dict[str, None]) -> StateSignature:
         """An iterator- and scratch-name-independent structural signature of a
         body state: its sorted node keys and its sorted edge descriptors
         (endpoints, connectors, memlet data / both subsets / wcr)."""
         node_sig = sorted(_node_key(n, loop_var, local_scratch) for n in state.nodes())
-        edge_sig: List[EdgeKey] = []
+        edge_sig: list[EdgeKey] = []
         for e in state.edges():
             subset = _normalize(str(e.data.subset), loop_var) if (e.data and e.data.subset is not None) else ""
             # A copy memlet indexes its DESTINATION in ``other_subset``; two bodies differing only
@@ -344,13 +344,13 @@ class GuardedFusionPlan:
 
     def __init__(
         self,
-        loops: List[LoopRegion],
-        loop_vars: List[str],
+        loops: list[LoopRegion],
+        loop_vars: list[str],
         var: str,
         lo: symbolic.SymbolicType,
         hi: symbolic.SymbolicType,
-        bounds: List[Tuple[symbolic.SymbolicType, symbolic.SymbolicType]],
-        guards: List[List[symbolic.SymbolicType]],
+        bounds: list[tuple[symbolic.SymbolicType, symbolic.SymbolicType]],
+        guards: list[list[symbolic.SymbolicType]],
     ) -> None:
         self.loops = loops
         self.loop_vars = loop_vars
@@ -361,7 +361,7 @@ class GuardedFusionPlan:
         self.guards = guards
 
 
-def plan_guarded_fusion(region: ControlFlowRegion) -> Optional[GuardedFusionPlan]:
+def plan_guarded_fusion(region: ControlFlowRegion) -> GuardedFusionPlan | None:
     """The maximal chain of adjacent-range sibling loops in ``region``, or ``None``.
 
     Refuses unless the chain is everything ``region`` holds (bar empty states): the callers
@@ -379,7 +379,7 @@ def plan_guarded_fusion(region: ControlFlowRegion) -> Optional[GuardedFusionPlan
     heads = [l for l in loops if not any(isinstance(e.src, LoopRegion) for e in region.in_edges(l))]
     if len(heads) != 1:
         return None
-    chain: List[LoopRegion] = [heads[0]]
+    chain: list[LoopRegion] = [heads[0]]
     while True:
         out = region.out_edges(chain[-1])
         if len(out) != 1:
@@ -404,7 +404,7 @@ def plan_guarded_fusion(region: ControlFlowRegion) -> Optional[GuardedFusionPlan
     # something inside that sibling.
     if any(var in l.free_symbols for l in chain[1:]):
         return None
-    bounds: List[Tuple[symbolic.SymbolicType, symbolic.SymbolicType]] = []
+    bounds: list[tuple[symbolic.SymbolicType, symbolic.SymbolicType]] = []
     for loop in chain:
         stride = loop_analysis.get_loop_stride(loop)
         if stride is None or symbolic.simplify(stride) != 1:

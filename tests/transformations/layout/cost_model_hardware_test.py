@@ -9,11 +9,11 @@ import pytest
 
 from dace.transformation.layout.cost_model import hardware
 from dace.transformation.layout.cost_model.hardware import (
+    DMIDECODE_COMMAND,
+    host_dram_spec,
     parse_dmidecode_memory,
     read_dmidecode_file,
-    host_dram_spec,
     run_dmidecode,
-    DMIDECODE_COMMAND,
 )
 
 # Soldered LPDDR5x: 4 packages x 32-bit @ 6400 MT/s -> 128-bit total -> 102.4 GB/s.

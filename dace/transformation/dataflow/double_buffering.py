@@ -3,13 +3,12 @@
 
 import copy
 
+from dace import data, subsets, symbolic
+from dace import sdfg as sd
 from dace.ordered import OrderedSet
-
-from dace import data, sdfg as sd, subsets, symbolic
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.transformation import transformation
-
 from dace.transformation.dataflow.map_for_loop import MapToForLoop
 
 

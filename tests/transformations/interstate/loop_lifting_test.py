@@ -2,8 +2,10 @@
 """Tests loop raising trainsformations."""
 
 import copy
+
 import numpy as np
 import pytest
+
 import dace
 from dace.memlet import Memlet
 from dace.sdfg.sdfg import SDFG, InterstateEdge

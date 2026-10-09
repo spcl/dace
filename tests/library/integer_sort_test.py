@@ -11,7 +11,7 @@ import numpy as np
 import pytest
 
 import dace
-from dace.libraries.sort.nodes.integer_sort import IntegerSort, INPUT_CONNECTOR_NAME, OUTPUT_CONNECTOR_NAME
+from dace.libraries.sort.nodes.integer_sort import INPUT_CONNECTOR_NAME, OUTPUT_CONNECTOR_NAME, IntegerSort
 
 _DTYPES = [
     (dace.int8, np.int8),

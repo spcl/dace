@@ -8,10 +8,9 @@ import torch
 from torch import nn
 
 import dace
-
 from dace.ml import DaceModule
-from tests.utils import tensors_close, torch_tensors_close
 from tests.ml_gpu_utils import DEVICES, experimental_cuda, is_gpu, torch_device
+from tests.utils import tensors_close, torch_tensors_close
 
 
 @pytest.mark.torch

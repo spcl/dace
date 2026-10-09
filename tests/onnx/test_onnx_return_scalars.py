@@ -4,12 +4,11 @@ import pytest
 pytest.importorskip("onnx", reason="ONNX not installed. Please install with: pip install dace[ml]")
 pytest.importorskip("torch", reason="PyTorch not installed. Please install with: pip install dace[ml]")
 
-import torch
 import onnx
+import torch
 
 from dace.libraries import onnx as donnx
-
-from tests.ml_gpu_utils import DEVICES, is_gpu, experimental_cuda
+from tests.ml_gpu_utils import DEVICES, experimental_cuda, is_gpu
 
 
 @pytest.mark.onnx

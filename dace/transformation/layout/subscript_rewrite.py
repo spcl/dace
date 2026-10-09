@@ -15,7 +15,7 @@ B)`` prints as ``0.5*A + 0.5*B``, and ``A / 3.0`` as ``0.3333333333333333*A``. T
 matching to avoid it.
 """
 
-from typing import Callable, Sequence, Tuple
+from collections.abc import Callable, Sequence
 
 import sympy
 
@@ -26,7 +26,7 @@ from dace.sdfg.narrowing import as_basic
 def rewrite_subscript_indices(
     expr_str: str,
     name: str,
-    new_indices: Callable[[Tuple[symbolic.SymbolicType, ...]], Sequence[symbolic.SymbolicType]],
+    new_indices: Callable[[tuple[symbolic.SymbolicType, ...]], Sequence[symbolic.SymbolicType]],
 ) -> str:
     """``expr_str`` with the indices of every ``name[...]`` access replaced by ``new_indices``.
 
@@ -53,7 +53,7 @@ def rewrite_subscript_indices(
 def rewrite_expression(
     expr: symbolic.SymbolicType,
     name: str,
-    new_indices: Callable[[Tuple[symbolic.SymbolicType, ...]], Sequence[symbolic.SymbolicType]],
+    new_indices: Callable[[tuple[symbolic.SymbolicType, ...]], Sequence[symbolic.SymbolicType]],
 ) -> symbolic.SymbolicType:
     """:func:`rewrite_subscript_indices` on a parsed expression. Bottom-up, so an access nested in
     another access' index is reindexed too."""

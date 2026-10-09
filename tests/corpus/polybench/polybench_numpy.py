@@ -42,7 +42,7 @@ reference interprets ~10^7 scalar updates at the ``paper`` preset and is NOT a d
 timing denominator.
 """
 
-from typing import Callable, Dict
+from collections.abc import Callable
 
 import numpy as np
 
@@ -60,7 +60,7 @@ from tests.corpus.polybench.medley.deriche import a1, a2, a3, a4, a5, a6, a7, a8
 #:   small extents; report the trip count next to any speedup taken against it.
 #: * ``'scalar'`` -- SCALAR python loop over elements. NOT a defensible timing denominator; it is
 #:   the trap that disqualified the tsvc oracles. Must not enter a "vs numpy" figure unlabelled.
-VECTORIZATION: Dict[str, str] = {
+VECTORIZATION: dict[str, str] = {
     "adi": "blocked",
     "atax": "array",
     "bicg": "array",
@@ -399,7 +399,7 @@ def ref_trmm(A: np.ndarray, B: np.ndarray, alpha: np.ndarray, M: int, N: int) ->
 #: kernel module name -> numpy reference. Parameters are resolved BY NAME against the corpus's
 #: ``call_arrays`` and dataset symbols, so a signature here must use the in-repo kernel's own
 #: argument names (``_fict_``, ``y_1``, ``imgIn``, ...) and symbol names (``tsteps``, ``TMAX``).
-REFERENCES: Dict[str, Callable[..., None]] = {
+REFERENCES: dict[str, Callable[..., None]] = {
     "adi": ref_adi,
     "atax": ref_atax,
     "bicg": ref_bicg,

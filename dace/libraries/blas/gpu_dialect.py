@@ -14,7 +14,9 @@ rocBLAS is snake_case throughout with lower-case enum values (``rocblas_dgemv``,
 ``rocblas_operation_transpose``), and the transpose flag is not even the same shape of token.
 """
 
-from typing import Callable, NamedTuple
+from collections.abc import Callable
+from typing import NamedTuple
+
 from dace.libraries.blas import blas_helpers
 
 

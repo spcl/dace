@@ -1,6 +1,6 @@
 import numpy as np
-import dace
 
+import dace
 from dace.transformation.dataflow import AugAssignToWCR, WCRToAugAssign
 
 
@@ -331,8 +331,9 @@ def test_aug_assign_copy_wrapped_rmw_value_and_parallelize():
     LoopToMap (the accumulator write is no longer iteration-indexed but is
     conflict-resolved)."""
     import numpy as np
-    from dace.transformation.interstate import LoopToMap
+
     from dace.sdfg.state import LoopRegion
+    from dace.transformation.interstate import LoopToMap
 
     rng = np.random.default_rng(0)
     n = 6

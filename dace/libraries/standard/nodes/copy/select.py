@@ -1,7 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Implementation selection for ``CopyLibraryNode``."""
 
-from typing import Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
 import dace
 from dace import dtypes, symbolic
@@ -11,8 +11,8 @@ from dace.libraries.standard.helper import (
     is_in_parallel_scope,
     is_parallel_cpu_transfer_size,
 )
+from dace.libraries.standard.nodes.copy.common import _both_packed_same_layout, _is_cross_cpu_gpu, cuda2d_pitch_params
 from dace.sdfg.scope import is_devicelevel_gpu, is_in_scope
-from dace.libraries.standard.nodes.copy.common import cuda2d_pitch_params, _both_packed_same_layout, _is_cross_cpu_gpu
 
 if TYPE_CHECKING:
     from dace.libraries.standard.nodes.copy.node import CopyLibraryNode
@@ -145,7 +145,7 @@ def _packed_orders_differ(inp: dace.data.Data, out: dace.data.Data) -> bool:
     return (c_in and not f_in and f_out and not c_out) or (f_in and not c_in and c_out and not f_out)
 
 
-def _refine_cuda_impl_for_subsets(node: "CopyLibraryNode", parent_state: dace.SDFGState) -> Optional[str]:
+def _refine_cuda_impl_for_subsets(node: "CopyLibraryNode", parent_state: dace.SDFGState) -> str | None:
     """Upgrade ``MemcpyCUDA1D`` to a more specific impl for non-contiguous subsets.
 
       both subsets contiguous, same element order    -> ``None`` (keep CUDA1D)

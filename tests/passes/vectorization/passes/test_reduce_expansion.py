@@ -16,10 +16,10 @@ import numpy as np
 import pytest
 
 import dace
-from dace import dtypes
 
 # Importing the vectorization package registers the implementation.
 import dace.transformation.passes.vectorization  # noqa: F401
+from dace import dtypes
 from dace.libraries.standard.nodes.reduce import Reduce
 from dace.transformation.passes.vectorization.reduce_expansion import (
     ExpandReduceVectorized,

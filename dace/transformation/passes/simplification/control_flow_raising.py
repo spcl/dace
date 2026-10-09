@@ -1,15 +1,15 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 
 import ast
-from typing import Dict, List, Optional, Tuple
 import warnings
 
-from dace import graphlib as nx
 import sympy
-from dace.ordered import OrderedSet
 
+from dace import graphlib as nx
 from dace import properties
 from dace.frontend.python import astutils
+from dace.ordered import OrderedSet
+from dace.sdfg import utils as sdutil
 from dace.sdfg.analysis import cfg as cfg_analysis
 from dace.sdfg.sdfg import SDFG, InterstateEdge
 from dace.sdfg.state import (
@@ -20,7 +20,6 @@ from dace.sdfg.state import (
     ReturnBlock,
     UnstructuredControlFlow,
 )
-from dace.sdfg import utils as sdutil
 from dace.sdfg.utils import dfs_conditional
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
@@ -29,10 +28,10 @@ from dace.transformation.interstate.loop_lifting import LoopLifting
 
 def region_has_cycle(region: AbstractControlFlowRegion) -> bool:
     """Whether the blocks of ``region`` form a cycle, self-edges included (Kahn's algorithm over the whole graph)."""
-    in_degree: Dict[ControlFlowBlock, int] = {block: 0 for block in region.nodes()}
+    in_degree: dict[ControlFlowBlock, int] = dict.fromkeys(region.nodes(), 0)
     for edge in region.edges():
         in_degree[edge.dst] += 1
-    ready: List[ControlFlowBlock] = [block for block, degree in in_degree.items() if degree == 0]
+    ready: list[ControlFlowBlock] = [block for block, degree in in_degree.items() if degree == 0]
     removed = 0
     while ready:
         block = ready.pop()
@@ -103,7 +102,7 @@ class ControlFlowRaising(ppl.Pass):
 
             # First check if there is an unconditional outgoing edge.
             has_unconditional = False
-            full_cond_expression: Optional[List[ast.AST]] = None
+            full_cond_expression: list[ast.AST] | None = None
             oedges = sdfg.out_edges(nd)
             for oe in oedges:
                 if oe.data.is_unconditional():
@@ -208,7 +207,7 @@ class ControlFlowRaising(ppl.Pass):
                     # cumulative ``full_cond_expression`` build below relies
                     # on.
                     ordered_oedges = sorted(oedges, key=lambda e: 1 if e.data.is_unconditional() else 0)
-                    full_cond_expression: Optional[sympy.Basic] = None
+                    full_cond_expression: sympy.Basic | None = None
                     uncond_generated = False
                     for i, oe in enumerate(ordered_oedges):
                         branch_name = "branch_" + str(i) + "_" + block.label
@@ -297,9 +296,9 @@ class ControlFlowRaising(ppl.Pass):
                 continue
 
             # Compute immediate dominators
-            idom: Dict[ControlFlowBlock, ControlFlowBlock] = sdutil.immediate_dominators(cfg.nx, cfg.start_block)
+            idom: dict[ControlFlowBlock, ControlFlowBlock] = sdutil.immediate_dominators(cfg.nx, cfg.start_block)
 
-            back_edges = set([(e.src, e.dst) for e in cfg_analysis.back_edges(cfg, idom)])
+            back_edges = {(e.src, e.dst) for e in cfg_analysis.back_edges(cfg, idom)}
 
             # DFS tree edges
             dfs_tree_edges = set(nx.dfs_edges(cfg.nx, cfg.start_block))
@@ -347,7 +346,7 @@ class ControlFlowRaising(ppl.Pass):
 
         return lifted
 
-    def apply_pass(self, top_sdfg: SDFG, _) -> Optional[Tuple[int, int, int]]:
+    def apply_pass(self, top_sdfg: SDFG, _) -> tuple[int, int, int] | None:
         lifted_returns = 0
         lifted_loops = 0
         lifted_unstructured = 0
@@ -372,11 +371,11 @@ class ControlFlowRaising(ppl.Pass):
             return None
         return lifted_returns, lifted_loops, lifted_branches, lifted_unstructured
 
-    def report(self, pass_retval: Optional[Tuple[int, int, int]]):
-        if pass_retval and any([x > 0 for x in pass_retval]):
+    def report(self, pass_retval: tuple[int, int, int] | None):
+        if pass_retval and any(x > 0 for x in pass_retval):
             return (
                 f"Lifted {pass_retval[0]} returns, {pass_retval[1]} loops, {pass_retval[2]} conditional blocks, "
-                + f"and {pass_retval[3]} unstructured control flow regions"
+                f"and {pass_retval[3]} unstructured control flow regions"
             )
         else:
             return "No control flow lifted"

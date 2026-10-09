@@ -2,18 +2,18 @@
 """BlockAwareMapTiling -- tiles top-level maps matching ``tile_sizes`` so SplitDimensions emits clean tile/offset indices and Block lowers cleanly, with no residual %/int_floor."""
 
 from dataclasses import dataclass
-from typing import Any, Dict, Tuple
+from typing import Any
 
 import sympy
 
 import dace
 from dace import symbolic
+from dace.sdfg.narrowing import as_basic, as_expr
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.dataflow.tiling import MapTiling
-from dace.sdfg.narrowing import as_basic, as_expr
 
 
-def provably_indivisible(map_entry: dace.nodes.MapEntry, tile_sizes: Tuple[int, ...]) -> bool:
+def provably_indivisible(map_entry: dace.nodes.MapEntry, tile_sizes: tuple[int, ...]) -> bool:
     """True iff some tiled dim's extent is a known constant not divisible by its tile; symbolic extents return False."""
     for (begin, end, _), tile in zip(map_entry.map.range, tile_sizes):
         extent = symbolic.simplify(
@@ -29,7 +29,7 @@ def provably_indivisible(map_entry: dace.nodes.MapEntry, tile_sizes: Tuple[int, 
 class BlockAwareMapTiling(ppl.Pass):
     """Tile top-level maps by ``tile_sizes`` so a subsequent Block aligns with the schedule."""
 
-    def __init__(self, tile_sizes: Tuple[int, ...], divides_evenly: bool = False):
+    def __init__(self, tile_sizes: tuple[int, ...], divides_evenly: bool = False):
         self._tile_sizes = tuple(tile_sizes)
         self._divides_evenly = divides_evenly
 
@@ -39,7 +39,7 @@ class BlockAwareMapTiling(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def apply_pass(self, sdfg: dace.SDFG, pipeline_results: Dict[str, Any]) -> int:
+    def apply_pass(self, sdfg: dace.SDFG, pipeline_results: dict[str, Any]) -> int:
         count = 0
         for state in sdfg.states():
             scope = state.scope_dict()

@@ -59,7 +59,6 @@ from dace.sdfg import nodes as nd
 from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.transformation.passes.canonicalize.finalize import finalize_for_target
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
-
 from tests.corpus.tsvc import tsvc
 from tests.corpus.tsvc.tsvc_numpy import REFERENCES
 from tests.corpus.tsvc_2_5 import tsvc_2_5, tsvc_2_5_numpy
@@ -466,7 +465,7 @@ BREAK_WITHDRAWN = (
     "sequential LoopRegion; a lift that returns owes a cost model, and correcting this table is "
     "how it announces itself."
 )
-XFAIL.update({name: BREAK_WITHDRAWN for name in ("ext_break_capture", "ext_break_find_first", "ext_break_post_body")})
+XFAIL.update(dict.fromkeys(("ext_break_capture", "ext_break_find_first", "ext_break_post_body"), BREAK_WITHDRAWN))
 
 
 def ext_program(name: str) -> DaceProgram:
@@ -562,7 +561,7 @@ def reference_and_inputs(name: str, symbols: tuple[str, ...]) -> tuple[dict, dic
 
     program = ext_program(name)
     arrays, scalars = tsvc_2_5.make_inputs(program)
-    base = name[4:] if name.startswith("ext_") else name
+    base = name.removeprefix("ext_")
     oracle = vars(tsvc_2_5_numpy)["ref_" + base]
     pool = {
         **{n: a.copy() for n, a in arrays.items()},

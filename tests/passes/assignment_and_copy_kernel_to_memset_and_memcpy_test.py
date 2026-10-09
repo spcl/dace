@@ -6,13 +6,15 @@ and ``CopyLibraryNode`` instances, across pure / CPU / CUDA expansion variants.
 """
 
 import functools
-import dace
-from dace.sdfg.dealias import convert_legacy_nested_sdfgs
+
 import numpy
 import pytest
+
+import dace
 from dace.libraries.standard.nodes.copy import CopyLibraryNode
 from dace.libraries.standard.nodes.fill import FillLibraryNode
 from dace.properties import CodeBlock
+from dace.sdfg.dealias import convert_legacy_nested_sdfgs
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.assignment_and_copy_kernel_to_memset_and_memcpy import (
     AssignmentAndCopyKernelToMemsetAndMemcpy,
@@ -236,7 +238,7 @@ def set_dtype_to_gpu_if_expansion_type_is_cuda(sdfg: dace.SDFG, expansion_type: 
     if expansion_type != "CUDA":
         return
 
-    for arr_name, arr in sdfg.arrays.items():
+    for arr in sdfg.arrays.values():
         if not isinstance(arr, dace.data.Scalar):
             arr.storage = dace.dtypes.StorageType.GPU_Global
     for state in sdfg.states():

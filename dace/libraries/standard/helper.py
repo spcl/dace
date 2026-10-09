@@ -1,7 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Shared helpers for the standard library node expansions."""
 
-from typing import Callable, Dict, List, Optional, Sequence, Tuple
+from collections.abc import Callable, Sequence
 
 import dace
 from dace import dtypes
@@ -44,8 +44,8 @@ def host_accessible_info_storage(storage: dtypes.StorageType) -> dtypes.StorageT
 
 
 def collapse_shape_and_strides(
-    subset: dace.subsets.Range, strides: List[dace.symbolic.SymExpr]
-) -> Tuple[List[dace.symbolic.SymExpr], List[dace.symbolic.SymExpr]]:
+    subset: dace.subsets.Range, strides: list[dace.symbolic.SymExpr]
+) -> tuple[list[dace.symbolic.SymExpr], list[dace.symbolic.SymExpr]]:
     """Drop length-1 dims from a (subset, strides) pair; surviving strides scale by the subset step.
 
     A tiled dimension (``b:e:step:tile``) addresses ``tile`` contiguous elements per step, which no
@@ -74,8 +74,8 @@ def collapse_shape_and_strides(
 
 
 def collapse_to_elements(
-    subset: dace.subsets.Range, strides: List[dace.symbolic.SymExpr]
-) -> Tuple[List[dace.symbolic.SymExpr], List[dace.symbolic.SymExpr]]:
+    subset: dace.subsets.Range, strides: list[dace.symbolic.SymExpr]
+) -> tuple[list[dace.symbolic.SymExpr], list[dace.symbolic.SymExpr]]:
     """:func:`collapse_shape_and_strides` for an expansion that writes element by element. A single-element
     subset collapses to zero dimensions; this helper returns one length-1 dimension for it, so the expansion
     has an index to write through."""
@@ -174,7 +174,7 @@ def schedule_dispatch(auto_cls: type, node: nodes.LibraryNode, parent_state: dac
 REENTRY_SHORT_LOOP_TRIPS = 8
 
 
-def is_short_loop(loop, cache: Optional[Dict[int, bool]] = None) -> bool:
+def is_short_loop(loop, cache: dict[int, bool] | None = None) -> bool:
     """Whether ``loop`` provably runs fewer than :data:`REENTRY_SHORT_LOOP_TRIPS` ascending trips.
 
     :param loop: the :class:`~dace.sdfg.state.LoopRegion` to measure.
@@ -211,7 +211,7 @@ def is_short_loop(loop, cache: Optional[Dict[int, bool]] = None) -> bool:
 
 
 def is_reentered_cpu_transfer(
-    node: nodes.LibraryNode, state: dace.SDFGState, loop_cache: Optional[Dict[int, bool]] = None
+    node: nodes.LibraryNode, state: dace.SDFGState, loop_cache: dict[int, bool] | None = None
 ) -> bool:
     """Whether an enclosing parallel map or long loop re-enters ``node``, so its own OpenMP region
     would be re-opened on every entry.
@@ -244,7 +244,7 @@ def cpu_transfer_parallelizes(
     node: nodes.LibraryNode,
     state: dace.SDFGState,
     num_elements: dace.symbolic.SymbolicType,
-    loop_cache: Optional[Dict[int, bool]] = None,
+    loop_cache: dict[int, bool] | None = None,
 ) -> bool:
     """Whether a CPU transfer of ``num_elements`` at ``node`` keeps its own OpenMP region.
 
@@ -263,7 +263,7 @@ def cpu_transfer_parallelizes(
     )
 
 
-def broadcast_indices(shape: Sequence, result: Sequence, axis: Optional[int] = None) -> List[str]:
+def broadcast_indices(shape: Sequence, result: Sequence, axis: int | None = None) -> list[str]:
     """The subscripts, one per axis of an operand of ``shape``, that read it for the result iterators
     ``__i0, __i1, ...`` by the NumPy broadcasting rule: an axis of extent 1 is read at ``0``.
 
@@ -293,8 +293,8 @@ def broadcast_indices(shape: Sequence, result: Sequence, axis: Optional[int] = N
 def broadcast_map_expansion(
     label: str,
     parent_sdfg: dace.SDFG,
-    inputs: Dict[str, Tuple[dace.Memlet, Optional[int]]],
-    output: Tuple[str, dace.Memlet],
+    inputs: dict[str, tuple[dace.Memlet, int | None]],
+    output: tuple[str, dace.Memlet],
     code: str,
 ) -> dace.SDFG:
     """Expand an element-wise library node into one map over its output.
@@ -312,7 +312,7 @@ def broadcast_map_expansion(
     params = [f"__i{d}" for d in range(len(result))]
     sdfg = dace.SDFG(f"{label}_sdfg")
 
-    def operand(conn: str, memlet: dace.Memlet, indices: List[str]) -> dace.Memlet:
+    def operand(conn: str, memlet: dace.Memlet, indices: list[str]) -> dace.Memlet:
         desc = parent_sdfg.arrays[memlet.data]
         strides = [stride * step for stride, (_, _, step) in zip(desc.strides, memlet.subset)]
         sdfg.add_array(conn, memlet.subset.size(), desc.dtype, desc.storage, strides=strides)

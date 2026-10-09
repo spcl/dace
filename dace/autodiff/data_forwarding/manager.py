@@ -1,16 +1,19 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
+
+import dace.autodiff.data_forwarding as data_forwarding
+import dace.autodiff.utils as ad_utils
 
 # DaCe imports
 import dace.sdfg.nodes as nodes
-from dace import config, data as dt
-from dace.sdfg import SDFGState, graph as dgraph
+from dace import config
+from dace import data as dt
 
 # Autodiff imports
 from dace.autodiff.base_abc import AutoDiffException
-import dace.autodiff.utils as ad_utils
-import dace.autodiff.data_forwarding as data_forwarding
+from dace.sdfg import SDFGState
+from dace.sdfg import graph as dgraph
 
 if TYPE_CHECKING:
     from dace.autodiff.backward_pass_generator import BackwardPassGenerator
@@ -21,7 +24,7 @@ class DataForwardingManager:
 
         # The user specified strategy for forwarding
         # Whether to forward data through separate SDFGs
-        self.bwd_generator: "BackwardPassGenerator" = bwd_generator
+        self.bwd_generator: BackwardPassGenerator = bwd_generator
 
     def forward_data_to_backward_pass(self) -> None:
         """
@@ -44,14 +47,14 @@ class DataForwardingManager:
                 strategy_choice[index],
             )
 
-    def get_overwrite_resolution_strategy(self) -> tuple[list[str], list[Optional[nodes.NestedSDFG]]]:
+    def get_overwrite_resolution_strategy(self) -> tuple[list[str], list[nodes.NestedSDFG | None]]:
         """
         Choose a strategy for resolving overwritten data that we need to forward to the backward pass.
         If the user wants a specific strategy, we use it.
         Otherwise, we evaluate what strategy is best for this specific node.
         """
         strategy_choice: list[str] = []
-        recomputation_nsdfgs: list[Optional[nodes.NestedSDFG]] = []
+        recomputation_nsdfgs: list[nodes.NestedSDFG | None] = []
 
         # As preprocessing step,
         # We will store all of the global program inputs,
@@ -127,7 +130,7 @@ class DataForwardingManager:
         forward_node: nodes.AccessNode,
         target_node: nodes.Node,
         starting_edge: dgraph.MultiConnectorEdge,
-        recomputation_nsdfg: Optional[nodes.NestedSDFG],
+        recomputation_nsdfg: nodes.NestedSDFG | None,
         strategy: str,
     ):
         """
@@ -309,7 +312,7 @@ class DataForwardingManager:
         forward_node: nodes.AccessNode,
         target_node: nodes.Node,
         starting_edge: dgraph.MultiConnectorEdge,
-        replicated_node: Optional[nodes.AccessNode] = None,
+        replicated_node: nodes.AccessNode | None = None,
     ):
         """
         Replicate and connect the forward AccessNode to the requesting node in the backward pass.

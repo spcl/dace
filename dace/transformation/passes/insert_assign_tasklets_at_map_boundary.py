@@ -17,19 +17,20 @@ edge is never split. GPU storage/device-scope handling is intentionally omitted.
 """
 
 import copy
-from typing import Any, Dict, Optional
+from typing import Any
 
 import dace
 from dace import nodes
 from dace.memlet import Memlet
 from dace.sdfg import SDFG
 from dace.sdfg.state import SDFGState
-from dace.transformation import pass_pipeline as ppl, transformation
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation import transformation
 from dace.transformation.passes.insert_unit_copy_assign_tasklets import _is_unit_subset
 
 
 def _outer_side_memlet(
-    sdfg: SDFG, outer_an: nodes.AccessNode, boundary_memlet: Memlet, wcr: Optional[Any] = None
+    sdfg: SDFG, outer_an: nodes.AccessNode, boundary_memlet: Memlet, wcr: Any | None = None
 ) -> Memlet:
     """Build the memlet for the boundary edge after the local AccessNode stops being an endpoint.
 
@@ -66,7 +67,7 @@ class InsertAssignTaskletsAtMapBoundary(ppl.Pass):
     def depends_on(self):
         return set()
 
-    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> int | None:
         """Insert assignment tasklets at every matching staging edge.
 
         :param sdfg: The SDFG to transform in place.

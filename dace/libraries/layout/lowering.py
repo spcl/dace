@@ -1,10 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Lower a layout-algebra op sequence to a materialized relayout in an SDFG: one mapped-tasklet copy from the logical index to the digit-tuple physical position."""
 
-from typing import Dict, List, Tuple, Union
-
 import dace
-
 from dace.libraries.layout.algebra import LayoutMap, compose_ops, identity_map, simplify_ops
 
 
@@ -15,7 +12,7 @@ def _digit_expr(digit) -> str:
     return str(dace.symbolic.simplify(expr))
 
 
-def relayout_map(logical_shape: List, ops: List) -> Tuple[List, LayoutMap, List]:
+def relayout_map(logical_shape: list, ops: list) -> tuple[list, LayoutMap, list]:
     """Simplify ``ops`` and compose them on the packed-C identity of ``logical_shape``; returns ``(simplified_ops, out_map, out_shape)``."""
     dims = list(range(len(logical_shape)))
     simplified = simplify_ops(ops)
@@ -31,11 +28,11 @@ def relayout_map(logical_shape: List, ops: List) -> Tuple[List, LayoutMap, List]
 
 
 def _emit_relayout_copy(
-    state: dace.SDFGState, in_name: str, out_name: str, logical_shape: List, out_map: LayoutMap
+    state: dace.SDFGState, in_name: str, out_name: str, logical_shape: list, out_map: LayoutMap
 ) -> None:
     """Emit the single mapped-tasklet copy ``out[digits] = in[logical]`` into ``state``."""
     dims = list(range(len(logical_shape)))
-    map_ranges: Dict[str, Union[str, dace.subsets.Subset]] = {f"__i{d}": f"0:{logical_shape[d]}" for d in dims}
+    map_ranges: dict[str, str | dace.subsets.Subset] = {f"__i{d}": f"0:{logical_shape[d]}" for d in dims}
     read_index = ", ".join(f"__i{d}" for d in dims)
     write_index = ", ".join(_digit_expr(dg) for dg in out_map.digits)
     state.add_mapped_tasklet(
@@ -48,7 +45,7 @@ def _emit_relayout_copy(
     )
 
 
-def build_relayout(sdfg: dace.SDFG, state: dace.SDFGState, in_name: str, out_name: str, ops: List) -> dace.SDFGState:
+def build_relayout(sdfg: dace.SDFG, state: dace.SDFGState, in_name: str, out_name: str, ops: list) -> dace.SDFGState:
     """Emit a relayout ``out = layout(ops)(in)`` into ``state``; ``in_name`` must be packed-C, ``out_name`` is created/replaced with the laid-out shape."""
     in_desc = sdfg.arrays[in_name]
     logical_shape = list(in_desc.shape)
@@ -70,7 +67,7 @@ def build_relayout(sdfg: dace.SDFG, state: dace.SDFGState, in_name: str, out_nam
     return state
 
 
-def build_relayout_sdfg(label: str, in_desc, out_desc, ops: List) -> dace.SDFG:
+def build_relayout_sdfg(label: str, in_desc, out_desc, ops: list) -> dace.SDFG:
     """Build a standalone SDFG relayouting ``_inp`` to ``_out`` via ``ops`` -- the nested SDFG ``LayoutChange.expand()`` returns."""
     logical_shape = list(in_desc.shape)
     _, out_map, _ = relayout_map(logical_shape, ops)

@@ -1,13 +1,13 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace.library
 import dace.sdfg.nodes
-from dace.transformation.transformation import ExpandTransformation
-from .. import environments
 from dace.libraries.blas import blas_helpers
 from dace.libraries.mpi.nodes.node import expanded_input_connectors
+from dace.libraries.pblas import environments
 from dace.libraries.pblas.nodes.node import scalapack_grid_code
 from dace.ordered import OrderedSet
 from dace.symbolic import symstr
+from dace.transformation.transformation import ExpandTransformation
 
 
 def local_extent_guard(a, b, c) -> str:

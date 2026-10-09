@@ -3,7 +3,6 @@ import ctypes.util
 
 import dace.library
 from dace.libraries.blas.environments.rocblas import rocBLAS
-from typing import Dict, List
 
 
 @dace.library.environment
@@ -18,16 +17,16 @@ class rocSOLVER:
     """
 
     cmake_minimum_version = None
-    cmake_packages: List[str] = []
-    cmake_variables: Dict[str, str] = {}
-    cmake_includes: List[str] = []
+    cmake_packages: list[str] = []
+    cmake_variables: dict[str, str] = {}
+    cmake_includes: list[str] = []
     cmake_libraries = ["rocsolver"]
-    cmake_compile_flags: List[str] = []
-    cmake_link_flags: List[str] = []
-    cmake_files: List[str] = []
+    cmake_compile_flags: list[str] = []
+    cmake_link_flags: list[str] = []
+    cmake_files: list[str] = []
 
     headers = {"frame": ["../include/dace_rocsolver.h"], "cuda": ["../include/dace_rocsolver.h"]}
-    state_fields: List[str] = []
+    state_fields: list[str] = []
     init_code = ""
     finalize_code = ""
     dependencies = [rocBLAS]

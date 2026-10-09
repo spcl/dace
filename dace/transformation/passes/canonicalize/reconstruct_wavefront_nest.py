@@ -38,30 +38,31 @@ leaves the SDFG untouched.
 """
 
 import copy
-from typing import Any, Dict, List, Optional, Tuple, Type, Union
+from typing import Any
 
 from dace import SDFG, symbolic
 from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion, SDFGState
-from dace.transformation import pass_pipeline as ppl, transformation
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation import transformation
 from dace.transformation.dataflow.map_for_loop import MapToForLoop
 from dace.transformation.interstate.loop_fusion import LoopFusion
-from dace.transformation.passes.fusion_inline import FuseStates
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.canonicalize.empty_state_elimination import EmptyStateElimination
 from dace.transformation.passes.canonicalize.fuse_consecutive_loops import _symbolically_equal
 from dace.transformation.passes.canonicalize.wavefront_skew import WavefrontSkew
+from dace.transformation.passes.fusion_inline import FuseStates
 
 #: ``(map_state, inner_loop)``: the two stateful siblings of a reconstruction candidate.
-Candidate = Tuple[SDFGState, LoopRegion]
+Candidate = tuple[SDFGState, LoopRegion]
 
 
-def _top_level_maps(state: SDFGState) -> List[nodes.MapEntry]:
+def _top_level_maps(state: SDFGState) -> list[nodes.MapEntry]:
     """Every ``MapEntry`` in ``state`` with no enclosing scope (a top-level parallel Map)."""
     return [n for n in state.nodes() if isinstance(n, nodes.MapEntry) and state.entry_node(n) is None]
 
 
-def find_candidate(outer: LoopRegion) -> Optional[Candidate]:
+def find_candidate(outer: LoopRegion) -> Candidate | None:
     """``(map_state, inner_loop)`` if ``outer``'s body is EXACTLY one ``SDFGState`` holding a
     top-level Map plus one sibling ``LoopRegion`` -- the imperfect two-statement shape
     ``WavefrontSkew.extract_two_level_nest`` refuses. ``None`` for any other shape."""
@@ -114,7 +115,7 @@ def _ranges_match(map_state: SDFGState, inner_loop: LoopRegion) -> bool:
     return True
 
 
-def _next_top_level_map(outer: LoopRegion) -> Optional[Tuple[SDFGState, nodes.MapEntry]]:
+def _next_top_level_map(outer: LoopRegion) -> tuple[SDFGState, nodes.MapEntry] | None:
     """The first top-level Map in any direct-child state of ``outer``, re-scanned fresh on
     every call: converting one Map can relocate a not-yet-converted sibling Map into a fresh
     boundary state (``MapToForLoop``'s inline step), so no state reference is cached."""
@@ -193,7 +194,7 @@ def _reconstruct_body(sdfg: SDFG, outer: LoopRegion) -> bool:
     return _fuse_siblings_to_one(sdfg, outer)
 
 
-def _locate_loop(sdfg: SDFG, target: LoopRegion) -> Optional[LoopRegion]:
+def _locate_loop(sdfg: SDFG, target: LoopRegion) -> LoopRegion | None:
     """The ``LoopRegion`` in ``sdfg`` corresponding to ``target`` in the SDFG ``sdfg`` was
     deep-copied from -- matched by label, an id-stable locator that survives
     ``copy.deepcopy``."""
@@ -234,10 +235,10 @@ class ReconstructWavefrontNest(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+    def depends_on(self) -> list[type[ppl.Pass] | ppl.Pass]:
         return []
 
-    def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> int | None:
         """Reconstruct every qualifying candidate in ``sdfg`` and its nested SDFGs.
 
         :param sdfg: The SDFG to transform in place.

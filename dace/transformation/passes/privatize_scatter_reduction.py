@@ -85,21 +85,20 @@ the refuse path keeps the non-reducible cases correct.
 """
 
 import ast
-from typing import List, Optional, Set, Type, Union
 
 from dace import SDFG, data, dtypes, properties
 from dace.sdfg import SDFGState, nodes
+from dace.sdfg.narrowing import as_expr
 from dace.sdfg.utils import get_last_view_node
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
-from dace.sdfg.narrowing import as_expr
 
 #: Reduction operators OpenMP's ``reduction`` clause supports (Strategy A). ``-`` /
 #: ``/`` and custom lambdas are refused (left as the correct contended atomic).
 SCATTER_REDUCIBLE_OPS = frozenset({"+", "*", "min", "max"})
 
 
-def scatter_wcr_op(wcr: str) -> Optional[str]:
+def scatter_wcr_op(wcr: str) -> str | None:
     """The reduction operator (``+`` / ``*`` / ``min`` / ``max``) of a WCR lambda
     string, or ``None`` when the reducer is not exactly one of those over its two
     arguments.
@@ -148,7 +147,7 @@ def _is_single_element(desc: data.Data) -> bool:
         return False  # symbolic size -> a genuine bounded array (e.g. ``bins``)
 
 
-def _data_dependent_index(inner: SDFG, subset, in_connectors: Set[str]) -> bool:
+def _data_dependent_index(inner: SDFG, subset, in_connectors: set[str]) -> bool:
     """True if ``subset``'s index is a runtime value derived from data -- a
     data-dependent scatter index -- rather than a constant slot or a map-parameter
     affine offset.
@@ -271,10 +270,10 @@ class PrivatizeScatterReduction(ppl.Pass):
     def should_reapply(self, _modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+    def depends_on(self) -> list[type[ppl.Pass] | ppl.Pass]:
         return []
 
-    def apply_pass(self, sdfg: SDFG, _pipeline_results) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _pipeline_results) -> int | None:
         """Surface every eligible scatter reduction in ``sdfg`` (and nested SDFGs).
 
         :returns: the number of scatter reductions surfaced, or ``None`` if none.

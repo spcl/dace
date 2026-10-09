@@ -35,23 +35,23 @@ linear chain; blocks may have parents (the pass recurses into all regions).
 """
 
 import copy
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any
 
-from dace import SDFG
-from dace import properties, symbolic
+from dace import SDFG, properties, symbolic
 from dace.ordered import OrderedSet
 from dace.properties import CodeBlock
+from dace.sdfg import nodes
 from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
-from dace.sdfg import nodes
-from dace.transformation import pass_pipeline as ppl, transformation
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation import transformation
 
 # Shared soundness kernel for the loop distribution below -- the same import route
 # ``fuse_loops.py`` uses, so fission, fusion and this hoist can never disagree.
 from dace.transformation.passes.loop_fission import LoopFission, _independent_block_groups
 
 
-def _free(expr: str) -> Set[str]:
+def _free(expr: str) -> set[str]:
     """Free symbol names of a condition / assignment expression string.
 
     :param expr: A condition or interstate-assignment RHS expression.
@@ -63,13 +63,13 @@ def _free(expr: str) -> Set[str]:
         return set()
 
 
-def _written(region: ControlFlowRegion) -> Set[str]:
+def _written(region: ControlFlowRegion) -> set[str]:
     """Data containers and interstate-assigned symbols written inside ``region``.
 
     :param region: The region to scan (recursively).
     :returns: The set of written data-container and symbol names.
     """
-    written: Set[str] = set()
+    written: set[str] = set()
     for e in region.all_interstate_edges():
         written |= set(e.data.assignments.keys())
     for st in region.states():
@@ -79,7 +79,7 @@ def _written(region: ControlFlowRegion) -> Set[str]:
     return written
 
 
-def _linear_order(region: ControlFlowRegion) -> Optional[List]:
+def _linear_order(region: ControlFlowRegion) -> list | None:
     """Order the blocks of ``region`` iff it is a plain linear chain.
 
     Edges must be unconditional (assignments are allowed -- they carry the
@@ -112,14 +112,14 @@ def _is_empty_state(b: ControlFlowRegion) -> bool:
     return isinstance(b, SDFGState) and b.number_of_nodes() == 0
 
 
-def _enclosing_loops(loop: LoopRegion, sdfg: SDFG) -> List[LoopRegion]:
+def _enclosing_loops(loop: LoopRegion, sdfg: SDFG) -> list[LoopRegion]:
     """Collect every ``LoopRegion`` strictly enclosing ``loop``.
 
     :param loop: The inner loop whose ancestors are wanted.
     :param sdfg: The root SDFG (chain walk stops here).
     :returns: The enclosing loops, innermost first, up to the root SDFG.
     """
-    out: List[LoopRegion] = []
+    out: list[LoopRegion] = []
     g = loop.parent_graph
     while g is not None and g is not sdfg:
         if isinstance(g, LoopRegion):
@@ -128,7 +128,7 @@ def _enclosing_loops(loop: LoopRegion, sdfg: SDFG) -> List[LoopRegion]:
     return out
 
 
-def _reads_outside(loop: LoopRegion, cb: ConditionalBlock) -> Set[str]:
+def _reads_outside(loop: LoopRegion, cb: ConditionalBlock) -> set[str]:
     """Symbols read anywhere in ``loop`` outside the conditional block ``cb``.
 
     Covers other body blocks, iedge conditions and RHSes, and the loop's own
@@ -142,7 +142,7 @@ def _reads_outside(loop: LoopRegion, cb: ConditionalBlock) -> Set[str]:
     :param cb: The guarding conditional block being considered for hoisting.
     :returns: The set of symbol names read outside ``cb``.
     """
-    reads: Set[str] = set()
+    reads: set[str] = set()
     for blk in loop.nodes():
         if blk is cb:
             continue
@@ -204,7 +204,7 @@ def strippable_prep(loop: LoopRegion, hoisted: list[tuple[str, str]]) -> dict[st
 
 def _hoistable(
     sdfg: SDFG, loop: LoopRegion, cb: ConditionalBlock, require_full_hoist: bool
-) -> Optional[Tuple[CodeBlock, List[Tuple[str, str]]]]:
+) -> tuple[CodeBlock, list[tuple[str, str]]] | None:
     """Whether the guard ``cb`` is loop-invariant enough to leave ``loop``.
 
     Judged on the WHOLE loop (every block, every iedge), so the answer stays
@@ -239,7 +239,7 @@ def _hoistable(
     #   - invariant: hoist with the guard;
     #   - per-iteration: must be DEAD outside the branch (lhs not read
     #     anywhere except inside cb), otherwise refuse.
-    chain_assignments: List[Tuple[str, str]] = []
+    chain_assignments: list[tuple[str, str]] = []
     for e in loop.edges():
         for lhs, rhs in e.data.assignments.items():
             rf = _free(rhs)
@@ -284,7 +284,7 @@ def _hoistable(
 
 def match_loop(
     sdfg: SDFG, loop: LoopRegion, require_full_hoist: bool = False
-) -> Optional[Tuple[LoopRegion, ConditionalBlock, CodeBlock, List[Tuple[str, str]]]]:
+) -> tuple[LoopRegion, ConditionalBlock, CodeBlock, list[tuple[str, str]]] | None:
     """Match ``loop`` as a body ``[empty*; if c; empty*]`` with a loop-invariant
     condition (plus a hoistable invariant assignment chain and any
     per-iteration assignments that are dead outside the branch).
@@ -315,7 +315,7 @@ def match_loop(
 
 def find_match(
     sdfg: SDFG, require_full_hoist: bool = False
-) -> Optional[Tuple[LoopRegion, ConditionalBlock, CodeBlock, List[Tuple[str, str]]]]:
+) -> tuple[LoopRegion, ConditionalBlock, CodeBlock, list[tuple[str, str]]] | None:
     """Find a loop that :func:`match_loop` matches."""
     for loop in sdfg.all_control_flow_regions(recursive=True):
         if isinstance(loop, LoopRegion):
@@ -405,7 +405,7 @@ class MoveLoopInvariantIfUp(ppl.Pass):
     def depends_on(self):
         return set()
 
-    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> int | None:
         """Hoist invariant guards out of their loops until none remain.
 
         :param sdfg: The SDFG to transform in place.
@@ -438,7 +438,7 @@ class MoveLoopInvariantIfUp(ppl.Pass):
         return m is not None
 
     @staticmethod
-    def _move(loop: LoopRegion, cb: ConditionalBlock, cond: CodeBlock, hoist_assignments: List[Tuple[str, str]]):
+    def _move(loop: LoopRegion, cb: ConditionalBlock, cond: CodeBlock, hoist_assignments: list[tuple[str, str]]):
         """Splice ``loop`` into ``[assign chain]; if cond: { loop' }`` in place.
 
         ``loop'`` is ``loop`` with its conditional block ``cb`` spliced out and

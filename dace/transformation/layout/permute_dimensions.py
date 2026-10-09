@@ -1,12 +1,12 @@
-import dace
 import warnings
+from dataclasses import dataclass
+from typing import Any
 
-from typing import Dict, List, Any, Tuple
+import dace
+from dace.optionals import required
+from dace.sdfg import nodes as nd
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.layout.subscript_rewrite import rewrite_expression
-from dace.sdfg import nodes as nd
-from dataclasses import dataclass
-from dace.optionals import required
 
 
 def _is_full_extent(memlet, arr) -> bool:
@@ -23,8 +23,8 @@ def _is_full_extent(memlet, arr) -> bool:
 
 
 def _nested_inner_permutation(
-    sdfg, node, outer_name: str, inner_name: str, permute_map: Dict[str, List[int]]
-) -> List[int]:
+    sdfg, node, outer_name: str, inner_name: str, permute_map: dict[str, list[int]]
+) -> list[int]:
     """Inner permutation for outer_name in node's nested SDFG; None if full/1-D rank match, else raises (partial-slice rank is unreachable after prepare_for_layout)."""
     if outer_name not in permute_map:
         return None
@@ -143,9 +143,9 @@ def _is_zero_init_tasklet(t: "nd.Tasklet") -> bool:
     return code in (f"{out_conn} = 0", f"{out_conn} = 0.0")
 
 
-def _find_full_extent_writer(sdfg: dace.SDFG, name: str) -> Tuple[dace.SDFGState, "nd.Node"]:
+def _find_full_extent_writer(sdfg: dace.SDFG, name: str) -> tuple[dace.SDFGState, "nd.Node"]:
     """Locates the unique (state, producer) that initializes name; raises ValueError if not exactly one."""
-    candidates: List[Tuple[dace.SDFGState, "nd.Node"]] = []
+    candidates: list[tuple[dace.SDFGState, nd.Node]] = []
     desc = sdfg.arrays[name]
     full_volume = 1
     for s in desc.shape:
@@ -209,7 +209,7 @@ class PermuteDimensions(ppl.Pass):
 
     def __init__(
         self,
-        permute_map: Dict[str, List[int]],
+        permute_map: dict[str, list[int]],
         add_permute_maps: bool,
         use_permute_libnodes: bool = False,
         column_major: bool = False,
@@ -223,7 +223,7 @@ class PermuteDimensions(ppl.Pass):
         # permutation applied once; never re-apply
         return False
 
-    def apply_pass(self, sdfg: dace.SDFG, pipeline_results: Dict[str, Any]) -> int:
+    def apply_pass(self, sdfg: dace.SDFG, pipeline_results: dict[str, Any]) -> int:
         # precondition (prepare_for_layout): no views except at library nodes, no implicit AN->AN copies;
         # WCR edges permuted like any other memlet, wcr preserved
         self._permute_index(sdfg, sdfg, self._permute_map, self._add_permute_maps)
@@ -233,9 +233,9 @@ class PermuteDimensions(ppl.Pass):
         self,
         sdfg: dace.SDFG,
         state: dace.SDFGState,
-        old_shape: List[int],
-        new_shape: List[int],
-        permute_indices: List[int],
+        old_shape: list[int],
+        new_shape: list[int],
+        permute_indices: list[int],
         old_name: str,
         new_name: str,
     ):
@@ -279,17 +279,17 @@ class PermuteDimensions(ppl.Pass):
                 external_edges=True,
             )
 
-    def _inverse_permute_indices(self, permute_indices: List[int]) -> List[int]:
+    def _inverse_permute_indices(self, permute_indices: list[int]) -> list[int]:
         return inverse_permutation(permute_indices)
 
-    def _note_copy_side(self, sides: Dict, edge, permute_indices: List[int]) -> None:
+    def _note_copy_side(self, sides: dict, edge, permute_indices: list[int]) -> None:
         note_copy_side(sides, edge, permute_indices)
 
-    def _retranspose_copies(self, state: dace.SDFGState, sides: Dict) -> None:
+    def _retranspose_copies(self, state: dace.SDFGState, sides: dict) -> None:
         retranspose_copies(state, sides, context="PermuteDimensions")
 
     def _permute_index(
-        self, root: dace.SDFG, sdfg: dace.SDFG, permute_map: Dict[str, List[int]], add_permute_maps: bool
+        self, root: dace.SDFG, sdfg: dace.SDFG, permute_map: dict[str, list[int]], add_permute_maps: bool
     ):
         # top-level SDFG: may add transpose states/maps; nested: just replace array shapes
         name_map = dict()
@@ -464,13 +464,13 @@ class PermuteDimensions(ppl.Pass):
             edge.data.assignments = new_assignments
 
 
-def inverse_permutation(permute_indices: List[int]) -> List[int]:
+def inverse_permutation(permute_indices: list[int]) -> list[int]:
     """The inverse axis permutation: ``inverse[permute_indices[i]] = i``."""
     inverse_map = {p: i for i, p in enumerate(permute_indices)}
     return [inverse_map[i] for i in sorted(inverse_map)]
 
 
-def note_copy_side(sides: Dict, edge, permute_indices: List[int]) -> None:
+def note_copy_side(sides: dict, edge, permute_indices: list[int]) -> None:
     """Marks edge (a CopyLibraryNode operand) as relaid out; may turn an elementwise copy transposing."""
     from dace.libraries.standard.nodes.copy import CopyLibraryNode
 
@@ -507,7 +507,7 @@ def covers_full_array(memlet, desc) -> bool:
     return True
 
 
-def retranspose_copies(state: dace.SDFGState, sides: Dict, context: str = "PermuteDimensions") -> None:
+def retranspose_copies(state: dace.SDFGState, sides: dict, context: str = "PermuteDimensions") -> None:
     """Replaces transposing copies with TensorTranspose; must run now, the permutation isn't recoverable later (axes = P^-1 if input relaid, P if output relaid)."""
     from dace.libraries.linalg import TensorTranspose
     from dace.libraries.standard.nodes.copy import CopyLibraryNode
@@ -561,10 +561,10 @@ def retranspose_copies(state: dace.SDFGState, sides: Dict, context: str = "Permu
 
 
 def rewrite_state_for_permute(
-    state: dace.SDFGState, name_map: Dict[str, str], permute_map: Dict[str, List[int]], note_copy_side=None
-) -> Dict:
+    state: dace.SDFGState, name_map: dict[str, str], permute_map: dict[str, list[int]], note_copy_side=None
+) -> dict:
     """Renames access nodes/connectors per name_map and permutes memlet subsets (new_subset[i] = old_subset[perm[i]]); shared rewrite core of PermuteDimensions and apply_assignment."""
-    sides: Dict = {}
+    sides: dict = {}
     for node in state.nodes():
         if isinstance(node, dace.nodes.AccessNode) and node.data in name_map:
             node.data = name_map[node.data]
@@ -598,13 +598,13 @@ def rewrite_state_for_permute(
     return sides
 
 
-def flip_gemm_operand_if_transposed(edge, permute_indices: List[int]) -> None:
+def flip_gemm_operand_if_transposed(edge, permute_indices: list[int]) -> None:
     """Special rewrite rule: a 2-D transpose (``[1, 0]``) of a BLAS-node operand is absorbed by flipping the node's structural flag (``transA``/``transB`` for Gemm/MatMul, ``trans`` for Syrk, ``uplo`` for Symm) instead of emitting a physical transpose. The native call reads the relaid-out box and transposes it for free -- the pattern stays a single library call with the input marked transposed. Identity permutations are ignored; non-transpose permutations and unabsorbable operands are refused by :func:`flip_operand_transpose`."""
     from dace.libraries.blas.nodes.gemm import Gemm
     from dace.libraries.blas.nodes.matmul import MatMul
-    from dace.libraries.blas.nodes.syrk import Syrk
-    from dace.libraries.blas.nodes.syr2k import Syr2k
     from dace.libraries.blas.nodes.symm import Symm
+    from dace.libraries.blas.nodes.syr2k import Syr2k
+    from dace.libraries.blas.nodes.syrk import Syrk
     from dace.transformation.layout.rewrite_libnodes import flip_operand_transpose
 
     if not (isinstance(edge.dst, (Gemm, MatMul, Syrk, Syr2k, Symm)) and edge.dst_conn in ("_a", "_b")):
@@ -619,7 +619,7 @@ def flip_gemm_operand_if_transposed(edge, permute_indices: List[int]) -> None:
     flip_operand_transpose(edge.dst, edge.dst_conn)
 
 
-def rewrite_einsum_if_permuted(edge, permute_indices: List[int]) -> None:
+def rewrite_einsum_if_permuted(edge, permute_indices: list[int]) -> None:
     """Special rewrite rule: an ``Einsum`` operand permuted by ``permute_indices`` needs the matching subscript group permuted the same way, since the node reads its shapes from the descriptors but its contraction from the string. Without this the expansion sees ``'ij,j->i'`` against a relaid-out ``(M, N)`` operand and rejects it as a dimension mismatch. Identity permutations are ignored; a permuted OUTPUT is refused, as the output subscripts are shared with every operand."""
     from dace.libraries.blas.nodes.einsum import Einsum
     from dace.transformation.layout.rewrite_libnodes import transform_einsum

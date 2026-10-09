@@ -17,8 +17,8 @@ import numpy
 import pytest
 
 import dace
-from dace.sdfg.dealias import convert_legacy_nested_sdfgs
 from dace.libraries.layout.algebra import Permute
+from dace.sdfg.dealias import convert_legacy_nested_sdfgs
 from dace.transformation.layout.apply_assignment import IDENTITY_LAYOUT, Layout, apply_assignment, writes_cover_array
 from dace.transformation.layout.line_graph import kernel_per_state, line_graph
 from dace.transformation.layout.prepare import prepare_for_layout

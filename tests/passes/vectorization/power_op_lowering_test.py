@@ -27,12 +27,11 @@ import numpy as np
 import pytest
 
 import dace
+from dace.transformation.passes.canonicalize.assume_symbols_nonnegative import set_symbol_nonnegative_assumptions
+from dace.transformation.passes.relax_integer_powers import exponent_relaxes_to_ipow
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.enums import ISA, RemainderStrategy
 from dace.transformation.passes.vectorization.tasklet_preprocessing_passes import StripPowerExponentCast
-from dace.transformation.passes.relax_integer_powers import exponent_relaxes_to_ipow
-from dace.transformation.passes.canonicalize.assume_symbols_nonnegative import set_symbol_nonnegative_assumptions
-
 from tests.passes.vectorization.helpers.harness import run_vectorization_test
 
 S = dace.symbol("S")

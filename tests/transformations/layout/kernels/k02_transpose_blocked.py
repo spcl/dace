@@ -21,8 +21,8 @@ paper SS IV-B2 (transpose microbenchmark, Block primitive).
 """
 
 import numpy
-import dace
 
+import dace
 from dace.transformation.layout.brute_force import block_candidates, permutation_candidates
 
 N = dace.symbol("N")

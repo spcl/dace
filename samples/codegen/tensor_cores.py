@@ -7,28 +7,27 @@ Running the sample requires an NVIDIA GPU with Tensor Cores.
 """
 
 # General DaCe imports
+# Other imports
+import itertools
+
+import numpy as np
+
 import dace
 from dace import data as dt
-from dace.sdfg import nodes
-
-# Code generator imports and helpers
-from dace.codegen.targets.framecode import DaCeCodeGenerator
+from dace.codegen.dispatcher import DefinedType
+from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.target import TargetCodeGenerator
 from dace.codegen.targets.cpp import cpp_array_expr, cpp_offset_expr
 
+# Code generator imports and helpers
+from dace.codegen.targets.framecode import DaCeCodeGenerator
+from dace.sdfg import nodes
+
 # Frontend imports and helpers
-
 # Transformations
-
 # Type hints
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.state import ControlFlowRegion, StateSubgraphView
-from dace.codegen.prettycode import CodeIOStream
-from dace.codegen.dispatcher import DefinedType
-
-# Other imports
-import itertools
-import numpy as np
 
 ############################################################################
 # Tensor core code generator
@@ -172,9 +171,7 @@ class TensorCoreCodegen(TargetCodeGenerator):
         if "TensorCore" in dst_desc.storage.name:
             # GPU memory to Tensor Cores
             callsite_stream.write(
-                "wmma::load_matrix_sync({tc}, &{other}, {stride});".format(
-                    tc=dst_node.data, other=other_expr, stride=src_desc.strides[0 if row_major else 1]
-                ),
+                f"wmma::load_matrix_sync({dst_node.data}, &{other_expr}, {src_desc.strides[0 if row_major else 1]});",
                 cfg,
                 state_id,
                 [src_node, dst_node],

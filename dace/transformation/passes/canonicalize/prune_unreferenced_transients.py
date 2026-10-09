@@ -2,11 +2,10 @@
 """Drop transient descriptors that nothing in their own SDFG names any more."""
 
 import re
-from typing import Any, Dict, Optional, Set
-
-from dace.ordered import OrderedSet
+from typing import Any
 
 from dace import SDFG, data, properties
+from dace.ordered import OrderedSet
 from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.transformation import pass_pipeline as ppl
@@ -30,7 +29,7 @@ def code_text(block: Any) -> str:
     return str(code)
 
 
-def referenced_names(sdfg: SDFG) -> Set[str]:
+def referenced_names(sdfg: SDFG) -> set[str]:
     """Names that anything in ``sdfg`` itself (not its children) still refers to.
 
     Structural references (access nodes, memlets) are collected exactly. Everything that can only
@@ -38,7 +37,7 @@ def referenced_names(sdfg: SDFG) -> Set[str]:
     is collected as word tokens, which over-approximates. Over-approximating is the safe direction:
     a name kept alive by accident costs a descriptor, a name dropped by accident is a miscompile.
     """
-    used: Set[str] = set()
+    used: set[str] = set()
     text: list = [sdfg.init_code, sdfg.exit_code]
     for state in sdfg.states():
         for node in state.nodes():
@@ -88,7 +87,7 @@ class PruneUnreferencedTransients(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return bool(modified & (ppl.Modifies.AccessNodes | ppl.Modifies.Descriptors))
 
-    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Set[str]]:
+    def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> set[str] | None:
         removed: OrderedSet = OrderedSet()
         for sd in sdfg.all_sdfgs_recursive():
             used = referenced_names(sd)
@@ -103,5 +102,5 @@ class PruneUnreferencedTransients(ppl.Pass):
                 removed.add(f"{sd.label}.{name}")
         return set(removed) or None
 
-    def report(self, pass_retval: Set[str]) -> str:
+    def report(self, pass_retval: set[str]) -> str:
         return f"Pruned {len(pass_retval)} unreferenced transients: {sorted(pass_retval)}."

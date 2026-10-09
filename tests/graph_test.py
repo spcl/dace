@@ -1,5 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import unittest
+
 from dace.sdfg.graph import *
 
 

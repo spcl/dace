@@ -25,9 +25,9 @@ import numpy as np
 import pytest
 
 import dace
-from dace.sdfg.dealias import convert_legacy_nested_sdfgs
 from dace.codegen.codegen import generate_code
-from dace.libraries.standard.nodes.scan import Scan, ScanOp, INPUT_CONNECTOR_NAME, OUTPUT_CONNECTOR_NAME
+from dace.libraries.standard.nodes.scan import INPUT_CONNECTOR_NAME, OUTPUT_CONNECTOR_NAME, Scan, ScanOp
+from dace.sdfg.dealias import convert_legacy_nested_sdfgs
 
 
 def _build_scan_sdfg(n: int, stride: int, op: ScanOp, implementation: str) -> dace.SDFG:

@@ -20,8 +20,8 @@ loud failure and pin that the real pipeline never reaches it.
 
 import numpy
 import pytest
-import dace
 
+import dace
 from dace.sdfg.dealias import convert_legacy_nested_sdfgs
 from dace.transformation.layout.permute_dimensions import PermuteDimensions
 from dace.transformation.layout.prepare import prepare_for_layout

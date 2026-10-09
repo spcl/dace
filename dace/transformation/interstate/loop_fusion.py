@@ -34,12 +34,10 @@ the buffer-reclaim ``MapFusionVertical`` does for maps, decided here on the loop
 """
 
 import copy
-from typing import Dict, List, Optional, Tuple
 
-from dace import SDFG
+from dace import SDFG, subsets, symbolic
 from dace import data as dt
-from dace import subsets
-from dace import symbolic
+from dace.optionals import required
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.sdfg import InterstateEdge
@@ -50,7 +48,6 @@ from dace.transformation.passes.break_anti_dependence import BreakAntiDependence
 from dace.transformation.passes.canonicalize.fuse_consecutive_loops import _symbolically_equal
 from dace.transformation.passes.iteration_domain import loop_trip_count, same_trip_count
 from dace.transformation.passes.loop_fission import _linear_blocks, _single_compute_state
-from dace.optionals import required
 
 
 @transformation.explicit_cf_compatible
@@ -169,15 +166,15 @@ class LoopFusion(transformation.MultiStateTransformation):
         return _symbolically_equal(i1, i2) and same_trip_count(t1, t2)
 
     @staticmethod
-    def _accesses(block: ControlFlowBlock) -> Tuple[Dict[str, List], Dict[str, List]]:
+    def _accesses(block: ControlFlowBlock) -> tuple[dict[str, list], dict[str, list]]:
         """``(reads, writes)`` -- per data container, the list of accessed subsets into that container,
         across every ``SDFGState`` of ``block`` (a plain state, or a region such as ``ConditionalBlock``
         whose ``all_states()`` walks its nested states). In-edges of an AccessNode write it (its ``dst``
         side), out-edges read it (its ``src`` side). A subset that cannot be resolved is recorded as
         ``None`` so the legality check can refuse conservatively rather than silently drop a dependence.
         """
-        reads: Dict[str, List] = {}
-        writes: Dict[str, List] = {}
+        reads: dict[str, list] = {}
+        writes: dict[str, list] = {}
         states = [block] if isinstance(block, SDFGState) else list(block.states())
         for state in states:
             for n in state.nodes():
@@ -192,7 +189,7 @@ class LoopFusion(transformation.MultiStateTransformation):
         return reads, writes
 
     @staticmethod
-    def _indirect_body_chain(loop: LoopRegion) -> Optional[Tuple[List, List]]:
+    def _indirect_body_chain(loop: LoopRegion) -> tuple[list, list] | None:
         """The indirect-access body shape ``_single_compute_state`` recognizes -- every block an empty
         ``SDFGState`` except exactly one (any block type; a ``ConditionalBlock`` whose OWN branch
         condition reads a symbol a bridge edge just defined -- mandelbrot's per-pixel mask check -- is
@@ -236,7 +233,7 @@ class LoopFusion(transformation.MultiStateTransformation):
         return order, [copy.deepcopy(e.data) for e in ordered_edges]
 
     @staticmethod
-    def _body_chain(loop: LoopRegion) -> Optional[Tuple[List, List]]:
+    def _body_chain(loop: LoopRegion) -> tuple[list, list] | None:
         """``(blocks, edges)`` in execution order for ``loop``'s body: ``_linear_blocks``'s plain chain
         (fresh default edges reconstructed -- none of its edges carry an assignment or condition to
         preserve) or ``_indirect_body_chain``'s bridge chain (its REAL edges, kept as-is). ``None`` if
@@ -247,14 +244,14 @@ class LoopFusion(transformation.MultiStateTransformation):
         return LoopFusion._indirect_body_chain(loop)
 
     @staticmethod
-    def _body_blocks(loop: LoopRegion) -> Optional[List]:
+    def _body_blocks(loop: LoopRegion) -> list | None:
         """``loop``'s body blocks in execution order (``_body_chain``), or ``None`` if the body matches
         neither recognized shape."""
         chain = LoopFusion._body_chain(loop)
         return chain[0] if chain is not None else None
 
     @staticmethod
-    def _body_accesses(loop: LoopRegion) -> Optional[Tuple[Dict[str, List], Dict[str, List]]]:
+    def _body_accesses(loop: LoopRegion) -> tuple[dict[str, list], dict[str, list]] | None:
         """``(reads, writes)`` unioned across every block of ``loop``'s body (``_body_blocks``), or
         ``None`` if the body has neither recognized shape. A ``ConditionalBlock`` among the blocks has
         both branches' accesses unioned together regardless of which one fires at runtime -- an
@@ -263,8 +260,8 @@ class LoopFusion(transformation.MultiStateTransformation):
         blocks = LoopFusion._body_blocks(loop)
         if blocks is None:
             return None
-        reads: Dict[str, List] = {}
-        writes: Dict[str, List] = {}
+        reads: dict[str, list] = {}
+        writes: dict[str, list] = {}
         for block in blocks:
             br, bw = LoopFusion._accesses(block)
             for arr, subs in br.items():
@@ -274,11 +271,11 @@ class LoopFusion(transformation.MultiStateTransformation):
         return reads, writes
 
     @staticmethod
-    def _rename_ivar(accesses: Dict[str, List], old: str, new: str) -> Dict[str, List]:
+    def _rename_ivar(accesses: dict[str, list], old: str, new: str) -> dict[str, list]:
         """``accesses`` with every subset rewritten from iterator ``old`` to ``new``, on COPIES --
         the originals are the live memlet subsets and must not be touched by a legality query."""
         repl = {old: symbolic.pystr_to_symbolic(new)}
-        renamed: Dict[str, List] = {}
+        renamed: dict[str, list] = {}
         for arr, subs in accesses.items():
             out = []
             for sub in subs:
@@ -295,8 +292,8 @@ class LoopFusion(transformation.MultiStateTransformation):
         self,
         first: LoopRegion,
         second: LoopRegion,
-        acc1: Tuple[Dict[str, List], Dict[str, List]],
-        acc2: Tuple[Dict[str, List], Dict[str, List]],
+        acc1: tuple[dict[str, list], dict[str, list]],
+        acc2: tuple[dict[str, list], dict[str, list]],
     ) -> bool:
         """Whether running ``first``'s body then ``second``'s body per iteration preserves the value of
         the two loops run in sequence, given each body's own ``(reads, writes)`` (``_body_accesses``).
@@ -439,7 +436,7 @@ class LoopFusion(transformation.MultiStateTransformation):
                 self._rewrite_array_to_scalar(sdfg, body_states, arr, desc)
 
     @staticmethod
-    def _localized_point(arr: str, body_states: List[SDFGState], ivar: str) -> Optional[object]:
+    def _localized_point(arr: str, body_states: list[SDFGState], ivar: str) -> object | None:
         """Return the single point subset all accesses to ``arr`` share (referencing ``ivar``), or ``None``
         if the accesses are not one identical iterator-indexed point -- an offset (``arr[i-1]``), a second
         distinct index, an unresolved subset, an access under a map scope, or no iterator all disqualify."""
@@ -488,7 +485,7 @@ class LoopFusion(transformation.MultiStateTransformation):
         return sub
 
     @staticmethod
-    def _rewrite_array_to_scalar(sdfg: SDFG, body_states: List[SDFGState], arr: str, desc: dt.Array) -> None:
+    def _rewrite_array_to_scalar(sdfg: SDFG, body_states: list[SDFGState], arr: str, desc: dt.Array) -> None:
         """Replace every access to the localized 1-D ``arr`` with a fresh ``[1]`` transient indexed at
         ``[0]``, then drop ``arr``. The ``[1]`` array (not a register scalar) persists across the two body
         states within one iteration, which is where the write and the read live."""

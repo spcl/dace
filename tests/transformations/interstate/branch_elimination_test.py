@@ -1,11 +1,13 @@
 import copy
 import functools
+
 import numpy as np
-import dace
-from dace.sdfg.dealias import convert_legacy_nested_sdfgs
 import pytest
+
+import dace
 from dace.properties import CodeBlock
 from dace.sdfg import InterstateEdge
+from dace.sdfg.dealias import convert_legacy_nested_sdfgs
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.interstate import branch_elimination
 from dace.transformation.passes import ConstantPropagation, EliminateBranches
@@ -463,7 +465,7 @@ def test_weird_condition():
     a = np.random.rand(N, N)
     b = np.random.rand(N, N)
     ncldtop = np.array([N // 2], dtype=np.int64)
-    run_and_compare(weird_condition, 1, False, f"weird_condition", a=a, b=b, ncldtop=ncldtop[0])
+    run_and_compare(weird_condition, 1, False, "weird_condition", a=a, b=b, ncldtop=ncldtop[0])
 
 
 @temporarily_disable_autoopt_and_serialization
@@ -570,7 +572,7 @@ def test_nested_if_two():
     b = np.random.choice([0.001, 5.0], size=(N, N))
     c = np.random.choice([0.001, 5.0], size=(N, N))
     d = np.random.choice([0.001, 5.0], size=(N, N))
-    run_and_compare(nested_if_two, 0, True, f"nested_if_two", a=a, b=b, c=c, d=d)
+    run_and_compare(nested_if_two, 0, True, "nested_if_two", a=a, b=b, c=c, d=d)
 
 
 @temporarily_disable_autoopt_and_serialization
@@ -607,7 +609,7 @@ def test_branch_dependent_value_write_with_transient_reuse():
         branch_dependent_value_write_with_transient_reuse,
         0,
         True,
-        f"branch_dependent_value_write_with_transient_reuse",
+        "branch_dependent_value_write_with_transient_reuse",
         a=a,
         b=b,
         c=c,
@@ -738,7 +740,7 @@ def test_try_clean():
     run_and_compare_sdfg(
         sdfg1,
         permissive=False,
-        sdfg_name=f"multi_state_nested_if_sdfg",
+        sdfg_name="multi_state_nested_if_sdfg",
         A=A,
         B=B,
         C=C,
@@ -768,7 +770,7 @@ def test_try_clean_as_pass():
     run_and_compare_sdfg(
         sdfg,
         permissive=False,
-        sdfg_name=f"multi_state_nested_if_sdfg_try_clean_variant",
+        sdfg_name="multi_state_nested_if_sdfg_try_clean_variant",
         A=A,
         B=B,
         C=C,
@@ -825,7 +827,7 @@ def test_sdfg_with_interstate_array_condition():
     run_and_compare_sdfg(
         sdfg,
         permissive=False,
-        sdfg_name=f"sdfg_with_interstate_array_condition",
+        sdfg_name="sdfg_with_interstate_array_condition",
         llindex=llindex,
         zsolqa=zsolqa,
         zratio=zratio,
@@ -865,7 +867,7 @@ def test_repeated_condition_variables():
     b = np.random.choice([0.001, 3.0], size=(N, N))
     c = np.random.choice([0.001, 3.0], size=(N, N))
     conds = np.random.choice([1.0, 3.0], size=(4, N))
-    run_and_compare(repeated_condition_variables, 0, True, f"repeated_condition_variables", a=a, b=b, c=c, conds=conds)
+    run_and_compare(repeated_condition_variables, 0, True, "repeated_condition_variables", a=a, b=b, c=c, conds=conds)
 
 
 def _find_state(root_sdfg: dace.SDFG, node):
@@ -1030,7 +1032,7 @@ def test_non_trivial_subset_after_combine_tasklet():
         non_trivial_subset_after_combine_tasklet,
         0,
         True,
-        f"non_trivial_subset_after_combine_tasklet",
+        "non_trivial_subset_after_combine_tasklet",
         a=A,
         b=B,
         c=C,
@@ -1117,7 +1119,7 @@ def test_split_on_disjoint_subsets():
         split_on_disjoint_subsets,
         0,
         True,
-        f"split_on_disjoint_subsets",
+        "split_on_disjoint_subsets",
         a=A,
         b=B,
         c=C,
@@ -1164,7 +1166,7 @@ def test_split_on_disjoint_subsets_nested():
         split_on_disjoint_subsets_nested,
         0,
         True,
-        f"split_on_disjoint_subsets_nested",
+        "split_on_disjoint_subsets_nested",
         a=A,
         b=B,
         c=C,
@@ -1252,7 +1254,7 @@ def test_write_to_transient():
         write_to_transient,
         0,
         True,
-        f"write_to_transient",
+        "write_to_transient",
         a=A,
         b=B,
         d=D[0],
@@ -1273,7 +1275,7 @@ def test_write_to_transient_two():
         write_to_transient_two,
         0,
         True,
-        f"write_to_transient_two",
+        "write_to_transient_two",
         a=A,
         b=B,
         d=D[0],
@@ -1304,7 +1306,7 @@ def test_double_empty_state():
     run_and_compare_sdfg(
         sdfg,
         permissive=False,
-        sdfg_name=f"double_empty_state",
+        sdfg_name="double_empty_state",
         a=A,
         b=B,
         d=D[0],
@@ -1404,8 +1406,8 @@ def test_complicated_pattern_for_manual_clean_up_one():
                 (cond0, body0), (cond1, body1) = cb.branches[0:2]
                 assert len(body0.nodes()) == 1
                 assert len(body1.nodes()) == 1
-                assert all({isinstance(n, dace.SDFGState) for n in body0.nodes()})
-                assert all({isinstance(n, dace.SDFGState) for n in body1.nodes()})
+                assert all(isinstance(n, dace.SDFGState) for n in body0.nodes())
+                assert all(isinstance(n, dace.SDFGState) for n in body1.nodes())
 
 
 @temporarily_disable_autoopt_and_serialization
@@ -2009,7 +2011,7 @@ def _get_safe_map_param_use_in_nested_sdfg() -> dace.SDFG:
     t2 = i_s2.add_tasklet("t2", inputs={"_in1", "_in2"}, outputs={"_out"}, code="_out = _in1 + _in2")
     for in_name, conn_name in [("zacust", "_in1"), ("zsolac", "_in2")]:
         i_s2.add_edge(i_s2.add_access(in_name), None, t2, conn_name, dace.memlet.Memlet(f"{in_name}[_for_it_37]"))
-    i_s2.add_edge(t2, "_out", i_s2.add_access("zsolac"), None, dace.memlet.Memlet(f"zsolac[_for_it_37]"))
+    i_s2.add_edge(t2, "_out", i_s2.add_access("zsolac"), None, dace.memlet.Memlet("zsolac[_for_it_37]"))
 
     o_s1 = outer_sdfg.add_state("o_s1", is_start_block=True)
     nsdfg = o_s1.add_nested_sdfg(
@@ -2079,7 +2081,7 @@ def test_safe_map_param_use_in_nested_sdfg():
     zfinalsum = np.random.choice([0.001, 5.0], size=(N,))
     zacust = np.random.choice([0.001, 5.0], size=(N,))
     run_and_compare_sdfg(
-        sdfg, False, f"safe_map_param_use_in_nested_sdfg", zsolac=zsolac, zfinalsum=zfinalsum, zacust=zacust
+        sdfg, False, "safe_map_param_use_in_nested_sdfg", zsolac=zsolac, zfinalsum=zfinalsum, zacust=zacust
     )
 
 
@@ -2732,7 +2734,8 @@ def test_can_be_applied_on_top_level_and_nested_conditional():
     means the match doesn't apply. Regression: applying the pass
     repeatedly must not raise or log ``AssertionError`` warnings.
     """
-    import io, contextlib
+    import contextlib
+    import io
 
     # Inner SDFG with a ConditionalBlock of its own.
     inner = dace.SDFG("inner_with_if")

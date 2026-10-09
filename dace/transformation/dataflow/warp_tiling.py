@@ -2,12 +2,14 @@
 import copy
 
 import numpy as np
-from dace import graphlib as nx, properties, nodes, dtypes, subsets, symbolic
-from dace import Memlet, SDFG, SDFGState
+
+from dace import SDFG, Memlet, SDFGState, dtypes, nodes, properties, subsets, symbolic
+from dace import graphlib as nx
 from dace.frontend.operations import detect_reduction_type
-from dace.transformation import transformation as xf, helpers as xfh
-from dace.sdfg import utils as sdutil
 from dace.libraries.standard.block_reduce import block_allreduce_code, block_redop
+from dace.sdfg import utils as sdutil
+from dace.transformation import helpers as xfh
+from dace.transformation import transformation as xf
 
 
 def lane_identity_literal(dtype: dtypes.typeclass, identity) -> str:

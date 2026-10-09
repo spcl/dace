@@ -1,8 +1,8 @@
-from typing import Tuple
+import numpy as np
 import pytest
 import sympy
+
 import dace
-import numpy as np
 import dace.sdfg.utils as sdutil
 
 N = dace.symbol("N")
@@ -35,7 +35,7 @@ input_sets = [
 def make_type2_sdfg():
     assignment_key = "_if_cond_1"
     assignment_val = "(((zqx[((_for_it_12 + 1) - 1), ((_for_it_11 + 1) - 1), (1 - 1)] + zqx[((_for_it_12 + 1) - 1), ((_for_it_11 + 1) - 1), (2 - 1)]) < rlmin) or (za[((_for_it_12 + 1) - 1), ((_for_it_11 + 1) - 1)] < ramin))"
-    sdfg = dace.SDFG(f"single_complex_expression_sdfg_type_2")
+    sdfg = dace.SDFG("single_complex_expression_sdfg_type_2")
     state1 = sdfg.add_state("complex_tasklet_state")
 
     sdfg.add_symbol("_for_it_11", dace.int64)
@@ -97,7 +97,7 @@ def run_two_sdfgs(sdfg1, sdfg2, inputs: dict):
 
 # Pytest test function
 @pytest.mark.parametrize("input", input_sets)
-def test_single_edge(input: Tuple[int, str, str, int]):
+def test_single_edge(input: tuple[int, str, str, int]):
     rng = np.random.default_rng(42)
     sdfgA = make_sdfg(input[1], input[2])
     sdfgB = make_sdfg(input[1], input[2])
@@ -133,9 +133,9 @@ def test_single_edge(input: Tuple[int, str, str, int]):
 def test_complex_expr_and_connector_names():
     sdfgA = make_type2_sdfg()
     sdfgB = make_type2_sdfg()
-    sdfgA.name = f"pattern_type2_original"
+    sdfgA.name = "pattern_type2_original"
     sdutil.demote_symbol_to_scalar(sdfgB, "_if_cond_1", dace.float64)
-    sdfgB.name = f"pattern_type2_demoted"
+    sdfgB.name = "pattern_type2_demoted"
 
     tasklets = set()
     for state in sdfgB.states():

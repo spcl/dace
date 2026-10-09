@@ -16,8 +16,8 @@ import pytest
 
 import dace
 from dace.codegen.cpf import RENDERABLE_IMPLEMENTATIONS, render
-from dace.libraries.standard.nodes.copy import CopyLibraryNode
 from dace.libraries.standard.helper import is_parallel_cpu_transfer_size
+from dace.libraries.standard.nodes.copy import CopyLibraryNode
 from dace.libraries.standard.nodes.copy.select import select_copy_implementation
 from dace.transformation.passes.insert_explicit_copies import InsertExplicitCopies
 

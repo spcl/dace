@@ -33,10 +33,10 @@ existing K=0 ``test_k0_remainder`` arm's responsibility).
 """
 
 import pytest
-import dace
 
+import dace
 from dace.transformation.passes.vectorization.config import VectorizeConfig
-from dace.transformation.passes.vectorization.enums import ISA, RemainderStrategy, BranchMode
+from dace.transformation.passes.vectorization.enums import ISA, BranchMode, RemainderStrategy
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import (
     VectorizeCPUMultiDim,
 )

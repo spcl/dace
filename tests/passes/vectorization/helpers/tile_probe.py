@@ -6,12 +6,10 @@ tile-shaped data (the K-dim "tile-only" invariant check). They live here rather
 than in the production pipeline because only the tests consume them.
 """
 
-from typing import Tuple
-
 import dace
 
 
-def descriptor_is_tile_or_broadcast(desc, widths: Tuple[int, ...]) -> bool:
+def descriptor_is_tile_or_broadcast(desc, widths: tuple[int, ...]) -> bool:
     """ONE-aware classify: ``desc`` is a tile (full ``widths``) or broadcast-tile
     (each dim = tile width ``w_d`` or broadcast marker ``dace.symbolic.ONE`` /
     literal ``1``), with >=1 real (non-broadcast) width dim.
@@ -55,7 +53,7 @@ def descriptor_is_tile_or_broadcast(desc, widths: Tuple[int, ...]) -> bool:
     return n_real >= 1
 
 
-def tasklet_reads_or_writes_tile(state: dace.SDFGState, tasklet: dace.nodes.Tasklet, widths: Tuple[int, ...]) -> bool:
+def tasklet_reads_or_writes_tile(state: dace.SDFGState, tasklet: dace.nodes.Tasklet, widths: tuple[int, ...]) -> bool:
     """True iff any in/out edge of ``tasklet`` carries a tile / broadcast-tile
     descriptor (see :func:`descriptor_is_tile_or_broadcast`).
 

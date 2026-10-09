@@ -6,8 +6,8 @@ import torch
 from torch import nn
 
 from dace.ml import DaceModule
-from tests.utils import torch_tensors_close
 from tests.ml_gpu_utils import DEVICES, experimental_cuda, is_gpu, torch_device
+from tests.utils import torch_tensors_close
 
 
 @pytest.mark.torch
@@ -19,7 +19,7 @@ def test_skip_input_grads(use_cpp_dispatcher: bool, device):
 
     class Module(torch.nn.Module):
         def __init__(self):
-            super(Module, self).__init__()
+            super().__init__()
             self.fc1 = nn.Parameter(torch.rand(10, 10))
 
         def forward(self, x):

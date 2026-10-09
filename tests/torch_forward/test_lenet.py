@@ -4,19 +4,18 @@ import pytest
 pytest.importorskip("onnx", reason="ONNX not installed. Please install with: pip install dace[ml]")
 pytest.importorskip("torch", reason="PyTorch not installed. Please install with: pip install dace[ml]")
 
-from dace.ml import DaceModule
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from tests.utils import torch_tensors_close
+from dace.ml import DaceModule
 from tests.ml_gpu_utils import DEVICES, experimental_cuda, is_gpu, torch_device
+from tests.utils import torch_tensors_close
 
 
 class LeNet(nn.Module):
     def __init__(self):
-        super(LeNet, self).__init__()
+        super().__init__()
         self.conv1 = nn.Conv2d(1, 6, (3, 3))
         self.conv2 = nn.Conv2d(6, 16, (3, 3))
         self.fc1 = nn.Linear(16 * 6 * 6, 120)  # 6*6 from image dimension

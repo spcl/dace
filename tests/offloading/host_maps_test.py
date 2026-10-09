@@ -8,11 +8,11 @@ The numerical companion lives in ``offload_to_accelerator_graphs_test.py``.
 import pytest
 
 import dace
-from dace.transformation import pass_pipeline as ppl
-from dace.sdfg import nodes
-from dace.transformation.passes.offloading import OffloadToAccelerator
-from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.properties import CodeBlock
+from dace.sdfg import nodes
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation.passes.offloading import OffloadToAccelerator
 from dace.transformation.passes.offloading.host_maps import host_maps, maps_pinned_by_host_loops
 from dace.transformation.passes.offloading.offloading_helpers import is_callback_tasklet
 

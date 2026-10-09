@@ -13,7 +13,7 @@ dependence / domain reasoning (:class:`WavefrontSkew` today; a future
 ``islpy`` is a hard dependency of dace (see ``pyproject.toml``).
 """
 
-from typing import Dict, Iterable, List, Mapping, Sequence, Tuple
+from collections.abc import Iterable, Mapping, Sequence
 
 import islpy as isl
 import sympy
@@ -30,9 +30,9 @@ def safe_name(prefix: str, index: int) -> str:
     return f"{prefix}{index}"
 
 
-def build_name_map(dims: Sequence[str], params: Sequence[str]) -> Dict[str, str]:
+def build_name_map(dims: Sequence[str], params: Sequence[str]) -> dict[str, str]:
     """Bijection ``original -> ISL-safe`` covering the iteration dims and params."""
-    mp: Dict[str, str] = {}
+    mp: dict[str, str] = {}
     for i, d in enumerate(dims):
         mp[d] = safe_name("d", i)
     for i, p in enumerate(params):
@@ -45,7 +45,7 @@ def subs_by_name(expr: SymbolicLike, mapping: Mapping[str, sympy.Expr]) -> sympy
     it is immune to symbol assumption mismatches (two ``symbol('u')`` with
     different assumptions are unequal under a plain ``subs`` dict)."""
     e = simplified(expr)
-    sub: Dict[sympy.Basic | complex, sympy.Basic | complex] = {}
+    sub: dict[sympy.Basic | complex, sympy.Basic | complex] = {}
     for s in free_symbols(e):
         if s.name in mapping:
             sub[s] = mapping[s.name]
@@ -107,7 +107,7 @@ def to_isl(e: sympy.Expr) -> str:
     raise ValueError(f"non-affine / unsupported term {e}")
 
 
-def render_affine(expr: SymbolicLike, name_map: Dict[str, str]) -> str:
+def render_affine(expr: SymbolicLike, name_map: dict[str, str]) -> str:
     """Render a quasi-affine expression into an ISL constraint string under
     ``name_map`` (see :func:`to_isl`). Raises ``ValueError`` on a form ISL cannot
     represent exactly, which the caller treats as "cannot reason, refuse" rather
@@ -119,7 +119,7 @@ def render_affine(expr: SymbolicLike, name_map: Dict[str, str]) -> str:
     return to_isl(e)
 
 
-def constraints_str(constraints: Iterable[SymbolicLike], name_map: Dict[str, str]) -> str:
+def constraints_str(constraints: Iterable[SymbolicLike], name_map: dict[str, str]) -> str:
     """`` and ``-joined ISL constraint body from exprs each meaning ``>= 0``."""
     parts = [f"({render_affine(c, name_map)}) >= 0" for c in constraints]
     return " and ".join(parts) if parts else "true"
@@ -127,7 +127,7 @@ def constraints_str(constraints: Iterable[SymbolicLike], name_map: Dict[str, str
 
 def make_set(
     dims: Sequence[str], params: Sequence[str], constraints: Iterable[SymbolicLike]
-) -> Tuple[isl.Set, Dict[str, str]]:
+) -> tuple[isl.Set, dict[str, str]]:
     """Build an ``isl.Set`` over ``dims`` parametrised by ``params`` from a list
     of exprs (each ``>= 0``). Returns ``(set, name_map)``."""
     name_map = build_name_map(dims, params)
@@ -149,7 +149,7 @@ def value_to_int(v: isl.Val) -> int:
 
 
 def constraint_to_sympy(
-    c: isl.Constraint, safe_dims: Sequence[str], safe_params: Sequence[str], inv_map: Dict[str, str]
+    c: isl.Constraint, safe_dims: Sequence[str], safe_params: Sequence[str], inv_map: dict[str, str]
 ) -> sympy.Expr:
     """Reconstruct the affine expr (meaning ``>= 0``) of an ``isl.Constraint``,
     mapping ISL-safe names back to originals via ``inv_map``."""
@@ -165,15 +165,15 @@ def constraint_to_sympy(
     return simplified(expr)
 
 
-def collect_basic_sets(s: isl.Set) -> List[isl.BasicSet]:
+def collect_basic_sets(s: isl.Set) -> list[isl.BasicSet]:
     """``isl.Set`` -> list of basic sets. (ISL callbacks abort the process on any
     Python exception, so the callback only appends -- never computes.)"""
-    out: List[isl.BasicSet] = []
+    out: list[isl.BasicSet] = []
     s.foreach_basic_set(lambda b: out.append(b))
     return out
 
 
-def classify_dim(e: sympy.Expr, dsym: sympy.Expr) -> Tuple[List[sympy.Expr], List[sympy.Expr], bool]:
+def classify_dim(e: sympy.Expr, dsym: sympy.Expr) -> tuple[list[sympy.Expr], list[sympy.Expr], bool]:
     """Split an ``e >= 0`` constraint into lower/upper bound terms for ``dsym``.
 
     coeff == 0  -> not a bound on this dim (ignore).
@@ -201,7 +201,7 @@ def classify_dim(e: sympy.Expr, dsym: sympy.Expr) -> Tuple[List[sympy.Expr], Lis
     return [], [int_floor(simplified(rest), -coeff)], True
 
 
-def pwaff_bound(pw: isl.PwAff, inv_map: Dict[str, str]) -> sympy.Expr | None:
+def pwaff_bound(pw: isl.PwAff, inv_map: dict[str, str]) -> sympy.Expr | None:
     """A single-piece ``isl.PwAff`` (as returned by ``Set.dim_min`` / ``dim_max``)
     rendered to a symbolic expression, with ISL-safe names mapped back through
     ``inv_map``. The piece's parameter guard (e.g. ``N >= 3``, a mere
@@ -215,7 +215,7 @@ def pwaff_bound(pw: isl.PwAff, inv_map: Dict[str, str]) -> sympy.Expr | None:
     domain leaves an ISL *existential* that per-constraint reading cannot turn
     into a clean bound, but ``dim_min`` / ``dim_max`` resolve it exactly.
     """
-    pieces: List[isl.Aff] = []
+    pieces: list[isl.Aff] = []
     pw.foreach_piece(lambda st, aff: pieces.append(aff))
     if len(pieces) != 1:
         return None
@@ -233,10 +233,10 @@ def pwaff_bound(pw: isl.PwAff, inv_map: Dict[str, str]) -> sympy.Expr | None:
     return simplified(expr)
 
 
-def dedupe_terms(terms: Sequence[SymbolicLike]) -> List[sympy.Expr]:
+def dedupe_terms(terms: Sequence[SymbolicLike]) -> list[sympy.Expr]:
     """Drop syntactically duplicate bound terms (ISL may repeat across basic sets)."""
     seen: set[str] = set()
-    out: List[sympy.Expr] = []
+    out: list[sympy.Expr] = []
     for t in terms:
         st = simplified(t)
         key = str(st)

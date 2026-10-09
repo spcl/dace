@@ -2,7 +2,7 @@
 
 import pytest
 import sympy
-from sympy import Min, Max
+from sympy import Max, Min
 
 import dace
 from dace import symbolic
@@ -61,6 +61,7 @@ def test_and_or_of_two_symbolic_booleans_keep_both_operands():
     operand: ``(not p) and (not q)`` became ``not q``. ConditionFusion writes simplified guards back
     from these trees, so the dropped conjunct reached the generated code."""
     import sympy
+
     from dace.symbolic import pystr_to_symbolic
 
     p, q = sympy.symbols("p q")

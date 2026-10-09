@@ -9,13 +9,11 @@ This module contains implementations of normalization operations including:
 """
 
 import copy
-import typing
+
+import numpy as np
 
 import dace
-import numpy as np
 from dace import SDFG, SDFGState, nodes
-from dace.sdfg.utils import in_desc_with_name, out_desc_with_name
-
 from dace.libraries.onnx.forward_implementation_abc import ONNXForward
 from dace.libraries.onnx.op_implementations.utils import (
     in_desc_with_name,
@@ -23,6 +21,7 @@ from dace.libraries.onnx.op_implementations.utils import (
     out_desc_with_name,
     python_pure_op_implementation,
 )
+from dace.sdfg.utils import in_desc_with_name, out_desc_with_name
 
 # ============================================================================
 # Softmax Operations
@@ -132,7 +131,7 @@ class PureDropout(ONNXForward):
         return True
 
     @staticmethod
-    def forward(node: "ONNXOp", state: SDFGState, sdfg: SDFG) -> typing.Union[nodes.Node, SDFG]:
+    def forward(node: "ONNXOp", state: SDFGState, sdfg: SDFG) -> nodes.Node | SDFG:
         # Get descriptors
         data = in_desc_with_name(node, state, sdfg, "data")
         output = out_desc_with_name(node, state, sdfg, "output")

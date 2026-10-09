@@ -18,15 +18,16 @@ number of entries, which is exactly what separates it from the two above.
 
 import contextlib
 
-import dace
 import numpy as np
 import pytest
+
+import dace
 from dace import dtypes
 from dace.libraries.standard.nodes.copy import CopyLibraryNode
 from dace.libraries.standard.nodes.fill import FillLibraryNode
 from dace.libraries.standard.nodes.reduce import Reduce
-from dace.sdfg import nodes
 from dace.properties import CodeBlock
+from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.passes.cpu_specialization import (
     SequentializeUnprofitableParallelScopes,
@@ -487,6 +488,7 @@ def test_converting_re_entered_copy_is_not_memcpy():
 def test_each_distinct_trip_count_is_asked_once():
     """Maps sharing a trip count share one sympy verdict, and every map still gets its own decision."""
     from unittest import mock
+
     from dace import symbolic
 
     sdfg = dace.SDFG("shared_trip_counts")

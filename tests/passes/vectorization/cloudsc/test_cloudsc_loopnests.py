@@ -22,10 +22,10 @@ contiguous column dimension (the vectorisation axis), mirroring the
 Fortran ``JL=KIDIA,KFDIA`` inner loop.
 """
 
-import pytest
 import numpy
-import dace
+import pytest
 
+import dace
 from tests.passes.vectorization.helpers.harness import run_vectorization_test
 
 KLEV = dace.symbol("KLEV")

@@ -20,11 +20,11 @@ from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.canonicalize.wavefront_skew import (
-    WavefrontSkew,
     SKEW_P_PREFIX,
     SKEW_T_PREFIX,
-    tiling_legal,
     Dependence,
+    WavefrontSkew,
+    tiling_legal,
 )
 
 N = dace.symbol("N")

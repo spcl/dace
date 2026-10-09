@@ -2,18 +2,19 @@
 """Iteration-domain helpers shared by the fusion passes: exact trip counts and unit-step alignment."""
 
 import copy
-from typing import Any, Optional, Sequence, Tuple
+from collections.abc import Sequence
+from typing import Any
 
 from dace import subsets, symbolic
 from dace.sdfg import nodes
+from dace.sdfg.narrowing import as_expr
 from dace.sdfg.state import LoopRegion, SDFGState
 from dace.transformation.passes.analysis import loop_analysis
-from dace.sdfg.narrowing import as_expr
 
-RangeTriple = Tuple[Any, Any, Any]
+RangeTriple = tuple[Any, Any, Any]
 
 
-def constant_int(value: Any) -> Optional[int]:
+def constant_int(value: Any) -> int | None:
     """``value`` as a Python int when it is an integer constant, else ``None``."""
     if symbolic.issymbolic(value):
         return None
@@ -60,7 +61,7 @@ def equal_trip_counts(first: Sequence[RangeTriple], second: Sequence[RangeTriple
     )
 
 
-def loop_trip_count(loop: LoopRegion) -> Optional[Any]:
+def loop_trip_count(loop: LoopRegion) -> Any | None:
     """``loop``'s iteration count, or ``None`` when its header is not an affine counter."""
     start = loop_analysis.get_init_assignment(loop)
     end = loop_analysis.get_loop_end(loop)

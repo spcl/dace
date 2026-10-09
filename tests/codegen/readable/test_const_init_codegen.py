@@ -9,6 +9,7 @@ Codegen-integration tests for constexpr initialization in the experimental
 import re
 
 import numpy as np
+
 import dace
 from dace.config import set_temporary
 

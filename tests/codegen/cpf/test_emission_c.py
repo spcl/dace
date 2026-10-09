@@ -21,16 +21,15 @@ import numpy as np
 import pytest
 
 import dace
+from dace import cpf, cpf_lowering
+from dace.codegen import cpf as cpf_module
+from dace.codegen.common import sym2cpp, unparse_interstate_edge
+from dace.codegen.cpf import render as render_sdfg
+from dace.codegen.cppunparse import cppunparse, pyexpr2cpp
+from dace.codegen.targets.experimental_cpu import format_index_helper
 from dace.libraries.standard.nodes import FindFirst
 from dace.libraries.standard.nodes.fill import FillLibraryNode
 from dace.transformation.passes.scatter_conflict_guard import insert_scatter_guard
-from dace import cpf, cpf_lowering
-from dace.codegen import cpf as cpf_module
-from dace.codegen.cpf import render as render_sdfg
-from dace.codegen.common import sym2cpp, unparse_interstate_edge
-from dace.codegen.cppunparse import cppunparse, pyexpr2cpp
-from dace.codegen.targets.experimental_cpu import format_index_helper
-
 from tests.codegen.cpf.conftest import (
     assert_matches,
     assert_standalone,
@@ -138,9 +137,9 @@ def test_entry_point_has_no_language_linkage():
     """``extern "C"`` is a C++ construct; the C entry point is a plain definition with the same ABI."""
     sdfg, code = render_c(c_scale_add, "mprc_axpy")
     assert 'extern "C"' not in code, 'extern "C" does not exist in C'
-    assert re.search(r"^void mprc_axpy\(", code, re.M), "CPF must export the SDFG under its own name"
+    assert re.search(r"^void mprc_axpy\(", code, re.MULTILINE), "CPF must export the SDFG under its own name"
     assert "#pragma omp parallel for" in code, "a data-parallel map must render as an OpenMP loop"
-    assert re.search(r"^static inline int64_t x_idx\(", code, re.M), (
+    assert re.search(r"^static inline int64_t x_idx\(", code, re.MULTILINE), (
         "C has no constexpr function, so the index helper is a plain static inline one"
     )
 
@@ -165,7 +164,7 @@ def test_two_dimensional_index_helper_carries_the_stride():
         r"^static inline int64_t a_idx\((int64_t __d0, int64_t __d1[^)]*)\) "
         r"\{ return (.*); \}$",
         code,
-        re.M,
+        re.MULTILINE,
     )
     assert helper is not None, f"expected a 2-index a_idx function in:\n{code}"
     assert "__d0" in helper.group(2) and "__d1" in helper.group(2), helper.group(2)
@@ -243,7 +242,7 @@ def test_a_nested_sdfg_function_takes_no_reference_and_agrees_with_cpp():
     sdfg, code = render_c(c_halves, "mprc_halves")
     # ``static inline``, not ``inline``: the unit defines and calls this function itself, and an
     # inline function with external linkage may not reference the ``static`` index helpers it calls.
-    nested = re.search(r"^static inline void \w+\(([^)]*)\)", code, re.M)
+    nested = re.search(r"^static inline void \w+\(([^)]*)\)", code, re.MULTILINE)
     assert nested is not None, f"this test needs a nested SDFG function, or it asserts nothing:\n{code}"
     assert "&" not in nested.group(1), f"C has no reference parameters: {nested.group(1)}"
 
@@ -701,7 +700,7 @@ def test_a_library_expansion_writing_a_scalar_takes_a_pointer_in_c():
     scalar connector. That expansion happens after the signature scalars are promoted, so it reached C
     as ``double& _result``; the promotion now sees it, and the result still reaches ``R``."""
     sdfg, code = render_c(c_gramschmidt, "cpf_c_gramschmidt")
-    nested = re.findall(r"^static inline void \w+\(([^)]*)\)", code, re.M)
+    nested = re.findall(r"^static inline void \w+\(([^)]*)\)", code, re.MULTILINE)
     assert nested, f"this test needs a nested SDFG function, or it asserts nothing:\n{code}"
     assert not any("&" in params for params in nested), nested
     m, n = 12, 7

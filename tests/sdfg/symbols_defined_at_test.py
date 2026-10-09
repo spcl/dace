@@ -19,10 +19,10 @@ The test file exercises both contributors that ``symbols_defined_at`` walks:
 
 from unittest import mock
 
-import dace
 import numpy as np
 import pytest
 
+import dace
 from dace.sdfg import nodes, propagation
 from dace.sdfg.state import LoopRegion, SDFGState, SymbolResolver
 

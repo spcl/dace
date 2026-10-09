@@ -1,6 +1,6 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 
-from typing import Tuple
+
 import dace
 from dace.sdfg import nodes as dace_nodes
 from dace.sdfg.utils import canonicalize_memlet_trees
@@ -43,7 +43,7 @@ def count_non_standard_memlets_in_scope(
     return nb_non_standard_memlets
 
 
-def _make_sdfg_multi_usage_input() -> Tuple[dace.SDFG, dace.SDFGState]:
+def _make_sdfg_multi_usage_input() -> tuple[dace.SDFG, dace.SDFGState]:
     N = 5
     sdfg = dace.SDFG(utility.unique_name("multi_input_usage"))
     state = sdfg.add_state(is_start_block=True)
@@ -151,7 +151,7 @@ def test_multi_use_value_input():
     assert ret == initial_non_standard_memlets
 
 
-def _make_multi_use_value_output() -> Tuple[dace.SDFG, dace.SDFGState]:
+def _make_multi_use_value_output() -> tuple[dace.SDFG, dace.SDFGState]:
 
     sdfg = dace.SDFG(utility.unique_name("multi_input_usage"))
     state = sdfg.add_state(is_start_block=True)

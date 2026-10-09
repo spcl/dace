@@ -28,9 +28,9 @@ import numpy as np
 import pytest
 
 import dace
-from dace.sdfg.dealias import convert_legacy_nested_sdfgs
 from dace import memlet as mm
-from dace.libraries.standard.nodes.scan import Scan, ScanOp, INPUT_CONNECTOR_NAME, OUTPUT_CONNECTOR_NAME
+from dace.libraries.standard.nodes.scan import INPUT_CONNECTOR_NAME, OUTPUT_CONNECTOR_NAME, Scan, ScanOp
+from dace.sdfg.dealias import convert_legacy_nested_sdfgs
 
 N = dace.symbol("N")
 

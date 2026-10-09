@@ -1,23 +1,23 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 
-import pytest
-
 # Un-frozen 2026-06-10 (walker-primary path complete). ReplaceSTD* imports + apply_pass calls
 # are stripped from log/exp/pow tests since the walker-primary pipeline handles log/exp/pow
 # directly (TileUnop("log") -> std::log, TileBinop("**") -> std::pow). Some failures expected
 # while we iterate.
 import math
-import dace
-import numpy
 
 # Walker-primary path handles log / exp / pow directly via TileUnop / TileBinop;
 # ReplaceSTD* legacy passes are intentionally NOT applied in this file.
-from math import log, exp, pow  # noqa: A004 — used inside @dace.program bodies
+from math import exp, log, pow  # noqa: A004 — used inside @dace.program bodies
 
+import numpy
+import pytest
+
+import dace
 from tests.passes.vectorization.helpers.harness import (
-    run_vectorization_test,
     N,
     S,
+    run_vectorization_test,
 )
 
 # Core elementwise/op kernels — also exercise the K-dim tile-op config.

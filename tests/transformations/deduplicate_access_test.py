@@ -1,12 +1,13 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests for the DeduplicateAccess transformation."""
 
-import dace
 import numpy as np
+
+import dace
+import dace.transformation.helpers as helpers
 from dace.subsets import Range
 from dace.transformation.dataflow import DeduplicateAccess
 from dace.transformation.passes.consolidate_edges import ConsolidateEdges
-import dace.transformation.helpers as helpers
 
 N = dace.symbol("N")
 i = dace.symbol("i")

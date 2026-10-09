@@ -16,8 +16,8 @@ QJRMS'15 (ICON vertical solvers).
 """
 
 import numpy
-import dace
 
+import dace
 from dace.transformation.layout.permute_dimensions import PermuteDimensions
 
 K, NB = dace.symbol("K"), dace.symbol("NB")

@@ -12,8 +12,8 @@ import pytest
 
 import dace
 from dace.transformation.passes.vectorization.config import VectorizeConfig
-from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
 from dace.transformation.passes.vectorization.enums import ISA, RemainderStrategy
+from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
 
 N = dace.symbol("N")
 

@@ -1,9 +1,7 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
-from typing import Optional, Set
-
-from dace import graphlib as nx
 
 from dace import SDFG, properties
+from dace import graphlib as nx
 from dace.ordered import OrderedSet
 from dace.sdfg import nodes
 from dace.transformation import pass_pipeline as ppl
@@ -34,8 +32,8 @@ class TransientReuse(ppl.Pass):
         # If states changed
         return modified & (ppl.Modifies.Nodes | ppl.Modifies.Memlets)
 
-    def apply_pass(self, sdfg: SDFG, _) -> Optional[Set[str]]:
-        result: Set[str] = set()
+    def apply_pass(self, sdfg: SDFG, _) -> set[str] | None:
+        result: set[str] = set()
 
         memory_before = 0
         arrays = {}
@@ -154,7 +152,7 @@ class TransientReuse(ppl.Pass):
                     mapping.add((buckets[i][0], buckets[i][j]))
 
             # For each mapping redirect edges and rename memlets in the state
-            for new, old in sorted(list(mapping)):
+            for new, old in sorted(mapping):
                 result.add(old)
                 for n in state.nodes():
                     if isinstance(n, nodes.AccessNode) and n.data == old:

@@ -21,10 +21,10 @@ import pytest
 
 import dace
 from dace.sdfg import nodes
+from dace.transformation.dataflow import TrivialTaskletElimination
 from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.canonicalize.induction_variable_substitution import LoopCarriedRotationSubstitution
 from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
-from dace.transformation.dataflow import TrivialTaskletElimination
 from tests.sdfg.cfg_list_checks import assert_cfg_list_as_after_a_reset, record_tree_resets
 
 N = dace.symbol("N")

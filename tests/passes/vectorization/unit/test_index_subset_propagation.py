@@ -13,15 +13,15 @@ These tests build the exact pattern via the SDFG API (the `@dace.program` fronte
 reliably reproduce the promotion) and pin both the contiguous-inline and gather-stop behaviors.
 """
 
-import dace
-from dace.transformation.passes.canonicalize import canonicalize
 import pytest
 
+import dace
+from dace import subsets
+from dace.transformation.pass_pipeline import Pipeline
+from dace.transformation.passes.canonicalize import canonicalize
+from dace.transformation.passes.prune_symbols import RemoveUnusedSymbols
 from dace.transformation.passes.scalar_to_symbol import ScalarToSymbolPromotion
 from dace.transformation.passes.symbol_propagation import SymbolPropagation
-from dace.transformation.passes.prune_symbols import RemoveUnusedSymbols
-from dace.transformation.pass_pipeline import Pipeline
-from dace import subsets
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.propagate_index_subsets import PropagateIndexSubsets, may_rewrite
 from dace.transformation.passes.vectorization.utils.tile_access import propagate_subset
@@ -157,7 +157,8 @@ def test_iplusoffset_kernel_emits_no_gather():
     DENSE load — no gather. Asserts the multi-dim pipeline emits no TileGather/TileScatter
     with gather_dims and mints no per-lane index tile (`_idx_*`)."""
     import copy
-    from tests.passes.vectorization.helpers.harness import _auto_tile_widths, S, S1, S2
+
+    from tests.passes.vectorization.helpers.harness import S1, S2, S, _auto_tile_widths
 
     @dace.program
     def tasklet_in_nested_sdfg(a: dace.float64[S, S], b: dace.float64[S, S], offset1: dace.int64, offset2: dace.int64):
@@ -168,8 +169,8 @@ def test_iplusoffset_kernel_emits_no_gather():
                 (1.5 * b[i + offset1, j + offset2]) + (2.0 * a[i + offset1, j + offset2])
             ) / 3.5
 
-    from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
     from dace.libraries.tileops import TileGather, TileScatter
+    from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
 
     sdfg = tasklet_in_nested_sdfg.to_sdfg(simplify=True)
     widths = _auto_tile_widths(sdfg, 8)

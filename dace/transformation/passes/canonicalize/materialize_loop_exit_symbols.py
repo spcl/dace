@@ -45,13 +45,12 @@ Out of scope:
 """
 
 import ast
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any
 
 import dace
 from dace import SDFG, properties, symbolic
 from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.state import AbstractControlFlowRegion, ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState
-
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis, scopes
@@ -65,7 +64,7 @@ LITERAL_NAMES = dict.fromkeys(["True", "False", "None"])
 POST_PREFIX = "_loop_exit_"
 
 
-def _parse_affine_update(rhs_str: str, lhs: str) -> Optional[Tuple[type, str]]:
+def _parse_affine_update(rhs_str: str, lhs: str) -> tuple[type, str] | None:
     """Parse ``rhs_str`` as ``lhs OP c`` (or ``c OP lhs``); return ``(ast op class, c_str)``.
 
     Accepts ``Add`` and ``Mult`` operators. ``c`` may be any expression that
@@ -93,7 +92,7 @@ def _parse_affine_update(rhs_str: str, lhs: str) -> Optional[Tuple[type, str]]:
     return type(expr.op), ast.unparse(c_node)
 
 
-def _is_loop_invariant_symbol(name: str, loop: LoopRegion, sdfg: SDFG, sdfg_free_symbols: Set[str]) -> bool:
+def _is_loop_invariant_symbol(name: str, loop: LoopRegion, sdfg: SDFG, sdfg_free_symbols: set[str]) -> bool:
     """Symbol exists in the SDFG and isn't reassigned inside the loop's body.
 
     ``sdfg_free_symbols`` is ``sdfg.free_symbols`` precomputed by the caller: that
@@ -116,7 +115,7 @@ def _is_loop_invariant_symbol(name: str, loop: LoopRegion, sdfg: SDFG, sdfg_free
 
 
 def _expr_is_loop_invariant(
-    expr_str: str, loop: LoopRegion, sdfg: SDFG, ignore: Dict[str, None], sdfg_free_symbols: Set[str]
+    expr_str: str, loop: LoopRegion, sdfg: SDFG, ignore: dict[str, None], sdfg_free_symbols: set[str]
 ) -> bool:
     """Every ``ast.Name`` in ``expr_str`` is loop-invariant in ``loop`` (or in ``ignore``)."""
     try:
@@ -137,15 +136,15 @@ def _expr_is_loop_invariant(
     return True
 
 
-def _detect_iv_symbols(loop: LoopRegion, sdfg: SDFG, sdfg_free_symbols: Set[str]) -> Dict[str, Tuple[type, str]]:
+def _detect_iv_symbols(loop: LoopRegion, sdfg: SDFG, sdfg_free_symbols: set[str]) -> dict[str, tuple[type, str]]:
     """Find symbols updated by ``sym = sym OP c`` on the loop body's interstate
     edges, where the update appears at most once per traversal and ``c`` is
     loop-invariant.
 
     :returns: ``{sym_name: (ast_op_class, c_expr_string)}``.
     """
-    found: Dict[str, Tuple[type, str]] = {}
-    seen_lhs: Dict[str, None] = {}
+    found: dict[str, tuple[type, str]] = {}
+    seen_lhs: dict[str, None] = {}
     for e in loop.edges():
         if not e.data.assignments:
             continue
@@ -168,7 +167,7 @@ def _detect_iv_symbols(loop: LoopRegion, sdfg: SDFG, sdfg_free_symbols: Set[str]
     return found
 
 
-def _trip_count(loop: LoopRegion) -> Optional[str]:
+def _trip_count(loop: LoopRegion) -> str | None:
     """Compute ``(end - init) // stride + 1`` as a sympy expression string."""
     start = loop_analysis.get_init_assignment(loop)
     end = loop_analysis.get_loop_end(loop)
@@ -184,7 +183,7 @@ def _trip_count(loop: LoopRegion) -> Optional[str]:
     return symbolic.symstr(n)
 
 
-def _closed_form(op_type: type, init: str, c: str, n: str) -> Optional[str]:
+def _closed_form(op_type: type, init: str, c: str, n: str) -> str | None:
     """Closed-form value of an affine recurrence after ``n`` steps."""
     if op_type is ast.Add:
         return f"(({init}) + ({c}) * ({n}))"
@@ -193,9 +192,9 @@ def _closed_form(op_type: type, init: str, c: str, n: str) -> Optional[str]:
     return None
 
 
-def _next_post_id(sdfg: SDFG, sdfg_free_symbols: Set[str]) -> int:
+def _next_post_id(sdfg: SDFG, sdfg_free_symbols: set[str]) -> int:
     """Lowest ``<N>`` not in use among existing ``_loop_exit_*_<N>`` symbols."""
-    used: Dict[int, None] = {}
+    used: dict[int, None] = {}
     for s in list(sdfg.symbols.keys()) + list(sdfg_free_symbols):
         if s.startswith(POST_PREFIX):
             tail = s.rsplit("_", 1)[-1]
@@ -207,11 +206,11 @@ def _next_post_id(sdfg: SDFG, sdfg_free_symbols: Set[str]) -> int:
     return n
 
 
-def _post_loop_blocks(parent: ControlFlowRegion, loop: LoopRegion) -> Dict[ControlFlowBlock, None]:
+def _post_loop_blocks(parent: ControlFlowRegion, loop: LoopRegion) -> dict[ControlFlowBlock, None]:
     """BFS from each out-edge destination of ``loop`` collecting every block in
     the post-loop region (within ``parent``)."""
-    visited: Dict[ControlFlowBlock, None] = {}
-    frontier: List[ControlFlowBlock] = [e.dst for e in parent.out_edges(loop)]
+    visited: dict[ControlFlowBlock, None] = {}
+    frontier: list[ControlFlowBlock] = [e.dst for e in parent.out_edges(loop)]
     while frontier:
         b = frontier.pop()
         if b in visited or b is loop:
@@ -223,10 +222,10 @@ def _post_loop_blocks(parent: ControlFlowRegion, loop: LoopRegion) -> Dict[Contr
     return visited
 
 
-def reiterated_names(post_blocks: Dict[ControlFlowBlock, None]) -> Dict[str, None]:
+def reiterated_names(post_blocks: dict[ControlFlowBlock, None]) -> dict[str, None]:
     """Iterators of the loops in the post-loop region. Such a loop binds its iterator afresh, so a read inside it is
     not a read of the exit value; renaming it to the exit symbol reads the wrong element (TSVC s1244 after fission)."""
-    names: Dict[str, None] = {}
+    names: dict[str, None] = {}
     for block in post_blocks:
         if isinstance(block, AbstractControlFlowRegion):
             names.update(
@@ -238,7 +237,7 @@ def reiterated_names(post_blocks: Dict[ControlFlowBlock, None]) -> Dict[str, Non
 
 
 def _rewrite_post_loop_readers(
-    parent: ControlFlowRegion, post_blocks: Dict[ControlFlowBlock, None], old_name: str, new_name: str, sdfg: SDFG
+    parent: ControlFlowRegion, post_blocks: dict[ControlFlowBlock, None], old_name: str, new_name: str, sdfg: SDFG
 ) -> None:
     """Replace every reference to ``old_name`` with ``new_name`` in the
     post-loop blocks: interstate edges into / between them (when both endpoints
@@ -265,14 +264,14 @@ def _rewrite_post_loop_readers(
 class _RenameNames(ast.NodeTransformer):
     """Substitute identifiers in an ast tree."""
 
-    def __init__(self, mapping: Dict[str, str]) -> None:
+    def __init__(self, mapping: dict[str, str]) -> None:
         self.mapping = mapping
 
     def visit_Name(self, node: ast.Name) -> ast.AST:
         return ast.copy_location(ast.Name(id=self.mapping.get(node.id, node.id), ctx=node.ctx), node)
 
 
-def _replace_in_expr(s: str, mapping: Dict[str, str]) -> str:
+def _replace_in_expr(s: str, mapping: dict[str, str]) -> str:
     try:
         tree = ast.parse(str(s), mode="eval").body
     except (SyntaxError, ValueError, TypeError):
@@ -290,10 +289,10 @@ def _interstate_text(edge: InterstateEdge) -> str:
 
 def _is_read_in(
     name: str,
-    blocks: Dict[ControlFlowBlock, None],
+    blocks: dict[ControlFlowBlock, None],
     parent: ControlFlowRegion,
-    state_reads: Dict[SDFGState, Set[str]],
-    edge_texts: Dict[int, str],
+    state_reads: dict[SDFGState, set[str]],
+    edge_texts: dict[int, str],
 ) -> bool:
     """Whether ``name`` is read in ``blocks``: among a state's used symbols, or in the text of an
     interstate edge that stays within ``blocks``. The edge half stays TEXT because the test is a
@@ -335,7 +334,7 @@ class MaterializeLoopExitSymbols(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def apply_pass(self, sdfg: SDFG, _: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _: dict[str, Any]) -> int | None:
         """Materialise every eligible IV symbol's exit value. Returns the count
         or ``None`` if nothing matched."""
         materialised = 0
@@ -348,8 +347,8 @@ class MaterializeLoopExitSymbols(ppl.Pass):
             sd_free_symbols = sd.free_symbols
             # What a state or an interstate edge reads does not depend on which loop asks, so each is
             # read once per SDFG instead of once per loop before it; a materialisation clears both.
-            state_reads: Dict[SDFGState, Set[str]] = {}
-            edge_texts: Dict[int, str] = {}
+            state_reads: dict[SDFGState, set[str]] = {}
+            edge_texts: dict[int, str] = {}
             for cfg in list(sd.all_control_flow_regions()):
                 if not (isinstance(cfg, LoopRegion) and cfg.loop_variable):
                     continue
@@ -381,10 +380,10 @@ class MaterializeLoopExitSymbols(ppl.Pass):
         self,
         loop: LoopRegion,
         sdfg: SDFG,
-        sdfg_free_symbols: Set[str],
+        sdfg_free_symbols: set[str],
         resolver: scopes.ScopedSymbolResolver,
-        state_reads: Dict[SDFGState, Set[str]],
-        edge_texts: Dict[int, str],
+        state_reads: dict[SDFGState, set[str]],
+        edge_texts: dict[int, str],
     ) -> int:
         parent = loop.parent_graph
         if parent is None:

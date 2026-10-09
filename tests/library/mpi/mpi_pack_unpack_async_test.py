@@ -8,13 +8,14 @@ Irecv/Wait inside a ``LoopRegion`` (the halo-in-a-time-loop shape), which is whe
 be spliced into the Wait's own graph, not the top SDFG. A 2-rank ring exercises it at runtime.
 """
 
-import dace
-from dace.memlet import Memlet
-import dace.libraries.mpi as mpi
-from dace.sdfg.state import LoopRegion
-from dace.transformation.layout.mpi_pack_unpack import MpiPackUnpack
 import numpy as np
 import pytest
+
+import dace
+import dace.libraries.mpi as mpi
+from dace.memlet import Memlet
+from dace.sdfg.state import LoopRegion
+from dace.transformation.layout.mpi_pack_unpack import MpiPackUnpack
 
 COL = 2
 

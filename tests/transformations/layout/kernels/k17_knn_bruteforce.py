@@ -20,8 +20,8 @@ FLANN/FAISS IVF); SC26 layout paper (Permute over an all-pairs scan).
 """
 
 import numpy
-import dace
 
+import dace
 from dace.transformation.layout.brute_force import permutation_candidates
 
 NR, NQ = dace.symbol("NR"), dace.symbol("NQ")

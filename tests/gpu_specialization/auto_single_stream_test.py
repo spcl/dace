@@ -14,10 +14,10 @@ through the pipeline so we can inspect the *real* shape the strategy sees in pro
 
 import warnings
 
-import dace
 import numpy as np
 import pytest
 
+import dace
 from dace.codegen import common
 from dace.transformation.auto.auto_optimize import auto_optimize
 from dace.transformation.passes.gpu_specialization.gpu_specialization_pipeline import GPUStreamPipeline

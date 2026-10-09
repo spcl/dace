@@ -56,15 +56,15 @@ import pytest
 
 import dace
 from dace import symbolic
+from dace.sdfg.propagation import propagate_memlets_sdfg
 from dace.sdfg.utils import specialize_symbols
 from dace.transformation.dataflow.trivial_tasklet_elimination import TrivialTaskletElimination
 from dace.transformation.dataflow.wcr_conversion import AugAssignToWCR
 from dace.transformation.interstate.loop_to_map import LoopToMap
-from dace.sdfg.propagation import propagate_memlets_sdfg
 from dace.transformation.passes.canonicalize.empty_state_elimination import EmptyStateElimination
 from dace.transformation.passes.dead_state_elimination import DeadStateElimination
-from dace.transformation.passes.lift_trivial_if import LiftTrivialIf
 from dace.transformation.passes.lift_preprocess import LiftPreprocess
+from dace.transformation.passes.lift_trivial_if import LiftTrivialIf
 from dace.transformation.passes.loop_to_scan import LoopToScan
 from dace.transformation.passes.parallelization_prep import ShortLoopUnroll
 from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated

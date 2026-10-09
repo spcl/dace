@@ -3,31 +3,33 @@
 Module that provides hooks that can be used to extend DaCe functionality.
 """
 
-from typing import Any, Callable, Generator, List, Optional, Tuple, Union, ContextManager, TYPE_CHECKING
 import contextlib
-from contextlib import contextmanager, ExitStack
 import pydoc
-from dace import config
 import warnings
+from collections.abc import Callable, Generator
+from contextlib import ExitStack, contextmanager
+from typing import TYPE_CHECKING, Any, ContextManager
+
+from dace import config
 
 if TYPE_CHECKING:
-    from dace.sdfg import SDFG
     from dace.codegen.compiled_sdfg import CompiledSDFG
+    from dace.sdfg import SDFG
 
 CallHookType = Callable[["SDFG"], None]
-CompiledCallHookType = Callable[["CompiledSDFG", Tuple[Any, ...]], None]
+CompiledCallHookType = Callable[["CompiledSDFG", tuple[Any, ...]], None]
 GeneratorType = Generator[Any, None, None]
 
 # Global list of hooks
-_SDFG_CALL_HOOKS: List[GeneratorType] = []
-_COMPILED_SDFG_CALL_HOOKS: List[GeneratorType] = []
+_SDFG_CALL_HOOKS: list[GeneratorType] = []
+_COMPILED_SDFG_CALL_HOOKS: list[GeneratorType] = []
 
 
 def _register_hook(
-    hook_list: List[GeneratorType],
-    before_hook: Optional[Callable[..., None]],
-    after_hook: Optional[Callable[..., None]],
-    context_manager: Optional[GeneratorType],
+    hook_list: list[GeneratorType],
+    before_hook: Callable[..., None] | None,
+    after_hook: Callable[..., None] | None,
+    context_manager: GeneratorType | None,
 ) -> int:
     """
     Internal function that registers function or context manager hooks to be called.
@@ -64,9 +66,9 @@ def _register_hook(
 
 def register_sdfg_call_hook(
     *,
-    before_hook: Optional[CallHookType] = None,
-    after_hook: Optional[CallHookType] = None,
-    context_manager: Optional[GeneratorType] = None,
+    before_hook: CallHookType | None = None,
+    after_hook: CallHookType | None = None,
+    context_manager: GeneratorType | None = None,
 ) -> int:
     """
     Registers a hook that is called when an SDFG is called.
@@ -82,9 +84,9 @@ def register_sdfg_call_hook(
 
 def register_compiled_sdfg_call_hook(
     *,
-    before_hook: Optional[CompiledCallHookType] = None,
-    after_hook: Optional[CompiledCallHookType] = None,
-    context_manager: Optional[GeneratorType] = None,
+    before_hook: CompiledCallHookType | None = None,
+    after_hook: CompiledCallHookType | None = None,
+    context_manager: GeneratorType | None = None,
 ) -> int:
     """
     Registers a hook that is called when a compiled SDFG is called.
@@ -123,9 +125,9 @@ def unregister_compiled_sdfg_call_hook(hook_id: int):
 @contextmanager
 def on_call(
     *,
-    before: Optional[CallHookType] = None,
-    after: Optional[CallHookType] = None,
-    context_manager: Optional[GeneratorType] = None,
+    before: CallHookType | None = None,
+    after: CallHookType | None = None,
+    context_manager: GeneratorType | None = None,
 ):
     """
     Context manager that registers a function to be called around each SDFG call.
@@ -167,9 +169,9 @@ def on_call(
 @contextmanager
 def on_compiled_sdfg_call(
     *,
-    before: Optional[CompiledCallHookType] = None,
-    after: Optional[CompiledCallHookType] = None,
-    context_manager: Optional[GeneratorType] = None,
+    before: CompiledCallHookType | None = None,
+    after: CompiledCallHookType | None = None,
+    context_manager: GeneratorType | None = None,
 ):
     """
     Context manager that registers a function to be called around each compiled SDFG call.
@@ -209,7 +211,7 @@ def on_compiled_sdfg_call(
 
 
 def _as_context_manager(
-    begin_func: Union[Callable[..., Any], ContextManager], end_func: Optional[Callable[..., Any]] = None
+    begin_func: Callable[..., Any] | ContextManager, end_func: Callable[..., Any] | None = None
 ) -> GeneratorType:
     """
     Returns a context manager from a begin and end functions, if not already given.
@@ -275,9 +277,9 @@ class invoke_compiled_sdfg_call_hooks(contextlib.AbstractContextManager):
 
     __slots__ = ("compiled_sdfg", "args", "exit_stack")
 
-    def __init__(self, compiled_sdfg: "CompiledSDFG", args: Tuple[Any, ...]) -> None:
-        self.compiled_sdfg: "CompiledSDFG" = compiled_sdfg
-        self.args: Tuple[Any, ...] = args
+    def __init__(self, compiled_sdfg: "CompiledSDFG", args: tuple[Any, ...]) -> None:
+        self.compiled_sdfg: CompiledSDFG = compiled_sdfg
+        self.args: tuple[Any, ...] = args
 
     def __enter__(self) -> "CompiledSDFG":
         if _COMPILED_SDFG_CALL_HOOKS:

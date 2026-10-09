@@ -16,9 +16,9 @@ import dace
 from dace.libraries.tileops.nodes import TileGather
 from dace.transformation.passes.vectorization import VectorizeCPUMultiDim
 from dace.transformation.passes.vectorization.config import VectorizeConfig
+from dace.transformation.passes.vectorization.enums import ISA
 from dace.transformation.passes.vectorization.restore_untiled_map_stride import TILE_NODES, RestoreUntiledMapStride
 from dace.transformation.passes.vectorization.utils.errors import VectorizeUnsupported
-from dace.transformation.passes.vectorization.enums import ISA
 
 WIDTH = 8
 N = dace.symbol("N", dtype=dace.int64)

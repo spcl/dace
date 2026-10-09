@@ -11,15 +11,13 @@ Operations implemented:
 """
 
 import copy
-import typing
 
 import dace
 from dace import SDFG, SDFGState
-from dace.sdfg.nodes import Node
-from dace.sdfg.utils import in_desc_with_name, out_desc_with_name
-
 from dace.libraries.onnx.forward_implementation_abc import ONNXForward
 from dace.libraries.onnx.op_implementations.utils import op_implementation
+from dace.sdfg.nodes import Node
+from dace.sdfg.utils import in_desc_with_name, out_desc_with_name
 
 
 @op_implementation(op="Resize", name="pure")
@@ -132,7 +130,7 @@ class PureResize(ONNXForward):
         return True
 
     @staticmethod
-    def forward(node: "ONNXOp", state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
+    def forward(node: "ONNXOp", state: SDFGState, sdfg: SDFG) -> Node | SDFG:
 
         inp_name = "X"
         out_name = "Y"
@@ -236,10 +234,10 @@ class PureResize(ONNXForward):
 
         # Calculate input indices
         tasklet_code.append(
-            """
+            f"""
         // Calculate input indices for each dimension
-        int inp_indices[{}];
-        """.format(num_dims)
+        int inp_indices[{num_dims}];
+        """
         )
 
         # Declare all size variables at the beginning
@@ -431,7 +429,7 @@ class PureResize(ONNXForward):
             tasklet_code.append("}")
 
         tasklet = nstate.add_tasklet(
-            f"tasklet_reshape",
+            "tasklet_reshape",
             tasklet_inputs,
             {"__out": dace.pointer(out_data_desc.dtype)},
             "\n".join(tasklet_code),

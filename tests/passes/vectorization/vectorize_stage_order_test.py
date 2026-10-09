@@ -17,7 +17,7 @@ from dace.libraries.standard.nodes.fill import FillLibraryNode
 from dace.transformation.passes.canonicalize.pipeline import IvSubstitutionFissionFixpoint, StructuralCleanup
 from dace.transformation.passes.parallelize import ParallelizePipeline
 from dace.transformation.passes.vectorization.config import VectorizeConfig
-from dace.transformation.passes.vectorization.enums import BranchMode, ISA, RemainderStrategy
+from dace.transformation.passes.vectorization.enums import ISA, BranchMode, RemainderStrategy
 from dace.transformation.passes.vectorization.vectorize_multi_dim import (
     EMITTABLE_TILE_NODE_TYPES,
     VectorizeCPUMultiDim,

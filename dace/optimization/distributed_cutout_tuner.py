@@ -1,9 +1,7 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
-from collections import OrderedDict
-import json
 import itertools
-
-from typing import Dict
+import json
+from collections import OrderedDict
 
 from dace.optimization import cutout_tuner as ct
 from dace.optimization import utils as optim_utils
@@ -20,7 +18,7 @@ class DistributedCutoutTuner:
     def __init__(self, tuner: ct.CutoutTuner) -> None:
         self._tuner = tuner
 
-    def optimize(self, measurements: int = 30, **kwargs) -> Dict:
+    def optimize(self, measurements: int = 30, **kwargs) -> dict:
         cutouts = OrderedDict()
         existing_files = set()
         for cutout, cutout_hash in self._tuner.cutouts():
@@ -65,7 +63,7 @@ class DistributedSpaceTuner:
     def __init__(self, tuner: ct.CutoutTuner) -> None:
         self._tuner = tuner
 
-    def optimize(self, measurements: int = 30, **kwargs) -> Dict:
+    def optimize(self, measurements: int = 30, **kwargs) -> dict:
         rank = optim_utils.get_world_rank()
         num_ranks = optim_utils.get_world_size()
 

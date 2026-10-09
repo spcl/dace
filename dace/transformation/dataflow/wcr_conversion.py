@@ -4,16 +4,16 @@
 import ast
 import copy
 import re
-from typing import List
+
 import sympy
-from dace import nodes, dtypes, Memlet, data, subsets, symbolic
+
+from dace import SDFG, Memlet, SDFGState, data, dtypes, nodes, subsets, symbolic
 from dace.frontend.python import astutils
+from dace.ordered import OrderedSet
+from dace.sdfg import utils as sdutil
+from dace.sdfg.propagation import propagate_memlets_state
 from dace.transformation import transformation
 from dace.transformation.helpers import get_parent_map_and_loop_scopes
-from dace.sdfg import utils as sdutil
-from dace import Memlet, SDFG, SDFGState
-from dace.sdfg.propagation import propagate_memlets_state
-from dace.ordered import OrderedSet
 
 
 def connect_through_scalar(
@@ -49,9 +49,9 @@ def read_back_access(state: SDFGState, written: nodes.AccessNode) -> nodes.Acces
     return node
 
 
-def _enclosing_map_params(state: SDFGState, node: nodes.Node) -> List[str]:
+def _enclosing_map_params(state: SDFGState, node: nodes.Node) -> list[str]:
     """Iteration parameters of every Map enclosing ``node`` (innermost outward)."""
-    params: List[str] = []
+    params: list[str] = []
     scope = state.scope_dict()
     cur = scope.get(node)
     while cur is not None:
@@ -474,7 +474,7 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
             ast_node: ast.Assign = tasklet.code.code[0]
             lhs: ast.Name = ast_node.targets[0]
             rhs = ast_node.value
-            inconns = list(edge.dst_conn for edge in inedges)
+            inconns = [edge.dst_conn for edge in inedges]
             if isinstance(rhs, ast.Call):
                 # min/max reduction. Accumulator = operand whose read slice matches the written
                 # slice (robust to arg order); WCR combines the OTHER (delta) operand into it.

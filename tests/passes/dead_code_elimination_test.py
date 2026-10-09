@@ -1,18 +1,17 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 """Various tests for dead code elimination passes."""
 
-from typing import Tuple
-
 import numpy as np
 import pytest
+
 import dace
 from dace.properties import CodeBlock
 from dace.sdfg import nodes
 from dace.sdfg.state import BreakBlock, ConditionalBlock, ContinueBlock, ControlFlowRegion, LoopRegion, ReturnBlock
 from dace.sdfg.validation import InvalidSDFGNodeError
 from dace.transformation.pass_pipeline import Pipeline
-from dace.transformation.passes.dead_state_elimination import DeadStateElimination
 from dace.transformation.passes.dead_dataflow_elimination import DeadDataflowElimination
+from dace.transformation.passes.dead_state_elimination import DeadStateElimination
 
 
 def test_dse_simple():
@@ -674,7 +673,7 @@ def test_dde_loop_condition():
     assert count_f_nodes == 2
 
 
-def dead_chain_in_a_loop_body() -> Tuple[dace.SDFG, dace.SDFGState]:
+def dead_chain_in_a_loop_body() -> tuple[dace.SDFG, dace.SDFGState]:
     sdfg = dace.SDFG("dead_chain_in_a_loop_body")
     sdfg.add_array("A", [10], dace.float64)
     sdfg.add_scalar("first", dace.float64, transient=True)
@@ -714,7 +713,7 @@ def test_dde_converging_loop_body_states_removes_the_whole_dead_chain():
     assert body.number_of_nodes() == 0
 
 
-def _two_writes_to_one_transient(second_write_range: str) -> Tuple[dace.SDFG, dace.SDFGState, nodes.AccessNode]:
+def _two_writes_to_one_transient(second_write_range: str) -> tuple[dace.SDFG, dace.SDFGState, nodes.AccessNode]:
     """``B[:] = 0`` then ``B[:, <range>] = A``, read back through a second access node.
 
     The two ``B`` access nodes are joined by no path -- the initializer's only out-edge is an
@@ -775,7 +774,7 @@ def test_dde_removes_an_initializer_the_second_write_fully_covers():
     assert not any(isinstance(n, nodes.Tasklet) and n.label == "init" for n in state.nodes())
 
 
-def _init_then_reduce(identity) -> Tuple[dace.SDFG, dace.SDFGState, nodes.AccessNode]:
+def _init_then_reduce(identity) -> tuple[dace.SDFG, dace.SDFGState, nodes.AccessNode]:
     """``s = 0`` then ``Reduce(s <- sum(A))``, read back through a second ``s`` access node.
 
     The two ``s`` nodes are joined only by an ordering edge, so deadness of the initializer is

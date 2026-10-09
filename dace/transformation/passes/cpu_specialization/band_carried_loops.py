@@ -87,16 +87,16 @@ rules apply. Only the wrapping map's extent and the inner map's range differ.
 """
 
 from functools import lru_cache
-from typing import Any, Dict, List, Optional, Set
+from typing import Any
 
 from dace import SDFG, dtypes, properties, subsets, symbolic
+from dace.optionals import required
 from dace.ordered import OrderedSet
 from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion, SDFGState
 from dace.transformation import transformation
 from dace.transformation.passes.canonicalize.supply_num_threads import DTYPE as NUM_THREADS_DTYPE
 from dace.transformation.passes.cpu_specialization.hoist_parallel_region import WORKSHARED, HoistParallelRegion
-from dace.optionals import required
 
 #: Parameter name of the band loop. One name, so the reshape can find the map it just made.
 BAND_PARAM = "__dace_band"
@@ -122,7 +122,7 @@ def axis_symbol(position: int):
     return symbolic.symbol(f"__dace_band_axis{position}", NUM_THREADS_DTYPE)
 
 
-def index_expressions(subset) -> List[Any]:
+def index_expressions(subset) -> list[Any]:
     """The per-dimension index expression of ``subset``, one entry per dimension: where each ``Range`` dimension
     starts."""
     if isinstance(subset, subsets.Range):
@@ -130,7 +130,7 @@ def index_expressions(subset) -> List[Any]:
     return []
 
 
-def names_a_param(expr, params: Set[str]) -> bool:
+def names_a_param(expr, params: set[str]) -> bool:
     """Whether ``expr`` mentions any of ``params``, which are symbol NAMES.
 
     By name, never by symbol object. Two ``dace.symbolic.symbol`` instances that share a name but
@@ -162,7 +162,7 @@ def same_index(left, right) -> bool:
     return symbolic.equal(left, right, is_length=False) is True
 
 
-def boundary_names(state: SDFGState, map_entry: nodes.MapEntry, map_exit: nodes.MapExit) -> Set[str]:
+def boundary_names(state: SDFGState, map_entry: nodes.MapEntry, map_exit: nodes.MapExit) -> set[str]:
     """The arrays that cross ``map_entry``'s scope boundary.
 
     Only these can carry a value from one trip of the enclosing loop to the next. Everything else
@@ -181,7 +181,7 @@ def boundary_names(state: SDFGState, map_entry: nodes.MapEntry, map_exit: nodes.
     return names
 
 
-def collect_accesses(state: SDFGState, scope_node, allowed: Set[str], reads: Dict, writes: Dict) -> bool:
+def collect_accesses(state: SDFGState, scope_node, allowed: set[str], reads: dict, writes: dict) -> bool:
     """Gather the PER-ELEMENT accesses under ``scope_node`` into ``reads`` / ``writes``.
 
     The memlets crossing a map's boundary are the union over the whole map -- for a body that
@@ -214,7 +214,7 @@ def collect_accesses(state: SDFGState, scope_node, allowed: Set[str], reads: Dic
     return True
 
 
-def descend_into_nested(state: SDFGState, node: nodes.NestedSDFG, allowed: Set[str], reads: Dict, writes: Dict) -> bool:
+def descend_into_nested(state: SDFGState, node: nodes.NestedSDFG, allowed: set[str], reads: dict, writes: dict) -> bool:
     """Add the accesses inside ``node``, translated into the enclosing graph's names and symbols.
 
     :param state: the state holding ``node``.
@@ -257,7 +257,7 @@ def descend_into_nested(state: SDFGState, node: nodes.NestedSDFG, allowed: Set[s
     return True
 
 
-def substituted(subset, substitution: Dict[str, Any]) -> List:
+def substituted(subset, substitution: dict[str, Any]) -> list:
     """``subset``'s index expressions rewritten through ``substitution``, which is keyed by NAME.
 
     Each expression is replaced against the symbol instances it actually carries, looked up by
@@ -268,7 +268,7 @@ def substituted(subset, substitution: Dict[str, Any]) -> List:
     return rewritten(index_expressions(subset), substitution)
 
 
-def rewritten(expressions: List, substitution: Dict[str, Any]) -> List:
+def rewritten(expressions: list, substitution: dict[str, Any]) -> list:
     """``expressions`` rewritten through ``substitution``, keyed by NAME; see :func:`substituted`."""
     out = []
     for expr in expressions:
@@ -284,9 +284,9 @@ def boundary_accesses(
     state: SDFGState,
     map_entry: nodes.MapEntry,
     map_exit: nodes.MapExit,
-    allowed: Set[str],
-    reads: Dict[str, List[List[Any]]],
-    writes: Dict[str, List[List[Any]]],
+    allowed: set[str],
+    reads: dict[str, list[list[Any]]],
+    writes: dict[str, list[list[Any]]],
 ) -> bool:
     """Add the PER-ITERATION accesses the scope BOUNDARY edges carry, whatever produced them.
 
@@ -320,7 +320,7 @@ def boundary_accesses(
     :returns: ``False`` if a boundary write is a union no interior access accounts for.
     """
     params = OrderedSet(map_entry.map.params)
-    union_writes: List[str] = []
+    union_writes: list[str] = []
     directions = ((state.out_edges(map_entry), reads, False), (state.in_edges(map_exit), writes, True))
     for edges, target, written in directions:
         for edge in edges:
@@ -337,7 +337,7 @@ def boundary_accesses(
 
 
 def collect_band_accesses(
-    state: SDFGState, map_entry: nodes.MapEntry, map_exit: nodes.MapExit, reads: Dict, writes: Dict
+    state: SDFGState, map_entry: nodes.MapEntry, map_exit: nodes.MapExit, reads: dict, writes: dict
 ) -> bool:
     """Add ``map_entry``'s per-element accesses to ``reads`` / ``writes``, on the band's own axes.
 
@@ -351,8 +351,8 @@ def collect_band_accesses(
     :param writes: ``name -> [index expression lists]``, extended in place.
     :returns: ``False`` if something in the scope cannot be analysed.
     """
-    local_reads: Dict[str, List] = {}
-    local_writes: Dict[str, List] = {}
+    local_reads: dict[str, list] = {}
+    local_writes: dict[str, list] = {}
     allowed = boundary_names(state, map_entry, map_exit)
     if not collect_accesses(state, map_entry, allowed, local_reads, local_writes):
         return False
@@ -368,7 +368,7 @@ def collect_band_accesses(
     return True
 
 
-def band_local(reads: Dict, writes: Dict, params: Set[str]) -> bool:
+def band_local(reads: dict, writes: dict, params: set[str]) -> bool:
     """Whether every dependence among ``reads`` / ``writes`` stays inside one band.
 
     :param reads: ``name -> [index expression lists]``, on the band's own axes.
@@ -399,17 +399,17 @@ def band_local(reads: Dict, writes: Dict, params: Set[str]) -> bool:
     return True
 
 
-def bandable_maps(loop: LoopRegion) -> Optional[List]:
+def bandable_maps(loop: LoopRegion) -> list | None:
     """The worksharing maps of ``loop`` whose axis may be cut, or ``None`` if any may not.
 
     :param loop: the candidate loop region.
     :returns: ``(state, map_entry)`` pairs to band, or ``None``.
     """
     found = []
-    reads: Dict[str, List] = {}
-    writes: Dict[str, List] = {}
-    params: Set[str] = set()
-    cut_ranges: List[Any] = []
+    reads: dict[str, list] = {}
+    writes: dict[str, list] = {}
+    params: set[str] = set()
+    cut_ranges: list[Any] = []
     for block in loop.all_control_flow_blocks():
         if not isinstance(block, SDFGState):
             continue

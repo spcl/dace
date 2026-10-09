@@ -1,6 +1,8 @@
 import copy
+
 import numpy
 import pytest
+
 import dace
 import dace.sdfg.construction_utils as cutil
 

@@ -1,8 +1,6 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 """Shared base and helpers for the Fortran I/O library nodes."""
 
-from typing import List, Tuple
-
 from dace import data, dtypes
 from dace.sdfg import nodes
 
@@ -18,7 +16,7 @@ _FIO_TYPES = {
 }
 
 
-def fio_type(dtype) -> Tuple[str, str]:
+def fio_type(dtype) -> tuple[str, str]:
     """Resolve the wrapper suffix and C cast type for an item ``dtype``.
 
     :param dtype: the connected descriptor's DaCe data type.
@@ -42,7 +40,7 @@ class FortranIONode(nodes.LibraryNode):
     def has_side_effects(self, sdfg) -> bool:
         return True
 
-    def _ordered_items(self, sdfg, state, prefix: str, edges_in: bool) -> List[Tuple[str, object, str, bool]]:
+    def _ordered_items(self, sdfg, state, prefix: str, edges_in: bool) -> list[tuple[str, object, str, bool]]:
         """Resolve the connected I/O items in connector order.
 
         :param prefix: connector prefix (``"_in_"`` for WRITE, ``"_out_"`` for

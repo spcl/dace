@@ -5,7 +5,6 @@ dependence-legal (no RAW/WAR/WAW against the second loop, no side effect) AND it
 """
 
 import copy
-from typing import Tuple
 from unittest import mock
 
 import numpy as np
@@ -15,8 +14,8 @@ import dace
 from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.state import BreakBlock, LoopRegion, SDFGState
 from dace.transformation.passes.analysis.analysis import AccessSets
-from dace.transformation.passes.canonicalize.reorder_state_for_loop_fusion import ReorderStateForLoopFusion
 from dace.transformation.passes.canonicalize.fuse_loops import FuseLoops
+from dace.transformation.passes.canonicalize.reorder_state_for_loop_fusion import ReorderStateForLoopFusion
 
 N = 8
 
@@ -29,7 +28,7 @@ def _loop(label: str, end: int) -> LoopRegion:
 
 def _build(
     conflict: str = "none", loop2_end: int = N, state_side_effects: bool = False
-) -> Tuple[dace.SDFG, LoopRegion, SDFGState, LoopRegion]:
+) -> tuple[dace.SDFG, LoopRegion, SDFGState, LoopRegion]:
     """``loop1{T[i]=T[i-1]+P[i]}`` ; ``state{...}`` ; ``loop2{U[i]=U[i-1]+Q[i]}``.
 
     The two loop bodies touch completely disjoint arrays (``P``/``T`` vs ``Q``/``U``), so once

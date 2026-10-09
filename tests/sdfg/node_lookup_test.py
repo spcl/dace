@@ -4,7 +4,8 @@
 import pytest
 
 import dace
-from dace.sdfg import graph as gr, nodes
+from dace.sdfg import graph as gr
+from dace.sdfg import nodes
 
 
 def reference_node(graph, id):

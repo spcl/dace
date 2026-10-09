@@ -80,11 +80,12 @@ plain memlets. NestedSDFG-mediated accesses to the same array are not considered
 import contextlib
 import copy
 import io
-from typing import Any, Dict, List, Optional, Set, Tuple, Type, Union
+from typing import Any
 
-from dace import graphlib as nx
 from dace import SDFG, data, dtypes, properties, subsets, symbolic
+from dace import graphlib as nx
 from dace.memlet import Memlet
+from dace.ordered import OrderedSet
 from dace.sdfg import nodes
 from dace.sdfg.state import (
     AbstractControlFlowRegion,
@@ -96,7 +97,6 @@ from dace.sdfg.state import (
 )
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.analysis.analysis import must_write_state
-from dace.ordered import OrderedSet
 
 #: Array lifetimes we are allowed to attach a privatized scalar to (the scalar follows
 #: the same scoping rules; persistent / global lifetimes are out of scope for v1).
@@ -104,11 +104,11 @@ _PRIVATIZABLE_LIFETIMES = (dtypes.AllocationLifetime.Scope, dtypes.AllocationLif
 
 #: Per-block ``(read, written)`` data names, the shape
 #: :func:`~dace.transformation.passes.analysis.analysis.must_write_state` consumes.
-AccessSetMap = Dict[ControlFlowBlock, Tuple[Set[str], Set[str]]]
+AccessSetMap = dict[ControlFlowBlock, tuple[set[str], set[str]]]
 #: Per-region immediate-dominator maps.
-IdomMap = Dict[ControlFlowRegion, Dict[ControlFlowBlock, ControlFlowBlock]]
+IdomMap = dict[ControlFlowRegion, dict[ControlFlowBlock, ControlFlowBlock]]
 #: ``must_write_state`` memo, keyed by ``(data name, id(block))``.
-MustWriteCache = Dict[Tuple[str, int], Optional[SDFGState]]
+MustWriteCache = dict[tuple[str, int], SDFGState | None]
 
 
 class _Promotion:
@@ -133,11 +133,11 @@ class _Promotion:
         arr_name: str,
         scalar_name: str,
         prologue: SDFGState,
-        edits: List[Tuple[Memlet, Optional[str], Any]],
-        node_edits: List[Tuple[nodes.AccessNode, str]],
-        introduced_scalar_nodes: Optional[List[Tuple[nodes.AccessNode, Any]]] = None,
-        removed_arr_nodes: Optional[List[Tuple[nodes.AccessNode, Any]]] = None,
-        endpoint_edits: Optional[List[Tuple[Any, Memlet, str, nodes.AccessNode]]] = None,
+        edits: list[tuple[Memlet, str | None, Any]],
+        node_edits: list[tuple[nodes.AccessNode, str]],
+        introduced_scalar_nodes: list[tuple[nodes.AccessNode, Any]] | None = None,
+        removed_arr_nodes: list[tuple[nodes.AccessNode, Any]] | None = None,
+        endpoint_edits: list[tuple[Any, Memlet, str, nodes.AccessNode]] | None = None,
     ):
         self.sdfg = sdfg
         self.arr_name = arr_name
@@ -232,22 +232,22 @@ class PromoteConstantIndexAccess(ppl.Pass):
         # stays refused on the same shape. Re-runs only repeat the speculative work.
         return False
 
-    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+    def depends_on(self) -> list[type[ppl.Pass] | ppl.Pass]:
         return []
 
-    def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[Dict[str, List[str]]]:
+    def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> dict[str, list[str]] | None:
         """Promote ``(arr, c)`` slots for loops that ``LoopToMap`` refuses, in ``sdfg`` and nested.
 
         :param sdfg: The SDFG to transform in place.
         :returns: A dict mapping each parallelized loop's label to the ``arr@c`` labels
                   that were promoted in it, or ``None`` if nothing was promoted.
         """
-        promoted: Dict[str, List[str]] = {}
+        promoted: dict[str, list[str]] = {}
         for sd in sdfg.all_sdfgs_recursive():
             promoted.update(self._promote_sdfg(sd))
         return promoted or None
 
-    def report(self, pass_retval: Any) -> Optional[str]:
+    def report(self, pass_retval: Any) -> str | None:
         if not pass_retval:
             return None
         slots = sum(len(v) for v in pass_retval.values())
@@ -257,14 +257,14 @@ class PromoteConstantIndexAccess(ppl.Pass):
 
     # core
 
-    def _promote_sdfg(self, sdfg: SDFG) -> Dict[str, List[str]]:
+    def _promote_sdfg(self, sdfg: SDFG) -> dict[str, list[str]]:
         """Promote beneficial slots for the loops of a single SDFG (speculate, then verify)."""
         loops = [r for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion) and r.loop_variable]
 
         # Cheap structural pre-filter first: collect the loops that actually have a
         # privatizable ``(arr, c)`` pair. Only if some do is the (expensive) LoopToMap
         # match worth running.
-        candidates: Dict[LoopRegion, List[Tuple[str, Any]]] = {}
+        candidates: dict[LoopRegion, list[tuple[str, Any]]] = {}
         for loop in loops:
             pairs = self._privatizable_slots(sdfg, loop)
             if pairs:
@@ -281,12 +281,12 @@ class PromoteConstantIndexAccess(ppl.Pass):
         # ``zvqx`` accesses left in its body). Doing each loop independently --
         # commit or undo before moving on -- lets the inner loop's check run against
         # the post-outer-decision state.
-        kept: Dict[str, List[str]] = {}
+        kept: dict[str, list[str]] = {}
         for loop, pairs in candidates.items():
             if self._l2m_accepts(loop, sdfg):
                 continue
-            applied: List[_Promotion] = []
-            labels: List[str] = []
+            applied: list[_Promotion] = []
+            labels: list[str] = []
             for arr_name, c_subset in pairs:
                 promo = self._promote(sdfg, loop, arr_name, c_subset)
                 applied.append(promo)
@@ -327,7 +327,7 @@ class PromoteConstantIndexAccess(ppl.Pass):
 
     # slot detection
 
-    def _privatizable_slots(self, sdfg: SDFG, loop: LoopRegion) -> List[Tuple[str, subsets.Range]]:
+    def _privatizable_slots(self, sdfg: SDFG, loop: LoopRegion) -> list[tuple[str, subsets.Range]]:
         """The ``(arr, constant_subset)`` pairs that are safe to privatize in ``loop``.
 
         At most one constant index ``c`` per array; an array with mixed access modes
@@ -338,9 +338,9 @@ class PromoteConstantIndexAccess(ppl.Pass):
         # access to the same array exists in the loop, or if the array appears in any
         # memlet whose primary side is a different array (v1 only handles the simple
         # tasklet<->AccessNode shape where ``memlet.data`` is the array itself).
-        per_arr: Dict[str, List[subsets.Range]] = {}
-        per_arr_has_wcr: Dict[str, bool] = {}
-        per_arr_mixed: Set[str] = set()
+        per_arr: dict[str, list[subsets.Range]] = {}
+        per_arr_has_wcr: dict[str, bool] = {}
+        per_arr_mixed: set[str] = set()
         for state in loop_states:
             for node in state.nodes():
                 if not isinstance(node, nodes.AccessNode):
@@ -373,7 +373,7 @@ class PromoteConstantIndexAccess(ppl.Pass):
         if not per_arr:
             return []
 
-        results: List[Tuple[str, subsets.Range]] = []
+        results: list[tuple[str, subsets.Range]] = []
         for name, subs in per_arr.items():
             if name in per_arr_mixed:
                 continue
@@ -382,7 +382,7 @@ class PromoteConstantIndexAccess(ppl.Pass):
             # One candidate per *distinct* constant point. Distinct slots are independent
             # (the per-array ``mixed`` gate above already refused promotion if a wildcard
             # access to the same array exists); each slot's live-out check is per-point.
-            unique_points: List[subsets.Range] = []
+            unique_points: list[subsets.Range] = []
             for s in subs:
                 if not any(self._point_subsets_equal(s, p) for p in unique_points):
                     unique_points.append(s)
@@ -466,11 +466,11 @@ class PromoteConstantIndexAccess(ppl.Pass):
         # does not run at all when the map range is empty, so it establishes nothing. Reads
         # are collected at every scope: a read inside a map still has to be covered.
         access_sets: AccessSetMap = {}
-        reads: Dict[SDFGState, List[nodes.AccessNode]] = {}
-        writes: Dict[SDFGState, List[nodes.AccessNode]] = {}
+        reads: dict[SDFGState, list[nodes.AccessNode]] = {}
+        writes: dict[SDFGState, list[nodes.AccessNode]] = {}
         for state in body_states:
-            read_nodes: List[nodes.AccessNode] = []
-            write_nodes: List[nodes.AccessNode] = []
+            read_nodes: list[nodes.AccessNode] = []
+            write_nodes: list[nodes.AccessNode] = []
             for node in state.nodes():
                 if not isinstance(node, nodes.AccessNode) or node.data != name:
                     continue
@@ -505,8 +505,8 @@ class PromoteConstantIndexAccess(ppl.Pass):
         # Region-level access sets + immediate dominators, for every region inside the loop.
         idom: IdomMap = {}
         for cfg in loop.all_control_flow_regions():
-            region_reads: Set[str] = set()
-            region_writes: Set[str] = set()
+            region_reads: set[str] = set()
+            region_writes: set[str] = set()
             for state in cfg.states():
                 region_reads |= access_sets[state][0]
                 region_writes |= access_sets[state][1]
@@ -533,7 +533,7 @@ class PromoteConstantIndexAccess(ppl.Pass):
         slot: subsets.Range,
         state: SDFGState,
         read: nodes.AccessNode,
-        state_writes: List[nodes.AccessNode],
+        state_writes: list[nodes.AccessNode],
         access_sets: AccessSetMap,
         idom: IdomMap,
         cache: MustWriteCache,
@@ -549,7 +549,7 @@ class PromoteConstantIndexAccess(ppl.Pass):
                 return True
         # A block that dominates the read and writes the slot on every path through itself.
         pivot: ControlFlowBlock = state
-        region: Optional[AbstractControlFlowRegion] = state.parent_graph
+        region: AbstractControlFlowRegion | None = state.parent_graph
         # ``idom`` covers exactly the regions inside ``loop``; leaving that set means the walk
         # left the loop without finding a cover, which is a refusal.
         while region is not None and region in idom:
@@ -615,8 +615,8 @@ class PromoteConstantIndexAccess(ppl.Pass):
             return False
 
         # Collect read/write events of name[slot]
-        reads: List[Tuple[SDFGState, nodes.AccessNode]] = []
-        writes: List[Tuple[SDFGState, nodes.AccessNode]] = []
+        reads: list[tuple[SDFGState, nodes.AccessNode]] = []
+        writes: list[tuple[SDFGState, nodes.AccessNode]] = []
         for state in body_states:
             for n in state.nodes():
                 if not isinstance(n, nodes.AccessNode) or n.data != name:
@@ -646,7 +646,7 @@ class PromoteConstantIndexAccess(ppl.Pass):
         # references ``name`` taints the iedge's LHS symbols. Subsequent
         # state code (tasklet bodies, memlet index expressions) that uses
         # the tainted symbol is treated as a taint source.
-        iedge_seed_symbols: Set[str] = set()
+        iedge_seed_symbols: set[str] = set()
         body_state_set = set(body_states)
         for edge in loop.all_interstate_edges():
             if edge.src not in body_state_set and edge.dst not in body_state_set:
@@ -678,8 +678,8 @@ class PromoteConstantIndexAccess(ppl.Pass):
         # A reached write of name[slot] (other than the seed) signals RMW.
         # Cross-state continuation uses the data name as the persistence key.
         for seed in reads:
-            visited: Set[Tuple[SDFGState, Any]] = {seed}
-            stack: List[Tuple[SDFGState, Any]] = [seed]
+            visited: set[tuple[SDFGState, Any]] = {seed}
+            stack: list[tuple[SDFGState, Any]] = [seed]
             seed_node = seed[1]
             while stack:
                 state, node = stack.pop()
@@ -706,19 +706,19 @@ class PromoteConstantIndexAccess(ppl.Pass):
         return False
 
     @staticmethod
-    def _loop_state_successors(loop: LoopRegion, body_states: List[SDFGState]) -> Dict[SDFGState, Set[SDFGState]]:
+    def _loop_state_successors(loop: LoopRegion, body_states: list[SDFGState]) -> dict[SDFGState, set[SDFGState]]:
         """For each state in ``body_states``, the transitive set of body
         states reachable via interstate edges inside ``loop``.
         """
         body_set = set(body_states)
-        adj: Dict[SDFGState, Set[SDFGState]] = {s: set() for s in body_states}
+        adj: dict[SDFGState, set[SDFGState]] = {s: set() for s in body_states}
         for edge in loop.all_interstate_edges():
             if edge.src in body_set and edge.dst in body_set:
                 adj[edge.src].add(edge.dst)
         # Transitive closure (small body sizes; Floyd-Warshall-style is fine).
         for s in body_states:
             stack = list(adj[s])
-            seen: Set[SDFGState] = set(stack)
+            seen: set[SDFGState] = set(stack)
             while stack:
                 cur = stack.pop()
                 for nxt in adj.get(cur, ()):
@@ -784,7 +784,7 @@ class PromoteConstantIndexAccess(ppl.Pass):
             symbolic.pystr_to_symbolic(ar[0]) == symbolic.pystr_to_symbolic(br[0]) for ar, br in zip(a.ranges, b.ranges)
         )
 
-    def _not_live_out(self, loop: LoopRegion, name: str, slot: Optional[subsets.Range] = None) -> bool:
+    def _not_live_out(self, loop: LoopRegion, name: str, slot: subsets.Range | None = None) -> bool:
         """Live-out check for ``name`` (whole array) or ``name[slot]`` (one element).
 
         Walks the parent CFG forward from ``loop``; if the loop is nested inside another
@@ -838,7 +838,7 @@ class PromoteConstantIndexAccess(ppl.Pass):
             cur = parent
 
     @staticmethod
-    def _state_touches_slot(state: SDFGState, name: str, slot: Optional[subsets.Range]) -> bool:
+    def _state_touches_slot(state: SDFGState, name: str, slot: subsets.Range | None) -> bool:
         """``True`` if ``state`` has any incident memlet on ``name`` that might overlap ``slot``.
 
         With ``slot=None``, any access-node of ``name`` qualifies (the legacy whole-array
@@ -869,7 +869,7 @@ class PromoteConstantIndexAccess(ppl.Pass):
         return False
 
     @staticmethod
-    def _states_of(block) -> List[SDFGState]:
+    def _states_of(block) -> list[SDFGState]:
         """Flatten ``block`` to a list of its constituent SDFG states."""
         if isinstance(block, SDFGState):
             return [block]
@@ -934,11 +934,11 @@ class PromoteConstantIndexAccess(ppl.Pass):
             src, dst, Memlet(data=arr_name, subset=copy.deepcopy(c_subset), other_subset=subsets.Range([(0, 0, 1)]))
         )
 
-        edits: List[Tuple[Memlet, Optional[str], Any]] = []
-        node_edits: List[Tuple[nodes.AccessNode, str]] = []
-        introduced_scalar_nodes: List[Tuple[nodes.AccessNode, Any]] = []
-        removed_arr_nodes: List[Tuple[nodes.AccessNode, Any]] = []
-        endpoint_edits: List[Tuple[Any, Memlet, str, nodes.AccessNode]] = []
+        edits: list[tuple[Memlet, str | None, Any]] = []
+        node_edits: list[tuple[nodes.AccessNode, str]] = []
+        introduced_scalar_nodes: list[tuple[nodes.AccessNode, Any]] = []
+        removed_arr_nodes: list[tuple[nodes.AccessNode, Any]] = []
+        endpoint_edits: list[tuple[Any, Memlet, str, nodes.AccessNode]] = []
         scalar_subset = subsets.Range([(0, 0, 1)])
 
         single_slot = self._arr_accesses_only_at_slot(loop, arr_name, c_subset)
@@ -947,7 +947,7 @@ class PromoteConstantIndexAccess(ppl.Pass):
             if state is prologue:
                 continue
             # Per-state introduced scalar AccessNode (slot-precise path only).
-            per_state_scalar: Optional[nodes.AccessNode] = None
+            per_state_scalar: nodes.AccessNode | None = None
             for edge in list(state.edges()):
                 memlet = edge.data
                 if memlet is None or memlet.data != arr_name:

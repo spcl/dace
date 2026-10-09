@@ -1,31 +1,33 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+import warnings
 from copy import deepcopy as dc
-from typing import Any, Dict, Optional, Tuple
-from dace import dtypes, memlet as mm, properties, data as dt
-from dace.symbolic import symstr, equal, equal_valued
+from typing import Any
+
+import numpy as np
+
 import dace.library
-from dace import SDFG, SDFGState
-from dace.frontend.common import op_repository as oprepo
 import dace.sdfg.nodes
-from dace.transformation.transformation import ExpandTransformation
-from dace.libraries.blas import blas_helpers
+from dace import SDFG, SDFGState, dtypes, properties
+from dace import data as dt
+from dace import memlet as mm
+from dace.frontend.common import op_repository as oprepo
+from dace.libraries.blas import blas_helpers, environments
 from dace.libraries.blas.blas_helpers import (
-    to_blastype,
     check_access,
     dtype_to_cudadatatype,
-    to_cublas_computetype,
     matrix_view,
+    to_blastype,
+    to_cublas_computetype,
 )
 from dace.libraries.blas.nodes.matmul import (
-    _get_matmul_operands,
     _get_codegen_gemm_opts,
+    _get_matmul_operands,
     _matrix_operand,
     _matrix_subset_size,
 )
-from .. import environments
 from dace.libraries.standard.environments.cuda import CUDA
-import numpy as np
-import warnings
+from dace.symbolic import equal, equal_valued, symstr
+from dace.transformation.transformation import ExpandTransformation
 
 
 def _is_complex(dtype):
@@ -42,16 +44,12 @@ def _cast_to_dtype_str(value, dtype: dace.dtypes.typeclass) -> str:
     if _is_complex(dtype):
         cast_value = complex(value)
 
-        return "dace.{type}({real}, {imag})".format(
-            type=dace.dtype_to_typeclass(dtype).to_string(),
-            real=cast_value.real,
-            imag=cast_value.imag,
-        )
+        return f"dace.{dace.dtype_to_typeclass(dtype).to_string()}({cast_value.real}, {cast_value.imag})"
     else:
-        return "dace.{}({})".format(dace.dtype_to_typeclass(dtype).to_string(), value)
+        return f"dace.{dace.dtype_to_typeclass(dtype).to_string()}({value})"
 
 
-def _coeff_conn_descs(node: "Gemm", state: SDFGState, sdfg: SDFG) -> Dict[str, dt.Data]:
+def _coeff_conn_descs(node: "Gemm", state: SDFGState, sdfg: SDFG) -> dict[str, dt.Data]:
     """Descriptors of the wired runtime coefficient connectors (``_alpha`` / ``_beta``), keyed by
     connector name.
 
@@ -83,8 +81,8 @@ def _host_value_expr(conn: str) -> str:
 
 
 def _host_coeff(
-    var: str, conn: str, prop: Any, desc: Optional[dt.Data], arr_prefix: str, dtype: dtypes.typeclass, cdtype: str
-) -> Tuple[str, str]:
+    var: str, conn: str, prop: Any, desc: dt.Data | None, arr_prefix: str, dtype: dtypes.typeclass, cdtype: str
+) -> tuple[str, str]:
     """Render a host-pointer-mode coefficient for the GPU BLAS call.
 
     A wired runtime host scalar is read by value and composed multiplicatively with the compile-time
@@ -121,7 +119,7 @@ def _host_coeff(
 
 
 def _device_coeff(
-    conn: str, prop: Any, desc: Optional[dt.Data], arr_prefix: str, cdtype: str, constants: Dict[float, str]
+    conn: str, prop: Any, desc: dt.Data | None, arr_prefix: str, cdtype: str, constants: dict[float, str]
 ) -> str:
     """Render a device-pointer-mode coefficient for the GPU BLAS call.
 
@@ -154,7 +152,7 @@ def _device_coeff(
     )
 
 
-def _cblas_coeff(var: str, conn: str, prop: Any, desc: Optional[dt.Data], dtype: dtypes.typeclass) -> str:
+def _cblas_coeff(var: str, conn: str, prop: Any, desc: dt.Data | None, dtype: dtypes.typeclass) -> str:
     """Render a host declaration of an effective CBLAS coefficient.
 
     The declared local holds the compile-time ``prop``, times the wired runtime host scalar when one
@@ -263,11 +261,11 @@ class ExpandGemmPure(ExpandTransformation):
             if equal_valued(1, node.alpha):
                 mul_program = "__out = __alpha * __a * __b"
             else:
-                mul_program = "__out = {} * __alpha * __a * __b".format(_cast_to_dtype_str(node.alpha, dtype_a))
+                mul_program = f"__out = {_cast_to_dtype_str(node.alpha, dtype_a)} * __alpha * __a * __b"
         elif equal_valued(1, node.alpha):
             mul_program = "__out = __a * __b"
         else:
-            mul_program = "__out = {} * __a * __b".format(_cast_to_dtype_str(node.alpha, dtype_a))
+            mul_program = f"__out = {_cast_to_dtype_str(node.alpha, dtype_a)} * __a * __b"
 
         if equal_valued(1, node.beta) and not rt_beta:
             state = sdfg.add_state(node.label + "_state")
@@ -285,7 +283,7 @@ class ExpandGemmPure(ExpandTransformation):
             if equal_valued(1, node.beta):
                 add_program = "__y = (__beta * __c)"
             else:
-                add_program = "__y = ({} * __beta * __c)".format(_cast_to_dtype_str(node.beta, dtype_a))
+                add_program = f"__y = ({_cast_to_dtype_str(node.beta, dtype_a)} * __beta * __c)"
             if list(shape_c) == [M, N]:
                 memlet_idx = index_c("__i0", "__i1")
             elif list(shape_c) == [1, N]:
@@ -295,7 +293,7 @@ class ExpandGemmPure(ExpandTransformation):
             elif list(shape_c) == [N]:
                 memlet_idx = "__i1"
             else:
-                raise ValueError("Could not broadcast input _c to ({}, {})".format(M, N))
+                raise ValueError(f"Could not broadcast input _c to ({M}, {N})")
             init_state.add_mapped_tasklet(
                 "gemm_init",
                 {"__i%d" % i: "0:%s" % s for i, s in enumerate([M, N])},
@@ -321,7 +319,7 @@ class ExpandGemmPure(ExpandTransformation):
             pass
         else:
             # Beta map
-            add_program = "__y = ({} * __c)".format(_cast_to_dtype_str(node.beta, dtype_a))
+            add_program = f"__y = ({_cast_to_dtype_str(node.beta, dtype_a)} * __c)"
 
             # manually broadcasting C to [M, N]
             if list(shape_c) == [M, N]:
@@ -333,7 +331,7 @@ class ExpandGemmPure(ExpandTransformation):
             elif list(shape_c) == [N]:
                 memlet_idx = "__i1"
             else:
-                raise ValueError("Could not broadcast input _c to ({}, {})".format(M, N))
+                raise ValueError(f"Could not broadcast input _c to ({M}, {N})")
 
             init_state.add_mapped_tasklet(
                 "gemm_init",
@@ -1140,8 +1138,8 @@ class Gemm(dace.sdfg.nodes.LibraryNode):
         size3 = _matrix_subset_size(out_memlet.subset)
         if size2 is not None:
             res = [equal(s0, s1) for s0, s1 in zip(size2, size3)]
-            fail = any([r is False for r in res])
-            success = all([r is True for r in res])
+            fail = any(r is False for r in res)
+            success = all(r is True for r in res)
             if fail:
                 raise ValueError("Input C matrix must match output matrix.")
             elif not success:
@@ -1150,8 +1148,8 @@ class Gemm(dace.sdfg.nodes.LibraryNode):
             raise ValueError("matrix-matrix product only supported on matrices")
         if len(size3) == 2:
             res = [equal(s0, s1) for s0, s1 in zip(size3, [size0[-2], size1[-1]])]
-            fail = any([r is False for r in res])
-            success = all([r is True for r in res])
+            fail = any(r is False for r in res)
+            success = all(r is True for r in res)
             if fail:
                 raise ValueError("Output to matrix-matrix product must agree in the m and n dimensions")
             elif not success:

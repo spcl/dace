@@ -8,22 +8,22 @@ import ast
 import collections
 import copy
 import numbers
+from typing import TYPE_CHECKING
+
 import astunparse
 import sympy as sp
-from typing import TYPE_CHECKING
 
 # DaCe imports
 import dace
+import dace.autodiff.utils as ad_utils
 import dace.sdfg.nodes as nodes
-from dace.ordered import OrderedSet
 from dace import dtypes
-from dace.data import Reference, Structure
-from dace.sdfg import SDFGState
-from dace.data import find_new_name
 
 # Autodiff imports
-from dace.autodiff.base_abc import BackwardResult, AutoDiffException
-import dace.autodiff.utils as ad_utils
+from dace.autodiff.base_abc import AutoDiffException, BackwardResult
+from dace.data import Reference, Structure, find_new_name
+from dace.ordered import OrderedSet
+from dace.sdfg import SDFGState
 
 if TYPE_CHECKING:
     from dace.autodiff.backward_pass_generator import BackwardPassGenerator
@@ -84,9 +84,7 @@ class DaceNodeBackwardImplementations:
                 # (1)
                 new_name = find_new_name(name + "_forwarded", self.bwd_engine.sdfg.arrays)
                 if new_name in self.bwd_engine.sdfg.arrays or new_name in self.bwd_engine.backward_input_arrays:
-                    raise AutoDiffException(
-                        "Attempted to create array with name '{}', but it already existed".format(new_name)
-                    )
+                    raise AutoDiffException(f"Attempted to create array with name '{new_name}', but it already existed")
 
                 self.bwd_engine.sdfg.add_datadesc(new_name, copy.deepcopy(desc))
                 self.bwd_engine.backward_input_arrays[new_name] = copy.deepcopy(desc)
@@ -144,7 +142,7 @@ class DaceNodeBackwardImplementations:
         )
 
         # If any input connectors point to symbols
-        for conn, _ in nsdfg.in_connectors.items():
+        for conn in nsdfg.in_connectors.keys():
             if conn in nsdfg.sdfg.symbols:
                 # We need to add a new symbol and create a mapping
                 new_symbol = find_new_name(conn, nsdfg.sdfg.symbols)
@@ -260,7 +258,7 @@ class DaceNodeBackwardImplementations:
         required_gradients: list[str],
     ) -> tuple[nodes.Node, BackwardResult]:
         if tasklet.language is not dtypes.Language.Python:
-            raise AutoDiffException("Expected tasklet with language Python, got language {}".format(tasklet.language))
+            raise AutoDiffException(f"Expected tasklet with language Python, got language {tasklet.language}")
 
         # tasklets should have scalar inputs (can be relaxed)
         for _, _, _, _, memlet in state.in_edges(tasklet):
@@ -413,7 +411,7 @@ class DaceNodeBackwardImplementations:
                 result.given_grad_names[output_conn] = rev_input_grad_name
 
                 # zero out the gradient
-                code = f"\n__zero_out_conn__ = 0.0"
+                code = "\n__zero_out_conn__ = 0.0"
                 rev_outputs = {}
                 rev_inputs = {rev_input_grad_name}
 
@@ -459,9 +457,7 @@ class DaceNodeBackwardImplementations:
 
                 if diff_expr.atoms(sp.Derivative):
                     # the final result contains a call to sp.Derivative
-                    raise AutoDiffException(
-                        "Unable to symbolically differentiate expression: {}".format(diff_expr.expr)
-                    )
+                    raise AutoDiffException(f"Unable to symbolically differentiate expression: {diff_expr.expr}")
 
                 if output_conn not in result.given_grad_names:
                     # pick a name for the input gradient
@@ -481,7 +477,7 @@ class DaceNodeBackwardImplementations:
                 string_symbols = string_symbols.difference(set(sdfg.symbols.keys()))
                 rev_inputs |= string_symbols | {rev_input_grad_name}
 
-                diff_code_str = "{input} * ({diff_expr})".format(input=rev_input_grad_name, diff_expr=str(diff_expr))
+                diff_code_str = f"{rev_input_grad_name} * ({str(diff_expr)})"
                 # small hack: our heaviside is lowercase
                 diff_code_str = diff_code_str.replace("Heaviside", "heaviside")
 

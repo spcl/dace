@@ -26,15 +26,15 @@ import numpy as np
 import pytest
 
 import dace
-from dace.sdfg.state import LoopRegion
 from dace.libraries.blas.nodes.einsum import Einsum
 from dace.libraries.linalg.nodes.transpose import Transpose
-from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
-from dace.transformation.dataflow.wcr_conversion import WCRToAugAssign
+from dace.sdfg.state import LoopRegion
 from dace.transformation.dataflow.map_for_loop import MapToForLoop
+from dace.transformation.dataflow.wcr_conversion import WCRToAugAssign
 from dace.transformation.passes.canonicalize.loop_to_einsum import LoopToEinsum
 from dace.transformation.passes.canonicalize.loop_to_symmetrize import LoopToSymmetrize
 from dace.transformation.passes.canonicalize.loop_to_transpose import LoopToTranspose
+from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
 
 N = dace.symbol("N")
 M = dace.symbol("M")

@@ -8,29 +8,31 @@ and in the vendor routine they call. Everything that does not depend on that
 difference lives here, so the two node modules stay free of copy-paste.
 """
 
+from collections.abc import Callable
 from copy import deepcopy as dc
-from typing import Callable, Dict, List, Optional, Tuple
 
 import dace.library
 import dace.sdfg.nodes
-from dace import SDFG, SDFGState, data as dt, dtypes, memlet as mm
+from dace import SDFG, SDFGState, dtypes
+from dace import data as dt
+from dace import memlet as mm
 from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES
-from dace.symbolic import symstr
 from dace.optionals import required
 from dace.sdfg.narrowing import as_range
+from dace.symbolic import symstr
 
 # Connector names of the runtime coefficient inputs.
 COEFF_CONNECTORS = ("_alpha", "_beta")
 
 
 def operand_info(
-    node, state: SDFGState, sdfg: SDFG, connectors: Tuple[str, ...]
-) -> Dict[str, Tuple[dt.Data, List, List]]:
+    node, state: SDFGState, sdfg: SDFG, connectors: tuple[str, ...]
+) -> dict[str, tuple[dt.Data, list, list]]:
     """Resolve ``(descriptor, shape, strides)`` per input connector in ``connectors``
     plus the ``_c`` output, from the connector memlets. The shape is the memlet
     subset's size (what the node actually operates on); the strides are the
     descriptor's (what the BLAS leading dimension must follow)."""
-    info: Dict[str, Tuple[dt.Data, List, List]] = {}
+    info: dict[str, tuple[dt.Data, list, list]] = {}
     for conn in connectors:
         edge = next((e for e in state.in_edges(node) if e.dst_conn == conn), None)
         if edge is None:
@@ -45,7 +47,7 @@ def operand_info(
     return info
 
 
-def scalar_conn_descs(node, state: SDFGState, sdfg: SDFG) -> Dict[str, dt.Data]:
+def scalar_conn_descs(node, state: SDFGState, sdfg: SDFG) -> dict[str, dt.Data]:
     """Descriptors of the runtime coefficient connectors (``_alpha`` / ``_beta``)
     that are actually wired, keyed by connector name."""
     return {
@@ -62,7 +64,7 @@ def scalar_ctype(value, dtype: dtypes.typeclass) -> str:
     return f"{dtype.ctype}({value})"
 
 
-def coeff_decl(var: str, prop, dtype: dtypes.typeclass, scalar: Optional[str]) -> str:
+def coeff_decl(var: str, prop, dtype: dtypes.typeclass, scalar: str | None) -> str:
     """C declaration of an effective coefficient: the symbolic property value, times
     the runtime scalar connector ``scalar`` when one is wired (the two compose,
     mirroring the pure path). A single-element connector reaches the tasklet by
@@ -81,8 +83,8 @@ def host_can_read(desc: dt.Data) -> bool:
 
 
 def gpu_coeff_pointers(
-    cls, node, dtype: dtypes.typeclass, pa: Optional[str], pb: Optional[str], scalars: Dict[str, dt.Data]
-) -> Tuple[str, str, str]:
+    cls, node, dtype: dtypes.typeclass, pa: str | None, pb: str | None, scalars: dict[str, dt.Data]
+) -> tuple[str, str, str]:
     """Prologue, then the alpha and beta POINTER expressions of the vendor-BLAS call.
 
     A runtime coefficient the offloader left in device memory is passed as a device pointer under
@@ -111,7 +113,7 @@ def gpu_coeff_pointers(
     _, _, runtimetype = blas_helpers.cublas_type_metadata(dtype)
     store = f"__state->{cls.backend}blas_handle.Constants()"
 
-    def pointer(name: str, prop, scalar: Optional[str]) -> str:
+    def pointer(name: str, prop, scalar: str | None) -> str:
         if scalar is not None:
             if prop != 1:
                 raise NotImplementedError(
@@ -136,7 +138,7 @@ def triangle_range(uplo: str, row: str, n) -> str:
     return f"0:{row} + 1" if uplo == "L" else f"{row}:{symstr(n)}"
 
 
-def blas_inplace(node, state: SDFGState, sdfg: SDFG, operands: Tuple[str, ...], code_fn: Callable):
+def blas_inplace(node, state: SDFGState, sdfg: SDFG, operands: tuple[str, ...], code_fn: Callable):
     """Build the vendor-BLAS node. ``code_fn(ptrs, pa, pb)`` renders the BLAS call,
     where ``ptrs`` maps each operand connector (and ``_c``) to its pointer name and
     ``pa`` / ``pb`` are the runtime ``_alpha`` / ``_beta`` scalar names (``None`` when
@@ -157,7 +159,7 @@ def blas_inplace(node, state: SDFGState, sdfg: SDFG, operands: Tuple[str, ...], 
         ptrs["_c"] = "_c"
         return dace.sdfg.nodes.Tasklet(
             node.name,
-            {conn: None for conn in operands},
+            dict.fromkeys(operands),
             {"_c": None},
             code_fn(ptrs, None, None),
             language=dtypes.Language.CPP,
@@ -180,7 +182,7 @@ def blas_inplace(node, state: SDFGState, sdfg: SDFG, operands: Tuple[str, ...], 
     # Inner tasklet connector per operand: ``_a`` -> ``__a``, which never collides with
     # the nested array names (they keep the outer ``_a`` / ``_c`` spelling).
     tconn = {conn: "__" + conn.lstrip("_") for conn in operands}
-    in_conns: Dict[str, Optional[dtypes.typeclass]] = {name: None for name in tconn.values()}
+    in_conns: dict[str, dtypes.typeclass | None] = dict.fromkeys(tconn.values())
     if reads_c:
         in_conns["__cin"] = None
     # A device-resident coefficient reaches the call as a POINTER, never as a value: a scalar
@@ -203,7 +205,7 @@ def blas_inplace(node, state: SDFGState, sdfg: SDFG, operands: Tuple[str, ...], 
     return nsdfg
 
 
-def add_coeff_arrays(nsdfg: SDFG, scalars: Dict[str, dt.Data], dtype: dtypes.typeclass) -> None:
+def add_coeff_arrays(nsdfg: SDFG, scalars: dict[str, dt.Data], dtype: dtypes.typeclass) -> None:
     """Add a ``[1]`` input array per wired runtime coefficient connector.
 
     Feeding the coefficient as a tasklet input -- rather than binding a symbol from
@@ -219,10 +221,10 @@ def add_triangular_tasklet(
     uplo: str,
     n,
     label: str,
-    inputs: Dict[str, mm.Memlet],
+    inputs: dict[str, mm.Memlet],
     code: str,
-    outputs: Dict[str, mm.Memlet],
-    extra_map: Optional[Tuple[str, str]] = None,
+    outputs: dict[str, mm.Memlet],
+    extra_map: tuple[str, str] | None = None,
 ) -> None:
     """Emit ``code`` over the ``uplo`` triangle of an ``n x n`` matrix as nested maps
     ``__i`` (row) then ``__j`` (that row's triangular column range), optionally with a
@@ -249,7 +251,7 @@ def add_triangular_tasklet(
         entries.append(red_me)
         exits.insert(0, red_mx)
 
-    tasklet = state.add_tasklet(label, {conn: None for conn in inputs}, {conn: None for conn in outputs}, code)
+    tasklet = state.add_tasklet(label, dict.fromkeys(inputs), dict.fromkeys(outputs), code)
     for conn, memlet in inputs.items():
         state.add_memlet_path(
             state.add_read(required(memlet.data)), *entries, tasklet, dst_conn=conn, memlet=dc(memlet)
@@ -266,7 +268,7 @@ def add_triangular_tasklet(
         state.add_memlet_path(tasklet, *exits, state.add_write(required(memlet.data)), src_conn=conn, memlet=dc(memlet))
 
 
-def beta_scale_state(nsdfg: SDFG, node, dtype: dtypes.typeclass, n, rt_beta: bool, label: str) -> Optional[SDFGState]:
+def beta_scale_state(nsdfg: SDFG, node, dtype: dtypes.typeclass, n, rt_beta: bool, label: str) -> SDFGState | None:
     """First state of a pure expansion: apply ``beta`` to the ``uplo`` triangle of
     ``_c`` -- scale it, zero it, or (compile-time ``beta == 1``) leave it alone, in
     which case ``None`` is returned and the caller chains its contraction directly.

@@ -10,7 +10,6 @@ workflow that names it is the thing that breaks. This guard closes that gap for 
 import glob
 import os
 import re
-from typing import List, Tuple
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
 WORKFLOW_DIR = os.path.join(REPO_ROOT, ".github", "workflows")
@@ -20,12 +19,12 @@ WORKFLOW_DIR = os.path.join(REPO_ROOT, ".github", "workflows")
 TEST_PATH = re.compile(r"(?<![\w./-])tests/[\w./*-]+")
 
 
-def referenced_paths() -> List[Tuple[str, int, str]]:
+def referenced_paths() -> list[tuple[str, int, str]]:
     """``(workflow, line number, path)`` for every ``tests/`` path on a ``pytest`` command line."""
-    found: List[Tuple[str, int, str]] = []
+    found: list[tuple[str, int, str]] = []
     workflows = glob.glob(os.path.join(WORKFLOW_DIR, "*.yml")) + glob.glob(os.path.join(WORKFLOW_DIR, "*.yaml"))
     for workflow in sorted(workflows):
-        with open(workflow, "r") as handle:
+        with open(workflow) as handle:
             lines = handle.read().split("\n")
         # A shell line continuation splits one pytest invocation over several YAML lines; join them and
         # report the command's first line.
@@ -51,7 +50,7 @@ def test_ci_workflows_reference_existing_test_paths():
     referenced = referenced_paths()
     assert referenced, "no pytest test paths found in the workflows -- the extractor is broken"
 
-    missing: List[str] = []
+    missing: list[str] = []
     for workflow, number, path in referenced:
         target = os.path.join(REPO_ROOT, path)
         present = bool(glob.glob(target)) if "*" in path else os.path.exists(target)

@@ -39,13 +39,13 @@ import pytest
 import dace
 from dace.dtypes import DeviceType
 from dace.libraries.tileops import MaskedCopyLibraryNode, TileITE
-from dace.transformation.interstate import LoopToMap
 from dace.sdfg.state import ConditionalBlock
+from dace.transformation.interstate import LoopToMap
 from dace.transformation.passes.canonicalize.finalize import offload_to_gpu
 from dace.transformation.passes.vectorization.config import VectorizeConfig
+from dace.transformation.passes.vectorization.enums import RemainderStrategy
 from dace.transformation.passes.vectorization.vectorize_gpu import VectorizeGPU
 from dace.transformation.passes.vectorization.vectorize_multi_dim import VectorizeMultiDim
-from dace.transformation.passes.vectorization.enums import RemainderStrategy
 
 N = dace.symbol("N")
 M = dace.symbol("M")
@@ -338,9 +338,9 @@ def test_pairs_are_matched_structurally_not_by_label():
     wrong range. The tail's innermost range starts exactly one past its own interior's end, which
     is what identifies the real pair.
     """
+    from dace.libraries.tileops.alignment import TILE_MAIN_MARKER
     from dace.transformation.passes.vectorization.fuse_branched_tail_remainder import FuseBranchedTailRemainder
     from dace.transformation.passes.vectorization.split_map_for_tile_remainder import SCALAR_TAIL_MARKER
-    from dace.libraries.tileops.alignment import TILE_MAIN_MARKER
 
     sdfg = dace.SDFG("label_collision")
     state = sdfg.add_state("s", is_start_block=True)
@@ -357,9 +357,9 @@ def test_pairs_are_matched_structurally_not_by_label():
 
 def test_a_tail_is_consumed_by_only_one_main():
     """Two genuine pairs sharing a base label each keep their own tail."""
+    from dace.libraries.tileops.alignment import TILE_MAIN_MARKER
     from dace.transformation.passes.vectorization.fuse_branched_tail_remainder import FuseBranchedTailRemainder
     from dace.transformation.passes.vectorization.split_map_for_tile_remainder import SCALAR_TAIL_MARKER
-    from dace.libraries.tileops.alignment import TILE_MAIN_MARKER
 
     sdfg = dace.SDFG("two_pairs")
     state = sdfg.add_state("s", is_start_block=True)
@@ -447,8 +447,8 @@ def test_branched_tail_elementwise_bitexact(width):
     bit-exact fp16 result including the partial tail lanes."""
 
     def work():
-        import numpy as np
         import cupy
+        import numpy as np
 
         sdfg = _prep(_add16)
         sdfg.name = f"bt_add16_w{width}"
@@ -481,8 +481,8 @@ def test_branched_tail_neighbor_stencil_bitexact(width):
     kernel, bit-exact fp16 including the tail."""
 
     def work():
-        import numpy as np
         import cupy
+        import numpy as np
 
         sdfg = _prep(_neighbor16)
         sdfg.name = f"bt_neighbor16_w{width}"
@@ -515,8 +515,8 @@ def test_branched_tail_outer_param_bitexact(width):
     that runs for the wrong ``i`` -- or only for one of them -- shows up as a mismatch."""
 
     def work():
-        import numpy as np
         import cupy
+        import numpy as np
 
         sdfg = _prep(_add16_2d)
         sdfg.name = f"bt_add16_2d_w{width}"
@@ -555,8 +555,8 @@ def test_default_masked_tail_stencil_bitexact(width):
     on the wrong lanes (or not at all) shows up as a mismatch."""
 
     def work():
-        import numpy as np
         import cupy
+        import numpy as np
 
         sdfg = _prep(_stencil16_2d_odd)
         sdfg.name = f"bmt_stencil16_w{width}"
@@ -593,8 +593,8 @@ def test_branched_tail_where_literal_arm_bitexact():
     nor a GPU and so actually runs in CI -- this one only runs under a dispatched GPU CI job."""
 
     def work():
-        import numpy as np
         import cupy
+        import numpy as np
 
         sdfg = _prep(_where16)
         sdfg.name = "bt_where16"

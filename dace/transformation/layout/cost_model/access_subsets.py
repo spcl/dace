@@ -1,6 +1,6 @@
-import dace
-from typing import Dict, List
 import copy
+
+import dace
 from dace.sdfg.narrowing import as_range
 
 """Access subsets: per-array index ranges touched by a loop nest."""
@@ -9,14 +9,14 @@ from dace.sdfg.narrowing import as_range
 def get_access_subsets(
     state: dace.SDFGState,
     loop_nest: dace.nodes.MapEntry,
-) -> Dict[str, dace.subsets.Range]:
+) -> dict[str, dace.subsets.Range]:
     """Union of per-array access subsets over a perfectly-nested loop (map) nest."""
     entry_node: dace.nodes.MapEntry = loop_nest
     exit_node: dace.nodes.MapExit = state.exit_node(loop_nest)
 
     # 1. collect all nodes in the outermost scope
     scope_children = state.scope_children()
-    all_scope_nodes: List[dace.nodes.Node] = []
+    all_scope_nodes: list[dace.nodes.Node] = []
 
     def _collect_recursive(entry: dace.nodes.MapEntry):
         """Recursively collect all nodes inside a scope entry."""
@@ -28,7 +28,7 @@ def get_access_subsets(
     _collect_recursive(entry_node)
 
     # 2. filter map entries; verify perfect nesting
-    map_entries: List[dace.nodes.MapEntry] = [n for n in all_scope_nodes if isinstance(n, dace.nodes.MapEntry)]
+    map_entries: list[dace.nodes.MapEntry] = [n for n in all_scope_nodes if isinstance(n, dace.nodes.MapEntry)]
 
     all_entries = [entry_node] + map_entries
 
@@ -64,13 +64,13 @@ def get_access_subsets(
 
     # 5. collect tasklets in the innermost map
     innermost_children = scope_children.get(innermost_entry, [])
-    tasklets: List[dace.nodes.Tasklet] = [n for n in innermost_children if isinstance(n, dace.nodes.Tasklet)]
+    tasklets: list[dace.nodes.Tasklet] = [n for n in innermost_children if isinstance(n, dace.nodes.Tasklet)]
 
     if not tasklets:
         raise ValueError("No tasklets found in the innermost map scope.")
 
     # 6 & 7. union access subsets over all tasklet edges
-    access_ranges: Dict[str, dace.subsets.Range] = {}
+    access_ranges: dict[str, dace.subsets.Range] = {}
 
     for tasklet in tasklets:
         for edge in state.in_edges(tasklet):
@@ -98,14 +98,14 @@ def scalar_copy_source(state: dace.SDFGState, edge) -> dace.Memlet:
     return edge.data
 
 
-def union_access(state: dace.SDFGState, ranges: Dict[str, dace.subsets.Range], memlet: dace.Memlet) -> None:
+def union_access(state: dace.SDFGState, ranges: dict[str, dace.subsets.Range], memlet: dace.Memlet) -> None:
     if memlet.is_empty() or memlet.data is None or is_register(state.sdfg, memlet.data):
         return
     _union_into(ranges, memlet.data, memlet.subset)
 
 
 def _union_into(
-    ranges: Dict[str, dace.subsets.Range],
+    ranges: dict[str, dace.subsets.Range],
     array_name: str,
     new_subset: dace.subsets.Subset,
 ) -> None:

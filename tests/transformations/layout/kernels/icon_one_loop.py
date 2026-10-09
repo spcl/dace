@@ -32,8 +32,8 @@ order); SC26 layout paper SS IV-D.
 """
 
 import numpy
-import dace
 
+import dace
 from dace.transformation.layout.brute_force import permutation_candidates
 
 NB, NLEV, NPROMA = dace.symbol("NB"), dace.symbol("NLEV"), dace.symbol("NPROMA")

@@ -6,7 +6,8 @@ import copy
 import warnings
 from abc import ABC
 
-from dace import symbolic, subsets, sdfg as sd
+from dace import sdfg as sd
+from dace import subsets, symbolic
 from dace.properties import Property, make_properties
 from dace.sdfg import dealias, nodes
 from dace.sdfg import utils as sdutil

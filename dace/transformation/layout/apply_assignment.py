@@ -3,13 +3,13 @@
 
 import re
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
 
 import dace
 from dace import SDFG
 from dace.libraries.layout import add_layout_change
 from dace.libraries.layout.algebra import Permute, simplify_ops
 from dace.sdfg import nodes
+from dace.sdfg.narrowing import as_basic
 from dace.transformation.layout.line_graph import KernelState, check_kernel_per_state, loop_spans
 from dace.transformation.layout.permute_dimensions import (
     note_copy_side,
@@ -17,7 +17,6 @@ from dace.transformation.layout.permute_dimensions import (
     rewrite_state_for_permute,
     spanned_dims,
 )
-from dace.sdfg.narrowing import as_basic
 
 
 @dataclass(frozen=True)
@@ -25,7 +24,7 @@ class Layout:
     """One layout in a trajectory: a stable tag plus the op sequence from packed-C identity."""
 
     tag: str
-    ops: Tuple = ()
+    ops: tuple = ()
 
     @property
     def is_identity(self) -> bool:
@@ -35,7 +34,7 @@ class Layout:
 IDENTITY_LAYOUT = Layout("identity", ())
 
 
-def composed_permutation(ops, ndim: int) -> List[int]:
+def composed_permutation(ops, ndim: int) -> list[int]:
     """Axis permutation an op sequence amounts to (``new[i] = old[perm[i]]``); refuses non-Permute ops."""
     perm = list(range(ndim))
     for op in ops:
@@ -50,10 +49,10 @@ def composed_permutation(ops, ndim: int) -> List[int]:
     return perm
 
 
-def segments_of(trajectory: List[Layout]) -> List[Tuple[int, int, Layout]]:
+def segments_of(trajectory: list[Layout]) -> list[tuple[int, int, Layout]]:
     """Runs of equal layout: ``[(first_kernel, last_kernel_exclusive, layout), ...]``."""
     # grouping compares tags only, so a tag reused for other ops would silently drop a segment
-    ops_of: Dict[str, Tuple] = {}
+    ops_of: dict[str, tuple] = {}
     for layout in trajectory:
         if ops_of.setdefault(layout.tag, layout.ops) != layout.ops:
             raise ValueError(
@@ -181,13 +180,13 @@ def refuse_interstate_references(sdfg: SDFG, arrays) -> None:
 class AppliedAssignment:
     """What the application did: per array its segment names, plus the inserted conversion states."""
 
-    segment_names: Dict[str, List[str]]
-    boundary_states: List[dace.SDFGState]
-    exit_state: Optional[dace.SDFGState]
+    segment_names: dict[str, list[str]]
+    boundary_states: list[dace.SDFGState]
+    exit_state: dace.SDFGState | None
 
 
 def apply_region_layout(
-    sdfg: SDFG, kernels: List[KernelState], region_layouts: Dict[str, Layout], region: Tuple[int, int]
+    sdfg: SDFG, kernels: list[KernelState], region_layouts: dict[str, Layout], region: tuple[int, int]
 ) -> AppliedAssignment:
     """Apply a layout to arrays ONLY within a top-level region, restoring the original layout at its end.
 
@@ -219,7 +218,7 @@ def apply_region_layout(
     return apply_assignment(sdfg, kernels, assignment)
 
 
-def apply_assignment(sdfg: SDFG, kernels: List[KernelState], assignment: Dict[str, List[Layout]]) -> AppliedAssignment:
+def apply_assignment(sdfg: SDFG, kernels: list[KernelState], assignment: dict[str, list[Layout]]) -> AppliedAssignment:
     """Applies one layout trajectory per array across the line graph, in place, with paid conversions on the boundaries; the program interface stays logical."""
     check_kernel_per_state(sdfg)
     refuse_interstate_references(sdfg, [a for a, traj in assignment.items() if any(not l.is_identity for l in traj)])
@@ -246,10 +245,10 @@ def apply_assignment(sdfg: SDFG, kernels: List[KernelState], assignment: Dict[st
 
     # Plan first (liveness reads pre-rewrite state), then rewrite, then insert conversions.
     # boundary_changes[kernel_index] = {in_name: (out_name, delta_ops)}
-    boundary_changes: Dict[int, Dict[str, Tuple[str, List]]] = {}
-    exit_changes: Dict[str, Tuple[str, List]] = {}
-    segment_names: Dict[str, List[str]] = {}
-    rewrites: List[Tuple[int, str, str, List[int]]] = []  # (kernel_index, array, seg_name, perm)
+    boundary_changes: dict[int, dict[str, tuple[str, list]]] = {}
+    exit_changes: dict[str, tuple[str, list]] = {}
+    segment_names: dict[str, list[str]] = {}
+    rewrites: list[tuple[int, str, str, list[int]]] = []  # (kernel_index, array, seg_name, perm)
 
     for array in sorted(assignment):
         trajectory = assignment[array]
@@ -268,8 +267,8 @@ def apply_assignment(sdfg: SDFG, kernels: List[KernelState], assignment: Dict[st
         # Walk segments carrying the LIVE holder: untouched stay unmaterialized, aliasing segments
         # skip conversion, others materialize a holder and chain entry conversion from it.
         live_name, live_ops = array, []
-        holders: List[Tuple[str, List]] = []  # per segment: the holder materializing the value
-        entry_targets: List[Tuple[int, str]] = []  # (kernel_position, out_name) of planned entries
+        holders: list[tuple[str, list]] = []  # per segment: the holder materializing the value
+        entry_targets: list[tuple[int, str]] = []  # (kernel_position, out_name) of planned entries
         for si, (start, end, seg_layout) in enumerate(segments):
             touched = [k for k in range(start, end) if state_touches(kernels[k].state, array)]
             if not touched:
@@ -324,7 +323,7 @@ def apply_assignment(sdfg: SDFG, kernels: List[KernelState], assignment: Dict[st
             if holder_name != array and not restored:
                 exit_changes[holder_name] = (array, simplify_ops([op.inverse() for op in reversed(holder_ops)]))
 
-    rewrites_by_state: Dict[int, List[Tuple[str, str, List[int]]]] = {}
+    rewrites_by_state: dict[int, list[tuple[str, str, list[int]]]] = {}
     for kernel_index, array, seg_name, perm in rewrites:
         rewrites_by_state.setdefault(kernel_index, []).append((array, seg_name, perm))
     for kernel_index in sorted(rewrites_by_state):
@@ -349,7 +348,7 @@ def apply_assignment(sdfg: SDFG, kernels: List[KernelState], assignment: Dict[st
                     )
         # A copy with one relaid operand becomes transposing (PermuteDimensions converts it to TensorTranspose).
         # Sides merge across this state's rewrites so a copy with both operands reassigned sees both.
-        sides: Dict = {}
+        sides: dict = {}
         for array, seg_name, perm in rewrites_by_state[kernel_index]:
             noted = rewrite_state_for_permute(state, {array: seg_name}, {array: perm}, note_copy_side)
             for copy_node, side in noted.items():

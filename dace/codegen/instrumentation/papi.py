@@ -2,25 +2,24 @@
 """Implements the PAPI counter performance instrumentation provider.
 Used for collecting CPU performance counters."""
 
-import dace
-from dace import dtypes, library, registry, symbolic
-from dace.codegen.instrumentation.provider import InstrumentationProvider
-from dace.codegen.common import sym2cpp
-from dace.config import Config
-from dace.sdfg import nodes
-from dace.sdfg.nodes import EntryNode, MapEntry, MapExit, Tasklet
-from dace.sdfg.graph import SubgraphView
-from dace.memlet import Memlet
-from dace.sdfg import scope_contains_scope
-from dace.sdfg.state import DataflowGraphView, SDFGState
-
-import sympy as sp
+import ast
 import ctypes.util
 import os
-import ast
 import subprocess
-from typing import Dict, List, Optional, Set
 import warnings
+
+import sympy as sp
+
+import dace
+from dace import dtypes, library, registry, symbolic
+from dace.codegen.common import sym2cpp
+from dace.codegen.instrumentation.provider import InstrumentationProvider
+from dace.config import Config
+from dace.memlet import Memlet
+from dace.sdfg import nodes, scope_contains_scope
+from dace.sdfg.graph import SubgraphView
+from dace.sdfg.nodes import EntryNode, MapEntry, MapExit, Tasklet
+from dace.sdfg.state import DataflowGraphView, SDFGState
 
 # Default sets of PAPI counters
 VECTOR_COUNTER_SET = (
@@ -85,7 +84,7 @@ class PAPIInstrumentation(InstrumentationProvider):
     """Instrumentation provider that reports CPU performance counters using
     the PAPI library."""
 
-    _counters: Optional[Set[str]] = None
+    _counters: set[str] | None = None
 
     perf_whitelist_schedules = [
         dtypes.ScheduleType.CPU_Multicore,
@@ -317,17 +316,12 @@ dace::perf::PAPIValueStore<%s> __perf_store (__state->report);"""
             [src_node, dst_node],
         )
         local_stream.write(
-            """
-dace::perf::{pcs} __perf_cpy_{nodeid}_{unique_id};
-auto& __vs_cpy_{nodeid}_{unique_id} = __perf_store.getNewValueSet(
-    __perf_cpy_{nodeid}_{unique_id}, {nodeid}, PAPI_thread_id(), {size},
+            f"""
+dace::perf::{self.perf_counter_string()} __perf_cpy_{node_id}_{unique_cpy_id};
+auto& __vs_cpy_{node_id}_{unique_cpy_id} = __perf_store.getNewValueSet(
+    __perf_cpy_{node_id}_{unique_cpy_id}, {node_id}, PAPI_thread_id(), {copy_size},
     dace::perf::ValueSetType::Copy);
-__perf_cpy_{nodeid}_{unique_id}.enterCritical();""".format(
-                pcs=self.perf_counter_string(),
-                nodeid=node_id,
-                unique_id=unique_cpy_id,
-                size=copy_size,
-            ),
+__perf_cpy_{node_id}_{unique_cpy_id}.enterCritical();""",
             cfg,
             state_id,
             [src_node, dst_node],
@@ -502,10 +496,10 @@ __perf_cpy_{nodeid}_{unique_id}.enterCritical();""".format(
         # (instead of per-thread). This incurs additional overhead.
         if self.should_instrument_entry(node):
             result.write(
-                ("auto __perf_tlp_{id}_releaser = __perf_tlp_{id}.enqueue();\n".format(id=unified_id))
+                (f"auto __perf_tlp_{unified_id}_releaser = __perf_tlp_{unified_id}.enqueue();\n")
                 + self.perf_counter_start_measurement_string(
                     unified_id,
-                    "__perf_tlp_{id}.getAndIncreaseCounter()".format(id=unified_id),
+                    f"__perf_tlp_{unified_id}.getAndIncreaseCounter()",
                     core_str="dace::perf::getThreadID()",
                 ),
                 cfg,
@@ -586,14 +580,14 @@ __perf_cpy_{nodeid}_{unique_id}.enterCritical();""".format(
         self, unified_id: int, iteration: str, core_str: str = "PAPI_thread_id()"
     ):
         pcs = self.perf_counter_string()
-        return """dace::perf::{counter_str} __perf_{id};
-auto& __vs_{id} = __perf_store.getNewValueSet(__perf_{id}, {id}, {core}, {it});
-__perf_{id}.enterCritical();
-        """.format(counter_str=pcs, id=unified_id, it=iteration, core=core_str)
+        return f"""dace::perf::{pcs} __perf_{unified_id};
+auto& __vs_{unified_id} = __perf_store.getNewValueSet(__perf_{unified_id}, {unified_id}, {core_str}, {iteration});
+__perf_{unified_id}.enterCritical();
+        """
 
     @staticmethod
     def perf_counter_end_measurement_string(unified_id):
-        return "__perf_{id}.leaveCritical(__vs_{id});\n".format(id=unified_id)
+        return f"__perf_{unified_id}.leaveCritical(__vs_{unified_id});\n"
 
     @staticmethod
     def perf_section_start_string(unified_id: int, size: str, in_size: str, core_str: str = "PAPI_thread_id()"):
@@ -605,11 +599,11 @@ __perf_store.markSectionStart(%d, (long long)%s, (long long)%s, %s);""" % (unifi
         return "__perf_store.markSuperSectionStart(%d);\n" % unified_id
 
 
-class PAPIUtils(object):
+class PAPIUtils:
     """General-purpose utilities for working with PAPI."""
 
     @staticmethod
-    def available_counters() -> Dict[str, int]:
+    def available_counters() -> dict[str, int]:
         """
         Returns the available PAPI counters on this machine. Only works on
         posix based systems with ``grep`` and ``papi-tools`` installed.
@@ -758,7 +752,7 @@ class PAPIUtils(object):
         return retparams
 
     @staticmethod
-    def all_maps(map_entry: EntryNode, dfg: SubgraphView) -> List[EntryNode]:
+    def all_maps(map_entry: EntryNode, dfg: SubgraphView) -> list[EntryNode]:
         """Returns all scope entry nodes within a scope entry."""
         state: dace.SDFGState = dfg.graph
         subgraph = state.scope_subgraph(map_entry, include_entry=False)
@@ -830,7 +824,7 @@ class PAPIUtils(object):
         return "(" + sym2cpp(sum(full)) + ")"
 
     @staticmethod
-    def get_parents(outermost_node: nodes.Node, node: nodes.Node, sdfg: dace.SDFG, state_id: int) -> List[nodes.Node]:
+    def get_parents(outermost_node: nodes.Node, node: nodes.Node, sdfg: dace.SDFG, state_id: int) -> list[nodes.Node]:
 
         parent = None
         # Because dfg is only a subgraph view, it does not contain the entry

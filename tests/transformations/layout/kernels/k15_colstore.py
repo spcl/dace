@@ -12,8 +12,8 @@ al., PAX VLDB'01.
 """
 
 import numpy
-import dace
 
+import dace
 from dace.transformation.layout.brute_force import permutation_candidates
 
 N, C = dace.symbol("N"), dace.symbol("C")

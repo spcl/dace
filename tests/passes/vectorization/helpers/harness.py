@@ -6,33 +6,21 @@ All `_get_*_sdfg` fixtures and the `run_vectorization_test` harness live here
 so each topical `test_*.py` file imports them rather than redefining.
 """
 
-import dace
-
 import copy
-
 import os
-
 import re
 
 import numpy
 
-from dace import InterstateEdge
-
-from dace import Union
-
+import dace
+from dace import InterstateEdge, Union
 from dace.properties import CodeBlock
-
 from dace.sdfg import ControlFlowRegion
-
 from dace.sdfg.state import ConditionalBlock
-
 from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.parallelize_loops import ParallelizeLoops
-
 from dace.transformation.passes.vectorization.config import VectorizeConfig
-
 from dace.transformation.passes.vectorization.enums import ISA, BranchMode, RemainderStrategy
-
 from tests.passes.vectorization.tile_assertions import tile_library_nodes
 
 N = dace.symbol("N")
@@ -113,8 +101,8 @@ def _collapsible_innermost_K(sdfg: dace.SDFG, loop_to_map_permissive: bool = Fal
     :returns: ``len(map.params)`` of the innermost map after collapse, or
         ``None`` when no map is present.
     """
-    from dace.transformation.dataflow import MapCollapse
     from dace.sdfg import infer_types
+    from dace.transformation.dataflow import MapCollapse
 
     probe = copy.deepcopy(sdfg)
     # Mirror the orchestrator's front-of-pipeline schedule assignment BEFORE probing the

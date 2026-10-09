@@ -28,15 +28,15 @@ import sympy
 import dace
 from dace import subsets
 from dace.sdfg import nodes
-from dace.transformation.passes.canonicalize.pipeline import canonicalize
 from dace.transformation.passes.canonicalize.assume_symbols_nonnegative import (
+    GUARD_STATE_LABEL,
     AssumeSymbolConstraints,
     AssumeSymbolsNonnegative,
     insert_assumption_guards,
     insert_symbol_nonnegative_guard,
     set_symbol_nonnegative_assumptions,
-    GUARD_STATE_LABEL,
 )
+from dace.transformation.passes.canonicalize.pipeline import canonicalize
 from dace.transformation.passes.canonicalize.tracked_assumptions import record_assumption, tracked_assumptions
 from tests.sdfg.cfg_list_in_place_test import assert_tree_consistent
 
@@ -266,7 +266,7 @@ def test_repositioning_alone_is_reported_as_a_change():
 
 def test_guard_aborts_on_negative_symbol():
     """A negative symbol must abort the compiled program (SIGTRAP/SIGILL)."""
-    script = textwrap.dedent(f"""
+    script = textwrap.dedent("""
         import os
         # openmp-pin-ok: the child asserts a SIGNAL, not values -- one thread keeps the abort a
         # single report instead of a race between teammates all trapping at once.

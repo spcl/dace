@@ -1,10 +1,10 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 
-from typing import List, Optional, Tuple
 
 from dace import SDFG, InterstateEdge, properties
 from dace.sdfg.state import ControlFlowRegion, LoopRegion, ReturnBlock
-from dace.transformation import pass_pipeline as ppl, transformation
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation import transformation
 
 
 @properties.make_properties
@@ -23,7 +23,7 @@ class EmptyLoopElimination(ppl.Pass):
         # If connectivity or any edges were changed, some more loops might be dead
         return modified & ppl.Modifies.CFG
 
-    def apply_pass(self, sdfg: SDFG, _) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _) -> int | None:
         loops = [
             (n, parent)
             for n, parent in sdfg.all_nodes_recursive()
@@ -38,7 +38,7 @@ class EmptyLoopElimination(ppl.Pass):
             # the order decides which loop's replacement keeps the base name. Tuples of graph
             # objects hash by id(), so a set would order that by allocation history. ``loops`` is
             # already unique, so a list loses nothing.
-            cfgs_to_rm: List[Tuple[LoopRegion, ControlFlowRegion]] = []
+            cfgs_to_rm: list[tuple[LoopRegion, ControlFlowRegion]] = []
 
             for node, parent in loops:
                 inner_nodes = node.nodes()

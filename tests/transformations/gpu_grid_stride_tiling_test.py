@@ -1,15 +1,15 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests for GPU grid-strided tiling transformation."""
 
-from typing import List, Tuple
-import pytest
-import dace
-from dace.transformation.dataflow import TrivialTaskletElimination, GPUGridStridedTiling
 import numpy as np
+import pytest
 import scipy.sparse as sparse
 
+import dace
+from dace.transformation.dataflow import GPUGridStridedTiling, TrivialTaskletElimination
 
-def find_map_entry(sdfg: dace.SDFG, map_name_list: List[str]) -> Tuple[dace.sdfg.nodes.MapEntry]:
+
+def find_map_entry(sdfg: dace.SDFG, map_name_list: list[str]) -> tuple[dace.sdfg.nodes.MapEntry]:
     if isinstance(map_name_list, str):
         map_name_list = [
             map_name_list,
@@ -22,7 +22,7 @@ def find_map_entry(sdfg: dace.SDFG, map_name_list: List[str]) -> Tuple[dace.sdfg
                     if map_name == node.map.params[0]:
                         ret_list[i] = node
     # check if all map entries are found
-    assert all([x is not None for x in ret_list])
+    assert all(x is not None for x in ret_list)
 
     # unpack if only one map entry is found
     if len(ret_list) == 1:

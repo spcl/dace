@@ -4,23 +4,20 @@ This module contains classes that implement the OTF map fusion transformation.
 """
 
 import copy
+
 import sympy
 
-from typing import Dict, List, Tuple
-
+from dace import dtypes, nodes, symbolic
+from dace.memlet import Memlet
+from dace.properties import SymbolicProperty, make_properties
+from dace.sdfg import dealias
+from dace.sdfg import nodes as nds
+from dace.sdfg import utils as sdutil
 from dace.sdfg.sdfg import SDFG
 from dace.sdfg.state import SDFGState, StateSubgraphView
-from dace.sdfg import nodes as nds
-from dace.memlet import Memlet
-from dace.sdfg import utils as sdutil
 from dace.transformation import transformation
-from dace import dtypes
-from dace import symbolic, nodes
-from dace.properties import SymbolicProperty, make_properties
-
-from dace.sdfg import dealias
+from dace.transformation.dataflow.local_storage import InLocalStorage, OutLocalStorage
 from dace.transformation.dataflow.stream_transient import AccumulateTransient
-from dace.transformation.dataflow.local_storage import OutLocalStorage, InLocalStorage
 
 
 def read_elsewhere(sdfg: SDFG, access_node: nodes.AccessNode) -> bool:
@@ -88,7 +85,7 @@ class OTFMapFusion(transformation.SingleStateTransformation):
         # ``out_degree(first_map_exit) > 1`` condition above holds -- the first map then writes
         # nothing but the intermediate -- and are kept so the hazard test stays complete if that
         # condition is ever relaxed.
-        def touched(edges) -> Dict[str, None]:
+        def touched(edges) -> dict[str, None]:
             return dict.fromkeys(e.data.data for e in edges if e.data is not None and e.data.data is not None)
 
         first_reads = touched(graph.in_edges(first_map_entry))
@@ -474,7 +471,7 @@ class OTFMapFusion(transformation.SingleStateTransformation):
         return new_inter_nodes
 
     @staticmethod
-    def solve(first_params: List[str], write_accesses: Tuple, second_params: List[str], read_accesses: Tuple):
+    def solve(first_params: list[str], write_accesses: tuple, second_params: list[str], read_accesses: tuple):
         """
         Infers the memory access for the write memlet given the
         location/parameters of the read access.

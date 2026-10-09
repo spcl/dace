@@ -17,8 +17,8 @@ import itertools
 
 import numpy
 import pytest
-import dace
 
+import dace
 from dace.transformation.layout.permute_dimensions import PermuteDimensions
 from dace.transformation.layout.prepare import prepare_for_layout
 
@@ -225,23 +225,21 @@ def build_cases():
 
 
 CASES = build_cases()
-CASE_IDS = ["{}_n{}_{}".format(k, n, perm_tag(pm)) for k, n, pm in CASES]
+CASE_IDS = [f"{k}_n{n}_{perm_tag(pm)}" for k, n, pm in CASES]
 
 
 @pytest.mark.parametrize("kernel_key,n,permute_map", CASES, ids=CASE_IDS)
 def test_permute_elementwise(kernel_key, n, permute_map):
     spec = KERNELS[kernel_key]
-    tag = "{}_n{}_{}".format(kernel_key, n, perm_tag(permute_map))
+    tag = f"{kernel_key}_n{n}_{perm_tag(permute_map)}"
     out, oracle = run_case(spec, permute_map, n, tag)
     assert out.shape == oracle.shape
-    assert numpy.allclose(out, oracle), "permute {} on {} (n={}) diverged from oracle".format(
-        permute_map, kernel_key, n
-    )
+    assert numpy.allclose(out, oracle), f"permute {permute_map} on {kernel_key} (n={n}) diverged from oracle"
 
 
 if __name__ == "__main__":
     for key, size, pmap in CASES:
-        t = "{}_n{}_{}".format(key, size, perm_tag(pmap))
+        t = f"{key}_n{size}_{perm_tag(pmap)}"
         got, ref = run_case(KERNELS[key], pmap, size, t)
         assert numpy.allclose(got, ref), t
         print("PASS", t)

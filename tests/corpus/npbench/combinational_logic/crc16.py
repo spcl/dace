@@ -2,6 +2,7 @@
 """npbench corpus benchmark: ``crc16`` (combinational_logic) -- auto-ported from the npbench repo."""
 
 import numpy as np
+
 import dace
 import dace as dc
 

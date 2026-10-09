@@ -13,8 +13,8 @@ import contextlib
 import os
 import pickle
 import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable, Dict, Tuple
 
 import dace
 from dace.config import set_temporary
@@ -74,7 +74,7 @@ def vectorize_gpu(sdfg: dace.SDFG) -> None:
 
 
 #: step -> (parent step, transformation). ``reference`` is the un-transformed parse.
-STEPS: Dict[str, Tuple[str, Callable[[dace.SDFG], None]]] = {
+STEPS: dict[str, tuple[str, Callable[[dace.SDFG], None]]] = {
     "canon_cpu": ("reference", canonicalize_for("cpu")),
     "canon_gpu": ("reference", canonicalize_for("gpu")),
     "vec_cpu": ("canon_cpu", vectorize_cpu),
@@ -105,7 +105,7 @@ def produce(step: str, out: Path) -> dace.SDFG:
     return sdfg
 
 
-def reference_io(out: Path) -> Tuple[Dict, Dict]:
+def reference_io(out: Path) -> tuple[dict, dict]:
     """``(inputs, outputs)`` of the reference run sequentially under the IEEE build, cached on disk."""
     path = out / "reference_io.pkl"
     if path.is_file():

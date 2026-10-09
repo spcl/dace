@@ -5,17 +5,17 @@ these run anywhere and pin the algebra the measured parameters flow through."""
 import pytest
 
 from dace.transformation.layout.cost_model.loggp import (
-    LogGP,
     Fit,
+    LogGP,
+    achievable_rate,
+    bandwidth_delay_product,
+    fit_message_size,
     gap_from_bandwidth,
     lines_touched,
-    message_time,
-    achievable_rate,
     memory_time,
+    message_time,
     nest_memory_time,
-    bandwidth_delay_product,
     regime,
-    fit_message_size,
     validate,
 )
 

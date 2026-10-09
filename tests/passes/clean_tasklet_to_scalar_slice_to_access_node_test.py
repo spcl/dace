@@ -8,9 +8,9 @@ tests. Covers the two folding cases (not-reused -> drop scalar; reused
 TSVC s3112 shape ``sum += a[i]; b[i] = sum``).
 """
 
-import dace
 import numpy as np
 
+import dace
 from dace.transformation.passes.clean_tasklet_to_scalar_slice_to_access_node_pattern import (
     CleanTaskletToScalarSliceToAccessNodePattern,
 )

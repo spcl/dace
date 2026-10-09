@@ -17,10 +17,10 @@ from dace import nodes
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.layout.timing import (
     InsertLayoutTiming,
+    _report_total_ms,
     add_fusion_barrier,
     is_copy_state,
     time_compute,
-    _report_total_ms,
 )
 
 

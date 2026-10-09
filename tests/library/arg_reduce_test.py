@@ -347,7 +347,7 @@ def test_the_cuda_expansion_gathers_a_strided_or_transformed_operand(subset, tra
     assert f"::dace::cub::gather_iterator<::dace::cub::{functor}>(__ar_in, __ar_stride)" in code, (
         f"the {subset!r}/{transform or 'identity'} read did not reach CUB through a gather iterator"
     )
-    assert f"long long __ar_stride" in code, "the wrapper does not take the stride as an argument"
+    assert "long long __ar_stride" in code, "the wrapper does not take the stride as an argument"
     assert f"(long long)({stride})" in code, (
         f"the host tasklet does not hand the wrapper the stride {stride!r}, which is the only place "
         f"the symbol it is written in is in scope"

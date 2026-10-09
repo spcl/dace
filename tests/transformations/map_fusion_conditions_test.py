@@ -16,15 +16,15 @@ import numpy as np
 import pytest
 
 import dace
-from dace.sdfg.state import ConditionalBlock
 from dace.sdfg import nodes
-from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
-from dace.transformation.passes.lift_trivial_if import LiftTrivialIf
-from dace.transformation.interstate.condition_fusion import ConditionFusion
-from dace.transformation.interstate.state_fusion_with_happens_before import StateFusionExtended
-from dace.transformation.interstate.sdfg_nesting import InlineSDFG
-from dace.transformation.dataflow.map_fusion_vertical import MapFusionVertical
+from dace.sdfg.state import ConditionalBlock
 from dace.transformation.dataflow.map_fusion_horizontal import MapFusionHorizontal
+from dace.transformation.dataflow.map_fusion_vertical import MapFusionVertical
+from dace.transformation.interstate.condition_fusion import ConditionFusion
+from dace.transformation.interstate.sdfg_nesting import InlineSDFG
+from dace.transformation.interstate.state_fusion_with_happens_before import StateFusionExtended
+from dace.transformation.passes.lift_trivial_if import LiftTrivialIf
+from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
 
 N = dace.symbol("N")
 M = dace.symbol("M")

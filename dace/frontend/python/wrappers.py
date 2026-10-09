@@ -1,10 +1,11 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """Types and wrappers used in DaCe's Python frontend."""
 
-import numpy
 import itertools
 from collections import deque
-from typing import Deque, Generic, Type, TypeVar, Union
+from typing import Generic, TypeVar
+
+import numpy
 
 from dace import dtypes
 
@@ -17,7 +18,7 @@ def ndarray(shape, dtype=numpy.float64, *args, **kwargs):
     return numpy.ndarray(shape=shape, dtype=new_dtype, *args, **kwargs)
 
 
-stream: Type[Deque[T]] = deque
+stream: type[deque[T]] = deque
 
 
 class stream_array(Generic[T]):
@@ -37,29 +38,29 @@ class stream_array(Generic[T]):
     def shape(self):
         return self.shape
 
-    def __getitem__(self, key) -> Deque[T]:
+    def __getitem__(self, key) -> deque[T]:
         return self.queue_array.__getitem__(key)
 
-    def __getslice__(self, *args) -> Deque[T]:
+    def __getslice__(self, *args) -> deque[T]:
         return self.queue_array.__getslice__(*args)
 
 
-def scalar(dtype: Union[dtypes.typeclass, type] = dtypes.float32):
+def scalar(dtype: dtypes.typeclass | type = dtypes.float32):
     """Convenience function that defines a scalar (array of size 1)."""
     return ndarray([1], dtype)
 
 
-def define_local(dimensions, dtype: Union[dtypes.typeclass, type] = dtypes.float32):
+def define_local(dimensions, dtype: dtypes.typeclass | type = dtypes.float32):
     """Defines a transient array in a DaCe program."""
     return ndarray(dimensions, dtype=dtype)
 
 
-def define_local_scalar(dtype: Union[dtypes.typeclass, type] = dtypes.float32):
+def define_local_scalar(dtype: dtypes.typeclass | type = dtypes.float32):
     """Defines a transient scalar (array of size 1) in a DaCe program."""
     return ndarray([1], dtype=dtype)
 
 
-def define_stream(dtype: Union[dtypes.typeclass, type] = dtypes.float32, buffer_size=1):
+def define_stream(dtype: dtypes.typeclass | type = dtypes.float32, buffer_size=1):
     """Defines a local stream in a DaCe program."""
     return define_streamarray([1], dtype=dtype, buffer_size=buffer_size)
 

@@ -3,7 +3,7 @@
 
 import collections
 from collections.abc import Mapping
-from typing import Dict, Final, List, NoReturn, Optional, Set
+from typing import Final, NoReturn
 
 from dace import data, dtypes, properties
 from dace.dtypes import typeclass
@@ -24,7 +24,7 @@ def state_scope_symbol_tables(
     sdfg: SDFG,
     state: SDFGState,
     base: dict[str, typeclass],
-    region_tables: Optional[Dict[int, Dict[str, typeclass]]] = None,
+    region_tables: dict[int, dict[str, typeclass]] | None = None,
 ) -> StateScopeTables:
     """
     One table per scope of ``state``, each the answer ``symbols_defined_at`` would give for a node in
@@ -88,27 +88,27 @@ class AllocationScopes(ppl.Pass):
             )
         )
 
-    def apply_pass(self, top_sdfg: SDFG, pipeline_res: Dict) -> Dict[str, Dict]:
+    def apply_pass(self, top_sdfg: SDFG, pipeline_res: dict) -> dict[str, dict]:
         """
         :return: ``data_states``, ``root_data_states`` and ``meta_symbols`` keyed by CFG id.
         """
-        data_states: Dict[int, Dict[str, List[SDFGState]]] = {}
-        root_data_states: Dict[int, Dict[str, Set[SDFGState]]] = {}
-        meta_symbols: Dict[int, Set[str]] = {}
+        data_states: dict[int, dict[str, list[SDFGState]]] = {}
+        root_data_states: dict[int, dict[str, set[SDFGState]]] = {}
+        meta_symbols: dict[int, set[str]] = {}
 
         for sdfg in top_sdfg.all_sdfgs_recursive():
-            by_data: Dict[str, List[SDFGState]] = collections.defaultdict(list)
-            by_root: Dict[str, Set[SDFGState]] = collections.defaultdict(set)
+            by_data: dict[str, list[SDFGState]] = collections.defaultdict(list)
+            by_root: dict[str, set[SDFGState]] = collections.defaultdict(set)
             # ``sdfg.states()`` order (not topological); the consumer relies on it to place allocations.
             for state in sdfg.states():
-                seen: Set[str] = set()
+                seen: set[str] = set()
                 for node in state.data_nodes():
                     if node.data not in seen:
                         seen.add(node.data)
                         by_data[node.data].append(state)
                     by_root[node.root_data].add(state)
 
-            meta: Set[str] = set()
+            meta: set[str] = set()
             for isedge in sdfg.all_interstate_edges():
                 meta |= isedge.data.free_symbols
             for cfg in sdfg.all_control_flow_regions():
@@ -147,7 +147,7 @@ class AccessInstances(ppl.Pass):
             )
         )
 
-    def apply_pass(self, top_sdfg: SDFG, pipeline_res: Dict) -> Dict[str, Dict]:
+    def apply_pass(self, top_sdfg: SDFG, pipeline_res: dict) -> dict[str, dict]:
         """
         :return: ``access_instances``, ``code_instances`` and ``shared_transients``, keyed by CFG id.
                  The consumer takes the first and last ``access_instances`` entry, so the order is
@@ -155,14 +155,14 @@ class AccessInstances(ppl.Pass):
         """
         from dace.sdfg.analysis import cfg as cfg_analysis
 
-        access_instances: Dict[int, Dict[str, List]] = {}
-        code_instances: Dict[int, Dict[str, List]] = {}
-        shared_transients: Dict[int, List[str]] = {}
+        access_instances: dict[int, dict[str, list]] = {}
+        code_instances: dict[int, dict[str, list]] = {}
+        shared_transients: dict[int, list[str]] = {}
 
         for sdfg in top_sdfg.all_sdfgs_recursive():
             shared_transients[sdfg.cfg_id] = sdfg.shared_transients(check_toplevel=False, include_nested_data=True)
-            instances: Dict[str, List] = collections.defaultdict(list)
-            code_uses: Dict[str, List] = collections.defaultdict(list)
+            instances: dict[str, list] = collections.defaultdict(list)
+            code_uses: dict[str, list] = collections.defaultdict(list)
             array_names = sdfg.arrays.keys()
             # A use with no access node of its own is recorded by a stand-in access node that is in no state's graph.
             #  That is harmless for an array, whose allocation only reads the descriptor, but not for a view, whose

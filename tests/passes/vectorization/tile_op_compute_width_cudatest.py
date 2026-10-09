@@ -21,8 +21,8 @@ import pytest
 
 import dace
 from dace.transformation.passes.vectorization.config import VectorizeConfig
-from dace.transformation.passes.vectorization.vectorize_gpu import VectorizeGPU
 from dace.transformation.passes.vectorization.enums import RemainderStrategy
+from dace.transformation.passes.vectorization.vectorize_gpu import VectorizeGPU
 
 #: Even, so every lane is a full tile and the remainder arm plays no part.
 N = 256

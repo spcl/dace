@@ -8,7 +8,7 @@ whose symbol mapping is not the identity stays a nested SDFG: an expansion re-bi
 """
 
 import copy
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from dace import SDFG
 from dace.libraries.standard.nodes import external_call
@@ -77,10 +77,10 @@ class OutlineToExternalCalls(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def apply_pass(self, sdfg: SDFG, _: Dict[str, Any]) -> Optional[List[external_call.ExternalCall]]:
+    def apply_pass(self, sdfg: SDFG, _: dict[str, Any]) -> list[external_call.ExternalCall] | None:
         """Outline and replace; returns the new nodes, or ``None`` if there were none."""
         passes.outline_top_level_nests(sdfg)
-        created: List[external_call.ExternalCall] = []
+        created: list[external_call.ExternalCall] = []
         for state in [block for block in sdfg.nodes() if isinstance(block, SDFGState)]:
             nests = [n for n in state.nodes() if isinstance(n, nodes.NestedSDFG) and n.no_inline]
             for nsdfg in nests:
@@ -89,6 +89,6 @@ class OutlineToExternalCalls(ppl.Pass):
         return created or None
 
 
-def outline_to_external_calls(sdfg: SDFG) -> List[external_call.ExternalCall]:
+def outline_to_external_calls(sdfg: SDFG) -> list[external_call.ExternalCall]:
     """Replace the root SDFG's top-level loop nests with ``ExternalCall`` nodes in place; returns them."""
     return OutlineToExternalCalls().apply_pass(sdfg, {}) or []

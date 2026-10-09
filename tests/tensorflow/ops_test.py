@@ -1,12 +1,14 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import pytest
-import numpy as np
 from importlib.util import find_spec
+
+import numpy as np
+import pytest
 
 
 @pytest.mark.tensorflow
 def test_shapen():
     import tensorflow as tf
+
     from dace.frontend.ml.tensorflow import TFSession
 
     myshape = [69, 96, 666]
@@ -30,6 +32,7 @@ def test_shapen():
 @pytest.mark.tensorflow
 def test_mean():
     import tensorflow as tf
+
     from dace.frontend.ml.tensorflow import TFSession
 
     shape = [10, 11, 12, 13]
@@ -53,7 +56,7 @@ def test_mean():
             print(output_dace)
             print(output_tf)
             print(tf.norm(output_dace - output_tf).eval(session=sess_tf))
-            raise AssertionError("mean test {i} failed".format(i=index))
+            raise AssertionError(f"mean test {index} failed")
 
     print("mean tests passed!")
 
@@ -61,6 +64,7 @@ def test_mean():
 @pytest.mark.tensorflow
 def test_addn():
     import tensorflow as tf
+
     from dace.frontend.ml.tensorflow import TFSession
 
     shape = [10, 11, 12, 13]
@@ -85,6 +89,7 @@ def test_addn():
 @pytest.mark.tensorflow
 def test_slice():
     import tensorflow as tf
+
     from dace.frontend.ml.tensorflow import TFSession
 
     t = tf.placeholder(tf.int32, [3, 2, 3])

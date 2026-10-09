@@ -1,14 +1,15 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
+import gc
 
-import pytest
-import dace
 import numpy
+import pytest
+
+import dace
 from dace import ControlFlowRegion
 from dace.properties import CodeBlock
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.offset_loop_and_maps import OffsetLoopsAndMaps
-import gc
 
 # klev, kidia, kfdia : Symbols
 # z1, z2. rmin: scalar
@@ -332,7 +333,8 @@ def test_map_ranges_offset_when_begin_expr_is_none():
     ``is None`` check caused map ranges to pass through unchanged while
     the corresponding loop ranges were correctly shifted.
     """
-    from dace import memlet as mm, nodes
+    from dace import memlet as mm
+    from dace import nodes
     from dace.transformation.passes.offset_loop_and_maps import OffsetLoopsAndMaps
 
     sdfg = dace.SDFG("map_offset_tester")

@@ -14,7 +14,7 @@ control-flow surgery, the callback owns what "parallel" means.
 """
 
 import copy
-from typing import Callable, Optional
+from collections.abc import Callable
 
 from dace.properties import CodeBlock
 from dace.sdfg import SDFG
@@ -33,9 +33,9 @@ def specialize_loop_under_condition(
     loop: LoopRegion,
     condition,
     parallelize: Callable[[LoopRegion, ControlFlowRegion, SDFG], None],
-    owner_sdfg: Optional[SDFG] = None,
+    owner_sdfg: SDFG | None = None,
     assume: bool = False,
-) -> Optional[ConditionalBlock]:
+) -> ConditionalBlock | None:
     """Replace ``loop`` with ``if (condition) { parallel } else { original loop }``.
 
     :param loop: Loop to specialize; removed from its parent graph, deep-copied into each branch.

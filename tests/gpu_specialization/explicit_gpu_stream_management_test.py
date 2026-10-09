@@ -12,12 +12,12 @@ from dace.transformation.pass_pipeline import Pipeline
 from dace.transformation.passes.gpu_specialization.gpu_specialization_pipeline import GPUStreamPipeline
 from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import PerComponentGPUStreamScheduler
 from dace.transformation.passes.gpu_specialization.gpu_stream_wiring import GPUStreamWiring
-from dace.transformation.passes.insert_explicit_copies import InsertExplicitCopies
-from dace.transformation.passes.move_array_out_of_kernel import MoveArrayOutOfKernel
 from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (
     STREAM_CONNECTOR,
     get_gpu_stream_array_name,
 )
+from dace.transformation.passes.insert_explicit_copies import InsertExplicitCopies
+from dace.transformation.passes.move_array_out_of_kernel import MoveArrayOutOfKernel
 
 # These tests pin behaviour specific to :class:`PerComponentGPUStreamScheduler` (per-WCC streams,
 # end-of-state fused sync tasklets). The pipeline's default is now

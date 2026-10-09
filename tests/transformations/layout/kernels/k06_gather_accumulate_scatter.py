@@ -22,8 +22,8 @@ isolation). Elementwise accumulate form so the layout is honest -- a BLAS ``zaxp
 """
 
 import numpy
-import dace
 
+import dace
 from dace.libraries.layout.shuffle import register_shuffle
 from dace.transformation.layout.brute_force import shuffle_candidates
 

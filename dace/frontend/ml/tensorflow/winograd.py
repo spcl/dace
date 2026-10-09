@@ -1,10 +1,12 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
-import numpy as np
 import re
-from dace.memlet import Memlet
-from dace import dtypes
 from math import ceil
+
+import numpy as np
+
+import dace
+from dace import dtypes
+from dace.memlet import Memlet
 from dace.ordered import OrderedSet
 
 
@@ -106,7 +108,7 @@ def mm_small(
                 None,
                 tasklet,
                 "j1",
-                Memlet.simple(B_node, ",".join(["i3", "i4"])),
+                Memlet.simple(B_node, "i3,i4"),
             )
     else:
         tasklet = state.add_tasklet("matmul_sequential", {"j0"}, {"out"}, "out=j0*" + B_node + "[i3, i4]")
@@ -133,7 +135,7 @@ def mm_small(
                 None,
                 tasklet,
                 "j0",
-                Memlet.simple(A_node, ",".join(["i2", "i3"])),
+                Memlet.simple(A_node, "i2,i3"),
             )
 
     if C_memlet:
@@ -159,7 +161,7 @@ def mm_small(
             None,
             Memlet.simple(
                 C_node,
-                ",".join(["i2", "i4"]),
+                "i2,i4",
                 wcr_str="lambda a,b:a+b",
                 wcr_conflict=False,
             ),
@@ -224,12 +226,12 @@ def mm(
         name=label + "_" + "mm_tasklet",
         inputs=OrderedSet(("a", "b")),
         outputs={"c"},
-        code="""
+        code=f"""
         cublasSetStream(handle, __dace_current_stream);
         cublasStatus_t status = cublasSgemm(
             handle,
-            CUBLAS_OP_{amode}, CUBLAS_OP_{bmode},
-            {m}, {n}, {k},
+            CUBLAS_OP_{A_mode}, CUBLAS_OP_{B_mode},
+            {Cshape[1]}, {Cshape[0]}, {Ashape[kdim_A]},
             const_pone,
             (float*)a, {lda},
             (float*)b, {ldb},
@@ -237,20 +239,8 @@ def mm(
             (float*)c, {ldc}
         );
         if (status)
-            printf("Multiplication {a}*{b}->{c} failed (status %d)\\n", status);
-        """.format(
-            a=A_node.data,
-            b=B_node.data,
-            c=C_node.data,
-            amode=A_mode,
-            bmode=B_mode,
-            m=Cshape[1],
-            n=Cshape[0],
-            k=Ashape[kdim_A],
-            lda=lda,
-            ldb=ldb,
-            ldc=ldc,
-        ),
+            printf("Multiplication {A_node.data}*{B_node.data}->{C_node.data} failed (status %d)\\n", status);
+        """,
         language=dace.dtypes.Language.CPP,
     )
 

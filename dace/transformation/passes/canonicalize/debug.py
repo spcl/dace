@@ -26,19 +26,20 @@ Typical use::
 
 import copy
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import numpy as np
 
-from dace import SDFG, data as dt, dtypes, symbolic
+from dace import SDFG, dtypes, symbolic
+from dace import data as dt
 from dace.transformation.passes.canonicalize.pipeline import _build_stages
 
 #: Default small value assigned to every free (sizing) symbol.
 DEFAULT_SYMBOL_VALUE: int = 3
 #: Default small-magnitude range for random floating-point input data.
-DEFAULT_FLOAT_RANGE: Tuple[float, float] = (0.25, 1.0)
+DEFAULT_FLOAT_RANGE: tuple[float, float] = (0.25, 1.0)
 #: Default small range for random integer input data.
-DEFAULT_INT_RANGE: Tuple[int, int] = (1, 4)
+DEFAULT_INT_RANGE: tuple[int, int] = (1, 4)
 
 
 @dataclass
@@ -61,10 +62,10 @@ class StageCheckResult:
     label: str
     pass_name: str
     valid: bool
-    validation_error: Optional[str]
-    numerically_correct: Optional[bool]
-    max_abs_diff: Optional[float]
-    run_error: Optional[str]
+    validation_error: str | None
+    numerically_correct: bool | None
+    max_abs_diff: float | None
+    run_error: str | None
 
     @property
     def ok(self) -> bool:
@@ -84,7 +85,7 @@ class StageCheckResult:
         return f"[{self.index:2}] {self.label:24s} {self.pass_name:36s} {v} | {n}"
 
 
-def _resolve_shape(shape: Tuple[Any, ...], symbol_values: Dict[str, int]) -> Tuple[int, ...]:
+def _resolve_shape(shape: tuple[Any, ...], symbol_values: dict[str, int]) -> tuple[int, ...]:
     """Substitute symbol values into a (symbolic) descriptor shape.
 
     :param shape: Descriptor shape; each dimension is an int or a symbolic
@@ -92,14 +93,14 @@ def _resolve_shape(shape: Tuple[Any, ...], symbol_values: Dict[str, int]) -> Tup
     :param symbol_values: Concrete value for every free symbol in ``shape``.
     :returns: The fully concrete shape.
     """
-    out: List[int] = []
+    out: list[int] = []
     for dim in shape:
         val = symbolic.evaluate(dim, symbol_values) if symbolic.issymbolic(dim) else dim
         out.append(int(val))
     return tuple(out)
 
 
-def _random_for_dtype(dtype: dtypes.typeclass, shape: Tuple[int, ...], rng: np.random.Generator) -> Any:
+def _random_for_dtype(dtype: dtypes.typeclass, shape: tuple[int, ...], rng: np.random.Generator) -> Any:
     """Build small-magnitude random data of ``dtype`` and ``shape``.
 
     :param dtype: Element type of the data.
@@ -124,7 +125,7 @@ def _random_for_dtype(dtype: dtypes.typeclass, shape: Tuple[int, ...], rng: np.r
 
 def _build_random_inputs(
     sdfg: SDFG, symbol_value: int, rng: np.random.Generator
-) -> Tuple[Dict[str, int], Dict[str, Any]]:
+) -> tuple[dict[str, int], dict[str, Any]]:
     """Build ``(symbol_values, data_values)`` for one run of ``sdfg``.
 
     Every free symbol is set to ``symbol_value``; every non-transient
@@ -136,9 +137,9 @@ def _build_random_inputs(
     :returns: ``(symbols, arrays)`` -- two dicts keyed by argument name.
     """
     free_syms = dict.fromkeys(str(s) for s in sdfg.free_symbols)
-    symbols: Dict[str, int] = {s: symbol_value for s in free_syms}
+    symbols: dict[str, int] = dict.fromkeys(free_syms, symbol_value)
 
-    arrays: Dict[str, Any] = {}
+    arrays: dict[str, Any] = {}
     for name, desc in sdfg.arglist().items():
         if name in symbols:
             continue  # a sizing symbol, handled above
@@ -152,7 +153,7 @@ def _build_random_inputs(
     return symbols, arrays
 
 
-def _run_capture(sdfg: SDFG, symbols: Dict[str, int], arrays: Dict[str, Any], tag: str) -> Dict[str, np.ndarray]:
+def _run_capture(sdfg: SDFG, symbols: dict[str, int], arrays: dict[str, Any], tag: str) -> dict[str, np.ndarray]:
     """Run a fresh copy of ``sdfg`` on copies of the inputs.
 
     A copy of every input is passed so callers can reuse the same inputs
@@ -173,7 +174,7 @@ def _run_capture(sdfg: SDFG, symbols: Dict[str, int], arrays: Dict[str, Any], ta
     return {k: v for k, v in call_args.items() if isinstance(v, np.ndarray)}
 
 
-def _compare(ref: Dict[str, np.ndarray], got: Dict[str, np.ndarray], rtol: float, atol: float) -> Tuple[bool, float]:
+def _compare(ref: dict[str, np.ndarray], got: dict[str, np.ndarray], rtol: float, atol: float) -> tuple[bool, float]:
     """Compare two output dicts arraywise.
 
     :param ref: Reference outputs from the un-canonicalized SDFG.
@@ -202,7 +203,7 @@ def canonicalize_with_stage_checks(
     rtol: float = 1e-6,
     atol: float = 1e-9,
     stop_on_failure: bool = False,
-) -> List[StageCheckResult]:
+) -> list[StageCheckResult]:
     """Canonicalize ``sdfg`` stage-by-stage, checking validity + numerical
     equivalence after every stage.
 
@@ -227,7 +228,7 @@ def canonicalize_with_stage_checks(
     except Exception as e:
         raise RuntimeError(f"cannot run the original SDFG to get a numerical reference: {e}") from e
 
-    results: List[StageCheckResult] = []
+    results: list[StageCheckResult] = []
     work = copy.deepcopy(sdfg)
     for index, (label, unit) in enumerate(_build_stages()):
         unit.apply_pass(work, {})
@@ -238,9 +239,9 @@ def canonicalize_with_stage_checks(
         except Exception as e:
             valid, verr = False, str(e).splitlines()[0]
 
-        num_ok: Optional[bool] = None
-        max_diff: Optional[float] = None
-        rerr: Optional[str] = None
+        num_ok: bool | None = None
+        max_diff: float | None = None
+        rerr: str | None = None
         if valid:
             try:
                 got = _run_capture(work, symbols, arrays, f"s{index}")
@@ -265,7 +266,7 @@ def canonicalize_with_stage_checks(
     return results
 
 
-def first_failing_stage(sdfg: SDFG, **kwargs: Any) -> Optional[StageCheckResult]:
+def first_failing_stage(sdfg: SDFG, **kwargs: Any) -> StageCheckResult | None:
     """Convenience: return the first stage that broke validity or values,
     or ``None`` if the whole pipeline stayed valid + numerically correct.
 

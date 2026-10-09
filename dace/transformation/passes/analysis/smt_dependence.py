@@ -7,13 +7,13 @@ When z3 is unavailable, every query returns ``None`` and callers fall back to
 their existing safe refusal.
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import sympy as sp
 
 from dace import symbolic
-from dace.sdfg.analysis.cfg import collect_enclosing_conditions  # noqa: F401 -- re-exported
 from dace.optionals import required
+from dace.sdfg.analysis.cfg import collect_enclosing_conditions  # noqa: F401 -- re-exported
 
 try:
     import z3
@@ -72,7 +72,7 @@ def _array_rank(arr: Any) -> int:
     return rank
 
 
-def _sympy_to_z3(expr: sp.Basic, sym_cache: Dict[str, Any], arr_cache: Dict[str, Any]) -> Any:
+def _sympy_to_z3(expr: sp.Basic, sym_cache: dict[str, Any], arr_cache: dict[str, Any]) -> Any:
     """Translate a sympy expression into a z3 integer term.
 
     Symbols become integer variables; array subscripts ``A[i]`` become
@@ -200,7 +200,7 @@ def _sympy_to_z3(expr: sp.Basic, sym_cache: Dict[str, Any], arr_cache: Dict[str,
     return None
 
 
-def _bool_to_z3(expr: sp.Basic, sym_cache: Dict[str, Any], arr_cache: Dict[str, Any]) -> Any:
+def _bool_to_z3(expr: sp.Basic, sym_cache: dict[str, Any], arr_cache: dict[str, Any]) -> Any:
     """Translate a sympy boolean into a z3 boolean."""
     if expr is None or expr is True:
         return True
@@ -270,7 +270,7 @@ def _bool_to_z3(expr: sp.Basic, sym_cache: Dict[str, Any], arr_cache: Dict[str, 
     return None
 
 
-def _iter_bounds(i: Any, start: Any, end: Any, step: Any) -> List[Any]:
+def _iter_bounds(i: Any, start: Any, end: Any, step: Any) -> list[Any]:
     """z3 constraints that put ``i`` inside the strided iteration domain."""
     if isinstance(start, (int, sp.Integer)):
         start_z = required(z3).IntVal(int(start))
@@ -309,7 +309,7 @@ def _iter_bounds(i: Any, start: Any, end: Any, step: Any) -> List[Any]:
     return cons
 
 
-def prove_unsat(antecedent: Any, consequent: Any, rlimit: int = DEFAULT_RLIMIT) -> Optional[bool]:
+def prove_unsat(antecedent: Any, consequent: Any, rlimit: int = DEFAULT_RLIMIT) -> bool | None:
     """Return ``True`` if ``antecedent => consequent`` is valid (consequent holds
     for every model of antecedent), ``False`` if a counter-model exists, and
     ``None`` if the solver gives up or the encoding failed."""
@@ -355,9 +355,9 @@ def prove_injective_write(
     start: Any,
     end: Any,
     step: Any = 1,
-    domain_assumptions: Optional[sp.Basic] = None,
+    domain_assumptions: sp.Basic | None = None,
     rlimit: int = DEFAULT_RLIMIT,
-) -> Optional[bool]:
+) -> bool | None:
     """Prove that distinct iterations write to distinct locations.
 
     :param write_expr: The write-index expression in terms of ``itervar``.
@@ -366,8 +366,8 @@ def prove_injective_write(
     if not _HAS_Z3:
         return None
 
-    sym_cache: Dict[str, Any] = {}
-    arr_cache: Dict[str, Any] = {}
+    sym_cache: dict[str, Any] = {}
+    arr_cache: dict[str, Any] = {}
 
     i1 = required(z3).Int(f"{itervar}_1")
     i2 = required(z3).Int(f"{itervar}_2")
@@ -399,9 +399,9 @@ def prove_disjoint_write_ranges(
     start: Any,
     end: Any,
     step: Any = 1,
-    domain_assumptions: Optional[sp.Basic] = None,
+    domain_assumptions: sp.Basic | None = None,
     rlimit: int = DEFAULT_RLIMIT,
-) -> Optional[bool]:
+) -> bool | None:
     """Prove that distinct iterations write to non-overlapping RANGES.
 
     The range form of :func:`prove_injective_write`: an iteration writes the inclusive interval
@@ -422,8 +422,8 @@ def prove_disjoint_write_ranges(
     if not _HAS_Z3:
         return None
 
-    sym_cache: Dict[str, Any] = {}
-    arr_cache: Dict[str, Any] = {}
+    sym_cache: dict[str, Any] = {}
+    arr_cache: dict[str, Any] = {}
 
     i1 = required(z3).Int(f"{itervar}_1")
     i2 = required(z3).Int(f"{itervar}_2")
@@ -451,15 +451,15 @@ def prove_disjoint_write_ranges(
 
 
 def prove_disjoint_access_boxes(
-    box1: List[Any],
-    box2: List[Any],
+    box1: list[Any],
+    box2: list[Any],
     itervar: str,
     start: Any,
     end: Any,
     step: Any = 1,
-    domain_assumptions: Optional[sp.Basic] = None,
+    domain_assumptions: sp.Basic | None = None,
     rlimit: int = DEFAULT_RLIMIT,
-) -> Optional[bool]:
+) -> bool | None:
     """Prove that two MULTI-DIMENSIONAL range accesses never touch the same element on
     two different iterations.
 
@@ -499,8 +499,8 @@ def prove_disjoint_access_boxes(
 
     # One cache pair for both boxes, so every symbol and array read outside ``itervar`` is the SAME
     # z3 constant on both sides -- a per-call cache would compare two unrelated uninterpreted terms.
-    sym_cache: Dict[str, Any] = {}
-    arr_cache: Dict[str, Any] = {}
+    sym_cache: dict[str, Any] = {}
+    arr_cache: dict[str, Any] = {}
     i1 = required(z3).Int(f"{itervar}_1")
     i2 = required(z3).Int(f"{itervar}_2")
     intersects = []
@@ -534,14 +534,14 @@ def prove_disjoint_access_boxes(
 def _overlap_pair(
     write_expr: sp.Basic,
     read_expr: sp.Basic,
-    read_guard: Optional[sp.Basic],
+    read_guard: sp.Basic | None,
     itervar: str,
     start: Any,
     end: Any,
     step: Any,
     order: str,
-    domain_assumptions: Optional[sp.Basic] = None,
-) -> Optional[bool]:
+    domain_assumptions: sp.Basic | None = None,
+) -> bool | None:
     """Prove/disprove an overlap of the requested order.
 
     ``order`` is ``'raw'`` (a write iteration precedes a read iteration),
@@ -549,8 +549,8 @@ def _overlap_pair(
     iteration follows a read iteration).  The read access is optionally guarded by
     ``read_guard``.
     """
-    sym_cache: Dict[str, Any] = {}
-    arr_cache: Dict[str, Any] = {}
+    sym_cache: dict[str, Any] = {}
+    arr_cache: dict[str, Any] = {}
 
     i_w = required(z3).Int(f"{itervar}_w")
     i_r = required(z3).Int(f"{itervar}_r")
@@ -589,9 +589,9 @@ def prove_read_ahead(
     start: Any,
     end: Any,
     step: Any = 1,
-    read_guard: Optional[sp.Basic] = None,
-    domain_assumptions: Optional[sp.Basic] = None,
-) -> Optional[bool]:
+    read_guard: sp.Basic | None = None,
+    domain_assumptions: sp.Basic | None = None,
+) -> bool | None:
     """Prove that a read only ever touches elements no iteration up to and including its own
     has written -- the precondition for breaking an anti-dependence by snapshotting.
 
@@ -614,9 +614,9 @@ def prove_no_write_after_read(
     start: Any,
     end: Any,
     step: Any = 1,
-    read_guard: Optional[sp.Basic] = None,
-    domain_assumptions: Optional[sp.Basic] = None,
-) -> Optional[bool]:
+    read_guard: sp.Basic | None = None,
+    domain_assumptions: sp.Basic | None = None,
+) -> bool | None:
     """Prove that no iteration AFTER the reader's own writes the element it reads.
 
     The other half of :func:`prove_read_ahead`, which covers the iterations up to and including
@@ -638,9 +638,9 @@ def classify_read_write_pair(
     start: Any,
     end: Any,
     step: Any = 1,
-    read_guard: Optional[sp.Basic] = None,
-    domain_assumptions: Optional[sp.Basic] = None,
-) -> Optional[str]:
+    read_guard: sp.Basic | None = None,
+    domain_assumptions: sp.Basic | None = None,
+) -> str | None:
     """Classify a single read/write pair as ``'WAR'``, ``'RAW'``, ``'none'``,
     or ``None`` (inconclusive).
 

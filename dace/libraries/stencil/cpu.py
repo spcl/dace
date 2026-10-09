@@ -51,7 +51,6 @@ class ExpandStencilCPU(dace.library.ExpandTransformation):
                 "\t" if len(oob_cond) > 0 else "",
                 field_accesses[output][tuple(0 for _ in range(len(shape)))],
                 field_accesses[output][tuple(0 for _ in range(len(shape)))],
-                output,
             )
             for output in outputs
         )

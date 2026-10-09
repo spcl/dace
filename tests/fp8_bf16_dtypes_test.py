@@ -63,7 +63,8 @@ def test_sdfg_serialization_roundtrip():
         dace.float8_e5m2,
     )
 
-    import tempfile, os
+    import os
+    import tempfile
 
     path = os.path.join(tempfile.gettempdir(), "lowp_roundtrip.sdfgz")
     sdfg.save(path)

@@ -20,17 +20,17 @@ Scope is limited to:
     guaranteed by the detection pass.
 """
 
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from dace import SDFG, data, nodes, properties, symbolic
 from dace.ordered import OrderedSet
 from dace.properties import CodeBlock
+from dace.sdfg.narrowing import as_basic, as_expr
+from dace.sdfg.replace import replace_properties_dict
 from dace.sdfg.state import ConditionalBlock, LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis
-from dace.sdfg.narrowing import as_basic, as_expr
-from dace.sdfg.replace import replace_properties_dict
 
 
 @properties.make_properties
@@ -46,14 +46,14 @@ class SimplifyInductionVariables(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return bool(modified & (ppl.Modifies.InterstateEdges | ppl.Modifies.Nodes))
 
-    def apply_pass(self, sdfg: SDFG, _: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _: dict[str, Any]) -> int | None:
         loops = [n for n, _p in sdfg.all_nodes_recursive() if isinstance(n, LoopRegion)]
         loops.sort(key=loop_nesting_depth, reverse=True)
         total = 0
         # Carried symbols that nested loops increment. Maps symbol name -> per-enclosing-loop
         # increment expression. Populated when a self-referential iedge IV is folded in an inner
         # loop; consumed by the enclosing loop so the outer carry can close too.
-        nested_carries: Dict[str, Tuple[LoopRegion, symbolic.SymbolicType]] = {}
+        nested_carries: dict[str, tuple[LoopRegion, symbolic.SymbolicType]] = {}
         for loop in loops:
             total += simplify_loop(loop, nested_carries)
         return total or None
@@ -69,7 +69,7 @@ def loop_nesting_depth(loop: LoopRegion) -> int:
     return depth
 
 
-def loop_trip_count(loop: LoopRegion) -> Optional[symbolic.SymbolicType]:
+def loop_trip_count(loop: LoopRegion) -> symbolic.SymbolicType | None:
     """Return the number of iterations of ``loop`` if its bounds are simple enough.
 
     Mirrors the trip-count computation used by ``InductionVariableSubstitution``.
@@ -84,7 +84,7 @@ def loop_trip_count(loop: LoopRegion) -> Optional[symbolic.SymbolicType]:
     return symbolic.simplify(symbolic.int_floor(end - start, stride) + 1)
 
 
-def self_referential_step(name: str, rhs: str) -> Optional[symbolic.SymbolicType]:
+def self_referential_step(name: str, rhs: str) -> symbolic.SymbolicType | None:
     """If ``rhs`` equals ``name + step`` (or ``name - step``), return the signed
     loop-invariant step. Otherwise return ``None``.
     """
@@ -105,8 +105,8 @@ def self_referential_step(name: str, rhs: str) -> Optional[symbolic.SymbolicType
 
 def fold_self_referential_iedge_ivs(
     loop: LoopRegion,
-    iv_edge_sites: Dict[str, list],
-    nested_carries: Dict[str, Tuple[LoopRegion, symbolic.SymbolicType]],
+    iv_edge_sites: dict[str, list],
+    nested_carries: dict[str, tuple[LoopRegion, symbolic.SymbolicType]],
 ) -> int:
     """Fold iedge counters of the form ``sym := sym + const`` inside ``loop``.
 
@@ -189,7 +189,7 @@ def fold_self_referential_iedge_ivs(
 
 
 def fold_nested_carried_symbols(
-    loop: LoopRegion, nested_carries: Dict[str, Tuple[LoopRegion, symbolic.SymbolicType]]
+    loop: LoopRegion, nested_carries: dict[str, tuple[LoopRegion, symbolic.SymbolicType]]
 ) -> int:
     """Close the outer carry for symbols incremented by an immediately nested loop.
 
@@ -230,13 +230,13 @@ def immediately_nested_loops(loop: LoopRegion) -> OrderedSet[LoopRegion]:
     return OrderedSet(n for n in loop.nodes() if isinstance(n, LoopRegion))
 
 
-def has_nested_carry(loop: LoopRegion, nested_carries: Dict[str, Tuple[LoopRegion, symbolic.SymbolicType]]) -> bool:
+def has_nested_carry(loop: LoopRegion, nested_carries: dict[str, tuple[LoopRegion, symbolic.SymbolicType]]) -> bool:
     """Whether a loop immediately nested in ``loop`` left a carried counter for it to close."""
     nested = immediately_nested_loops(loop)
     return any(src_loop in nested for src_loop, _ in nested_carries.values())
 
 
-def simplify_loop(loop: LoopRegion, nested_carries: Dict[str, Tuple[LoopRegion, symbolic.SymbolicType]]) -> int:
+def simplify_loop(loop: LoopRegion, nested_carries: dict[str, tuple[LoopRegion, symbolic.SymbolicType]]) -> int:
     # Only fold derived IVs that came from interstate-edge assignments; skip
     # tasklet-derived entries (they refer to data descriptors, not symbols,
     # and folding them requires dataflow rewrites out of scope for v1).
@@ -350,11 +350,11 @@ def fold_into_loop_local_descriptors(loop: LoopRegion, name: str, replacement: s
             replace_properties_dict(desc, {name: replacement}, sdfg=sdfg)
 
 
-def collect_interstate_iv_sites(loop: LoopRegion) -> Dict[str, list]:
+def collect_interstate_iv_sites(loop: LoopRegion) -> dict[str, list]:
     """Map each IV-candidate symbol name to the list of interstate edges that
     carry an assignment for it inside ``loop``.
     """
-    sites: Dict[str, list] = {}
+    sites: dict[str, list] = {}
     for edge in loop.all_interstate_edges():
         for name in edge.data.assignments:
             sites.setdefault(name, []).append(edge)
@@ -444,7 +444,7 @@ def state_reads_symbol(state: SDFGState, name: str) -> bool:
     )
 
 
-def header_code(block: Any) -> List[CodeBlock]:
+def header_code(block: Any) -> list[CodeBlock]:
     """The code a loop or a conditional block evaluates outside its body."""
     if isinstance(block, LoopRegion):
         codes = [block.init_statement, block.update_statement, block.loop_condition]

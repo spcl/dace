@@ -1,34 +1,37 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Loop to map transformation"""
 
-from collections import Counter, defaultdict
 import copy
-from re import findall
+import warnings
+from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from itertools import islice
-import sympy as sp
-from typing import Any, Dict, List, Optional, Set, Tuple
-import warnings
+from re import findall
+from typing import Any, Optional
 
-from dace import data as dt, dtypes, memlet, nodes, sdfg as sd, symbolic, subsets, properties
-from dace.sdfg.type_inference import infer_expr_type
-from dace.sdfg import dealias, graph as gr, nodes
-from dace.sdfg import SDFG, InterstateEdge, SDFGState
+import sympy as sp
+
+import dace.transformation.helpers as helpers
+from dace import data as dt
+from dace import dtypes, memlet, nodes, properties, subsets, symbolic
+from dace import sdfg as sd
+from dace.ordered import OrderedSet
+from dace.sdfg import SDFG, InterstateEdge, SDFGState, dealias, nodes
+from dace.sdfg import graph as gr
 from dace.sdfg import utils as sdutil
 from dace.sdfg.analysis import cfg as cfg_analysis
 from dace.sdfg.state import (
     BreakBlock,
+    ConditionalBlock,
     ContinueBlock,
     ControlFlowBlock,
     ControlFlowRegion,
     LoopRegion,
     ReturnBlock,
-    ConditionalBlock,
 )
-import dace.transformation.helpers as helpers
+from dace.sdfg.type_inference import infer_expr_type
 from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis, smt_dependence
-from dace.ordered import OrderedSet
 
 
 def _align_itersym(expr, itersym):
@@ -172,7 +175,7 @@ def nested_reads_match_writes(nsdfg_node, conn, itersym, a, b, step) -> bool:
     return True
 
 
-def _dependent_indices(itervar: str, subset: subsets.Subset) -> Set[int]:
+def _dependent_indices(itervar: str, subset: subsets.Subset) -> set[int]:
     """Finds the indices or ranges of a subset that depend on the iteration
     variable. Returns their index in the subset's indices/ranges list.
     """
@@ -183,7 +186,7 @@ def _dependent_indices(itervar: str, subset: subsets.Subset) -> Set[int]:
     }
 
 
-def _sanitize_by_index(indices: Set[int], subset: subsets.Subset) -> subsets.Range:
+def _sanitize_by_index(indices: set[int], subset: subsets.Subset) -> subsets.Range:
     """Keeps the indices or ranges of subsets that are in `indices`."""
     return subsets.Range([t for i, t in enumerate(subset.ndrange()) if i in indices])
 
@@ -309,16 +312,16 @@ def _dim_provably_disjoint(idx1, idx2, itersym, step=1, start=0) -> bool:
 
 
 #: ``(lo, hi, is_point, itervar, start, end, step)`` as text: everything the injective-write oracle parses.
-SmtWriteKey = Tuple[str, str, bool, str, str, str, str]
+SmtWriteKey = tuple[str, str, bool, str, str, str, str]
 
 
 def smt_proves_injective_write(
-    dst_subset: Optional[subsets.Subset],
+    dst_subset: subsets.Subset | None,
     itersym: symbolic.SymbolicType,
     start: Any,
     end: Any,
     step: Any,
-    verdicts: Optional[Dict[SmtWriteKey, bool]] = None,
+    verdicts: dict[SmtWriteKey, bool] | None = None,
 ) -> bool:
     """Ask the SMT oracle whether a non-affine write touches a distinct location on
     every iteration.
@@ -388,8 +391,8 @@ def _smt_proves_disjoint_boxes(
     start,
     end,
     step,
-    varying: Set[str],
-    verdicts: Optional[Dict[Tuple[str, ...], bool]] = None,
+    varying: set[str],
+    verdicts: dict[tuple[str, ...], bool] | None = None,
 ) -> bool:
     """Ask the SMT oracle whether two multi-dimensional RANGE accesses can collide across iterations.
 
@@ -449,8 +452,8 @@ def _smt_classify_read_write_pair(
     start,
     end,
     step,
-    read_state: Optional[SDFGState] = None,
-) -> Optional[str]:
+    read_state: SDFGState | None = None,
+) -> str | None:
     """SMT fallback classification for a single read/write pair.
 
     Returns ``'none'``, ``'RAW'``, ``'WAR'``, or ``None`` (inconclusive).  Only
@@ -502,7 +505,7 @@ def write_refusal(
     step,
     permissive: bool,
     ctx: Optional["LiftContext"],
-) -> Optional[str]:
+) -> str | None:
     """Why :meth:`LoopToMap.can_be_applied` refuses the loop on the write ``e`` into ``dn``, or ``None``."""
     if e.data.dynamic and e.data.wcr is None:
         # Dynamic write (no WCR) is safe across iterations if its dst subset
@@ -546,7 +549,7 @@ def counted_write(sdfg: SDFG, state: SDFGState, dn: nodes.AccessNode, e: gr.Mult
     return not (isinstance(sdfg.arrays[dn.data], dt.View) and e is sdutil.get_view_edge(state, dn))
 
 
-def carried_local_transients(loop: LoopRegion, candidates: Set[str], ctx: Optional["LiftContext"] = None) -> Set[str]:
+def carried_local_transients(loop: LoopRegion, candidates: set[str], ctx: Optional["LiftContext"] = None) -> set[str]:
     """Among ``candidates`` -- transients that appear ONLY inside ``loop`` -- the ones an iteration
     can READ before it writes them, so their value comes from the PREVIOUS iteration.
 
@@ -568,9 +571,9 @@ def carried_local_transients(loop: LoopRegion, candidates: Set[str], ctx: Option
     :func:`observable_locals`: dead scratch left behind by an earlier rewrite would otherwise
     cost the loop its lift.
     """
-    carried: Set[str] = set()
+    carried: set[str] = set()
 
-    def scan(region: ControlFlowRegion, written: Set[str]) -> None:
+    def scan(region: ControlFlowRegion, written: set[str]) -> None:
         for block in cfg_analysis.blockorder_topological_sort(region, recursive=False, ignore_nonstate_blocks=False):
             if isinstance(block, SDFGState):
                 for dn in block.data_nodes():
@@ -599,7 +602,7 @@ def carried_local_transients(loop: LoopRegion, candidates: Set[str], ctx: Option
     return carried & observable_locals(loop, candidates, ctx)
 
 
-def edge_read_symbols(edge: InterstateEdge, ctx: Optional["LiftContext"]) -> Set[str]:
+def edge_read_symbols(edge: InterstateEdge, ctx: Optional["LiftContext"]) -> set[str]:
     """``edge.read_symbols()``, memoized on ``ctx`` when one is available. Callers must not mutate it."""
     if ctx is None:
         return edge.read_symbols()
@@ -610,11 +613,11 @@ def edge_read_symbols(edge: InterstateEdge, ctx: Optional["LiftContext"]) -> Set
     return names
 
 
-def control_flow_reads(loop: LoopRegion, ctx: Optional["LiftContext"] = None) -> Set[str]:
+def control_flow_reads(loop: LoopRegion, ctx: Optional["LiftContext"] = None) -> set[str]:
     """The names read by ``loop``'s interstate edges and by the headers of ``loop`` and of the loops and
     conditionals inside it, each edge's and header's share memoized on ``ctx`` when one is available."""
     memo = None if ctx is None else ctx.invariants.control_flow_reads
-    reads: Set[str] = set()
+    reads: set[str] = set()
     for e in loop.all_interstate_edges():
         names = None if memo is None else memo.get(e.data)
         if names is None:
@@ -633,7 +636,7 @@ def control_flow_reads(loop: LoopRegion, ctx: Optional["LiftContext"] = None) ->
     return reads
 
 
-def observable_locals(loop: LoopRegion, candidates: Set[str], ctx: Optional["LiftContext"] = None) -> Set[str]:
+def observable_locals(loop: LoopRegion, candidates: set[str], ctx: Optional["LiftContext"] = None) -> set[str]:
     """Among ``candidates`` -- transients that appear ONLY inside ``loop`` -- the ones whose value
     can be observed outside the set: it flows into a container that is not a candidate, or a
     header/interstate edge of ``loop`` reads it.
@@ -644,7 +647,7 @@ def observable_locals(loop: LoopRegion, candidates: Set[str], ctx: Optional["Lif
     refusing that loop on its own dead carry keeps it as a residual ``LoopRegion`` that
     fragments the maps around it.
     """
-    downstream: Dict[str, Set[str]] = defaultdict(set)
+    downstream: dict[str, set[str]] = defaultdict(set)
     for block in loop.all_control_flow_blocks():
         if not isinstance(block, SDFGState):
             continue
@@ -668,7 +671,7 @@ def observable_locals(loop: LoopRegion, candidates: Set[str], ctx: Optional["Lif
     return observable
 
 
-def loop_varying_symbols(loop: LoopRegion) -> Set[str]:
+def loop_varying_symbols(loop: LoopRegion) -> set[str]:
     """Symbols whose value can change *while* ``loop`` runs, other than its own iterator:
     the iterators of loops and maps nested inside its body, and everything its
     interstate edges assign.
@@ -678,7 +681,7 @@ def loop_varying_symbols(loop: LoopRegion) -> Set[str]:
     symbolic comparison of two indices that mention it is a valid statement about every
     pair of iterations. That is what :func:`_read_write_dims_disjoint` needs.
     """
-    varying: Set[str] = set()
+    varying: set[str] = set()
     for cfr in loop.all_control_flow_regions(recursive=True):
         if isinstance(cfr, LoopRegion) and cfr is not loop and cfr.loop_variable:
             varying.add(cfr.loop_variable)
@@ -692,7 +695,7 @@ def loop_varying_symbols(loop: LoopRegion) -> Set[str]:
 
 
 def _read_write_dims_disjoint(
-    read: subsets.Subset, write: subsets.Subset, itersym, step, start, varying: Set[str]
+    read: subsets.Subset, write: subsets.Subset, itersym, step, start, varying: set[str]
 ) -> bool:
     """True iff some dimension's read/write point-indices are provably disjoint
     across every pair of in-domain iterations (step-aware
@@ -758,7 +761,7 @@ def _read_write_same_iteration(read: subsets.Subset, write: subsets.Subset, iter
     return False
 
 
-def _collision_forces_same_iteration(sub1: subsets.Subset, sub2: subsets.Subset, itersym, varying: Set[str]) -> bool:
+def _collision_forces_same_iteration(sub1: subsets.Subset, sub2: subsets.Subset, itersym, varying: set[str]) -> bool:
     """Prove that two point subsets ``sub1``, ``sub2`` of the same container can only address
     the same element when their loop iterations coincide.
 
@@ -835,7 +838,7 @@ def _collision_forces_same_iteration(sub1: subsets.Subset, sub2: subsets.Subset,
     return len(sp.linsolve(lin_eqs, lambdas)) > 0
 
 
-def _writes_may_overlap(m1: memlet.Memlet, m2: memlet.Memlet, itersym, step, start, end, varying: Set[str]) -> bool:
+def _writes_may_overlap(m1: memlet.Memlet, m2: memlet.Memlet, itersym, step, start, end, varying: set[str]) -> bool:
     """Conservatively decide whether two write memlets to the same container
     can address the same element on different loop iterations. Returns
     ``False`` only if some subset dimension is provably disjoint (the
@@ -891,7 +894,7 @@ class LiftInvariants:
 
     #: symbols + array descriptors, the name -> type map ``infer_expr_type`` resolves bounds
     #: against. A lift only ever ADDS descriptors, and bounds name only pre-existing ones.
-    sset: Dict[str, Any]
+    sset: dict[str, Any]
     #: whether ANY descriptor of this SDFG is a StructureView. When none is, no loop body can hold
     #: one, so the per-loop scan over every data node of every loop state is skipped outright.
     has_structure_views: bool
@@ -899,21 +902,21 @@ class LiftInvariants:
     #: the pass on CloudSC: the two probes that read it -- the loop's own block walk and the
     #: "used after the loop" walk -- each trigger a full recursive symbol collection per block per
     #: candidate loop. Blocks a lift creates are new objects and simply miss.
-    block_free_symbols: Dict[Any, Set[str]]
+    block_free_symbols: dict[Any, set[str]]
     #: SMT injective-write verdicts, keyed by every text the oracle parses. A pure function of the
     #: key: the parse is cached on (text, dtype authority) and the authority is fixed for the pass,
     #: and no graph state enters the query. Every sweep restart re-probes each refused loop, and
     #: re-asking z3 the same question per lift was 21% of the pass on CloudSC.
-    smt_injective: Dict[SmtWriteKey, bool] = field(default_factory=dict)
+    smt_injective: dict[SmtWriteKey, bool] = field(default_factory=dict)
     #: disjoint-box verdicts of :func:`_smt_proves_disjoint_boxes`, keyed by the texts z3 parses, on the
     #: same grounds; a read witness re-asks every read-write pair of its container per re-probe.
-    smt_disjoint_boxes: Dict[Tuple[str, ...], bool] = field(default_factory=dict)
+    smt_disjoint_boxes: dict[tuple[str, ...], bool] = field(default_factory=dict)
     #: interstate edge or loop/conditional header -> the names it reads, for :func:`control_flow_reads`.
     #: A lift edits neither: it moves the lifted loop's edges and headers as they are and re-attaches its
     #: out-edges' data unchanged, so an entry never goes stale.
-    control_flow_reads: Dict[Any, Set[str]] = field(default_factory=dict)
+    control_flow_reads: dict[Any, set[str]] = field(default_factory=dict)
     #: interstate edge -> ``read_symbols()``, for :func:`edge_read_symbols`; stays exact for the same reason.
-    edge_read_symbols: Dict[Any, Set[str]] = field(default_factory=dict)
+    edge_read_symbols: dict[Any, set[str]] = field(default_factory=dict)
     #: whether a lift in this SDFG already re-derived the parent references of every SDFG nested below
     #: it. They stay exact from then on -- ``add_node`` re-homes the blocks a lift moves, and the body
     #: SDFG is nested by ``add_nested_sdfg`` -- so the walk that re-derives them runs once per SDFG.
@@ -922,7 +925,7 @@ class LiftInvariants:
 
 def build_lift_invariants(sdfg: SDFG) -> LiftInvariants:
     """Collect the facts of :class:`LiftInvariants`. Call once per SDFG, at the start of a pass."""
-    sset: Dict[str, Any] = {}
+    sset: dict[str, Any] = {}
     sset.update(sdfg.symbols)
     sset.update(sdfg.arrays)
     return LiftInvariants(
@@ -932,7 +935,7 @@ def build_lift_invariants(sdfg: SDFG) -> LiftInvariants:
     )
 
 
-def block_free_symbols(block, ctx: Optional["LiftContext"]) -> Set[str]:
+def block_free_symbols(block, ctx: Optional["LiftContext"]) -> set[str]:
     """``block.free_symbols``, memoized on ``ctx`` when one is available."""
     if ctx is None:
         return block.free_symbols
@@ -972,7 +975,7 @@ class LoopFacts:
     refusal_witness: Any = None
 
 
-def loop_facts_of(memo: Dict[Any, LoopFacts], loop) -> LoopFacts:
+def loop_facts_of(memo: dict[Any, LoopFacts], loop) -> LoopFacts:
     """The :class:`LoopFacts` entry for ``loop``, created empty on first ask."""
     facts = memo.get(loop)
     if facts is None:
@@ -997,44 +1000,44 @@ class LiftContext:
     #: data name -> the states holding an AccessNode for it. Deliberately NOT ``FindAccessStates``:
     #: that one also counts interstate-edge and region-condition reads, which would mark more
     #: containers as live outside the loop and refuse loops the plain access-node scan accepts.
-    access_states: Dict[str, OrderedSet]
+    access_states: dict[str, OrderedSet]
     #: whole-SDFG block order and each block's position in it, for the "used after the loop" walk
-    block_order: List[Any]
-    block_index: Dict[Any, int]
+    block_order: list[Any]
+    block_index: dict[Any, int]
     #: loop -> the :class:`LoopFacts` derived from that loop's own body. Caller-owned, so it
     #: survives the per-lift context rebuild -- unlike everything else here, a lift OUTSIDE the
     #: loop cannot invalidate it. Recomputing these walks every state and edge of the loop, per
     #: candidate, per sweep.
-    loop_facts: Dict[Any, LoopFacts]
+    loop_facts: dict[Any, LoopFacts]
     #: ``sdfg.free_symbols`` as of this context. ``LoopToMap.apply`` needs it as the BEFORE
     #: snapshot to spot variables a lift turns into free symbols, and recomputing it there is a
     #: full recursive walk of every state, node, memlet and subset of the whole SDFG -- per lift.
     #: A context is rebuilt after every lift, so this is the same value apply would compute.
-    sdfg_free_symbols: Set[str]
+    sdfg_free_symbols: set[str]
     #: control flow region -> its index in ``cfg_list``. ``ControlFlowRegion.cfg_id`` is
     #: ``cfg_list.index(self)``, a linear scan of every CFG in the tree, and a pass setting up one
     #: match per candidate loop pays it per candidate.
-    cfg_ids: Dict[Any, int]
+    cfg_ids: dict[Any, int]
     #: the same set as of the END of the lift ``apply`` just performed, for the holder to seed the
     #: NEXT context with. ``apply`` computes it anyway; recomputing it in ``build_lift_context`` is
     #: the same whole-SDFG walk a third time. Left ``None`` when the lift removed a loop-body-local
     #: array, since dropping a name from ``sdfg.arrays`` drops it from the walk's defined set.
-    post_lift_free_symbols: Optional[Set[str]] = None
+    post_lift_free_symbols: set[str] | None = None
     #: container names the lift ``apply`` just performed moved INTO its nested SDFG. The only thing
     #: that can leave an enclosing region's read/write set: a lift adds no access, it re-homes the
     #: ones it finds behind a nested node that re-exposes them, so an ancestor's cached sets can be
     #: patched by subtracting these instead of being dropped and walked again.
-    internalized_data: Optional[Set[str]] = None
+    internalized_data: set[str] | None = None
     #: how many interstate edges of the SDFG (not across nested SDFGs) assign each name, and how many
     #: loops of the SDFG and every SDFG nested in it bind each name as their iterator: what
     #: :func:`declare_lifted_symbols` otherwise walks the whole SDFG for, per lift. Built on first use.
-    edge_assignments: Optional[Counter] = None
-    loop_variables: Optional[Counter] = None
+    edge_assignments: Counter | None = None
+    loop_variables: Counter | None = None
     #: name -> the blocks of ``block_order`` that read it (in their contents or on an out-edge), and the
     #: blocks all of whose out-edges assign it: the "used after the loop" walk as an index. Entries of
     #: blocks that left the order are skipped by ``block_index``. Built on first use.
-    symbol_uses: Optional[Dict[str, List[Any]]] = None
-    symbol_kills: Optional[Dict[str, List[Any]]] = None
+    symbol_uses: dict[str, list[Any]] | None = None
+    symbol_kills: dict[str, list[Any]] | None = None
 
 
 def index_block_symbols(ctx: LiftContext, block) -> None:
@@ -1050,7 +1053,7 @@ def index_block_symbols(ctx: LiftContext, block) -> None:
         ctx.symbol_kills.setdefault(name, []).append(block)
 
 
-def used_after_loop(ctx: LiftContext, loop: LoopRegion, names: Set[str], loop_blocks: Set[Any]) -> bool:
+def used_after_loop(ctx: LiftContext, loop: LoopRegion, names: set[str], loop_blocks: set[Any]) -> bool:
     """Whether a block after ``loop`` reads one of ``names`` before every out-edge of some block reassigns it:
     the verdict of the ``block_order`` walk in :meth:`LoopToMap.can_be_applied`, from the index."""
     if ctx.symbol_uses is None:
@@ -1072,7 +1075,7 @@ def used_after_loop(ctx: LiftContext, loop: LoopRegion, names: Set[str], loop_bl
     return False
 
 
-def symbol_bindings(ctx: LiftContext, sdfg: SDFG) -> Tuple[Counter, Counter]:
+def symbol_bindings(ctx: LiftContext, sdfg: SDFG) -> tuple[Counter, Counter]:
     """``(ctx.edge_assignments, ctx.loop_variables)``, built from ``sdfg`` on first use."""
     if ctx.edge_assignments is None:
         ctx.edge_assignments = Counter(k for e in sdfg.all_interstate_edges() for k in e.data.assignments)
@@ -1086,9 +1089,9 @@ def symbol_bindings(ctx: LiftContext, sdfg: SDFG) -> Tuple[Counter, Counter]:
 
 def build_lift_context(
     sdfg: SDFG,
-    invariants: Optional[LiftInvariants] = None,
-    loop_facts: Optional[Dict[Any, LoopFacts]] = None,
-    sdfg_free_symbols: Optional[Set[str]] = None,
+    invariants: LiftInvariants | None = None,
+    loop_facts: dict[Any, LoopFacts] | None = None,
+    sdfg_free_symbols: set[str] | None = None,
 ) -> LiftContext:
     """Collect the volatile per-SDFG facts of :class:`LiftContext` in one pass over ``sdfg``.
 
@@ -1100,7 +1103,7 @@ def build_lift_context(
     if invariants is None:
         invariants = build_lift_invariants(sdfg)
 
-    access_states: Dict[str, OrderedSet] = defaultdict(OrderedSet)
+    access_states: dict[str, OrderedSet] = defaultdict(OrderedSet)
     for state in sdfg.states():
         for anode in state.data_nodes():
             access_states[anode.data].add(state)
@@ -1121,9 +1124,7 @@ def build_lift_context(
     )
 
 
-def iterator_type(
-    loop: LoopRegion, rebound: Set[str], table: Dict[str, dtypes.typeclass]
-) -> Optional[dtypes.typeclass]:
+def iterator_type(loop: LoopRegion, rebound: set[str], table: dict[str, dtypes.typeclass]) -> dtypes.typeclass | None:
     """The type ``loop`` gives its iterator when every other name its header reads keeps the type ``table``
     declares (none is in ``rebound``), so the walk of ``defined_symbols`` would infer the same one."""
     if not loop.init_statement:
@@ -1135,7 +1136,7 @@ def iterator_type(
     return loop.new_symbols(table).get(itervar)
 
 
-def declare_lifted_symbols(nsdfg: SDFG, sdfg: SDFG, loop: LoopRegion, ctx: Optional[LiftContext] = None) -> None:
+def declare_lifted_symbols(nsdfg: SDFG, sdfg: SDFG, loop: LoopRegion, ctx: LiftContext | None = None) -> None:
     """Declare in the lifted body the free symbols whose type the parent SDFG settles without a walk.
 
     ``add_nested_sdfg`` types every symbol the body leaves undeclared from ``defined_symbols``, a walk
@@ -1159,9 +1160,9 @@ def declare_lifted_symbols(nsdfg: SDFG, sdfg: SDFG, loop: LoopRegion, ctx: Optio
             if isinstance(r, LoopRegion) and r.loop_variable
         )
     # Every assigned name, and every iterator some loop other than ``loop`` binds.
-    rebound: Set[str] = {name for name, count in edge_assignments.items() if count > 0}
+    rebound: set[str] = {name for name, count in edge_assignments.items() if count > 0}
     rebound.update(name for name, count in loop_variables.items() if count > (name == loop.loop_variable))
-    table: Dict[str, dtypes.typeclass] = dict(sdfg.symbols)
+    table: dict[str, dtypes.typeclass] = dict(sdfg.symbols)
     for desc in sdfg.arrays.values():
         table.update({s.name: s.dtype for s in desc.free_symbols if s.dtype is not None})
     itervar = loop.loop_variable
@@ -1184,7 +1185,7 @@ def declare_lifted_symbols(nsdfg: SDFG, sdfg: SDFG, loop: LoopRegion, ctx: Optio
         region = region.parent_graph
 
 
-def exhaustively_assigned(block: ConditionalBlock) -> Set[str]:
+def exhaustively_assigned(block: ConditionalBlock) -> set[str]:
     """The symbols every branch of ``block`` assigns; empty unless it has an else arm."""
     if not any(c is None for c, body in block.branches):
         return set()
@@ -1204,16 +1205,16 @@ def symbols_assigned_before_use(
     loop: LoopRegion,
     itervar: str,
     ctx: Optional["LiftContext"] = None,
-    blocks: Optional[List[ControlFlowBlock]] = None,
-    refusal: Optional[List[str]] = None,
-) -> Optional[Set[str]]:
+    blocks: list[ControlFlowBlock] | None = None,
+    refusal: list[str] | None = None,
+) -> set[str] | None:
     """The symbols ``loop``'s body assigns, plus ``itervar``; ``None`` if an iteration reads one before assigning it.
 
     :param blocks: the body in topological order, if the caller has it.
     :param refusal: receives why the loop carries a symbol, when it does.
     """
-    symbols_that_may_be_used: Set[str] = {itervar}
-    used_before_assignment: Set[str] = set()
+    symbols_that_may_be_used: set[str] = {itervar}
+    used_before_assignment: set[str] = set()
     if blocks is None:
         blocks = cfg_analysis.blockorder_topological_sort(loop, recursive=True, ignore_nonstate_blocks=False)
     # Blocks are visited in order, so a symbol not yet assigned in this iteration comes from the previous one.
@@ -1277,7 +1278,7 @@ class LoopToMap(xf.MultiStateTransformation):
 
         # Optional, set by a pass that probes many loops of this SDFG (see :class:`LiftContext`).
         # ``vars(self).get``, not ``getattr``: the attribute is genuinely absent on a plain match.
-        ctx: Optional[LiftContext] = vars(self).get("lift_context")
+        ctx: LiftContext | None = vars(self).get("lift_context")
 
         def refuse(reason: str) -> bool:
             """Refuse the match and record why."""
@@ -1323,13 +1324,13 @@ class LoopToMap(xf.MultiStateTransformation):
         # interstate assignment. After conversion the body → a ``loop_body`` NSDFG (assignment
         # goes with it) but the Map's range stays outer, referencing a symbol only defined inside
         # the NSDFG → ``Missing symbols on nested SDFG`` downstream.
-        range_syms: Set[str] = set()
+        range_syms: set[str] = set()
         for expr in (start, end, step):
             try:
                 range_syms |= {str(s) for s in expr.free_symbols}
             except AttributeError:
                 pass
-        body_assigned_syms: Set[str] = set()
+        body_assigned_syms: set[str] = set()
         for e in self.loop.all_interstate_edges():
             body_assigned_syms.update(e.data.assignments.keys())
         if range_syms & body_assigned_syms:
@@ -1382,9 +1383,9 @@ class LoopToMap(xf.MultiStateTransformation):
                 )
             if facts is not None:
                 facts.block_order = in_order_loop_blocks
-        symbols_that_may_be_used: Set[str] = {itervar}
+        symbols_that_may_be_used: set[str] = {itervar}
         if in_order_loop_blocks is not None:
-            refusal: List[str] = []
+            refusal: list[str] = []
             symbols_that_may_be_used = symbols_assigned_before_use(
                 self.loop, itervar, ctx, in_order_loop_blocks, refusal
             )
@@ -1395,14 +1396,14 @@ class LoopToMap(xf.MultiStateTransformation):
         # when it is ALSO live outside the loop.
         if ctx is None:
             # Get access nodes from other states to isolate local loop variables
-            other_access_nodes: Set[str] = set()
+            other_access_nodes: set[str] = set()
             for state in sdfg.states():
                 if state in loop_states:
                     continue
-                other_access_nodes |= set(n.data for n in state.data_nodes() if sdfg.arrays[n.data].transient)
+                other_access_nodes |= {n.data for n in state.data_nodes() if sdfg.arrays[n.data].transient}
             # Add non-transient nodes from loop state
             for state in loop_states:
-                other_access_nodes |= set(n.data for n in state.data_nodes() if not sdfg.arrays[n.data].transient)
+                other_access_nodes |= {n.data for n in state.data_nodes() if not sdfg.arrays[n.data].transient}
             local_transients = {
                 n.data for state in loop_states for n in state.data_nodes() if sdfg.arrays[n.data].transient
             } - other_access_nodes
@@ -1457,7 +1458,7 @@ class LoopToMap(xf.MultiStateTransformation):
                 facts.read_write = self.loop.read_and_write_sets()
             _, write_set = facts.read_write
 
-        write_memlets: Dict[str, List[memlet.Memlet]] = defaultdict(list)
+        write_memlets: dict[str, list[memlet.Memlet]] = defaultdict(list)
 
         itersym = symbolic.pystr_to_symbolic(itervar)
         a = sp.Wild("a", exclude=[itersym])
@@ -1537,7 +1538,7 @@ class LoopToMap(xf.MultiStateTransformation):
         # at ``A[15]``); parallelizing reorders them. Allow only if some dim is provably disjoint
         # for all iterations (``A[2*i]`` vs ``A[2*i+1]``).
         for data, mmlts in write_memlets.items():
-            distinct: Dict[str, memlet.Memlet] = {}
+            distinct: dict[str, memlet.Memlet] = {}
             for m in mmlts:
                 if m.wcr is None:
                     distinct.setdefault(str(m.subset), m)
@@ -1596,7 +1597,7 @@ class LoopToMap(xf.MultiStateTransformation):
                             )
 
         # Consider reads in inter-state edges (could be in assignments or in condition)
-        isread_set: Set[memlet.Memlet] = set()
+        isread_set: set[memlet.Memlet] = set()
         for e in self.loop.all_interstate_edges():
             isread_set |= set(e.data.get_read_memlets(sdfg.arrays))
         for mmlt in isread_set:
@@ -1610,7 +1611,7 @@ class LoopToMap(xf.MultiStateTransformation):
 
         # Iteration variable + other symbols must not be used on later edges/blocks before
         # reassignment. First check the outgoing edges of the loop itself.
-        reassigned_symbols: Set[str] = None
+        reassigned_symbols: set[str] = None
         for oe in graph.out_edges(self.loop):
             if symbols_that_may_be_used & edge_read_symbols(oe.data, ctx):
                 return refuse(
@@ -1693,7 +1694,7 @@ class LoopToMap(xf.MultiStateTransformation):
         end,
         step,
         permissive: bool,
-    ) -> Optional[str]:
+    ) -> str | None:
         """The refusal :attr:`LoopFacts.refusal_witness` names, if the current graph still refuses on it.
 
         Re-derives what :meth:`can_be_applied` decides for the witness's container alone: the analysis
@@ -1719,7 +1720,7 @@ class LoopToMap(xf.MultiStateTransformation):
         a = sp.Wild("a", exclude=[itersym])
         b = sp.Wild("b", exclude=[itersym])
         # The probe visits the writes in this order, and a write that fails refuses the loop by itself.
-        writes: List[memlet.Memlet] = []
+        writes: list[memlet.Memlet] = []
         accesses = [(st, dn) for st in loop_states for dn in st.data_nodes() if dn.data == name]
         for st, dn in accesses:
             for w in st.in_edges(dn):
@@ -1753,12 +1754,12 @@ class LoopToMap(xf.MultiStateTransformation):
         start: symbolic.SymbolicType,
         end: symbolic.SymbolicType,
         step: symbolic.SymbolicType,
-        write_memlets: Dict[str, List[memlet.Memlet]],
+        write_memlets: dict[str, list[memlet.Memlet]],
         mmlt: memlet.Memlet,
         src_subset: subsets.Range,
-        varying: Set[str],
+        varying: set[str],
     ):
-        from dace.sdfg.propagation import propagate_subset, align_memlet
+        from dace.sdfg.propagation import align_memlet, propagate_subset
 
         a = sp.Wild("a", exclude=[itersym])
         b = sp.Wild("b", exclude=[itersym])
@@ -1868,7 +1869,7 @@ class LoopToMap(xf.MultiStateTransformation):
 
         return True
 
-    def _is_array_thread_local(self, name: str, itervar: str, sdfg: SDFG, states: List[SDFGState]) -> bool:
+    def _is_array_thread_local(self, name: str, itervar: str, sdfg: SDFG, states: list[SDFGState]) -> bool:
         """
         This helper method checks whether an array used exclusively in the body of a detected for-loop is thread-local,
         i.e., its whole range is may be used in every loop iteration, or is can be shared by multiple iterations.
@@ -1911,7 +1912,7 @@ class LoopToMap(xf.MultiStateTransformation):
     def apply(self, graph: ControlFlowRegion, sdfg: sd.SDFG):
         # Precomputed per-SDFG analysis, when a pass supplies it (see :class:`LiftContext`).
         # Everything read from it here is a value ``apply`` would otherwise recompute per lift.
-        lift_ctx: Optional[LiftContext] = vars(self).get("lift_context")
+        lift_ctx: LiftContext | None = vars(self).get("lift_context")
         from dace.sdfg.propagation import align_memlet
 
         # Obtain loop information
@@ -2060,7 +2061,7 @@ class LoopToMap(xf.MultiStateTransformation):
         declare_lifted_symbols(nsdfg, sdfg, self.loop, lift_ctx)
         cnode = body.add_nested_sdfg(nsdfg, read_set, write_set)
         if sdfg.parent:
-            for s, m in sdfg.parent_nsdfg_node.symbol_mapping.items():
+            for s in sdfg.parent_nsdfg_node.symbol_mapping.keys():
                 if s not in cnode.symbol_mapping:
                     cnode.symbol_mapping[s] = symbolic.pystr_to_symbolic(s)
                     # Other passes map symbols without declaring them; type it off the symbol.
@@ -2145,7 +2146,7 @@ class LoopToMap(xf.MultiStateTransformation):
         sink_nodes = body.sink_nodes()
 
         # Check intermediate nodes
-        intermediate_nodes: List[nodes.AccessNode] = []
+        intermediate_nodes: list[nodes.AccessNode] = []
         for node in body.nodes():
             if isinstance(node, nodes.AccessNode) and body.in_degree(node) > 0 and node not in sink_nodes:
                 # Scalars written without WCR must be thread-local
@@ -2201,7 +2202,7 @@ class LoopToMap(xf.MultiStateTransformation):
         # We first gather them and handle them later.
         # List, not a set: ``MultiConnectorEdge`` hashes by id(), so set order varies run to run
         # (it tracks allocation history) and would perturb the node insertion order below.
-        direct_edges: List[gr.MultiConnectorEdge[memlet.Memlet]] = []
+        direct_edges: list[gr.MultiConnectorEdge[memlet.Memlet]] = []
         for n1 in source_nodes:
             if not isinstance(n1, nodes.AccessNode):
                 continue
@@ -2234,7 +2235,7 @@ class LoopToMap(xf.MultiStateTransformation):
                     body.add_edge_pair(exit, e.src, n, new_memlet, internal_connector=e.src_conn)
             else:
                 body.add_nedge(n, exit, memlet.Memlet())
-        intermediate_sinks: Dict[str, nodes.AccessNode] = {}
+        intermediate_sinks: dict[str, nodes.AccessNode] = {}
         for n in intermediate_nodes:
             if isinstance(sdfg.arrays[n.data], dt.View):
                 continue

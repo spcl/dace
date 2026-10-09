@@ -39,7 +39,7 @@ from dace.sdfg import nodes as nd
 from dace.transformation.layout.isolation import set_openmp_thread_count
 from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.vectorization.config import VectorizeConfig
-from dace.transformation.passes.vectorization.enums import RemainderStrategy, BranchMode
+from dace.transformation.passes.vectorization.enums import BranchMode, RemainderStrategy
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
 
 N = dace.symbol("N")

@@ -32,16 +32,16 @@ Out of scope:
 * While loops (no ``loop_variable``).
 """
 
-from typing import Any, Dict, Optional
+from typing import Any
 
 import dace
 from dace import SDFG, properties, symbolic
+from dace.sdfg.narrowing import as_basic
 from dace.sdfg.state import LoopRegion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.canonicalize.fresh_names import lowest_free_suffix
-from dace.sdfg.narrowing import as_basic
 
 #: Prefix for the fresh positive-direction iterator the rewrite introduces.
 POS_ITER_PREFIX = "_loop_pos_"
@@ -69,7 +69,7 @@ class NormalizeNegativeStride(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def apply_pass(self, sdfg: SDFG, _: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _: dict[str, Any]) -> int | None:
         """Rewrite every eligible negative-stride loop in ``sdfg`` (and nested SDFGs).
 
         :returns: The number of loops rewritten, or ``None`` if none.

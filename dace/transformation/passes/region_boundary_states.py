@@ -1,6 +1,6 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 
-from typing import Any, Dict, Optional, Set
+from typing import Any
 
 from dace import properties
 from dace.sdfg.sdfg import SDFG
@@ -32,7 +32,7 @@ class RegionBoundaryStates(ppl.Pass):
         # Reapplying would bracket the brackets, so the pass runs once.
         return False
 
-    def apply_pass(self, sdfg: SDFG, _: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _: dict[str, Any]) -> int | None:
         """
         :param sdfg: The SDFG to modify in-place.
         :return: Number of states inserted, or None if unchanged.
@@ -41,7 +41,7 @@ class RegionBoundaryStates(ppl.Pass):
         # symbol an enclosing region assigns and passes down through symbol_mapping, and reading only the
         # owning SDFG's arrays leaves that region unbracketed. Sharing a name that needs no boundary only
         # costs two empty states.
-        sized_by: Set[str] = {
+        sized_by: set[str] = {
             str(s)
             for nested in sdfg.all_sdfgs_recursive()
             for desc in nested.arrays.values()

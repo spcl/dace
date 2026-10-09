@@ -22,10 +22,10 @@ equivalence of the vectorised SDFG vs the non-vectorised reference via
 ``run_vectorization_test``.
 """
 
-import pytest
 import numpy
-import dace
+import pytest
 
+import dace
 from tests.passes.vectorization.helpers.harness import run_vectorization_test
 
 NB = dace.symbol("NB")

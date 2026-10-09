@@ -48,13 +48,10 @@ Deterministic: everything derives from ``seed`` through one ``numpy.random.defau
 array is built ROW-MAJOR, the standing invariant for CloudSC data.
 """
 
-from typing import Dict, List, Tuple, Union
-
 import numpy as np
 import sympy
 
 import dace
-
 from tests.corpus.cloudsc.generate_data_for_cloudsc import (
     CLOUDSC_CONSTANTS,
     CLOUDSC_INPUT_RANGES,
@@ -62,12 +59,12 @@ from tests.corpus.cloudsc.generate_data_for_cloudsc import (
     pressure_profile,
 )
 
-Field = Dict[str, np.ndarray]
-Inputs = Dict[str, Union[np.ndarray, int, float]]
+Field = dict[str, np.ndarray]
+Inputs = dict[str, np.ndarray | int | float]
 
 #: US Standard Atmosphere 1976 layer boundaries, ``(pressure [Pa], temperature [K])``, from the
 #: surface up to 84.852 km. Temperature between anchors is linear in ``log(p)``.
-STANDARD_ATMOSPHERE: Tuple[Tuple[float, float], ...] = (
+STANDARD_ATMOSPHERE: tuple[tuple[float, float], ...] = (
     (101325.0, 288.15),
     (22632.1, 216.65),
     (5474.89, 216.65),
@@ -126,7 +123,7 @@ def saturation_mixing_ratio(t: np.ndarray, p: np.ndarray) -> np.ndarray:
     return vapor / (1.0 - CLOUDSC_CONSTANTS["ydcst_retv"] * vapor)
 
 
-def phase_thresholds() -> Tuple[float, ...]:
+def phase_thresholds() -> tuple[float, ...]:
     """Temperatures the kernel branches on: melting, homogeneous freezing, and the mixed-phase band."""
     return (
         CLOUDSC_CONSTANTS["ydcst_rtt"],
@@ -136,7 +133,7 @@ def phase_thresholds() -> Tuple[float, ...]:
     )
 
 
-def repel_from_thresholds(values: np.ndarray, thresholds: Tuple[float, ...], margin: float) -> np.ndarray:
+def repel_from_thresholds(values: np.ndarray, thresholds: tuple[float, ...], margin: float) -> np.ndarray:
     """Push every element at least ``margin`` away from every threshold, keeping which side it is on."""
     out = np.array(values, dtype=np.float64, order="C")
     for threshold in thresholds:
@@ -311,11 +308,11 @@ def generate_conditioned_cloudsc_inputs(sdfg: dace.SDFG, seed: int = 0) -> Input
     klev, klon, nclv = CLOUDSC_SYMBOLS["klev"], CLOUDSC_SYMBOLS["klon"], CLOUDSC_SYMBOLS["nclv"]
     fields = build_conditioned_fields(klev, klon, nclv, seed)
 
-    arrays: Dict[str, np.ndarray] = {}
+    arrays: dict[str, np.ndarray] = {}
     for name, desc in sdfg.arrays.items():
         if desc.transient:
             continue
-        dims: List[int] = [instantiate_dim(d) for d in desc.shape]
+        dims: list[int] = [instantiate_dim(d) for d in desc.shape]
         is_int = "int" in str(desc.dtype)
         if name in fields:
             arrays[name] = fields[name]

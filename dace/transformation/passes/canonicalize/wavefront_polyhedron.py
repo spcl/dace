@@ -27,28 +27,29 @@ constraint extraction -- lives in
 re-exports the names :class:`WavefrontSkew` reaches through the ``poly`` alias.
 """
 
-from typing import Any, List, Optional, Sequence, Tuple
+from collections.abc import Sequence
+from typing import Any
 
 import islpy as isl
 import sympy as sp
 
 from dace import symbolic
-from dace.sdfg.narrowing import as_expr, simplified
 
 # noqa: F401 -- re-exports reached as poly.<name> from wavefront_skew; ruff cannot see that use.
-from dace.sdfg.analysis.polyhedral_isl import is_domain_empty  # noqa: F401
 from dace.sdfg.analysis.polyhedral_isl import (
     classify_dim,
     collect_basic_sets,
     constraint_to_sympy,
     dedupe_terms,
+    is_domain_empty,  # noqa: F401
     make_set,
     pwaff_bound,
     subs_by_name,
 )
+from dace.sdfg.narrowing import as_expr, simplified
 
 
-def constraints_from_condition(cond: Any) -> Optional[List[sp.Expr]]:
+def constraints_from_condition(cond: Any) -> list[sp.Expr] | None:
     """``cond`` rendered as a list of expressions each meant ``>= 0``, or ``None``.
 
     A read that only executes under a branch guard carries a dependence only where that guard
@@ -69,7 +70,7 @@ def constraints_from_condition(cond: Any) -> Optional[List[sp.Expr]]:
     # sympy's connectives, so matching only ``sp.And`` would miss every parsed guard.
     func = str(cond.func) if isinstance(cond, sp.Basic) else ""
     if isinstance(cond, sp.And) or func == "AND":
-        out: List[sp.Expr] = []
+        out: list[sp.Expr] = []
         for arg in cond.args:
             part = constraints_from_condition(arg)
             if part is None:
@@ -98,7 +99,7 @@ class SkewBounds:
     bounds."""
 
     def __init__(
-        self, t_lo_terms: List[sp.Expr], t_hi_terms: List[sp.Expr], p_lo_terms: List[sp.Expr], p_hi_terms: List[sp.Expr]
+        self, t_lo_terms: list[sp.Expr], t_hi_terms: list[sp.Expr], p_lo_terms: list[sp.Expr], p_hi_terms: list[sp.Expr]
     ) -> None:
         self.t_lo_terms = t_lo_terms
         self.t_hi_terms = t_hi_terms
@@ -107,14 +108,14 @@ class SkewBounds:
 
 
 def skew_bounds(
-    dims: Tuple[str, str],
+    dims: tuple[str, str],
     params: Sequence[str],
     domain_constraints: Sequence[sp.Expr],
-    tau: Tuple[int, int],
+    tau: tuple[int, int],
     t_name: str,
     p_name: str,
-    t_range: Optional[Tuple[sp.Expr, sp.Expr]] = None,
-) -> Optional[SkewBounds]:
+    t_range: tuple[sp.Expr, sp.Expr] | None = None,
+) -> SkewBounds | None:
     """Project the domain through the unimodular skew ``t = a*u + b*v`` and read
     back bound terms. ``dims`` are ``(u, v)``; ``tau = (a, b)``. The parallel axis
     ``p`` is the coordinate whose complement inverts over the integers:
@@ -157,8 +158,8 @@ def skew_bounds(
     # p-range at fixed t (parametric in t): read directly from the skewed set. A
     # steep skew scales p by |a| > 1, which ``classify_dim`` turns into an exact
     # int_ceil / int_floor bound.
-    p_lo_terms: List[sp.Expr] = []
-    p_hi_terms: List[sp.Expr] = []
+    p_lo_terms: list[sp.Expr] = []
+    p_hi_terms: list[sp.Expr] = []
     for b_set in collect_basic_sets(s_set):
         for c in b_set.get_constraints():
             e = constraint_to_sympy(c, safe_dims, safe_params, inv)

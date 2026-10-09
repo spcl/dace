@@ -11,14 +11,13 @@ descent. These tests pin both behaviours, including value preservation on the
 cloudsc inout pattern.
 """
 
-import pytest
 import numpy
+import pytest
 
 import dace
 from dace.sdfg.nodes import MapEntry, NestedSDFG
 from dace.transformation.interstate import LoopToMap
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import normalize_loop_nests
-
 from tests.passes.vectorization.helpers.harness import _get_cloudsc_snippet_four
 
 M = dace.symbol("M")

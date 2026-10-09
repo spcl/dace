@@ -1,7 +1,8 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 
-import dace
 import numpy as np
+
+import dace
 
 
 def test_augmented_assignment_to_indirect_access():

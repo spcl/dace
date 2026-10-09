@@ -7,8 +7,8 @@ opt-in fixtures defined in ``tests/passes/vectorization/conftest.py``
 ``emission_style``, ``vectorize_config``) are visible to the test.
 """
 
-import pytest
 import numpy as np
+import pytest
 
 from tests.corpus.tsvc import tsvc
 

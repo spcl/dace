@@ -1,12 +1,13 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
-from typing import Dict, Optional, Any
+from typing import Any
 
-from dace import sdfg as sd, properties
-from dace.sdfg.state import ContinueBlock, ConditionalBlock, LoopRegion
-from dace.transformation import transformation
-from dace.transformation import pass_pipeline as ppl
+from dace import properties
+from dace import sdfg as sd
 from dace.sdfg.sdfg import SDFG
+from dace.sdfg.state import ConditionalBlock, ContinueBlock, LoopRegion
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation import transformation
 
 
 @properties.make_properties
@@ -24,7 +25,7 @@ class ContinueToCondition(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return modified & ppl.Modifies.CFG
 
-    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> int | None:
         """Turn every eligible ``continue`` into a guard on the rest of the loop body.
 
         :param sdfg: The SDFG to transform in place.

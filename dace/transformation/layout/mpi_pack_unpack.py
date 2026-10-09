@@ -12,7 +12,7 @@ Run AFTER the layout passes (Permute/Block/apply_assignment).
 """
 
 from dataclasses import dataclass
-from typing import Any, Dict
+from typing import Any
 
 import dace
 from dace.transformation import pass_pipeline as ppl
@@ -38,8 +38,8 @@ class MpiPackUnpack(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def apply_pass(self, sdfg: dace.SDFG, pipeline_results: Dict[str, Any]) -> int:
-        from dace.libraries.mpi.nodes import Send, Isend, Recv, Irecv, Sendrecv
+    def apply_pass(self, sdfg: dace.SDFG, pipeline_results: dict[str, Any]) -> int:
+        from dace.libraries.mpi.nodes import Irecv, Isend, Recv, Send, Sendrecv
 
         count = 0
         for phase in program_phases(sdfg):

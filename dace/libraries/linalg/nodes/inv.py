@@ -1,17 +1,19 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
+
+import numpy as np
+
 import dace
 import dace.library
 import dace.properties
 import dace.sdfg.nodes
-import numpy as np
 from dace import Memlet
-from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES, host_accessible_info_storage
+from dace.libraries.blas import environments as blas_environments
+from dace.libraries.lapack import environments
 from dace.libraries.lapack.nodes import Getrf, Getri, Getrs
 from dace.libraries.linalg.nodes.solve import gesv_core_program, restride
+from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES, host_accessible_info_storage
 from dace.transformation.transformation import ExpandTransformation
-from dace.libraries.lapack import environments
-from dace.libraries.blas import environments as blas_environments
 
 
 def input_operand_storage(node, parent_state, parent_sdfg):
@@ -34,7 +36,7 @@ def _make_sdfg(node, parent_state, parent_sdfg, implementation):
     # host-accessible (pinned) memory when the operand is GPU-resident.
     info_storage = host_accessible_info_storage(input_operand_storage(node, parent_state, parent_sdfg))
 
-    sdfg = dace.SDFG("{l}_sdfg".format(l=node.label))
+    sdfg = dace.SDFG(f"{node.label}_sdfg")
 
     a_arr = sdfg.add_array("_ain", in_shape, dtype=in_dtype, strides=in_strides)
     if not node.overwrite:
@@ -43,7 +45,7 @@ def _make_sdfg(node, parent_state, parent_sdfg, implementation):
     ipiv_arr = sdfg.add_array("_pivots", [n], dtype=dace.int32, transient=True)
     info_arr = sdfg.add_array("_info", [1], dtype=dace.int32, transient=True, storage=info_storage)
 
-    state = sdfg.add_state("{l}_state".format(l=node.label))
+    state = sdfg.add_state(f"{node.label}_state")
 
     getrf_node = Getrf("getrf")
     getrf_node.implementation = implementation
@@ -90,7 +92,7 @@ def _make_sdfg_getrs(node, parent_state, parent_sdfg, implementation):
     operand_storage = input_operand_storage(node, parent_state, parent_sdfg)
     info_storage = host_accessible_info_storage(operand_storage)
 
-    sdfg = dace.SDFG("{l}_sdfg".format(l=node.label))
+    sdfg = dace.SDFG(f"{node.label}_sdfg")
 
     a_arr = sdfg.add_array("_ain", in_shape, dtype=in_dtype, strides=in_strides)
     if not node.overwrite:
@@ -102,7 +104,7 @@ def _make_sdfg_getrs(node, parent_state, parent_sdfg, implementation):
     ipiv_arr = sdfg.add_array("_pivots", [n], dtype=dace.int32, transient=True, storage=operand_storage)
     info_arr = sdfg.add_array("_info", [1], dtype=dace.int32, transient=True, storage=info_storage)
 
-    state = sdfg.add_state("{l}_state".format(l=node.label))
+    state = sdfg.add_state(f"{node.label}_state")
 
     getrf_node = Getrf("getrf")
     getrf_node.implementation = implementation

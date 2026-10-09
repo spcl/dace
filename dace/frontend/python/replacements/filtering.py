@@ -4,14 +4,12 @@ Contains replacements for filtering functions. This module includes functions fr
 NumPy's Indexing Routines and Sorting, Searching, and Counting Functions.
 """
 
+from dace import SDFG, Memlet, SDFGState, data, dtypes, nodes, subsets, symbolic
 from dace.frontend.common import op_repository as oprepo
 from dace.frontend.python.replacements.utils import ProgramVisitor, broadcast_together
-from dace import data, dtypes, subsets, symbolic, Memlet, SDFG, SDFGState, nodes
-
-from typing import List, Optional, Set
 
 
-def branch_type(operand, arr: Optional[data.Data]) -> dtypes.typeclass:
+def branch_type(operand, arr: data.Data | None) -> dtypes.typeclass:
     """dtype of one ``numpy.where`` branch: the array's own, else the scalar's.
 
     A symbolic scalar (``2 * N``) reaches here as a sympy expression, whose Python ``type()`` --
@@ -43,9 +41,9 @@ def where_as_merge_node(
     left: str,
     right: str,
     out: str,
-    left_node: Optional[nodes.AccessNode],
-    right_node: Optional[nodes.AccessNode],
-    generated_nodes: Optional[Set[nodes.Node]],
+    left_node: nodes.AccessNode | None,
+    right_node: nodes.AccessNode | None,
+    generated_nodes: set[nodes.Node] | None,
 ) -> None:
     """Wire ``out = where(cond, left, right)`` as a MergeLibraryNode, reusing the given access nodes."""
     from dace.libraries.standard.nodes import MergeLibraryNode  # Avoid import loop
@@ -74,9 +72,9 @@ def _array_array_where(
     cond_operand: str,
     left_operand: str = None,
     right_operand: str = None,
-    generated_nodes: Optional[Set[nodes.Node]] = None,
-    left_operand_node: Optional[nodes.AccessNode] = None,
-    right_operand_node: Optional[nodes.AccessNode] = None,
+    generated_nodes: set[nodes.Node] | None = None,
+    left_operand_node: nodes.AccessNode | None = None,
+    right_operand_node: nodes.AccessNode | None = None,
 ):
     from dace.frontend.python.replacements.operators import result_type
 
@@ -156,7 +154,7 @@ def _array_array_where(
             "_where_",
             in_connectors,
             {"__out": None},
-            "__out = {i1} if __incond else {i2}".format(i1=tasklet_args[1], i2=tasklet_args[2]),
+            f"__out = {tasklet_args[1]} if __incond else {tasklet_args[2]}",
         )
         n0 = state.add_read(cond_operand)
         n3 = state.add_write(out_operand)
@@ -210,7 +208,7 @@ def _array_array_where(
             "_where_",
             all_idx_dict,
             inputs,
-            "__out = {i1} if __incond else {i2}".format(i1=tasklet_args[1], i2=tasklet_args[2]),
+            f"__out = {tasklet_args[1]} if __incond else {tasklet_args[2]}",
             {"__out": Memlet.simple(out_operand, out_idx)},
             external_edges=True,
             input_nodes=input_nodes,
@@ -230,7 +228,7 @@ def _array_array_where(
 
 @oprepo.replaces("numpy.select")
 def _array_array_select(
-    visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, cond_list: List[str], choice_list: List[str], default=None
+    visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, cond_list: list[str], choice_list: list[str], default=None
 ):
     if len(cond_list) != len(choice_list):
         raise ValueError("numpy.select is only valid with same-length condition and choice lists")

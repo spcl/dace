@@ -2,7 +2,7 @@
 """``all_control_flow_regions`` walks with an explicit stack; it must yield exactly the regions, in
 exactly the order, of the recursive definition (``reset_cfg_list`` numbers ``cfg_id`` by it)."""
 
-from typing import Iterator
+from collections.abc import Iterator
 
 import dace
 from dace.properties import CodeBlock

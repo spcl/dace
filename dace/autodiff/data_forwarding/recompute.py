@@ -4,13 +4,14 @@ from typing import TYPE_CHECKING
 
 # DaCe imports
 import dace
+import dace.autodiff.utils as ad_utils
 import dace.sdfg.nodes as nodes
-from dace.sdfg import SDFG, SDFGState, state as dstate
-from dace.sdfg.state import LoopRegion
 
 # Autodiff imports
 from dace.autodiff.base_abc import AutoDiffException
-import dace.autodiff.utils as ad_utils
+from dace.sdfg import SDFG, SDFGState
+from dace.sdfg import state as dstate
+from dace.sdfg.state import LoopRegion
 
 if TYPE_CHECKING:
     from dace.autodiff.backward_pass_generator import BackwardPassGenerator

@@ -17,8 +17,6 @@ canonicalize run, so it never needs to survive a save/load. A relation is a
 sympy ``Boolean`` (e.g. ``StrictLessThan(K, N)``) over the SDFG's free symbols.
 """
 
-from typing import List
-
 from dace import symbolic
 from dace.sdfg import SDFG
 
@@ -46,7 +44,7 @@ def record_assumption(sdfg: SDFG, relation: symbolic.SymbolicType) -> None:
         store.append(relation)
 
 
-def tracked_assumptions(sdfg: SDFG) -> List[symbolic.SymbolicType]:
+def tracked_assumptions(sdfg: SDFG) -> list[symbolic.SymbolicType]:
     """The relations recorded on ``sdfg`` via :func:`record_assumption` (a copy)."""
     return list(vars(sdfg).get(ATTR, ()))
 

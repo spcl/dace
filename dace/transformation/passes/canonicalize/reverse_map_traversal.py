@@ -30,21 +30,21 @@ belongs innermost by scoring unit coefficients. Orienting first means it scores 
 the emitted code will actually use.
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import sympy
 
 from dace import SDFG, symbolic
+from dace.optionals import required
 from dace.sdfg import nodes
+from dace.sdfg.narrowing import as_basic, as_expr
 from dace.sdfg.state import SDFGState
 from dace.subsets import Range
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
-from dace.optionals import required
-from dace.sdfg.narrowing import as_basic, as_expr
 
 
-def access_coefficients(state: SDFGState, entry: nodes.MapEntry, param: str) -> Optional[List[Optional[int]]]:
+def access_coefficients(state: SDFGState, entry: nodes.MapEntry, param: str) -> list[int | None] | None:
     """Sign of ``param``'s coefficient in every data access inside ``entry``'s scope.
 
     ``None`` when any access uses the parameter non-affinely (a modulo, a call, an indirection):
@@ -55,7 +55,7 @@ def access_coefficients(state: SDFGState, entry: nodes.MapEntry, param: str) -> 
         ascending/descending access, or ``None`` for the whole map if any use is non-affine.
     """
     sym = symbolic.pystr_to_symbolic(param)
-    signs: List[Optional[int]] = []
+    signs: list[int | None] = []
     for edge in state.scope_subgraph(entry).edges():
         if edge.data is None or edge.data.is_empty():
             continue
@@ -82,7 +82,7 @@ def access_coefficients(state: SDFGState, entry: nodes.MapEntry, param: str) -> 
     return signs
 
 
-def reverse_descending_maps(sdfg: SDFG) -> Optional[int]:
+def reverse_descending_maps(sdfg: SDFG) -> int | None:
     """Flip every map parameter whose accesses all descend, in place.
 
     :param sdfg: the SDFG to rewrite.
@@ -120,5 +120,5 @@ class ReverseMapTraversal(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return bool(modified & (ppl.Modifies.Memlets | ppl.Modifies.Nodes))
 
-    def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> int | None:
         return reverse_descending_maps(sdfg)

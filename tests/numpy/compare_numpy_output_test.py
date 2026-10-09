@@ -1,11 +1,11 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """``compare_numpy_output`` is the oracle of every ufunc test, so an output it skips passes while wrong."""
 
-import dace
 import numpy as np
 import pytest
-
 from common import compare_numpy_output
+
+import dace
 
 
 def two_outputs(A: dace.float64[4]):

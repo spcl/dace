@@ -1,11 +1,13 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import numpy as np
 from copy import deepcopy as dc
-from dace import dtypes, data, symbolic
-from typing import Any, Dict, List, Tuple
+from typing import Any
+
+import numpy as np
+
+from dace import data, dtypes, symbolic
 
 
-def matrix_view(subset) -> Tuple[List[Any], List[int]]:
+def matrix_view(subset) -> tuple[list[Any], list[int]]:
     """
     Returns an operand's matrix view: the raw subset if it is already 2D, otherwise the squeezed one.
 
@@ -42,7 +44,7 @@ def to_blastype(dtype):
         raise TypeError("Type %s not supported in BLAS operations" % dtype.__name__)
 
 
-def cublas_type_metadata(dtype: dtypes.typeclass) -> Tuple[str, str, str]:
+def cublas_type_metadata(dtype: dtypes.typeclass) -> tuple[str, str, str]:
     """
     Returns type metadata on a given dace dtype.
 
@@ -112,7 +114,7 @@ def to_cublas_computetype(dtype: dtypes.typeclass) -> str:
     return types[dtype]
 
 
-def packed_unit_extent(shape, strides) -> List:
+def packed_unit_extent(shape, strides) -> list:
     """``strides`` with the free stride of a single row or column replaced by a packed matrix's.
 
     A dimension of extent 1 is never stepped over, so its stride is free, but BLAS still checks the
@@ -130,7 +132,7 @@ def packed_unit_extent(shape, strides) -> List:
     return [*batch, s_rows, s_cols]
 
 
-def get_gemm_opts(a_strides, b_strides, c_strides) -> Dict[str, Any]:
+def get_gemm_opts(a_strides, b_strides, c_strides) -> dict[str, Any]:
     """
     Returns GEMM argument order, transposition, and leading dimensions
     based on column-major storage from dace arrays.

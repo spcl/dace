@@ -1,10 +1,12 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import unittest
-from dace.sdfg.utils import *
+
 import networkx as nx
 
+from dace.sdfg.utils import *
 
-class GraphSearchSpace(object):
+
+class GraphSearchSpace:
     def __init__(self, graph, graph_node):
         self.graph = graph
         self.node = graph_node

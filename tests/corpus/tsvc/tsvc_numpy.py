@@ -11,7 +11,7 @@ Call as ``REFERENCES[name](**arrays, **scalar_params, **symbols)`` -- the extra
 ``**_`` swallows any symbol the body does not use.
 """
 
-from math import sin, cos  # noqa: F401  -- called unqualified inside the references
+from math import cos, sin  # noqa: F401  -- called unqualified inside the references
 
 VLEN = 8
 

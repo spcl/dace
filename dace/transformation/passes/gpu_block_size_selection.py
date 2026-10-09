@@ -39,14 +39,15 @@ derive the block size from the thread-block map, and a preset ``gpu_block_size``
 would conflict at codegen.
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from dace import SDFG, dtypes
 from dace.codegen.common import cuda_emits_tree_reductions
+from dace.optionals import required
 from dace.sdfg import nodes
 from dace.sdfg.state import SDFGState
-from dace.transformation import pass_pipeline as ppl, transformation
-from dace.optionals import required
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation import transformation
 
 #: Schedules whose maps derive the block size themselves; a device map wrapping
 #: one of these must not also carry a preset ``gpu_block_size``.
@@ -84,7 +85,7 @@ TREE_REDUCTION_BLOCK_SIZE = [512, 1, 1]
 SKEW_RATIO = 2
 
 
-def constant_extent(extent) -> Optional[int]:
+def constant_extent(extent) -> int | None:
     """Return ``extent`` as a positive Python ``int`` if it is a known constant, else ``None``.
 
     A symbolic (non-constant) extent -- the common case for size symbols -- returns
@@ -97,7 +98,7 @@ def constant_extent(extent) -> Optional[int]:
     return value if value > 0 else None
 
 
-def domain_matched_2d_block(ext_x, ext_y) -> List[int]:
+def domain_matched_2d_block(ext_x, ext_y) -> list[int]:
     """Choose a 2-D thread-block (CUDA ``x, y`` order) for extents ``ext_x`` (contiguous,
     last map dimension) and ``ext_y`` (outer map dimension).
 
@@ -120,7 +121,7 @@ def domain_matched_2d_block(ext_x, ext_y) -> List[int]:
     return [warp, WARPS_PER_2D_BLOCK, 1]
 
 
-def pick_gpu_block_size(gpu_map: nodes.Map) -> Optional[List[int]]:
+def pick_gpu_block_size(gpu_map: nodes.Map) -> list[int] | None:
     """Domain-matched ``gpu_block_size`` for a ``GPU_Device`` ``map``, in CUDA ``(x, y, z)`` order.
 
     * 1-D map -> :data:`WARPS_PER_1D_BLOCK` warps on ``x``.
@@ -220,10 +221,10 @@ class SelectGPUDeviceBlockSize(ppl.Pass):
         # New/rescheduled scopes may introduce device maps that still need a block size.
         return bool(modified & ppl.Modifies.Scopes)
 
-    def apply_pass(self, sdfg: SDFG, _: Dict[str, Any]) -> Optional[Dict[str, List[int]]]:
+    def apply_pass(self, sdfg: SDFG, _: dict[str, Any]) -> dict[str, list[int]] | None:
         """Set ``gpu_block_size`` on eligible device maps. Returns ``{map label: block size}``
         for the maps it assigned, or ``None`` if it assigned none."""
-        assigned: Dict[str, List[int]] = {}
+        assigned: dict[str, list[int]] = {}
         for node, state in sdfg.all_nodes_recursive():
             if not isinstance(node, nodes.MapEntry):
                 continue
@@ -248,7 +249,7 @@ class SelectGPUDeviceBlockSize(ppl.Pass):
         return assigned or None
 
 
-def select_gpu_device_block_size(sdfg: SDFG) -> Dict[str, List[int]]:
+def select_gpu_device_block_size(sdfg: SDFG) -> dict[str, list[int]]:
     """Functional entry point: assign domain-matched block sizes in place.
 
     Returns the ``{map label: block size}`` map of assignments (empty if none)."""

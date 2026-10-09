@@ -10,18 +10,17 @@ preserve the user's intent.
 """
 
 import copy
-from typing import List, TYPE_CHECKING
 import warnings
+from typing import TYPE_CHECKING
 
 import dace.library
 import dace.properties
 import dace.sdfg.nodes
-from dace.transformation.transformation import ExpandTransformation
-from dace.libraries.blas import blas_helpers
-from .. import environments
-from dace.libraries.blas import gpu_dialect
-from dace import memlet as mm, symbolic, SDFG, SDFGState
+from dace import SDFG, SDFGState, symbolic
+from dace import memlet as mm
 from dace.frontend.common import op_repository as oprepo
+from dace.libraries.blas import blas_helpers, environments, gpu_dialect
+from dace.transformation.transformation import ExpandTransformation
 
 if TYPE_CHECKING:
     from dace.frontend.python.newast import ProgramVisitor
@@ -31,7 +30,7 @@ if TYPE_CHECKING:
 class ExpandCopyPure(ExpandTransformation):
     """Backend-agnostic: ``y[i] := x[i]`` as a mapped tasklet."""
 
-    environments: List[type] = []
+    environments: list[type] = []
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
@@ -90,7 +89,7 @@ class ExpandCopyMKL(ExpandTransformation):
 
 @dace.library.expansion
 class ExpandCopyGPUBLAS(ExpandTransformation):
-    environments: List[type] = []
+    environments: list[type] = []
     dialect: gpu_dialect.GpuBlasDialect
 
     @classmethod

@@ -5,7 +5,8 @@ dataflow graph representation."""
 import copy
 import os
 import re
-from typing import Any, Dict, Iterator, List, Optional, Type
+from collections.abc import Iterator
+from typing import Any
 
 import dace
 from dace.config import Config
@@ -17,7 +18,7 @@ from dace.transformation.transformation import PatternTransformation
 # This import is necessary since it registers all the patterns
 
 
-class Optimizer(object):
+class Optimizer:
     """Implements methods for optimizing a DaCe program stateful dataflow
     graph representation, by matching patterns and applying
     transformations on it.
@@ -46,7 +47,7 @@ class Optimizer(object):
         raise NotImplementedError
 
     def set_transformation_metadata(
-        self, patterns: List[Type[PatternTransformation]], options: Optional[List[Dict[str, Any]]] = None
+        self, patterns: list[type[PatternTransformation]], options: list[dict[str, Any]] | None = None
     ):
         """
         Caches transformation metadata for a certain set of patterns to match.

@@ -2,7 +2,7 @@
 """Pad layout primitive: grow a dimension's extent with trailing unused elements, keeping packed strides. Only the descriptor changes (recursed into nested SDFGs); existing memlets still index the live region."""
 
 from dataclasses import dataclass
-from typing import Any, Dict, List
+from typing import Any
 
 import dace
 from dace.transformation import pass_pipeline as ppl
@@ -12,7 +12,7 @@ from dace.transformation import pass_pipeline as ppl
 class PadDimensions(ppl.Pass):
     """Grow chosen array dimensions by trailing pad, preserving the packed layout."""
 
-    def __init__(self, pad_map: Dict[str, List[int]]):
+    def __init__(self, pad_map: dict[str, list[int]]):
         self._pad_map = pad_map
 
     def modifies(self) -> ppl.Modifies:
@@ -21,7 +21,7 @@ class PadDimensions(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def _packed_strides(self, shape: List, fortran: bool) -> List:
+    def _packed_strides(self, shape: list, fortran: bool) -> list:
         n = len(shape)
         strides = [1] * n
         if fortran:
@@ -32,7 +32,7 @@ class PadDimensions(ppl.Pass):
                 strides[i] = strides[i + 1] * shape[i + 1]
         return strides
 
-    def _grow(self, sdfg: dace.SDFG, arr_name: str, pads: List[int]):
+    def _grow(self, sdfg: dace.SDFG, arr_name: str, pads: list[int]):
         desc = sdfg.arrays[arr_name]
         if len(pads) != len(desc.shape):
             raise ValueError(f"PadDimensions: pad {pads} length != rank {len(desc.shape)} of '{arr_name}'")
@@ -45,7 +45,7 @@ class PadDimensions(ppl.Pass):
             total = total * s
         desc.set_shape(new_shape, strides=strides, total_size=total)
 
-    def _grow_recursive(self, sdfg: dace.SDFG, arr_name: str, pads: List[int]):
+    def _grow_recursive(self, sdfg: dace.SDFG, arr_name: str, pads: list[int]):
         self._grow(sdfg, arr_name, pads)
         for state in sdfg.states():
             for node in state.nodes():
@@ -62,10 +62,10 @@ class PadDimensions(ppl.Pass):
                 for inner in inner_names:
                     self._grow_recursive(node.sdfg, inner, pads)
 
-    def apply_pass(self, sdfg: dace.SDFG, pipeline_results: Dict[str, Any]) -> Dict[str, List]:
+    def apply_pass(self, sdfg: dace.SDFG, pipeline_results: dict[str, Any]) -> dict[str, list]:
         # Record each array's pre-pad shape so a following PadZeroFill knows the live extent (the boundary
         # between real and pad cells) and can refuse to zero-fill an array that was never grown.
-        originals: Dict[str, List] = {}
+        originals: dict[str, list] = {}
         for arr_name, pads in self._pad_map.items():
             originals[arr_name] = list(sdfg.arrays[arr_name].shape)
             self._grow_recursive(sdfg, arr_name, pads)
@@ -86,7 +86,7 @@ class PadZeroFill(ppl.Pass):
     ``original + pad``) is a hard error rather than a silent miscompile.
     """
 
-    def __init__(self, pad_map: Dict[str, List[int]]):
+    def __init__(self, pad_map: dict[str, list[int]]):
         self._pad_map = pad_map
 
     def depends_on(self):
@@ -98,7 +98,7 @@ class PadZeroFill(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def apply_pass(self, sdfg: dace.SDFG, pipeline_results: Dict[str, Any]) -> int:
+    def apply_pass(self, sdfg: dace.SDFG, pipeline_results: dict[str, Any]) -> int:
         if "PadDimensions" not in pipeline_results:
             raise ValueError(
                 "PadZeroFill must run after PadDimensions: it needs the pre-pad shapes to know which cells "
@@ -134,7 +134,7 @@ class PadZeroFill(ppl.Pass):
                 self._zero_slab(init, arr, list(desc.shape), dim, orig[dim])
         return 0
 
-    def _zero_slab(self, state, arr: str, new_shape: List, dim: int, old_extent) -> None:
+    def _zero_slab(self, state, arr: str, new_shape: list, dim: int, old_extent) -> None:
         """Zero ``A[.., old_extent:new, ..]`` -- the pad slab of one dimension (all other dims full). The
         union of the per-dim slabs is exactly the complement of the live box, so overlaps re-zero harmlessly."""
         params = [f"__p{k}" for k in range(len(new_shape))]
@@ -150,9 +150,9 @@ class PadZeroFill(ppl.Pass):
         )
 
     def _refuse_nonsum_reductions(self, sdfg: dace.SDFG) -> None:
-        from dace.libraries.standard.nodes.reduce import Reduce
-        from dace.frontend.operations import detect_reduction_type
         from dace.dtypes import ReductionType
+        from dace.frontend.operations import detect_reduction_type
+        from dace.libraries.standard.nodes.reduce import Reduce
 
         padded = {arr: {d for d, p in enumerate(pads) if p > 0} for arr, pads in self._pad_map.items()}
         for state in sdfg.states():

@@ -92,7 +92,7 @@ def _generate_tables():
         "auto-opt": lambda s: auto_optimize(s, dace.DeviceType.CPU),
     }
     print(f"{'suite':5} {'kernel':18} {'canon':>10} {'auto-opt':>10}", flush=True)
-    tally = {lbl: 0 for lbl in pipelines}
+    tally = dict.fromkeys(pipelines, 0)
     for suite, name in CS.kernels():
         row = {}
         for lbl, transform in pipelines.items():

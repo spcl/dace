@@ -1,22 +1,22 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+import ast
 import copy
 import re
-import dace
-from typing import Dict, Iterable, List, Optional
+from collections.abc import Iterable
+
 import sympy
-from dace import SDFG
-from dace import properties
-from dace import Union
-from dace import ControlFlowRegion
+
+import dace
+from dace import SDFG, ControlFlowRegion, Union, properties
+from dace.optionals import required
 from dace.properties import Property
-from dace.sdfg.state import ConditionalBlock, LoopRegion
-from dace.symbolic import symstr
-from dace.transformation import pass_pipeline as ppl, transformation
+from dace.sdfg.narrowing import as_basic, as_expr
 from dace.sdfg.nodes import CodeBlock
 from dace.sdfg.replace import replace_in_codeblock
-import ast
-from dace.sdfg.narrowing import as_basic, as_expr
-from dace.optionals import required
+from dace.sdfg.state import ConditionalBlock, LoopRegion
+from dace.symbolic import symstr
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation import transformation
 
 
 def _get_expr_from_str(expr: str) -> dace.symbolic.SymExpr:
@@ -27,7 +27,7 @@ def _get_expr_from_str(expr: str) -> dace.symbolic.SymExpr:
     return parsed_expr
 
 
-def create_new_memlet(edge_data: dace.memlet.Memlet, repldict: Dict[str, str]) -> Optional[dace.memlet.Memlet]:
+def create_new_memlet(edge_data: dace.memlet.Memlet, repldict: dict[str, str]) -> dace.memlet.Memlet | None:
     """Copy ``edge_data`` with ``repldict`` substituted into BOTH of its subsets.
 
     A two-sided (copy) memlet names one array in ``.data`` and keeps the OTHER side's
@@ -53,20 +53,20 @@ def create_new_memlet(edge_data: dace.memlet.Memlet, repldict: Dict[str, str]) -
     return new_memlet
 
 
-def update_edge_if_changed(state: dace.SDFGState, edge, new_memlet: Optional[dace.memlet.Memlet]) -> None:
+def update_edge_if_changed(state: dace.SDFGState, edge, new_memlet: dace.memlet.Memlet | None) -> None:
     """Re-attach ``edge`` carrying ``new_memlet`` if that differs from what it carries now."""
     if new_memlet and new_memlet != edge.data:
         state.remove_edge(edge)
         state.add_edge(edge.src, edge.src_conn, edge.dst, edge.dst_conn, new_memlet)
 
 
-def process_memlets_in_edges(state: dace.SDFGState, edges: Iterable, repldict: Dict[str, str]) -> None:
+def process_memlets_in_edges(state: dace.SDFGState, edges: Iterable, repldict: dict[str, str]) -> None:
     """Substitute ``repldict`` into the memlet of every edge in ``edges``."""
     for edge in edges:
         update_edge_if_changed(state, edge, create_new_memlet(edge.data, repldict))
 
 
-def repl_memlets_recursive(cfg: ControlFlowRegion, repldict: Dict[str, str]) -> None:
+def repl_memlets_recursive(cfg: ControlFlowRegion, repldict: dict[str, str]) -> None:
     """Substitute ``repldict`` into every memlet of ``cfg``, descending into nested SDFGs."""
     for state in cfg.states():
         process_memlets_in_edges(state, state.edges(), repldict)
@@ -75,7 +75,7 @@ def repl_memlets_recursive(cfg: ControlFlowRegion, repldict: Dict[str, str]) -> 
                 repl_memlets_recursive(node.sdfg, repldict)
 
 
-def repl_interstate_edges_recursive(cfg: ControlFlowRegion, repldict: Dict[str, str]) -> None:
+def repl_interstate_edges_recursive(cfg: ControlFlowRegion, repldict: dict[str, str]) -> None:
     """Substitute ``repldict`` into every inter-state edge of ``cfg``, descending into nested SDFGs."""
     for edge in [] if isinstance(cfg, dace.SDFGState) else cfg.all_interstate_edges():
         edge.data.replace_dict(repldict)
@@ -86,7 +86,7 @@ def repl_interstate_edges_recursive(cfg: ControlFlowRegion, repldict: Dict[str, 
                 repl_interstate_edges_recursive(node.sdfg, repldict)
 
 
-def replace_in_code(block: CodeBlock, repldict: Dict[str, str]) -> CodeBlock:
+def replace_in_code(block: CodeBlock, repldict: dict[str, str]) -> CodeBlock:
     """Copy of ``block`` with every name in ``repldict`` replaced: on the AST for Python, per identifier otherwise."""
     if block.language == dace.dtypes.Language.Python:
         block = copy.deepcopy(block)
@@ -107,7 +107,7 @@ def tasklets_assign(node_list: Iterable[dace.nodes.Node], names: Iterable[str]) 
     )
 
 
-def repl_tasklets_on_node_list(node_list: Iterable[dace.nodes.Node], repldict: Dict[str, str]) -> None:
+def repl_tasklets_on_node_list(node_list: Iterable[dace.nodes.Node], repldict: dict[str, str]) -> None:
     """Substitute ``repldict`` into the body of every tasklet in ``node_list`` that reads a key."""
     for node in node_list:
         if isinstance(node, dace.nodes.Tasklet):
@@ -116,7 +116,7 @@ def repl_tasklets_on_node_list(node_list: Iterable[dace.nodes.Node], repldict: D
                 node.code = replace_in_code(node.code, active)
 
 
-def repl_tasklets_recursive(cfg: ControlFlowRegion, repldict: Dict[str, str]) -> None:
+def repl_tasklets_recursive(cfg: ControlFlowRegion, repldict: dict[str, str]) -> None:
     """Substitute ``repldict`` into every tasklet of ``cfg``, descending into nested SDFGs."""
     for state in [cfg] if isinstance(cfg, dace.SDFGState) else cfg.states():
         repl_tasklets_on_node_list(state.nodes(), repldict)
@@ -125,7 +125,7 @@ def repl_tasklets_recursive(cfg: ControlFlowRegion, repldict: Dict[str, str]) ->
                 repl_tasklets_recursive(node.sdfg, repldict)
 
 
-def repl_for_regions_recursive(root: ControlFlowRegion, cfg: ControlFlowRegion, repldict: Dict[str, str]) -> None:
+def repl_for_regions_recursive(root: ControlFlowRegion, cfg: ControlFlowRegion, repldict: dict[str, str]) -> None:
     """Substitute ``repldict`` into every ``LoopRegion`` header under ``cfg`` except ``root``'s own."""
     for node in [] if isinstance(cfg, dace.SDFGState) else cfg.all_control_flow_regions():
         if node == root:
@@ -145,7 +145,7 @@ def repl_for_regions_recursive(root: ControlFlowRegion, cfg: ControlFlowRegion, 
                 repl_for_regions_recursive(root, node.sdfg, repldict)
 
 
-def repl_if_blocks_recursive(cfg: ControlFlowRegion, repldict: Dict[str, str]) -> None:
+def repl_if_blocks_recursive(cfg: ControlFlowRegion, repldict: dict[str, str]) -> None:
     """Substitute ``repldict`` into every ``ConditionalBlock`` branch condition under ``cfg``."""
     for node in [] if isinstance(cfg, dace.SDFGState) else cfg.all_control_flow_regions():
         if isinstance(node, ConditionalBlock):
@@ -159,7 +159,7 @@ def repl_if_blocks_recursive(cfg: ControlFlowRegion, repldict: Dict[str, str]) -
                 repl_if_blocks_recursive(node.sdfg, repldict)
 
 
-def repl_recursive(cfg: ControlFlowRegion, repldict: Dict[str, str]) -> None:
+def repl_recursive(cfg: ControlFlowRegion, repldict: dict[str, str]) -> None:
     """Substitute ``repldict`` everywhere inside ``cfg``: inter-state edges, memlets, tasklets,
     nested loop headers and branch conditions. ``cfg``'s OWN loop header is left alone."""
     repl_interstate_edges_recursive(cfg, repldict)
@@ -237,9 +237,7 @@ class OffsetLoopsAndMaps(ppl.Pass):
     # per scope instead of over the whole SDFG; it lives at module level so both callers reach it
     # without touching another pass's privates. These methods stay as the pass-facing spelling.
 
-    def _create_new_memlet(
-        self, edge_data: dace.memlet.Memlet, repldict: Dict[str, str]
-    ) -> Optional[dace.memlet.Memlet]:
+    def _create_new_memlet(self, edge_data: dace.memlet.Memlet, repldict: dict[str, str]) -> dace.memlet.Memlet | None:
         """Create a new memlet with substituted subset ranges."""
         return create_new_memlet(edge_data, repldict)
 
@@ -247,19 +245,19 @@ class OffsetLoopsAndMaps(ppl.Pass):
         """Update edge if the new memlet is different from the current one."""
         update_edge_if_changed(state, edge, new_memlet)
 
-    def _process_memlets_in_edges(self, state, edges, repldict: Dict[str, str]) -> None:
+    def _process_memlets_in_edges(self, state, edges, repldict: dict[str, str]) -> None:
         """Process memlets in a collection of edges."""
         process_memlets_in_edges(state, edges, repldict)
 
-    def _repl_memlets_recursive(self, cfg: ControlFlowRegion, repldict: Dict[str, str]) -> None:
+    def _repl_memlets_recursive(self, cfg: ControlFlowRegion, repldict: dict[str, str]) -> None:
         """Recursively replace memlets in all states of a control flow region."""
         repl_memlets_recursive(cfg, repldict)
 
-    def _repl_memlets_on_edge_list(self, state, edges, repldict: Dict[str, str]) -> None:
+    def _repl_memlets_on_edge_list(self, state, edges, repldict: dict[str, str]) -> None:
         """Replace memlets on a specific list of edges."""
         process_memlets_in_edges(state, edges, repldict)
 
-    def _repl_memlets_on_edge_list_recursive(self, state, edges, repldict: Dict[str, str]) -> None:
+    def _repl_memlets_on_edge_list_recursive(self, state, edges, repldict: dict[str, str]) -> None:
         """Replace memlets on a specific list of edges."""
         process_memlets_in_edges(state, edges, repldict)
 
@@ -267,20 +265,20 @@ class OffsetLoopsAndMaps(ppl.Pass):
             if isinstance(node, dace.nodes.NestedSDFG):
                 repl_memlets_recursive(node.sdfg, repldict)
 
-    def _repl_interstate_edges_recursive(self, cfg: ControlFlowRegion, repldict: Dict[str, str]) -> None:
+    def _repl_interstate_edges_recursive(self, cfg: ControlFlowRegion, repldict: dict[str, str]) -> None:
         """Recursively replace interstate edges in control flow region."""
         repl_interstate_edges_recursive(cfg, repldict)
 
-    def _repl_tasklets_recursive(self, cfg: ControlFlowRegion, repldict: Dict[str, str]) -> None:
+    def _repl_tasklets_recursive(self, cfg: ControlFlowRegion, repldict: dict[str, str]) -> None:
         repl_tasklets_recursive(cfg, repldict)
 
     def _repl_tasklets_on_node_list(
-        self, state: dace.SDFGState, nodes: List[dace.nodes.Node], repldict: Dict[str, str]
+        self, state: dace.SDFGState, nodes: list[dace.nodes.Node], repldict: dict[str, str]
     ) -> None:
         repl_tasklets_on_node_list(nodes, repldict)
 
     def _repl_tasklets_recursive_from_node_list(
-        self, state: dace.SDFGState, nodes: List[dace.nodes.Node], repldict: Dict[str, str]
+        self, state: dace.SDFGState, nodes: list[dace.nodes.Node], repldict: dict[str, str]
     ) -> None:
         repl_tasklets_on_node_list(nodes, repldict)
 
@@ -298,14 +296,14 @@ class OffsetLoopsAndMaps(ppl.Pass):
         return len(tokens) != 0
 
     def _repl_for_regions_recursive(
-        self, root: ControlFlowRegion, cfg: ControlFlowRegion, repldict: Dict[str, str]
+        self, root: ControlFlowRegion, cfg: ControlFlowRegion, repldict: dict[str, str]
     ) -> None:
         repl_for_regions_recursive(root, cfg, repldict)
 
-    def _repl_if_blocks_recursive(self, cfg: ControlFlowRegion, repldict: Dict[str, str]) -> None:
+    def _repl_if_blocks_recursive(self, cfg: ControlFlowRegion, repldict: dict[str, str]) -> None:
         repl_if_blocks_recursive(cfg, repldict)
 
-    def _repl_recursive(self, cfg: ControlFlowRegion, repldict: Dict[str, str]) -> None:
+    def _repl_recursive(self, cfg: ControlFlowRegion, repldict: dict[str, str]) -> None:
         """Replace both interstate edges and memlets recursively."""
         repl_recursive(cfg, repldict)
 
@@ -452,7 +450,7 @@ class OffsetLoopsAndMaps(ppl.Pass):
         expr_str = lhs + op_to_split + symstr(as_basic(dace.symbolic.SymExpr(rhs)).simplify()) + (")" * (opens - exits))
         return expr_str
 
-    def apply_pass(self, sdfg: SDFG, pipeline_results) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, pipeline_results) -> int | None:
         """Shift every matching loop / map in ``sdfg`` by ``offset_expr``.
 
         :param sdfg: The SDFG to transform in place.

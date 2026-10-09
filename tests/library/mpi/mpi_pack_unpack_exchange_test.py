@@ -7,12 +7,13 @@ received contiguous buffer back into column ``COL`` of B. A 2-rank ring then che
 left neighbour's rank. Marked ``mpi`` -- run under ``mpirun -n 2``.
 """
 
-import dace
-from dace.memlet import Memlet
-import dace.libraries.mpi as mpi
-from dace.transformation.layout.mpi_pack_unpack import MpiPackUnpack
 import numpy as np
 import pytest
+
+import dace
+import dace.libraries.mpi as mpi
+from dace.memlet import Memlet
+from dace.transformation.layout.mpi_pack_unpack import MpiPackUnpack
 
 COL = 2
 

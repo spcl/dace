@@ -31,7 +31,6 @@ import pytest
 import dace
 from dace.config import set_temporary
 from dace.sdfg import nodes
-
 from tests.corpus.cloudsc.cloudsc_offload_to_gpu_test import blocked_sdfg
 from tests.corpus.cloudsc.offload_cloudsc_to_gpu import offload_cloudsc_to_gpu
 from tests.corpus.cloudsc.pipelines import check_offload_phase, gpu_is_runnable, strict_fp_device_build

@@ -3,17 +3,17 @@
 
 import contextlib
 import re
-from typing import Optional, Sequence
-
-import dace
-from dace.libraries.standard.nodes.fill import FillLibraryNode, byte_pattern, select_fill_implementation
+from collections.abc import Sequence
 
 import numpy as np
 import pytest
 
+import dace
+from dace.libraries.standard.nodes.fill import FillLibraryNode, byte_pattern, select_fill_implementation
+
 
 def make_fill_sdfg(
-    implementation: Optional[str],
+    implementation: str | None,
     shape: Sequence[int],
     subset: str,
     gpu: bool = True,
@@ -48,12 +48,12 @@ def make_fill_sdfg(
     return sdfg
 
 
-def _get_sdfg(implementation: Optional[str], gpu: bool = True) -> dace.SDFG:
+def _get_sdfg(implementation: str | None, gpu: bool = True) -> dace.SDFG:
     """1-D slice fill."""
     return make_fill_sdfg(implementation, (200,), "50:100", gpu=gpu, name="fill_sdfg")
 
 
-def _get_multi_dim_sdfg(implementation: Optional[str], gpu: bool = True) -> dace.SDFG:
+def _get_multi_dim_sdfg(implementation: str | None, gpu: bool = True) -> dace.SDFG:
     """3-D sub-block fill."""
     return make_fill_sdfg(implementation, (50, 2, 2), "40:50, 0:2, 0:2", gpu=gpu, name="fill_sdfg2")
 

@@ -17,15 +17,17 @@ global ``atomicAdd`` per element, all to the same address, while
 which reduce through a node for the same reason.
 """
 
+from typing import TYPE_CHECKING
+
 import dace
 import dace.library
 import dace.properties
 import dace.sdfg.nodes
-from dace import SDFG, SDFGState, memlet as mm, symbolic
+from dace import SDFG, SDFGState, symbolic
+from dace import memlet as mm
 from dace.frontend.common import op_repository as oprepo
 from dace.libraries.standard.nodes.reduce import Reduce
 from dace.transformation.transformation import ExpandTransformation
-from typing import List, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from dace.frontend.python.newast import ProgramVisitor
@@ -35,7 +37,7 @@ if TYPE_CHECKING:
 class ExpandNorm2Pure(ExpandTransformation):
     """Pure expansion: WCR-summed squares + sqrt finalize."""
 
-    environments: List[type] = []
+    environments: list[type] = []
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, **kwargs):

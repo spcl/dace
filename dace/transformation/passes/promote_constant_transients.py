@@ -3,18 +3,21 @@
 
 import ast
 import copy
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any
 
 import numpy as np
 
-from dace import SDFG, Memlet, SDFGState, data as dt, dtypes, properties, subsets
+from dace import SDFG, Memlet, SDFGState, dtypes, properties, subsets
+from dace import data as dt
 from dace.frontend.python import astutils
-from dace.sdfg import nodes as nd, utils as sdutil
-from dace.sdfg.graph import MultiConnectorEdge
-from dace.transformation import pass_pipeline as ppl, transformation
 from dace.optionals import required
+from dace.sdfg import nodes as nd
+from dace.sdfg import utils as sdutil
+from dace.sdfg.graph import MultiConnectorEdge
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation import transformation
 
-Write = Tuple[SDFGState, MultiConnectorEdge]
+Write = tuple[SDFGState, MultiConnectorEdge]
 
 
 @properties.make_properties
@@ -30,11 +33,11 @@ class PromoteConstantTransients(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def apply_pass(self, top_sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Dict[int, Set[str]]]:
+    def apply_pass(self, top_sdfg: SDFG, pipeline_results: dict[str, Any]) -> dict[int, set[str]] | None:
         """:return: ``{cfg_id: promoted names}``, or ``None`` if nothing was promoted."""
-        result: Dict[int, Set[str]] = {}
+        result: dict[int, set[str]] = {}
         for sdfg in top_sdfg.all_sdfgs_recursive():
-            writes: Dict[str, List[Write]] = {}
+            writes: dict[str, list[Write]] = {}
             skip = symbolic_reads(sdfg)
             for state in sdfg.states():
                 for node in state.data_nodes():
@@ -68,14 +71,14 @@ def is_candidate(desc: dt.Data) -> bool:
     )
 
 
-def to_int(dim) -> Optional[int]:
+def to_int(dim) -> int | None:
     try:
         return int(dim)
     except (TypeError, ValueError):
         return None
 
 
-def symbolic_reads(sdfg: SDFG) -> Set[str]:
+def symbolic_reads(sdfg: SDFG) -> set[str]:
     """Data names read by interstate edges or control-flow conditions, which access nodes do not show."""
     names = set(sdfg.arrays.keys())
     refs = set()
@@ -86,7 +89,7 @@ def symbolic_reads(sdfg: SDFG) -> Set[str]:
     return refs
 
 
-def literal_written(state: SDFGState, edge: MultiConnectorEdge) -> Optional[Any]:
+def literal_written(state: SDFGState, edge: MultiConnectorEdge) -> Any | None:
     """The literal a write edge stores: from a data-free tasklet, or through a map exit holding only one."""
     if edge.data.wcr is not None:
         return None
@@ -115,7 +118,7 @@ def literal_written(state: SDFGState, edge: MultiConnectorEdge) -> Optional[Any]
     return value if isinstance(value, (bool, int, float, complex)) else None
 
 
-def constant_value(desc: dt.Data, writes: List[Write]) -> Optional[Any]:
+def constant_value(desc: dt.Data, writes: list[Write]) -> Any | None:
     """The initializer if every write stores a literal to a disjoint constant subset, else ``None``."""
     # Only a plain scalar type has a numpy value (not e.g. an opaque ``MPI_Request``).
     if not writes or type(desc.dtype) is not dtypes.typeclass:

@@ -1,8 +1,9 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
-import numpy
-import dace
 
+import numpy
+
+import dace
 from dace.transformation.layout.block_aware_map_tiling import BlockAwareMapTiling
 from dace.transformation.layout.split_dimensions import SplitDimensions
 

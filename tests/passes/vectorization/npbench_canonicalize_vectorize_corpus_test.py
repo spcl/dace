@@ -30,10 +30,10 @@ import pytest
 from dace.libraries.tileops.dispatch import detect_host_isa
 from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.vectorization.config import VectorizeConfig
+from dace.transformation.passes.vectorization.enums import ISA, BranchMode, RemainderStrategy
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
-from tests.passes.vectorization.tile_assertions import assert_tiled_unless_pinned
 from tests.corpus.npbench import npbench
-from dace.transformation.passes.vectorization.enums import ISA, RemainderStrategy, BranchMode
+from tests.passes.vectorization.tile_assertions import assert_tiled_unless_pinned
 
 CORPUS = {c["name"]: c for c in npbench.collect()}
 KERNELS = sorted(CORPUS)

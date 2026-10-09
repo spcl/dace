@@ -12,16 +12,15 @@ Both arms must match the unvectorized scalar reference bit-equally
 (rtol=0, atol=0) on non-FMA kernels.
 """
 
-import pytest
 import numpy as np
+import pytest
 
 import dace
+from dace.transformation.passes.vectorization.config import VectorizeConfig
+from dace.transformation.passes.vectorization.enums import ISA, RemainderStrategy
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import (
     VectorizeCPUMultiDim,
 )
-from dace.transformation.passes.vectorization.config import VectorizeConfig
-from dace.transformation.passes.vectorization.enums import ISA, RemainderStrategy
-
 from tests.passes.vectorization.tile_assertions import assert_tiled
 
 

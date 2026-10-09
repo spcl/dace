@@ -21,17 +21,17 @@ are derived at registration (``branch``/``reduction``/``gather``/``2d``) for
 :func:`collect`.
 """
 
+import ast
 import copy
 import dataclasses
 import inspect
 import re
 import textwrap
-import ast
-from typing import Callable, Dict, FrozenSet, List, Optional, Tuple
+from collections.abc import Callable
 
 # Some kernels (e.g. s451) call ``sin``/``cos`` unqualified; the original
 # VectraArtifacts source imports them here, so do the same.
-from math import sin, cos  # noqa: F401  -- resolved unqualified inside kernel bodies
+from math import cos, sin  # noqa: F401  -- resolved unqualified inside kernel bodies
 
 import numpy as np
 
@@ -62,20 +62,20 @@ class TSVCKernel:
     """One corpus kernel and the metadata needed to instantiate it."""
 
     program: Callable  #: the ``@dace.program`` (unchanged by registration)
-    args: Dict[str, str]  #: arg name -> shape code (documentation/tags only)
-    params: Dict[str, object]  #: scalar parameter name -> value ("N4" -> LEN//4)
+    args: dict[str, str]  #: arg name -> shape code (documentation/tags only)
+    params: dict[str, object]  #: scalar parameter name -> value ("N4" -> LEN//4)
     regime: str  #: "1d" or "2d"
-    tags: FrozenSet[str]  #: intrinsic, derived tags for :func:`collect`
+    tags: frozenset[str]  #: intrinsic, derived tags for :func:`collect`
 
     @property
     def name(self) -> str:
         return self.program.f.__name__
 
 
-_REGISTRY: List[TSVCKernel] = []
+_REGISTRY: list[TSVCKernel] = []
 
 
-def _derived_tags(program, args: Dict[str, str]) -> FrozenSet[str]:
+def _derived_tags(program, args: dict[str, str]) -> frozenset[str]:
     """Intrinsic tags read off the kernel: ``branch``/``reduction``/``gather``."""
     tags = set()
     codes = set(args.values())
@@ -93,7 +93,7 @@ def _derived_tags(program, args: Dict[str, str]) -> FrozenSet[str]:
 
 
 def tsvc_kernel(
-    *, args: Dict[str, str], params: Optional[Dict[str, object]] = None, regime: str = "1d", tags: Tuple[str, ...] = ()
+    *, args: dict[str, str], params: dict[str, object] | None = None, regime: str = "1d", tags: tuple[str, ...] = ()
 ):
     """Register ``program`` in the corpus and return it unchanged.
 
@@ -113,8 +113,8 @@ def tsvc_kernel(
 
 
 def collect(
-    *, regime: Optional[str] = None, tags: Optional[Tuple[str, ...]] = None, name: Optional[str] = None
-) -> List[TSVCKernel]:
+    *, regime: str | None = None, tags: tuple[str, ...] | None = None, name: str | None = None
+) -> list[TSVCKernel]:
     """Filtered view of the corpus.
 
     :param regime: keep only this regime (``"1d"``/``"2d"``).
@@ -1878,22 +1878,22 @@ def vtvtv_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.flo
         a[i] = a[i] * b[i] * c[i]
 
 
-KERNELS: List[TSVCKernel] = list(_REGISTRY)
-KERNELS_BY_NAME: Dict[str, TSVCKernel] = {k.name: k for k in KERNELS}
+KERNELS: list[TSVCKernel] = list(_REGISTRY)
+KERNELS_BY_NAME: dict[str, TSVCKernel] = {k.name: k for k in KERNELS}
 
 
-def lengths(kernel: TSVCKernel) -> Tuple[int, int]:
+def lengths(kernel: TSVCKernel) -> tuple[int, int]:
     """The ``(LEN_1D, LEN_2D)`` at which to instantiate ``kernel``."""
     return (64, LEN_2D_FIXED) if kernel.regime == "1d" else (LEN_2D_FIXED, 16)
 
 
-def _concrete_shape(desc, l1: int, l2: int) -> Tuple[int, ...]:
+def _concrete_shape(desc, l1: int, l2: int) -> tuple[int, ...]:
     """Concrete int shape of a data descriptor at ``LEN_1D=l1, LEN_2D=l2``."""
     subs = {LEN_1D: l1, LEN_2D: l2}
     return tuple(int(dace.symbolic.evaluate(s, subs)) for s in desc.shape)
 
 
-def allocate(kernel: TSVCKernel, l1: int, l2: int, rng: np.random.Generator) -> Dict[str, np.ndarray]:
+def allocate(kernel: TSVCKernel, l1: int, l2: int, rng: np.random.Generator) -> dict[str, np.ndarray]:
     """Allocate one in-bounds ndarray per kernel *array* argument.
 
     Shapes and dtypes are read from the kernel's own SDFG ``arglist()`` -- the
@@ -1944,7 +1944,7 @@ def allocate(kernel: TSVCKernel, l1: int, l2: int, rng: np.random.Generator) -> 
 #: indices on the "no exit yet" side of the midpoint plus the midpoint itself; every other index
 #: (including the whole tail past the midpoint, which the break makes unreachable) keeps its
 #: original random draw.
-def _place_break_at_middle(kernel: TSVCKernel, arrays: Dict[str, np.ndarray], l1: int) -> None:
+def _place_break_at_middle(kernel: TSVCKernel, arrays: dict[str, np.ndarray], l1: int) -> None:
     """Rewrite the break-predicate array in place so the exit fires at ``l1 // 2``."""
     mid = l1 // 2
     if kernel.name == "s481_d_single":  # break on d[i] < 0.0
@@ -1962,13 +1962,13 @@ def _place_break_at_middle(kernel: TSVCKernel, arrays: Dict[str, np.ndarray], l1
         a[mid] = threshold + abs(a[mid]) + 1.0
 
 
-def scalar_params(kernel: TSVCKernel, l1: int) -> Dict[str, int]:
+def scalar_params(kernel: TSVCKernel, l1: int) -> dict[str, int]:
     """Resolve scalar parameter values (``"N4"`` -> ``l1 // 4`` to keep shifted
     writes in bounds)."""
     return {p: (l1 // 4 if v == "N4" else v) for p, v in kernel.params.items()}
 
 
-def symbols(kernel: TSVCKernel, l1: int, l2: int) -> Dict[str, int]:
+def symbols(kernel: TSVCKernel, l1: int, l2: int) -> dict[str, int]:
     """The ``LEN_*`` symbols the kernel needs (passing an unused symbol errors).
 
     Read from the SDFG's free symbols so it matches the compiled signature exactly.
@@ -1977,7 +1977,7 @@ def symbols(kernel: TSVCKernel, l1: int, l2: int) -> Dict[str, int]:
     return {s: v for s, v in (("LEN_1D", l1), ("LEN_2D", l2), ("S", S_VALUE)) if s in free}
 
 
-def regime_sizes(regime: str, swept: int) -> Tuple[int, int]:
+def regime_sizes(regime: str, swept: int) -> tuple[int, int]:
     """``(LEN_1D, LEN_2D)`` for one test variant.
 
     ``swept`` is the non-divisible dimension the variant exercises. Enforces the
@@ -2043,7 +2043,7 @@ def to_sdfg(kernel: TSVCKernel, tag: str, *, simplify: bool = False) -> "dace.SD
     return sdfg
 
 
-def make_inputs(kernel: TSVCKernel, seed: int = 1234) -> Tuple[Dict[str, np.ndarray], Dict[str, int]]:
+def make_inputs(kernel: TSVCKernel, seed: int = 1234) -> tuple[dict[str, np.ndarray], dict[str, int]]:
     """Build ``(arrays, call_kwargs)`` for one run at the kernel's default lengths.
 
     ``call_kwargs`` already merges the scalar parameters and the ``LEN_*``

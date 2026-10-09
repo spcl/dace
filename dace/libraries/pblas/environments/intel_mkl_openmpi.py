@@ -1,9 +1,10 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
-import os
-from dace.config import Config
-import dace.library
 import ctypes.util
+import os
 import warnings
+
+import dace.library
+from dace.config import Config
 from dace.libraries.pblas.environments.thread_level import MPI_THREAD_LEVEL_GUARD
 
 

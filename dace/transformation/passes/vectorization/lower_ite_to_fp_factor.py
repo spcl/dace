@@ -10,15 +10,14 @@ the blend is exact there; a float/complex output keeps its ``ITE`` call and is
 lowered by a real select instead. See :meth:`_ITEToFpFactor.visit_Call`."""
 
 import ast
-
 from typing import Any
 
 import dace
 from dace import properties
 from dace.frontend.python.astutils import unparse
+from dace.optionals import required
 from dace.properties import CodeBlock
 from dace.transformation import pass_pipeline as ppl
-from dace.optionals import required
 
 
 class _ITEToFpFactor(ast.NodeTransformer):

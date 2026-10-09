@@ -5,19 +5,16 @@ import math
 import numpy as np
 
 import dace.library
-from dace.codegen import common
 import dace.properties
 import dace.sdfg.nodes
-from dace import dtypes
-
-from dace import Memlet
-from dace.libraries.lapack import Potrf
-from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES
+from dace import Memlet, dtypes
+from dace.codegen import common
+from dace.libraries.blas import environments as blas_environments
+from dace.libraries.lapack import Potrf, environments
 from dace.libraries.linalg.nodes.solve import restride
 from dace.libraries.linalg.nodes.transpose import Transpose
+from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES
 from dace.transformation.transformation import ExpandTransformation
-from dace.libraries.lapack import environments
-from dace.libraries.blas import environments as blas_environments
 
 #: The vendor GPU solvers. The branches below are about whether the factorization runs ON THE
 #: DEVICE -- which decides the column-major transposes and the device-side info code -- and not
@@ -56,7 +53,7 @@ def _make_sdfg(node, parent_state, parent_sdfg, implementation):
     dtype = inp_desc.dtype
     storage = inp_desc.storage
 
-    sdfg = dace.SDFG("{l}_sdfg".format(l=node.label))
+    sdfg = dace.SDFG(f"{node.label}_sdfg")
 
     ain_arr = sdfg.add_array("_a", inp_shape, dtype=dtype, strides=inp_desc.strides)
     bout_arr = sdfg.add_array("_b", out_shape, dtype=dtype, strides=out_desc.strides)
@@ -69,7 +66,7 @@ def _make_sdfg(node, parent_state, parent_sdfg, implementation):
     else:
         binout_arr = bout_arr
 
-    state = sdfg.add_state("{l}_state".format(l=node.label))
+    state = sdfg.add_state(f"{node.label}_state")
 
     potrf_node = Potrf("potrf", lower=node.lower)
     potrf_node.implementation = implementation

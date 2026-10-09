@@ -5,9 +5,9 @@ loop-to-map). SDFGs are produced through the DaCe Python frontend."""
 import numpy as np
 
 import dace
-from dace.sdfg.state import LoopRegion
 from dace.sdfg import nodes
-from dace.transformation.passes import ParallelizePipeline, parallelize, BestEffortLoopPeeling, ShortLoopUnroll
+from dace.sdfg.state import LoopRegion
+from dace.transformation.passes import BestEffortLoopPeeling, ParallelizePipeline, ShortLoopUnroll, parallelize
 from dace.transformation.passes.parallelization_prep import loop_body_census
 
 M, N = (dace.symbol(s) for s in ("M", "N"))

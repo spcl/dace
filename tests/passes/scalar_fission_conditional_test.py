@@ -16,8 +16,8 @@ import pytest
 
 import dace
 from dace.sdfg.state import LoopRegion
-from dace.transformation.passes import PrivatizeScalars
 from dace.transformation.interstate import LoopToMap
+from dace.transformation.passes import PrivatizeScalars
 
 N = dace.symbol("N")
 

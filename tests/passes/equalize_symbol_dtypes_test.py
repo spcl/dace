@@ -6,8 +6,6 @@ never cancel. The tests build graphs where one name is spelled at two dtypes in 
 declared one afterwards.
 """
 
-from typing import Dict, Set
-
 import sympy
 
 import dace
@@ -19,19 +17,19 @@ from dace.transformation.passes.equalize_symbol_dtypes import equalize, equalize
 N = dace.symbol("N", dtype=dace.int64)
 
 
-def bound_symbols(expr) -> Set[symbolic.symbol]:
+def bound_symbols(expr) -> set[symbolic.symbol]:
     if isinstance(expr, symbolic.SymExpr):
         return bound_symbols(expr.expr) | bound_symbols(expr.approx)
     return {s for s in getattr(expr, "free_symbols", ()) if isinstance(s, symbolic.symbol)}
 
 
-def subset_symbols(subset: subsets.Subset) -> Set[symbolic.symbol]:
+def subset_symbols(subset: subsets.Subset) -> set[symbolic.symbol]:
     return {s for rng in subset.ndrange() for bound in rng for s in bound_symbols(bound)}
 
 
-def dtypes_of(sdfg: dace.SDFG) -> Dict[str, Set[dtypes.typeclass]]:
+def dtypes_of(sdfg: dace.SDFG) -> dict[str, set[dtypes.typeclass]]:
     """Every dtype each symbol name carries in a map range, memlet subset or descriptor extent of the whole tree."""
-    seen: Dict[str, Set[dtypes.typeclass]] = {}
+    seen: dict[str, set[dtypes.typeclass]] = {}
 
     def add(symbols):
         for sym in symbols:

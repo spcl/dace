@@ -28,7 +28,6 @@ from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.canonicalize import induction_variable_substitution as ivs
 from dace.transformation.passes.canonicalize.induction_variable_substitution import extract_tasklet_iv
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
-
 from tests.corpus.tsvc import tsvc
 from tests.corpus.tsvc.tsvc_numpy import REFERENCES
 

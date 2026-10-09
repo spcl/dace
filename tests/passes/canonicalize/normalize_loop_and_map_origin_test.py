@@ -6,8 +6,6 @@ counter is rebased to a 0-based begin while KEEPING its stride (unlike
 
 import copy
 
-from typing import Optional, Tuple
-
 import numpy as np
 import pytest
 
@@ -272,7 +270,7 @@ def test_nested_sdfg_map_is_rebased_after_its_enclosing_map():
 
 
 def mark_cells_under(
-    state: dace.SDFGState, outer: Optional[Tuple[nodes.MapEntry, nodes.MapExit]], row_param_range: str
+    state: dace.SDFGState, outer: tuple[nodes.MapEntry, nodes.MapExit] | None, row_param_range: str
 ) -> nodes.MapEntry:
     """``for j in <row_param_range>: A[i, j] = 1`` nested under ``outer`` (a map entry, or None)."""
     entry, exit_node = state.add_map("cols", {"j": row_param_range})

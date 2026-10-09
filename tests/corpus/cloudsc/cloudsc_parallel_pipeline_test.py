@@ -26,8 +26,8 @@ import gc
 import pytest
 
 import dace
-from tests.corpus.cloudsc.generate_data_for_cloudsc import build_cloudsc_sdfg
 from dace.transformation.passes.parallelization_prep import DEFAULT_UNROLL_LIMIT, _constant_trip_count, _loops
+from tests.corpus.cloudsc.generate_data_for_cloudsc import build_cloudsc_sdfg
 from tests.corpus.cloudsc.pipelines import (
     build_reference_outputs,
     gpu_is_runnable,

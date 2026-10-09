@@ -1,20 +1,20 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
-from dace import properties, symbolic
+import warnings
+
+import numpy as np
+
 import dace.library
 import dace.sdfg.nodes
-from dace.sdfg import SDFG, SDFGState
 from dace import memlet as mm
-from dace.transformation.transformation import ExpandTransformation
-from dace.libraries.blas.nodes.matmul import _get_matmul_operands
-from dace.libraries.blas.nodes.gemm import _cast_to_dtype_str, _is_complex
-from dace.libraries.blas import blas_helpers
+from dace import properties, symbolic
 from dace.frontend.common import op_repository as oprepo
-from dace.libraries.blas import environments
-from dace.libraries.blas import gpu_dialect
-import numpy as np
-import warnings
+from dace.libraries.blas import blas_helpers, environments, gpu_dialect
+from dace.libraries.blas.nodes.gemm import _cast_to_dtype_str, _is_complex
+from dace.libraries.blas.nodes.matmul import _get_matmul_operands
 from dace.ordered import OrderedSet
+from dace.sdfg import SDFG, SDFGState
+from dace.transformation.transformation import ExpandTransformation
 
 
 def zero_extent_may_occur(extent) -> bool:
@@ -65,7 +65,7 @@ class ExpandGemvPure(ExpandTransformation):
             trans_shape_a = shape_a
 
         if symbolic.inequal_symbols(trans_shape_a[1], shape_x[0]):
-            raise SyntaxError("Matrix-vector product size mismatch: {} vs. {}".format(trans_shape_a[1], shape_x[0]))
+            raise SyntaxError(f"Matrix-vector product size mismatch: {trans_shape_a[1]} vs. {shape_x[0]}")
 
         N, M = trans_shape_a[0], trans_shape_a[1]
 
@@ -79,7 +79,7 @@ class ExpandGemvPure(ExpandTransformation):
         if symbolic.equal_valued(1, node.alpha):
             mul_program = "__out = __A * __x"
         else:
-            mul_program = "__out = {} * __A * __x".format(coefficient_str(node.alpha, dtype_a))
+            mul_program = f"__out = {coefficient_str(node.alpha, dtype_a)} * __A * __x"
 
         init_state = sdfg.add_state(node.label + "_initstate")
         state = sdfg.add_state_after(init_state, node.label + "_state")
@@ -123,7 +123,7 @@ class ExpandGemvPure(ExpandTransformation):
         if symbolic.equal_valued(1, node.beta):
             add_program = "__y_out = __y_in + __tmp"
         else:
-            add_program = "__y_out = ({} * __y_in) + __tmp".format(coefficient_str(node.beta, dtype_y))
+            add_program = f"__y_out = ({coefficient_str(node.beta, dtype_y)} * __y_in) + __tmp"
 
         memlet_idx = "__i"
 
@@ -131,7 +131,7 @@ class ExpandGemvPure(ExpandTransformation):
         if node.beta != 0:
             state.add_mapped_tasklet(
                 "_Add_",
-                {"__i": "0:{}".format(N)},
+                {"__i": f"0:{N}"},
                 {
                     "__y_in": dace.Memlet(f"_y[{memlet_idx}]"),
                     "__tmp": dace.Memlet(f"{mul_out}[__i]"),

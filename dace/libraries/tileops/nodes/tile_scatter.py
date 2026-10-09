@@ -9,11 +9,8 @@ import sympy
 import dace
 from dace import library, properties
 from dace.codegen.cppunparse import pyexpr2cpp
-from dace.sdfg import nodes
-
-from dace.libraries.tileops.kinds import SCALAR, SYMBOL, TILE, VALID_KINDS
 from dace.libraries.tileops.expansions import ExpandTilePure
-from dace.libraries.tileops.nodes.tile_op import TileOp
+from dace.libraries.tileops.kinds import SCALAR, SYMBOL, TILE, VALID_KINDS
 from dace.libraries.tileops.lanes import (
     GATHER_INDEX_DTYPES,
     gather_lane_offset,
@@ -22,9 +19,11 @@ from dace.libraries.tileops.lanes import (
     resolve_gather_deps,
     tile_offset,
 )
+from dace.libraries.tileops.nodes.tile_op import TileOp
 from dace.libraries.tileops.operands import scalar_operand_ref
 from dace.libraries.tileops.validation import validate_mask_descriptor_lock, validate_packed_layout
 from dace.optionals import required
+from dace.sdfg import nodes
 from dace.sdfg.narrowing import as_range
 
 

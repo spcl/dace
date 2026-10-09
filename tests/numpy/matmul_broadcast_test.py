@@ -106,8 +106,8 @@ def _batch_check(prog):
 
     The frontend emits the generic ``MatMul``; it is ``BatchedMatMul``'s MKL / cuBLAS expansions
     that run this check, and it reads the operands off the node either way."""
-    from dace.libraries.blas.nodes.matmul import MatMul
     from dace.libraries.blas.nodes.batched_matmul import refuse_broadcast_batches
+    from dace.libraries.blas.nodes.matmul import MatMul
 
     sdfg = prog.to_sdfg(simplify=True)
     for state in sdfg.states():

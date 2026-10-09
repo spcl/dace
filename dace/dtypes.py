@@ -3,22 +3,23 @@
 
 import builtins
 import ctypes
-import json
 import inspect
-import numpy
-import ml_dtypes
+import json
 import re
 import types
-from sympy import Float, Integer
 from collections import OrderedDict
+from collections.abc import Callable
 from dataclasses import dataclass
+from enum import Enum, auto
 from functools import lru_cache, wraps
-from typing import Any, Callable, Concatenate, Dict, Optional, ParamSpec, TYPE_CHECKING, TypeVar
+from typing import TYPE_CHECKING, Any, Concatenate, ParamSpec, TypeVar
 
-from dace.config import Config
+import ml_dtypes
+import numpy
+from sympy import Float, Integer
 
-from enum import auto, Enum
 from dace.attr_enum import ExtensibleAttributeEnum
+from dace.config import Config
 from dace.registry import undefined_safe_enum
 from dace.version import __version__
 
@@ -65,7 +66,7 @@ class StorageType(ExtensibleAttributeEnum):
 
         #: Whether the data is placed in dynamic shared memory (``True``), in static shared memory (``False``), or where
         #: the code generator decides (``None``), based on its size and the static shared memory the kernel uses.
-        dynamic: Optional[bool] = None
+        dynamic: bool | None = None
 
     SVE_Register = auto()  #: SVE register
     Snitch_TCDM = auto()  #: Cluster-private memory
@@ -354,7 +355,7 @@ _DEFAULT_DATA_TYPES = {
 }
 
 
-class typeclass(object):
+class typeclass:
     """An extension of types that enables their use in DaCe.
 
     These types are defined for three reasons:
@@ -365,7 +366,7 @@ class typeclass(object):
 
     #: Class-level default so `to_string`/`to_json` stay defined for the subclasses that build
     #: themselves without `typeclass.__init__` (`struct`, `pointer`, `vector`).
-    typename: Optional[str] = None
+    typename: str | None = None
 
     def __init__(self, wrapped_type, typename=None):
         # Convert python basic types
@@ -376,14 +377,14 @@ class typeclass(object):
                 else:
                     wrapped_type = getattr(numpy, wrapped_type)
             except AttributeError:
-                raise ValueError("Unknown type: {}".format(wrapped_type))
+                raise ValueError(f"Unknown type: {wrapped_type}")
 
         # Only Python's scalar types consult the configuration; every other type paid the lookup.
         if wrapped_type is int or wrapped_type is float or wrapped_type is complex:
             config_data_types = Config.get("compiler", "default_data_types")
             widths = _DEFAULT_DATA_TYPES.get(config_data_types.lower())
             if widths is None:
-                raise NameError("Unknown configuration for default_data_types: {}".format(config_data_types))
+                raise NameError(f"Unknown configuration for default_data_types: {config_data_types}")
             wrapped_type = widths[wrapped_type]
         elif wrapped_type is builtins.bool:
             # This module rebinds ``bool`` to a typeclass below, so name the builtin explicitly.
@@ -768,7 +769,7 @@ class struct(typeclass):
     Example use: `dace.struct(a=dace.int32, b=dace.float64)`.
     """
 
-    STRUCT_CTYPES: Dict[str, ctypes.Structure] = {}
+    STRUCT_CTYPES: dict[str, ctypes.Structure] = {}
 
     def __init__(self, name, **fields_and_types):
         # self._data = fields_and_types
@@ -813,7 +814,7 @@ class struct(typeclass):
 
         ret = struct(json_obj["name"])
         ret._data = {k: json_to_typeclass(v, context) for k, v in json_obj["data"]}
-        ret._length = {k: v for k, v in json_obj["length"]}
+        ret._length = dict(json_obj["length"])
         ret.bytes = json_obj["bytes"]
 
         return ret
@@ -965,7 +966,7 @@ class callback(typeclass):
             elif isinstance(arg, str):
                 arg = json_to_typeclass(arg, {"version": __version__})
             else:
-                raise TypeError("Cannot resolve type from: {}".format(arg))
+                raise TypeError(f"Cannot resolve type from: {arg}")
             self.input_types.append(arg)
         self.bytes = int64.bytes
         self.type = self
@@ -1051,6 +1052,7 @@ class callback(typeclass):
 
     def get_trampoline(self, pyfunc, other_arguments, refs, argument_to_pyobject):
         from functools import partial
+
         from dace import data, symbolic
 
         def _string_converter(a: str, *args):
@@ -1600,7 +1602,7 @@ def json_to_typeclass(obj, context=None):
     elif isinstance(obj, dict) and "type" in obj:
         return get_serializer(obj["type"]).from_json(obj, context)
     else:
-        raise ValueError("Cannot resolve: {}".format(obj))
+        raise ValueError(f"Cannot resolve: {obj}")
 
 
 ParamsT = ParamSpec("ParamsT")
@@ -1640,7 +1642,7 @@ def paramdec(
 
 def deduplicate(iterable):
     """Removes duplicates in the passed iterable."""
-    return type(iterable)([i for i in sorted(set(iterable), key=lambda x: iterable.index(x))])
+    return type(iterable)(sorted(set(iterable), key=lambda x: iterable.index(x)))
 
 
 namere = re.compile(r"^[a-zA-Z_][a-zA-Z_0-9]*$")

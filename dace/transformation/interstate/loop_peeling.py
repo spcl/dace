@@ -3,15 +3,15 @@
 
 import ast
 import copy
+
 import sympy as sp
-from typing import List, Optional
 
 from dace import sdfg as sd
 from dace import symbolic
+from dace.frontend.python.astutils import ASTFindReplace
+from dace.properties import CodeBlock, Property, make_properties
 from dace.sdfg.nodes import NestedSDFG
 from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion, SDFGState
-from dace.frontend.python.astutils import ASTFindReplace
-from dace.properties import Property, make_properties, CodeBlock
 from dace.symbolic import pystr_to_symbolic
 from dace.transformation.interstate.loop_unroll import LoopUnroll
 from dace.transformation.passes.analysis import loop_analysis
@@ -41,7 +41,7 @@ class LoopPeeling(LoopUnroll):
         condition = pystr_to_symbolic(condition.as_string)
         itersym = pystr_to_symbolic(var)
         # Find condition by matching expressions
-        end: Optional[sp.Expr] = None
+        end: sp.Expr | None = None
         a = sp.Wild("a")
         op = ""
         match = condition.match(itersym < a)
@@ -70,7 +70,7 @@ class LoopPeeling(LoopUnroll):
         return res
 
     def _instantiate_peeled_iteration(
-        self, graph: ControlFlowRegion, value: symbolic.SymbolicType, label_suffix: Optional[str]
+        self, graph: ControlFlowRegion, value: symbolic.SymbolicType, label_suffix: str | None
     ) -> ControlFlowBlock:
         """Instantiate one peeled iteration of ``self.loop`` directly into
         ``graph``, choosing the FLATTEST representation that still preserves
@@ -189,7 +189,7 @@ class LoopPeeling(LoopUnroll):
         is_symbolic = any(symbolic.issymbolic(r) for r in (start, end))
 
         if self.begin:
-            peeled_iterations: List[ControlFlowBlock] = []
+            peeled_iterations: list[ControlFlowBlock] = []
             for i in range(self.count):
                 current_index = start + (i * stride)
                 is_symbolic |= symbolic.issymbolic(current_index)
@@ -208,7 +208,7 @@ class LoopPeeling(LoopUnroll):
                 new_start = symbolic.evaluate(start + (self.count * stride), sdfg.constants)
                 self.loop.init_statement = CodeBlock(f"{self.loop.loop_variable} = {new_start}")
         else:
-            peeled_iterations: List[ControlFlowBlock] = []
+            peeled_iterations: list[ControlFlowBlock] = []
             for i in reversed(range(self.count)):
                 # Anchor the iterate value on the loop end (never the loop
                 # variable) so back-peeled iterations don't leak a loop-defined

@@ -5,25 +5,24 @@ import ctypes.util
 
 import dace.library
 from dace.libraries.blas.environments.rocblas import rocBLAS
-from typing import Dict, List
 
 
 @dace.library.environment
 class hipFFT:
     cmake_minimum_version = None
-    cmake_packages: List[str] = []
-    cmake_variables: Dict[str, str] = {}
+    cmake_packages: list[str] = []
+    cmake_variables: dict[str, str] = {}
     cmake_libraries = ["hipfft"]
     # The HIP headers require a platform macro when the compiler is not hipcc.
     cmake_compile_flags = ["-D__HIP_PLATFORM_AMD__"]
-    cmake_link_flags: List[str] = []
-    cmake_files: List[str] = []
+    cmake_link_flags: list[str] = []
+    cmake_files: list[str] = []
 
     headers = {"frame": ["hipfft/hipfft.h", "hipfft/hipfftXt.h"], "cuda": ["hipfft/hipfft.h", "hipfft/hipfftXt.h"]}
-    state_fields: List[str] = []
+    state_fields: list[str] = []
     init_code = ""
     finalize_code = ""
-    dependencies: List[str] = []
+    dependencies: list[str] = []
 
     @staticmethod
     def cmake_includes():

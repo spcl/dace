@@ -45,7 +45,6 @@ from .jupyter import *
 # Import hooks from config last (as it may load classes from within dace)
 hooks._install_hooks_from_config()
 
-import sys
 import os
 
 raw_path = Config.get("external_transformations_path")

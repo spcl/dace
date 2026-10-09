@@ -15,26 +15,27 @@ state holding that SDFG's own node reads; refusals on ``T`` and its ancestors ar
 """
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple, Type, Union
+from typing import Any
 
 from dace import SDFG
 from dace.config import Config
 from dace.sdfg import nodes
 from dace.sdfg.state import AbstractControlFlowRegion, ControlFlowRegion, SDFGState
-from dace.transformation import pass_pipeline as ppl, transformation
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation import transformation
 from dace.transformation.dataflow import PruneConnectors
 from dace.transformation.interstate import InlineSDFG
 
 #: A transformation and the pattern node its single-node expression binds.
-Probe = Tuple[transformation.SingleStateTransformation, transformation.PatternNode]
+Probe = tuple[transformation.SingleStateTransformation, transformation.PatternNode]
 
 #: An accepted candidate: the transformation, the state it applies in, and the nested SDFG node.
-Candidate = Tuple[transformation.SingleStateTransformation, SDFGState, nodes.NestedSDFG]
+Candidate = tuple[transformation.SingleStateTransformation, SDFGState, nodes.NestedSDFG]
 
 
-def ancestor_blocks(state: SDFGState) -> List[Any]:
+def ancestor_blocks(state: SDFGState) -> list[Any]:
     """``state``'s enclosing regions and states up to the root, crossing nested-SDFG boundaries."""
-    chain: List[Any] = []
+    chain: list[Any] = []
     block: Any = state.parent_graph
     while block is not None:
         chain.append(block)
@@ -46,13 +47,13 @@ def ancestor_blocks(state: SDFGState) -> List[Any]:
 class Walk:
     """One fixpoint's probes and the refusals still known to hold."""
 
-    probes: List[Probe]
+    probes: list[Probe]
     #: States whose every candidate was refused, with their nested SDFG nodes in node order.
-    clean_states: Dict[SDFGState, List[nodes.NestedSDFG]] = field(default_factory=dict)
+    clean_states: dict[SDFGState, list[nodes.NestedSDFG]] = field(default_factory=dict)
     #: Regions with no accepted candidate in their states or child regions.
-    clean_regions: Dict[ControlFlowRegion, None] = field(default_factory=dict)
+    clean_regions: dict[ControlFlowRegion, None] = field(default_factory=dict)
 
-    def first_accepted(self, region: ControlFlowRegion) -> Optional[Candidate]:
+    def first_accepted(self, region: ControlFlowRegion) -> Candidate | None:
         if region in self.clean_regions:
             return None
         blocks = region.nodes()
@@ -77,7 +78,7 @@ class Walk:
         self.clean_regions[region] = None
         return None
 
-    def first_accepted_in_state(self, state: SDFGState) -> Optional[Candidate]:
+    def first_accepted_in_state(self, state: SDFGState) -> Candidate | None:
         nested = [node for node in state.nodes() if isinstance(node, nodes.NestedSDFG)]
         for xform, pattern_node in self.probes:
             for node in nested:
@@ -86,7 +87,7 @@ class Walk:
         self.clean_states[state] = nested
         return None
 
-    def forget(self, blocks: List[Any]) -> None:
+    def forget(self, blocks: list[Any]) -> None:
         for block in blocks:
             self.clean_regions.pop(block, None)
             self.clean_states.pop(block, None)
@@ -125,10 +126,10 @@ class PruneAndInlineNestedSDFGs(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return PruneConnectors().should_reapply(modified) or InlineSDFG().should_reapply(modified)
 
-    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+    def depends_on(self) -> list[type[ppl.Pass] | ppl.Pass]:
         return []
 
-    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> int | None:
         """Prune and inline until neither transformation accepts a nested SDFG of ``sdfg``.
 
         :param sdfg: The SDFG to transform in place.

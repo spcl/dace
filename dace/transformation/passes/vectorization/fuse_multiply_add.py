@@ -10,16 +10,15 @@ NumPy. OFF by default; enabled via ``VectorizeConfig.fuse_multiply_add``.
 """
 
 import ast
-
 from typing import Any
 
 import dace
 from dace import properties
+from dace.ordered import OrderedSet
 from dace.sdfg import nodes
 from dace.sdfg.state import SDFGState
-from dace.transformation.passes.vectorization.utils.tasklets import is_vectorizable_tasklet
 from dace.transformation import pass_pipeline as ppl
-from dace.ordered import OrderedSet
+from dace.transformation.passes.vectorization.utils.tasklets import is_vectorizable_tasklet
 
 
 def _binop_tasklet(tasklet: nodes.Tasklet, op: str) -> tuple[str, list[str]] | None:

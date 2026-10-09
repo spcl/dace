@@ -12,8 +12,9 @@ suffixes. These tests pin the four invariants:
 - no orphan declared connector
 """
 
-import dace
 import pytest
+
+import dace
 from dace.sdfg.construction_utils import assert_connector_role_matches_edges
 
 

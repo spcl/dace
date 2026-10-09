@@ -9,8 +9,8 @@ import numpy as np
 import pytest
 
 import dace
+from dace.libraries.lapack.nodes import Geqrf, Orgqr, Potrf, Potrs
 from dace.memlet import Memlet
-from dace.libraries.lapack.nodes import Potrf, Potrs, Geqrf, Orgqr
 
 _RTOL = 1e-10
 _ATOL = 1e-10

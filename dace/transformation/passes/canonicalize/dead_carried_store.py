@@ -25,7 +25,7 @@ picture: one state, no nested SDFGs, no conditionals, no WCR, and every access t
 affine in the loop variable with matching non-scan indices.
 """
 
-from typing import Any, Dict, List, NamedTuple, Optional, Tuple, Type, Union
+from typing import Any, NamedTuple
 
 import sympy
 
@@ -33,11 +33,11 @@ from dace import SDFG, properties, symbolic
 from dace.memlet import Memlet
 from dace.sdfg import nodes
 from dace.sdfg.graph import MultiConnectorEdge
+from dace.sdfg.narrowing import as_basic, as_expr
 from dace.sdfg.state import LoopRegion, SDFGState
 from dace.subsets import Subset
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.analysis import loop_analysis
-from dace.sdfg.narrowing import as_basic, as_expr
 
 
 class CarriedStore(NamedTuple):
@@ -58,7 +58,7 @@ class CarriedStore(NamedTuple):
     distance: int
 
 
-def symbol_named(expr: sympy.Basic, name: str) -> Optional[sympy.Symbol]:
+def symbol_named(expr: sympy.Basic, name: str) -> sympy.Symbol | None:
     """The symbol OBJECT called ``name`` inside ``expr``, or ``None``.
 
     Never ``symbolic.symbol(name)``: a freshly minted symbol carries
@@ -71,7 +71,7 @@ def symbol_named(expr: sympy.Basic, name: str) -> Optional[sympy.Symbol]:
     return next((s for s in expr.free_symbols if str(s) == name), None)
 
 
-def constant_offset_on_axis(subset: Subset, loop_var: str) -> Optional[Tuple[int, int]]:
+def constant_offset_on_axis(subset: Subset, loop_var: str) -> tuple[int, int] | None:
     """``(axis, offset)`` for a subset that is the single point ``i + offset`` on exactly one axis
     and loop-invariant everywhere else, else ``None``.
 
@@ -79,7 +79,7 @@ def constant_offset_on_axis(subset: Subset, loop_var: str) -> Optional[Tuple[int
     make the overlap between two iterations a set question rather than the equality this pass
     reasons with.
     """
-    found: Optional[Tuple[int, int]] = None
+    found: tuple[int, int] | None = None
     for axis, (begin, end, step) in enumerate(subset.ndrange()):
         begin, end = symbolic.pystr_to_symbolic(begin), symbolic.pystr_to_symbolic(end)
         if (
@@ -99,7 +99,7 @@ def constant_offset_on_axis(subset: Subset, loop_var: str) -> Optional[Tuple[int
     return found
 
 
-def body_is_analyzable(loop: LoopRegion) -> Optional[List[SDFGState]]:
+def body_is_analyzable(loop: LoopRegion) -> list[SDFGState] | None:
     """The body as a straight-line chain of states, or ``None`` for anything this pass will not read.
 
     A statement per state is the shape the frontend actually produces -- ``s244``'s three lines are
@@ -120,7 +120,7 @@ def body_is_analyzable(loop: LoopRegion) -> Optional[List[SDFGState]]:
             return None
     if any(loop.out_degree(b) > 1 or loop.in_degree(b) > 1 for b in blocks):
         return None
-    order: List[SDFGState] = []
+    order: list[SDFGState] = []
     node = loop.start_block
     seen = set()
     while node is not None and id(node) not in seen:
@@ -135,7 +135,7 @@ def body_is_analyzable(loop: LoopRegion) -> Optional[List[SDFGState]]:
     return order
 
 
-def find_killed_store(loop: LoopRegion, body: List[SDFGState], stride: int) -> Optional[Tuple[SDFGState, CarriedStore]]:
+def find_killed_store(loop: LoopRegion, body: list[SDFGState], stride: int) -> tuple[SDFGState, CarriedStore] | None:
     """The one store the loop provably overwrites unread, with the state owning it, or ``None``.
 
     Requires, for the candidate pair ``(dead at i + c, kill at i + d)``:
@@ -151,7 +151,7 @@ def find_killed_store(loop: LoopRegion, body: List[SDFGState], stride: int) -> O
     * the reads clear :func:`reads_are_clear`.
     """
     ambiguous: set = set()
-    stores: Dict[str, List[Tuple[SDFGState, Any, int, int]]] = {}
+    stores: dict[str, list[tuple[SDFGState, Any, int, int]]] = {}
     for state in body:
         for node in state.nodes():
             if not isinstance(node, nodes.AccessNode):
@@ -192,7 +192,7 @@ def find_killed_store(loop: LoopRegion, body: List[SDFGState], stride: int) -> O
 
 
 def reads_are_clear(
-    body: List[SDFGState],
+    body: list[SDFGState],
     dead_state: SDFGState,
     name: str,
     loop_var: str,
@@ -343,10 +343,10 @@ class DeadCarriedStoreElimination(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+    def depends_on(self) -> list[type[ppl.Pass] | ppl.Pass]:
         return []
 
-    def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> int | None:
         from dace.transformation.interstate.loop_peeling import LoopPeeling
 
         count = 0

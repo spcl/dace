@@ -1,24 +1,26 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-from copy import deepcopy as dc
 import numbers
-from dace import dtypes, memlet as mm, properties, data as dt
-from dace.symbolic import symstr, equal, equal_valued
+import warnings
+from copy import deepcopy as dc
+
 import dace.library
-from dace.frontend.common import op_repository as oprepo
 import dace.sdfg.nodes
-from dace.transformation.transformation import ExpandTransformation
+from dace import data as dt
+from dace import dtypes, properties
+from dace import memlet as mm
+from dace.frontend.common import op_repository as oprepo
+from dace.libraries.blas import environments, gpu_dialect
 from dace.libraries.blas.blas_helpers import (
-    to_blastype,
     check_access,
     check_one_device,
     dtype_to_cudadatatype,
+    to_blastype,
     to_cublas_computetype,
 )
-from dace.libraries.blas.nodes.matmul import _get_matmul_operands, _get_batchmm_opts, _get_codegen_gemm_opts
-from .. import environments
-from dace.libraries.blas import gpu_dialect
-import warnings
+from dace.libraries.blas.nodes.matmul import _get_batchmm_opts, _get_codegen_gemm_opts, _get_matmul_operands
 from dace.ordered import OrderedSet
+from dace.symbolic import equal, equal_valued, symstr
+from dace.transformation.transformation import ExpandTransformation
 
 
 def refuse_broadcast_batches(node, state, sdfg) -> None:

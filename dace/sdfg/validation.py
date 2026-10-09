@@ -6,7 +6,7 @@ import functools
 import os
 import warnings
 from collections import defaultdict
-from typing import TYPE_CHECKING, Any, Dict, List, Set
+from typing import TYPE_CHECKING, Any
 
 import networkx as nx
 
@@ -38,13 +38,13 @@ def validate(graph: "dace.sdfg.graph.SubgraphView"):
 def validate_control_flow_region(
     sdfg: "SDFG",
     region: "ControlFlowRegion",
-    initialized_transients: Set[str],
+    initialized_transients: set[str],
     symbols: dict,
-    references: Set[int] = None,
+    references: set[int] = None,
     **context: bool,
 ):
-    from dace.sdfg.state import SDFGState, ControlFlowRegion, ConditionalBlock, LoopRegion
     from dace.sdfg.scope import is_in_scope
+    from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
 
     if len(region.source_nodes()) > 1:
         try:
@@ -247,7 +247,7 @@ def validate_control_flow_region(
     _no_writes_to_scalars_or_arrays_on_interstate_edges(region)
 
 
-def validate_sdfg(sdfg: "dace.sdfg.SDFG", references: Set[int] = None, **context: bool):
+def validate_sdfg(sdfg: "dace.sdfg.SDFG", references: set[int] = None, **context: bool):
     """Verifies the correctness of an SDFG by applying multiple tests.
 
     :param sdfg: The SDFG to verify.
@@ -286,11 +286,11 @@ def validate_sdfg(sdfg: "dace.sdfg.SDFG", references: Set[int] = None, **context
             if isinstance(cfg, ConditionalBlock):
                 continue
             blocks = cfg.nodes()
-            if len(blocks) != len(set([s.label for s in blocks])):
+            if len(blocks) != len({s.label for s in blocks}):
                 raise InvalidSDFGError("Found multiple blocks with the same name in " + cfg.name, sdfg, None)
 
         # Check the names of data descriptors and co.
-        seen_names: Set[str] = set()
+        seen_names: set[str] = set()
         for obj_names in [sdfg.arrays.keys(), sdfg.symbols.keys()]:
             if not seen_names.isdisjoint(obj_names):
                 raise InvalidSDFGError(
@@ -452,7 +452,7 @@ def validate_sdfg(sdfg: "dace.sdfg.SDFG", references: Set[int] = None, **context
         raise
 
 
-def _accessible(sdfg: "dace.sdfg.SDFG", container: str, context: Dict[str, bool]):
+def _accessible(sdfg: "dace.sdfg.SDFG", container: str, context: dict[str, bool]):
     """
     Helper function that returns False if a data container cannot be accessed in the current SDFG context.
     """
@@ -491,7 +491,7 @@ def _is_out_of_bounds_index(index, offset, size) -> bool:
     return ((index + offset) >= size) == True
 
 
-def _is_scalar(edge: "gr.MultiConnectorEdge[Memlet]", memlet_path: List["gr.MultiConnectorEdge[Memlet]"]):
+def _is_scalar(edge: "gr.MultiConnectorEdge[Memlet]", memlet_path: list["gr.MultiConnectorEdge[Memlet]"]):
     """
     Helper function that determines if a memlet is going to dereference a scalar value.
     Returns False in any case the memlet _may not_ be dereferenced (but could be).
@@ -528,10 +528,10 @@ def state_has_reachable_cycle(state: "dace.sdfg.SDFGState") -> bool:
     anywhere when it has none, found by one colored depth-first walk over the out-edge index."""
     out_edges = state._nodes
     sources = [node for node, (in_index, _) in out_edges.items() if not in_index]
-    starts = sources if sources else list(out_edges)
+    starts = sources or list(out_edges)
     on_path = 1
     finished = 2
-    color: Dict[Any, int] = {}
+    color: dict[Any, int] = {}
     for start in starts:
         if start in color:
             continue
@@ -560,9 +560,9 @@ def validate_state(
     state: "dace.sdfg.SDFGState",
     state_id: int = None,
     sdfg: "dace.sdfg.SDFG" = None,
-    symbols: Dict[str, dtypes.typeclass] = None,
-    initialized_transients: Set[str] = None,
-    references: Set[int] = None,
+    symbols: dict[str, dtypes.typeclass] = None,
+    initialized_transients: set[str] = None,
+    references: set[int] = None,
     **context: bool,
 ):
     """Verifies the correctness of an SDFG state by applying multiple
@@ -1144,9 +1144,7 @@ def validate_state(
                 if e.data.is_empty():
                     if isinstance(dst_node, nd.ExitNode):
                         pass
-                    if isinstance(dst_node, nd.Tasklet) and all(
-                        {oe.data.is_empty() for oe in state.out_edges(dst_node)}
-                    ):
+                    if isinstance(dst_node, nd.Tasklet) and all(oe.data.is_empty() for oe in state.out_edges(dst_node)):
                         pass
                 else:
                     raise InvalidSDFGEdgeError(
@@ -1480,7 +1478,7 @@ def _no_writes_to_scalars_or_arrays_on_interstate_edges(cfg: "dace.ControlFlowRe
     for edge in cfg.edges():
         if edge.data is not None and isinstance(edge.data, InterstateEdge):
             # sdfg.arrays return arrays and scalars, it is invalid to write to them
-            if any([key in cfg.sdfg.arrays for key in edge.data.assignments]):
+            if any(key in cfg.sdfg.arrays for key in edge.data.assignments):
                 raise InvalidSDFGInterstateEdgeError(
                     f'Assignment to a scalar or an array detected in an interstate edge: "{edge}"',
                     cfg.sdfg,

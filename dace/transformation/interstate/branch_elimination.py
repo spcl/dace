@@ -1,13 +1,18 @@
 import ast
 import copy
-import numpy
-from sympy import Function, pycode
 import re
+
+import numpy
 import sympy
+from sympy import Function, pycode
+
 import dace
-from dace import properties, transformation
-from dace import InterstateEdge
+import dace.sdfg.construction_utils as cutil
+import dace.sdfg.tasklet_utils as tutil
+import dace.sdfg.utils as sdutil
+from dace import InterstateEdge, properties, transformation
 from dace.dtypes import typeclass
+from dace.ordered import OrderedSet
 from dace.properties import CodeBlock
 from dace.sdfg.narrowing import as_access, as_range, as_state, as_typeclass, free_symbol_names
 from dace.sdfg.sdfg import SDFG
@@ -19,15 +24,10 @@ from dace.sdfg.state import (
     SDFGState,
     enclosing_region_symbols,
 )
-import dace.sdfg.utils as sdutil
-import dace.sdfg.construction_utils as cutil
-from dace.transformation.helpers import get_parent_map_and_loop_scopes
-import dace.sdfg.tasklet_utils as tutil
-from typing import Dict, Optional, Tuple, Set, Union
 from dace.symbolic import pystr_to_symbolic
+from dace.transformation.helpers import get_parent_map_and_loop_scopes
 from dace.transformation.passes import FuseStates
 from dace.transformation.passes.prune_symbols import RemoveUnusedSymbols
-from dace.ordered import OrderedSet
 
 
 def remove_symbol_assignments(graph: ControlFlowRegion, sym_name: str):
@@ -200,14 +200,14 @@ class BranchElimination(transformation.MultiStateTransformation):
     def expressions(cls):
         return [sdutil.node_path_graph(cls.conditional)]
 
-    def _check_reuse(self, sdfg: dace.SDFG, orig_state: dace.SDFGState, diff_set: Set[str]):
+    def _check_reuse(self, sdfg: dace.SDFG, orig_state: dace.SDFGState, diff_set: set[str]):
         for graph in sdfg.all_control_flow_regions():
             if (not isinstance(graph, dace.SDFGState)) and orig_state in graph.states():
                 continue
             if graph == orig_state:
                 continue
             read_set, write_set = graph.read_and_write_sets()
-            if any({k in read_set or k in write_set for k in diff_set}):
+            if any(k in read_set or k in write_set for k in diff_set):
                 return True
 
         return False
@@ -289,7 +289,7 @@ class BranchElimination(transformation.MultiStateTransformation):
         single-name version.
         """
         wanted = set(symbol_names)
-        found: Set[str] = set()
+        found: set[str] = set()
         if not wanted:
             return found
 
@@ -503,10 +503,10 @@ class BranchElimination(transformation.MultiStateTransformation):
         return float_lhs_name
 
     def _is_disjoint_subset(self, state0: SDFGState, state1: SDFGState) -> bool:
-        state0_writes: Set[str] = set()
-        state1_writes: Set[str] = set()
-        state0_write_subsets: Dict[str, Set[dace.subsets.Range]] = {}
-        state1_write_subsets: Dict[str, Set[dace.subsets.Range]] = {}
+        state0_writes: set[str] = set()
+        state1_writes: set[str] = set()
+        state0_write_subsets: dict[str, set[dace.subsets.Range]] = {}
+        state1_write_subsets: dict[str, set[dace.subsets.Range]] = {}
         read_sets0, write_sets0 = state0.read_and_write_sets()
         read_sets1, write_sets1 = state1.read_and_write_sets()
         joint_writes = write_sets0.intersection(write_sets1)
@@ -540,7 +540,7 @@ class BranchElimination(transformation.MultiStateTransformation):
             # Build symmetric difference of subsets
             try:
                 all_keys = set(state0_write_subsets) | set(state1_write_subsets)
-                intersects = {k: False for k in all_keys}
+                intersects = dict.fromkeys(all_keys, False)
                 for name, subsets0 in state0_write_subsets.items():
                     if name in state1_write_subsets:
                         subsets1 = state1_write_subsets[name]
@@ -624,7 +624,7 @@ class BranchElimination(transformation.MultiStateTransformation):
         ignored_write_access_nodes = self.collect_ignored_write_accesses(state)
         return {an.data for an in ignored_write_access_nodes}
 
-    def ignored_accesses_are_reused(self, states: Set[dace.SDFGState]):
+    def ignored_accesses_are_reused(self, states: set[dace.SDFGState]):
         """
         Check if ignored write accesses are used elsewhere in the SDFG.
         Implement it by remove the state and then running and checking the
@@ -633,7 +633,7 @@ class BranchElimination(transformation.MultiStateTransformation):
         Returns:
             True if any ignored data is later read or written in another state.
         """
-        ignored_accesses: Set[dace.nodes.AccessNode] = set()
+        ignored_accesses: set[dace.nodes.AccessNode] = set()
         for state in states:
             ignored_accesses = ignored_accesses.union(self.collect_ignored_write_accesses(state))
         ignored_data = {a.data for a in ignored_accesses}
@@ -902,7 +902,7 @@ class BranchElimination(transformation.MultiStateTransformation):
                 return False
 
             if self.has_wcr_edges(state0) or self.has_wcr_edges(state1):
-                print(f"[can_be_applied] Has WCR edges.")
+                print("[can_be_applied] Has WCR edges.")
                 return False
 
             read_sets0, write_sets0 = state0.read_and_write_sets()
@@ -1007,7 +1007,7 @@ class BranchElimination(transformation.MultiStateTransformation):
                     return False
 
         elif len(self.conditional.branches) == 1:
-            tup0: Tuple[Optional[properties.CodeBlock], ControlFlowRegion] = self.conditional.branches[0]
+            tup0: tuple[properties.CodeBlock | None, ControlFlowRegion] = self.conditional.branches[0]
             cond0, body0 = tup0[0], tup0[1]
 
             # Works if the branch body has a single state
@@ -1027,7 +1027,7 @@ class BranchElimination(transformation.MultiStateTransformation):
                 return False
 
             if self.has_wcr_edges(state0):
-                print(f"[can_be_applied] Has WCR edges.")
+                print("[can_be_applied] Has WCR edges.")
                 return False
 
             # For joint writes ensure the write subsets are always the same
@@ -1080,7 +1080,7 @@ class BranchElimination(transformation.MultiStateTransformation):
 
     def _scalar_is_assigned_symbolic_value(
         self, state: SDFGState, node: dace.nodes.AccessNode
-    ) -> Union[None, Tuple[str, dace.nodes.Tasklet]]:
+    ) -> None | tuple[str, dace.nodes.Tasklet]:
         # Check if the scalars are really needed
         # If scalar has single source, which is a tasklet with 0 in degree then it is using some symbol value
         # then we can use the symbolic expression instead
@@ -1099,11 +1099,11 @@ class BranchElimination(transformation.MultiStateTransformation):
             return None
         return t.code.as_string.split("=")[-1].strip(), t
 
-    def try_simplify_combine_tasklet(self, state: SDFGState, node: dace.nodes.Tasklet) -> Set[str]:
+    def try_simplify_combine_tasklet(self, state: SDFGState, node: dace.nodes.Tasklet) -> set[str]:
         if node.language != dace.dtypes.Language.Python:
             return set()
 
-        removed_names: Set[str] = set()
+        removed_names: set[str] = set()
         for ie in state.in_edges(node):
             if isinstance(ie.src, dace.nodes.AccessNode):
                 rettup = self._scalar_is_assigned_symbolic_value(state, ie.src)
@@ -1132,7 +1132,7 @@ class BranchElimination(transformation.MultiStateTransformation):
 
     def _try_fuse(
         self, graph: ControlFlowRegion, new_state: SDFGState, cond_prep_state: SDFGState
-    ) -> Tuple[Set[str], Set[str]]:
+    ) -> tuple[set[str], set[str]]:
         added_scalars = set()
         removed_scalars = set()
         if (
@@ -1208,7 +1208,7 @@ class BranchElimination(transformation.MultiStateTransformation):
                     oes = graph.out_edges(cond_prep_state)
                     cfg_ies = graph.in_edges(cond_prep_state)
                     all_assignments = [oe.data.assignments for oe in oes]
-                    if all({d == dict() for d in all_assignments}):
+                    if all(d == dict() for d in all_assignments):
                         was_start_block = cond_prep_state == graph.start_block
                         graph.remove_node(cond_prep_state)
                         for cfg_ie in cfg_ies:
@@ -1221,7 +1221,7 @@ class BranchElimination(transformation.MultiStateTransformation):
                                 graph.add_edge(new_state, oe2.dst, copy.deepcopy(oe2.data))
         return added_scalars, removed_scalars
 
-    def extract_condition_var_and_assignment(self, graph: ControlFlowRegion) -> Tuple[str, str]:
+    def extract_condition_var_and_assignment(self, graph: ControlFlowRegion) -> tuple[str, str]:
         non_none_conds = [cond for cond, _ in self.conditional.branches if cond is not None]
         assert len(non_none_conds) == 1
         cond = non_none_conds.pop()
@@ -1234,12 +1234,12 @@ class BranchElimination(transformation.MultiStateTransformation):
         free_syms = {str(s).strip() for s in cond_code_symexpr.free_symbols if str(s) in graph.sdfg.symbols}
         # print("free_syms:", free_syms)
         sym_val_map = dict()
-        nodes_to_check: Set[ControlFlowBlock] = {self.conditional}
+        nodes_to_check: set[ControlFlowBlock] = {self.conditional}
 
         # Do reverse BFS from the sink node to get all possible interstate assignments
         while nodes_to_check:
             node_to_check = nodes_to_check.pop()
-            ies = {ie for ie in graph.in_edges(node_to_check)}
+            ies = set(graph.in_edges(node_to_check))
             for ie in ies:
                 for k, v in ie.data.assignments.items():
                     if k in free_syms and k not in sym_val_map:
@@ -1254,7 +1254,7 @@ class BranchElimination(transformation.MultiStateTransformation):
             nodes_to_check = nodes_to_check.union({ie.src for ie in ies})
 
         # The symbol can in free symbols
-        assigned_syms = {k for k in sym_val_map}
+        assigned_syms = set(sym_val_map)
 
         # If 1 free symbol, easy it means it is condition variable,
         # otherwise get the left most
@@ -1267,7 +1267,7 @@ class BranchElimination(transformation.MultiStateTransformation):
         new_sym_val_map = dict()
         for k, v in sym_val_map.items():
             vv = pystr_to_symbolic(v)
-            funcs = [e for e in vv.atoms(Function)]
+            funcs = list(vv.atoms(Function))
             # print(f"Functions in {v} are {funcs}")
             if len(funcs) == 0:
                 new_sym_val_map[str(k)] = str(v)
@@ -1407,15 +1407,15 @@ class BranchElimination(transformation.MultiStateTransformation):
         if len(self.conditional.branches) == 1:
             cond, body = self.conditional.branches[0]
 
-            nodes = [n for n in body.bfs_nodes()]
+            nodes = list(body.bfs_nodes())
             if len(nodes) <= 1:
                 return False
 
-            in_degree_leq_one = all({body.in_degree(n) <= 1 for n in nodes})
-            out_degree_leq_one = all({body.out_degree(n) <= 1 for n in nodes})
+            in_degree_leq_one = all(body.in_degree(n) <= 1 for n in nodes)
+            out_degree_leq_one = all(body.out_degree(n) <= 1 for n in nodes)
             edges = body.edges()
             # Can support if they are not fully empty
-            all_edges_empty = all({e.data.assignments == dict() for e in edges})
+            all_edges_empty = all(e.data.assignments == dict() for e in edges)
 
             if in_degree_leq_one and out_degree_leq_one:  # and all_edges_empty:
                 # Put all nodes into their own if condition
@@ -1508,7 +1508,7 @@ class BranchElimination(transformation.MultiStateTransformation):
             assert len(in_edges) <= 1
             assert len(out_edges) <= 1
             new_src_node: ControlFlowBlock
-            new_assignments: Dict[str, Union[str, ast.AST]] = {}
+            new_assignments: dict[str, str | ast.AST] = {}
             if len(in_edges) == 0:
                 if len(out_edges) == 1:
                     new_src_node = graph.add_state("empty_start_state", is_start_block=True)
@@ -1587,7 +1587,7 @@ class BranchElimination(transformation.MultiStateTransformation):
             # 2 states, first state empty and only thing is interstate assignments
             if (
                 len(body.nodes()) == 2
-                and all({isinstance(n, dace.SDFGState) for n in body.nodes()})
+                and all(isinstance(n, dace.SDFGState) for n in body.nodes())
                 and len(body.start_block.nodes()) == 0
                 and len(body.edges()) == 1
             ):
@@ -1706,11 +1706,11 @@ class BranchElimination(transformation.MultiStateTransformation):
         # 2 states, first state empty and only thing is interstate assignments
         if (
             len(body0.nodes()) == 2
-            and all({isinstance(n, dace.SDFGState) for n in body0.nodes()})
+            and all(isinstance(n, dace.SDFGState) for n in body0.nodes())
             and len(body0.start_block.nodes()) == 0
             and len(body0.edges()) == 1
             and len(body1.nodes()) == 2
-            and all({isinstance(n, dace.SDFGState) for n in body1.nodes()})
+            and all(isinstance(n, dace.SDFGState) for n in body1.nodes())
             and len(body1.start_block.nodes()) == 0
             and len(body1.edges()) == 1
         ):
@@ -1720,9 +1720,9 @@ class BranchElimination(transformation.MultiStateTransformation):
             # If symbol not used anywhere else
             symbols_defined0 = set()
             symbols_defined1 = set()
-            for k, v in edge0.data.assignments.items():
+            for k in edge0.data.assignments.keys():
                 symbols_defined0.add(k)
-            for k, v in edge1.data.assignments.items():
+            for k in edge1.data.assignments.keys():
                 symbols_defined1.add(k)
 
             if symbols_defined1 != symbols_defined0:
@@ -1810,7 +1810,7 @@ class BranchElimination(transformation.MultiStateTransformation):
         sdfg.validate()
 
         # If not top-level tasklets the others wont work
-        if not all({self.only_top_level_tasklets(body) for cond, body in self.conditional.branches}):
+        if not all(self.only_top_level_tasklets(body) for cond, body in self.conditional.branches):
             return False
 
         # Implicitly done by can-be-applied
@@ -1830,7 +1830,7 @@ class BranchElimination(transformation.MultiStateTransformation):
 
         return applied
 
-    processed_tasklets: Set[dace.nodes.Tasklet] = set()
+    processed_tasklets: set[dace.nodes.Tasklet] = set()
 
     def make_division_tasklets_safe_for_unconditional_execution(
         self,
@@ -1948,7 +1948,7 @@ class BranchElimination(transformation.MultiStateTransformation):
         nodes_to_check = {self.conditional}
         while nodes_to_check:
             node_to_check = nodes_to_check.pop()
-            ies = {ie for ie in graph.in_edges(node_to_check)}
+            ies = set(graph.in_edges(node_to_check))
             for ie in ies:
                 for k, v in ie.data.assignments.items():
                     if k in free_syms:
@@ -1961,7 +1961,7 @@ class BranchElimination(transformation.MultiStateTransformation):
 
     _index = 0
 
-    def apply(self, graph: ControlFlowRegion, sdfg: SDFG) -> Set[str]:
+    def apply(self, graph: ControlFlowRegion, sdfg: SDFG) -> set[str]:
         # If CFG has 1 or two branches
         # If two branches then the write sets to sink nodes are the same
 
@@ -1971,7 +1971,7 @@ class BranchElimination(transformation.MultiStateTransformation):
         assert graph == self.conditional.parent_graph
         cond_var, cond_assignment = self.extract_condition_var_and_assignment(graph)
         orig_cond_var = cond_var
-        added_scalar_names: Set[str] = set()
+        added_scalar_names: set[str] = set()
 
         if len(self.conditional.branches) == 2:
             tup0 = self.conditional.branches[0]
@@ -2242,7 +2242,7 @@ class BranchElimination(transformation.MultiStateTransformation):
 
         # If the symbol is not used anymore
         conditional_strs = {cond.as_string for cond, _ in self.conditional.branches if cond is not None}
-        conditional_symbols: Set[str] = set()
+        conditional_symbols: set[str] = set()
         graph.remove_node(self.conditional)
 
         for cond_str in conditional_strs:
@@ -2290,7 +2290,7 @@ class BranchElimination(transformation.MultiStateTransformation):
             if graph.start_block != new_state:
                 src_nodes = {e.src for e in graph.in_edges(new_state)}
                 if len(src_nodes) > 0:
-                    src_edges = {e for e in graph.in_edges(new_state)}
+                    src_edges = set(graph.in_edges(new_state))
                     assert len(src_nodes) == 1
                     assert len(src_edges) == 1
                     src_edge = src_edges.pop()
@@ -2319,7 +2319,7 @@ class BranchElimination(transformation.MultiStateTransformation):
 
                     EmptyStateElimination().apply_pass(graph.sdfg, {})
                     src_nodes = {e.src for e in graph.in_edges(new_state)}
-                    src_edges = {e for e in graph.in_edges(new_state)}
+                    src_edges = set(graph.in_edges(new_state))
                     graph.sdfg.validate()
                     if len(src_nodes) > 0:
                         assert len(src_edges) == 1
@@ -2353,10 +2353,10 @@ class BranchElimination(transformation.MultiStateTransformation):
         assert len({e for e in g.out_edges(state1) if e.dst == state2}) == 1
         assert {e for e in g.out_edges(state1) if e.dst == state2}.pop().data.assignments == dict()
 
-        node_map: Dict[dace.nodes.Node, dace.nodes.Node] = {}
+        node_map: dict[dace.nodes.Node, dace.nodes.Node] = {}
         # One memo for the fused-in state: a scope's entry and exit share a single Map object, and a
         # per-node deepcopy would hand them one copy each.
-        memo: Dict[int, object] = {}
+        memo: dict[int, object] = {}
         for n in state2.nodes():
             if n in state2_src_nodes:
                 src_access = as_access(n)
@@ -2395,7 +2395,7 @@ class BranchElimination(transformation.MultiStateTransformation):
                 g.add_edge(state1, oe.dst, copy.deepcopy(oe.data))
 
     def find_previous_write(
-        self, state: dace.SDFGState, sink: dace.nodes.Node, data: str, skip_set: Set[dace.nodes.Node]
+        self, state: dace.SDFGState, sink: dace.nodes.Node, data: str, skip_set: set[dace.nodes.Node]
     ):
         nodes_to_check = {ie.src for ie in state.in_edges(sink) if ie.src not in skip_set}
         while nodes_to_check:
@@ -2413,7 +2413,7 @@ class BranchElimination(transformation.MultiStateTransformation):
         rhs_access: dace.nodes.AccessNode,
         data: str,
         combine_tasklet: dace.nodes.Tasklet,
-        skip_set: Set[dace.nodes.Node],
+        skip_set: set[dace.nodes.Node],
     ):
         identity_rhs_access = self.find_previous_write(new_state, rhs_access, data, set())
         assert identity_rhs_access is not None

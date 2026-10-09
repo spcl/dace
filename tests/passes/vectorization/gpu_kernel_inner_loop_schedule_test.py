@@ -14,8 +14,8 @@ import dace
 from dace.dtypes import DeviceType
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.vectorization.config import VectorizeConfig
-from dace.transformation.passes.vectorization.vectorize_multi_dim import VectorizeMultiDim
 from dace.transformation.passes.vectorization.enums import ISA
+from dace.transformation.passes.vectorization.vectorize_multi_dim import VectorizeMultiDim
 
 N, M = dace.symbol("N"), dace.symbol("M")
 

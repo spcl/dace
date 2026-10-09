@@ -4,8 +4,7 @@ import copy
 import networkx as nx
 import numpy as np
 
-from dace import SDFG, InterstateEdge, Memlet
-from dace import dtypes
+from dace import SDFG, InterstateEdge, Memlet, dtypes
 from dace.sdfg import nodes as dnodes
 from dace.transformation.interstate import StateFusionExtended
 

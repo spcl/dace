@@ -19,7 +19,7 @@ iteration order -- so every rule here errs towards keeping the edge.
 """
 
 import collections
-from typing import Any, Dict, List, Optional, Tuple, Type, Union
+from typing import Any
 
 from dace import SDFG
 from dace.memlet import Memlet
@@ -32,7 +32,7 @@ from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 
 #: One state edge, as the tuple needed to re-add it unchanged.
-EdgeTuple = Tuple[nodes.Node, Optional[str], nodes.Node, Optional[str], Memlet]
+EdgeTuple = tuple[nodes.Node, str | None, nodes.Node, str | None, Memlet]
 
 
 def is_ordering_edge(edge: MultiConnectorEdge[Memlet]) -> bool:
@@ -48,7 +48,7 @@ def is_ordering_edge(edge: MultiConnectorEdge[Memlet]) -> bool:
     return edge.data is not None and edge.data.is_empty() and edge.src_conn is None and edge.dst_conn is None
 
 
-def candidate_edges(state: SDFGState) -> List[MultiConnectorEdge[Memlet]]:
+def candidate_edges(state: SDFGState) -> list[MultiConnectorEdge[Memlet]]:
     """Ordering edges of ``state``, in the pass's canonical processing order.
 
     The order is a topological sort of the state, ties broken by the edge's position in the
@@ -95,7 +95,7 @@ def reaches(state: SDFGState, src: nodes.Node, dst: nodes.Node, ignored: Ordered
     return False
 
 
-def scope_identity(state: SDFGState) -> Optional[Dict[int, Optional[int]]]:
+def scope_identity(state: SDFGState) -> dict[int, int | None] | None:
     """Object-identity view of ``state.scope_dict()``, for before/after comparison.
 
     ``scope_dict`` is derived from connectivity, so an edge removal can silently move a node
@@ -113,7 +113,7 @@ def scope_identity(state: SDFGState) -> Optional[Dict[int, Optional[int]]]:
     return {id(node): (None if scope is None else id(scope)) for node, scope in scopes.items()}
 
 
-def restore_edges(state: SDFGState, snapshot: List[EdgeTuple]) -> None:
+def restore_edges(state: SDFGState, snapshot: list[EdgeTuple]) -> None:
     """Put ``state``'s edge list back exactly as ``snapshot`` recorded it.
 
     Clearing and re-adding in the recorded order restores insertion order as well as the
@@ -148,8 +148,8 @@ def reduce_state(state: SDFGState) -> int:
     rank = {id(edge): r for r, edge in enumerate(candidates)}
     # Both are taken lazily, on the first removal: until then the state is untouched and the
     # rollback material would be paid for by every state that turns out to have nothing to remove.
-    snapshot: Optional[List[EdgeTuple]] = None
-    before: Optional[Dict[int, Optional[int]]] = None
+    snapshot: list[EdgeTuple] | None = None
+    before: dict[int, int | None] | None = None
 
     removed = 0
     for r, edge in enumerate(candidates):
@@ -194,10 +194,10 @@ class RedundantOrderingEdgeElimination(ppl.Pass):
         # that was necessary in isolation becomes implied by the merged dataflow.
         return bool(modified & (ppl.Modifies.Memlets | ppl.Modifies.Nodes | ppl.Modifies.States))
 
-    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+    def depends_on(self) -> list[type[ppl.Pass] | ppl.Pass]:
         return []
 
-    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> int | None:
         """Reduce every state of ``sdfg`` and of its nested SDFGs.
 
         Nested SDFGs are visited as SDFGs of their own: ``scope_dict`` restarts at each

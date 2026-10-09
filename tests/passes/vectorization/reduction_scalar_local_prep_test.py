@@ -39,7 +39,7 @@ import dace
 from dace import data
 from dace.sdfg import nodes
 from dace.transformation.passes.vectorization.config import VectorizeConfig
-from dace.transformation.passes.vectorization.enums import ISA, RemainderStrategy, BranchMode
+from dace.transformation.passes.vectorization.enums import ISA, BranchMode, RemainderStrategy
 from dace.transformation.passes.vectorization.reduction_scalar_local_prep import PrepareReductionForWidening
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
 

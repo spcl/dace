@@ -10,7 +10,6 @@ prototypes in ``dace_fortran_io.h``, found on the include path added here.
 import os
 
 import dace.library
-from typing import Dict, List
 
 #: This library's directory, where ``dace_fortran_io.{f90,h}`` and
 #: ``fortran_io.cmake`` ship together.
@@ -20,16 +19,16 @@ _LIB_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 @dace.library.environment
 class FortranIO:
     cmake_minimum_version = None
-    cmake_packages: List[str] = []
-    cmake_variables: Dict[str, str] = {}
+    cmake_packages: list[str] = []
+    cmake_variables: dict[str, str] = {}
     cmake_includes = [_LIB_DIR]
     cmake_libraries = ["gfortran"]
     cmake_compile_flags = [f"-I{_LIB_DIR}"]
-    cmake_link_flags: List[str] = []
+    cmake_link_flags: list[str] = []
     cmake_files = [os.path.join(_LIB_DIR, "fortran_io.cmake")]
 
     headers = ["dace_fortran_io.h"]
-    state_fields: List[str] = []
+    state_fields: list[str] = []
     init_code = ""
     finalize_code = ""
-    dependencies: List[str] = []
+    dependencies: list[str] = []

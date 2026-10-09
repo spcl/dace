@@ -2,9 +2,9 @@
 
 import copy
 
-import dace
 import numpy as np
 
+import dace
 from dace.sdfg import nodes
 from dace.transformation.dataflow.map_expansion import MapExpansion
 from dace.transformation.dataflow.map_for_loop import MapToForLoop
@@ -176,7 +176,7 @@ def test_introduced_symbol_picks_up_outer_type():
         for n in state.nodes():
             if not isinstance(n, nodes.NestedSDFG):
                 continue
-            for sym, mapping in n.symbol_mapping.items():
+            for sym in n.symbol_mapping.keys():
                 if sym not in n.sdfg.symbols:
                     continue
                 inner_t = n.sdfg.symbols[sym]
@@ -418,8 +418,8 @@ def test_conditional_block_else_branch_not_dereferenced():
     if/else guard living inside a body NSDFG that ``ExpandNestedSDFGInputs`` widens
     (e.g. TSVC 2.5 quasi-affine-mod-k stripe kernels). Fix: skip branches whose
     ``cond is None`` -- nothing to rewrite, leave the branch untouched."""
-    from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
     from dace.properties import CodeBlock as PropCodeBlock
+    from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
 
     sdfg = dace.SDFG("cond_else_repro")
     sdfg.add_array("A", (10,), dace.float64)

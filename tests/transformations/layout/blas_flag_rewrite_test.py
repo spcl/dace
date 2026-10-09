@@ -22,7 +22,7 @@ import numpy
 import pytest
 
 import dace
-from dace.libraries.blas import Syrk, Syr2k, Symm
+from dace.libraries.blas import Symm, Syr2k, Syrk
 from dace.libraries.blas.nodes.matmul import MatMul
 from dace.libraries.linalg.nodes.tensordot import TensorDot
 from dace.libraries.linalg.nodes.transpose import Transpose

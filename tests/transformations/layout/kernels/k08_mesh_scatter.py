@@ -52,8 +52,8 @@ table ``tsg``; the edge-index table stays a flat CSR-style gather index.
 """
 
 import numpy
-import dace
 
+import dace
 from dace.libraries.layout.shuffle import register_shuffle
 from dace.transformation.layout.brute_force import permutation_candidates, shuffle_candidates
 from dace.transformation.layout.pad_dimensions import PadDimensions

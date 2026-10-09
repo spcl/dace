@@ -1,17 +1,17 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests for the PBLAS GEMV library node."""
 
-import dace
 import numpy as np
 import pytest
 
+import dace
 from dace import Memlet
 from dace.frontend.python.replacements.mpi import _distr_matmult
 from dace.libraries.mpi.nodes.comm_f2c import CommF2c
 from dace.libraries.pblas.nodes.gridinit import BlacsGridInit
 from dace.libraries.pblas.nodes.pgemm import Pgemm
-from dace.transformation.auto.auto_optimize import auto_optimize
 from dace.sdfg import utils
+from dace.transformation.auto.auto_optimize import auto_optimize
 
 # Symbols
 

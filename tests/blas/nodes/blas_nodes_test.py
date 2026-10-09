@@ -1,9 +1,10 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+import numpy as np
+import pytest
+
 import dace
 import dace.libraries.blas as blas
 from dace.transformation.dataflow import RedundantSecondArray
-import numpy as np
-import pytest
 
 M = dace.symbol("M")
 N = dace.symbol("N")

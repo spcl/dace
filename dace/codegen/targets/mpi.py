@@ -1,14 +1,14 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 from typing import TYPE_CHECKING
-from dace import registry, symbolic, dtypes
-from dace.codegen.prettycode import CodeIOStream
+
+from dace import dtypes, registry, symbolic
+from dace.codegen import cppunparse
 from dace.codegen.codeobject import CodeObject
+from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.target import TargetCodeGenerator, make_absolute
 from dace.codegen.targets.cpp import mangle_dace_state_struct_name
-from dace.sdfg import nodes, SDFG
 from dace.config import Config
-
-from dace.codegen import cppunparse
+from dace.sdfg import SDFG, nodes
 from dace.sdfg.state import ControlFlowRegion, StateSubgraphView
 
 if TYPE_CHECKING:
@@ -93,7 +93,6 @@ int __dace_exit_mpi({sdfg_state_name} *__state) {{
 }}
 """.format(
                 params=params_comma,
-                sdfg=sdfg,
                 sdfg_state_name=mangle_dace_state_struct_name(sdfg),
                 file_header=fileheader.getvalue(),
             ),
@@ -109,7 +108,7 @@ int __dace_exit_mpi({sdfg_state_name} *__state) {{
 
         if Config.get("compiler", "mpi", "executable"):
             compiler = make_absolute(Config.get("compiler", "mpi", "executable"))
-            options.append('-DMPI_CXX_COMPILER="{}"'.format(compiler))
+            options.append(f'-DMPI_CXX_COMPILER="{compiler}"')
 
         return options
 

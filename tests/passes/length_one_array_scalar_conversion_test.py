@@ -10,11 +10,10 @@ classes, covering the staging, ``preserve_abi``, ``filter`` gating and ``opaque`
 """
 
 import numpy as np
+import pytest
 
 import dace
 import dace.data as dd
-import pytest
-
 from dace.transformation.passes import (
     ConvertLengthOneArraysToScalars,
     ConvertScalarsToLengthOneArrays,

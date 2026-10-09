@@ -13,7 +13,6 @@ import dace
 from dace.codegen.cpf import render
 from dace.transformation.passes.canonicalize.finalize import finalize_for_target
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
-
 from tests.codegen.cpf.conftest import assert_matches, build_standalone, call_standalone
 
 N = dace.symbol("N")

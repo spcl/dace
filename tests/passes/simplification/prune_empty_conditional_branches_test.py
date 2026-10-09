@@ -1,7 +1,9 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 
 import copy
+
 import numpy as np
+
 import dace
 from dace.sdfg.state import ConditionalBlock
 from dace.transformation.passes.simplification.prune_empty_conditional_branches import PruneEmptyConditionalBranches

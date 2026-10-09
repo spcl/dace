@@ -11,9 +11,9 @@ import pytest
 
 import dace
 from dace import dtypes
-from dace.sdfg import nodes
 from dace.libraries.standard.block_reduce import BLOCK_COLLECTIVE_THREADS
 from dace.libraries.standard.nodes.reduce import ExpandReducePure, Reduce
+from dace.sdfg import nodes
 
 N = dace.symbol("N")
 

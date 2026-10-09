@@ -29,17 +29,16 @@ its size):
   atomic per block), with only the resulting flag copied back.
 """
 
-from typing import Dict, List, Optional, Tuple
-
 import dace
 from dace import dtypes, library, nodes, symbolic
 from dace.codegen.common import global_code_id, sym2cpp
 from dace.libraries.standard.helper import schedule_dispatch
 from dace.libraries.standard.pure_components import chain, counted_loop, element, operand_array, tasklet_state
 from dace.memlet import Memlet
-from dace.transformation.transformation import ExpandTransformation
-from . import _helpers
 from dace.optionals import required
+from dace.transformation.transformation import ExpandTransformation
+
+from . import _helpers
 
 INPUT_CONNECTOR_NAME = "_idx_in"
 OUTPUT_CONNECTOR_NAME = "_count_out"
@@ -101,7 +100,7 @@ def _length(node: "ScatterConflictCheck", state: dace.SDFGState) -> str:
     return sym2cpp(required(in_edges[0].data.subset).num_elements())
 
 
-def _outputs(owner_desc: Optional[dace.data.Array]) -> Dict[str, None]:
+def _outputs(owner_desc: dace.data.Array | None) -> dict[str, None]:
     """Output connectors of the expanded tasklet (the tag array only when it is wired). A dict, not
     a set: connector iteration order is observable in the emitted code."""
     if owner_desc is None:
@@ -110,8 +109,8 @@ def _outputs(owner_desc: Optional[dace.data.Array]) -> Dict[str, None]:
 
 
 def _owner(
-    node: "ScatterConflictCheck", state: dace.SDFGState, owner_desc: Optional[dace.data.Array]
-) -> Optional[Tuple[str, str]]:
+    node: "ScatterConflictCheck", state: dace.SDFGState, owner_desc: dace.data.Array | None
+) -> tuple[str, str] | None:
     """``(connector, capacity)`` for the wired tag array, or ``None``. Capacity comes from the
     edge's own subset, so it tracks whatever the caller actually sized the descriptor by."""
     if owner_desc is None:
@@ -120,7 +119,7 @@ def _owner(
     return SCRATCH_CONNECTOR_NAME, sym2cpp(required(edge.data.subset).num_elements())
 
 
-def _tagcount_call(n: str, src: str, omp: bool, owner: Optional[Tuple[str, str]]) -> str:
+def _tagcount_call(n: str, src: str, omp: bool, owner: tuple[str, str] | None) -> str:
     """C++ calling :cpp:func:`dace::detect_collision` (``dace/runtime/include/dace/detect.h``).
 
     The tagged-write + verify algorithm, why two passes are the floor and why out-of-range values
@@ -148,7 +147,7 @@ OWN_TAGS = "tags"
 
 
 def index_loop(
-    label: str, n: str, code: str, reads: Dict[str, Memlet], writes: Dict[str, Memlet], nsdfg: dace.SDFG
+    label: str, n: str, code: str, reads: dict[str, Memlet], writes: dict[str, Memlet], nsdfg: dace.SDFG
 ) -> dace.sdfg.state.LoopRegion:
     """One pass over the index array: ``x`` is element ``CHECK_INDEX`` of ``_idx_in``."""
     loop = counted_loop(label, CHECK_INDEX, "0", n)
@@ -176,7 +175,7 @@ class ExpandPure(ExpandTransformation):
     """The serial tagged-write + verify as SDFG components: tag every in-range slot with the last position that
     names it, then flag a position whose slot carries another position's tag."""
 
-    environments: List[type] = []
+    environments: list[type] = []
 
     @staticmethod
     def expansion(node: "ScatterConflictCheck", state: dace.SDFGState, sdfg: dace.SDFG) -> dace.SDFG:
@@ -217,7 +216,7 @@ class ExpandCPU(ExpandTransformation):
     """Tagged-write + verify, OpenMP-parallel (2 passes ~= 2x the scatter's own cost). A ``Sequential``
     node, or one re-entered by an enclosing parallel scope or loop, runs both passes on one thread."""
 
-    environments: List[type] = []
+    environments: list[type] = []
 
     @staticmethod
     def expansion(node: "ScatterConflictCheck", state: dace.SDFGState, sdfg: dace.SDFG) -> nodes.Tasklet:
@@ -257,7 +256,7 @@ class ExpandCUDA(ExpandTransformation):
     """
 
     # Filled in on first expansion to dodge the sort<->standard import cycle.
-    environments: List[type] = []
+    environments: list[type] = []
 
     @staticmethod
     def expansion(node: "ScatterConflictCheck", state: dace.SDFGState, sdfg: dace.SDFG) -> nodes.Tasklet:
@@ -304,7 +303,7 @@ class ExpandCUDA(ExpandTransformation):
 class ExpandAuto(ExpandTransformation):
     """Picks ``CPU``, ``CUDA`` or ``pure`` from the node's schedule (:func:`schedule_dispatch`)."""
 
-    environments: List[type] = []
+    environments: list[type] = []
 
     @staticmethod
     def expansion(node: "ScatterConflictCheck", state: dace.SDFGState, sdfg: dace.SDFG):

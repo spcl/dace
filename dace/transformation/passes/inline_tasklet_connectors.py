@@ -16,14 +16,13 @@ rewritten here; C++ / library bodies are handled at code-gen time (``rewrite_cpp
 import ast
 import keyword
 import warnings
-from typing import Dict, List, Optional, Set, Tuple
 
 from dace import data as dt
 from dace import dtypes, subsets
 from dace.properties import CodeBlock
 from dace.sdfg import nodes
-from dace.sdfg.sdfg import SDFG
 from dace.sdfg.scope import is_in_scope
+from dace.sdfg.sdfg import SDFG
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.pass_pipeline import Modifies
 
@@ -37,7 +36,7 @@ class InlineTaskletConnectors(ppl.Pass):
     def should_reapply(self, modified: Modifies) -> bool:
         return False
 
-    def plan(self, sdfg: SDFG) -> Tuple[List[Tuple[nodes.Tasklet, Dict[str, Tuple[str, List[str]]]]], Set[str]]:
+    def plan(self, sdfg: SDFG) -> tuple[list[tuple[nodes.Tasklet, dict[str, tuple[str, list[str]]]]], set[str]]:
         """The inlining plan and the containers it may be applied to.
 
         Decided PER CONTAINER, not per tasklet. A reader rewritten to name the array directly
@@ -49,9 +48,9 @@ class InlineTaskletConnectors(ppl.Pass):
         :returns: ``(plans, safe)`` -- the per-tasklet connector accesses, and the container names
                   every toucher of which can be inlined.
         """
-        plans: List[Tuple[nodes.Tasklet, Dict[str, Tuple[str, List[str]]]]] = []
-        touched: Dict[str, int] = {}
-        inlinable: Dict[str, int] = {}
+        plans: list[tuple[nodes.Tasklet, dict[str, tuple[str, list[str]]]]] = []
+        touched: dict[str, int] = {}
+        inlinable: dict[str, int] = {}
         for node, parent in sdfg.all_nodes_recursive():
             if not isinstance(node, nodes.Tasklet):
                 continue
@@ -76,10 +75,10 @@ class InlineTaskletConnectors(ppl.Pass):
                 plans.append((node, accesses))
         return plans, {data for data, count in touched.items() if inlinable.get(data, 0) == count}
 
-    def apply_pass(self, sdfg: SDFG, _) -> Optional[Set[str]]:
+    def apply_pass(self, sdfg: SDFG, _) -> set[str] | None:
         plans, safe = self.plan(sdfg)
 
-        inlined_tasklets: Set[str] = set()
+        inlined_tasklets: set[str] = set()
         for node, accesses in plans:
             accesses = {conn: acc for conn, acc in accesses.items() if acc[0] in safe}
             if not accesses:
@@ -95,7 +94,7 @@ class InlineTaskletConnectors(ppl.Pass):
 
     def _connector_access(
         self, osdfg: SDFG, state, node: nodes.Tasklet, edge, is_output: bool
-    ) -> Optional[Tuple[str, str, List[str]]]:
+    ) -> tuple[str, str, list[str]] | None:
         """
         Decides whether ``edge``'s connector can be inlined, and if so returns
         ``(connector_name, data_name, index_expressions)`` where the index
@@ -155,12 +154,12 @@ class InlineTaskletConnectors(ppl.Pass):
         indices = [str(rb) for (rb, _re, _rs) in subset.ranges]
         return (conn, memlet.data, indices)
 
-    def _plan_tasklet(self, osdfg: SDFG, state, node: nodes.Tasklet) -> Dict[str, Tuple[str, List[str]]]:
+    def _plan_tasklet(self, osdfg: SDFG, state, node: nodes.Tasklet) -> dict[str, tuple[str, list[str]]]:
         """The connectors of ``node`` that could be inlined. Pure -- decides, never rewrites."""
-        in_acc: Dict[str, Tuple[str, List[str]]] = {}
-        out_acc: Dict[str, Tuple[str, List[str]]] = {}
-        in_subset: Dict[str, subsets.Subset] = {}
-        out_subset: Dict[str, subsets.Subset] = {}
+        in_acc: dict[str, tuple[str, list[str]]] = {}
+        out_acc: dict[str, tuple[str, list[str]]] = {}
+        in_subset: dict[str, subsets.Subset] = {}
+        out_subset: dict[str, subsets.Subset] = {}
         for edge in state.in_edges(node):
             info = self._connector_access(osdfg, state, node, edge, is_output=False)
             if info is not None:
@@ -181,7 +180,7 @@ class InlineTaskletConnectors(ppl.Pass):
         # (WCR output, different array, one side not inlinable) keep the connector
         # for BOTH sides -- a single identifier in the body cannot mean two things.
         inout = set(node.in_connectors) & set(node.out_connectors)
-        accesses: Dict[str, Tuple[str, List[str]]] = {}
+        accesses: dict[str, tuple[str, list[str]]] = {}
         for name in set(in_acc) | set(out_acc):
             if name in inout:
                 if name in in_acc and name in out_acc and in_acc[name] == out_acc[name]:
@@ -203,7 +202,7 @@ class InlineTaskletConnectors(ppl.Pass):
             del accesses[name]
         return accesses
 
-    def _apply_plan(self, node: nodes.Tasklet, accesses: Dict[str, Tuple[str, List[str]]]) -> bool:
+    def _apply_plan(self, node: nodes.Tasklet, accesses: dict[str, tuple[str, list[str]]]) -> bool:
         """Rewrite ``node``'s body for the planned connectors."""
         new_code, inlined = self._rewrite_python(node, accesses)
         if not inlined:
@@ -212,7 +211,7 @@ class InlineTaskletConnectors(ppl.Pass):
         node.ignored_symbols = set(node.ignored_symbols) | {accesses[c][0] for c in inlined}
         return True
 
-    def _rewrite_python(self, node: nodes.Tasklet, accesses: Dict[str, Tuple[str, List[str]]]) -> Tuple[str, Set[str]]:
+    def _rewrite_python(self, node: nodes.Tasklet, accesses: dict[str, tuple[str, list[str]]]) -> tuple[str, set[str]]:
         # ``as_string`` unparses the tasklet's already-parsed AST, so it is always valid Python;
         # any unexpected failure is still caught by apply_pass and the tasklet left classic.
         tree = ast.parse(node.code.as_string)
@@ -250,10 +249,10 @@ def _binds_base_pointer(node: nodes.Tasklet, edge, is_output: bool) -> bool:
     return isinstance(conntype, dtypes.pointer)
 
 
-def _rebound_names(tree: ast.AST) -> Set[str]:
+def _rebound_names(tree: ast.AST) -> set[str]:
     """Names bound by a nested scope inside a tasklet body: lambda / function parameters, the
     function's own name, and comprehension targets."""
-    names: Set[str] = set()
+    names: set[str] = set()
     for n in ast.walk(tree):
         if isinstance(n, (ast.Lambda, ast.FunctionDef, ast.AsyncFunctionDef)):
             args = n.args
@@ -269,11 +268,11 @@ def _rebound_names(tree: ast.AST) -> Set[str]:
 
 def aliased_writers(
     name: str,
-    in_acc: Dict[str, Tuple[str, List[str]]],
-    out_acc: Dict[str, Tuple[str, List[str]]],
-    in_subset: Dict[str, subsets.Subset],
-    out_subset: Dict[str, subsets.Subset],
-) -> List[str]:
+    in_acc: dict[str, tuple[str, list[str]]],
+    out_acc: dict[str, tuple[str, list[str]]],
+    in_subset: dict[str, subsets.Subset],
+    out_subset: dict[str, subsets.Subset],
+) -> list[str]:
     """The outputs other than input ``name`` that write an element of its container it may read."""
     return [
         other
@@ -286,12 +285,12 @@ def aliased_writers(
 
 def reads_after_aliased_writes(
     node: nodes.Tasklet,
-    candidates: List[str],
-    in_acc: Dict[str, Tuple[str, List[str]]],
-    out_acc: Dict[str, Tuple[str, List[str]]],
-    in_subset: Dict[str, subsets.Subset],
-    out_subset: Dict[str, subsets.Subset],
-) -> List[str]:
+    candidates: list[str],
+    in_acc: dict[str, tuple[str, list[str]]],
+    out_acc: dict[str, tuple[str, list[str]]],
+    in_subset: dict[str, subsets.Subset],
+    out_subset: dict[str, subsets.Subset],
+) -> list[str]:
     """The ``candidates`` inputs a statement of ``node`` may read after an output writing an aliased element."""
     aliased = {name: aliased_writers(name, in_acc, out_acc, in_subset, out_subset) for name in candidates}
     aliased = {name: writers for name, writers in aliased.items() if writers}
@@ -301,7 +300,7 @@ def reads_after_aliased_writes(
     return [name for name, writers in aliased.items() if reads_after_write(body, name, writers)]
 
 
-def reads_after_write(body: List[ast.stmt], read: str, writers: List[str]) -> bool:
+def reads_after_write(body: list[ast.stmt], read: str, writers: list[str]) -> bool:
     """True when a statement of ``body`` may read ``read`` after one of ``writers`` was stored."""
     written = False
     for stmt in body:
@@ -314,14 +313,14 @@ def reads_after_write(body: List[ast.stmt], read: str, writers: List[str]) -> bo
     return False
 
 
-def stored_name(n: ast.AST) -> Optional[str]:
+def stored_name(n: ast.AST) -> str | None:
     if not isinstance(n, (ast.Name, ast.Subscript)) or not isinstance(n.ctx, ast.Store):
         return None
     base = n if isinstance(n, ast.Name) else n.value
     return base.id if isinstance(base, ast.Name) else None
 
 
-def evaluates_before_storing(stmt: ast.stmt, walked: List[ast.AST]) -> bool:
+def evaluates_before_storing(stmt: ast.stmt, walked: list[ast.AST]) -> bool:
     """A plain assignment evaluates its whole value first; a walrus inside it stores early."""
     return isinstance(stmt, (ast.Assign, ast.AugAssign, ast.AnnAssign)) and not any(
         isinstance(n, ast.NamedExpr) for n in walked
@@ -331,11 +330,11 @@ def evaluates_before_storing(stmt: ast.stmt, walked: List[ast.AST]) -> bool:
 class _ConnectorInliner(ast.NodeTransformer):
     """Replaces connector names with direct ``data[indices]`` subscripts."""
 
-    def __init__(self, accesses: Dict[str, Tuple[str, List[str]]]):
+    def __init__(self, accesses: dict[str, tuple[str, list[str]]]):
         self.accesses = accesses
-        self.inlined: Set[str] = set()
+        self.inlined: set[str] = set()
 
-    def _make_access(self, data: str, indices: List[str]) -> ast.AST:
+    def _make_access(self, data: str, indices: list[str]) -> ast.AST:
         elts = [ast.parse(ix, mode="eval").body for ix in indices]
         if len(elts) == 1:
             sl = elts[0]

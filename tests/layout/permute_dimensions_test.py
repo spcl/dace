@@ -12,10 +12,12 @@ Array shapes:
   ieblk:      dace.int32[3, nblks_c, nproma]    (block index of neighbor)
 """
 
-import dace
+import copy
+
 import numpy as np
 import pytest
-import copy
+
+import dace
 from dace.transformation.layout.permute_dimensions import PermuteDimensions
 
 # Symbols

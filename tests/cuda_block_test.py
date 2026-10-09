@@ -1,10 +1,11 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+import numpy as np
+import pytest
+
 import dace
 from dace import dtypes, nodes
 from dace.config import Config
 from dace.transformation.dataflow import GPUTransformMap
-import numpy as np
-import pytest
 
 N = dace.symbol("N")
 

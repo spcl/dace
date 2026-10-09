@@ -22,8 +22,8 @@ import pytest
 import dace
 from dace import memlet as mm
 from dace.codegen.codegen import inline_host_nested_sdfgs
-from dace.sdfg import dealias
 from dace.libraries.standard.nodes.reduce import Reduce
+from dace.sdfg import dealias
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.loop_to_reduce import LoopToReduce
 

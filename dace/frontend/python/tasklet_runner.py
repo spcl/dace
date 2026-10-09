@@ -7,7 +7,7 @@ statements.
 import ast
 import copy
 import inspect
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from dace.frontend.python import astutils
 from dace.frontend.python.astutils import rname
@@ -29,7 +29,7 @@ def get_tasklet_ast(stack_depth=2, frame=None) -> ast.With:
         frame = inspect.stack()[stack_depth][0]
     caller = inspect.getframeinfo(frame, context=0)
     try:
-        with open(caller.filename, "r") as fp:
+        with open(caller.filename) as fp:
             pysrc = fp.read()
     except (OSError, FileNotFoundError):
         try:
@@ -64,13 +64,13 @@ class TaskletRewriter(astutils.ExtNodeTransformer):
     def __init__(self) -> None:
         super().__init__()
         # Used for incoming memlets
-        self.pre_statements: List[ast.AST] = []
+        self.pre_statements: list[ast.AST] = []
         # Used for outgoing memlets
-        self.post_statements: List[ast.AST] = []
+        self.post_statements: list[ast.AST] = []
         # Used for dynamic memlets, which should be replaced within the tasklet
-        self.name_replacements: Dict[str, ast.AST] = {}
-        self.assign_replacements: Dict[str, ast.AST] = {}
-        self.wcr_replacements: Dict[str, Tuple[ast.AST, ast.Lambda]] = {}
+        self.name_replacements: dict[str, ast.AST] = {}
+        self.assign_replacements: dict[str, ast.AST] = {}
+        self.wcr_replacements: dict[str, tuple[ast.AST, ast.Lambda]] = {}
         self.replace: bool = False
 
     def clear_statements(self):
@@ -99,7 +99,7 @@ class TaskletRewriter(astutils.ExtNodeTransformer):
 
         return iftrue
 
-    def _analyze_call(self, node: ast.Call) -> Tuple[bool, Optional[ast.Lambda]]:
+    def _analyze_call(self, node: ast.Call) -> tuple[bool, ast.Lambda | None]:
         """
         Analyze memlet expression if a function call (e.g.
         ``A(1, lambda a,b: a+b)[:]``).
@@ -126,7 +126,7 @@ class TaskletRewriter(astutils.ExtNodeTransformer):
     def _clean_memlet(
         self,
         node: ast.AST,
-    ) -> Tuple[ast.AST, bool, Optional[ast.Lambda]]:
+    ) -> tuple[ast.AST, bool, ast.Lambda | None]:
         result = node
         dynamic = False
         wcr = None
@@ -224,7 +224,7 @@ class TaskletRewriter(astutils.ExtNodeTransformer):
         return result
 
 
-def run_tasklet(tasklet_ast: ast.With, filename: str, gvars: Dict[str, Any], lvars: Dict[str, Any]):
+def run_tasklet(tasklet_ast: ast.With, filename: str, gvars: dict[str, Any], lvars: dict[str, Any]):
     """
     Transforms and runs a tasklet given by its AST, filename, global, and local
     variables.

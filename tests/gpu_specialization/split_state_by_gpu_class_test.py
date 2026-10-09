@@ -13,8 +13,7 @@ rewrite rules:
 """
 
 import dace
-
-from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import classify_state_top_level, NodeKind
+from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import NodeKind, classify_state_top_level
 from dace.transformation.passes.gpu_specialization.split_state_by_gpu_class import SplitStateByGPUClass
 
 

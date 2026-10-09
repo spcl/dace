@@ -107,12 +107,13 @@ def test_finalize_selects_openmp_for_reduce():
     ``omp critical`` / per-element ``reduce_atomic`` on the accumulator, and bit-exactness vs
     numpy."""
     import numpy as np
+
     from dace.libraries.standard.nodes.reduce import Reduce
     from dace.transformation.passes.canonicalize import canonicalize
     from dace.transformation.passes.canonicalize.finalize import finalize_for_target
 
     header = os.path.join(os.path.dirname(os.path.abspath(dace.__file__)), "runtime", "include", "dace", "reduction.h")
-    with open(header, "r") as f:
+    with open(header) as f:
         header_src = f.read()
 
     Nsym = dace.symbol("N", dtype=dace.int64)
@@ -166,6 +167,7 @@ def test_finalize_selects_openmp_scan_for_prefix_scan():
     expansion (OpenMP 5.0 ``reduction(inscan, ...)`` + ``#pragma omp scan``), never the serial
     ``pure`` loop. Bit-exact vs ``np.cumsum``."""
     import numpy as np
+
     from dace.libraries.standard.nodes.scan import Scan
     from dace.transformation.passes.canonicalize import canonicalize
     from dace.transformation.passes.canonicalize.finalize import finalize_for_target
@@ -210,6 +212,7 @@ def test_finalize_nested_reduction_stays_sequential():
     reductions" slowdown). The generated code must contain exactly one parallel region (the outer
     map), and the result stays bit-exact."""
     import numpy as np
+
     from dace.libraries.standard.nodes.reduce import Reduce
     from dace.transformation.passes.canonicalize import canonicalize
     from dace.transformation.passes.canonicalize.finalize import finalize_for_target
@@ -374,7 +377,7 @@ def test_finalize_never_selects_mkl_prefers_openblas():
     """The canonicalize perf tail must never pick ``MKL`` -- it prefers OpenBLAS (and OpenMP /
     HPTT / cuBLAS). A large matmul lowers to OpenBLAS, and no library node is left on ``MKL``."""
     from dace.sdfg import nodes
-    from dace.transformation.passes.canonicalize.finalize import finalize_for_target, canonicalize_fast_library_priority
+    from dace.transformation.passes.canonicalize.finalize import canonicalize_fast_library_priority, finalize_for_target
 
     assert "MKL" not in canonicalize_fast_library_priority(dace.dtypes.DeviceType.CPU)
 

@@ -5,9 +5,9 @@ import copy
 import signal
 
 import numpy as np
+import pytest
 
 import dace
-import pytest
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes import SimplifyInductionVariables
 
@@ -391,6 +391,7 @@ def test_llvm_negative_scale_derived_iv():
     `j = -i + N` (reverse index mapping). Must fold and subset must be
     semantically `N - i`."""
     import sympy
+
     from dace import symbolic
 
     sdfg, loop, body, use = simple_loop_with_derived("neg_scale", {"j": "-i + N"})

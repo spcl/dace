@@ -20,8 +20,8 @@ import dace
 from dace import symbolic
 from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
-from dace.transformation.passes.parallelization_prep import BestEffortLoopPeeling
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
+from dace.transformation.passes.parallelization_prep import BestEffortLoopPeeling
 
 N = dace.symbol("N")
 

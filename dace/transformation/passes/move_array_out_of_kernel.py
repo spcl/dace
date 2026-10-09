@@ -8,22 +8,24 @@ import logging
 import numbers
 import re
 import warnings
-from collections.abc import Callable
 from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass
 
 import sympy
 
-from dace import SDFG, SDFGState, data as dt, dtypes, properties, subsets, symbolic, utils
+from dace import SDFG, SDFGState, dtypes, properties, subsets, symbolic, utils
+from dace import data as dt
 from dace.memlet import Memlet
+from dace.optionals import required
+from dace.ordered import OrderedSet
 from dace.sdfg import is_devicelevel_gpu, nodes
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.replace import replace_properties_dict
 from dace.sdfg.state import LoopRegion
-from dace.transformation import helpers, pass_pipeline as ppl, transformation
+from dace.transformation import helpers, transformation
+from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.length_one_array_scalar_conversion import rewrite_code_slots
-from dace.ordered import OrderedSet
-from dace.optionals import required
 
 logger = logging.getLogger(__name__)
 

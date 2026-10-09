@@ -1,11 +1,12 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import numpy as np
+
 import dace
 from dace import nodes
-from dace.transformation.passes.simplification.continue_to_condition import ContinueToCondition
-from dace.sdfg.state import ContinueBlock, LoopRegion, ConditionalBlock, ControlFlowRegion
 from dace.properties import CodeBlock
+from dace.sdfg.state import ConditionalBlock, ContinueBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.pass_pipeline import FixedPointPipeline
+from dace.transformation.passes.simplification.continue_to_condition import ContinueToCondition
 from tests.cfg_tree import assert_tree_matches_a_reset, spy_on_resets
 
 

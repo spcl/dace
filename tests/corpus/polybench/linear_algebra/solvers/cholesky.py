@@ -1,6 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
 import numpy as np
+
+import dace
 
 N = dace.symbol("N")
 
@@ -49,8 +50,7 @@ def print_result(filename, *args, n=None, **kwargs):
         fp.write("==BEGIN DUMP_ARRAYS==\n")
         fp.write("begin dump: %s\n" % "A")
         for i in range(0, n):
-            for j in range(0, i + 1):
-                fp.write("{:.7f} ".format(args[0][i, j]))
+            fp.writelines(f"{args[0][i, j]:.7f} " for j in range(0, i + 1))
             fp.write("\n")
         fp.write("\nend   dump: %s\n" % "A")
         fp.write("==END   DUMP_ARRAYS==\n")

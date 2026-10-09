@@ -1,10 +1,9 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 
-from dace.transformation import pass_pipeline as ppl
-from dace.sdfg import utils as sdutil
-from dace import SDFG, properties
-from typing import Optional
 
+from dace import SDFG, properties
+from dace.sdfg import utils as sdutil
+from dace.transformation import pass_pipeline as ppl
 from dace.transformation.transformation import explicit_cf_compatible
 
 
@@ -27,7 +26,7 @@ class ConsolidateEdges(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return (modified & ppl.Modifies.AccessNodes) or (modified & ppl.Modifies.Memlets)
 
-    def apply_pass(self, sdfg: SDFG, _) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _) -> int | None:
         """
         Consolidates edges on the given SDFG.
 

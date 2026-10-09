@@ -2,16 +2,17 @@
 """Pass replacing implicit copy patterns with explicit ``CopyLibraryNode`` instances."""
 
 import copy
-from typing import Any, Dict, Optional
+from typing import Any
 
 from dace import data, dtypes, nodes, properties, subsets, symbolic
+from dace.libraries.standard.helper import CPU_RESIDENT_STORAGES, GPU_RESIDENT_STORAGES
+from dace.libraries.standard.nodes.copy import CopyLibraryNode
 from dace.memlet import Memlet
 from dace.sdfg import SDFG
 from dace.sdfg import utils as sdutils
 from dace.sdfg.state import SDFGState
-from dace.transformation import pass_pipeline as ppl, transformation
-from dace.libraries.standard.helper import CPU_RESIDENT_STORAGES, GPU_RESIDENT_STORAGES
-from dace.libraries.standard.nodes.copy import CopyLibraryNode
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation import transformation
 
 
 def _derive_matching_dst_subset(src_subset: subsets.Range, dst_desc: data.Data) -> subsets.Range:
@@ -171,7 +172,7 @@ class InsertExplicitCopies(ppl.Pass):
     def depends_on(self):
         return set()
 
-    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> int | None:
         """Lift every implicit copy in ``sdfg`` (and nested SDFGs) to a ``CopyLibraryNode``.
 
         :param sdfg: The SDFG to transform, recursively including nested SDFGs.

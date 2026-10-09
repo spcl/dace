@@ -32,7 +32,7 @@ import functools
 import io
 import operator
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any
 
 from dace import SDFG, data, dtypes, properties, subsets, symbolic
 from dace.sdfg import nodes
@@ -53,9 +53,9 @@ class LoopDominators:
     """``all_dominators(loop)``, computed on first need and shared by every buffer asked about one unmutated loop."""
 
     loop: LoopRegion
-    computed: Optional[Dict[Any, Set[Any]]] = None
+    computed: dict[Any, set[Any]] | None = None
 
-    def get(self) -> Dict[Any, Set[Any]]:
+    def get(self) -> dict[Any, set[Any]]:
         if self.computed is None:
             from dace.sdfg.analysis import cfg as cfg_analysis  # avoid an import cycle
 
@@ -93,7 +93,7 @@ class _Expansion:
     :param edits: The memlet subset edits as ``(memlet, attribute_name, old_subset)`` triples.
     """
 
-    def __init__(self, desc: data.Array, shape, strides, total_size, offset, edits: List[Tuple[Any, str, Any]]):
+    def __init__(self, desc: data.Array, shape, strides, total_size, offset, edits: list[tuple[Any, str, Any]]):
         self.desc = desc
         self._shape = shape
         self._strides = strides
@@ -130,19 +130,19 @@ class BufferExpansion(ppl.Pass):
     def depends_on(self):
         return set()
 
-    def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[Dict[str, List[str]]]:
+    def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> dict[str, list[str]] | None:
         """Expand the buffers that unblock a loop, in ``sdfg`` and every nested SDFG.
 
         :param sdfg: The SDFG to transform in place.
         :returns: ``{loop_label: [expanded_array, ...]}`` for the loops that became
                   parallelizable, or ``None`` if nothing was expanded.
         """
-        expanded: Dict[str, List[str]] = {}
+        expanded: dict[str, list[str]] = {}
         for sd in sdfg.all_sdfgs_recursive():
             expanded.update(self._expand_sdfg(sd))
         return expanded or None
 
-    def report(self, pass_retval: Any) -> Optional[str]:
+    def report(self, pass_retval: Any) -> str | None:
         if not pass_retval:
             return None
         arrays = sum(len(v) for v in pass_retval.values())
@@ -150,7 +150,7 @@ class BufferExpansion(ppl.Pass):
 
     # core
 
-    def _expand_sdfg(self, sdfg: SDFG) -> Dict[str, List[str]]:
+    def _expand_sdfg(self, sdfg: SDFG) -> dict[str, list[str]]:
         """Expand beneficial buffers for the loops of a single SDFG (speculate, then verify).
 
         A loop ``LoopToMap`` already accepts needs no privatization; a loop it *refuses* is the
@@ -178,9 +178,9 @@ class BufferExpansion(ppl.Pass):
         access_states = self._access_state_index(sdfg)
         interstate_syms = self._interstate_symbols(sdfg)
         write_index = self._write_state_index(sdfg)
-        order: Optional[str] = None  # ambient storage order: built lazily, only when actually expanding
+        order: str | None = None  # ambient storage order: built lazily, only when actually expanding
 
-        kept: Dict[str, List[str]] = {}
+        kept: dict[str, list[str]] = {}
         for loop in loops:
             ix = self._loop_index(loop)
             if ix is None:
@@ -205,7 +205,7 @@ class BufferExpansion(ppl.Pass):
         return kept
 
     @staticmethod
-    def _write_state_index(sdfg: SDFG) -> Dict[str, Set[SDFGState]]:
+    def _write_state_index(sdfg: SDFG) -> dict[str, set[SDFGState]]:
         """Map each *privatizable-kind* transient array to the states that WRITE it (one pass).
 
         A key is a transient, non-view, reindexable-lifetime Array of rank >= 1 -- exactly the
@@ -224,7 +224,7 @@ class BufferExpansion(ppl.Pass):
             and desc.lifetime in _REINDEXABLE_LIFETIMES
             and len(desc.shape) >= 1
         }
-        index: Dict[str, Set[SDFGState]] = {}
+        index: dict[str, set[SDFGState]] = {}
         if not reindexable:
             return index
         for state in sdfg.states():
@@ -235,10 +235,10 @@ class BufferExpansion(ppl.Pass):
 
     @staticmethod
     def _has_candidate_buffer(
-        loop_states: Set[SDFGState],
-        write_index: Dict[str, Set[SDFGState]],
-        access_states: Dict[str, Set[SDFGState]],
-        interstate_syms: Set[str],
+        loop_states: set[SDFGState],
+        write_index: dict[str, set[SDFGState]],
+        access_states: dict[str, set[SDFGState]],
+        interstate_syms: set[str],
     ) -> bool:
         """Whether ``loop_states`` could hold a privatizable buffer -- the cheap gate on the probe.
 
@@ -259,13 +259,13 @@ class BufferExpansion(ppl.Pass):
         return False
 
     @staticmethod
-    def _access_state_index(sdfg: SDFG) -> Dict[str, Set[SDFGState]]:
+    def _access_state_index(sdfg: SDFG) -> dict[str, set[SDFGState]]:
         """Map every data name to the set of states holding an AccessNode for it (one pass).
 
         Built once per SDFG so ``_is_loop_local`` is a set lookup instead of an
         ``all_states x nodes`` rescan for every (loop, array) pair.
         """
-        index: Dict[str, Set[SDFGState]] = {}
+        index: dict[str, set[SDFGState]] = {}
         for state in sdfg.states():
             for n in state.nodes():
                 if isinstance(n, nodes.AccessNode):
@@ -273,9 +273,9 @@ class BufferExpansion(ppl.Pass):
         return index
 
     @staticmethod
-    def _interstate_symbols(sdfg: SDFG) -> Set[str]:
+    def _interstate_symbols(sdfg: SDFG) -> set[str]:
         """Names appearing free on any interstate edge (a buffer used there is not loop-local)."""
-        syms: Set[str] = set()
+        syms: set[str] = set()
         for edge in sdfg.all_interstate_edges():
             syms |= {str(s) for s in edge.data.free_symbols}
         return syms
@@ -317,10 +317,10 @@ class BufferExpansion(ppl.Pass):
         self,
         sdfg: SDFG,
         loop: LoopRegion,
-        access_states: Optional[Dict[str, Set[SDFGState]]] = None,
-        interstate_syms: Optional[Set[str]] = None,
-        loop_states: Optional[Set[SDFGState]] = None,
-    ) -> List[str]:
+        access_states: dict[str, set[SDFGState]] | None = None,
+        interstate_syms: set[str] | None = None,
+        loop_states: set[SDFGState] | None = None,
+    ) -> list[str]:
         """Transient arrays in ``loop`` that are safe to privatize by expansion.
 
         A buffer qualifies when it is a transient array used only inside ``loop``, has no
@@ -338,7 +338,7 @@ class BufferExpansion(ppl.Pass):
             loop_states = set(loop.states())
         # The loop is not mutated while its buffers are judged, so one dominator table serves all of them.
         dominators = LoopDominators(loop)
-        candidates: List[str] = []
+        candidates: list[str] = []
         for name, desc in sdfg.arrays.items():
             if not isinstance(desc, data.Array) or not desc.transient:
                 continue
@@ -372,7 +372,7 @@ class BufferExpansion(ppl.Pass):
         return candidates
 
     @staticmethod
-    def _is_library_node_operand(loop_states: Set[SDFGState], name: str) -> bool:
+    def _is_library_node_operand(loop_states: set[SDFGState], name: str) -> bool:
         """True if ``name`` is a direct input/output of a library node in ``loop_states``.
 
         Such a buffer is a shape-constrained operand (e.g. a GEMM's 2D slice); expanding
@@ -390,7 +390,7 @@ class BufferExpansion(ppl.Pass):
 
     @staticmethod
     def _is_loop_local(
-        loop_states: Set[SDFGState], name: str, access_states: Dict[str, Set[SDFGState]], interstate_syms: Set[str]
+        loop_states: set[SDFGState], name: str, access_states: dict[str, set[SDFGState]], interstate_syms: set[str]
     ) -> bool:
         """True if ``name`` is accessed only within ``loop_states`` (not live in/out of the loop).
 
@@ -403,7 +403,7 @@ class BufferExpansion(ppl.Pass):
         return name not in interstate_syms
 
     @staticmethod
-    def defined_before_read(loop: LoopRegion, name: str, dominators: Optional[LoopDominators] = None) -> bool:
+    def defined_before_read(loop: LoopRegion, name: str, dominators: LoopDominators | None = None) -> bool:
         """True if every read of ``name`` in the loop body observes a value written in the
         *same* iteration -- i.e. ``name`` is never loop-carried, so a private copy per
         iteration preserves semantics.
@@ -422,8 +422,8 @@ class BufferExpansion(ppl.Pass):
             dominators = LoopDominators(loop)
         saw_read = saw_write = False
         # (reading_block, read_subset, node_local_write_subsets) triples needing a dominator.
-        exposed_reads: List[Tuple[Any, Any, List[Any]]] = []
-        write_blocks: Dict[Any, List[Any]] = {}  # unconditional state -> covering write subsets
+        exposed_reads: list[tuple[Any, Any, list[Any]]] = []
+        write_blocks: dict[Any, list[Any]] = {}  # unconditional state -> covering write subsets
         for state in loop.states():
             block = BufferExpansion._top_block(loop, state)
             for node in state.nodes():
@@ -474,7 +474,7 @@ class BufferExpansion(ppl.Pass):
         return True
 
     @staticmethod
-    def _union_covers(writes: List[Any], read) -> bool:
+    def _union_covers(writes: list[Any], read) -> bool:
         """True iff the ``writes`` TOGETHER cover ``read`` (sound; conservative when unsure).
 
         Accepts either a single write that already covers ``read``, or several unit-step writes
@@ -592,8 +592,8 @@ class BufferExpansion(ppl.Pass):
             offset=new_offset,
         )
 
-        edits: List[Tuple[Any, str, Any]] = []
-        seen: Set[int] = set()
+        edits: list[tuple[Any, str, Any]] = []
+        seen: set[int] = set()
         for state in loop.states():
             for edge in state.edges():
                 if id(edge) in seen or edge.data is None:

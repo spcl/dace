@@ -112,8 +112,8 @@ def test_scalar_fission(with_raising):
     # There should now be 5 arrays in the SDFG, i.e. 2 more than before since two isolated scopes of tmp exist.
     assert len(sdfg.arrays.keys()) == 5
     # Assert all accesses per scope are identical.
-    assert all([n.data == list(tmp1_edge.assignments.values())[0] for n in [tmp1_write, loop1_read_tmp]])
-    assert all([n.data == list(tmp2_edge.assignments.values())[0] for n in [tmp2_write, loop2_read_tmp]])
+    assert all(n.data == list(tmp1_edge.assignments.values())[0] for n in [tmp1_write, loop1_read_tmp])
+    assert all(n.data == list(tmp2_edge.assignments.values())[0] for n in [tmp2_write, loop2_read_tmp])
 
 
 @pytest.mark.parametrize("with_raising", (False, True))

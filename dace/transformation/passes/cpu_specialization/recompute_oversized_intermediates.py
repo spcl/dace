@@ -28,7 +28,7 @@ is a property of the host's cache, so this runs in the CPU lowering band and the
 keeps its materialized intermediates.
 """
 
-from typing import Any, Dict, Optional
+from typing import Any
 
 from dace import SDFG, data, properties, symbolic
 from dace.sdfg import nodes
@@ -113,7 +113,7 @@ class RecomputeOversizedIntermediates(ppl.Pass):
     def depends_on(self):
         return set()
 
-    def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> int | None:
         """Apply to fixpoint; returns how many chains were collapsed, or ``None``."""
         # ``cpu_specialize`` validates once at its end; a validation per pass would walk the SDFG again.
         applied = sdfg.apply_transformations_repeated(

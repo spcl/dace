@@ -21,12 +21,14 @@ imports pull in).
 
 import ast
 import copy
-from typing import Any, Dict, FrozenSet, List, Optional, Tuple, Set
+from typing import Any
 
 import sympy
 
 from dace import properties, symbolic
+from dace.optionals import required
 from dace.sdfg import SDFG, nodes
+from dace.sdfg.narrowing import as_basic, as_expr, config_int
 from dace.sdfg.state import (
     BreakBlock,
     ConditionalBlock,
@@ -36,8 +38,6 @@ from dace.sdfg.state import (
     enclosing_region_symbols,
 )
 from dace.transformation import pass_pipeline as ppl
-from dace.optionals import required
-from dace.sdfg.narrowing import as_basic, as_expr, config_int
 
 #: Default trip-count threshold below which a constant-trip loop is unrolled
 #: (``optimizer.canonicalization.unroll_limit``).
@@ -56,7 +56,7 @@ def _loops(sdfg: SDFG):
     return [r for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion) and r.loop_variable]
 
 
-def mappable_count_upper_bound(candidate: SDFG, verdicts: Dict[str, bool]) -> int:
+def mappable_count_upper_bound(candidate: SDFG, verdicts: dict[str, bool]) -> int:
     """An upper bound on ``BestEffortLoopPeeling._mappable_loop_count(candidate, dict(verdicts))``, without its prep.
 
     The count scores each loop 0 or 1 -- its memoized verdict when the label is in ``verdicts``, a
@@ -78,7 +78,7 @@ def _as_symbolic(expr):
     return symbolic.pystr_to_symbolic(str(expr))
 
 
-def _retyped(expr, sdfg, scoped: Optional[Dict[str, Any]] = None):
+def _retyped(expr, sdfg, scoped: dict[str, Any] | None = None):
     """``expr`` with every free symbol re-bound to the dtype ``sdfg`` declares for it.
 
     A loop bound lives in a STRING-backed property, so recovering one re-parses it, and
@@ -126,7 +126,7 @@ def _unified(expr, *context):
     """
     if not isinstance(expr, sympy.Basic):
         return expr
-    widest: Dict[str, Any] = {}
+    widest: dict[str, Any] = {}
     for other in context:
         for sym in getattr(other, "free_symbols", ()):
             if not isinstance(sym, symbolic.symbol):
@@ -166,7 +166,7 @@ def _unique_block_label(sdfg: SDFG, base: str) -> str:
             return cand
 
 
-def _constant_trip_count(loop: LoopRegion, sdfg: SDFG) -> Optional[int]:
+def _constant_trip_count(loop: LoopRegion, sdfg: SDFG) -> int | None:
     """The exact iteration count of ``loop`` if it is constant, else ``None``.
 
     Ascending strides only: the ``stride_val <= 0`` bail deliberately declines DESCENDING loops, which
@@ -294,7 +294,7 @@ def _local_state_fusion(sdfg: SDFG, region) -> int:
     return fused
 
 
-def loop_body_census(loop: LoopRegion) -> Tuple[int, bool]:
+def loop_body_census(loop: LoopRegion) -> tuple[int, bool]:
     """(tasklets, holds a map) over every state ``loop`` holds, nested SDFGs included; stops at the first map."""
     tasklets = 0
     states = list(loop.states())
@@ -353,7 +353,7 @@ class ShortLoopUnroll(ppl.Pass):
     def depends_on(self):
         return set()
 
-    def eligible(self, loop: LoopRegion, sdfg: SDFG, trips: Dict[LoopRegion, Optional[int]]) -> bool:
+    def eligible(self, loop: LoopRegion, sdfg: SDFG, trips: dict[LoopRegion, int | None]) -> bool:
         """Whether ``loop`` passes every gate short of LoopUnroll's own applicability check."""
         if loop not in trips:
             trips[loop] = _constant_trip_count(loop, sdfg)
@@ -366,7 +366,7 @@ class ShortLoopUnroll(ppl.Pass):
         return not _unfusable_branchy_body(loop)  # a branchy body local fusion cannot re-merge
 
     @staticmethod
-    def unroll_one(loop: LoopRegion) -> Optional[bool]:
+    def unroll_one(loop: LoopRegion) -> bool | None:
         """Unroll ``loop``: True on success, None when LoopUnroll refuses it, False when apply raised part-way.
 
         Applicability is decided first, on its own, so a refusal (graph untouched, not a modification) is
@@ -386,7 +386,7 @@ class ShortLoopUnroll(ppl.Pass):
             return False
         return True
 
-    def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> int | None:
         """Unroll short constant-trip loops.
 
         Re-collects after each unroll since unrolling rewrites the control-flow
@@ -412,10 +412,10 @@ class ShortLoopUnroll(ppl.Pass):
         # Trip count per loop OBJECT, for this call. It reads only the loop header and
         # ``sdfg.constants``; no step here rewrites a live loop's header (an unroll substitutes
         # into fresh copies), and the keys stay referenced, so no id is reused.
-        trips: Dict[LoopRegion, Optional[int]] = {}
+        trips: dict[LoopRegion, int | None] = {}
         # Loops LoopUnroll refused or failed on. The gates are re-judged every level instead: unrolling inner
         # loops can fold a guard away and make a branchy body unrollable.
-        refused: Set[LoopRegion] = set()
+        refused: set[LoopRegion] = set()
         while True:
             # One LEVEL at a time: every eligible loop at the deepest eligible depth unrolls, then each
             # region that received clones is fused once, then the next innermost level is judged. The
@@ -424,7 +424,7 @@ class ShortLoopUnroll(ppl.Pass):
             if not eligible:
                 break
             depth = max(_loop_depth(loop) for loop in eligible)
-            touched: List[ControlFlowRegion] = []
+            touched: list[ControlFlowRegion] = []
             for loop in [loop for loop in eligible if _loop_depth(loop) == depth]:
                 parent = loop.parent_graph
                 outcome = self.unroll_one(loop)
@@ -696,8 +696,8 @@ class BestEffortLoopPeeling(ppl.Pass):
         An EMPTY memlet is a happens-before edge, not an access, and carries no subset to solve
         against; it is skipped first so its absent data/subset is never taken for a whole-array
         access."""
-        reads: Dict[Any, dict] = {}
-        writes: Dict[Any, dict] = {}
+        reads: dict[Any, dict] = {}
+        writes: dict[Any, dict] = {}
         for state in loop.states():
             if not isinstance(state, SDFGState):
                 continue
@@ -892,7 +892,7 @@ class BestEffortLoopPeeling(ppl.Pass):
         loop: LoopRegion,
         x,
         middle_singleton: bool = True,
-        clamp: FrozenSet[str] = frozenset(),
+        clamp: frozenset[str] = frozenset(),
         reuse_loop: bool = False,
     ) -> bool:
         """Index-set-split ``loop`` at iteration ``x`` into range segments, each a
@@ -932,6 +932,7 @@ class BestEffortLoopPeeling(ppl.Pass):
         nest. Only for a throwaway candidate graph: the loop object stays live, so a caller that later visits
         its snapshot of loops (the real split in :meth:`apply_pass`) would find it still in the graph."""
         import copy
+
         from dace.properties import CodeBlock
         from dace.sdfg.sdfg import InterstateEdge
         from dace.transformation.passes.analysis import loop_analysis
@@ -972,7 +973,7 @@ class BestEffortLoopPeeling(ppl.Pass):
         if not middle_singleton and not want_before:
             return False  # [x, end] would be the whole loop -> nothing to split
 
-        chain: List[LoopRegion] = []
+        chain: list[LoopRegion] = []
         in_edges = list(parent.in_edges(loop))
         out_edges = list(parent.out_edges(loop))
 
@@ -1058,6 +1059,7 @@ class BestEffortLoopPeeling(ppl.Pass):
         boundary ``x == start`` of a front conflict emits no ``before`` at all, so nothing is left
         to prove). ``None`` means the bounds are unreadable and the caller must not split."""
         import sympy
+
         from dace.transformation.passes.analysis import loop_analysis
 
         sides = self._split_sides_needing_clamp(loop, x)
@@ -1072,7 +1074,7 @@ class BestEffortLoopPeeling(ppl.Pass):
             relations.add(sympy.LessThan(start, x))  # an `after` segment exists -> it must not underrun
         return frozenset(relations)
 
-    def _split_sides_needing_clamp(self, loop: LoopRegion, x) -> Optional[FrozenSet[str]]:
+    def _split_sides_needing_clamp(self, loop: LoopRegion, x) -> frozenset[str] | None:
         """Which range segments of a split at ``x`` are not PROVABLY inside ``loop``'s bounds.
 
         The one predicate behind both ways of discharging the contract of :meth:`_split_loop_at`:
@@ -1211,7 +1213,7 @@ class BestEffortLoopPeeling(ppl.Pass):
         # search is trying to change -- so its label never enters the memo. Its segments are new
         # labels and miss the memo by construction.
         split_label = _loops(mini)[0].label if _loops(mini) else None
-        verdicts: Dict[str, bool] = {}
+        verdicts: dict[str, bool] = {}
         try:
             baseline = self._mappable_loop_count(copy.deepcopy(mini), verdicts)
         except Exception:
@@ -1282,7 +1284,7 @@ class BestEffortLoopPeeling(ppl.Pass):
             prev = cur
         EmptyStateElimination().apply_pass(sdfg, {})
 
-    def _clean_peeled_remainder(self, sdfg: SDFG, collect: Optional[set] = None):
+    def _clean_peeled_remainder(self, sdfg: SDFG, collect: set | None = None):
         """Post-peel cleanup so the remainder body is affine and mappable: collapse
         the now-dead boundary guards (:meth:`_prune_dead_loop_branches`) and rewrite
         the modulo subsets the peel/split made affine over the shortened range
@@ -1343,7 +1345,7 @@ class BestEffortLoopPeeling(ppl.Pass):
         if not isinstance(m, sympy.Symbol):
             return None
         # Affine decomposition in m and each offset symbol; every coefficient numeric.
-        coeffs: Dict[Any, Any] = {}
+        coeffs: dict[Any, Any] = {}
         rem = s
         for sym in (m, *offsets):
             c = as_expr(s).coeff(sym, 1)
@@ -1373,13 +1375,13 @@ class BestEffortLoopPeeling(ppl.Pass):
             return frozenset(relied)
         return None
 
-    def _enclosing_loop_ranges(self, block) -> Dict[Any, Any]:
+    def _enclosing_loop_ranges(self, block) -> dict[Any, Any]:
         """``{loop_variable: (start, end)}`` for every ``LoopRegion`` enclosing
         ``block``, with inclusive bounds. Empty for a peeled iteration region (no
         enclosing loop), whose body holds a fixed, already-substituted index."""
         from dace.transformation.passes.analysis import loop_analysis
 
-        ranges: Dict[Any, Any] = {}
+        ranges: dict[Any, Any] = {}
         graph = block.parent_graph
         seen = set()
         while graph is not None and id(graph) not in seen:
@@ -1431,7 +1433,7 @@ class BestEffortLoopPeeling(ppl.Pass):
             if isinstance(n, sympy.Mod) or n.func.__name__ in _MODULO_FUNC_NAMES
         }
 
-    def _modulo_to_affine(self, mod, ranges: Dict[Any, Any]):
+    def _modulo_to_affine(self, mod, ranges: dict[Any, Any]):
         """If ``mod`` is a modulo ``arg % m`` (operator or helper function) with
         ``arg`` affine in the enclosing loop variables and provably confined to a
         single band ``[t*m, (t+1)*m - 1]`` over their ranges, return ``(arg - t*m,
@@ -1495,7 +1497,7 @@ class BestEffortLoopPeeling(ppl.Pass):
             return arg - t * as_expr(m), relations
         return None
 
-    def _loop_own_ranges(self, loop: LoopRegion) -> Dict[Any, Any]:
+    def _loop_own_ranges(self, loop: LoopRegion) -> dict[Any, Any]:
         """``{loop_variable: (start, end)}`` for ``loop`` itself (inclusive), the
         single-entry range box :meth:`_modulo_to_affine` reduces a modulo argument
         over; empty if the bounds are not recoverable."""
@@ -1515,7 +1517,7 @@ class BestEffortLoopPeeling(ppl.Pass):
             )
         }
 
-    def _affine_body_modulos(self, loop: LoopRegion, ranges: Optional[Dict[Any, Any]] = None):
+    def _affine_body_modulos(self, loop: LoopRegion, ranges: dict[Any, Any] | None = None):
         """Yield ``(mod, arg, m, a, b)`` for every memlet-subset modulo ``Mod(arg,
         m)`` in ``loop``'s body whose argument ``arg = a*ivar + b`` is affine in the
         loop variable -- the only modulos a bounded peel or a band split can fold.
@@ -1682,7 +1684,7 @@ class BestEffortLoopPeeling(ppl.Pass):
             return x, frozenset(relations)
         return None
 
-    def _rewrite_modulo_over_range(self, sdfg: SDFG, collect: Optional[set] = None):
+    def _rewrite_modulo_over_range(self, sdfg: SDFG, collect: set | None = None):
         """Rewrite every ``Mod(arg, m)`` memlet subset to an equivalent affine form
         when ``arg`` provably stays in one band over its enclosing loops' ranges (see
         :meth:`_modulo_to_affine`). A peel that removes the wrapping boundary
@@ -1696,11 +1698,12 @@ class BestEffortLoopPeeling(ppl.Pass):
         parallel branch, where the condition already holds, so the relation guards
         the branch rather than aborting)."""
         import sympy
+
         from dace import subsets
 
         for st in sdfg.states():
             ranges = self._enclosing_loop_ranges(st)
-            repl: Dict[Any, Any] = {}
+            repl: dict[Any, Any] = {}
             ranges_seen = []
             for e in st.edges():
                 if e.data is None:
@@ -1726,7 +1729,7 @@ class BestEffortLoopPeeling(ppl.Pass):
                 for r in ranges_seen:
                     r.replace(repl)
 
-    def _mappable_loop_count(self, candidate: SDFG, verdicts: Optional[Dict[str, bool]] = None) -> int:
+    def _mappable_loop_count(self, candidate: SDFG, verdicts: dict[str, bool] | None = None) -> int:
         """Cheap proxy for "does the peel unblock parallelization?": run scalar
         fission -> symbol propagation -> constant propagation -> iterator SSA (no reduction
         passes), then COUNT the loops ``LoopToMap`` *could* parallelize -- via
@@ -1823,7 +1826,7 @@ class BestEffortLoopPeeling(ppl.Pass):
 
         return probe
 
-    def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> int | None:
         """Unblock stuck loops, splitting or peeling each at a point taken from its body.
         Returns the number of loops rewritten or None.
 

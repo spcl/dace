@@ -13,8 +13,6 @@ loop, the shared-memory declaration and the broadcast is how two copies drift ap
 placement, which is the part that goes silently wrong rather than loudly broken.
 """
 
-from typing import Optional
-
 from dace import SDFG, dtypes, nodes
 from dace.sdfg.state import SDFGState
 
@@ -135,9 +133,7 @@ def add_block_lane_map(state, label: str, lanes: int = BLOCK_COLLECTIVE_THREADS)
 GPU_BLOCK_IMPLEMENTATIONS = ("CUDA (block strided)", "CUDA (block)")
 
 
-def gpu_block_implementation(
-    node: nodes.Node, state: Optional[SDFGState] = None, sdfg: Optional[SDFG] = None
-) -> Optional[str]:
+def gpu_block_implementation(node: nodes.Node, state: SDFGState | None = None, sdfg: SDFG | None = None) -> str | None:
     """The block lowering ``node`` registers and can take, or ``None`` when it has none.
 
     ``Reduce`` registers both keys and they are NOT interchangeable: ``'CUDA (block)'`` is the

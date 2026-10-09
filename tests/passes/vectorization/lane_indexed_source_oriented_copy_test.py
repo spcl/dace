@@ -11,8 +11,9 @@ invisible and the exemption never fired -- the pass then refused the kernel outr
 ``NotImplementedError: ... has non-scalar shape``.
 """
 
-import dace
 import pytest
+
+import dace
 from dace.transformation.passes.vectorization.utils.tile_access import data_is_lane_indexed
 from dace.transformation.passes.vectorization.widen_accesses import WidenAccesses
 

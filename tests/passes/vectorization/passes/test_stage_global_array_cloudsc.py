@@ -20,17 +20,16 @@ The pass module does not exist yet — the implementation agent creates it. Unti
 then this file raises an ``ImportError`` for the pass *only*.
 """
 
-import pytest
 import copy
 
 import numpy
+import pytest
 
 import dace
 from dace import data as dt
 from dace.transformation.passes.vectorization.stage_global_array_through_scalars import (
     StageGlobalArrayThroughScalars,
 )
-
 from tests.passes.vectorization.helpers.harness import (
     _get_cloudsc_snippet_four,
 )

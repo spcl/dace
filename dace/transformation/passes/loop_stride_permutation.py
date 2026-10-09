@@ -59,22 +59,21 @@ the innermost body must be a single statement for the oracle.
 """
 
 import re
-from typing import Dict, List, Optional, Set, Tuple, Type, Union
 
 import sympy
 
 import dace
 from dace import SDFG
 from dace import data as dt
-from dace.sdfg.state import LoopRegion, SDFGState
-from dace.symbolic import pystr_to_symbolic
-from dace.transformation import pass_pipeline as ppl, transformation
+from dace.optionals import required
 from dace.properties import CodeBlock
-from dace.symbolic import symstr
+from dace.sdfg.narrowing import as_basic, as_expr
+from dace.sdfg.state import LoopRegion, SDFGState
+from dace.symbolic import pystr_to_symbolic, symstr
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation import transformation
 from dace.transformation.interstate.loop_to_map import LoopToMap
 from dace.transformation.passes.analysis import loop_analysis
-from dace.optionals import required
-from dace.sdfg.narrowing import as_basic, as_expr
 
 #: Loop-control properties swapped to realize an interchange.
 _LOOP_META_ATTRS = ("loop_variable", "init_statement", "loop_condition", "update_statement", "inverted")
@@ -97,10 +96,10 @@ class LoopStridePermutation(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+    def depends_on(self) -> list[type[ppl.Pass] | ppl.Pass]:
         return []
 
-    def apply_pass(self, sdfg: SDFG, _: Dict[str, object]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _: dict[str, object]) -> int | None:
         """Interchange every eligible perfect loop nest in ``sdfg`` so a
         unit-stride DOALL axis becomes innermost.
 
@@ -112,7 +111,7 @@ class LoopStridePermutation(ppl.Pass):
             applied += self._maybe_interchange_nest(sdfg, chain)
         return applied or None
 
-    def _perfect_nests(self, sdfg: SDFG) -> List[List[LoopRegion]]:
+    def _perfect_nests(self, sdfg: SDFG) -> list[list[LoopRegion]]:
         """Collect maximal perfect loop-nest chains ``[L0, .., L_{n-1}]`` (outer
         to inner), ``n >= 2``.
 
@@ -125,14 +124,14 @@ class LoopStridePermutation(ppl.Pass):
         """
         # A region is the "inner" of a perfect pair iff it is the single block of
         # a parent LoopRegion; chain tops are the loops that are NOT such inners.
-        inners: Set[int] = set()
+        inners: set[int] = set()
         for region in sdfg.all_control_flow_regions():
             if isinstance(region, LoopRegion):
                 blocks = list(region.nodes())
                 if len(blocks) == 1 and isinstance(blocks[0], LoopRegion):
                     inners.add(id(blocks[0]))
 
-        chains: List[List[LoopRegion]] = []
+        chains: list[list[LoopRegion]] = []
         for region in sdfg.all_control_flow_regions():
             if not isinstance(region, LoopRegion) or id(region) in inners:
                 continue
@@ -152,7 +151,7 @@ class LoopStridePermutation(ppl.Pass):
             chains.append(chain)
         return chains
 
-    def _maybe_interchange_nest(self, sdfg: SDFG, chain: List[LoopRegion]) -> int:
+    def _maybe_interchange_nest(self, sdfg: SDFG, chain: list[LoopRegion]) -> int:
         """Bubble a unit-stride DOALL loop in ``chain`` to the innermost slot.
 
         :param chain: A perfect nest ``[L0, .., L_{n-1}]`` (outer to inner).
@@ -173,7 +172,7 @@ class LoopStridePermutation(ppl.Pass):
                 return 1
         return 0
 
-    def _try_bubble_to_inner(self, sdfg: SDFG, chain: List[LoopRegion], pos: int) -> bool:
+    def _try_bubble_to_inner(self, sdfg: SDFG, chain: list[LoopRegion], pos: int) -> bool:
         """Bubble ``chain[pos]``'s loop variable to the innermost slot via adjacent
         metadata swaps, verify, and revert the whole bubble on failure.
 
@@ -192,7 +191,7 @@ class LoopStridePermutation(ppl.Pass):
         # How many levels of the nest are parallel before the move, to compare against after.
         doall_before = sum(1 for lr in chain if self._is_doall(sdfg, lr))
 
-        done: List[Tuple[LoopRegion, LoopRegion]] = []
+        done: list[tuple[LoopRegion, LoopRegion]] = []
         snapshot = [{attr: getattr(lr, attr) for attr in _LOOP_META_ATTRS} for lr in chain]
 
         def revert() -> None:
@@ -235,14 +234,14 @@ class LoopStridePermutation(ppl.Pass):
         ) and outer.loop_variable not in LoopStridePermutation._meta_tokens(inner)
 
     @staticmethod
-    def _tokens(text: str) -> Set[str]:
+    def _tokens(text: str) -> set[str]:
         """Identifiers appearing in ``text``."""
         return set(re.findall(r"\b[A-Za-z_]\w*\b", text))
 
     @staticmethod
-    def _meta_tokens(lr: LoopRegion) -> Set[str]:
+    def _meta_tokens(lr: LoopRegion) -> set[str]:
         """Identifiers appearing anywhere in ``lr``'s loop control."""
-        toks: Set[str] = set()
+        toks: set[str] = set()
         for attr in ("init_statement", "loop_condition", "update_statement"):
             block = getattr(lr, attr)
             if block is not None:
@@ -318,7 +317,7 @@ class LoopStridePermutation(ppl.Pass):
         except Exception:  # noqa: BLE001 -- oracle refuses exotic shapes -> not provably DOALL
             return False
 
-    def _unit_stride_loop_vars(self, sdfg: SDFG, inner: LoopRegion, loop_vars: Set[str]) -> Set[str]:
+    def _unit_stride_loop_vars(self, sdfg: SDFG, inner: LoopRegion, loop_vars: set[str]) -> set[str]:
         """Loop variables that index a stride-1 array axis with a unit coefficient.
 
         Walks every memlet inside the (innermost) loop body and, per the user's
@@ -326,7 +325,7 @@ class LoopStridePermutation(ppl.Pass):
         of each access. Only literal stride-1 axes count, so the test is
         concrete (no symbolic stride comparison needed).
         """
-        result: Set[str] = set()
+        result: set[str] = set()
         for state in inner.states():
             if not isinstance(state, SDFGState):
                 continue

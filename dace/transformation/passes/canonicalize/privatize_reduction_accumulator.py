@@ -32,16 +32,17 @@ The init's seed-read AND the writeback are unconditional, so this stays
 value-preserving even if zero iterations of the map run.
 """
 
-from typing import Any, Dict, Optional
+from typing import Any
 
-from dace import SDFG, data, memlet as mm, properties, subsets
+from dace import SDFG, data, properties, subsets
+from dace import memlet as mm
+from dace.optionals import required
 from dace.sdfg import SDFGState, nodes
 from dace.sdfg.graph import MultiConnectorEdge
+from dace.sdfg.narrowing import as_map_entry
 from dace.sdfg.state import ControlFlowRegion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
-from dace.optionals import required
-from dace.sdfg.narrowing import as_map_entry
 
 
 @properties.make_properties
@@ -61,7 +62,7 @@ class PrivatizeReductionAccumulator(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return bool(modified & ppl.Modifies.CFG)
 
-    def apply_pass(self, sdfg: SDFG, _: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _: dict[str, Any]) -> int | None:
         count = 0
         for state in list(sdfg.states()):
             for map_exit in [n for n in state.nodes() if isinstance(n, nodes.MapExit)]:

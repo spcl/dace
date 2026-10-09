@@ -10,8 +10,8 @@ import copy
 import numpy as np
 
 import dace
-from dace.sdfg.dealias import convert_legacy_nested_sdfgs
 from dace.sdfg import nodes
+from dace.sdfg.dealias import convert_legacy_nested_sdfgs
 from dace.transformation.dataflow import PruneConnectors
 from dace.transformation.interstate import InlineSDFG
 from dace.transformation.passes.canonicalize.prune_and_inline_nested_sdfgs import PruneAndInlineNestedSDFGs

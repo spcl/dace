@@ -2,16 +2,16 @@
 """TensorDot library node and its pure / TTGT / cuTENSOR expansions."""
 
 import collections
-import dace
 
+import dace
+from dace import library, nodes, properties, symbolic
 from dace.libraries.linalg import environments
 from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES
-from dace import library, nodes, properties, symbolic
-from dace.utils import prod as _prod
-from dace.symbolic import symstr
-from dace.transformation.transformation import ExpandTransformation
 from dace.ordered import OrderedSet
 from dace.sdfg.scope import is_devicelevel_gpu
+from dace.symbolic import symstr
+from dace.transformation.transformation import ExpandTransformation
+from dace.utils import prod as _prod
 
 
 @library.expansion
@@ -63,11 +63,11 @@ class ExpandPure(ExpandTransformation):
         state = sdfg.add_state(f"{node.label}_state")
         sdfg.add_edge(init_state, state, dace.InterstateEdge())
 
-        outer_map_shape = list([s for i, s in enumerate(left_arr.shape) if i not in node.left_axes])
+        outer_map_shape = [s for i, s in enumerate(left_arr.shape) if i not in node.left_axes]
         outer_map_shape.extend([s for i, s in enumerate(right_arr.shape) if i not in node.right_axes])
         outer_map_params = [f"__oi{i}" for i in range(len(outer_map_shape))]
         outer_map_rng = {i: f"0:{symstr(s)}" for i, s in zip(outer_map_params, outer_map_shape)}
-        inner_map_shape = list([left_arr.shape[i] for i in node.left_axes])
+        inner_map_shape = [left_arr.shape[i] for i in node.left_axes]
         inner_map_params = [f"__ii{i}" for i in range(len(inner_map_shape))]
         inner_map_rng = {i: f"0:{symstr(s)}" for i, s in zip(inner_map_params, inner_map_shape)}
 
@@ -90,7 +90,7 @@ class ExpandPure(ExpandTransformation):
         out_mem = dace.Memlet(expr=f"_out_tensor[{','.join(out_idx)}]", wcr="lambda x, y: x + y")
         inputs = {"_left": left_mem, "_right": right_mem}
         outputs = {"_out": out_mem}
-        code = f"_out = _left * _right"
+        code = "_out = _left * _right"
         state.add_mapped_tasklet(
             f"{node.label}_tasklet",
             {**outer_map_rng, **inner_map_rng},
@@ -323,7 +323,7 @@ class ExpandGPUTensorDot(ExpandTransformation):
             if axis in node.right_axes:
                 continue
             extents += f"extent[{i}] = {sym2cpp(s)};\n"
-        extents += f"""
+        extents += """
             std::vector<int64_t> extentA;
             for (auto mode : modeA) extentA.push_back(extent[mode]);
             std::vector<int64_t> extentB;

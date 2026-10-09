@@ -14,8 +14,8 @@ form so the layout is honest -- BLAS packs operands internally and would hide it
 """
 
 import numpy
-import dace
 
+import dace
 from dace.transformation.layout.brute_force import permutation_candidates
 
 N = dace.symbol("N")

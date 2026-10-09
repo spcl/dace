@@ -4,11 +4,11 @@ import copy
 import numpy as np
 
 import dace
-from dace.sdfg import nodes
 from dace.properties import CodeBlock
-from dace.sdfg.state import LoopRegion, ConditionalBlock, ControlFlowRegion
+from dace.sdfg import nodes
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.interstate import LoopToMap
-from dace.transformation.passes import SymbolPropagation, ScalarToSymbolPromotion
+from dace.transformation.passes import ScalarToSymbolPromotion, SymbolPropagation
 from dace.transformation.passes.symbol_propagation import consistent_bindings, resolve_bindings
 
 

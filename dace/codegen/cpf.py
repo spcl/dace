@@ -43,19 +43,20 @@ import shutil
 import subprocess
 import tempfile
 from collections import Counter
-from typing import Callable, Dict, List, NamedTuple, Optional, Sequence, Set, Tuple
+from collections.abc import Callable, Sequence
+from typing import NamedTuple
 
-from dace.ordered import OrderedSet
-
-from dace import data as dt, dtypes, cpf_lowering
+from dace import cpf_lowering, dtypes
+from dace import data as dt
 from dace.codegen import codegen
 from dace.codegen.codeobject import CodeObject
 from dace.config import Config, set_temporary
+from dace.optionals import required
+from dace.ordered import OrderedSet
 from dace.sdfg import SDFG, nodes
 from dace.transformation.passes.canonicalize.annotate_loop_kinds import AnnotateLoopKinds
 from dace.transformation.passes.canonicalize.finalize import explicit_accumulating_copies
 from dace.transformation.passes.scalar_promotion import PromoteScalarOutputsToArrays
-from dace.optionals import required
 
 #: The storage types CPF can render, as an ALLOWLIST. Ordinary host memory and plain locals, and
 #: nothing else: ``CPU_Pinned`` is host memory but is allocated through the CUDA API, and the
@@ -97,7 +98,7 @@ HOST_SCHEDULES = frozenset(
 #:
 #: Keyed by class name. Every library node registered in the process must appear here (the suite
 #: asserts it), so a new node arrives with a description instead of rendering as anonymous loops.
-LIBRARY_NODE_DESCRIPTIONS: Dict[str, str] = {
+LIBRARY_NODE_DESCRIPTIONS: dict[str, str] = {
     "Abort": "MPI_Abort: terminate the communicator",
     "AllNode": "all: true where every element along the reduced axes is true",
     "Allgather": "MPI_Allgather: gather from every rank to every rank",
@@ -216,7 +217,7 @@ LIBRARY_NODE_DESCRIPTIONS: Dict[str, str] = {
 #: Descriptions for the one class name two libraries share. Looked up as ``<module>.<class>``,
 #: before :data:`LIBRARY_NODE_DESCRIPTIONS` -- which deliberately has NO ``Reduce`` entry, so
 #: neither meaning can be served to the other by a bare-name lookup.
-QUALIFIED_DESCRIPTIONS: Dict[str, str] = {
+QUALIFIED_DESCRIPTIONS: dict[str, str] = {
     "dace.libraries.mpi.nodes.reduce.Reduce": "MPI_Reduce: reduce across ranks onto the root",
     "dace.libraries.standard.nodes.reduce.Reduce": "reduction over the given axes with the given operator",
 }
@@ -257,7 +258,7 @@ RENDERABLE_IMPLEMENTATIONS = ("pure", "pure-seq", "MappedTasklet")
 #: parallel mapped tasklet past the threshold where the map is worth its overhead. Its
 #: ``dace::CopyND`` branch needs a ``GPU_Shared`` endpoint, which :func:`prepare` has already
 #: refused by the time this runs.
-RENDERABLE_BY_NODE: Dict[str, Tuple[str, ...]] = {
+RENDERABLE_BY_NODE: dict[str, tuple[str, ...]] = {
     "ArgReduce": ("CPU",),
     "CopyLibraryNode": ("Auto",),
     "FillLibraryNode": ("Auto",),
@@ -284,7 +285,7 @@ RENDERABLE_BY_NODE: Dict[str, Tuple[str, ...]] = {
 #: what they reach: ``get_scratch``, ``find_first_index_device`` and ``inclusive_affine`` are
 #: inline definitions in :mod:`dace.cpf_lowering`, exactly as ``find_first_index`` and the scans are
 #: for the host.
-RENDERABLE_BY_NODE_DEVICE: Dict[str, Tuple[str, ...]] = {"FindFirst": ("CUDA",), "Scan": ("CUDA",)}
+RENDERABLE_BY_NODE_DEVICE: dict[str, tuple[str, ...]] = {"FindFirst": ("CUDA",), "Scan": ("CUDA",)}
 
 #: Consecutive rounds of :func:`force_renderable_expansions` that may leave the library-node census
 #: unchanged before it refuses. NOT a bound on total rounds: a state needs one round per node.
@@ -311,7 +312,7 @@ DEVICE_SCHEDULES = frozenset(
 )
 
 
-def uses_device_code(sdfg: SDFG, dialect: Optional[cpf_lowering.Dialect] = None) -> List[str]:
+def uses_device_code(sdfg: SDFG, dialect: cpf_lowering.Dialect | None = None) -> list[str]:
     """Names of the constructs in ``sdfg`` that ``dialect`` cannot render.
 
     Under a host dialect that is every device construct, because CPF would have to invoke a
@@ -331,7 +332,7 @@ def uses_device_code(sdfg: SDFG, dialect: Optional[cpf_lowering.Dialect] = None)
     # the language allowlist does not widen; what widens is where the CPP runs.
     languages = (dtypes.Language.Python, dtypes.Language.CPP)
 
-    found: List[str] = []
+    found: list[str] = []
     for subsdfg, name, desc in sdfg.arrays_recursive():
         if desc.storage not in storages:
             found.append(f"{subsdfg.name}.{name} is in {desc.storage.name} storage")
@@ -344,7 +345,7 @@ def uses_device_code(sdfg: SDFG, dialect: Optional[cpf_lowering.Dialect] = None)
     return found
 
 
-def description_of(node) -> Optional[str]:
+def description_of(node) -> str | None:
     """The one-line description of what library node ``node`` computes.
 
     :param node: the library node, or its class. Both are accepted because the emitter has a node
@@ -357,7 +358,7 @@ def description_of(node) -> Optional[str]:
     return QUALIFIED_DESCRIPTIONS.get(qualified) or LIBRARY_NODE_DESCRIPTIONS.get(cls.__name__)
 
 
-def subtree_guids(node, state) -> Set[str]:
+def subtree_guids(node, state) -> set[str]:
     """GUIDs of ``node`` and, if it is a nested SDFG, of every node inside it.
 
     An expansion usually lands as a single nested SDFG, and the code the reader sees comes from the
@@ -389,7 +390,7 @@ def on_device_at_host_level(node: nodes.LibraryNode, state) -> bool:
     return touches and not libnode_is_device_code(node, state, owner)
 
 
-def renderable_implementations(node: nodes.LibraryNode, state) -> Tuple[str, ...]:
+def renderable_implementations(node: nodes.LibraryNode, state) -> tuple[str, ...]:
     """The implementations to try for ``node``, best first.
 
     :seealso: :data:`RENDERABLE_BY_NODE_DEVICE`, :data:`RENDERABLE_BY_NODE`,
@@ -432,7 +433,7 @@ def schedule_host_level_device_node(node: nodes.LibraryNode, state) -> None:
         node.schedule = dtypes.ScheduleType.GPU_Device
 
 
-def force_renderable_expansions(sdfg: SDFG, provenance: Optional[Dict[str, Tuple[str, str]]] = None) -> None:
+def force_renderable_expansions(sdfg: SDFG, provenance: dict[str, tuple[str, str]] | None = None) -> None:
     """Expand every library node in ``sdfg`` through a renderable implementation, in place.
 
     Done here rather than left to code generation because the choice has to be made GENERATION BY
@@ -458,10 +459,10 @@ def force_renderable_expansions(sdfg: SDFG, provenance: Optional[Dict[str, Tuple
                        Descriptions come from :data:`LIBRARY_NODE_DESCRIPTIONS`.
     :raises NotImplementedError: if expansion has stalled (see :data:`MAX_EXPANSION_STALLED_ROUNDS`).
     """
-    census: Optional[Counter] = None
+    census: Counter | None = None
     stalled = 0
     while True:
-        pending: Dict[int, List] = {}
+        pending: dict[int, list] = {}
         for node, state in sdfg.all_nodes_recursive():
             if isinstance(node, nodes.LibraryNode):
                 pending.setdefault(id(state), []).append((node, state))
@@ -488,7 +489,7 @@ def force_renderable_expansions(sdfg: SDFG, provenance: Optional[Dict[str, Tuple
             state = group[0][1]
             order = {id(node): index for index, node in enumerate(state.nodes())}
             chosen.append(min(group, key=lambda pair: order[id(pair[0])]))
-        described: Dict[int, Tuple[nodes.LibraryNode, str, set]] = {}
+        described: dict[int, tuple[nodes.LibraryNode, str, set]] = {}
         for node, state in chosen:
             available = type(node).implementations
             selected = next((c for c in renderable_implementations(node, state) if c in available), None)
@@ -534,7 +535,7 @@ def is_return_name(name: str) -> bool:
     return name == RETURN_PREFIX or name.startswith(RETURN_PREFIX + "_")
 
 
-def return_containers(sdfg: SDFG) -> List[Tuple[SDFG, str]]:
+def return_containers(sdfg: SDFG) -> list[tuple[SDFG, str]]:
     """Every return container in ``sdfg``'s whole tree, as ``(owning SDFG, name)``.
 
     Both the DECLARATIONS and the ACCESS NODES are walked, because they answer different questions
@@ -550,7 +551,7 @@ def return_containers(sdfg: SDFG) -> List[Tuple[SDFG, str]]:
     :param sdfg: the outermost SDFG.
     :returns: ``(owner, name)`` pairs, deduplicated, in a deterministic order.
     """
-    found: Dict[Tuple[int, str], Tuple[SDFG, str]] = {}
+    found: dict[tuple[int, str], tuple[SDFG, str]] = {}
     for owner, name, _ in sdfg.arrays_recursive():
         if is_return_name(name):
             found.setdefault((owner.cfg_id, name), (owner, name))
@@ -641,7 +642,7 @@ def refuse_runtime_scopes(sdfg: SDFG) -> None:
             )
 
 
-def prepare(sdfg: SDFG, provenance: Optional[Dict[str, Tuple[str, str]]] = None) -> None:
+def prepare(sdfg: SDFG, provenance: dict[str, tuple[str, str]] | None = None) -> None:
     """Make ``sdfg`` renderable as one host translation unit, in place.
 
     Six things happen: every library node is pointed at the best implementation a standalone unit
@@ -709,7 +710,7 @@ def is_device_object(obj: CodeObject) -> bool:
     return obj.target_type in DEVICE_TARGET_TYPES or obj.language in DEVICE_LANGUAGES
 
 
-def split_units(objects: List[CodeObject], name: str) -> Tuple[CodeObject, Optional[CodeObject]]:
+def split_units(objects: list[CodeObject], name: str) -> tuple[CodeObject, CodeObject | None]:
     """The units CPF renders, out of what code generation produced: the frame, and under a device dialect
     the one device object.
 
@@ -746,7 +747,7 @@ def state_struct(frame: str, name: str) -> str:
     the identical definition in the device unit is what separate compilation needs, and the one
     definition rule allows. Empty when the frame defines no state.
     """
-    match = re.search(rf"^struct {re.escape(name)}_state_t \{{.*?^\}};\n", frame, re.M | re.S)
+    match = re.search(rf"^struct {re.escape(name)}_state_t \{{.*?^\}};\n", frame, re.MULTILINE | re.DOTALL)
     return match.group(0) + "\n" if match else ""
 
 
@@ -771,7 +772,7 @@ def written_containers(sdfg: SDFG) -> OrderedSet:
     return written
 
 
-def readonly_entry_arrays(sdfg: SDFG, arglist: Optional[Dict[str, dt.Data]] = None) -> OrderedSet:
+def readonly_entry_arrays(sdfg: SDFG, arglist: dict[str, dt.Data] | None = None) -> OrderedSet:
     """The entry point's ARRAY parameters that nothing writes -- the ones whose pointee is const.
 
     Read off the same SDFG the signature is generated from, so the qualifier and the argument list
@@ -795,7 +796,7 @@ def entry_parameter_name(param: str) -> str:
     return param.strip().split()[-1].lstrip("*")
 
 
-def qualify_readonly_pointers(code: str, sdfg: SDFG, entry: str, arglist: Optional[Dict[str, dt.Data]] = None) -> str:
+def qualify_readonly_pointers(code: str, sdfg: SDFG, entry: str, arglist: dict[str, dt.Data] | None = None) -> str:
     """Add ``const`` to the entry point's read-only pointer parameters.
 
     The signature is built by ``Data.as_arg``, which is shared with every other DaCe backend and
@@ -822,7 +823,7 @@ def qualify_readonly_pointers(code: str, sdfg: SDFG, entry: str, arglist: Option
     )
 
 
-def rewrite_entry_parameters(code: str, entry: str, rewrite: Callable[[List[str]], List[str]]) -> str:
+def rewrite_entry_parameters(code: str, entry: str, rewrite: Callable[[list[str]], list[str]]) -> str:
     """Apply ``rewrite`` to the entry point's parameter list wherever the unit declares it.
 
     One splitter for every signature rewrite, so the qualifier pass and the ordering pass can never
@@ -880,7 +881,7 @@ def reorder_entry_parameters(code: str, entry: str, order: Sequence[str]) -> str
     """
     wanted = list(order)
 
-    def to_order(params: List[str]) -> List[str]:
+    def to_order(params: list[str]) -> list[str]:
         by_name = {entry_parameter_name(p): p for p in params}
         if set(by_name) != set(wanted):
             raise ValueError(
@@ -894,7 +895,7 @@ def reorder_entry_parameters(code: str, entry: str, order: Sequence[str]) -> str
 
 #: ``language`` argument -> the dialect that renders it. ``'c++'`` is the default and stays the
 #: historical behaviour exactly.
-LANGUAGES: Dict[str, cpf_lowering.Dialect] = {
+LANGUAGES: dict[str, cpf_lowering.Dialect] = {
     "c++": cpf_lowering.Dialect.STANDALONE,
     "c": cpf_lowering.Dialect.STANDALONE_C,
     "hip": cpf_lowering.Dialect.STANDALONE_HIP,
@@ -965,14 +966,14 @@ CONTRACT_LINES = [
 #: on purpose -- it is the acceptance spec, written from outside, and it also compiles the result
 #: with no include path at all, which is the only check that cannot be fooled by a table that
 #: forgot an entry.
-BANNED: Tuple[Tuple[re.Pattern, str], ...] = (
+BANNED: tuple[tuple[re.Pattern, str], ...] = (
     (re.compile(r'#\s*include\s*[<"][^>"]*dace/'), "a DaCe runtime header"),
     (re.compile(r'#\s*include\s*"'), "a quoted (build-tree-relative) include"),
     (re.compile(r"CopyND"), "a dace::CopyND copy -- insert explicit copies before rendering"),
     (re.compile(r"__dace_(init|exit)\w*"), "a DaCe init/exit entry point"),
     (re.compile(r"\bdace\s*::"), "a DaCe runtime symbol"),
     (re.compile(r"\bDACE_[A-Z]"), "a DaCe preprocessor macro"),
-    (re.compile(r"^[ \t]*#[ \t]*define\b", re.M), "a preprocessor macro definition"),
+    (re.compile(r"^[ \t]*#[ \t]*define\b", re.MULTILINE), "a preprocessor macro definition"),
     (re.compile(r"__state\b"), "a state-struct dereference"),
 )
 
@@ -992,11 +993,11 @@ _C_DECLARED_TYPES = (
 #: :data:`BANNED` because the unit DECLARES that struct, which carries the stream, rather than
 #: borrowing it (:func:`~dace.cpf_lowering.device_entry_prologue`). Every ``DACE_*`` spelling is
 #: written out by :func:`~dace.cpf_lowering.device_spell_out`, so one surviving is a leak here too.
-BANNED_DEVICE: Tuple[Tuple[re.Pattern, str], ...] = tuple(
+BANNED_DEVICE: tuple[tuple[re.Pattern, str], ...] = tuple(
     entry for entry in BANNED if entry[1] != "a state-struct dereference"
 )
 
-BANNED_C: Tuple[Tuple[re.Pattern, str], ...] = BANNED + (
+BANNED_C: tuple[tuple[re.Pattern, str], ...] = BANNED + (
     (re.compile(r"\bstd\s*::"), "a C++ standard-library symbol"),
     (re.compile(r"\btemplate\s*<"), "a C++ template"),
     (re.compile(r'extern\s*"C"'), "a C++ language linkage specifier"),
@@ -1043,7 +1044,7 @@ def verify(code: str, name: str, dialect: cpf_lowering.Dialect = cpf_lowering.Di
 #: installed on every box a host render runs on, so gating them here would turn "hipcc is not
 #: installed" into "this SDFG cannot be rendered" -- and a gate that quietly skips instead would be
 #: the very shape this one exists to close.
-COMPILE_CHECK_TOOLCHAINS: Dict[cpf_lowering.Dialect, Tuple[str, str, str, Tuple[str, ...]]] = {
+COMPILE_CHECK_TOOLCHAINS: dict[cpf_lowering.Dialect, tuple[str, str, str, tuple[str, ...]]] = {
     cpf_lowering.Dialect.STANDALONE: ("c++20", ".cpp", "CXX", ("g++", "c++")),
     cpf_lowering.Dialect.STANDALONE_C: ("c23", ".c", "CC", ("gcc", "cc")),
 }
@@ -1051,17 +1052,17 @@ COMPILE_CHECK_TOOLCHAINS: Dict[cpf_lowering.Dialect, Tuple[str, str, str, Tuple[
 #: What a ``'cuda'`` unit is built with besides the output flags. ``--expt-relaxed-constexpr`` is what
 #: DaCe's own CUDA build adds (``dace/codegen/CMakeLists.txt``): kernels call the ``constexpr`` index
 #: and runtime helpers, which nvcc otherwise treats as host-only. hipcc needs no such flag.
-CUDA_BUILD_FLAGS: Tuple[str, ...] = ("-std=c++20", "--expt-relaxed-constexpr")
+CUDA_BUILD_FLAGS: tuple[str, ...] = ("-std=c++20", "--expt-relaxed-constexpr")
 
 #: What the gate compiles with. ``-fsyntax-only`` because the question is whether the TEXT is a
 #: valid translation unit, not how fast its object code is: it parses, resolves every name and
 #: type-checks, and skips optimization and object emission, which is where the time goes. NO
 #: ``-I``: a header the unit names must be a system header, which is half of what self-contained
 #: means. ``-fopenmp`` because the parallel form is OpenMP and its pragmas must parse.
-COMPILE_CHECK_FLAGS: Tuple[str, ...] = ("-fsyntax-only", "-fopenmp")
+COMPILE_CHECK_FLAGS: tuple[str, ...] = ("-fsyntax-only", "-fopenmp")
 
 
-def compile_check_compiler(dialect: cpf_lowering.Dialect) -> Optional[str]:
+def compile_check_compiler(dialect: cpf_lowering.Dialect) -> str | None:
     """The compiler the gate builds ``dialect``'s output with, or ``None`` if none is installed.
 
     :param dialect: which standalone dialect rendered the unit.
@@ -1160,7 +1161,7 @@ class Rendering(NamedTuple):
     #: The entry point's parameter names, in the order the rendered signature takes them. Equal to
     #: ``tuple(sdfg.arglist())`` unless the caller asked for an order of its own, which is exactly
     #: when a consumer that read the arglist instead would call with its arguments shifted.
-    arguments: Tuple[str, ...]
+    arguments: tuple[str, ...]
     #: Under a device dialect, the DEVICE unit (``<name>.hip`` / ``<name>.cu``): the ``__global__``
     #: kernels and the launchers ``code`` calls. Empty under a host dialect.
     device_code: str = ""
@@ -1170,7 +1171,7 @@ def render(
     sdfg: SDFG,
     validate: bool = True,
     language: str = "c++",
-    order: Optional[Sequence[str]] = None,
+    order: Sequence[str] | None = None,
     check_compiles: bool = True,
 ) -> Rendering:
     """Render ``sdfg`` and return the text together with the SDFG it describes.
@@ -1201,7 +1202,7 @@ def render(
     """
     dialect = dialect_for(language)
     prepared = copy.deepcopy(sdfg)
-    provenance: Dict[str, Tuple[str, str]] = {}
+    provenance: dict[str, tuple[str, str]] = {}
     # Under the dialect, because ``prepare`` EXPANDS library nodes and an expansion bakes its
     # tasklet text once and for good. A node that spells its own element transform -- ArgReduce
     # writes ``std::abs`` -- had no way to know which dialect was being rendered and always chose
@@ -1269,7 +1270,7 @@ def cpf(
     sdfg: SDFG,
     validate: bool = True,
     language: str = "c++",
-    order: Optional[Sequence[str]] = None,
+    order: Sequence[str] | None = None,
     check_compiles: bool = True,
 ) -> str:
     """Render ``sdfg`` as one self-contained host translation unit.

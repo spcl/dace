@@ -3,14 +3,11 @@
 transformation."""
 
 from dace import data as dt
-from dace.sdfg import SDFG, SDFGState
 from dace.memlet import Memlet
-from dace.sdfg import nodes
 from dace.properties import Property, make_properties
-from dace.sdfg import SDFG
+from dace.sdfg import SDFG, SDFGState, nodes
 from dace.sdfg import utils as sdutil
 from dace.transformation import transformation as pm
-
 from dace.transformation.dataflow.map_collapse import MapCollapse
 from dace.transformation.dataflow.map_fusion_vertical import MapFusionVertical
 
@@ -61,9 +58,9 @@ class MapReduceFusion(pm.SingleStateTransformation):
             return False
 
         # Make sure that the array is only accessed by the map and the reduce
-        if any([src != tmap_exit for src, _, _, _, memlet in graph.in_edges(in_array)]):
+        if any(src != tmap_exit for src, _, _, _, memlet in graph.in_edges(in_array)):
             return False
-        if any([dest != reduce_node for _, _, dest, _, memlet in graph.out_edges(in_array)]):
+        if any(dest != reduce_node for _, _, dest, _, memlet in graph.out_edges(in_array)):
             return False
 
         # ``apply`` rewrites whichever in-edge of the exit carries the intermediate, and does not care
@@ -216,9 +213,9 @@ class MapWCRFusion(pm.SingleStateTransformation):
         rmap_entry = self.rmap_out_entry
 
         # Make sure that the array is only accessed by the map and the reduce
-        if any([src != tmap_exit for src, _, _, _, memlet in graph.in_edges(in_array)]):
+        if any(src != tmap_exit for src, _, _, _, memlet in graph.in_edges(in_array)):
             return False
-        if any([dest != rmap_entry for _, _, dest, _, memlet in graph.out_edges(in_array)]):
+        if any(dest != rmap_entry for _, _, dest, _, memlet in graph.out_edges(in_array)):
             return False
 
         # Make sure that there is a reduction in the second map

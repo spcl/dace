@@ -6,12 +6,12 @@ Re-exports :class:`VectorizeMultiDim`, its ``device=CPU`` wrapper
 """
 
 from dace.transformation.passes.vectorization.vectorize_multi_dim import (
-    VectorizeMultiDim,
+    TILE_NODE_TYPES,
     VectorizeCPUMultiDim,
     VectorizeGPUMultiDim,
-    normalize_loop_nests,
+    VectorizeMultiDim,
     _validate_knobs,
-    TILE_NODE_TYPES,
+    normalize_loop_nests,
 )
 
 __all__ = [

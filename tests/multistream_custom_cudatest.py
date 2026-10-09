@@ -1,8 +1,10 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import dace as dp
-import numpy as np
 import os
+
+import numpy as np
 import pytest
+
+import dace as dp
 from dace.codegen import common
 
 #: The vendor BLAS of the configured GPU backend: cuBLAS on CUDA, rocBLAS on HIP (same dgemm argument order)

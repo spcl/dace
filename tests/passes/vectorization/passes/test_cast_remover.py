@@ -12,8 +12,8 @@ the divisor (TSVC s276's ``int_floor(LEN_1D, 2)`` lane condition became
 import pytest
 
 from dace.transformation.passes.vectorization.tasklet_preprocessing_passes import (
-    _remove_dace_int_casts,
     _remove_dace_float_casts,
+    _remove_dace_int_casts,
 )
 
 

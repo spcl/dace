@@ -13,11 +13,11 @@ import numpy as np
 import pytest
 
 import dace
+from dace.ordered import OrderedSet
 from dace.sdfg.state import LoopRegion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.offloading import OffloadToAccelerator
 from dace.transformation.passes.offloading.offloading_ir_node import OffloadingIRNode
-from dace.ordered import OrderedSet
 
 N = dace.symbol("N")
 #: Conditionals in a row: 2^48 routes, which no route-by-route walk finishes.

@@ -46,7 +46,7 @@ edge becomes a plain copy, so the pass is idempotent.
 
 import ast
 import copy
-from typing import Any, Dict, List, Optional, Set, Tuple, Type, Union
+from typing import Any
 
 import numpy
 
@@ -54,16 +54,17 @@ from dace import SDFG, SDFGState, data, dtypes, symbolic
 from dace.memlet import Memlet
 from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock, LoopRegion
-from dace.transformation.passes.analysis import scopes
 from dace.symbolic import symbol
-from dace.transformation import pass_pipeline as ppl, transformation
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation import transformation
+from dace.transformation.passes.analysis import scopes
 from dace.transformation.passes.privatize_scatter_reduction import is_data_dependent_scatter_sink
 
 #: Reduction op -> the augassign op it normalizes to (``-`` accumulates like ``+``).
 _WCR_OP = {"+": "+", "-": "+", "*": "*", "min": "min", "max": "max"}
 
 
-def _op_from_wcr(wcr: str) -> Optional[str]:
+def _op_from_wcr(wcr: str) -> str | None:
     """Return the reduction op (``+``/``*``/``min``/``max``) for a WCR lambda string.
 
     The WCR body is either a binary op (``x + y``) or a call (``min(x, y)``); anything
@@ -85,7 +86,7 @@ def _op_from_wcr(wcr: str) -> Optional[str]:
     return None
 
 
-def _binop_expr_from_wcr(wcr: str) -> Optional[str]:
+def _binop_expr_from_wcr(wcr: str) -> str | None:
     """Return the original infix operator / function name in a WCR lambda.
 
     Unlike :func:`_op_from_wcr`, this keeps ``-`` as subtraction (it is the aug-
@@ -173,7 +174,7 @@ class NormalizeWCR(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+    def depends_on(self) -> list[type[ppl.Pass] | ppl.Pass]:
         return []
 
     def _seed_desc(self, oc_desc: data.Data) -> data.Data:
@@ -415,7 +416,7 @@ class NormalizeWCR(ppl.Pass):
             name = f"{base}_{i}"
         return name
 
-    def _find_inner_scatter(self, inner: SDFG, oc: str) -> Optional[Tuple]:
+    def _find_inner_scatter(self, inner: SDFG, oc: str) -> tuple | None:
         """The inner ``(state, MapEntry, tasklet, out_conn, param)`` whose single-element
         ``oc[param]`` WCR write aggregates to the slice output ``oc``. ``None`` unless the
         producer is exactly one single-param per-element scatter map.
@@ -475,7 +476,7 @@ class NormalizeWCR(ppl.Pass):
         # Every tasklet input must trace to a direct nsdfg boundary connector fed by a
         # top-level source at the outer map. Resolve the whole plan before mutating.
         boundary_in = {oe.dst_conn: oe for oe in state.in_edges(nsdfg)}
-        top_in: Dict[str, Any] = {}
+        top_in: dict[str, Any] = {}
         for ie in state.in_edges(outer_me):
             if ie.data is not None:
                 top_in.setdefault(ie.data.data, ie.src)
@@ -688,7 +689,7 @@ class NormalizeWCR(ppl.Pass):
                             total += 1
         return total
 
-    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Dict[str, Set[str]]]:
+    def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> dict[str, set[str]] | None:
         """Normalize every masked in-nsdfg write-only WCR reduction under a Map.
 
         :param sdfg: The SDFG to normalize.

@@ -8,9 +8,10 @@ are correct iff ``np.einsum(labels)`` equals ``np.tensordot``. The execution tes
 
 import numpy as np
 import pytest
+
 import dace
+from dace.libraries.linalg.nodes.tensordot import ExpandTBLIS, TensorDot
 from dace.memlet import Memlet
-from dace.libraries.linalg.nodes.tensordot import TensorDot, ExpandTBLIS
 from dace.transformation.layout.select_lowering import tblis_is_linkable
 
 # (left_shape, right_shape, left_axes, right_axes, permutation)

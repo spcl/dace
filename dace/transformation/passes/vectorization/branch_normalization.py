@@ -12,30 +12,28 @@ No ``ConditionalBlock`` remains afterwards.
 
 import ast
 import copy
-
 from collections.abc import Callable
 from typing import Any
 
 import dace
 from dace import properties, subsets, symbolic
 from dace.memlet import Memlet
-from dace.sdfg.graph import MultiConnectorEdge
-from dace.sdfg.state import ControlFlowBlock
+from dace.optionals import required
+from dace.ordered import OrderedSet
 from dace.properties import CodeBlock
 from dace.sdfg.construction_utils import (
     assert_connector_role_matches_edges,
     move_branch_cfg_up_discard_conditions,
 )
-from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
+from dace.sdfg.graph import MultiConnectorEdge
+from dace.sdfg.narrowing import as_range, free_symbol_names
+from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.vectorization.same_write_set_if_else_to_ite_cfg import (
     SameWriteSetIfElseToITECFG,
     arm_accesses_are_in_range_unguarded,
     condition_guards_iteration_symbol,
 )
-from dace.optionals import required
-from dace.sdfg.narrowing import as_range, free_symbol_names
-from dace.ordered import OrderedSet
 
 
 def rewrite_blocks_to_fixpoint(sdfg: dace.SDFG, rewrite: Callable[[ConditionalBlock], bool]) -> int:
@@ -360,7 +358,7 @@ class BranchNormalization(ppl.Pass):
             if cfg in inside_regions:
                 continue
             for e in cfg.edges():
-                for _lhs, rhs in (e.data.assignments or {}).items():
+                for rhs in (e.data.assignments or {}).values():
                     if symbolic.symbols_in_code(str(rhs), potential_symbols=only):
                         return True
                 if e.data.condition is not None and symbolic.symbols_in_code(

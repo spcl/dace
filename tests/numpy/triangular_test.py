@@ -2,8 +2,9 @@
 """Tests for the numpy.triu and numpy.tril replacements (upper/lower triangular masks)."""
 
 import numpy as np
-import dace
 from common import compare_numpy_output
+
+import dace
 
 
 @compare_numpy_output()

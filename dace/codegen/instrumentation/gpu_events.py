@@ -1,10 +1,10 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-from typing import Union
+
 from dace import config, dtypes, registry
-from dace.codegen.prettycode import CodeIOStream
-from dace.sdfg import nodes, is_devicelevel_gpu
 from dace.codegen import common
 from dace.codegen.instrumentation.provider import InstrumentationProvider
+from dace.codegen.prettycode import CodeIOStream
+from dace.sdfg import is_devicelevel_gpu, nodes
 from dace.sdfg.sdfg import SDFG
 from dace.sdfg.state import ControlFlowRegion, SDFGState
 
@@ -35,18 +35,18 @@ class GPUEventProvider(InstrumentationProvider):
         sdfg.append_global_code("\n#include <chrono>", None)
         sdfg.append_global_code("\n#include <%s>" % header_name, None)
 
-    def _get_sobj(self, node: Union[nodes.EntryNode, nodes.ExitNode]):
+    def _get_sobj(self, node: nodes.EntryNode | nodes.ExitNode):
         # Get object behind scope
         if isinstance(node, (nodes.ConsumeEntry, nodes.ConsumeExit)):
             return node.consume
         return node.map
 
     def _create_event(self, id):
-        return """{backend}Event_t __dace_ev_{id};
-{backend}EventCreate(&__dace_ev_{id});""".format(id=id, backend=self.backend)
+        return f"""{self.backend}Event_t __dace_ev_{id};
+{self.backend}EventCreate(&__dace_ev_{id});"""
 
     def _destroy_event(self, id):
-        return "{backend}EventDestroy(__dace_ev_{id});".format(id=id, backend=self.backend)
+        return f"{self.backend}EventDestroy(__dace_ev_{id});"
 
     def _record_event(self, id, stream):
         concurrent_streams = int(config.Config.get("compiler", "cuda", "max_concurrent_streams"))
@@ -66,15 +66,13 @@ class GPUEventProvider(InstrumentationProvider):
             if node is not None:
                 node_id = state.node_id(node)
 
-        return """float __dace_ms_{id} = -1.0f;
-{backend}EventSynchronize(__dace_ev_e{id});
-{backend}EventElapsedTime(&__dace_ms_{id}, __dace_ev_b{id}, __dace_ev_e{id});
-int __dace_micros_{id} = (int) (__dace_ms_{id} * 1000.0);
-unsigned long int __dace_ts_end_{id} = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now().time_since_epoch()).count();
-unsigned long int __dace_ts_start_{id} = __dace_ts_end_{id} - __dace_micros_{id};
-__state->report.add_completion("{timer_name}", "GPU", __dace_ts_start_{id}, __dace_ts_end_{id}, {cfg_id}, {state_id}, {node_id});""".format(
-            id=idstr, timer_name=timer_name, backend=self.backend, cfg_id=cfg.cfg_id, state_id=state_id, node_id=node_id
-        )
+        return f"""float __dace_ms_{idstr} = -1.0f;
+{self.backend}EventSynchronize(__dace_ev_e{idstr});
+{self.backend}EventElapsedTime(&__dace_ms_{idstr}, __dace_ev_b{idstr}, __dace_ev_e{idstr});
+int __dace_micros_{idstr} = (int) (__dace_ms_{idstr} * 1000.0);
+unsigned long int __dace_ts_end_{idstr} = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now().time_since_epoch()).count();
+unsigned long int __dace_ts_start_{idstr} = __dace_ts_end_{idstr} - __dace_micros_{idstr};
+__state->report.add_completion("{timer_name}", "GPU", __dace_ts_start_{idstr}, __dace_ts_end_{idstr}, {cfg.cfg_id}, {state_id}, {node_id});"""
 
     # Code generation hooks
     def on_state_begin(

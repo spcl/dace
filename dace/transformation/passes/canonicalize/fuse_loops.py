@@ -25,11 +25,12 @@ Legality (per array touched by both bodies, under the shared iterator):
 Symbolic / indirected / complex offsets are refused conservatively (v1).
 """
 
-from typing import Any, Dict, List, Optional, Type, Union
+from typing import Any
 
 from dace import SDFG
 from dace.sdfg.state import ControlFlowRegion, LoopRegion
-from dace.transformation import pass_pipeline as ppl, transformation
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation import transformation
 from dace.transformation.interstate.loop_fusion import LoopFusion
 
 
@@ -52,10 +53,10 @@ class FuseLoops(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+    def depends_on(self) -> list[type[ppl.Pass] | ppl.Pass]:
         return []
 
-    def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> int | None:
         """Fuse every qualifying consecutive-loop pair in ``sdfg`` and its nested
         SDFGs, repeating until no pair matches (a chain collapses one adjacency
         per sweep).

@@ -3,7 +3,7 @@
 
 import ast
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import dace
 from dace.frontend.python import astutils
@@ -30,7 +30,7 @@ class StructMemberReverter(ast.NodeTransformer):
 class UnzipArrays(ppl.Pass):
     """Inverse of ZipArrays: splits a fused array back into its component field arrays."""
 
-    def __init__(self, unzip_map: Dict[str, List[str]], field_axis: Optional[int] = None):
+    def __init__(self, unzip_map: dict[str, list[str]], field_axis: int | None = None):
         self._unzip_map = unzip_map
         self._field_axis = field_axis
 
@@ -40,7 +40,7 @@ class UnzipArrays(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def apply_pass(self, sdfg: dace.SDFG, pipeline_results: Dict[str, Any]) -> int:
+    def apply_pass(self, sdfg: dace.SDFG, pipeline_results: dict[str, Any]) -> int:
         for fused, fields in self._unzip_map.items():
             desc = sdfg.arrays[fused]
             if isinstance(desc.dtype, dace.dtypes.struct):
@@ -93,12 +93,12 @@ class UnzipArrays(ppl.Pass):
         # Split a map's fused connector into one IN/OUT pair per field, each with its own reservoir edge.
         for state in sdfg.states():
             for scope in [n for n in state.nodes() if isinstance(n, nd.MapEntry)]:
-                for conn in [c for c in scope.in_connectors]:
+                for conn in list(scope.in_connectors):
                     out_conn = "OUT_" + conn[len("IN_") :]
                     if self._scope_conn_multifield(state, scope, out_conn, fused, axis, is_entry=True):
                         self._split_map_scope(sdfg, state, scope, conn, out_conn, fused, fields, axis, is_entry=True)
             for scope in [n for n in state.nodes() if isinstance(n, nd.MapExit)]:
-                for conn in [c for c in scope.out_connectors]:
+                for conn in list(scope.out_connectors):
                     in_conn = "IN_" + conn[len("OUT_") :]
                     if self._scope_conn_multifield(state, scope, in_conn, fused, axis, is_entry=False):
                         self._split_map_scope(sdfg, state, scope, in_conn, conn, fused, fields, axis, is_entry=False)

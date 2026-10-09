@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 
-import pytest
 import numpy as np
+import pytest
 
 import dace
 from dace import symbolic
-from dace.sdfg.validation import InvalidSDFGError
 from dace.codegen import exceptions as exc
+from dace.sdfg.validation import InvalidSDFGError
 
 
 def test_undefined_symbol_in_sdfg():

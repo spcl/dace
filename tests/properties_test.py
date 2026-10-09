@@ -3,7 +3,9 @@
 
 import copy
 import unittest
+
 import sympy as sp
+
 import dace
 
 

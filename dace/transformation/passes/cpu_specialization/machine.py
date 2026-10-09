@@ -26,7 +26,6 @@ import os
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
-from typing import Optional
 
 #: Physical cores of the machine the reference numbers below were measured on (AMD Ryzen 7 8845HS,
 #: 8 cores / 16 threads). An empty ``omp parallel if(0)`` region measured 691 ns there at 8 threads,
@@ -65,7 +64,7 @@ class CpuTopology:
     numa_nodes: int
 
 
-def read_int(path: Path) -> Optional[int]:
+def read_int(path: Path) -> int | None:
     """First integer in ``path``, or ``None`` when it cannot be read."""
     try:
         return int(path.read_text().strip())
@@ -73,7 +72,7 @@ def read_int(path: Path) -> Optional[int]:
         return None
 
 
-def read_size(path: Path) -> Optional[int]:
+def read_size(path: Path) -> int | None:
     """A sysfs cache size (``32K``, ``1024K``, ``16M``) in bytes, or ``None``."""
     try:
         raw = path.read_text().strip()
@@ -86,7 +85,7 @@ def read_size(path: Path) -> Optional[int]:
         return None
 
 
-def count_physical_cores() -> Optional[int]:
+def count_physical_cores() -> int | None:
     """Distinct physical cores, by grouping the SMT siblings sysfs reports for each CPU."""
     groups = set()
     for topo in sorted(CPU_ROOT.glob("cpu[0-9]*/topology")):
@@ -141,7 +140,7 @@ def topology() -> CpuTopology:
     )
 
 
-def scale_for_team(reference: int, cores: Optional[int] = None) -> int:
+def scale_for_team(reference: int, cores: int | None = None) -> int:
     """``reference``, calibrated at :data:`REFERENCE_CORES`, rescaled to this machine's core count.
 
     Linear in the core count because that is how the fork/join it amortizes grows. A bigger machine

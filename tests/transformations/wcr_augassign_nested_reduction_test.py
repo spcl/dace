@@ -20,8 +20,8 @@ import numpy as np
 import pytest
 
 import dace
-from dace.sdfg.dealias import convert_legacy_nested_sdfgs
 from dace.sdfg import nodes
+from dace.sdfg.dealias import convert_legacy_nested_sdfgs
 from dace.transformation.dataflow.wcr_conversion import WCRToAugAssign
 
 N = dace.symbol("N")

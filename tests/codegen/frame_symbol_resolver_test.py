@@ -6,8 +6,9 @@ whole specification: same keys, same types, and the same ORDER (callers such as 
 straight back into ``new_symbols``).
 """
 
-import dace
 import pytest
+
+import dace
 from dace import dtypes
 from dace.sdfg.state import SymbolResolver
 

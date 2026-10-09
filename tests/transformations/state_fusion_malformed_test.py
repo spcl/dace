@@ -7,13 +7,13 @@ buggy upstream transformation leaves behind. None of them is compiled.
 """
 
 import warnings
-from typing import Tuple
 
 import pytest
 
 import dace
 from dace import Memlet, subsets
-from dace.sdfg import nodes, utils as sdutil
+from dace.sdfg import nodes
+from dace.sdfg import utils as sdutil
 from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.state import SDFGState
 from dace.transformation.interstate import StateFusion, StateFusionExtended
@@ -38,7 +38,7 @@ def fill_state(state: SDFGState, name: str, index: str = "0") -> None:
     state.add_edge(t, "o", an, None, Memlet(f"{name}[{index}]"))
 
 
-def two_states(name: str) -> Tuple[dace.SDFG, SDFGState, SDFGState]:
+def two_states(name: str) -> tuple[dace.SDFG, SDFGState, SDFGState]:
     sdfg = dace.SDFG(name)
     sdfg.add_array("A", [8], dace.float64)
     sdfg.add_array("B", [8], dace.float64)
@@ -55,7 +55,7 @@ def assert_refused(xform, sdfg: dace.SDFG, first: SDFGState, second: SDFGState) 
 
 
 # cycles
-def make_cyclic(name: str, cyclic_second: bool) -> Tuple[dace.SDFG, SDFGState, SDFGState]:
+def make_cyclic(name: str, cyclic_second: bool) -> tuple[dace.SDFG, SDFGState, SDFGState]:
     """One state holds ``A -> t -> A``: a self-feeding access node, i.e. a cycle."""
     sdfg, first, second = two_states(name)
     cyc, other = (second, first) if cyclic_second else (first, second)
@@ -88,7 +88,7 @@ def test_cyclic_state_not_fused_by_driver(cyclic_second):
 
 
 # broken scope
-def make_dangling_exit(name: str, on_second: bool) -> Tuple[dace.SDFG, SDFGState, SDFGState]:
+def make_dangling_exit(name: str, on_second: bool) -> tuple[dace.SDFG, SDFGState, SDFGState]:
     """A MapExit whose body edge was deleted: its sink is unreachable from any source, so
     ``scope_children`` raises ``RuntimeError('Leftover nodes in queue')``."""
     sdfg, first, second = two_states(name)
@@ -128,7 +128,7 @@ def test_map_scope_without_exit_refused(xform):
 
 
 # connector shapes
-def make_scope_edge_damage(name: str, kind: str) -> Tuple[dace.SDFG, SDFGState, SDFGState]:
+def make_scope_edge_damage(name: str, kind: str) -> tuple[dace.SDFG, SDFGState, SDFGState]:
     """Second state is ``B -> me -> t -> mx -> A``; ``kind`` damages the exit's connectors."""
     sdfg, first, second = two_states(name)
     a_in = first.add_access("A")

@@ -71,13 +71,12 @@ from typing import Any
 import dace
 from dace import symbolic
 from dace.memlet import Memlet
-from dace.sdfg.graph import MultiConnectorEdge
 from dace.ordered import OrderedSet
 from dace.sdfg import nodes as nd
+from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.state import BreakBlock, LoopRegion, SDFGState
 from dace.transformation.passes.canonicalize.finalize import finalize_for_target
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
-
 from tests.corpus.tsvc import tsvc
 from tests.corpus.tsvc_2_5 import tsvc_2_5
 

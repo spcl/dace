@@ -1,22 +1,22 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 
 import gzip
+import json
 import os
+import threading
 import warnings
 
 import numpy as np
-import threading
 import pytest
+import sympy
+from packaging.version import parse as parse_version
+from sympy.core.cache import clear_cache
 
 import dace
 from dace import subsets, symbolic
 from dace.codegen.common import sym2cpp
 from dace.properties import DictProperty, ListProperty, SymbolicProperty
 from dace.sdfg.infer_types import infer_connector_types
-from packaging.version import parse as parse_version
-import sympy
-from sympy.core.cache import clear_cache
-import json
 
 
 def test_symbolic_serialization_roundtrip_preserves_metadata():

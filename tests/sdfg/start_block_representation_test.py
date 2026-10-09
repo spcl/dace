@@ -11,9 +11,10 @@ The index is derived state that any removal invalidates, so ``remove_node`` re-r
 the removal; that is what the behavioural cases below pin.
 """
 
+import pytest
+
 import dace
 from dace.sdfg.state import ControlFlowRegion
-import pytest
 
 
 def _sdfg_with_explicit_start(n: int = 4) -> dace.SDFG:

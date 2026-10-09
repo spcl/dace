@@ -6,12 +6,11 @@ pytest.importorskip("onnx", reason="ONNX not installed. Please install with: pip
 pytest.importorskip("torch", reason="PyTorch not installed. Please install with: pip install dace[ml]")
 
 import torch
+from test_single_state import SDFGBackwardRunner, _pin_reduce_to_pure, run_correctness
 
 import dace
-from dace.transformation.interstate import StateFusion
-
 import dace.libraries.onnx as donnx
-from test_single_state import SDFGBackwardRunner, run_correctness, _pin_reduce_to_pure
+from dace.transformation.interstate import StateFusion
 
 
 @dace.program

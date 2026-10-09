@@ -4,20 +4,20 @@
 from __future__ import annotations
 
 import dace
-from dace.ordered import OrderedSet
 from dace.libraries.tileops import (
     MaskedCopyLibraryNode,
     TileBinop,
     TileFMA,
+    TileGather,
     TileIota,
     TileITE,
-    TileGather,
     TileMaskGen,
     TileMMA,
     TileReduce,
     TileScatter,
     TileUnop,
 )
+from dace.ordered import OrderedSet
 
 # Spelled out, not imported from the pass: the assertion audits production code, not restates it.
 TILE_NODE_TYPES = (

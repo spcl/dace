@@ -12,11 +12,12 @@ gramschmidt, whose WCR bodies take the refusal path).
 
 import copy
 
-import dace
 import pytest
+
+import dace
+import tests.corpus.measure_parallelization as mp
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.vectorization.vectorize_multi_dim import restore_sdfg_in_place
-import tests.corpus.measure_parallelization as mp
 
 N = 8
 

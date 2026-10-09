@@ -28,7 +28,6 @@ a caveat that reappears in only one of them is still a caveat.
 """
 
 import re
-from typing import List, Tuple
 
 import pytest
 
@@ -36,7 +35,6 @@ import dace
 from dace.codegen.cpf import cpf
 from dace.config import set_temporary
 from dace.transformation.passes.canonicalize import canonicalize
-
 from tests.corpus.tsvc import tsvc
 
 #: The two renderings under test: DaCe's readable CPU generator, and the standalone CPF unit.
@@ -82,13 +80,13 @@ def emitted(sdfg: dace.SDFG, renderer: str) -> str:
         return "\n".join(obj.clean_code for obj in sdfg.generate_code())
 
 
-def loop_bodies(code: str) -> List[str]:
+def loop_bodies(code: str) -> list[str]:
     """The body of every ``for`` loop in ``code``, brace-matched, outermost first.
 
     A regex cannot do this: the bodies nest, and the assertions below are about what appears
     ANYWHERE under a loop header, including inside an inner one.
     """
-    bodies: List[str] = []
+    bodies: list[str] = []
     for match in re.finditer(r"\bfor\s*\(", code):
         opening = code.find("{", match.end())
         if opening < 0:
@@ -105,7 +103,7 @@ def loop_bodies(code: str) -> List[str]:
     return bodies
 
 
-def index_function(code: str, array: str) -> Tuple[List[str], str]:
+def index_function(code: str, array: str) -> tuple[list[str], str]:
     """``<array>_idx``'s data dimensions and its subscript arithmetic.
 
     Returns the ``__dN`` parameters in declaration order -- so the LAST one is the fastest-varying

@@ -25,10 +25,10 @@ import pytest
 
 import dace
 from dace.libraries.tileops import TileBinop, TileUnop
+from dace.transformation.interstate import LoopToMap
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.enums import ISA
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
-from dace.transformation.interstate import LoopToMap
 from tests.passes.vectorization.tile_assertions import sdfg_masked_loads, sdfg_masked_stores
 
 L = dace.symbol("LEN_2D")

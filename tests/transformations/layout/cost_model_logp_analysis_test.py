@@ -2,11 +2,11 @@
 """LogP cost analysis read directly off an SDFG loop nest: latency and bandwidth per iteration, local
 memory free, and a layout change visible in the predicted time. Pure/symbolic -- no measurement."""
 
-import dace
 import sympy as sp
 
-from dace.transformation.layout.cost_model.logp_analysis import analyze_loop_nest
+import dace
 from dace.transformation.layout.cost_model.loggp import LogGP, gap_from_bandwidth
+from dace.transformation.layout.cost_model.logp_analysis import analyze_loop_nest
 
 N = dace.symbol("N")
 P = LogGP(L=95e-9, o=0.0, g=4e-9, G=gap_from_bandwidth(100e9), line_bytes=64, bw_saturated=100e9, bw_core=40e9)

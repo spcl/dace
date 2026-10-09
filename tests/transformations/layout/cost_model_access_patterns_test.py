@@ -47,7 +47,7 @@ def blocks_per_iter(stride: int, n: int = 4096) -> float:
     t = st.add_tasklet("t", {"a"}, {"b"}, "b = a")
     st.add_memlet_path(st.add_read("A"), me, t, dst_conn="a", memlet=dace.Memlet("A[i]"))
     st.add_memlet_path(t, mx, st.add_write("B"), src_conn="b", memlet=dace.Memlet("B[i]"))
-    lr = [{p: r for p, r in zip(me.map.params, me.map.range)}]
+    lr = [dict(zip(me.map.params, me.map.range))]
     return float(sp.simplify(average_blocks_touched(st, lr, get_access_subsets(st, me), ELEMS_PER_BLOCK)["A"]))
 
 

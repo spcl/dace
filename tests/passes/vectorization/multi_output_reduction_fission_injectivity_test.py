@@ -27,7 +27,7 @@ def _map_with_wcr_writes(map_params, writes):
         if arr not in sdfg.arrays:
             sdfg.add_array(arr, [N, N], dace.float64)
     state = sdfg.add_state()
-    entry, exit_node = state.add_map("m", {p: "0:N" for p in map_params})
+    entry, exit_node = state.add_map("m", dict.fromkeys(map_params, "0:N"))
     for arr, sub in writes:
         tasklet = state.add_tasklet(f"t_{arr}", {}, {"o"}, "o = 1.0")
         access = state.add_access(arr)

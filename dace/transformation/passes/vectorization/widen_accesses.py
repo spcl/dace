@@ -21,18 +21,21 @@ Downstream chain: ``GenerateTileIterationMask`` -> ``InsertTileLoadStore`` -> ``
 
 import copy
 import re
-from typing import Any, List, Type, Union
+from typing import Any
 
 import dace
 from dace import data as dd
 from dace import properties, subsets, symbolic
 from dace.memlet import Memlet
+from dace.ordered import OrderedSet
 from dace.sdfg import SDFG
 from dace.sdfg.graph import Edge, MultiConnectorEdge
-from dace.sdfg.sdfg import InterstateEdge
+from dace.sdfg.narrowing import as_basic, as_expr, as_range
 from dace.sdfg.nodes import AccessNode, NestedSDFG, Tasklet
+from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.state import SDFGState
-from dace.transformation import pass_pipeline as ppl, transformation
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation import transformation
 from dace.transformation.passes.analysis import scopes
 from dace.transformation.passes.vectorization.convert_tasklets_to_tile_ops import is_same_domain_constant
 from dace.transformation.passes.vectorization.utils.errors import VectorizeUnsupported
@@ -55,8 +58,6 @@ from dace.transformation.passes.vectorization.utils.tile_access import (
     classify_tile_access,
     data_is_lane_indexed,
 )
-from dace.ordered import OrderedSet
-from dace.sdfg.narrowing import as_basic, as_expr, as_range
 
 
 def _state_defs(
@@ -112,6 +113,7 @@ def emit_per_lane_symbol_fanout(
     :raises UndeterminedSymbolDType: when nothing declares ``sym_name``.
     """
     import itertools
+
     from dace import symbolic
 
     iedge, rhs_template = _find_iedge_defining_symbol(sdfg, sym_name)
@@ -182,7 +184,7 @@ class WidenAccesses(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+    def depends_on(self) -> list[type[ppl.Pass] | ppl.Pass]:
         return []
 
     # Step 1: classify non-transient ANs
@@ -871,4 +873,4 @@ class WidenAccesses(ppl.Pass):
             "WidenAccesses",
             "lane-dep transients widened to (W_0,...,W_{K-1}) or kept as Scalar bridge",
         )
-        return total if total else None
+        return total or None

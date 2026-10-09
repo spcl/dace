@@ -41,7 +41,6 @@ each degenerate one additionally gets a dedicated codegen-only test documenting 
 
 import contextlib
 import re
-from typing import Dict, Optional, Tuple
 
 import numpy as np
 import pytest
@@ -49,7 +48,6 @@ import pytest
 import dace
 from dace import dtypes
 from dace.config import set_temporary
-
 from tests.codegen.readable.conftest import run_isolated
 
 N = dace.symbol("N")
@@ -169,7 +167,7 @@ _INPUT_A = np.random.default_rng(0).integers(-10, 10, size=SIZE).astype(np.float
 _EXPECTED_B = reference(_INPUT_A)
 
 #: (arm id, config path or None for the default control arm, value). Exactly the requested matrix.
-ARMS: Tuple[Tuple[str, Optional[Tuple[str, ...]], object], ...] = (
+ARMS: tuple[tuple[str, tuple[str, ...] | None, object], ...] = (
     ("default", None, None),
     ("impl_legacy", ("compiler", "cpu", "implementation"), "legacy"),
     ("index_ctype_int32", ("compiler", "cpu", "codegen_params", "index_ctype"), "int32"),
@@ -191,10 +189,10 @@ ARMS: Tuple[Tuple[str, Optional[Tuple[str, ...]], object], ...] = (
 )
 
 
-def run_arm(arm_id: str, path: Optional[Tuple[str, ...]], value: object) -> np.ndarray:
+def run_arm(arm_id: str, path: tuple[str, ...] | None, value: object) -> np.ndarray:
     """Compile + run one arm in a forked child (a miscompiled arm must not take down pytest)."""
 
-    def work() -> Dict[str, np.ndarray]:
+    def work() -> dict[str, np.ndarray]:
         ctx = set_temporary(*path, value=value) if path is not None else contextlib.nullcontext()
         with ctx:
             csdfg = option_matrix_sdfg(f"optmatrix_{arm_id}").compile()
@@ -206,7 +204,7 @@ def run_arm(arm_id: str, path: Optional[Tuple[str, ...]], value: object) -> np.n
 
 
 @pytest.mark.parametrize("arm_id, path, value", ARMS, ids=[arm[0] for arm in ARMS])
-def test_arm_matches_numpy_reference(arm_id: str, path: Optional[Tuple[str, ...]], value: object) -> None:
+def test_arm_matches_numpy_reference(arm_id: str, path: tuple[str, ...] | None, value: object) -> None:
     """A codegen knob changes the spelling, never the answer. Exact equality: every step in the
     kernel is a small-integer multiply/add/subtract, so nothing here is float-inexact."""
     B = run_arm(arm_id, path, value)
@@ -216,7 +214,7 @@ def test_arm_matches_numpy_reference(arm_id: str, path: Optional[Tuple[str, ...]
 # #
 # Non-vacuity: prove the kernel actually reaches the knobs (>= 3 required; these are 8).
 # #
-def cpp_text(sdfg_name: str, path: Optional[Tuple[str, ...]] = None, value: object = None) -> str:
+def cpp_text(sdfg_name: str, path: tuple[str, ...] | None = None, value: object = None) -> str:
     """Codegen-only (no compile) C++ text for a FRESH build under (path, value). Pass the SAME
     ``sdfg_name`` to a paired call for a byte-comparable pair -- the name is baked into the output."""
     sdfg = option_matrix_sdfg(sdfg_name)

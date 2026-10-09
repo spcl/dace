@@ -106,8 +106,8 @@ import datetime
 import functools
 import importlib
 import json
-import multiprocessing
 import math
+import multiprocessing
 import re
 import shlex
 import shutil
@@ -124,13 +124,13 @@ import numpy as np
 import pytest
 
 import dace
-from dace.sdfg import nodes
 from dace.libraries.blas.environments.openblas import (
     OPENBLAS_PARALLEL_NAMES,
     OpenBLAS,
     _openblas_threading_flavor,
     _standalone_libopenblas,
 )
+from dace.sdfg import nodes
 from dace.transformation.auto.auto_optimize import auto_optimize
 from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.canonicalize.finalize import finalize_for_target

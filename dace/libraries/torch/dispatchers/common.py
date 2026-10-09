@@ -11,13 +11,14 @@ including:
 """
 
 import dataclasses
-from typing import Callable, List, Tuple, Union
+from collections.abc import Callable
+
+import torch
 
 import dace
-import torch
 from dace.codegen.compiled_sdfg import CompiledSDFG
-from dace.libraries.onnx.converters import clean_onnx_name
 from dace.frontend.ml.onnx.importer import create_output_array
+from dace.libraries.onnx.converters import clean_onnx_name
 
 
 @dataclasses.dataclass
@@ -36,11 +37,11 @@ class DaceTorchFunction:
     """
 
     function: Callable
-    compiled_sdfgs: List[CompiledSDFG]
-    ptr: List[torch.Tensor]
+    compiled_sdfgs: list[CompiledSDFG]
+    ptr: list[torch.Tensor]
 
 
-def get_arglist(module: "dace.frontend.ml.torch.DaceModule") -> Tuple[List[str], List[str]]:
+def get_arglist(module: "dace.frontend.ml.torch.DaceModule") -> tuple[list[str], list[str]]:
     """Get the list of forward-pass argument names for a module.
 
     :param module: The DaCe module to extract argument names from.
@@ -55,7 +56,7 @@ def get_arglist(module: "dace.frontend.ml.torch.DaceModule") -> Tuple[List[str],
 
 def compile_and_init_sdfgs(
     module: "dace.frontend.ml.torch.DaceModule", dummy_inputs
-) -> Union[Tuple[CompiledSDFG, torch.Tensor], Tuple[CompiledSDFG, torch.Tensor, CompiledSDFG, torch.Tensor]]:
+) -> tuple[CompiledSDFG, torch.Tensor] | tuple[CompiledSDFG, torch.Tensor, CompiledSDFG, torch.Tensor]:
     """Compile SDFGs and initialize them using the provided dummy inputs.
 
     This function compiles the forward pass SDFG and optionally the backward pass
@@ -89,7 +90,7 @@ def compile_and_init_sdfgs(
     all_kwargs = {**inputs, **outputs, **symbols, **forwarded_transients, **module.dace_model.initialized_parameters}
 
     compiled.initialize(**all_kwargs)
-    for _, hook in module.post_compile_hooks.items():
+    for hook in module.post_compile_hooks.values():
         hook(compiled)
     handle_ptr = torch.tensor([compiled._libhandle.value]).squeeze(0)
 

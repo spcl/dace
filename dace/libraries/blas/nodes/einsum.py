@@ -7,7 +7,7 @@ Specialization expansions of this node convert it to fast BLAS operations (e.g.,
 
 from copy import deepcopy
 
-from dace import SDFG, SDFGState, Memlet, library, nodes, properties, symbolic
+from dace import SDFG, Memlet, SDFGState, library, nodes, properties, symbolic
 from dace import transformation as xf
 from dace.frontend.common import einsum
 

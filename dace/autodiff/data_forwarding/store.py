@@ -1,18 +1,23 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
-from typing import List, TYPE_CHECKING
+from typing import TYPE_CHECKING
+
 import sympy as sp
+
+import dace.autodiff.utils as ad_utils
 
 # DaCe imports
 import dace.sdfg.nodes as nodes
-from dace import dtypes, data as dt, symbolic
-from dace.sdfg import SDFGState, graph as dgraph, state as dstate
-from dace.memlet import Memlet
-from dace.sdfg.state import LoopRegion
+from dace import data as dt
+from dace import dtypes, symbolic
 
 # Autodiff imports
 from dace.autodiff.base_abc import AutoDiffException
-import dace.autodiff.utils as ad_utils
+from dace.memlet import Memlet
+from dace.sdfg import SDFGState
+from dace.sdfg import graph as dgraph
+from dace.sdfg import state as dstate
+from dace.sdfg.state import LoopRegion
 
 if TYPE_CHECKING:
     from dace.autodiff.backward_pass_generator import BackwardPassGenerator
@@ -109,7 +114,7 @@ def store_data(
     shape: list[int] = list(bwd_generator.sdfg.arrays[forward_an.data].shape)
 
     # If the shape is an expression:
-    free_symbols_dict = {sym: None for sym in bwd_generator.sdfg.free_symbols}
+    free_symbols_dict = dict.fromkeys(bwd_generator.sdfg.free_symbols)
     if any(symbolic.issymbolic(s, free_symbols_dict) for s in shape):
         # Otherwise, replace all the loop dependent allocations with the max length of the loop
         # For example, an array of size [i+1] in a range(2, 10) loop will be stored in a [10, 10] array (1)
@@ -634,7 +639,7 @@ def find_map_exist_for_map_entry(map_entry: nodes.MapEntry, state: SDFGState) ->
 
 
 def get_symbol_upper_bound_from_loop(
-    bwd_generator: "BackwardPassGenerator", s: sp.Symbol, loops: List[LoopRegion]
+    bwd_generator: "BackwardPassGenerator", s: sp.Symbol, loops: list[LoopRegion]
 ) -> int:
     """
     Given a symbol and a list of loops, get the upper bound of the symbol from the loops.

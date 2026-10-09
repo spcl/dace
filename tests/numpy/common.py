@@ -1,15 +1,15 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import contextlib
 import inspect
-from copy import deepcopy as dc
 from collections import OrderedDict
-from typing import Callable
+from collections.abc import Callable
+from copy import deepcopy as dc
 
-import dace
 import numpy as np
 import pytest
-
 from numpy.random import default_rng
+
+import dace
 
 rng = default_rng(42)
 
@@ -95,7 +95,7 @@ def compare_numpy_output(
                     if non_zero:
                         res[res == 0] = 1 + 1j
                 else:
-                    raise ValueError("unsupported dtype {}".format(ddesc.dtype))
+                    raise ValueError(f"unsupported dtype {ddesc.dtype}")
 
                 if type(ddesc) is dace.data.Scalar:
                     return res[0]
@@ -147,9 +147,7 @@ def compare_numpy_output(
                 if dace_thrown is None or numpy_thrown is None:
                     raise_from = dace_thrown if dace_thrown is not None else numpy_thrown
                     raise AssertionError(
-                        "dace threw {}: {}, but numpy threw {}: {}".format(
-                            type(dace_thrown).__name__, dace_thrown, type(numpy_thrown).__name__, numpy_thrown
-                        )
+                        f"dace threw {type(dace_thrown).__name__}: {dace_thrown}, but numpy threw {type(numpy_thrown).__name__}: {numpy_thrown}"
                     ) from raise_from
             else:
                 # A validation function yields one value per element; a tuple result is one output per entry.

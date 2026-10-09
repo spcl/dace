@@ -32,26 +32,24 @@ frontend's implicit per-arm assignment cast -- these two forms are NOT ``ast.Bin
 """
 
 import ast
-
 from collections.abc import Callable
-from typing import Any, Tuple, Type
-
-from dace.ordered import OrderedSet
+from typing import Any
 
 import dace
 from dace import dtypes
 from dace.memlet import Memlet
+from dace.optionals import required
+from dace.ordered import OrderedSet
 from dace.sdfg import nodes
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.state import SDFGState
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.helpers import CodeBlock
 from dace.transformation.passes.vectorization.utils.tasklets import single_assignment
-from dace.optionals import required
 
 #: Comparison ops produce ``bool`` regardless of operand dtype -- unify the operands but
 #: never cast the output (mirrors ``convert_tasklets_to_tile_ops._COMPARISON_BINOPS``).
-_COMPARISON_AST: Tuple[Type[ast.cmpop], ...] = (ast.Lt, ast.LtE, ast.Gt, ast.GtE, ast.Eq, ast.NotEq)
+_COMPARISON_AST: tuple[type[ast.cmpop], ...] = (ast.Lt, ast.LtE, ast.Gt, ast.GtE, ast.Eq, ast.NotEq)
 
 
 def _cast_name(dtype: dtypes.typeclass) -> str:

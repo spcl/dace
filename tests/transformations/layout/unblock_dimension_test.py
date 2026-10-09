@@ -1,7 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import numpy
-import dace
 
+import dace
 from dace.transformation.layout.split_dimensions import SplitDimensions
 from dace.transformation.layout.unblock_dimensions import UnblockDimensions
 

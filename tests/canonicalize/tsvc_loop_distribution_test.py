@@ -24,7 +24,6 @@ from dace.sdfg import utils as sdutil
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.canonicalize.pipeline import _build_stages, canonicalize
 from dace.transformation.passes.canonicalize.split_statements import SplitStatements
-
 from tests.corpus.tsvc import tsvc
 from tests.corpus.tsvc.tsvc_numpy import REFERENCES
 

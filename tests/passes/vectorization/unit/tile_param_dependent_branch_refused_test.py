@@ -28,7 +28,7 @@ from dace.libraries.tileops.dispatch import detect_host_isa
 from dace.sdfg import nodes as nd
 from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.vectorization.config import VectorizeConfig
-from dace.transformation.passes.vectorization.enums import RemainderStrategy, BranchMode
+from dace.transformation.passes.vectorization.enums import BranchMode, RemainderStrategy
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
 from tests.helpers.isolation import run_isolated
 

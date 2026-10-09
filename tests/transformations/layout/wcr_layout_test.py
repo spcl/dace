@@ -15,13 +15,13 @@ through two map exits + a nested SDFG) forms are covered.
 
 import numpy
 import pytest
-import dace
 
+import dace
+from dace.transformation.layout.normalize_schedule import normalize_schedule_for_layout
 from dace.transformation.layout.permute_dimensions import PermuteDimensions
+from dace.transformation.layout.prepare import prepare_for_layout
 from dace.transformation.layout.split_dimensions import SplitDimensions
 from dace.transformation.layout.unblock_dimensions import UnblockDimensions
-from dace.transformation.layout.normalize_schedule import normalize_schedule_for_layout
-from dace.transformation.layout.prepare import prepare_for_layout
 
 I, J, K = (dace.symbol(s) for s in ("I", "J", "K"))
 

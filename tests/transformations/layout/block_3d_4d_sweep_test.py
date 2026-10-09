@@ -21,7 +21,6 @@ import numpy
 import pytest
 
 import dace
-
 from dace.transformation.layout.normalize_schedule import normalize_schedule_for_layout
 from dace.transformation.layout.split_dimensions import SplitDimensions
 

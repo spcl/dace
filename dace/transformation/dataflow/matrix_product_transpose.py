@@ -2,12 +2,14 @@
 """Implements the matrix-matrix product transpose transformation."""
 
 from copy import deepcopy as dcpy
+
 import dace
-from dace.sdfg import nodes, graph as gr
+from dace.properties import make_properties
+from dace.sdfg import graph as gr
+from dace.sdfg import nodes
 from dace.sdfg.sdfg import SDFG
 from dace.sdfg.state import SDFGState
 from dace.transformation import transformation
-from dace.properties import make_properties
 
 
 @make_properties

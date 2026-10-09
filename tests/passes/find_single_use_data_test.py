@@ -1,10 +1,10 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
-from typing import Dict, Set, Tuple
+
 import dace
 from dace.transformation.passes.analysis import FindSingleUseData
 
 
-def perform_scan(sdfg: dace.SDFG) -> Dict[dace.SDFG, Set[str]]:
+def perform_scan(sdfg: dace.SDFG) -> dict[dace.SDFG, set[str]]:
     scanner = FindSingleUseData()
     return scanner.apply_pass(sdfg, None)
 
@@ -228,7 +228,7 @@ def _make_access_nested_nsdfg() -> dace.SDFG:
     return sdfg
 
 
-def _make_access_nested_sdfg() -> Tuple[dace.SDFG, dace.SDFG]:
+def _make_access_nested_sdfg() -> tuple[dace.SDFG, dace.SDFG]:
     sdfg = dace.SDFG("access_nested_sdfg")
     nsdfg = _make_access_nested_nsdfg()
 

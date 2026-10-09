@@ -9,9 +9,10 @@ Each is built at host level and offloaded the way the pipeline does it, so the p
 
 import json
 
-import dace
 import numpy as np
 import pytest
+
+import dace
 from dace import dtypes
 from dace.sdfg import nodes
 from dace.transformation.passes.gpu_specialization.contiguous_axis_to_threads import ContiguousAxisToThreads
@@ -197,7 +198,7 @@ def test_a_forwarded_scalar_is_read_through_the_kernel_entry():
     sdfg = offloaded(forwarded_scalar_nest)
     ContiguousAxisToThreads().apply_pass(sdfg, {})
     entry, state = only_kernel(sdfg)
-    inside = [n for n in state.scope_subgraph(entry).data_nodes()]
+    inside = list(state.scope_subgraph(entry).data_nodes())
     assert not inside, [n.data for n in inside]
 
 

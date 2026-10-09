@@ -19,8 +19,8 @@ call, cuBLAS device call, and the pure/naive nested-tasklet expansion).
 
 import copy
 import ctypes.util
-import re
 import os
+import re
 import shutil
 
 import numpy as np
@@ -32,7 +32,6 @@ from dace.codegen.exceptions import CompilationError, CompilerConfigurationError
 from dace.config import Config
 from dace.libraries.standard.nodes.fill import FillLibraryNode
 from dace.sdfg import nodes
-
 from tests.codegen.readable.conftest import EXPERIMENTAL, LEGACY
 
 N, M, K = (dace.symbol(s) for s in ("N", "M", "K"))

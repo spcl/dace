@@ -4,7 +4,7 @@
 import ast
 import copy
 from dataclasses import dataclass
-from typing import Any, Dict, List
+from typing import Any
 
 import dace
 from dace.frontend.python import astutils
@@ -16,7 +16,7 @@ from dace.transformation import pass_pipeline as ppl
 class StructMemberRewriter(ast.NodeTransformer):
     """Rewrites tasklet-connector reference ``conn`` to ``conn.field`` (both reads and writes)."""
 
-    def __init__(self, conn_field: Dict[str, str]):
+    def __init__(self, conn_field: dict[str, str]):
         self.conn_field = conn_field
 
     def visit_Name(self, node: ast.Name):
@@ -32,7 +32,7 @@ class StructMemberRewriter(ast.NodeTransformer):
 class ZipArrays(ppl.Pass):
     """Fuses groups of same-shape arrays into field-minor AoS arrays."""
 
-    def __init__(self, zip_map: Dict[str, List[str]], field_axis: int = None):
+    def __init__(self, zip_map: dict[str, list[str]], field_axis: int = None):
         self._zip_map = zip_map
         self._field_axis = field_axis
 
@@ -42,7 +42,7 @@ class ZipArrays(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def _check_nested(self, sdfg: dace.SDFG, fields: List[str]):
+    def _check_nested(self, sdfg: dace.SDFG, fields: list[str]):
         for state in sdfg.states():
             for n in state.nodes():
                 if isinstance(n, nd.NestedSDFG):
@@ -50,7 +50,7 @@ class ZipArrays(ppl.Pass):
                     if any(f in conns for f in fields):
                         raise NotImplementedError("ZipArrays: fields passed to nested SDFGs not supported yet")
 
-    def apply_pass(self, sdfg: dace.SDFG, pipeline_results: Dict[str, Any]) -> int:
+    def apply_pass(self, sdfg: dace.SDFG, pipeline_results: dict[str, Any]) -> int:
         for new_name, fields in self._zip_map.items():
             descs = [sdfg.arrays[f] for f in fields]
             shape0 = tuple(descs[0].shape)
@@ -135,7 +135,7 @@ class ZipArrays(ppl.Pass):
                     node.data = new_name
 
 
-def aosoa_layout(sdfg: dace.SDFG, new_name: str, fields: List[str], vector_width: int) -> None:
+def aosoa_layout(sdfg: dace.SDFG, new_name: str, fields: list[str], vector_width: int) -> None:
     """Applies AoSoA layout (Block + Zip) to same-shape, same-dtype ``fields``: ``[.., N] -> [.., N/V, F, V]``."""
     from dace.transformation.layout.split_dimensions import SplitDimensions
 
@@ -155,7 +155,7 @@ def with_field_index(subset: dace.subsets.Range, axis: int, first: int, last: in
 
 
 def zip_homogeneous_fields(
-    sdfg: dace.SDFG, new_name: str, field_index: Dict[str, int], axis: int, new_desc: dace.data.Array
+    sdfg: dace.SDFG, new_name: str, field_index: dict[str, int], axis: int, new_desc: dace.data.Array
 ) -> None:
     """Fuses the same-dtype containers of ``field_index`` into ``new_name`` (described by ``new_desc``), field
     ``f`` at index ``field_index[f]`` of dimension ``axis``. A nested SDFG fed a field is zipped the same way: its

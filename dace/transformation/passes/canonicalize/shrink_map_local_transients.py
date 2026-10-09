@@ -2,21 +2,21 @@
 """Shrink a transient that only ever lives inside one map body down to the box that body touches."""
 
 import re
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from dace import SDFG, SDFGState, data, dtypes, properties, subsets, symbolic
-from dace.sdfg import nodes
+from dace.memlet import Memlet
+from dace.optionals import required
 from dace.sdfg import graph as gr
+from dace.sdfg import nodes
 from dace.sdfg.scope import is_devicelevel_gpu
 from dace.sdfg.state import LoopRegion
-from dace.memlet import Memlet
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 from dace.transformation.passes.canonicalize.prune_unreferenced_transients import code_text
-from dace.optionals import required
 
 #: Storages whose buffer is a plain allocation this pass may resize.
-RESIZABLE_STORAGE: Tuple[dtypes.StorageType, ...] = (
+RESIZABLE_STORAGE: tuple[dtypes.StorageType, ...] = (
     dtypes.StorageType.Default,
     dtypes.StorageType.CPU_Heap,
     dtypes.StorageType.Register,
@@ -40,14 +40,14 @@ def named_in_text(sdfg: SDFG, name: str) -> bool:
     return any(word.search(text) for text in texts)
 
 
-def map_local_accesses(sdfg: SDFG, name: str) -> Optional[Tuple[SDFGState, List[gr.MultiConnectorEdge[Memlet]]]]:
+def map_local_accesses(sdfg: SDFG, name: str) -> tuple[SDFGState, list[gr.MultiConnectorEdge[Memlet]]] | None:
     """The state and edges of ``name`` when every access to it sits strictly inside ONE map body.
 
     :param sdfg: SDFG owning the descriptor.
     :param name: Descriptor name.
     :returns: ``(state, edges)``, or ``None`` when the accesses are not confined to one map body.
     """
-    found: Optional[Tuple[SDFGState, List[gr.MultiConnectorEdge[Memlet]]]] = None
+    found: tuple[SDFGState, list[gr.MultiConnectorEdge[Memlet]]] | None = None
     for state in sdfg.states():
         edges = [e for e in state.edges() if e.data.data == name]
         nodes_here = [n for n in state.data_nodes() if n.data == name]
@@ -65,13 +65,13 @@ def map_local_accesses(sdfg: SDFG, name: str) -> Optional[Tuple[SDFGState, List[
     return found
 
 
-def uniform_subset(edges: List[gr.MultiConnectorEdge[Memlet]]) -> Optional[subsets.Range]:
+def uniform_subset(edges: list[gr.MultiConnectorEdge[Memlet]]) -> subsets.Range | None:
     """The one subset every edge in ``edges`` reads or writes, or ``None`` when they disagree.
 
     :param edges: Edges naming one descriptor.
     :returns: The shared subset, or ``None``.
     """
-    shared: Optional[subsets.Range] = None
+    shared: subsets.Range | None = None
     for edge in edges:
         memlet = edge.data
         if memlet.other_subset is not None or memlet.dynamic or memlet.wcr is not None:
@@ -85,7 +85,7 @@ def uniform_subset(edges: List[gr.MultiConnectorEdge[Memlet]]) -> Optional[subse
     return shared
 
 
-def device_level_accesses(sdfg: SDFG, accesses: List[Tuple[SDFGState, gr.MultiConnectorEdge[Memlet]]]) -> bool:
+def device_level_accesses(sdfg: SDFG, accesses: list[tuple[SDFGState, gr.MultiConnectorEdge[Memlet]]]) -> bool:
     """Whether every access in ``accesses`` runs in device code, under a ``GPU_Device`` map.
 
     A ``GPU_Global`` transient is resizable only there. Shrunk under a kernel, it becomes
@@ -99,7 +99,7 @@ def device_level_accesses(sdfg: SDFG, accesses: List[Tuple[SDFGState, gr.MultiCo
     return all(is_devicelevel_gpu(sdfg, state, edge.dst) for state, edge in accesses)
 
 
-def nest_invariant_accesses(sdfg: SDFG, name: str) -> Optional[List[Tuple[SDFGState, gr.MultiConnectorEdge[Memlet]]]]:
+def nest_invariant_accesses(sdfg: SDFG, name: str) -> list[tuple[SDFGState, gr.MultiConnectorEdge[Memlet]]] | None:
     """Every access to ``name`` when ``sdfg`` is a nested SDFG and all of them sit outside any map.
 
     A per-iteration buffer also appears in a map body nested into its own SDFG, as a top-level
@@ -114,7 +114,7 @@ def nest_invariant_accesses(sdfg: SDFG, name: str) -> Optional[List[Tuple[SDFGSt
     """
     if sdfg.parent_nsdfg_node is None:
         return None
-    found: List[Tuple[SDFGState, gr.MultiConnectorEdge[Memlet]]] = []
+    found: list[tuple[SDFGState, gr.MultiConnectorEdge[Memlet]]] = []
     for state in sdfg.states():
         sdict = state.scope_dict()
         if any(sdict[n] is not None for n in state.data_nodes() if n.data == name):
@@ -144,7 +144,7 @@ def box_is_invariant(sdfg: SDFG, box: subsets.Range) -> bool:
     return not ({str(sym) for sym in box.free_symbols} & assigned)
 
 
-def shrinks_the_buffer(desc: data.Array, size: Tuple[Any, ...]) -> bool:
+def shrinks_the_buffer(desc: data.Array, size: tuple[Any, ...]) -> bool:
     """Whether a descriptor of extent ``size`` is provably smaller than ``desc``.
 
     :param desc: The descriptor as it stands.
@@ -187,7 +187,7 @@ class ShrinkMapLocalTransients(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return bool(modified & (ppl.Modifies.Descriptors | ppl.Modifies.Memlets | ppl.Modifies.Nodes))
 
-    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> int | None:
         """Shrink every map-body-local transient that names one box.
 
         :param sdfg: SDFG to rewrite in place.

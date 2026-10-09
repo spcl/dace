@@ -1,32 +1,33 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
-from copy import deepcopy as dcpy, copy
-from functools import reduce
 import operator
-from typing import TYPE_CHECKING, List, Optional, Set, Union
+from copy import copy
+from copy import deepcopy as dcpy
+from functools import reduce
+from typing import TYPE_CHECKING
 
 import dace
-from dace.sdfg.graph import generate_element_id
 import dace.serialize
-from dace import subsets, dtypes, symbolic
+from dace import dtypes, subsets, symbolic
 from dace.frontend.operations import detect_reduction_type
 from dace.frontend.python.astutils import unparse
 from dace.properties import (
-    Property,
-    make_properties,
     DataProperty,
-    SubsetProperty,
-    SymbolicProperty,
     DebugInfoProperty,
     LambdaProperty,
+    Property,
+    SubsetProperty,
+    SymbolicProperty,
+    make_properties,
 )
+from dace.sdfg.graph import generate_element_id
 
 if TYPE_CHECKING:
     import dace.sdfg.graph
 
 
 @make_properties
-class Memlet(object):
+class Memlet:
     """Data movement object. Represents the data, the subset moved, and the
     manner it is reindexed (`other_subset`) into the destination.
     If there are multiple conflicting writes, this object also specifies
@@ -51,13 +52,13 @@ class Memlet(object):
         # Type-only view of the SubsetProperty descriptors below: reads are Optional[Subset], writes also take strings.
         # fmt: off
         @property
-        def subset(self) -> Optional[subsets.Subset]: ...
+        def subset(self) -> subsets.Subset | None: ...
         @subset.setter
-        def subset(self, value: Union[str, subsets.Subset, None]) -> None: ...
+        def subset(self, value: str | subsets.Subset | None) -> None: ...
         @property
-        def other_subset(self) -> Optional[subsets.Subset]: ...
+        def other_subset(self) -> subsets.Subset | None: ...
         @other_subset.setter
-        def other_subset(self, value: Union[str, subsets.Subset, None]) -> None: ...
+        def other_subset(self, value: str | subsets.Subset | None) -> None: ...
         # fmt: on
     else:
         subset = SubsetProperty(
@@ -97,14 +98,14 @@ class Memlet(object):
 
     def __init__(
         self,
-        expr: Optional[str] = None,
-        data: Optional[str] = None,
-        subset: Union[str, subsets.Subset, None] = None,
-        other_subset: Union[str, subsets.Subset, None] = None,
-        volume: Union[int, str, symbolic.SymbolicType, None] = None,
+        expr: str | None = None,
+        data: str | None = None,
+        subset: str | subsets.Subset | None = None,
+        other_subset: str | subsets.Subset | None = None,
+        volume: int | str | symbolic.SymbolicType | None = None,
         dynamic: bool = False,
-        wcr: Union[str, ast.AST, None] = None,
-        debuginfo: Optional[dtypes.DebugInfo] = None,
+        wcr: str | ast.AST | None = None,
+        debuginfo: dtypes.DebugInfo | None = None,
         wcr_nonatomic: bool = False,
         allow_oob: bool = False,
     ):
@@ -598,7 +599,7 @@ class Memlet(object):
         #  is valid, in certain cases, for example if an AccessNode is connected to a MapEntry,
         #  because the Map is not executed. Thus we do the check in the `validate_state()` function.
 
-    def used_symbols(self, all_symbols: bool, edge=None) -> Set[str]:
+    def used_symbols(self, all_symbols: bool, edge=None) -> set[str]:
         """
         Returns a set of symbols used in this edge's properties.
 
@@ -642,11 +643,11 @@ class Memlet(object):
         return result
 
     @property
-    def free_symbols(self) -> Set[str]:
+    def free_symbols(self) -> set[str]:
         """Returns a set of symbols used in this edge's properties."""
         return self.used_symbols(all_symbols=True)
 
-    def get_free_symbols_by_indices(self, indices_src: List[int], indices_dst: List[int]) -> Set[str]:
+    def get_free_symbols_by_indices(self, indices_src: list[int], indices_dst: list[int]) -> set[str]:
         """
         Returns set of free symbols used in this edges properties but only taking certain indices of the src and dst
         subset into account
@@ -751,7 +752,7 @@ class Memlet(object):
         return "Memlet (" + self.__str__() + ")"
 
 
-class MemletTree(object):
+class MemletTree:
     """A tree of memlet edges.
 
     Since memlets can form paths through scope nodes, and since these
@@ -772,7 +773,7 @@ class MemletTree(object):
         edge: "dace.sdfg.graph.MultiConnectorEdge[Memlet]",
         downwards: bool = True,
         parent: "MemletTree" = None,
-        children: Optional[List["MemletTree"]] = None,
+        children: list["MemletTree"] | None = None,
     ) -> None:
         self.edge = edge
         self.parent = parent
@@ -802,7 +803,7 @@ class MemletTree(object):
             node = node.parent
         return node
 
-    def leaves(self) -> "List[dace.sdfg.graph.MultiConnectorEdge[Memlet]]":
+    def leaves(self) -> "list[dace.sdfg.graph.MultiConnectorEdge[Memlet]]":
         """Returns a list of all the leaves of this MemletTree, i.e., the innermost edges."""
         if not self.children:
             return [self.edge]

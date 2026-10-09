@@ -9,8 +9,8 @@ import numpy as np
 
 import dace
 from dace.codegen import cppunparse
-from dace.sdfg.state import LoopRegion
 from dace.sdfg import nodes
+from dace.sdfg.state import LoopRegion
 from dace.transformation.interstate.loop_to_map import LoopToMap
 from dace.transformation.passes import BreakAntiDependence
 

@@ -42,16 +42,18 @@ implementation):
   sequential).  Index = iterator distance.
 """
 
+from typing import TYPE_CHECKING
+
 import dace
 import dace.dtypes as dtypes
 import dace.library
 import dace.properties
 import dace.sdfg.nodes
-from dace import SDFG, SDFGState, memlet as mm, symbolic
+from dace import SDFG, SDFGState, symbolic
+from dace import memlet as mm
 from dace.frontend.common import op_repository as oprepo
 from dace.libraries.standard.nodes.reduce import Reduce
 from dace.transformation.transformation import ExpandTransformation
-from typing import List, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from dace.frontend.python.newast import ProgramVisitor
@@ -266,7 +268,7 @@ def _emit_pure(node, parent_state: SDFGState, parent_sdfg: SDFG, func: str):
 class ExpandArgMinPure(ExpandTransformation):
     """Pure expansion of :class:`ArgMin` -- multi-state min/min pipeline."""
 
-    environments: List[type] = []
+    environments: list[type] = []
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, **kwargs):
@@ -277,7 +279,7 @@ class ExpandArgMinPure(ExpandTransformation):
 class ExpandArgMaxPure(ExpandTransformation):
     """Pure expansion of :class:`ArgMax` -- multi-state max/min pipeline."""
 
-    environments: List[type] = []
+    environments: list[type] = []
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, **kwargs):

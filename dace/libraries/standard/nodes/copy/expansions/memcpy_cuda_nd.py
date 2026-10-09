@@ -5,17 +5,17 @@ from typing import TYPE_CHECKING
 
 import dace
 from dace import library, nodes, subsets, symbolic
-from dace.codegen.common import sym2cpp, get_gpu_backend
+from dace.codegen.common import get_gpu_backend, sym2cpp
 from dace.libraries.standard import environments
 from dace.libraries.standard.helper import CURRENT_STREAM_NAME, collapse_shape_and_strides
-from dace.libraries.standard.nodes.copy.node import CopyLibraryNode
-from dace.transformation.transformation import ExpandTransformation
 from dace.libraries.standard.nodes.copy.common import (
-    _make_expansion_sdfg,
-    _memcpy_kind,
     INPUT_CONNECTOR_NAME,
     OUTPUT_CONNECTOR_NAME,
+    _make_expansion_sdfg,
+    _memcpy_kind,
 )
+from dace.libraries.standard.nodes.copy.node import CopyLibraryNode
+from dace.transformation.transformation import ExpandTransformation
 
 if TYPE_CHECKING:
     pass

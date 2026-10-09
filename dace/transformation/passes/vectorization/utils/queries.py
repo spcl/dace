@@ -7,7 +7,6 @@ emission and prep passes.
 """
 
 import dace
-
 from dace.transformation.passes.vectorization.utils.subsets import an_side_subset
 
 

@@ -10,12 +10,11 @@ BOTH orders and assert the two dialects never collapse onto one answer.
 
 import re
 
-import dace
 import numpy as np
+import pytest
 import sympy
 
-import pytest
-
+import dace
 from dace import cpf_lowering, symbolic
 from dace.codegen.common import sym2cpp
 from dace.codegen.cpf import render

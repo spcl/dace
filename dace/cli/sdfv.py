@@ -1,18 +1,16 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """SDFG visualizer that uses Jinja, HTML5, and Javascript."""
 
-import json
-import tempfile
-import sys
-import os
-import platform
-from typing import Optional, Union
 import functools
 import http.server
+import json
+import os
+import platform
+import sys
+import tempfile
 import threading
 
 import dace
-import tempfile
 
 
 def partialclass(cls, *args, **kwds):
@@ -23,7 +21,7 @@ def partialclass(cls, *args, **kwds):
     return NewCls
 
 
-def view(sdfg: dace.SDFG, filename: Optional[Union[str, int]] = None, verbose: bool = True, compress: bool = True):
+def view(sdfg: dace.SDFG, filename: str | int | None = None, verbose: bool = True, compress: bool = True):
     """
     View an sdfg in the system's HTML viewer
 

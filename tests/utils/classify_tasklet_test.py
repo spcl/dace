@@ -1,6 +1,6 @@
 import pytest
+
 import dace
-import typing
 import dace.sdfg.tasklet_utils as tutil
 
 # One case per (TaskletType, classifier path) pair. `classify_tasklet` picks the type from the operand
@@ -593,9 +593,9 @@ tasklet_infos = [
 
 
 def _gen_sdfg(
-    tasklet_info: typing.Tuple[str, str, typing.Set[str], typing.Set[str], typing.Set[str], tutil.TaskletType],
+    tasklet_info: tuple[str, str, set[str], set[str], set[str], tutil.TaskletType],
 ) -> dace.SDFG:
-    sdfg = dace.SDFG(f"sd")
+    sdfg = dace.SDFG("sd")
     state = sdfg.add_state("s0", is_start_block=True)
 
     expr_str, out_type, in_arrays, in_scalars, in_symbols, _ = tasklet_info

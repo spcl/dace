@@ -1,16 +1,18 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import collections
 import warnings
-from typing import Any, Dict, Iterator, List, Optional, Set, Tuple
+from collections.abc import Iterator
+from typing import Any
 
 from dace import SDFG, SDFGState, properties, transformation
 from dace.config import Config
 from dace.sdfg import nodes
 from dace.sdfg.state import ControlFlowRegion
 from dace.sdfg.validation import validate_state
-from dace.transformation import pass_pipeline as ppl, dataflow as dftrans
-from dace.transformation.dataflow import map_fusion_helper as mfhelper
+from dace.transformation import dataflow as dftrans
+from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
+from dace.transformation.dataflow import map_fusion_helper as mfhelper
 from dace.transformation.passes import analysis as ap
 from dace.transformation.passes.iteration_domain import align_maps_to_unit_step
 
@@ -19,15 +21,15 @@ from dace.transformation.passes.iteration_domain import align_maps_to_unit_step
 FUSE_ROUNDS = 2
 
 #: One expression: the pattern nodes in declaration order, and the edges required between them.
-PatternShape = Tuple[List[xf.PatternNode], Set[Tuple[int, int]]]
+PatternShape = tuple[list[xf.PatternNode], set[tuple[int, int]]]
 
 #: Applied transformations, by transformation name -- the report `PatternMatchAndApply` returns.
-AppliedMap = Dict[str, List[Any]]
+AppliedMap = dict[str, list[Any]]
 
 
-def _pattern_shapes(xform: xf.PatternTransformation) -> List[PatternShape]:
+def _pattern_shapes(xform: xf.PatternTransformation) -> list[PatternShape]:
     """The declared expressions of ``xform`` as (nodes, edges) index pairs."""
-    shapes: List[PatternShape] = []
+    shapes: list[PatternShape] = []
     for expr in xform.expressions():
         pnodes = list(expr.nodes())
         index = {pn: i for i, pn in enumerate(pnodes)}
@@ -36,8 +38,8 @@ def _pattern_shapes(xform: xf.PatternTransformation) -> List[PatternShape]:
 
 
 def _induced_matches(
-    state: SDFGState, pnodes: List[xf.PatternNode], pedges: Set[Tuple[int, int]]
-) -> Iterator[List[nodes.Node]]:
+    state: SDFGState, pnodes: list[xf.PatternNode], pedges: set[tuple[int, int]]
+) -> Iterator[list[nodes.Node]]:
     """Yield the induced matches of one small pattern in ``state``.
 
     Replaces the VF2 subgraph isomorphism the pattern matcher ran for these patterns: pattern node
@@ -51,12 +53,12 @@ def _induced_matches(
     # Deduplicated successors, built from `state.edges()` because that is the order the collapsed
     # digraph's adjacency carried -- `out_edges()` can order one node's successors differently.
     # The generator dies before the caller applies anything, so the state cannot change under it.
-    adjacency: Dict[nodes.Node, Dict[nodes.Node, None]] = {}
+    adjacency: dict[nodes.Node, dict[nodes.Node, None]] = {}
     for edge in state.edges():
         adjacency.setdefault(edge.src, {})[edge.dst] = None
-    no_successors: Dict[nodes.Node, None] = {}
+    no_successors: dict[nodes.Node, None] = {}
 
-    def successors(node: nodes.Node) -> Dict[nodes.Node, None]:
+    def successors(node: nodes.Node) -> dict[nodes.Node, None]:
         return adjacency.get(node, no_successors)
 
     # The pattern node whose image supplies the candidates for each level, or None for a free level.
@@ -67,7 +69,7 @@ def _induced_matches(
         [n for n in all_nodes if isinstance(n, pnodes[j].node)] if parents[j] is None else [] for j in range(npat)
     ]
 
-    def extend(j: int, images: List[nodes.Node]) -> Iterator[List[nodes.Node]]:
+    def extend(j: int, images: list[nodes.Node]) -> Iterator[list[nodes.Node]]:
         if j == npat:
             yield list(images)
             return
@@ -220,19 +222,19 @@ class FuseMaps(ppl.Pass):
 
     def __init__(
         self,
-        perform_vertical_map_fusion: Optional[bool] = None,
-        perform_horizontal_map_fusion: Optional[bool] = None,
-        only_inner_maps: Optional[bool] = None,
-        only_toplevel_maps: Optional[bool] = None,
-        strict_dataflow: Optional[bool] = None,
-        assume_always_shared: Optional[bool] = None,
-        require_exclusive_intermediates: Optional[bool] = None,
-        require_all_intermediates: Optional[bool] = None,
-        only_if_common_ancestor: Optional[bool] = None,
-        consolidate_edges_only_if_not_extending: Optional[bool] = None,
-        never_consolidate_edges: Optional[bool] = None,
-        validate: Optional[bool] = None,
-        validate_all: Optional[bool] = None,
+        perform_vertical_map_fusion: bool | None = None,
+        perform_horizontal_map_fusion: bool | None = None,
+        only_inner_maps: bool | None = None,
+        only_toplevel_maps: bool | None = None,
+        strict_dataflow: bool | None = None,
+        assume_always_shared: bool | None = None,
+        require_exclusive_intermediates: bool | None = None,
+        require_all_intermediates: bool | None = None,
+        only_if_common_ancestor: bool | None = None,
+        consolidate_edges_only_if_not_extending: bool | None = None,
+        never_consolidate_edges: bool | None = None,
+        validate: bool | None = None,
+        validate_all: bool | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -280,7 +282,7 @@ class FuseMaps(ppl.Pass):
         if not self.perform_horizontal_map_fusion:
             if only_if_common_ancestor is not None:
                 raise ValueError(
-                    f"Used `FuseMaps` without horizontal Map fusion, but speciefied: only_if_common_ancestor"
+                    "Used `FuseMaps` without horizontal Map fusion, but speciefied: only_if_common_ancestor"
                 )
 
     def modifies(self) -> ppl.Modifies:
@@ -292,7 +294,7 @@ class FuseMaps(ppl.Pass):
     def depends_on(self):
         return [ap.FindSingleUseData]
 
-    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> int | None:
         """
         Fuses all Maps that can be fused in the SDFG, including its nested SDFGs.
 
@@ -348,7 +350,7 @@ class FuseMaps(ppl.Pass):
             )
 
         explicit_cf = sdfg.root_sdfg.using_explicit_control_flow
-        units: List[Tuple[xf.PatternTransformation, List[PatternShape]]] = []
+        units: list[tuple[xf.PatternTransformation, list[PatternShape]]] = []
         for xform in fusion_transforms:
             if explicit_cf and not xform.__explicit_cf_compatible__:
                 warnings.warn(
@@ -360,7 +362,7 @@ class FuseMaps(ppl.Pass):
 
         # Nested SDFGs whose inside is propagated and unchanged since, shared by the fusions so a nested SDFG
         #  is propagated again only after something inside it changed, not once per fusion of its scope.
-        propagated: Dict[SDFG, None] = {}
+        propagated: dict[SDFG, None] = {}
         # The last propagation onto each external scope edge, so a fusion re-propagates only the connectors whose
         #  memlets it changed; `propagate_scope_node()` checks every record against the graph before trusting it.
         scope_records: mfhelper.ScopeRecords = {}
@@ -390,13 +392,13 @@ class FuseMaps(ppl.Pass):
     def _drain(
         self,
         xform: xf.PatternTransformation,
-        shapes: List[PatternShape],
+        shapes: list[PatternShape],
         cfg: ControlFlowRegion,
         state: SDFGState,
         state_id: int,
-        pipeline_results: Dict[str, Any],
+        pipeline_results: dict[str, Any],
         applied: AppliedMap,
-        propagated: Dict[SDFG, None],
+        propagated: dict[SDFG, None],
     ) -> None:
         """Apply ``xform`` in ``state`` until nothing matches there any more.
 

@@ -7,19 +7,19 @@ one is left in place."""
 
 import numpy
 import pytest
-import dace
 
-from dace.transformation.layout.rewrite_libnodes import (
-    transform_einsum,
-    remap_contracted_axes,
-    GemmToTensorDot,
-    permute_reduce,
-    block_scan_stride,
-)
-from dace.transformation.layout.select_lowering import select_layout_lowering
+import dace
 from dace.libraries.blas.nodes.gemm import Gemm
 from dace.libraries.standard.nodes.reduce import Reduce
 from dace.libraries.standard.nodes.scan import Scan, ScanOp
+from dace.transformation.layout.rewrite_libnodes import (
+    GemmToTensorDot,
+    block_scan_stride,
+    permute_reduce,
+    remap_contracted_axes,
+    transform_einsum,
+)
+from dace.transformation.layout.select_lowering import select_layout_lowering
 
 
 # #

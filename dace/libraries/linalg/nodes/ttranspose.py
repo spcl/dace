@@ -1,20 +1,22 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """TensorTranspose library node and its pure / HPTT / cuTENSOR expansions."""
 
-import dace
 import multiprocessing
+import warnings
+from collections.abc import Sequence
+from numbers import Number
+from typing import Any
+
+import dace
 from dace import dtypes, library, nodes, properties, symbolic
 from dace.codegen.common import global_code_id
 from dace.data import core as datacore
-from dace.libraries.standard.environments.tiled_transpose import TiledTranspose
-from dace.transformation.transformation import ExpandTransformation
 from dace.libraries.blas import blas_helpers
+from dace.libraries.linalg import environments
+from dace.libraries.standard.environments.tiled_transpose import TiledTranspose
 from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES
 from dace.sdfg.scope import is_devicelevel_gpu
-from numbers import Number
-from dace.libraries.linalg import environments
-import warnings
-from typing import Any, Sequence
+from dace.transformation.transformation import ExpandTransformation
 
 
 def moves_whole_container(desc: dace.data.Data, shape: Sequence[Any]) -> bool:

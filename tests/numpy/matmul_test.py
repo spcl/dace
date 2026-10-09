@@ -1,10 +1,11 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests for the ``numpy.matmul`` function spelling, which delegates to the ``@`` operator."""
 
-import dace
-from dace.frontend.python.common import DaceSyntaxError
 import numpy as np
 import pytest
+
+import dace
+from dace.frontend.python.common import DaceSyntaxError
 
 M, K, N, B1, B2 = 5, 3, 4, 2, 3
 

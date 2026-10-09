@@ -1,12 +1,14 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 
 import copy
-import dace
+import re
+
 import numpy as np
 import pytest
-from dace.sdfg import graph, memlet_utils as mu
-import re
-from typing import Tuple, Optional
+
+import dace
+from dace.sdfg import graph
+from dace.sdfg import memlet_utils as mu
 
 
 def _replace_zero_with_one(memlet: dace.Memlet) -> dace.Memlet:
@@ -109,8 +111,8 @@ def _perform_non_lin_delin_test(sdfg: dace.SDFG, edge: graph.MultiConnectorEdge)
 
 
 def _make_non_lin_delin_sdfg(
-    shape_a: Tuple[int, ...], shape_b: Optional[Tuple[int, ...]] = None
-) -> Tuple[dace.SDFG, dace.SDFGState, dace.nodes.AccessNode, dace.nodes.AccessNode]:
+    shape_a: tuple[int, ...], shape_b: tuple[int, ...] | None = None
+) -> tuple[dace.SDFG, dace.SDFGState, dace.nodes.AccessNode, dace.nodes.AccessNode]:
 
     if shape_b is None:
         shape_b = shape_a

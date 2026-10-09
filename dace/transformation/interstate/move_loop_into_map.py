@@ -3,19 +3,24 @@
 
 import copy
 import dataclasses
-from dace.sdfg.state import AbstractControlFlowRegion, ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
+
+from sympy import diff
+
 import dace.transformation.helpers as helpers
+from dace import Memlet, dtypes, nodes, properties, symbol, symbolic
+from dace import data as dt
 from dace import graphlib as nx
+from dace import sdfg as sd
+from dace import subsets as sbs
 from dace.libraries.standard.nodes.copy import node as copy_node
 from dace.libraries.standard.nodes.fill import node as fill_node
 from dace.ordered import OrderedSet
+from dace.sdfg import graph as gr
+from dace.sdfg import nodes, propagation
+from dace.sdfg import utils as sdutil
 from dace.sdfg.scope import ScopeTree
-from dace import Memlet, data as dt, dtypes, nodes, properties, sdfg as sd, subsets as sbs, symbolic, symbol
-from dace.sdfg import graph as gr, nodes, propagation, utils as sdutil
+from dace.sdfg.state import AbstractControlFlowRegion, ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
 from dace.transformation import transformation
-from sympy import diff
-from typing import List, Set, Tuple
-
 from dace.transformation.passes.analysis import loop_analysis
 
 
@@ -29,7 +34,7 @@ def offset(memlet_subset_ranges, value):
     return (memlet_subset_ranges[0] + value, memlet_subset_ranges[1] + value, memlet_subset_ranges[2])
 
 
-def _collect_nested_lane_accesses(body: SDFGState, nsdfg: nodes.NestedSDFG, reads: List, writes: List) -> None:
+def _collect_nested_lane_accesses(body: SDFGState, nsdfg: nodes.NestedSDFG, reads: list, writes: list) -> None:
     """Append the per-lane accesses hidden inside ``nsdfg`` to ``reads`` / ``writes``.
 
     ``LoopToMap`` nests the map body, leaving WHOLE-ARRAY memlets on the NestedSDFG's connectors
@@ -67,7 +72,7 @@ def _collect_nested_lane_accesses(body: SDFGState, nsdfg: nodes.NestedSDFG, read
                 bucket.append((name, sbs.Range(rewritten)))
 
 
-def _differs_on_map_axis(read: sbs.Subset, write: sbs.Subset, mparams: Set[str]) -> bool:
+def _differs_on_map_axis(read: sbs.Subset, write: sbs.Subset, mparams: set[str]) -> bool:
     """True if ``read`` and ``write`` address a different position on some dimension indexed by
     a map parameter.
 
@@ -723,7 +728,7 @@ class MoveLoopIntoMap(transformation.MultiStateTransformation):
             if str(itervar) in n.free_symbols:
                 return False
 
-        def test_subset_dependency(subset: sbs.Subset, mparams: Set[int]) -> Tuple[bool, List[int]]:
+        def test_subset_dependency(subset: sbs.Subset, mparams: set[int]) -> tuple[bool, list[int]]:
             dims = []
             for i, r in enumerate(subset):
                 if not isinstance(r, (list, tuple)):
@@ -795,8 +800,8 @@ class MoveLoopIntoMap(transformation.MultiStateTransformation):
         # recurrence sweeps this pass exists for (TSVC s231 / s233 / s235,
         # ``aa[j, i] = aa[j-1, i] + ...``) carry only on the loop axis and read the map axis at the
         # same position, so they still interchange.
-        lane_reads: List[Tuple[str, sbs.Subset]] = []
-        lane_writes: List[Tuple[str, sbs.Subset]] = []
+        lane_reads: list[tuple[str, sbs.Subset]] = []
+        lane_writes: list[tuple[str, sbs.Subset]] = []
         for e in body.edges():
             if e.src not in subgraph.nodes() or e.dst not in subgraph.nodes():
                 continue

@@ -1,13 +1,15 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 # Original application code: NPBench - https://github.com/spcl/npbench
 
-import dace.dtypes
-import numpy as np
-import dace as dc
-import pytest
 import argparse
-from dace.transformation.auto.auto_optimize import auto_optimize
+
+import numpy as np
+import pytest
+
+import dace as dc
+import dace.dtypes
 from dace.autodiff import add_backward_pass
+from dace.transformation.auto.auto_optimize import auto_optimize
 
 N = dc.symbol("N", dtype=dc.int32)
 
@@ -114,8 +116,8 @@ def run_lu(device_type: dace.dtypes.DeviceType):
 
 def run_lu_autodiff():
     import jax
-    import jax.numpy as jnp
     import jax.lax as lax
+    import jax.numpy as jnp
 
     # Initialize data (polybench mini size)
     N = 5

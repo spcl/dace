@@ -1,13 +1,14 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Inverse of the GPU scalar promotion: a value living inside a kernel stays a ``Scalar``, not a ``double*``."""
 
-from typing import Any, Dict, Optional, Set
+from typing import Any
 
 from dace import data, dtypes, properties
 from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES
 from dace.sdfg import SDFG, infer_types
 from dace.sdfg.scope import is_in_scope
-from dace.transformation import pass_pipeline as ppl, transformation
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation import transformation
 from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import is_inside_gpu_device_kernel
 from dace.transformation.passes.length_one_array_scalar_conversion import ConvertLengthOneArraysToScalars
 from dace.transformation.passes.scalar_promotion import written_by_gpu_map_exit
@@ -31,7 +32,7 @@ def kernel_internal_len1_array(sdfg: SDFG, name: str, desc: data.Data, device_fu
     return device_function or all_accesses_within_gpu_kernel(sdfg, name)
 
 
-def reset_parent_connectors(sub: SDFG, names: Set[str]) -> None:
+def reset_parent_connectors(sub: SDFG, names: set[str]) -> None:
     """Reset the parent ``NestedSDFG`` connectors of the scalarized descriptors for re-inference."""
     node = sub.parent_nsdfg_node
     if node is None:
@@ -52,7 +53,7 @@ class DemoteKernelInternalArraysToScalars(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def apply_pass(self, sdfg: SDFG, _: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _: dict[str, Any]) -> int | None:
         """Demote every kernel-internal length-1 array; returns how many, or ``None``."""
         demoted = 0
         for sub in list(sdfg.all_sdfgs_recursive()):

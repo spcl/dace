@@ -24,7 +24,8 @@ import re
 import shutil
 import subprocess
 import tempfile
-from typing import Any, Dict, List, Optional, Sequence
+from collections.abc import Sequence
+from typing import Any
 
 import numpy as np
 import pytest
@@ -76,10 +77,10 @@ BANNED_PATTERNS = (
     (re.compile(r"__dace_(init|exit)\w*"), "DaCe init/exit entry point"),
     (re.compile(r"\bdace\s*::"), "DaCe runtime namespace reference"),
     (re.compile(r"\bDACE_[A-Z]"), "DaCe preprocessor macro"),
-    (re.compile(r"^[ \t]*#[ \t]*define\b", re.M), "preprocessor macro definition"),
+    (re.compile(r"^[ \t]*#[ \t]*define\b", re.MULTILINE), "preprocessor macro definition"),
     (re.compile(r"__state\b"), "DaCe state-struct dereference"),
     (
-        re.compile(r"^(?!\s*//).*?\b(auto|__auto_type)\b", re.M),
+        re.compile(r"^(?!\s*//).*?\b(auto|__auto_type)\b", re.MULTILINE),
         "deduced declaration (auto) instead of the resolved type",
     ),
 )
@@ -245,11 +246,11 @@ def assert_standalone_units(rendering: Rendering, label: str = "cpf") -> None:
 #: the frame text alone dropped the alias out from under it. The tests never noticed because none of
 #: them compiled that particular pairing, so the invariant is stated here instead of per test.
 DEVICE_PREAMBLE_USES = (
-    (re.compile(r"\bgpucub\s*::"), re.compile(r"^namespace gpucub\s*=", re.M), "gpucub"),
-    (re.compile(r"\bcpf_gpu_atomic\s*\("), re.compile(r"void cpf_gpu_atomic\s*\(", re.M), "cpf_gpu_atomic"),
+    (re.compile(r"\bgpucub\s*::"), re.compile(r"^namespace gpucub\s*=", re.MULTILINE), "gpucub"),
+    (re.compile(r"\bcpf_gpu_atomic\s*\("), re.compile(r"void cpf_gpu_atomic\s*\(", re.MULTILINE), "cpf_gpu_atomic"),
     (
         re.compile(r"\bcpf_kernel_launch_check\s*\("),
-        re.compile(r"^static inline void cpf_kernel_launch_check\s*\(", re.M),
+        re.compile(r"^static inline void cpf_kernel_launch_check\s*\(", re.MULTILINE),
         "cpf_kernel_launch_check",
     ),
 )
@@ -452,7 +453,7 @@ def build_standalone(code: str, name: str = "cpf_kernel", language: str = "c++")
     return ctypes.CDLL(compile_standalone(code, name, language=language))
 
 
-def entry_argtypes(sdfg: dace.SDFG, order: Optional[Sequence[str]] = None) -> List[Any]:
+def entry_argtypes(sdfg: dace.SDFG, order: Sequence[str] | None = None) -> list[Any]:
     """ctypes argument types for ``sdfg``'s CPF entry point.
 
     CPF emits ``void <sdfg.name>(<arglist>)`` with the SAME argument order DaCe's own
@@ -465,7 +466,7 @@ def entry_argtypes(sdfg: dace.SDFG, order: Optional[Sequence[str]] = None) -> Li
     """
     arglist = sdfg.arglist()
     names = list(arglist) if order is None else list(order)
-    argtypes: List[Any] = []
+    argtypes: list[Any] = []
     for name in names:
         desc = arglist[name]
         if isinstance(desc, dt.Scalar):
@@ -476,7 +477,7 @@ def entry_argtypes(sdfg: dace.SDFG, order: Optional[Sequence[str]] = None) -> Li
 
 
 def call_standalone(
-    library: ctypes.CDLL, sdfg: dace.SDFG, arguments: Dict[str, Any], order: Optional[Sequence[str]] = None
+    library: ctypes.CDLL, sdfg: dace.SDFG, arguments: dict[str, Any], order: Sequence[str] | None = None
 ) -> None:
     """Invoke ``sdfg``'s CPF entry point in ``library`` with ``arguments``.
 
@@ -507,7 +508,7 @@ def call_standalone(
     function = getattr(library, sdfg.name)
     function.argtypes = entry_argtypes(sdfg, order)
     function.restype = None
-    values: List[Any] = []
+    values: list[Any] = []
     for name in names:
         desc = arglist[name]
         value = arguments[name]
@@ -532,7 +533,7 @@ def tolerance_for(dtype) -> Any:
     return (1e-5, 1e-6) if single else (1e-9, 1e-11)
 
 
-def assert_matches(reference: Dict[str, np.ndarray], cpf: Dict[str, np.ndarray], label: str = "cpf") -> None:
+def assert_matches(reference: dict[str, np.ndarray], cpf: dict[str, np.ndarray], label: str = "cpf") -> None:
     """Assert the CPF run reproduced ``reference`` (dtype-aware tolerance; exact for integers)."""
     assert set(reference) == set(cpf), f"{label}: output-key mismatch {sorted(reference)} vs {sorted(cpf)}"
     for name, expected in reference.items():

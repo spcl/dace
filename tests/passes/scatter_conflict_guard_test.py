@@ -7,10 +7,10 @@ program traps. Permutation-index runs are expected to terminate cleanly with the
 correct numerical result (the scatter Map executes after the guard).
 """
 
-import re
 import copy
 import os
 import pathlib
+import re
 import subprocess
 import sys
 import textwrap

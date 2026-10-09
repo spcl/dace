@@ -2,10 +2,11 @@
 """Tests constants, optional, and keyword arguments."""
 
 from types import SimpleNamespace
-import dace
+
 import numpy as np
 import pytest
 
+import dace
 from dace.frontend.python.common import DaceSyntaxError, SDFGConvertible
 from dace.transformation.pass_pipeline import FixedPointPipeline
 
@@ -538,8 +539,8 @@ def test_constant_propagation():
 
     # Ensure condition was folded
     sdfg = conditional_val.to_sdfg(val=3, simplify=True)
-    from dace.transformation.passes.dead_state_elimination import DeadStateElimination
     from dace.transformation.passes.constant_propagation import ConstantPropagation
+    from dace.transformation.passes.dead_state_elimination import DeadStateElimination
 
     simp_pipeline = FixedPointPipeline([ConstantPropagation(), DeadStateElimination()])
     res = dict()
@@ -583,7 +584,8 @@ def test_constant_propagation_with_normal_argument():
 
 
 def test_constant_propagation_pass():
-    from dace.transformation.passes import constant_propagation as cprop, dead_state_elimination as dse
+    from dace.transformation.passes import constant_propagation as cprop
+    from dace.transformation.passes import dead_state_elimination as dse
 
     @dace.program
     def conditional_val(A: dace.float64[20], val: dace.compiletime):

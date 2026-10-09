@@ -49,12 +49,12 @@ cycle (this module is imported by ``dace.transformation.passes`` whose subpackag
 transformations import).
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from dace import properties
 from dace.sdfg import SDFG
 from dace.transformation import pass_pipeline as ppl
-from dace.transformation.passes.parallelization_prep import ShortLoopUnroll, DEFAULT_UNROLL_LIMIT
+from dace.transformation.passes.parallelization_prep import DEFAULT_UNROLL_LIMIT, ShortLoopUnroll
 
 #: Rounds of (StateFusionExtended -> FuseMaps) run after the loops have become maps.
 FUSE_ROUNDS: int = 2
@@ -87,7 +87,7 @@ class ParallelizePipeline(ppl.Pass):
         validate: bool = False,
         validate_all: bool = False,
         unroll_limit: int = DEFAULT_UNROLL_LIMIT,
-        specialize_constants: Optional[Dict[str, Any]] = None,
+        specialize_constants: dict[str, Any] | None = None,
     ):
         self.validate = validate
         self.validate_all = validate_all
@@ -103,11 +103,11 @@ class ParallelizePipeline(ppl.Pass):
     def depends_on(self):
         return set()
 
-    def _stages(self) -> List[ppl.Pass]:
+    def _stages(self) -> list[ppl.Pass]:
         from dace.transformation.pass_pipeline import Pipeline
-        from dace.transformation.passes.canonicalize.pipeline import IvSubstitutionFissionFixpoint, StructuralCleanup
         from dace.transformation.passes.canonicalize.fuse_conditions import FuseConditions
         from dace.transformation.passes.canonicalize.fuse_loops import FuseLoops
+        from dace.transformation.passes.canonicalize.pipeline import IvSubstitutionFissionFixpoint, StructuralCleanup
         from dace.transformation.passes.fuse_maps import FuseMaps
         from dace.transformation.passes.fusion_inline import FuseStates
         from dace.transformation.passes.parallelize_loops import ParallelizeLoops
@@ -116,7 +116,7 @@ class ParallelizePipeline(ppl.Pass):
         from dace.transformation.passes.symbol_ssa import SymbolSSA
         from dace.transformation.passes.unique_loop_iterators import UniqueLoopIterators
 
-        stages: List[ppl.Pass] = [
+        stages: list[ppl.Pass] = [
             ShortLoopUnroll(self.unroll_limit),
             # Immediately after the unroll: each replay reassigns the same frontend index symbol on
             # the edge feeding its copy, so one name carries N values and nothing may be reordered
@@ -153,7 +153,7 @@ class ParallelizePipeline(ppl.Pass):
             stages.append(Pipeline([FuseStates(), FuseMaps(), FuseLoops(), FuseConditions()]))
         return stages
 
-    def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> int | None:
         """Parallelize ``sdfg`` in place.
 
         :param sdfg: The SDFG to parallelize.
@@ -179,7 +179,7 @@ def parallelize(
     validate: bool = True,
     validate_all: bool = False,
     unroll_limit: int = DEFAULT_UNROLL_LIMIT,
-    specialize_constants: Optional[Dict[str, Any]] = None,
+    specialize_constants: dict[str, Any] | None = None,
 ) -> SDFG:
     """Parallelize ``sdfg``'s loops in place and return it.
 

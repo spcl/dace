@@ -1,8 +1,8 @@
+import copy
+
 import dace
 from dace.sdfg.state import MultiConnectorEdge
 from dace.transformation import pass_pipeline as ppl
-from typing import Optional
-import copy
 from dace.transformation.transformation import explicit_cf_compatible
 
 
@@ -282,7 +282,7 @@ class CleanAccessNodeToScalarSliceToTaskletPattern(ppl.Pass):
 
         return folded
 
-    def apply_pass(self, sdfg: dace.SDFG, _) -> Optional[int]:
+    def apply_pass(self, sdfg: dace.SDFG, _) -> int | None:
         """Fold every ``A -> A_slice -> tasklet`` pattern in the SDFG hierarchy.
 
         :returns: Number of patterns folded, or ``None`` if none matched.

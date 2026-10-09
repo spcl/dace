@@ -1,9 +1,9 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 import dace.library
 import dace.sdfg.nodes
+from dace.libraries.mpi import environments
+from dace.libraries.mpi.nodes.node import MPINode, expanded_input_connectors, resolve_comm
 from dace.transformation.transformation import ExpandTransformation
-from .. import environments
-from dace.libraries.mpi.nodes.node import MPINode, resolve_comm, expanded_input_connectors
 
 
 @dace.library.expansion

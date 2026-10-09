@@ -13,27 +13,27 @@ import numpy as np
 import pytest
 import sympy
 
-from dace.symbolic import int_ceil
 from dace.libraries.layout.algebra import (
+    Block,
     Digit,
     LayoutMap,
-    Permute,
-    Block,
-    Unblock,
     Pad,
+    Permute,
     Shuffle,
-    Zip,
+    Unblock,
     Unzip,
-    identity_map,
+    Zip,
     compose_ops,
-    simplify_ops,
+    identity_map,
     is_identity,
-    physical_index_exprs,
-    op_to_dict,
     op_from_dict,
-    ops_to_list,
+    op_to_dict,
     ops_from_list,
+    ops_to_list,
+    physical_index_exprs,
+    simplify_ops,
 )
+from dace.symbolic import int_ceil
 
 N = sympy.Symbol("N", nonnegative=True, integer=True)
 M = sympy.Symbol("M", nonnegative=True, integer=True)

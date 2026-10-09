@@ -12,7 +12,7 @@ import numpy
 import pytest
 
 import dace
-from dace.transformation.layout.brute_force import sweep, best, time_cpu, time_gpu, single_default_stream
+from dace.transformation.layout.brute_force import best, single_default_stream, sweep, time_cpu, time_gpu
 from dace.transformation.layout.permute_dimensions import PermuteDimensions
 
 # Deliberately tiny: 48x32 float64 is 12 KiB per array (~36 KiB with the permuted transient). The

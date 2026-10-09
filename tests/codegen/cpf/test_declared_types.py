@@ -1,8 +1,8 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """CPF spells the type of every variable it declares: the rendered unit carries no ``auto``."""
 
-import os
 import ast
+import os
 import re
 
 import numpy as np
@@ -13,7 +13,6 @@ from dace import cpf_lowering
 from dace.codegen import cppunparse
 from dace.codegen.cpf import render
 from dace.libraries.standard.nodes.scan import INPUT_CONNECTOR_NAME, OUTPUT_CONNECTOR_NAME, Scan, ScanOp
-
 from tests.codegen.cpf.conftest import assert_standalone, build_standalone, call_standalone
 
 N = dace.symbol("N")

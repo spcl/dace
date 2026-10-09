@@ -16,9 +16,10 @@ reference lowering that likewise writes only the ``uplo`` triangle.
 
 import dace.library
 import dace.sdfg.nodes
-from dace import SDFG, SDFGState, memlet as mm, properties, symbolic
+from dace import SDFG, SDFGState, properties, symbolic
+from dace import memlet as mm
 from dace.frontend.common import op_repository as oprepo
-from dace.libraries.blas import gpu_dialect
+from dace.libraries.blas import environments, gpu_dialect
 from dace.libraries.blas.blas_helpers import to_blastype
 from dace.libraries.blas.nodes.rank_k_helpers import (
     add_coeff_arrays,
@@ -26,16 +27,13 @@ from dace.libraries.blas.nodes.rank_k_helpers import (
     beta_scale_state,
     blas_inplace,
     coeff_decl,
+    gpu_coeff_pointers,
     operand_info,
     render_scalar,
     scalar_conn_descs,
-    gpu_coeff_pointers,
 )
 from dace.symbolic import symstr
 from dace.transformation.transformation import ExpandTransformation
-
-from .. import environments
-from typing import List
 
 # Input connectors carrying a matrix operand, in BLAS argument order.
 OPERANDS = ("_a",)
@@ -55,7 +53,7 @@ class ExpandSyrkPure(ExpandTransformation):
     accumulate ``alpha * (A A^T | A^T A)`` onto it as a WCR contraction over ``k``.
     Only the ``uplo`` triangle is ever touched."""
 
-    environments: List[type] = []
+    environments: list[type] = []
 
     @staticmethod
     def expansion(node: "Syrk", state: SDFGState, sdfg: SDFG) -> SDFG:
@@ -108,7 +106,7 @@ class ExpandSyrkCBLAS(ExpandTransformation):
     """CBLAS ``cblas_?syrk`` (row-major): handles the DaCe row-major layout directly,
     so no operand transpose trick is needed (unlike the GPU path)."""
 
-    environments: List[type] = []
+    environments: list[type] = []
 
     @staticmethod
     def expansion(node: "Syrk", state: SDFGState, sdfg: SDFG):
@@ -152,7 +150,7 @@ class ExpandSyrkGPUBLAS(ExpandTransformation):
 
     dialect: gpu_dialect.GpuBlasDialect
 
-    environments: List[type] = []
+    environments: list[type] = []
     backend = "cu"
 
     @classmethod

@@ -1,27 +1,26 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 """Subgraph Transformation Helper API"""
 
+import copy
+
 from dace import subsets
 from dace.sdfg import nodes
 from dace.sdfg.graph import SubgraphView
-
-import copy
-from typing import List, Dict
 
 # ****************
 # Helper functions
 
 
-def common_map_base_ranges(ranges: List[subsets.Range]) -> List[subsets.Range]:
+def common_map_base_ranges(ranges: list[subsets.Range]) -> list[subsets.Range]:
     """Finds a maximal set of ranges that can be found
     in every instance of the ranges in the given list
     """
     if len(ranges) == 0:
         return None
     # first pass: find maximal set
-    range_base = [rng for rng in ranges[0]]
+    range_base = list(ranges[0])
     for current_range in ranges:
-        tmp = [rng for rng in current_range]
+        tmp = list(current_range)
 
         range_base_new = []
         for element in tmp:
@@ -34,7 +33,7 @@ def common_map_base_ranges(ranges: List[subsets.Range]) -> List[subsets.Range]:
     return range_base
 
 
-def find_reassignment(maps: List[nodes.Map], common_ranges, offset=False) -> Dict[nodes.Map, List]:
+def find_reassignment(maps: list[nodes.Map], common_ranges, offset=False) -> dict[nodes.Map, list]:
     """Provided a list of maps and their common base ranges
     (found via common_map_base_ranges()),
     for each map greedily assign each loop to an index so that
@@ -54,7 +53,7 @@ def find_reassignment(maps: List[nodes.Map], common_ranges, offset=False) -> Dic
              for each map loop that maps it to a
              common base range or '-1' if it does not.
     """
-    result = {m: None for m in maps}
+    result = dict.fromkeys(maps)
     outer_ranges_dict = dict(enumerate(common_ranges))
 
     for m in maps:
@@ -185,10 +184,8 @@ def subgraph_from_maps(sdfg, graph, map_entries, scope_children=None):
     node_set = set()
     for map_entry in map_entries:
         node_set |= set(scope_children[map_entry])
-        node_set |= set(
-            e.dst for e in graph.out_edges(graph.exit_node(map_entry)) if isinstance(e.dst, nodes.AccessNode)
-        )
-        node_set |= set(e.src for e in graph.in_edges(map_entry) if isinstance(e.src, nodes.AccessNode))
+        node_set |= {e.dst for e in graph.out_edges(graph.exit_node(map_entry)) if isinstance(e.dst, nodes.AccessNode)}
+        node_set |= {e.src for e in graph.in_edges(map_entry) if isinstance(e.src, nodes.AccessNode)}
 
         node_set.add(map_entry)
 

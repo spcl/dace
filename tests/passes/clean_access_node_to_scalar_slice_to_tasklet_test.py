@@ -11,9 +11,9 @@ Covers the two cases the pass distinguishes for the frontend
   implicit cast instead of failing in ``CopyNDDynamic``.
 """
 
-import dace
 import numpy as np
 
+import dace
 from dace.transformation.passes.clean_access_node_to_scalar_slice_to_tasklet_pattern import (
     CleanAccessNodeToScalarSliceToTaskletPattern,
 )

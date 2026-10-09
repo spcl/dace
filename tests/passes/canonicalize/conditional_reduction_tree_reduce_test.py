@@ -30,8 +30,8 @@ import numpy as np
 import pytest
 
 import dace
-from dace.transformation.passes.canonicalize.pipeline import canonicalize
 from dace.transformation.passes.canonicalize.finalize import finalize_for_target, offload_to_gpu
+from dace.transformation.passes.canonicalize.pipeline import canonicalize
 
 N = dace.symbol("N")
 K = dace.symbol("K")

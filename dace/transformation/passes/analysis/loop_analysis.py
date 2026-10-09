@@ -4,12 +4,12 @@ Various analyses concerning LopoRegions, and utility functions to get informatio
 """
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple
-from dace.frontend.python import astutils
+from typing import TYPE_CHECKING, Optional
 
 import sympy
 
 from dace import symbolic
+from dace.frontend.python import astutils
 from dace.sdfg.state import (
     AbstractControlFlowRegion,
     BreakBlock,
@@ -28,7 +28,7 @@ if TYPE_CHECKING:
     from dace.sdfg.sdfg import SDFG
 
 
-def symbol_use_sites(sdfg: "SDFG") -> Tuple[Dict[str, Set[int]], Set[str]]:
+def symbol_use_sites(sdfg: "SDFG") -> tuple[dict[str, set[int]], set[str]]:
     """One walk of ``sdfg`` indexing where each symbol is used: name -> ``id()`` of every block and
     inter-state edge that references it, plus the set of names any data descriptor's shape or strides
     mention (anywhere in the SDFG tree, since a nested descriptor is materialised just as eagerly).
@@ -41,7 +41,7 @@ def symbol_use_sites(sdfg: "SDFG") -> Tuple[Dict[str, Set[int]], Set[str]]:
     blocks. A state must be asked WITH contents: ``SDFGState.used_symbols(with_contents=False)`` returns
     the empty set, which would silently hide every real use.
     """
-    uses: Dict[str, Set[int]] = {}
+    uses: dict[str, set[int]] = {}
     for block in sdfg.all_control_flow_blocks():
         with_contents = not isinstance(block, AbstractControlFlowRegion)
         for name in block.used_symbols(all_symbols=True, with_contents=with_contents):
@@ -49,7 +49,7 @@ def symbol_use_sites(sdfg: "SDFG") -> Tuple[Dict[str, Set[int]], Set[str]]:
     for edge in sdfg.all_interstate_edges():
         for name in set(edge.data.free_symbols) | set(edge.data.assignments):
             uses.setdefault(name, set()).add(id(edge))
-    descriptor_symbols: Set[str] = set()
+    descriptor_symbols: set[str] = set()
     for nested in sdfg.all_sdfgs_recursive():
         for desc in nested.arrays.values():
             descriptor_symbols.update(str(s) for s in desc.free_symbols)
@@ -57,7 +57,7 @@ def symbol_use_sites(sdfg: "SDFG") -> Tuple[Dict[str, Set[int]], Set[str]]:
 
 
 def symbol_used_outside(
-    name: str, inside_sites: Set[int], use_sites: Dict[str, Set[int]], descriptor_symbols: Set[str]
+    name: str, inside_sites: set[int], use_sites: dict[str, set[int]], descriptor_symbols: set[str]
 ) -> bool:
     """Whether ``name`` is read or written at any site not in ``inside_sites``.
 
@@ -74,8 +74,8 @@ def counter_used_outside_loop(
     name: str,
     loop: LoopRegion,
     sdfg: "SDFG",
-    use_sites: Optional[Dict[str, Set[int]]] = None,
-    descriptor_symbols: Optional[Set[str]] = None,
+    use_sites: dict[str, set[int]] | None = None,
+    descriptor_symbols: set[str] | None = None,
 ) -> bool:
     """Whether ``name`` is read or written anywhere outside ``loop``.
 
@@ -107,13 +107,13 @@ def rebinds_counter(block: ControlFlowBlock, name: str) -> bool:
     return init is not None and name not in symbolic.free_symbols_and_functions(init)
 
 
-def loop_jumps(loop: LoopRegion) -> List[ControlFlowBlock]:
+def loop_jumps(loop: LoopRegion) -> list[ControlFlowBlock]:
     """The ``break`` and ``continue`` blocks that target ``loop``.
 
     A jump targets its innermost enclosing loop, so the walk descends through conditional branches
     and plain regions but not into nested loops.
     """
-    jumps: List[ControlFlowBlock] = []
+    jumps: list[ControlFlowBlock] = []
     stack = list(loop.nodes())
     while stack:
         block = stack.pop()
@@ -127,13 +127,13 @@ def loop_jumps(loop: LoopRegion) -> List[ControlFlowBlock]:
     return jumps
 
 
-def get_loop_end(loop: LoopRegion) -> Optional[symbolic.SymbolicType]:
+def get_loop_end(loop: LoopRegion) -> symbolic.SymbolicType | None:
     """
     Parse a loop region to identify the end value of the iteration variable under normal loop termination (no break).
     """
     if loop.loop_variable is None or loop.loop_variable == "":
         return None
-    end: Optional[symbolic.SymbolicType] = None
+    end: symbolic.SymbolicType | None = None
     a = sympy.Wild("a")
     condition = symbolic.pystr_to_symbolic(loop.loop_condition.as_string)
     itersym = symbolic.pystr_to_symbolic(loop.loop_variable)
@@ -155,7 +155,7 @@ def get_loop_end(loop: LoopRegion) -> Optional[symbolic.SymbolicType]:
     return end
 
 
-def assignment_text(stmt: Optional["CodeBlock"], variable: Optional[str]) -> Optional[str]:
+def assignment_text(stmt: Optional["CodeBlock"], variable: str | None) -> str | None:
     """
     The right-hand side text a loop's init or update statement assigns to ``variable``.
 
@@ -165,7 +165,7 @@ def assignment_text(stmt: Optional["CodeBlock"], variable: Optional[str]) -> Opt
     """
     if stmt is None:
         return None
-    assignments: Dict[str, str] = {}
+    assignments: dict[str, str] = {}
     for code in stmt.code if isinstance(stmt.code, list) else [stmt.code]:
         visitor = astutils.FindAssignment()
         visitor.visit(code)
@@ -178,7 +178,7 @@ def assignment_text(stmt: Optional["CodeBlock"], variable: Optional[str]) -> Opt
     return assignments.get(variable)
 
 
-def get_init_assignment(loop: LoopRegion) -> Optional[symbolic.SymbolicType]:
+def get_init_assignment(loop: LoopRegion) -> symbolic.SymbolicType | None:
     """
     Parse a loop region's init statement to identify the exact init assignment expression.
     """
@@ -186,7 +186,7 @@ def get_init_assignment(loop: LoopRegion) -> Optional[symbolic.SymbolicType]:
     return None if text is None else symbolic.pystr_to_symbolic(text)
 
 
-def get_update_assignment(loop: LoopRegion) -> Optional[symbolic.SymbolicType]:
+def get_update_assignment(loop: LoopRegion) -> symbolic.SymbolicType | None:
     """
     Parse a loop region's update statement to identify the exact update assignment expression.
     """
@@ -194,7 +194,7 @@ def get_update_assignment(loop: LoopRegion) -> Optional[symbolic.SymbolicType]:
     return None if text is None else symbolic.pystr_to_symbolic(text)
 
 
-def get_loop_stride(loop: LoopRegion) -> Optional[symbolic.SymbolicType]:
+def get_loop_stride(loop: LoopRegion) -> symbolic.SymbolicType | None:
     update_assignment = get_update_assignment(loop)
     if update_assignment:
         return update_assignment - symbolic.pystr_to_symbolic(loop.loop_variable)
@@ -296,15 +296,15 @@ class InductionVariable:
     loop: LoopRegion
     kind: str  # 'basic' | 'derived'
     basis: Optional["InductionVariable"] = None
-    scale: Optional[symbolic.SymbolicType] = None
-    offset: Optional[symbolic.SymbolicType] = None
+    scale: symbolic.SymbolicType | None = None
+    offset: symbolic.SymbolicType | None = None
 
 
 def affine_in_iv(
     expr: symbolic.SymbolicType,
-    ivs: Dict[str, "InductionVariable"],
-    invariant_syms: Optional[Set[str]] = None,
-) -> Optional[Tuple[Optional[str], symbolic.SymbolicType, symbolic.SymbolicType]]:
+    ivs: dict[str, "InductionVariable"],
+    invariant_syms: set[str] | None = None,
+) -> tuple[str | None, symbolic.SymbolicType, symbolic.SymbolicType] | None:
     """
     If ``expr`` equals ``scale * iv + offset`` for some iv in ``ivs`` with
     loop-invariant ``scale`` and ``offset``, return a triple
@@ -399,7 +399,7 @@ def affine_in_iv(
     return None
 
 
-def _collect_tasklet_derived_ivs(loop: LoopRegion, pending: Dict[str, str]) -> None:
+def _collect_tasklet_derived_ivs(loop: LoopRegion, pending: dict[str, str]) -> None:
     """
     Populate ``pending`` with single-assignment Python tasklets in the loop's
     start state that write to a scalar data descriptor. The key is the data
@@ -407,9 +407,9 @@ def _collect_tasklet_derived_ivs(loop: LoopRegion, pending: Dict[str, str]) -> N
     understand this refers to a data descriptor, not a DaCe symbol.
     """
     # Local imports to avoid import cycles at module load.
+    from dace import dtypes
     from dace.sdfg import nodes
     from dace.sdfg.state import SDFGState
-    from dace import dtypes
 
     try:
         start = loop.start_block
@@ -456,7 +456,7 @@ def _collect_tasklet_derived_ivs(loop: LoopRegion, pending: Dict[str, str]) -> N
         pending.setdefault(out_data, rhs_str)
 
 
-def detect_induction_variables(loop: LoopRegion) -> Dict[str, InductionVariable]:
+def detect_induction_variables(loop: LoopRegion) -> dict[str, InductionVariable]:
     """
     Classify induction variables of ``loop``: the loop variable itself as a
     basic IV, plus any symbol assigned on an interstate edge within the loop,
@@ -472,7 +472,7 @@ def detect_induction_variables(loop: LoopRegion) -> Dict[str, InductionVariable]
     exits. Callers that need trip-count accuracy should combine this with
     ``get_loop_end``.
     """
-    ivs: Dict[str, InductionVariable] = {}
+    ivs: dict[str, InductionVariable] = {}
     if not loop.loop_variable:
         return ivs
     start = get_init_assignment(loop)
@@ -491,8 +491,8 @@ def detect_induction_variables(loop: LoopRegion) -> Dict[str, InductionVariable]
     )
 
     # Collect candidate derived IV assignments.
-    pending: Dict[str, str] = {}
-    rejected: Set[str] = set()
+    pending: dict[str, str] = {}
+    rejected: set[str] = set()
     for e in loop.all_interstate_edges():
         for name, rhs in e.data.assignments.items():
             if name == loop.loop_variable:

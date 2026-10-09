@@ -12,7 +12,6 @@ import os
 import subprocess
 import sys
 import textwrap
-from typing import Dict, List
 
 BLOCK_IDXALG = textwrap.dedent("""
     import sys
@@ -34,9 +33,9 @@ BLOCK_IDXALG = textwrap.dedent("""
 def run_isolated(body: str, env_backend: str) -> subprocess.CompletedProcess:
     """Run `body` in a fresh interpreter with idxalg unimportable and the backend pinned."""
     script = BLOCK_IDXALG + textwrap.dedent(body)
-    argv: List[str] = [sys.executable, "-c", script]
+    argv: list[str] = [sys.executable, "-c", script]
     # Inherit the environment so the child resolves the same DaCe; only the backend is pinned.
-    env: Dict[str, str] = dict(os.environ)
+    env: dict[str, str] = dict(os.environ)
     env["DACE_SYMBOLIC_BACKEND"] = env_backend
     return subprocess.run(argv, capture_output=True, text=True, env=env)
 

@@ -1,14 +1,12 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Insert relayout states on line-graph boundaries, one `LayoutChange` node per changed array."""
 
-from typing import Dict, List, Tuple
-
 from dace import SDFG, SDFGState
 from dace.libraries.layout import add_layout_change
 
 
 def relayout_on_boundary(
-    sdfg: SDFG, dst_state: SDFGState, changes: Dict[str, Tuple[str, List]], make_transient: bool = True
+    sdfg: SDFG, dst_state: SDFGState, changes: dict[str, tuple[str, list]], make_transient: bool = True
 ) -> SDFGState:
     """Insert a relayout state before `dst_state`; `changes` = {in_array: (out_array, ops)}."""
     if not changes:

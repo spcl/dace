@@ -8,7 +8,6 @@ numpy and against the runtime build of the same SDFG.
 """
 
 import copy
-from typing import Dict
 
 import numpy as np
 import pytest
@@ -18,7 +17,6 @@ from dace.codegen.cpf import render as render_sdfg
 from dace.libraries.standard.nodes.copy import CopyLibraryNode
 from dace.transformation.passes.canonicalize.finalize import finalize_for_target
 from dace.transformation.passes.insert_explicit_copies import InsertExplicitCopies
-
 from tests.codegen.cpf.conftest import assert_matches, assert_standalone, build_standalone, call_standalone
 
 LANGUAGES = ("c", "c++")
@@ -39,8 +37,8 @@ def lifted_copies(sdfg: dace.SDFG) -> int:
 
 
 def render_and_run(
-    sdfg: dace.SDFG, arguments: Dict[str, np.ndarray], language: str
-) -> Dict[str, Dict[str, np.ndarray]]:
+    sdfg: dace.SDFG, arguments: dict[str, np.ndarray], language: str
+) -> dict[str, dict[str, np.ndarray]]:
     """Render ``sdfg`` in ``language`` and run the rendering and the runtime build on separate copies.
 
     :param sdfg: the SDFG to render and run.

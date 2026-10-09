@@ -2,17 +2,19 @@
 """DaCe Python parsing functionality and entry point to Python frontend."""
 
 import collections
-import itertools
-import tempfile
 import copy
+import itertools
 import os
-from typing import Any, Callable, Dict, OrderedDict, List, Optional, Set, Tuple, Union
+import tempfile
+from collections import OrderedDict
+from collections.abc import Callable
+from typing import Any
 
 # Try importing ML dependencies
 try:
     import torch
-    from torch import Tensor
     import torch.nn as nn
+    from torch import Tensor
     from torch.onnx import TrainingMode
 
     TORCH_AVAILABLE = True
@@ -33,16 +35,16 @@ except ImportError:
 
 from dace import config, data
 from dace.codegen import compiled_sdfg
-from dace.sdfg import SDFG, nodes
-from dace.frontend.python import common as pycommon
 from dace.data import find_new_name
+from dace.frontend.python import common as pycommon
+from dace.sdfg import SDFG, nodes
 
 if TORCH_AVAILABLE and ONNX_AVAILABLE:
-    from dace.libraries.onnx.converters import clean_onnx_name
-    from dace.libraries.torch import dispatchers
     from dace.autodiff import torch as torch_autodiff
     from dace.autodiff.library import library as autodiff_library
     from dace.frontend.ml.onnx import ONNXModel
+    from dace.libraries.onnx.converters import clean_onnx_name
+    from dace.libraries.torch import dispatchers
     from dace.transformation.onnx import auto_optimize_onnx as auto_opt
 else:
     clean_onnx_name = None
@@ -54,7 +56,7 @@ else:
 
 if TORCH_AVAILABLE and ONNX_AVAILABLE:
 
-    def _onnx_delete_initializers(model: onnx.ModelProto, names: Set[str]) -> None:
+    def _onnx_delete_initializers(model: onnx.ModelProto, names: set[str]) -> None:
         """
         Delete the given initializers from the given onnx model.
 
@@ -108,26 +110,26 @@ if TORCH_AVAILABLE and ONNX_AVAILABLE:
         def __init__(
             self,
             module: nn.Module,
-            dummy_inputs: Optional[Tuple[torch.Tensor, ...]] = None,
-            cuda: Optional[bool] = None,
+            dummy_inputs: tuple[torch.Tensor, ...] | None = None,
+            cuda: bool | None = None,
             training: bool = False,
             backward: bool = False,
-            inputs_to_skip: Optional[List[str]] = None,
+            inputs_to_skip: list[str] | None = None,
             onnx_simplify: bool = True,
             simplify: bool = True,
             auto_optimize: bool = False,
             debug_transients: bool = False,
             compile_torch_extension: bool = True,
-            sdfg_name: Optional[str] = None,
+            sdfg_name: str | None = None,
         ):
 
-            super(DaceModule, self).__init__()
+            super().__init__()
 
             self.backward = backward
             self.model = module
-            self.dace_model: Optional[ONNXModel] = None
+            self.dace_model: ONNXModel | None = None
             self.training = training
-            self.sdfg: Optional[SDFG] = None
+            self.sdfg: SDFG | None = None
             self.use_cuda = cuda
             self.sdfg_name = sdfg_name or type(module).__name__
             self.auto_optimize = auto_optimize
@@ -138,7 +140,7 @@ if TORCH_AVAILABLE and ONNX_AVAILABLE:
             self.inputs_to_skip = inputs_to_skip or []
 
             self.function = None
-            self._gradient_buffers: Optional[List[str]] = None
+            self._gradient_buffers: list[str] | None = None
 
             #: hooks that are executed after onnx graph is imported to an SDFG
             self.post_onnx_hooks: OrderedDict[str, Callable[[DaceModule], None]] = collections.OrderedDict()
@@ -374,7 +376,7 @@ if TORCH_AVAILABLE and ONNX_AVAILABLE:
 
                 # save the parameters as they are now for later access
                 self._exported_parameters = dict(
-                    (n, p) for n, p in itertools.chain(self.model.named_parameters(), self.model.named_buffers())
+                    itertools.chain(self.model.named_parameters(), self.model.named_buffers())
                 )
 
                 _onnx_delete_initializers(onnx_model_exported, input_names)
@@ -392,7 +394,7 @@ if TORCH_AVAILABLE and ONNX_AVAILABLE:
 
                 self.sdfg.validate()
 
-                for _, hook in self.post_onnx_hooks.items():
+                for hook in self.post_onnx_hooks.values():
                     hook(self)
 
                 # choose the backend that will generate the function to call during
@@ -421,7 +423,7 @@ if TORCH_AVAILABLE and ONNX_AVAILABLE:
                         torch_autodiff.make_backward_function(dace_model, required_gradients)
                     )
 
-                    for _, hook in self.post_autodiff_hooks.items():
+                    for hook in self.post_autodiff_hooks.values():
                         hook(self.forward_sdfg, self.backward_sdfg)
                     self.compiled_function = function_generator(self, dummy_inputs)
                 else:
@@ -435,7 +437,7 @@ if TORCH_AVAILABLE and ONNX_AVAILABLE:
 
                 return forward
 
-        def _call_params(self) -> Tuple[Union[Tensor, nn.parameter.Parameter], ...]:
+        def _call_params(self) -> tuple[Tensor | nn.parameter.Parameter, ...]:
             """
             Get the parameters that we need to pass to the model, in the correct order.
 
@@ -487,7 +489,7 @@ if TORCH_AVAILABLE and ONNX_AVAILABLE:
                     autodiff_library.ParameterArray.make_parameter(self.sdfg, onnx_name)
             return self.sdfg
 
-        def _add_gradient_buffers(self) -> List[str]:
+        def _add_gradient_buffers(self) -> list[str]:
             """
             Allocate gradient buffers for all parameters, and add their descriptors to the SDFG.
 
@@ -545,7 +547,7 @@ if TORCH_AVAILABLE and ONNX_AVAILABLE:
             t.requires_grad = param.requires_grad
             return t
 
-        def __sdfg_closure__(self, reevaluate: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+        def __sdfg_closure__(self, reevaluate: dict[str, str] | None = None) -> dict[str, Any]:
             """
             Get the SDFG closure (SDFGConvertible interface).
 
@@ -566,9 +568,9 @@ if TORCH_AVAILABLE and ONNX_AVAILABLE:
 
         def closure_resolver(
             self,
-            constant_args: Dict[str, Any],
-            given_args: Set[str],
-            parent_closure: Optional[pycommon.SDFGClosure] = None,
+            constant_args: dict[str, Any],
+            given_args: set[str],
+            parent_closure: pycommon.SDFGClosure | None = None,
         ) -> pycommon.SDFGClosure:
             """
             Resolve closure for SDFG execution (SDFGConvertible interface).

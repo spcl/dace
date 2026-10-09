@@ -1,47 +1,40 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import collections
-from typing import Type
-
-import dace.frontend.common.op_repository as dace_op_repo
-from dace.frontend.python.newast import ProgramVisitor
-from dace import config, SDFG, SDFGState
-from dace.properties import Property, ListProperty
-from dace.transformation.transformation import ExpandTransformation
-
-from dace.libraries.onnx.nodes.node_utils import parse_variadic_param
-from dace.libraries.onnx.schema import (
-    ONNXSchema,
-    ONNXAttributeType,
-    _ATTR_TYPE_TO_PYTHON_TYPE,
-    ONNXParameterType,
-    ONNXAttribute,
-    ONNXParameter,
-    ONNXTypeConstraint,
-)
-
-import dace.libraries.onnx.nodes.onnx_op as onnx_op
-from dace.frontend.python.common import StringLiteral
 
 import onnx
+
+import dace.frontend.common.op_repository as dace_op_repo
+import dace.libraries.onnx.nodes.onnx_op as onnx_op
+from dace import SDFG, SDFGState, config
+from dace.frontend.python.common import StringLiteral
+from dace.frontend.python.newast import ProgramVisitor
+from dace.libraries.onnx.nodes.node_utils import parse_variadic_param
+from dace.libraries.onnx.schema import (
+    _ATTR_TYPE_TO_PYTHON_TYPE,
+    ONNXAttribute,
+    ONNXAttributeType,
+    ONNXParameter,
+    ONNXParameterType,
+    ONNXSchema,
+    ONNXTypeConstraint,
+)
+from dace.properties import ListProperty, Property
+from dace.transformation.transformation import ExpandTransformation
 
 
 def _get_typecons_docstring(cons: ONNXTypeConstraint) -> str:
     """Generate documentation string for type constraints."""
-    return "    * **{}** -- {}".format(
-        cons.type_str, ", ".join(":class:`{}`".format(t.to_string()) for t in cons.types)
-    )
+    return "    * **{}** -- {}".format(cons.type_str, ", ".join(f":class:`{t.to_string()}`" for t in cons.types))
 
 
 def _get_connector_docstring(param: ONNXParameter) -> str:
     """Generate documentation string for connectors."""
-    return "    * **{}** ({}, {}) -- {}".format(
-        param.name, param.type_str, param.param_type.name.lower(), param.description
-    )
+    return f"    * **{param.name}** ({param.type_str}, {param.param_type.name.lower()}) -- {param.description}"
 
 
 def _get_attr_docstring(attr: ONNXAttribute) -> str:
     """Generate documentation string for attributes."""
-    param_doc = ":param {}: {}".format(attr.name, attr.description)
+    param_doc = f":param {attr.name}: {attr.description}"
 
     if attr.attribute_type is ONNXAttributeType.Unsupported:
         return ""
@@ -51,15 +44,15 @@ def _get_attr_docstring(attr: ONNXAttribute) -> str:
     else:
         type_string = _ATTR_TYPE_TO_PYTHON_TYPE[attr.attribute_type].__name__
 
-    type_string = ":class:`{}`".format(type_string)
+    type_string = f":class:`{type_string}`"
 
     if attr.attribute_type in [ONNXAttributeType.Ints, ONNXAttributeType.Floats, ONNXAttributeType.Strings]:
-        type_string = ":class:`List` [{}]".format(type_string)
+        type_string = f":class:`List` [{type_string}]"
 
     if not attr.required:
-        type_string = ":class:`Optional` [{}], default={}".format(type_string, repr(attr.default_value))
+        type_string = f":class:`Optional` [{type_string}], default={repr(attr.default_value)}"
 
-    param_type = ":type {}: {}".format(attr.name, type_string)
+    param_type = f":type {attr.name}: {type_string}"
 
     return param_doc + "\n" + param_type
 
@@ -71,16 +64,16 @@ def _get_all_schemas():
         name_to_schemas[schema.name].append(schema)
 
     all_schemas = []
-    for name, schemas in name_to_schemas.items():
+    for schemas in name_to_schemas.values():
         all_schemas.extend(schemas)
 
     return all_schemas
 
 
-def register_op_repo_replacement(cls: Type[onnx_op.ONNXOp], cls_name: str, dace_schema: ONNXSchema):
+def register_op_repo_replacement(cls: type[onnx_op.ONNXOp], cls_name: str, dace_schema: ONNXSchema):
     """Register an op repository replacement for the given ONNX operation class."""
 
-    @dace_op_repo.replaces("dace.libraries.onnx.{}".format(cls_name))
+    @dace_op_repo.replaces(f"dace.libraries.onnx.{cls_name}")
     def op_repo_replacement(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, **kwargs):
         attrs = {name: value for name, value in kwargs.items() if name in dace_schema.attributes}
         # Remove used attrs
@@ -163,17 +156,15 @@ def _initialize_onnx_registry():
     _REGISTRY_INITIALIZED = True
 
     # Import these here to avoid circular imports at module load time
-    from dace.libraries.onnx.forward_implementation_abc import ONNXForward
     import dace.libraries.onnx.op_implementations  # Registers implementations
+    from dace.libraries.onnx.forward_implementation_abc import ONNXForward
 
     # Generate all of the Op Nodes
     for schema in _get_all_schemas():
         try:
             dace_schema = ONNXSchema.from_onnx_proto(schema)
             # If the schema has a parameter name that exists as both an input and an output, prepend "in_" and "out_"
-            intersecting_names = set(i.name for i in dace_schema.inputs).intersection(
-                o.name for o in dace_schema.outputs
-            )
+            intersecting_names = {i.name for i in dace_schema.inputs}.intersection(o.name for o in dace_schema.outputs)
             for name in intersecting_names:
                 in_cands = [i for i in dace_schema.inputs if i.name == name]
                 out_cands = [i for i in dace_schema.outputs if i.name == name]
@@ -183,7 +174,7 @@ def _initialize_onnx_registry():
 
         except Exception as e:
             if config.Config.get_bool("debugprint"):
-                print("Import of {} failed: {}".format(schema.name, e))
+                print(f"Import of {schema.name} failed: {e}")
             continue
 
         attrs = {}
@@ -211,7 +202,7 @@ def _initialize_onnx_registry():
                     default=None if attr.default_value is None else attr.default_value,
                 )
             elif attr.required:
-                raise NotImplementedError("Required attribute '{}' has an unsupported type".format(attr.name))
+                raise NotImplementedError(f"Required attribute '{attr.name}' has an unsupported type")
 
         required_attrs = {name for name, attr in dace_schema.attributes.items() if attr.required}
 
@@ -236,7 +227,7 @@ def _initialize_onnx_registry():
             self.backward_implementation = None
 
             if len(args) > 0:
-                raise TypeError("__init__() takes 1 positional arguments but {} were given".format(1 + len(args)))
+                raise TypeError(f"__init__() takes 1 positional arguments but {1 + len(args)} were given")
 
             missing_arguments = required_attrs.difference(op_attributes)
             if len(missing_arguments) > 0:
@@ -247,9 +238,7 @@ def _initialize_onnx_registry():
             unknown_attrs = set(op_attributes).difference(self.schema.attributes)
             if len(unknown_attrs) > 0:
                 raise TypeError(
-                    "{}.__init__() got an unexpected keyword argument '{}'".format(
-                        self.schema.name, list(unknown_attrs)[0]
-                    )
+                    f"{self.schema.name}.__init__() got an unexpected keyword argument '{list(unknown_attrs)[0]}'"
                 )
 
             for name, attr in op_attributes.items():

@@ -14,9 +14,9 @@ import numpy as np
 import pytest
 
 import dace
-from dace.transformation.layout.isolation import set_openmp_thread_count
 from dace.libraries.standard.nodes import FindFirst
 from dace.libraries.standard.nodes.find_first import INDEX_NAME, OUTPUT_CONNECTOR_NAME
+from dace.transformation.layout.isolation import set_openmp_thread_count
 
 N = dace.symbol("N")
 

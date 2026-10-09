@@ -10,8 +10,8 @@ import pytest
 
 import dace
 from dace.sdfg.state import LoopRegion
-from dace.transformation.passes.analysis.loop_analysis import loop_provably_at_most_one_iteration
 from dace.transformation.interstate.loop_to_map import LoopToMap
+from dace.transformation.passes.analysis.loop_analysis import loop_provably_at_most_one_iteration
 
 N = dace.symbol("N", nonnegative=True)
 

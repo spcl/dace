@@ -2,9 +2,9 @@
 """Tests for build_relayout: lower a layout-algebra op sequence to a materialized copy."""
 
 import numpy
-import dace
 
-from dace.libraries.layout.algebra import Permute, Block, Unblock
+import dace
+from dace.libraries.layout.algebra import Block, Permute, Unblock
 from dace.libraries.layout.lowering import build_relayout
 
 N = dace.symbol("N")

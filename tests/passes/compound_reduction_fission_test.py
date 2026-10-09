@@ -13,9 +13,9 @@ tests below pin the expected behavior so the fix lands with a contract.
 """
 
 import dace
-from dace.sdfg.state import LoopRegion
 from dace.libraries.standard.nodes import Reduce
 from dace.sdfg import nodes
+from dace.sdfg.state import LoopRegion
 from dace.transformation.dataflow.trivial_tasklet_elimination import TrivialTaskletElimination
 from dace.transformation.dataflow.wcr_conversion import AugAssignToWCR
 from dace.transformation.interstate.loop_to_map import LoopToMap

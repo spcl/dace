@@ -45,10 +45,10 @@ from dace.libraries.tileops.dispatch import detect_host_isa
 from dace.sdfg import nodes as nd
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
 from dace.transformation.passes.vectorization.config import VectorizeConfig
-from dace.transformation.passes.vectorization.enums import ISA, RemainderStrategy, BranchMode
+from dace.transformation.passes.vectorization.enums import ISA, BranchMode, RemainderStrategy
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
-from tests.passes.vectorization.tile_assertions import assert_tiled_unless_pinned
 from tests.corpus.tsvc_2_5 import tsvc_2_5, tsvc_2_5_numpy
+from tests.passes.vectorization.tile_assertions import assert_tiled_unless_pinned
 
 PEEL_LIMIT = 4
 BREAK_ANTI_DEP = True
@@ -100,7 +100,7 @@ MULTIDIM_KNOBS = [
 def _oracle(program):
     """The numpy oracle for a kernel: ``ref_`` + name with any ``ext_`` dropped."""
     base = program.name.rsplit("tsvc_2_5_", 1)[-1]
-    return getattr(tsvc_2_5_numpy, "ref_" + (base[4:] if base.startswith("ext_") else base))
+    return getattr(tsvc_2_5_numpy, "ref_" + (base.removeprefix("ext_")))
 
 
 def _allclose(a, b) -> bool:

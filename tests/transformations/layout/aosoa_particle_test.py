@@ -9,8 +9,8 @@ into the AoSoA array and the output unpacked back to per-field vectors.
 """
 
 import numpy
-import dace
 
+import dace
 from dace.transformation.layout.zip_arrays import aosoa_layout
 
 N = dace.symbol("N")

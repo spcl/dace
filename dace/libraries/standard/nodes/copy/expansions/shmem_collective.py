@@ -4,15 +4,15 @@
 from typing import TYPE_CHECKING
 
 import dace
-from dace import library, nodes, dtypes
+from dace import dtypes, library, nodes
+from dace.libraries.standard.nodes.copy.common import (
+    INPUT_CONNECTOR_NAME,
+    OUTPUT_CONNECTOR_NAME,
+    _build_shmem_collective_copy_code,
+)
 from dace.libraries.standard.nodes.copy.node import CopyLibraryNode
 from dace.sdfg.scope import is_in_scope
 from dace.transformation.transformation import ExpandTransformation
-from dace.libraries.standard.nodes.copy.common import (
-    _build_shmem_collective_copy_code,
-    INPUT_CONNECTOR_NAME,
-    OUTPUT_CONNECTOR_NAME,
-)
 
 if TYPE_CHECKING:
     pass

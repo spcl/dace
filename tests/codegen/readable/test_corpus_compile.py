@@ -179,7 +179,7 @@ def build_and_run(family, name, implementation, target):
         with use_implementation(implementation), without_fma_contraction(), without_simd():
             sdfg = load_program(family, name).to_sdfg(simplify=True)
             sdfg.name = f"{sdfg.name}_{implementation}_{target}"
-            symbols = {symbol: SYMBOL_SIZE for symbol in map(str, sdfg.free_symbols)}
+            symbols = dict.fromkeys(map(str, sdfg.free_symbols), SYMBOL_SIZE)
             symbols.update({s: v for s, v in SYMBOL_OVERRIDES.get(name, {}).items() if s in symbols})
             if target == "gpu":
                 sdfg.apply_gpu_transformations()

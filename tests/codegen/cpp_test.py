@@ -1,9 +1,9 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 
-from functools import reduce
-from operator import mul
 import re
 import warnings
+from functools import reduce
+from operator import mul
 
 from dace import SDFG, Memlet, config, dtypes, symbol
 from dace.codegen import codegen

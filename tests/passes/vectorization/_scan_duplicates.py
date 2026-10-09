@@ -25,12 +25,11 @@ Not a test; not picked up by pytest collection.
 import ast
 import pathlib
 from collections import defaultdict
-from typing import Dict, List, Optional, Tuple
 
 ROOT = pathlib.Path(__file__).parent
 
 
-def walk_test_files() -> List[pathlib.Path]:
+def walk_test_files() -> list[pathlib.Path]:
     """Every test_*.py + _get_*_sdfg helper file under the vectorization tree."""
     return sorted(p for p in ROOT.rglob("*.py") if p.name.startswith(("test_", "helpers")) or p.name == "harness.py")
 
@@ -52,14 +51,14 @@ def _is_pytest_skip(decorator: ast.expr) -> bool:
     return False
 
 
-def _statement_opcodes(fn: ast.FunctionDef) -> Tuple[str, ...]:
+def _statement_opcodes(fn: ast.FunctionDef) -> tuple[str, ...]:
     """Linearised opcode sequence: each ``ast`` node type, depth-first.
 
     Ignores names and literal values so equivalent kernels under different
     variable names still match. Truncated at 200 nodes to keep the
     fingerprint comparison cheap.
     """
-    seq: List[str] = []
+    seq: list[str] = []
     for node in ast.walk(fn):
         seq.append(type(node).__name__)
         if len(seq) >= 200:
@@ -67,7 +66,7 @@ def _statement_opcodes(fn: ast.FunctionDef) -> Tuple[str, ...]:
     return tuple(seq)
 
 
-def _loop_structure(fn: ast.FunctionDef) -> Tuple[int, int]:
+def _loop_structure(fn: ast.FunctionDef) -> tuple[int, int]:
     """``(max_nest_depth, total_loops)`` — for/while/dace.map all count."""
     max_depth = 0
     total = 0
@@ -90,9 +89,9 @@ def _loop_structure(fn: ast.FunctionDef) -> Tuple[int, int]:
     return (max_depth, total)
 
 
-def _array_signature(fn: ast.FunctionDef) -> Tuple[int, ...]:
+def _array_signature(fn: ast.FunctionDef) -> tuple[int, ...]:
     """Tuple of array ranks inferred from annotations like ``dace.float64[N, N]``."""
-    ranks: List[int] = []
+    ranks: list[int] = []
     for arg in fn.args.args:
         ann = arg.annotation
         if isinstance(ann, ast.Subscript):
@@ -105,12 +104,12 @@ def _array_signature(fn: ast.FunctionDef) -> Tuple[int, ...]:
     return tuple(ranks)
 
 
-def kernel_fingerprint(fn: ast.FunctionDef) -> Tuple:
+def kernel_fingerprint(fn: ast.FunctionDef) -> tuple:
     """Combined structural fingerprint."""
     return (_loop_structure(fn), _array_signature(fn), _statement_opcodes(fn))
 
 
-def extract_kernel_from_test(test_fn: ast.FunctionDef) -> Optional[str]:
+def extract_kernel_from_test(test_fn: ast.FunctionDef) -> str | None:
     """Return the name of the kernel ``test_fn`` invokes via
     :func:`run_vectorization_test`, or ``None`` if not a harness test."""
     for node in ast.walk(test_fn):
@@ -135,9 +134,9 @@ def scan_file(path: pathlib.Path):
         tree = ast.parse(path.read_text())
     except SyntaxError:
         return {}, {}, {}
-    programs: Dict[str, ast.FunctionDef] = {}
-    tests: Dict[str, ast.FunctionDef] = {}
-    test_to_kernel: Dict[str, Optional[str]] = {}
+    programs: dict[str, ast.FunctionDef] = {}
+    tests: dict[str, ast.FunctionDef] = {}
+    test_to_kernel: dict[str, str | None] = {}
     for node in ast.walk(tree):
         if isinstance(node, ast.FunctionDef):
             is_program = any(_is_dace_program(d) for d in node.decorator_list)
@@ -152,9 +151,9 @@ def scan_file(path: pathlib.Path):
 
 def main():
     file_paths = walk_test_files()
-    all_programs: Dict[Tuple[str, str], ast.FunctionDef] = {}  # (file, fn) -> ast
-    all_tests: Dict[Tuple[str, str], ast.FunctionDef] = {}
-    test_kernel: Dict[Tuple[str, str], Optional[str]] = {}
+    all_programs: dict[tuple[str, str], ast.FunctionDef] = {}  # (file, fn) -> ast
+    all_tests: dict[tuple[str, str], ast.FunctionDef] = {}
+    test_kernel: dict[tuple[str, str], str | None] = {}
     for path in file_paths:
         rel = str(path.relative_to(ROOT))
         programs, tests, mapping = scan_file(path)
@@ -173,7 +172,7 @@ def main():
     print()
 
     # Group A: same kernel, different test wrappers
-    kernel_to_tests: Dict[str, List[Tuple[str, str]]] = defaultdict(list)
+    kernel_to_tests: dict[str, list[tuple[str, str]]] = defaultdict(list)
     for (f, t), k in test_kernel.items():
         if k:
             kernel_to_tests[k].append((f, t))
@@ -189,7 +188,7 @@ def main():
     print()
 
     # Group B: structurally similar kernels
-    fp_to_kernels: Dict[Tuple, List[Tuple[str, str]]] = defaultdict(list)
+    fp_to_kernels: dict[tuple, list[tuple[str, str]]] = defaultdict(list)
     for (f, name), fn in all_programs.items():
         fp = kernel_fingerprint(fn)
         fp_to_kernels[fp].append((f, name))
@@ -225,7 +224,7 @@ def main():
     any_c = False
     for f, entries in sorted(by_file.items()):
         # Same prefix tests with similar line counts
-        prefix_groups: Dict[str, List[Tuple[str, str, int]]] = defaultdict(list)
+        prefix_groups: dict[str, list[tuple[str, str, int]]] = defaultdict(list)
         for t, k, nlines in entries:
             # Group by first 3 underscore-separated tokens
             tokens = t.split("_")

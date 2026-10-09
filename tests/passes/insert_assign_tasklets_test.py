@@ -16,9 +16,9 @@ import pytest
 
 import dace
 from dace import nodes
-from dace.transformation.passes.insert_unit_copy_assign_tasklets import InsertAssignTaskletsForUnitCopies
 from dace.transformation.pass_pipeline import Pipeline
 from dace.transformation.passes.insert_assign_tasklets_at_map_boundary import InsertAssignTaskletsAtMapBoundary
+from dace.transformation.passes.insert_unit_copy_assign_tasklets import InsertAssignTaskletsForUnitCopies
 from dace.transformation.passes.scalar_fission import ScalarFission
 
 

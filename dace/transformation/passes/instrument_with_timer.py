@@ -1,12 +1,13 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Bracket an SDFG with a steady-clock timer that reports its wall-clock runtime in nanoseconds."""
 
-from typing import Any, Dict, Optional
+from typing import Any
 
 from dace import Memlet, dtypes, properties
 from dace.sdfg.sdfg import SDFG, InterstateEdge
 from dace.sdfg.state import SDFGState
-from dace.transformation import pass_pipeline as ppl, transformation
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation import transformation
 
 NOW_NS = (
     "std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count()"
@@ -47,7 +48,7 @@ class InstrumentWithTimer(ppl.Pass):
         state.add_edge(state.add_read(src), None, tasklet, "__in", Memlet(data=src, subset="0"))
         state.add_edge(tasklet, "__out", state.add_write(dst), None, Memlet(data=dst, subset="0"))
 
-    def apply_pass(self, sdfg: SDFG, _: Dict[str, Any]) -> Optional[str]:
+    def apply_pass(self, sdfg: SDFG, _: dict[str, Any]) -> str | None:
         """
         :param sdfg: The SDFG to instrument in-place.
         :return: Name of the descriptor carrying the elapsed time, or None if the SDFG is already instrumented.

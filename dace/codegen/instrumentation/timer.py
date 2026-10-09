@@ -1,8 +1,8 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 from dace import dtypes, registry
-from dace.sdfg.nodes import CodeNode, ConsumeEntry, ConsumeExit
 from dace.codegen.instrumentation.provider import InstrumentationProvider
 from dace.codegen.prettycode import CodeIOStream
+from dace.sdfg.nodes import CodeNode, ConsumeEntry, ConsumeExit
 
 
 @registry.autoregister_params(type=dtypes.InstrumentationType.Timer)
@@ -42,12 +42,10 @@ class TimerProvider(InstrumentationProvider):
                 node_id = state.node_id(node)
 
         stream.write(
-            """auto __dace_tend_{id} = std::chrono::high_resolution_clock::now();
-unsigned long int __dace_ts_start_{id} = std::chrono::duration_cast<std::chrono::microseconds>(__dace_tbegin_{id}.time_since_epoch()).count();
-unsigned long int __dace_ts_end_{id} = std::chrono::duration_cast<std::chrono::microseconds>(__dace_tend_{id}.time_since_epoch()).count();
-__state->report.add_completion("{timer_name}", "Timer", __dace_ts_start_{id}, __dace_ts_end_{id}, {cfg_id}, {state_id}, {node_id});""".format(
-                timer_name=timer_name, id=idstr, cfg_id=cfg.cfg_id, state_id=state_id, node_id=node_id
-            )
+            f"""auto __dace_tend_{idstr} = std::chrono::high_resolution_clock::now();
+unsigned long int __dace_ts_start_{idstr} = std::chrono::duration_cast<std::chrono::microseconds>(__dace_tbegin_{idstr}.time_since_epoch()).count();
+unsigned long int __dace_ts_end_{idstr} = std::chrono::duration_cast<std::chrono::microseconds>(__dace_tend_{idstr}.time_since_epoch()).count();
+__state->report.add_completion("{timer_name}", "Timer", __dace_ts_start_{idstr}, __dace_ts_end_{idstr}, {cfg.cfg_id}, {state_id}, {node_id});"""
         )
 
     # Code generation hooks

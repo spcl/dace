@@ -3,13 +3,14 @@
 
 import itertools
 import warnings
-from typing import Dict, List, Optional
 
 import numpy
 
 import dace
 from dace import SDFG
 from dace.libraries.layout.algebra import Permute
+from dace.optionals import required
+from dace.sdfg.narrowing import as_expr
 from dace.transformation.layout.apply_assignment import (
     IDENTITY_LAYOUT,
     Layout,
@@ -25,8 +26,6 @@ from dace.transformation.layout.global_assign import AssignmentCosts
 from dace.transformation.layout.line_graph import KernelState
 from dace.transformation.layout.nest_eval import MAX_PERMUTE_NDIM, evaluate_nest
 from dace.transformation.layout.permute_dimensions import PermuteDimensions
-from dace.optionals import required
-from dace.sdfg.narrowing import as_expr
 
 #: Illustrative CPU parameters; shared so both providers price relayouts identically.
 EXAMPLE_CPU = LogGP(
@@ -58,7 +57,7 @@ def permutation_tag(perm) -> str:
     return "perm" + "".join(map(str, perm))
 
 
-def permutation_layouts(ndim: int) -> List[Layout]:
+def permutation_layouts(ndim: int) -> list[Layout]:
     """Identity FIRST, then every non-identity dimension permutation as a one-op layout."""
     if ndim > MAX_PERMUTE_NDIM:
         raise NotImplementedError(
@@ -73,7 +72,7 @@ def permutation_layouts(ndim: int) -> List[Layout]:
     return layouts
 
 
-def assignment_arrays(sdfg: SDFG, kernels: List[KernelState]) -> List[str]:
+def assignment_arrays(sdfg: SDFG, kernels: list[KernelState]) -> list[str]:
     """Arrays the assignment optimizes: non-transient, rank >= 2, touched by at least one kernel."""
     touched = set()
     for kernel in kernels:
@@ -81,10 +80,10 @@ def assignment_arrays(sdfg: SDFG, kernels: List[KernelState]) -> List[str]:
     return sorted(name for name in touched if not sdfg.arrays[name].transient and len(sdfg.arrays[name].shape) >= 2)
 
 
-def liveness_facts(sdfg: SDFG, kernels: List[KernelState], arrays: List[str]):
+def liveness_facts(sdfg: SDFG, kernels: list[KernelState], arrays: list[str]):
     """Liveness facts the objective prices, using the same predicates ``apply_assignment`` decides conversions with."""
-    entry_needed: Dict[str, bool] = {}
-    last_write: Dict[str, Optional[int]] = {}
+    entry_needed: dict[str, bool] = {}
+    last_write: dict[str, int | None] = {}
     for array in arrays:
         touching = [k for k in kernels if state_touches(k.state, array)]
         if touching:
@@ -103,7 +102,7 @@ def liveness_facts(sdfg: SDFG, kernels: List[KernelState], arrays: List[str]):
     return entry_needed, last_write
 
 
-def relayout_edge_costs(sdfg: SDFG, arrays: Dict[str, List[Layout]], symbols: Dict[str, int], p: LogGP) -> Dict:
+def relayout_edge_costs(sdfg: SDFG, arrays: dict[str, list[Layout]], symbols: dict[str, int], p: LogGP) -> dict:
     """Streaming relayout bound per (array, from, to) pair; keyed per pair since measured costs can differ."""
     edges = {}
     for array, layouts in arrays.items():
@@ -119,10 +118,10 @@ def relayout_edge_costs(sdfg: SDFG, arrays: Dict[str, List[Layout]], symbols: Di
 
 def model_costs(
     sdfg: SDFG,
-    kernels: List[KernelState],
-    symbols: Dict[str, int],
+    kernels: list[KernelState],
+    symbols: dict[str, int],
     p: LogGP = EXAMPLE_CPU,
-    n_cores: Optional[int] = None,
+    n_cores: int | None = None,
 ) -> AssignmentCosts:
     """Model provider: externalizes each nest, permutes in place, prices with count_loop_nest/nest_memory_time.
 
@@ -173,9 +172,9 @@ def model_costs(
 
 def eval_costs(
     sdfg: SDFG,
-    kernels: List[KernelState],
-    symbols: Dict[str, int],
-    provided: Optional[Dict[str, numpy.ndarray]] = None,
+    kernels: list[KernelState],
+    symbols: dict[str, int],
+    provided: dict[str, numpy.ndarray] | None = None,
     p: LogGP = EXAMPLE_CPU,
     reps: int = 10,
     warmup: int = 2,

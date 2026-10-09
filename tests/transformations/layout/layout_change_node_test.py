@@ -3,17 +3,18 @@
 node chaining/folding, and the permute -> TensorTranspose (cuTENSOR/HPTT) dispatch selection."""
 
 import json
-import numpy
-import dace
 
-from dace.sdfg import nodes as nd
-from dace.libraries.layout.algebra import Permute, Block, Unblock, is_identity
+import numpy
+
+import dace
+from dace.libraries.layout.algebra import Block, Permute, Unblock, is_identity
 from dace.libraries.layout.layout_change import (
-    LayoutChange,
     ExpandCuTensor,
+    LayoutChange,
     add_layout_change,
     fold_layout_changes,
 )
+from dace.sdfg import nodes as nd
 
 _counter = [0]
 

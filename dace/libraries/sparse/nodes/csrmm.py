@@ -1,16 +1,18 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 from copy import deepcopy as dc
-from dace import dtypes, memlet as mm, properties, data as dt, propagate_memlets_sdfg
-from dace.symbolic import symstr
-import dace.library
-from dace import SDFG, SDFGState
-import dace.sdfg.nodes
-from dace.transformation.transformation import ExpandTransformation
-from dace.libraries.blas.blas_helpers import to_blastype, check_access, to_cublas_computetype
-from dace.libraries.sparse import environments
-from dace.libraries.sparse import sparse_dialect
+
 import numpy as np
+
+import dace.library
+import dace.sdfg.nodes
+from dace import SDFG, SDFGState, dtypes, propagate_memlets_sdfg, properties
+from dace import data as dt
+from dace import memlet as mm
+from dace.libraries.blas.blas_helpers import check_access, to_blastype, to_cublas_computetype
+from dace.libraries.sparse import environments, sparse_dialect
 from dace.ordered import OrderedSet
+from dace.symbolic import symstr
+from dace.transformation.transformation import ExpandTransformation
 
 
 def _is_complex(dtype):
@@ -27,13 +29,9 @@ def _cast_to_dtype_str(value, dtype: dace.dtypes.typeclass) -> str:
     if _is_complex(dtype):
         cast_value = complex(value)
 
-        return "dace.{type}({real}, {imag})".format(
-            type=dace.dtype_to_typeclass(dtype).to_string(),
-            real=cast_value.real,
-            imag=cast_value.imag,
-        )
+        return f"dace.{dace.dtype_to_typeclass(dtype).to_string()}({cast_value.real}, {cast_value.imag})"
     else:
-        return "dace.{}({})".format(dace.dtype_to_typeclass(dtype).to_string(), value)
+        return f"dace.{dace.dtype_to_typeclass(dtype).to_string()}({value})"
 
 
 def _get_csrmm_operands(
@@ -73,7 +71,7 @@ def _get_csrmm_operands(
             result[edge.src_conn] = (edge, outer_array, size, strides)
     for name, res in result.items():
         if res is None:
-            raise ValueError('Matrix multiplication connector "{}" not found.'.format(name))
+            raise ValueError(f'Matrix multiplication connector "{name}" not found.')
     return result
 
 

@@ -14,7 +14,6 @@ keep that true, so a policy change is a deliberate edit here rather than a silen
 import glob
 import os
 import re
-from typing import List, Tuple
 
 from dace.config import Config
 
@@ -25,12 +24,12 @@ WORKFLOW_DIR = os.path.join(REPO_ROOT, ".github", "workflows")
 CACHE_ASSIGNMENT = re.compile(r'DACE_cache[=:]\s*[\'"]?(\w+)[\'"]?')
 
 
-def cache_assignments() -> List[Tuple[str, int, str]]:
+def cache_assignments() -> list[tuple[str, int, str]]:
     """``(workflow, line number, value)`` for every ``DACE_cache`` assignment in the workflows."""
-    found: List[Tuple[str, int, str]] = []
+    found: list[tuple[str, int, str]] = []
     workflows = glob.glob(os.path.join(WORKFLOW_DIR, "*.yml")) + glob.glob(os.path.join(WORKFLOW_DIR, "*.yaml"))
     for workflow in sorted(workflows):
-        with open(workflow, "r") as handle:
+        with open(workflow) as handle:
             for number, line in enumerate(handle, start=1):
                 match = CACHE_ASSIGNMENT.search(line)
                 if match:

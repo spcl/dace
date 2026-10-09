@@ -20,10 +20,10 @@ import numpy as np
 import dace
 from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock, LoopRegion
-from dace.transformation.passes.move_if_into_loop import MoveIfIntoLoop
-from dace.transformation.passes.loop_fission import LoopFission
 from dace.transformation.dataflow.map_fusion_vertical import MapFusionVertical
 from dace.transformation.interstate import LoopToMap
+from dace.transformation.passes.loop_fission import LoopFission
+from dace.transformation.passes.move_if_into_loop import MoveIfIntoLoop
 
 N = dace.symbol("N")  # number of edges (structured horizontal index)
 L = dace.symbol("L")  # number of levels (structured vertical index)

@@ -55,20 +55,19 @@ ANY GATHER dim → whole-subset kind GATHER. Non-GATHER dims fold into the gathe
 
 import enum
 import re
-from dataclasses import dataclass, field
 from collections.abc import Sequence
+from dataclasses import dataclass, field
 from typing import TypeAlias
 
 import sympy
 
 from dace import data as dt
-from dace import dtypes
-from dace import symbolic
+from dace import dtypes, symbolic
+from dace.optionals import required
 from dace.sdfg import SDFG, SDFGState, nodes
+from dace.sdfg.narrowing import as_expr, as_range, free_symbol_names
 from dace.subsets import Range, Subset
 from dace.transformation.passes.vectorization.utils.subsets import an_side_subset
-from dace.optionals import required
-from dace.sdfg.narrowing import as_expr, as_range, free_symbol_names
 
 
 class PerDimKind(enum.Enum):

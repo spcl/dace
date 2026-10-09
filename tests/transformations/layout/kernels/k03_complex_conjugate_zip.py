@@ -24,8 +24,8 @@ transformation system for heterogeneous computing," InPar 2012 (ASTA = AoSoA). P
 """
 
 import numpy
-import dace
 
+import dace
 from dace.transformation.layout.zip_arrays import ZipArrays, aosoa_layout
 
 N = dace.symbol("N")

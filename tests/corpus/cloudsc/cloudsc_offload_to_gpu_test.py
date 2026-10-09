@@ -13,16 +13,15 @@ hide a bug.
 import pytest
 
 import dace
-from dace.sdfg.dealias import convert_legacy_nested_sdfgs
 from dace import data, dtypes
 from dace.codegen.codegen import generate_code
 from dace.config import Config
 from dace.memlet import Memlet
 from dace.properties import CodeBlock
 from dace.sdfg import InterstateEdge, nodes
+from dace.sdfg.dealias import convert_legacy_nested_sdfgs
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.passes.canonicalize.move_loop_into_map_gated import MoveLoopIntoMapGated
-
 from tests.corpus.cloudsc.offload_cloudsc_to_gpu import (
     BLOCK_MAP_SYMBOLS,
     assign_schedules,

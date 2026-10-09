@@ -21,21 +21,21 @@ import numpy as np
 import pytest
 
 import dace
-from dace.transformation import pass_pipeline as ppl
 from dace import dtypes
+from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES
+from dace.libraries.standard.nodes.find_first import INDEX_NAME, OUTPUT_CONNECTOR_NAME, FindFirst
+from dace.libraries.standard.nodes.merge_node import MergeLibraryNode
+from dace.libraries.standard.nodes.reduce import Reduce
+from dace.libraries.standard.nodes.scan import Scan, ScanOp
+from dace.ordered import OrderedSet
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
+from dace.transformation import pass_pipeline as ppl
 from dace.transformation.auto.auto_optimize import set_fast_implementations
 from dace.transformation.passes.canonicalize.finalize import finalize_for_target, offload_to_gpu
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
-from dace.libraries.standard.nodes.scan import Scan, ScanOp
-from dace.libraries.standard.nodes.find_first import FindFirst, INDEX_NAME, OUTPUT_CONNECTOR_NAME
-from dace.libraries.standard.nodes.merge_node import MergeLibraryNode
-from dace.libraries.standard.nodes.reduce import Reduce
-from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES
 from dace.transformation.passes.offloading import OffloadToAccelerator
 from dace.transformation.passes.offloading.offloading_helpers import traverse_IR
 from dace.transformation.passes.offloading.offloading_ir_node import OffloadingIRNode
-from dace.ordered import OrderedSet
 from tests.corpus.tsvc import tsvc
 
 GUARDED_KERNEL = "s171_d_single"

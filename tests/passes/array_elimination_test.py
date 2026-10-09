@@ -1,7 +1,8 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 
-import dace
 import numpy as np
+
+import dace
 from dace.sdfg import utils as sdutil
 from dace.transformation.pass_pipeline import Pipeline
 from dace.transformation.passes.array_elimination import ArrayElimination
@@ -259,8 +260,9 @@ def test_source_merge_preserves_carrier_raw_order_on_sibling_transient():
     state).
     """
     import numpy as np
-    from tests.corpus.tsvc.tsvc import s254_d_single
+
     from dace.transformation.passes.canonicalize.pipeline import _build_stages
+    from tests.corpus.tsvc.tsvc import s254_d_single
 
     sdfg = s254_d_single.to_sdfg(simplify=True)
     # Drive the SDFG to the state right BEFORE the final SimplifyPass enters

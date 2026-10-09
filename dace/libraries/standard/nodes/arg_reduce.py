@@ -45,7 +45,7 @@ is slice-local (``0 .. N-1``); the lift adds the slice base to recover the
 original-array position.
 """
 
-from typing import Callable, List, Optional, Tuple
+from collections.abc import Callable
 
 import dace
 from dace import library, properties, symbolic
@@ -53,11 +53,11 @@ from dace.codegen.common import global_code_id
 from dace.libraries.standard.helper import schedule_dispatch
 from dace.libraries.standard.pure_components import chain, counted_loop, element, operand_array, tasklet_state
 from dace.memlet import Memlet
-from dace.sdfg import nodes
-from dace.transformation.transformation import ExpandTransformation
-from dace.ordered import OrderedSet
 from dace.optionals import required
+from dace.ordered import OrderedSet
+from dace.sdfg import nodes
 from dace.sdfg.narrowing import as_expr, as_range
+from dace.transformation.transformation import ExpandTransformation
 
 _OP_CPP = {"max": ">", "min": "<"}
 #: The ``dace/cub_compat.cuh`` tag that picks the CUB routine, and with it the spelling that
@@ -74,7 +74,7 @@ _TRANSFORM_CPP = {"": None, "abs": "std::abs"}
 _TRANSFORM_C = {"": None, "abs": "abs"}
 
 
-def _transform_spelling(transform: str, dtype: "dace.dtypes.typeclass") -> Optional[str]:
+def _transform_spelling(transform: str, dtype: "dace.dtypes.typeclass") -> str | None:
     """The element transform's spelling in whichever dialect is being rendered.
 
     Asked at EXPANSION time because the tasklet's text is fixed once it is built; outside a
@@ -116,7 +116,7 @@ def _count(in_edge) -> symbolic.SymbolicType:
 
 def _scan_context(
     node: "ArgReduce", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG
-) -> Tuple[dace.dtypes.typeclass, str, str, Callable[[str], str], bool]:
+) -> tuple[dace.dtypes.typeclass, str, str, Callable[[str], str], bool]:
     """The operand facts both CPU expansions read off the wired edges.
 
     :returns: ``(value_dtype, index_ctype, element_count, read, has_val)``, where ``read(expr)``
@@ -164,11 +164,11 @@ def _beats(op: str, cand_v: str, cand_i: str, held_v: str, held_i: str) -> str:
 
 def _writeback(has_val: bool) -> str:
     """Copy the scan's answer out through whichever result connectors are wired."""
-    return (f"_out_val = __ar_best.__ar_v;\n" if has_val else "") + f"_out_idx = __ar_best.__ar_i;"
+    return ("_out_val = __ar_best.__ar_v;\n" if has_val else "") + "_out_idx = __ar_best.__ar_i;"
 
 
 def _connectors(has_val: bool):
-    return {c: None for c in (("_out_val", "_out_idx") if has_val else ("_out_idx",))}
+    return dict.fromkeys(("_out_val", "_out_idx") if has_val else ("_out_idx",))
 
 
 #: Unary element transforms as a Python expression over the element.
@@ -182,7 +182,7 @@ class ExpandArgReducePure(ExpandTransformation):
     """The sequential scan as SDFG components: seed from element 0, a loop keeping the first extreme, and a
     write-back of whichever results are wired."""
 
-    environments: List[type] = []
+    environments: list[type] = []
 
     @staticmethod
     def expansion(node: "ArgReduce", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> dace.SDFG:
@@ -240,7 +240,7 @@ class ExpandArgReduceCPU(ExpandTransformation):
     than a different order of work -- which is not what this lowering is for.
     """
 
-    environments: List[type] = []
+    environments: list[type] = []
 
     @staticmethod
     def expansion(node: "ArgReduce", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> nodes.Tasklet:
@@ -285,7 +285,7 @@ class ExpandArgReduceCUDA(ExpandTransformation):
     """
 
     # Filled in on first expansion to dodge the sort<->standard import cycle.
-    environments: List[type] = []
+    environments: list[type] = []
 
     @staticmethod
     def expansion(node: "ArgReduce", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> nodes.Tasklet:
@@ -347,13 +347,13 @@ class ExpandArgReduceCUDA(ExpandTransformation):
             (f"{vt} __ar_val;\n" if val_edge is not None else "") + f"long long __ar_idx;\n"
             f"DACE_GPU_CHECK(__dace_argreduce_{idstr}(_in{stride_arg}, {val_out}, &__ar_idx, "
             f"(long long)({items}), __dace_current_stream));\n"
-            + (f"_out_val = __ar_val;\n" if val_edge is not None else "")
+            + ("_out_val = __ar_val;\n" if val_edge is not None else "")
             + f"_out_idx = ({it})__ar_idx;"
         )
         return nodes.Tasklet(
             label=f"{node.label}_cuda",
             inputs={"_in": dace.pointer(in_dtype)},
-            outputs={c: None for c in (("_out_val", "_out_idx") if val_edge is not None else ("_out_idx",))},
+            outputs=dict.fromkeys(("_out_val", "_out_idx") if val_edge is not None else ("_out_idx",)),
             code=code,
             language=dace.dtypes.Language.CPP,
         )
@@ -363,7 +363,7 @@ class ExpandArgReduceCUDA(ExpandTransformation):
 class ExpandArgReduceAuto(ExpandTransformation):
     """Picks ``CPU``, ``CUDA`` or ``pure`` from the node's schedule (:func:`schedule_dispatch`)."""
 
-    environments: List[type] = []
+    environments: list[type] = []
 
     @staticmethod
     def expansion(node: "ArgReduce", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG):
@@ -403,7 +403,7 @@ class ArgReduce(nodes.LibraryNode):
         "arg-reduce over f(a[...]) without materialising f(a[...]) first.",
     )
 
-    def __init__(self, name: str, op: str = "max", transform: str = "", location: Optional[str] = None):
+    def __init__(self, name: str, op: str = "max", transform: str = "", location: str | None = None):
         if op not in _OP_CPP:
             raise ValueError(f"ArgReduce: op must be 'max' or 'min', got {op!r}")
         if transform not in _TRANSFORM_CPP:

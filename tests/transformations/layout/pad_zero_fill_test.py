@@ -12,10 +12,11 @@ or against a shape that was never grown, it is a hard error rather than a silent
 
 import numpy as np
 import pytest
+
 import dace
-from dace.memlet import Memlet
 from dace.libraries.linalg.nodes.tensordot import TensorDot
 from dace.libraries.standard.nodes.reduce import Reduce
+from dace.memlet import Memlet
 from dace.transformation.layout.pad_dimensions import PadDimensions, PadZeroFill
 
 

@@ -16,7 +16,6 @@ Python/SDFG API inputs.
 """
 
 from collections import Counter
-from typing import List, Optional, Set, Union
 
 import sympy
 
@@ -24,8 +23,7 @@ import dace
 from dace.sdfg.replace import replace_properties_dict
 from dace.sdfg.state import ControlFlowRegion, LoopRegion, sdfg_scope_symbols
 from dace.transformation import pass_pipeline as ppl
-from dace.transformation.passes.analysis import loop_analysis
-from dace.transformation.passes.analysis import ControlFlowBlockReachability
+from dace.transformation.passes.analysis import ControlFlowBlockReachability, loop_analysis
 from dace.transformation.transformation import explicit_cf_compatible
 
 # Prefix for renamed iterators; self-identifying in codegen / dumped SDFGs.
@@ -65,7 +63,7 @@ class UniqueLoopIterators(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def _rename_one_loop_var(self, cfg: Union[ControlFlowRegion, dace.SDFG], old_name: str, new_name: str):
+    def _rename_one_loop_var(self, cfg: ControlFlowRegion | dace.SDFG, old_name: str, new_name: str):
         """Rename ``old_name`` to ``new_name`` inside ``cfg``.
 
         ``replace_dict`` cascades the rename through the region's states,
@@ -116,7 +114,7 @@ class UniqueLoopIterators(ppl.Pass):
                 if old_name in node.sdfg.symbols:
                     self._rename_one_loop_var(node.sdfg, old_name, new_name)
 
-    def _compute_post_value(self, loop: LoopRegion) -> Optional[dace.symbolic.SymbolicType]:
+    def _compute_post_value(self, loop: LoopRegion) -> dace.symbolic.SymbolicType | None:
         """Counted-DO exit value: one stride past the last attained value.
 
         ``post = init + int_floor(diff, step) * step`` where
@@ -215,13 +213,13 @@ class UniqueLoopIterators(ppl.Pass):
         # emitting the assignment would shadow it (a hard C++ compile error). Skip.
         return False
 
-    def _apply_recursive(self, sdfg: dace.SDFG) -> Set[str]:
+    def _apply_recursive(self, sdfg: dace.SDFG) -> set[str]:
         """Rename the loop iterators of ``sdfg`` and of every nested SDFG below it.
 
         :param sdfg: The SDFG to rewrite in place.
         :returns: The new iterator names that were assigned (empty if every iterator was already unique).
         """
-        renamed: Set[str] = set()
+        renamed: set[str] = set()
         array_names = frozenset(sdfg.arrays.keys())
         base = sdfg_scope_symbols(sdfg)
         # Loop-variable names that more than one LoopRegion in THIS SDFG shares.
@@ -236,7 +234,7 @@ class UniqueLoopIterators(ppl.Pass):
         duplicated = {v for v, count in Counter(loop_vars).items() if count > 1}
         # Names to re-check for dead-declaration removal once every loop below is renamed
         # (only populated when ``assign_loop_iterator_post_value`` is off, see below).
-        dead_symbol_candidates: List[tuple[LoopRegion, str]] = []
+        dead_symbol_candidates: list[tuple[LoopRegion, str]] = []
         for cfg in sdfg.all_control_flow_regions():
             if not isinstance(cfg, LoopRegion):
                 continue
@@ -374,7 +372,7 @@ class UniqueLoopIterators(ppl.Pass):
                             max_id = max(max_id, _id_of(param))
         return max_id + 1
 
-    def apply_pass(self, sdfg: dace.SDFG, _) -> Optional[Set[str]]:
+    def apply_pass(self, sdfg: dace.SDFG, _) -> set[str] | None:
         """Rename every ``LoopRegion`` iterator in ``sdfg`` and its nested SDFGs.
 
         :param sdfg: SDFG to mutate in place.

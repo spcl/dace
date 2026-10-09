@@ -17,12 +17,12 @@ This file adds the missing end-to-end coverage:
 
 import numpy
 import pytest
-import dace
 
+import dace
 from dace.libraries.blas.nodes.einsum import Einsum
-from dace.transformation.layout.rewrite_libnodes import transform_einsum, RewriteCopyForLayout, copy_permutation_axes
 from dace.transformation.layout.permute_dimensions import PermuteDimensions
 from dace.transformation.layout.prepare import prepare_for_layout
+from dace.transformation.layout.rewrite_libnodes import RewriteCopyForLayout, copy_permutation_axes, transform_einsum
 
 M, K, Nn = (dace.symbol(s) for s in ("M", "K", "Nn"))
 

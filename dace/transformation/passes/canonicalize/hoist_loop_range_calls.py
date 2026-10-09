@@ -22,17 +22,17 @@ value, so two ranges can never collide on one symbol.
 
 import itertools
 from collections.abc import Iterator
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import sympy
 
 from dace import SDFG, dtypes, properties, subsets, symbolic
 from dace.sdfg import nodes
+from dace.sdfg.narrowing import as_map_entry
 from dace.sdfg.state import ControlFlowRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 from dace.transformation.passes.analysis import scopes
-from dace.sdfg.narrowing import as_map_entry
 
 #: Prefix for a minted range symbol. ``__dace`` keeps it out of the ABI (``SDFG.arglist`` drops the
 #: prefix on both the scalar and free-symbol paths), which is what makes minting one free.
@@ -65,7 +65,7 @@ class HoistLoopRangeCalls(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> int | None:
         """:returns: how many range components were bound to symbols, or ``None`` if none were."""
         counter = itertools.count(self._next_free_index(sdfg))
         # ONE resolver for the whole run: ``symbols_defined_at`` rebuilds the SDFG base and
@@ -131,7 +131,7 @@ class HoistLoopRangeCalls(ppl.Pass):
         while parent_entry is not None:
             enclosing.update(as_map_entry(parent_entry).map.params)
             parent_entry = scope.get(parent_entry)
-        assignments: List[Tuple[str, str]] = []
+        assignments: list[tuple[str, str]] = []
         ranges = []
         for begin, end, step in entry.map.range:
             # ONLY the step. Measured against gcc: a call in an ``omp for`` INCREMENT is rejected

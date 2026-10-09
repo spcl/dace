@@ -3,17 +3,18 @@
 
 import ast
 import copy
-from typing import List, Optional, Union
 
-from dace import data, dtypes, sdfg as sd, symbolic
+from dace import data, dtypes, symbolic
+from dace import sdfg as sd
+from dace.frontend.python.astutils import ASTFindReplace
+from dace.ordered import OrderedSet
 from dace.properties import Property, make_properties
-from dace.sdfg import InterstateEdge, SDFG, utils as sdutil
+from dace.sdfg import SDFG, InterstateEdge
+from dace.sdfg import utils as sdutil
 from dace.sdfg.nodes import NestedSDFG
 from dace.sdfg.state import AbstractControlFlowRegion, ControlFlowRegion, LoopRegion, SDFGState
-from dace.frontend.python.astutils import ASTFindReplace
 from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis
-from dace.ordered import OrderedSet
 
 
 def loop_local_view_names(loop: LoopRegion, sdfg: SDFG) -> OrderedSet:
@@ -127,7 +128,7 @@ class LoopUnroll(xf.MultiStateTransformation):
         # Create states for loop subgraph
         # A state is returned as a replacement when the loop body is empty
         local_views = loop_local_view_names(self.loop, sdfg)
-        unrolled_iterations: List[Union[ControlFlowRegion, SDFGState]] = []
+        unrolled_iterations: list[ControlFlowRegion | SDFGState] = []
         for position, i in enumerate(offsets):
             # Instantiate loop contents as a new control flow region with iterate value.
             # `position` (0, 1, 2, ...) is instantiate_loop_iteration's label-safety fallback,
@@ -180,7 +181,7 @@ class LoopUnroll(xf.MultiStateTransformation):
         loop: LoopRegion,
         value: symbolic.SymbolicType,
         index: int,
-        label_suffix: Optional[str] = None,
+        label_suffix: str | None = None,
     ) -> ControlFlowRegion:
         it_label = (
             loop.label

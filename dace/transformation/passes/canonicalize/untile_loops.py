@@ -72,7 +72,8 @@ hoisted; those are left alone.)
 
 import copy
 import functools
-from typing import Any, Dict, FrozenSet, Iterator, List, Optional, Tuple
+from collections.abc import Iterator
+from typing import Any
 
 import sympy
 
@@ -80,19 +81,19 @@ import dace
 from dace import SDFG, dtypes, properties, symbolic
 from dace.sdfg import nodes
 from dace.sdfg.graph import NodeNotFoundError
-from dace.sdfg.state import LoopRegion, SDFGState, ControlFlowRegion
+from dace.sdfg.narrowing import as_basic, as_expr, as_range
+from dace.sdfg.state import ControlFlowRegion, LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.canonicalize.fresh_names import lowest_free_suffix
 from dace.transformation.passes.canonicalize.tracked_assumptions import record_assumption
-from dace.sdfg.narrowing import as_basic, as_expr, as_range
 
 #: Prefix for the synthesised unit-stride iterator that replaces the (i, ii) pair.
 UNTILE_PREFIX = "_untile_k_"
 
 
-def count_applied(result: Optional[Dict[str, List[Any]]]) -> int:
+def count_applied(result: dict[str, list[Any]] | None) -> int:
     """Number of transformations a ``PatternMatchAndApplyRepeated`` run applied.
 
     It returns ``{transformation name: [applied, ...]}``, or ``None`` when it matched nothing.
@@ -103,7 +104,7 @@ def count_applied(result: Optional[Dict[str, List[Any]]]) -> int:
     return sum(len(applied) for applied in result.values())
 
 
-def _try_extract_perfect_one_child(cfg: ControlFlowRegion) -> Optional[ControlFlowRegion]:
+def _try_extract_perfect_one_child(cfg: ControlFlowRegion) -> ControlFlowRegion | None:
     """Return the single non-empty child block of ``cfg`` if it has
     exactly one, otherwise ``None``.
 
@@ -112,7 +113,7 @@ def _try_extract_perfect_one_child(cfg: ControlFlowRegion) -> Optional[ControlFl
     non-empty plain state, a ConditionalBlock, etc.) breaks the perfect
     nest and the function refuses.
     """
-    candidate: Optional[ControlFlowRegion] = None
+    candidate: ControlFlowRegion | None = None
     for b in cfg.nodes():
         if isinstance(b, SDFGState):
             if len(b.nodes()) > 0:
@@ -137,7 +138,7 @@ def _iter_candidate_inners(outer: LoopRegion) -> Iterator[LoopRegion]:
     (a non-empty plain state, a sibling CFR, etc.), so non-perfect-nest
     cases are still refused.
     """
-    seen: Dict[int, None] = {}
+    seen: dict[int, None] = {}
     current: ControlFlowRegion = outer
     while True:
         nxt = _try_extract_perfect_one_child(current)
@@ -175,7 +176,7 @@ def _intermediate_chain_clean(outer: LoopRegion, inner: LoopRegion, outer_var: s
     return True
 
 
-def _is_constant_positive_int(expr: symbolic.SymbolicType) -> Optional[int]:
+def _is_constant_positive_int(expr: symbolic.SymbolicType) -> int | None:
     """If ``expr`` simplifies to a positive integer literal, return that value."""
     try:
         s = symbolic.simplify(expr)
@@ -195,7 +196,7 @@ def _is_zero(expr: symbolic.SymbolicType) -> bool:
     return as_basic(s).is_number and s == 0
 
 
-def _tile_size(expr: symbolic.SymbolicType) -> Optional[Tuple[symbolic.SymbolicType, Optional[int]]]:
+def _tile_size(expr: symbolic.SymbolicType) -> tuple[symbolic.SymbolicType, int | None] | None:
     """Classify an outer-loop stride as a tile size: ``(K_expr, K_const)`` or ``None``.
 
     ``K_const`` is set for a concrete literal ``> 1``. Refused: literals ``<= 1``, provably
@@ -254,8 +255,8 @@ def map_tile_pattern_present(sdfg: SDFG) -> bool:
     bails on the first sweep for almost every SDFG. GPU-scheduled Maps are skipped: lowering
     device parallelism to a sequential loop is not a canonicalization.
     """
-    tiled: List[nodes.Map] = []
-    every: List[nodes.Map] = []
+    tiled: list[nodes.Map] = []
+    every: list[nodes.Map] = []
     for n, _ in sdfg.all_nodes_recursive():
         if not isinstance(n, nodes.MapEntry) or n.map.schedule in dtypes.GPU_SCHEDULES:
             continue
@@ -276,7 +277,7 @@ def tiles_a_parent_window(outer: LoopRegion, start: symbolic.SymbolicType, span:
     the test and keeps the round-up bound, which is what makes its intended overshoot past the
     last origin survive.
     """
-    enclosing: Dict[str, None] = {}
+    enclosing: dict[str, None] = {}
     graph = outer.parent_graph
     while graph is not None:
         if isinstance(graph, LoopRegion) and graph.loop_variable:
@@ -337,9 +338,9 @@ def _match_inner_case(
     inner: LoopRegion,
     outer_var: str,
     K_expr: symbolic.SymbolicType,
-    K_const: Optional[int],
-    outer_limit: Optional[symbolic.SymbolicType] = None,
-) -> Optional[Tuple[str, symbolic.SymbolicType, bool, bool]]:
+    K_const: int | None,
+    outer_limit: symbolic.SymbolicType | None = None,
+) -> tuple[str, symbolic.SymbolicType, bool, bool] | None:
     """Classify the inner shape: ``(case, inner_stride, needs_div_assumption, clamped)`` or ``None``.
 
     * ``'A'`` -- inner ``range(0, K, S)`` (body uses ``i + ii``);
@@ -429,12 +430,12 @@ def _diff_is_zero(a: symbolic.SymbolicType, b: symbolic.SymbolicType) -> bool:
 
 
 @functools.lru_cache(maxsize=4096, typed=True)
-def free_symbol_names(text: str) -> FrozenSet[str]:
+def free_symbol_names(text: str) -> frozenset[str]:
     """Names of the free symbols of the expression ``text``."""
     return frozenset(str(s) for s in symbolic.pystr_to_symbolic(text).free_symbols)
 
 
-def memlet_bound_texts(memlet: dace.Memlet) -> List[str]:
+def memlet_bound_texts(memlet: dace.Memlet) -> list[str]:
     """Every axis bound (lo/hi/stride) of ``memlet``'s subset, then of its other subset, as text."""
     return [
         str(bound)
@@ -445,7 +446,7 @@ def memlet_bound_texts(memlet: dace.Memlet) -> List[str]:
     ]
 
 
-def body_bound_texts(inner: LoopRegion) -> List[str]:
+def body_bound_texts(inner: LoopRegion) -> list[str]:
     """Every memlet bound in ``inner``'s body, as text: where the audit looks for references to ``i`` / ``ii``."""
     return [
         text
@@ -498,11 +499,11 @@ def reads_only_through_sum(text: str, outer_var: str, inner_var: str) -> bool:
 
 
 #: ``{array: (masks, factors)}`` for :class:`~dace.transformation.layout.unblock_dimensions.UnblockDimensions`.
-BlockedArrays = Dict[str, Tuple[List[bool], List[int]]]
+BlockedArrays = dict[str, tuple[list[bool], list[int]]]
 
 
 def is_unit_point(
-    rng: Tuple[symbolic.SymbolicType, symbolic.SymbolicType, symbolic.SymbolicType], target: symbolic.SymbolicType
+    rng: tuple[symbolic.SymbolicType, symbolic.SymbolicType, symbolic.SymbolicType], target: symbolic.SymbolicType
 ) -> bool:
     """``True`` iff ``rng`` is the unit-stride single point ``target``."""
     lo, hi, stp = rng
@@ -511,7 +512,7 @@ def is_unit_point(
 
 def match_block_memlet(
     sdfg: SDFG, memlet: dace.Memlet, outer_var: str, inner_var: str, K_expr: symbolic.SymbolicType, K_const: int
-) -> Optional[Tuple[List[bool], List[int]]]:
+) -> tuple[list[bool], list[int]] | None:
     """``(masks, factors)`` unblocking ``memlet``'s array if it reads ``A[..., int_floor(i, K), ii]`` with the last
     extent ``K`` and no leading axis naming ``i`` or ``ii``; else ``None``."""
     arr = sdfg.arrays.get(memlet.data)
@@ -539,9 +540,9 @@ def blocked_arrays_of(
     inner_var: str,
     case: str,
     K_expr: symbolic.SymbolicType,
-    K_const: Optional[int],
+    K_const: int | None,
     sdfg: SDFG,
-) -> Optional[BlockedArrays]:
+) -> BlockedArrays | None:
     """:func:`_audit_combined_access` that also admits a case-A read of an array blocked to match the tile.
 
     :returns: ``None`` to refuse, else the arrays to unblock before the substitution.
@@ -783,7 +784,7 @@ class UntileLoops(ppl.Pass):
         self._loops_back_to_maps(probe)
         return untiled > 0 and count_loops(probe) <= loops_before
 
-    def apply_pass(self, sdfg: SDFG, _: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _: dict[str, Any]) -> int | None:
         """Run the per-loop rewrite as a fixpoint over the SDFG, around the Map round trip when
         that is forced or when a Map tile nest makes it pay off."""
         # The round trip rewrites the graph even when no tile pair is found, so its edits have to
@@ -821,9 +822,9 @@ class UntileLoops(ppl.Pass):
         case: str,
         clamped: bool,
         K_expr: symbolic.SymbolicType,
-        K_const: Optional[int],
+        K_const: int | None,
         sdfg: SDFG,
-    ) -> Optional[BlockedArrays]:
+    ) -> BlockedArrays | None:
         """Arrays to unblock before collapsing ``candidate`` with its outer tile loop, or ``None`` to refuse."""
         if not self.unblock_arrays:
             return {} if _audit_combined_access(candidate, outer_var, candidate.loop_variable, case) else None
@@ -860,11 +861,11 @@ class UntileLoops(ppl.Pass):
         # (different axes interleaved) the same-axis partner sits N
         # levels deep with foreign-axis loops between -- the descent
         # walks past those.
-        case: Optional[str] = None
+        case: str | None = None
         inner_stride: symbolic.SymbolicType = None
         needs_div_assumption = False
         clamped = False
-        inner: Optional[LoopRegion] = None
+        inner: LoopRegion | None = None
         blocked_arrays: BlockedArrays = {}
         for candidate in _iter_candidate_inners(outer):
             if not candidate.loop_variable:

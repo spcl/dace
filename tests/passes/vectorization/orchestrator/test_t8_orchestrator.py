@@ -8,11 +8,11 @@ final SDFG, and confirms the no-laneid audit passes.
 import pytest
 
 import dace
+from dace.transformation.passes.vectorization.config import VectorizeConfig
+from dace.transformation.passes.vectorization.enums import ISA
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import (
     VectorizeCPUMultiDim,
 )
-from dace.transformation.passes.vectorization.config import VectorizeConfig
-from dace.transformation.passes.vectorization.enums import ISA
 
 
 def _build_k1_axpy_sdfg():

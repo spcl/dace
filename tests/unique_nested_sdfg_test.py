@@ -3,9 +3,9 @@
 # The scope of the test is to verify that code nested SDFGs with a unique name is generated only once
 # The nested SDFG compute vector addition
 
-import dace
 import numpy as np
 
+import dace
 from dace.memlet import Memlet
 
 size_n = 32
@@ -43,7 +43,7 @@ def make_vecAdd_sdfg(sdfg_name: str, dtype=dace.float32):
     # ---------- ----------
     # COMPUTE
     # ---------- ----------
-    vecMap_entry, vecMap_exit = vecAdd_state.add_map("vecAdd_map", dict(i="0:{}".format(n)))
+    vecMap_entry, vecMap_exit = vecAdd_state.add_map("vecAdd_map", dict(i=f"0:{n}"))
 
     vecAdd_tasklet = vecAdd_state.add_tasklet("vecAdd_task", ["x_con", "y_con"], ["z_con"], "z_con = x_con + y_con")
 

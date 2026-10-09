@@ -19,10 +19,9 @@ the conversion flags below are what makes these assertions bite.
 import re
 
 import dace
-from dace import dtypes, cpf_lowering
+from dace import cpf_lowering, dtypes
 from dace.codegen.cpf import render
 from dace.codegen.targets.cpu import CPUCodeGen
-
 from tests.codegen.cpf.conftest import compile_standalone
 
 #: What a strict consumer builds with; the shared WARNING_FLAGS do not include these.

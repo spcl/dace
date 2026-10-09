@@ -1,18 +1,22 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Map Fission transformation."""
 
-from copy import deepcopy as dcpy
 from collections import defaultdict
+from copy import deepcopy as dcpy
 from functools import reduce
-from dace import sdfg as sd, memlet as mm, subsets, data as dt
+
+from dace import data as dt
+from dace import memlet as mm
+from dace import sdfg as sd
+from dace import subsets
 from dace.properties import CodeBlock
-from dace.sdfg import nodes, graph as gr
+from dace.sdfg import graph as gr
+from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.propagation import propagate_memlets_state, propagate_subset
 from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.symbolic import int_floor, pystr_to_symbolic
-from dace.transformation import transformation, helpers
-from typing import Dict, List, Optional, Set, Tuple
+from dace.transformation import helpers, transformation
 
 
 @transformation.explicit_cf_compatible
@@ -53,7 +57,7 @@ class MapFission(transformation.SingleStateTransformation):
         ]
 
     @staticmethod
-    def _components(subgraph: gr.SubgraphView) -> List[Tuple[nodes.Node, nodes.Node]]:
+    def _components(subgraph: gr.SubgraphView) -> list[tuple[nodes.Node, nodes.Node]]:
         """
         Returns the list of tuples non-array components in this subgraph.
         Each element in the list is a 2 tuple of (input node, output node) of
@@ -78,15 +82,15 @@ class MapFission(transformation.SingleStateTransformation):
         subset = gr.SubgraphView(parent, schildren[None])
         if nested:
             # Views alias storage that already spans every iteration
-            return set(
+            return {
                 node.data
                 for node in subset.nodes()
                 if isinstance(node, nodes.AccessNode)
                 and sdfg.arrays[node.data].transient
                 and not isinstance(sdfg.arrays[node.data], dt.View)
-            )
+            }
         else:
-            return set(node.data for node in subset.nodes() if isinstance(node, nodes.AccessNode))
+            return {node.data for node in subset.nodes() if isinstance(node, nodes.AccessNode)}
 
     @staticmethod
     def _internal_border_arrays(total_components, subgraphs):
@@ -107,14 +111,14 @@ class MapFission(transformation.SingleStateTransformation):
         return inputs & outputs
 
     @staticmethod
-    def iteration_invariant_copies(state: sd.SDFGState, map_entry: nodes.MapEntry, subgraph, border_arrays) -> Set[str]:
+    def iteration_invariant_copies(state: sd.SDFGState, map_entry: nodes.MapEntry, subgraph, border_arrays) -> set[str]:
         """Border transients written only by copies from ``map_entry`` that read no map parameter.
 
         Every iteration copies the same value into them, so fission keeps them unwidened: the copy moves in
         front of the new maps once, and every new map reads the one value.
         """
         params = set(map_entry.map.params)
-        candidates: Dict[str, bool] = {}
+        candidates: dict[str, bool] = {}
         for node in subgraph.nodes():
             if not isinstance(node, nodes.AccessNode) or node.data not in border_arrays:
                 continue
@@ -155,7 +159,7 @@ class MapFission(transformation.SingleStateTransformation):
         else:  # Map with nested SDFG
             nsdfg_node = self.nested_sdfg
             # Make sure there are no other internal nodes in the map
-            if len(set(e.dst for e in graph.out_edges(map_node))) > 1:
+            if len({e.dst for e in graph.out_edges(map_node)}) > 1:
                 return False
 
             # Fissioning a component across a conditional needs the branch
@@ -167,7 +171,7 @@ class MapFission(transformation.SingleStateTransformation):
 
             if len(nsdfg_node.sdfg.nodes()) == 1:
                 child = nsdfg_node.sdfg.nodes()[0]
-                conditions: List[CodeBlock] = []
+                conditions: list[CodeBlock] = []
                 if isinstance(child, LoopRegion):
                     conditions.append(child.loop_condition)
                 elif isinstance(child, ConditionalBlock):
@@ -302,15 +306,9 @@ class MapFission(transformation.SingleStateTransformation):
             # in other scopes or states
             if expr_index == 0:
                 # Find all nodes not in subgraph
-                not_subgraph = set(n.data for n in graph.nodes() if n not in snodes and isinstance(n, nodes.AccessNode))
+                not_subgraph = {n.data for n in graph.nodes() if n not in snodes and isinstance(n, nodes.AccessNode)}
                 not_subgraph.update(
-                    set(
-                        n.data
-                        for s in sdfg.states()
-                        if s != graph
-                        for n in s.nodes()
-                        if isinstance(n, nodes.AccessNode)
-                    )
+                    {n.data for s in sdfg.states() if s != graph for n in s.nodes() if isinstance(n, nodes.AccessNode)}
                 )
 
                 for _, component_out in components:
@@ -374,7 +372,7 @@ class MapFission(transformation.SingleStateTransformation):
     def apply(self, graph: sd.SDFGState, sdfg: sd.SDFG):
         map_entry = self.map_entry
         map_exit = graph.exit_node(map_entry)
-        nsdfg_node: Optional[nodes.NestedSDFG] = None
+        nsdfg_node: nodes.NestedSDFG | None = None
 
         # Obtain subgraph to perform fission to
         if self.expr_index == 0:  # Map with subgraph

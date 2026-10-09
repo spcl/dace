@@ -10,8 +10,8 @@ import numpy as np
 import pytest
 
 import dace
-from dace.sdfg.state import LoopRegion
 from dace.sdfg import nodes
+from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.promote_constant_index_access import PromoteConstantIndexAccess
 
 N = dace.symbol("N")

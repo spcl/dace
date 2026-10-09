@@ -10,9 +10,10 @@ It is called almost everywhere in the SVEUnparser, because it checks whether:
     - Pointers are mixed with vectors or scalars
 """
 
+import collections
+
 import dace.dtypes as dtypes
 from dace.codegen.targets.sve import util as util
-import collections
 
 
 class IncompatibleTypeError(Exception):
@@ -32,9 +33,9 @@ def assert_type_compatibility(defined_symbols: collections.OrderedDict, types: t
 
     # Find all unique vector, pointer and scalar types
     # TODO: Better way to determine uniqueness
-    vec_types = list(set([t for t in types if isinstance(t, dtypes.vector)]))
-    ptr_types = list(set([t for t in types if isinstance(t, dtypes.pointer)]))
-    scal_types = list(set([t for t in types if not isinstance(t, (dtypes.vector, dtypes.pointer))]))
+    vec_types = list({t for t in types if isinstance(t, dtypes.vector)})
+    ptr_types = list({t for t in types if isinstance(t, dtypes.pointer)})
+    scal_types = list({t for t in types if not isinstance(t, (dtypes.vector, dtypes.pointer))})
 
     # Check if we can represent the types in SVE
     for t in types:

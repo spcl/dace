@@ -3,7 +3,6 @@
 
 import re
 from dataclasses import dataclass
-from typing import List, Optional
 
 BITS_PER_BYTE = 8
 MT_PER_S = 1e6
@@ -27,7 +26,7 @@ class MemoryDevice:
 class DramSpec:
     """The host DRAM configuration, as read from a dmidecode dump."""
 
-    devices: List[MemoryDevice]
+    devices: list[MemoryDevice]
 
     @property
     def memory_type(self) -> str:
@@ -42,12 +41,12 @@ class DramSpec:
         return sum(d.peak_bytes_per_s() for d in self.devices)
 
 
-def _field(block: str, name: str) -> Optional[str]:
+def _field(block: str, name: str) -> str | None:
     match = re.search(rf"^\s*{re.escape(name)}:\s*(.+?)\s*$", block, re.MULTILINE)
     return match.group(1) if match else None
 
 
-def _parse_size_bytes(text: Optional[str]) -> Optional[int]:
+def _parse_size_bytes(text: str | None) -> int | None:
     """``Size: 16 GB`` -> bytes. Returns None for an empty slot (``No Module Installed``)."""
     if not text:
         return None
@@ -58,7 +57,7 @@ def _parse_size_bytes(text: Optional[str]) -> Optional[int]:
     return int(match.group(1)) * scale
 
 
-def _parse_mtps(text: Optional[str]) -> Optional[float]:
+def _parse_mtps(text: str | None) -> float | None:
     """``Speed: 6400 MT/s`` -> 6400.0. Older dmidecode reports ``MHz`` for the same quantity."""
     if not text:
         return None
@@ -66,7 +65,7 @@ def _parse_mtps(text: Optional[str]) -> Optional[float]:
     return float(match.group(1)) if match else None
 
 
-def _parse_bits(text: Optional[str]) -> Optional[int]:
+def _parse_bits(text: str | None) -> int | None:
     """``Data Width: 32 bits`` -> 32."""
     if not text:
         return None
@@ -76,7 +75,7 @@ def _parse_bits(text: Optional[str]) -> Optional[int]:
 
 def parse_dmidecode_memory(text: str) -> DramSpec:
     """Parse ``dmidecode --type 17`` output; populated devices only, Configured Memory Speed preferred over Speed."""
-    devices: List[MemoryDevice] = []
+    devices: list[MemoryDevice] = []
     for block in re.split(r"\n(?=Memory Device\b)|\n\n(?=Handle )", text):
         if "Memory Device" not in block:
             continue
@@ -100,7 +99,7 @@ def parse_dmidecode_memory(text: str) -> DramSpec:
 
 def read_dmidecode_file(path: str) -> DramSpec:
     """:func:`parse_dmidecode_memory` on a saved dump (``sudo dmidecode -t 17 > dram.txt``)."""
-    with open(path, "r") as handle:
+    with open(path) as handle:
         return parse_dmidecode_memory(handle.read())
 
 
@@ -116,7 +115,7 @@ def run_dmidecode(sudo: bool = True) -> DramSpec:
     return parse_dmidecode_memory(completed.stdout)
 
 
-def host_dram_spec(dump_path: Optional[str] = None, sudo: bool = True) -> DramSpec:
+def host_dram_spec(dump_path: str | None = None, sudo: bool = True) -> DramSpec:
     """Host DRAM configuration: parsed from ``dump_path`` when given, else read live via :func:`run_dmidecode`."""
     if dump_path is not None:
         return read_dmidecode_file(dump_path)

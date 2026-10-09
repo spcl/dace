@@ -19,25 +19,25 @@ Each implementation follows the ONNX specification and is designed to be:
 
 import copy
 from math import prod
-import typing
+
+import numpy as np
 
 import dace
-import numpy as np
 from dace import SDFG, SDFGState, subsets
-from dace.sdfg.nodes import Node
-from dace.sdfg.utils import in_desc_with_name, in_edge_with_name, out_desc_with_name
+from dace.libraries.onnx import converters
 from dace.libraries.onnx.forward_implementation_abc import ONNXForward
-from dace.libraries.onnx.op_implementations.common import iterables_equal
 from dace.libraries.onnx.nodes import onnx_op
+from dace.libraries.onnx.op_implementations.common import iterables_equal
 from dace.libraries.onnx.op_implementations.utils import (
     empty_sdfg_for_node,
     op_implementation,
     program_for_node,
     python_pure_op_implementation,
 )
+from dace.sdfg.nodes import Node
+from dace.sdfg.utils import in_desc_with_name, in_edge_with_name, out_desc_with_name
 from dace.transformation.onnx import constant_folding
 from dace.transformation.onnx.replacement import onnx_constant_or_none
-from dace.libraries.onnx import converters
 
 # ==============================================================================
 # Concatenation Operations
@@ -51,7 +51,7 @@ class PureConcat(ONNXForward):
         return True
 
     @staticmethod
-    def forward(node: "ONNXOp", state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
+    def forward(node: "ONNXOp", state: SDFGState, sdfg: SDFG) -> Node | SDFG:
         axis = node.axis
 
         num_inputs = len(state.in_edges(node))
@@ -126,7 +126,7 @@ class PureUnsqueeze(ONNXForward):
         return True
 
     @staticmethod
-    def forward(node: "ONNXOp", state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
+    def forward(node: "ONNXOp", state: SDFGState, sdfg: SDFG) -> Node | SDFG:
 
         # Get input/output descriptors
         expanded_desc = copy.deepcopy(out_desc_with_name(node, state, sdfg, "expanded"))
@@ -149,7 +149,7 @@ class PureSqueeze(ONNXForward):
         return True
 
     @staticmethod
-    def forward(node: "ONNXOp", state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
+    def forward(node: "ONNXOp", state: SDFGState, sdfg: SDFG) -> Node | SDFG:
         squeezed_desc = copy.deepcopy(out_desc_with_name(node, state, sdfg, "squeezed"))
 
         def prog(data, squeezed):
@@ -170,7 +170,7 @@ class PureExpand(ONNXForward):
         return True
 
     @staticmethod
-    def forward(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
+    def forward(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> Node | SDFG:
 
         shape = out_desc_with_name(node, state, sdfg, "output").shape
 
@@ -191,7 +191,7 @@ class PureExpand(ONNXForward):
         )
 
     @staticmethod
-    def forward(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
+    def forward(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> Node | SDFG:
 
         constant_folding.remove_node_and_computation(sdfg, state, node, "shape")
 
@@ -216,7 +216,7 @@ def Transpose(data, transposed):
 @op_implementation(op="Transpose", name="einsum")
 class EinsumTranspose(ONNXForward):
     @staticmethod
-    def forward(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
+    def forward(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> Node | SDFG:
         from dace.libraries.onnx.nodes.onnx_op_registry import ONNXEinsum  # avoid import loop
 
         perm = node.perm
@@ -330,7 +330,7 @@ class PureSlice(ONNXForward):
         return True
 
     @staticmethod
-    def forward(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
+    def forward(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> Node | SDFG:
 
         start = sdfg._parent_onnx_model.clean_weights[in_edge_with_name(node, state, "starts").src.data].numpy()[0]
         end = sdfg._parent_onnx_model.clean_weights[in_edge_with_name(node, state, "ends").src.data].numpy()[0]
@@ -372,7 +372,7 @@ class PureSliceAllConstant(ONNXForward):
         return True
 
     @staticmethod
-    def forward(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
+    def forward(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> Node | SDFG:
         axes = PureSliceAllConstant._get_constant("axes", node, state, sdfg)
         ends = PureSliceAllConstant._get_constant("ends", node, state, sdfg)
         starts = PureSliceAllConstant._get_constant("starts", node, state, sdfg)
@@ -446,7 +446,7 @@ class SplitPure(ONNXForward):
         return True
 
     @staticmethod
-    def forward(node: "ONNXOp", state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
+    def forward(node: "ONNXOp", state: SDFGState, sdfg: SDFG) -> Node | SDFG:
         from dace.transformation.onnx.replacement import onnx_constant_or_none
 
         nsdfg = dace.SDFG(node.label + "_expansion")
@@ -538,7 +538,7 @@ class PureShape(ONNXForward):
         return True
 
     @staticmethod
-    def forward(node: "ONNXOp", state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
+    def forward(node: "ONNXOp", state: SDFGState, sdfg: SDFG) -> Node | SDFG:
 
         data_desc = in_desc_with_name(node, state, sdfg, "data")
         shape_val = np.array(data_desc.shape, np.int64)
@@ -555,7 +555,7 @@ class PureShape(ONNXForward):
 
         for i, v in enumerate(shape_val):
             tasklet = nstate.add_tasklet("write_shape", {}, {"shape_scalar": dace.int64}, f"shape_scalar = {v}")
-            nstate.add_edge(tasklet, "shape_scalar", s, None, dace.Memlet("shape[{}]".format(i)))
+            nstate.add_edge(tasklet, "shape_scalar", s, None, dace.Memlet(f"shape[{i}]"))
 
         return nsdfg
 
@@ -568,7 +568,7 @@ class PureShape(ONNXForward):
 @op_implementation(op="Gather", name="pure")
 class PureGather(ONNXForward):
     @staticmethod
-    def forward(node: "ONNXOp", state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
+    def forward(node: "ONNXOp", state: SDFGState, sdfg: SDFG) -> Node | SDFG:
         # To understand this operator, read the docs for np.take.
         # The ONNX docs are not easy to understand (and are incorrect in opset 11)
 
@@ -621,7 +621,7 @@ class PureGather(ONNXForward):
                 "__data": dace.Memlet(data_memlet_str),
                 "idx": dace.Memlet(indices_idx_str),
             },
-            code=f"__output = __data[idx]",
+            code="__output = __data[idx]",
             outputs={"__output": dace.Memlet(output_idx_str)},
             external_edges=True,
         )
@@ -665,7 +665,7 @@ class PureCast(ONNXForward):
         return True
 
     @staticmethod
-    def forward(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
+    def forward(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> Node | SDFG:
         input_desc = in_desc_with_name(node, state, sdfg, "input")
         output_desc = out_desc_with_name(node, state, sdfg, "output")
         if input_desc.dtype == output_desc.dtype:
@@ -683,8 +683,8 @@ class PureCast(ONNXForward):
             tasklet, _, _ = nstate.add_mapped_tasklet(
                 node.label + "_tasklet",
                 map_ranges=map_ranges,
-                inputs={f"__input": dace.Memlet(f"input[{index_str}]")},
-                code=f"__output = __input",
+                inputs={"__input": dace.Memlet(f"input[{index_str}]")},
+                code="__output = __input",
                 outputs={"__output": dace.Memlet(f"output[{index_str}]")},
                 external_edges=True,
             )

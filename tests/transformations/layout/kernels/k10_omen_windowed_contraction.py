@@ -25,8 +25,8 @@ finalist; arXiv:1912.10024); NPBench 'sselfeng' (Ziogas et al., ICS'21); SC26 la
 """
 
 import numpy
-import dace
 
+import dace
 from dace.transformation.layout.permute_dimensions import PermuteDimensions
 
 NA, NE = dace.symbol("NA"), dace.symbol("NE")

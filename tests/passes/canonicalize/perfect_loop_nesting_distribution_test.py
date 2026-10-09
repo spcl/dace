@@ -26,7 +26,8 @@ import numpy as np
 import pytest
 
 import dace
-from dace.sdfg import nodes, utils as sdutil
+from dace.sdfg import nodes
+from dace.sdfg import utils as sdutil
 from dace.sdfg.state import LoopRegion, SDFGState
 from dace.transformation.interstate import LoopToMap
 from dace.transformation.interstate.trivial_loop_elimination import TrivialLoopElimination
@@ -44,10 +45,9 @@ from dace.transformation.passes.loop_fission import LoopFission, _linear_blocks
 from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
 from dace.transformation.passes.simplify import SimplifyPass
 from dace.transformation.passes.unique_loop_iterators import UniqueLoopIterators
-
+from tests.cfg_tree import assert_tree_matches_a_reset, spy_on_resets
 from tests.corpus.tsvc import tsvc
 from tests.corpus.tsvc.tsvc_numpy import REFERENCES
-from tests.cfg_tree import assert_tree_matches_a_reset, spy_on_resets
 
 #: The two kernels whose outer loop body holds sibling inner loops carrying in opposite directions.
 SIBLING_NESTS = ["s2233", "s233"]

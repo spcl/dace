@@ -11,8 +11,8 @@ from transformers import BertConfig
 from transformers.models.bert.modeling_bert import BertLayer
 
 from dace.ml import DaceModule
-from tests.utils import torch_tensors_close
 from tests.ml_gpu_utils import DEVICES, experimental_cuda, is_gpu, torch_device
+from tests.utils import torch_tensors_close
 
 # DaCe and PyTorch round a float32 matmul differently, so a ReLU input closer to zero than the rounding noise (~1e-6)
 # gets a different gradient mask in each and the weight gradients of that unit disagree by far more than the test
@@ -211,7 +211,7 @@ def test_bert(device):
 
     class BertTokenSoftmaxClf(nn.Module):
         def __init__(self):
-            super(BertTokenSoftmaxClf, self).__init__()
+            super().__init__()
             self.bert = BertLayer(BertConfig(hidden_act="relu")).eval()
             self.sm = nn.LogSoftmax(dim=-1)
 

@@ -18,21 +18,21 @@ all tasklets (no control flow, left untouched) or exactly one NestedSDFG.
 
 import copy
 from collections import Counter
-from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
+from collections.abc import Callable, Iterable
+from typing import Any
 
 from dace import SDFG, data, nodes, properties
-from dace.sdfg import SDFGState
-from dace.sdfg import InterstateEdge
+from dace.optionals import required
+from dace.sdfg import InterstateEdge, SDFGState
 from dace.sdfg import utils as sdutil
 from dace.sdfg.replace import replace_datadesc_names
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.analysis import map_scope
-from dace.optionals import required
 
 
 def _map_body_nsdfgs(
-    state: SDFGState, map_entry: nodes.MapEntry, order_of: Callable[[SDFGState], Dict[nodes.Node, int]]
-) -> List[nodes.NestedSDFG]:
+    state: SDFGState, map_entry: nodes.MapEntry, order_of: Callable[[SDFGState], dict[nodes.Node, int]]
+) -> list[nodes.NestedSDFG]:
     """The NestedSDFG nodes in ``map_entry``'s OWN scope, in dependency
     (topological) order so a producer is always merged before its consumer.
 
@@ -58,7 +58,7 @@ def _map_body_size(state: SDFGState, map_entry: nodes.MapEntry) -> int:
     )
 
 
-def _uniquify_data_against(inner: SDFG, taken_data: Iterable[str]) -> Dict[str, str]:
+def _uniquify_data_against(inner: SDFG, taken_data: Iterable[str]) -> dict[str, str]:
     """Rename ``inner``'s data descriptors that collide with ``taken_data`` to
     fresh names, so ``inner`` can be spliced into another SDFG without a clash.
 
@@ -80,7 +80,7 @@ def _uniquify_data_against(inner: SDFG, taken_data: Iterable[str]) -> Dict[str, 
 
 def shared_carrier_connectors(
     state: SDFGState, keep: nodes.NestedSDFG, drop: nodes.NestedSDFG
-) -> Optional[Dict[str, Tuple[str, nodes.AccessNode]]]:
+) -> dict[str, tuple[str, nodes.AccessNode]] | None:
     """Connectors of ``drop`` that read a container ``keep`` writes, or ``None`` to refuse the merge.
 
     ``MapFusion`` leaves a producer and its consumer as siblings wired through one outer AccessNode
@@ -109,9 +109,9 @@ def shared_carrier_connectors(
     if any(e.data.data in consumed for e in state.out_edges(drop) if e.data.data is not None):
         return None
 
-    forward: Dict[str, Tuple[str, nodes.AccessNode]] = {}
+    forward: dict[str, tuple[str, nodes.AccessNode]] = {}
     # One whole-SDFG count for all carriers, built on first need -- most edges never reach it.
-    elsewhere: Optional[Counter] = None
+    elsewhere: Counter | None = None
     for e in state.in_edges(drop):
         if e.data.data not in produced or not isinstance(e.src, nodes.AccessNode):
             continue
@@ -160,10 +160,10 @@ def _dedup_boundary_aliases(state: SDFGState, keep: nodes.NestedSDFG) -> None:
     # Symbol-mapping dedup: group keys by the outer value they bind to, and
     # collapse each >=2 group onto one canonical key (prefer the key whose name
     # already IS the bound value, e.g. the map parameter).
-    groups: Dict[str, List[str]] = {}
+    groups: dict[str, list[str]] = {}
     for k, v in keep.symbol_mapping.items():
         groups.setdefault(str(v), []).append(k)
-    sym_repl: Dict[str, str] = {}
+    sym_repl: dict[str, str] = {}
     for value_str, keys in groups.items():
         if len(keys) < 2:
             continue
@@ -183,8 +183,8 @@ def _dedup_boundary_aliases(state: SDFGState, keep: nodes.NestedSDFG) -> None:
     # In-connector dedup: an in-edge whose outer memlet matches an earlier one
     # reads identical data; rename its inner descriptor onto the earlier
     # connector and drop the duplicate edge + connector.
-    seen: Dict[Tuple, str] = {}
-    data_repl: Dict[str, str] = {}
+    seen: dict[tuple, str] = {}
+    data_repl: dict[str, str] = {}
     for e in list(state.in_edges(keep)):
         if e.dst_conn is None:
             continue
@@ -219,13 +219,13 @@ class NormalizeMapBody(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> int | None:
         merged = 0
         # One topological order per state and run: a state can hold many map entries, and each used
         # to sort the whole state again. A merge rewires its state, so that state's order is dropped.
-        orders: Dict[SDFGState, Dict[nodes.Node, int]] = {}
+        orders: dict[SDFGState, dict[nodes.Node, int]] = {}
 
-        def order_of(state: SDFGState) -> Dict[nodes.Node, int]:
+        def order_of(state: SDFGState) -> dict[nodes.Node, int]:
             if state not in orders:
                 orders[state] = {n: i for i, n in enumerate(sdutil.dfs_topological_sort(state))}
             return orders[state]
@@ -247,7 +247,7 @@ class NormalizeMapBody(ppl.Pass):
                 orders.pop(g, None)
         return merged or None
 
-    def _merge_siblings(self, state: SDFGState, siblings: List[nodes.NestedSDFG]) -> bool:
+    def _merge_siblings(self, state: SDFGState, siblings: list[nodes.NestedSDFG]) -> bool:
         """Merge sibling NestedSDFGs in ``state`` into ``siblings[0]`` by
         sequencing their control-flow graphs. Returns True on success."""
         keep = siblings[0]

@@ -9,7 +9,7 @@ that stops reaching its family fails instead of passing vacuously.
 
 import math
 import re
-from typing import Callable, Dict, Tuple
+from collections.abc import Callable
 
 import numpy as np
 import pytest
@@ -27,14 +27,14 @@ N = dace.symbol("N")
 #: What a C unit must not carry: a macro definition, the C23 type query and the pragma operator the
 #: statement macros needed, and an ``auto`` declaration.
 MACRO_CONSTRUCTS = (
-    re.compile(r"^[ \t]*#[ \t]*define\b", re.M),
+    re.compile(r"^[ \t]*#[ \t]*define\b", re.MULTILINE),
     re.compile(r"\btypeof(?:_unqual)?\b"),
     re.compile(r"\b_Pragma\b"),
     re.compile(r"\bauto\b"),
 )
 
 #: ``(sdfg, helper calls the rendering must contain, arguments, expected outputs by name)``.
-Case = Tuple[dace.SDFG, Tuple[str, ...], Dict[str, object], Dict[str, np.ndarray]]
+Case = tuple[dace.SDFG, tuple[str, ...], dict[str, object], dict[str, np.ndarray]]
 
 
 @dace.program
@@ -310,7 +310,7 @@ def c_mod_case() -> Case:
     )
 
 
-CASES: Dict[str, Callable[[], Case]] = {
+CASES: dict[str, Callable[[], Case]] = {
     "minmax_float64": minmax_case,
     "minmax_int64_through_a_symbol": minmax_through_a_symbol_case,
     "floored_int64": floored_case,

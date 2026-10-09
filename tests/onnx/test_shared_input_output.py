@@ -16,9 +16,8 @@ from torch.nn import functional as F
 import dace
 import dace.libraries.onnx as donnx
 from dace.ml import DaceModule
-
+from tests.ml_gpu_utils import DEVICES, experimental_cuda, is_gpu, run_sdfg, torch_device
 from tests.utils import torch_tensors_close
-from tests.ml_gpu_utils import DEVICES, run_sdfg, is_gpu, experimental_cuda, torch_device
 
 
 @pytest.mark.onnx
@@ -101,7 +100,7 @@ def test_bn_in_import(device):
 
     class Module(torch.nn.Module):
         def __init__(self):
-            super(Module, self).__init__()
+            super().__init__()
             self.bn = nn.BatchNorm2d(3, track_running_stats=True)
 
         def forward(self, x):

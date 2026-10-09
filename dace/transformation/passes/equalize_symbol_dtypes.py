@@ -2,7 +2,8 @@
 """Make every symbol name carry the one dtype its scope declares."""
 
 import contextlib
-from typing import Any, Dict, Iterator, Mapping, Optional
+from collections.abc import Iterator, Mapping
+from typing import Any
 
 import sympy
 
@@ -43,7 +44,7 @@ def retype_expression(expr: Any, table: Mapping[str, dtypes.typeclass]) -> Any:
     return expr.xreplace(replacements) if replacements else expr
 
 
-def retype_subset(subset: Optional[subsets.Subset], table: Mapping[str, dtypes.typeclass]) -> Optional[subsets.Subset]:
+def retype_subset(subset: subsets.Subset | None, table: Mapping[str, dtypes.typeclass]) -> subsets.Subset | None:
     """``subset`` with its bounds retyped by :func:`retype_expression`; the same object when nothing changes."""
     if not isinstance(subset, subsets.Range):
         return subset
@@ -75,7 +76,7 @@ class EqualizeSymbolDtypes(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return bool(modified & (ppl.Modifies.Memlets | ppl.Modifies.Nodes | ppl.Modifies.Symbols))
 
-    def apply_pass(self, sdfg: SDFG, _: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _: dict[str, Any]) -> int | None:
         """Retype the whole SDFG tree in place.
 
         :param sdfg: The SDFG to modify; nested SDFGs are visited too.
@@ -163,7 +164,7 @@ class EqualizeSymbolDtypes(ppl.Pass):
         return rewritten
 
 
-def equalize(sdfg: SDFG) -> Optional[int]:
+def equalize(sdfg: SDFG) -> int | None:
     """Rebuild ``sdfg`` at the dtypes it declares, with the symbol-dtype authority following the declarations."""
     with symbolic.serialization_symbol_dtypes({}, inherit=True):
         return EqualizeSymbolDtypes().apply_pass(sdfg, {})

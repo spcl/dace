@@ -29,8 +29,8 @@ import numpy as np
 import pytest
 
 import dace
-from dace.transformation.interstate import LoopToMap
 from dace.transformation.dataflow.wcr_conversion import AugAssignToWCR
+from dace.transformation.interstate import LoopToMap
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
 

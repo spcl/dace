@@ -18,7 +18,7 @@ units" feature; the emission side (routing each ``no_inline`` nest to its own fi
 code generator.
 """
 
-from typing import Any, Dict, List, Optional, Set, Tuple, Union
+from typing import Any, Union
 
 from dace import SDFG, dtypes
 from dace.properties import make_properties
@@ -31,7 +31,7 @@ from dace.transformation import pass_pipeline as ppl
 NestNode = Union[nodes.MapEntry, LoopRegion]
 
 
-def loop_defined_symbols(loop: LoopRegion) -> Set[str]:
+def loop_defined_symbols(loop: LoopRegion) -> set[str]:
     """Symbols DEFINED inside a loop region: each loop variable (the region and any nested
     ``LoopRegion``) plus every inter-state-edge assignment target.
 
@@ -41,7 +41,7 @@ def loop_defined_symbols(loop: LoopRegion) -> Set[str]:
     first. (Loop counters type themselves via ``LoopRegion.new_symbols`` and need no pre-declaration,
     but they are cheap to include and a counter left declared is removed again by the outliner.)
     """
-    syms: Set[str] = set()
+    syms: set[str] = set()
     for block in [loop, *loop.all_control_flow_blocks()]:
         if isinstance(block, LoopRegion) and block.loop_variable and block.init_statement:
             syms.add(block.loop_variable)
@@ -68,14 +68,14 @@ class OutlineTopLevelNests(ppl.Pass):
         # re-running would wrap nothing new. Never worth re-triggering.
         return False
 
-    def apply_pass(self, sdfg: SDFG, _: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _: dict[str, Any]) -> int | None:
         """Outline the root SDFG's top-level nests. Returns the number outlined, or ``None`` if none."""
         # Snapshot the top-level nests BEFORE mutating: each outline rewrites the graph in place, so
         # collecting refs up front (as NestForge's `outer` strategy does) avoids iterating a mutating
         # container. Top-level nests are disjoint scopes, so sibling node objects stay valid across an
         # extraction as long as map subgraphs are recomputed at extraction time.
-        loop_refs: List[LoopRegion] = []
-        map_refs: List[Tuple[SDFGState, nodes.MapEntry]] = []
+        loop_refs: list[LoopRegion] = []
+        map_refs: list[tuple[SDFGState, nodes.MapEntry]] = []
         for block in sdfg.nodes():
             if isinstance(block, LoopRegion):
                 loop_refs.append(block)

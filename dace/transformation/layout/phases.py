@@ -9,7 +9,6 @@ Sub-phasing (splitting a loop into several layout phases) is a deferred TODO.
 """
 
 from dataclasses import dataclass
-from typing import List
 
 from dace import SDFG, SDFGState
 from dace.sdfg.state import AbstractControlFlowRegion, ControlFlowBlock
@@ -22,7 +21,7 @@ class Phase:
     block: ControlFlowBlock
     index: int
 
-    def states(self) -> List[SDFGState]:
+    def states(self) -> list[SDFGState]:
         """The states this phase contains (itself if a plain state; the whole body if a region -- not sub-phased)."""
         if isinstance(self.block, SDFGState):
             return [self.block]
@@ -30,7 +29,7 @@ class Phase:
         return list(self.block.states())
 
 
-def program_phases(sdfg: SDFG) -> List[Phase]:
+def program_phases(sdfg: SDFG) -> list[Phase]:
     """The top-level control-flow blocks of ``sdfg``, one :class:`Phase` each (NOT recursed). Order is the
     SDFG's block order; the MPI pass handles each point-to-point op independently, so ordering is cosmetic."""
     return [Phase(block=block, index=i) for i, block in enumerate(sdfg.nodes())]

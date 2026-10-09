@@ -4,10 +4,10 @@ schedule is re-tiled by b so the innermost loop iterates the block. Oracle: the 
 computes the same result (bit-exact), tiling is idempotent, and an unblocked kernel is untouched."""
 
 import numpy
-import dace
 
-from dace.transformation.layout.split_dimensions import SplitDimensions
+import dace
 from dace.transformation.layout.normalize_schedule import normalize_schedule_for_layout
+from dace.transformation.layout.split_dimensions import SplitDimensions
 
 N = dace.symbol("N")
 

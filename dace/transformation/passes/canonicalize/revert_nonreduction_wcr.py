@@ -15,16 +15,18 @@ and it is 31% of the whole canonicalization. Six WCR edges are cheaper to look a
 isomorphism.
 """
 
-from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple, Type, Union
+from collections.abc import Callable, Iterator
+from typing import Any
 
 from dace import SDFG
 from dace.sdfg import nodes
 from dace.sdfg.state import SDFGState
-from dace.transformation import pass_pipeline as ppl, transformation
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation import transformation
 from dace.transformation.dataflow.wcr_conversion import WCRToAugAssign
 
 #: ``{PatternNode: node}`` binding for one candidate.
-Binding = Dict[Any, nodes.Node]
+Binding = dict[Any, nodes.Node]
 
 
 def _exit_outputs(state: SDFGState, map_exit: nodes.MapExit, data: str) -> Iterator[nodes.AccessNode]:
@@ -45,7 +47,7 @@ def _exit_outputs(state: SDFGState, map_exit: nodes.MapExit, data: str) -> Itera
             yield edge.dst
 
 
-def wcr_candidates(state: SDFGState) -> Iterator[Tuple[int, Binding]]:
+def wcr_candidates(state: SDFGState) -> Iterator[tuple[int, Binding]]:
     """Enumerate ``(expr_index, binding)`` for every WCR edge in ``state``.
 
     The edge's endpoint types select the pattern: the six ``WCRToAugAssign.expressions()``
@@ -91,7 +93,7 @@ def wcr_candidates(state: SDFGState) -> Iterator[Tuple[int, Binding]]:
 
 
 #: Enumerates ``(expr_index, binding)`` candidates in one state.
-CandidateFn = Callable[[SDFGState], Iterator[Tuple[int, Binding]]]
+CandidateFn = Callable[[SDFGState], Iterator[tuple[int, Binding]]]
 
 
 def apply_at_candidates(sdfg: SDFG, xform_type: type, candidates: CandidateFn) -> int:
@@ -141,10 +143,10 @@ class RevertNonReductionWCR(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+    def depends_on(self) -> list[type[ppl.Pass] | ppl.Pass]:
         return []
 
-    def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> int | None:
         """Revert every conflict-free WCR in ``sdfg`` and its nested SDFGs.
 
         Outer fixpoint over the whole SDFG, not per state: ``WCRToAugAssign`` decides expr 4 and

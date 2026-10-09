@@ -89,7 +89,7 @@ point that do not exist yet (``dace/codegen/targets/cpu.py`` carries the matchin
 ``TODO(later): barriers and map_header += " nowait"``).
 """
 
-from typing import Any, Dict, List, Optional, Set
+from typing import Any
 
 from dace import SDFG, dtypes, properties
 from dace.sdfg import nodes
@@ -121,7 +121,7 @@ SHARED_LIFETIMES = (
 )
 
 
-def top_level_nodes(state: SDFGState) -> List[nodes.Node]:
+def top_level_nodes(state: SDFGState) -> list[nodes.Node]:
     """The nodes of ``state`` that no map scope encloses -- the ones a hoisted team would replicate.
 
     :param state: the state to inspect.
@@ -131,7 +131,7 @@ def top_level_nodes(state: SDFGState) -> List[nodes.Node]:
     return [n for n in state.nodes() if scopes[n] is None]
 
 
-def loop_local_transients(sdfg: SDFG, loop: LoopRegion) -> Set[str]:
+def loop_local_transients(sdfg: SDFG, loop: LoopRegion) -> set[str]:
     """The transients outlining ``loop`` would move into the nest rather than pass as a connector.
 
     Mirrors the ``unique_set`` rule of :func:`~dace.transformation.helpers.nest_sdfg_subgraph`: a
@@ -143,8 +143,8 @@ def loop_local_transients(sdfg: SDFG, loop: LoopRegion) -> Set[str]:
     :returns: the names of the transients that would move inside.
     """
     inside_blocks = {id(loop)} | {id(b) for b in loop.all_control_flow_blocks()}
-    inside_names: Set[str] = set()
-    outside_names: Set[str] = set()
+    inside_names: set[str] = set()
+    outside_names: set[str] = set()
     for block in sdfg.all_control_flow_blocks():
         target = inside_names if id(block) in inside_blocks else outside_names
         if isinstance(block, SDFGState):
@@ -176,7 +176,7 @@ class HoistParallelRegion(ppl.Pass):
     def depends_on(self):
         return set()
 
-    def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> int | None:
         """Hoist the OpenMP team out of every loop that qualifies.
 
         :param sdfg: the SDFG to specialize, in place.

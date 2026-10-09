@@ -4,12 +4,14 @@ and class AccessStack which which corresponds to the stack used to compute the s
 Further, provides a curve fitting method and plotting function."""
 
 import warnings
-from dace.data import Array
+
+import numpy as np
 import sympy as sp
 from scipy.optimize import curve_fit
-import numpy as np
+
 from dace import symbol, symbolic
-from dace.symbolic import symbol, pystr_to_symbolic
+from dace.data import Array
+from dace.symbolic import pystr_to_symbolic, symbol
 
 
 class CacheLineTracker:

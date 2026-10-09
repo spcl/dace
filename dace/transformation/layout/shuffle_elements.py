@@ -4,16 +4,15 @@
 import copy
 import re
 from dataclasses import dataclass
-from typing import Any, Dict, List, Tuple, Union
+from typing import Any, Union
 
 import dace
+from dace.libraries.layout.shuffle import emit_shuffle_globals, get_shuffle
 from dace.sdfg import nodes as nd
 from dace.transformation import pass_pipeline as ppl
 
-from dace.libraries.layout.shuffle import get_shuffle, emit_shuffle_globals
-
 #: A per-array shuffle spec: one ``(sigma_name, dim)`` pair, or a list of them for multiple dimensions.
-ShuffleSpec = Union[Tuple[str, int], List[Tuple[str, int]]]
+ShuffleSpec = Union[tuple[str, int], list[tuple[str, int]]]
 
 
 @dataclass
@@ -21,7 +20,7 @@ class ShuffleElements(ppl.Pass):
     """Renumber one or more full dimensions via registered bijections. ``shuffle_map`` maps each array to
     either a single ``(sigma_name, dim)`` or a list of them (each dim renumbered by its own sigma)."""
 
-    def __init__(self, shuffle_map: Dict[str, ShuffleSpec]):
+    def __init__(self, shuffle_map: dict[str, ShuffleSpec]):
         self._shuffle_map = shuffle_map
 
     def modifies(self) -> ppl.Modifies:
@@ -38,13 +37,13 @@ class ShuffleElements(ppl.Pass):
         return False
 
     @staticmethod
-    def _normalize(spec: ShuffleSpec) -> List[Tuple[str, int]]:
+    def _normalize(spec: ShuffleSpec) -> list[tuple[str, int]]:
         """A single ``(name, dim)`` tuple or a list of them -> a list (backward compatible)."""
         if isinstance(spec, tuple):
             return [spec]
         return list(spec)
 
-    def apply_pass(self, sdfg: dace.SDFG, pipeline_results: Dict[str, Any]) -> int:
+    def apply_pass(self, sdfg: dace.SDFG, pipeline_results: dict[str, Any]) -> int:
         used = []
         for arr, spec in self._shuffle_map.items():
             pairs = self._normalize(spec)
@@ -64,7 +63,7 @@ class ShuffleElements(ppl.Pass):
     def _is_written(self, sdfg: dace.SDFG, arr: str) -> bool:
         return any(an.data == arr and state.in_degree(an) > 0 for state in sdfg.states() for an in state.data_nodes())
 
-    def _shuffle_array(self, sdfg: dace.SDFG, arr: str, fns: Dict[int, Any]) -> None:
+    def _shuffle_array(self, sdfg: dace.SDFG, arr: str, fns: dict[int, Any]) -> None:
         self._guard_no_interstate(sdfg, arr)
         desc = sdfg.arrays[arr]
         for dim in fns:
@@ -123,7 +122,7 @@ class ShuffleElements(ppl.Pass):
 
     # body rewrite: A[e] -> A'[sigma^{-1}(e)] on each shuffled dim; recurses into nested SDFGs
     def _compose_subset(
-        self, subset: dace.subsets.Range, fns: Dict[int, Any], sizes: Dict[int, Any]
+        self, subset: dace.subsets.Range, fns: dict[int, Any], sizes: dict[int, Any]
     ) -> dace.subsets.Range:
         ranges = list(subset.ranges)
         for dim, fn in fns.items():

@@ -42,9 +42,10 @@ linking to the deferred ``CascadeInterstateEdgeAssignmentsUp`` design
 work that targets them.
 """
 
+import re
+
 import numpy as np
 import pytest
-import re
 
 import dace
 from dace.ordered import OrderedSet

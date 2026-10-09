@@ -1,7 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import os
+
 from dace import config, library
-from typing import Dict, List
 
 
 @library.environment
@@ -13,17 +13,17 @@ class TBLIS:
     """
 
     cmake_minimum_version = None
-    cmake_packages: List[str] = []
-    cmake_variables: Dict[str, str] = {}
-    cmake_compile_flags: List[str] = []
+    cmake_packages: list[str] = []
+    cmake_variables: dict[str, str] = {}
+    cmake_compile_flags: list[str] = []
     cmake_link_flags = ["-lpthread"]
-    cmake_files: List[str] = []
+    cmake_files: list[str] = []
 
     headers = ["tblis/tblis.h"]
-    state_fields: List[str] = []
+    state_fields: list[str] = []
     init_code = ""
     finalize_code = ""
-    dependencies: List[str] = []
+    dependencies: list[str] = []
 
     @staticmethod
     def cmake_includes():

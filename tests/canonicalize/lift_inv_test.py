@@ -29,10 +29,10 @@ os.environ.setdefault("UCX_VFS_ENABLE", "n")
 import numpy as np
 
 import dace
-from dace.sdfg import nodes
-from dace.sdfg.state import LoopRegion
 from dace.libraries.linalg.nodes.inv import Inv
 from dace.libraries.linalg.nodes.solve import Solve
+from dace.sdfg import nodes
+from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.canonicalize.lift_inv import LiftInv
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
 

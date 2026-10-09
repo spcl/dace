@@ -1,6 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 
-from typing import Dict
+
 import dace
 from dace.sdfg.analysis.writeset_underapproximation import UnderapproximateWrites, UnderapproximateWritesDict
 from dace.sdfg.utils import inline_control_flow_regions
@@ -585,7 +585,7 @@ def test_nested_sdfg_in_map_branches():
     inline_control_flow_regions(sdfg)
 
     pipeline = Pipeline([UnderapproximateWrites()])
-    result: Dict[int, UnderapproximateWritesDict] = pipeline.apply_pass(sdfg, {})[UnderapproximateWrites.__name__]
+    result: dict[int, UnderapproximateWritesDict] = pipeline.apply_pass(sdfg, {})[UnderapproximateWrites.__name__]
 
     write_approx = result[sdfg.cfg_id].approximation
     # find write set

@@ -23,7 +23,6 @@ subgraphs in a few megabytes.
 """
 
 import tracemalloc
-from typing import List, Tuple
 
 import pytest
 
@@ -68,7 +67,7 @@ def _clique_state_sdfg(num_maps: int) -> dace.SDFG:
     return sdfg
 
 
-def _enumerate(sdfg: dace.SDFG, measure: bool = False) -> Tuple[List[Tuple[nodes.MapEntry, ...]], int, int]:
+def _enumerate(sdfg: dace.SDFG, measure: bool = False) -> tuple[list[tuple[nodes.MapEntry, ...]], int, int]:
     """Runs the enumerator over the single state of ``sdfg``.
 
     :return: The yielded groups, the number of condition-function calls and
@@ -86,7 +85,7 @@ def _enumerate(sdfg: dace.SDFG, measure: bool = False) -> Tuple[List[Tuple[nodes
         calls[0] += 1
         return condition.can_be_applied(inner_sdfg, subgraph)
 
-    def run() -> List[Tuple[nodes.MapEntry, ...]]:
+    def run() -> list[tuple[nodes.MapEntry, ...]]:
         enumerator = GreedyEnumerator(
             sdfg, state, SubgraphView(state, state.nodes()), condition_function=counting_condition
         )
@@ -115,7 +114,7 @@ def test_greedy_enumerator_is_linear_in_map_count():
     # The groups must partition the maps: every map exactly once, no duplicates.
     covered = [me for group in groups for me in group]
     assert len(covered) == N_MAPS
-    assert len(set(id(me) for me in covered)) == N_MAPS
+    assert len({id(me) for me in covered}) == N_MAPS
     assert len(groups) <= N_MAPS
 
     # Greedy scan: one condition check per map that is offered to a non-empty set.

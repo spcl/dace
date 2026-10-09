@@ -24,15 +24,14 @@ import numpy as np
 import pytest
 
 import dace
-from dace.libraries.standard.nodes import FindFirst
-from dace.transformation.passes.scatter_conflict_guard import insert_scatter_guard
 from dace import cpf
 from dace.codegen.cpf import render as render_sdfg
+from dace.libraries.standard.nodes import FindFirst
 from dace.transformation.passes.canonicalize.assume_symbols_nonnegative import (
     insert_assumption_guards,
     set_symbol_nonnegative_assumptions,
 )
-
+from dace.transformation.passes.scatter_conflict_guard import insert_scatter_guard
 from tests.codegen.cpf.conftest import (
     assert_matches,
     assert_standalone,

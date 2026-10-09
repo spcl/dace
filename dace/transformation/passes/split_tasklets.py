@@ -1,23 +1,21 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+import ast
 import copy
 import dataclasses
 import functools
 import itertools
 import re
-
-from dace.ordered import OrderedSet
-
-from dace import graphlib as nx, properties, subsets
+from collections.abc import Iterable
+from typing import Any
 
 import dace
-from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
-
-from dace import SDFG
-from dace.transformation import pass_pipeline as ppl, transformation
-
-import ast
+from dace import SDFG, properties, subsets
+from dace import graphlib as nx
+from dace.ordered import OrderedSet
 from dace.sdfg.nodes import CodeBlock
 from dace.sdfg.type_inference import infer_types
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation import transformation
 
 
 class ASTSplitter:
@@ -176,13 +174,13 @@ class ASTSplitter:
         return ast.unparse(node)
 
 
-def branch_assignments(branch: List[ast.stmt]) -> Optional[Dict[str, ast.expr]]:
+def branch_assignments(branch: list[ast.stmt]) -> dict[str, ast.expr] | None:
     """``{name: value}`` for a branch that only assigns to plain names, else ``None``.
 
     ``None`` means the branch does something an ``ITE`` blend cannot stand in for -- a nested
     conditional, a call with an effect, a subscript target -- and the caller must decline.
     """
-    assignments: Dict[str, ast.expr] = {}
+    assignments: dict[str, ast.expr] = {}
     for statement in branch:
         if not isinstance(statement, ast.Assign) or len(statement.targets) != 1:
             return None
@@ -193,7 +191,7 @@ def branch_assignments(branch: List[ast.stmt]) -> Optional[Dict[str, ast.expr]]:
     return assignments
 
 
-def fold_conditionals(body: List[ast.stmt]) -> Optional[List[ast.Assign]]:
+def fold_conditionals(body: list[ast.stmt]) -> list[ast.Assign] | None:
     """Rewrite ``if`` statements whose branches only assign into ``ITE`` assignments.
 
     ``if c: y = a`` becomes ``y = ITE(c, a, y)`` -- the if-THEN form, where the false case is the
@@ -207,8 +205,8 @@ def fold_conditionals(body: List[ast.stmt]) -> Optional[List[ast.Assign]]:
     :param body: the statements of a tasklet body.
     :returns: an equivalent list of plain assignments, or ``None`` to decline.
     """
-    folded: List[ast.Assign] = []
-    assigned: Set[str] = set()
+    folded: list[ast.Assign] = []
+    assigned: set[str] = set()
     for statement in body:
         if isinstance(statement, ast.Assign):
             names = branch_assignments([statement])
@@ -242,7 +240,7 @@ def fold_conditionals(body: List[ast.stmt]) -> Optional[List[ast.Assign]]:
     return folded
 
 
-def to_static_single_assignment(assignments: List[ast.Assign]) -> List[ast.Assign]:
+def to_static_single_assignment(assignments: list[ast.Assign]) -> list[ast.Assign]:
     """Version every name assigned more than once, so the result is single-assignment.
 
     ``y = 0.0`` followed by ``y = ITE(c, x, y)`` is two writes to one name, which the chain builder
@@ -253,8 +251,8 @@ def to_static_single_assignment(assignments: List[ast.Assign]) -> List[ast.Assig
     final = {}
     for index, assignment in enumerate(assignments):
         final[assignment.targets[0].id] = index
-    versioned: List[ast.Assign] = []
-    current: Dict[str, str] = {}
+    versioned: list[ast.Assign] = []
+    current: dict[str, str] = {}
     counter = 0
     for index, assignment in enumerate(assignments):
         value = copy.deepcopy(assignment.value)
@@ -273,7 +271,7 @@ def to_static_single_assignment(assignments: List[ast.Assign]) -> List[ast.Assig
     return versioned
 
 
-def lower_assignments(assignments: List[ast.Assign], code: str) -> List[str]:
+def lower_assignments(assignments: list[ast.Assign], code: str) -> list[str]:
     """Lower a list of plain assignments into single-operation SSA lines.
 
     One ``ASTSplitter`` is shared across the list so its temporaries stay unique.
@@ -299,7 +297,7 @@ def lower_assignments(assignments: List[ast.Assign], code: str) -> List[str]:
     return ssa.stmts
 
 
-def to_ssa(code: str) -> List[str]:
+def to_ssa(code: str) -> list[str]:
     """
     Convert a single Python assignment (or expression) into single-operation SSA lines.
 
@@ -377,7 +375,7 @@ def _ast_function_names(rhs: str) -> OrderedSet:
     return names
 
 
-def _get_vars(ssa_line: str) -> Tuple[List[str], List[str]]:
+def _get_vars(ssa_line: str) -> tuple[list[str], list[str]]:
     """
     Extract the left-hand-side and right-hand-side variable names of an SSA line.
 
@@ -446,7 +444,7 @@ def _ssa_lhs_is_bool(ssa_line: str) -> bool:
     return False
 
 
-def _infer_ssa_intermediate_types(ssa_statements: List[str], leaf_types: Dict[str, Any], fallback) -> Dict[str, Any]:
+def _infer_ssa_intermediate_types(ssa_statements: list[str], leaf_types: dict[str, Any], fallback) -> dict[str, Any]:
     """Infer the dtype of every SSA intermediate, threading resolved types forward.
 
     The primary inference is DaCe's ``infer_types`` (operand promotion via
@@ -465,8 +463,8 @@ def _infer_ssa_intermediate_types(ssa_statements: List[str], leaf_types: Dict[st
     :param fallback: Dtype to use for an intermediate with no known operand type.
     :returns: ``{intermediate name -> dtype}`` for every typed SSA assignment.
     """
-    known: Dict[str, Any] = dict(leaf_types)
-    inferred: Dict[str, Any] = {}
+    known: dict[str, Any] = dict(leaf_types)
+    inferred: dict[str, Any] = {}
     for stmt in ssa_statements:
         try:
             stmt_types = infer_types([stmt], known)
@@ -491,10 +489,10 @@ def _infer_ssa_intermediate_types(ssa_statements: List[str], leaf_types: Dict[st
 class StraightLineBody:
     """A body of ``name = expr`` statements; ``defining`` maps each output to its final assignment."""
 
-    targets: List[str]
-    values: List[ast.expr]
-    reads: List[Dict[str, None]]
-    defining: Dict[str, int]
+    targets: list[str]
+    values: list[ast.expr]
+    reads: list[dict[str, None]]
+    defining: dict[str, int]
 
 
 @dataclasses.dataclass(slots=True)
@@ -507,8 +505,8 @@ class OutputPlan:
     cross_reads: OrderedSet
 
 
-def assignment_targets(statements: List[ast.stmt]) -> Optional[List[str]]:
-    targets: List[str] = []
+def assignment_targets(statements: list[ast.stmt]) -> list[str] | None:
+    targets: list[str] = []
     for statement in statements:
         if not isinstance(statement, ast.Assign) or len(statement.targets) != 1:
             return None
@@ -518,11 +516,11 @@ def assignment_targets(statements: List[ast.stmt]) -> Optional[List[str]]:
     return targets
 
 
-def names_read(value: ast.expr) -> Dict[str, None]:
+def names_read(value: ast.expr) -> dict[str, None]:
     return dict.fromkeys(node.id for node in ast.walk(value) if isinstance(node, ast.Name))
 
 
-def straight_line_body(tasklet: dace.nodes.Tasklet) -> Optional[StraightLineBody]:
+def straight_line_body(tasklet: dace.nodes.Tasklet) -> StraightLineBody | None:
     """The body of ``tasklet`` if it is straight-line and assigns every output connector, else ``None``."""
     try:
         statements = ast.parse(tasklet.code.as_string).body
@@ -538,16 +536,16 @@ def straight_line_body(tasklet: dace.nodes.Tasklet) -> Optional[StraightLineBody
     return StraightLineBody(targets, values, [names_read(value) for value in values], defining)
 
 
-def producer_of(targets: List[str], name: str, before: int) -> Optional[int]:
+def producer_of(targets: list[str], name: str, before: int) -> int | None:
     for index in range(before - 1, -1, -1):
         if targets[index] == name:
             return index
     return None
 
 
-def backward_slice(body: StraightLineBody, output: str) -> Optional[List[int]]:
+def backward_slice(body: StraightLineBody, output: str) -> list[int] | None:
     """Body-ordered statements computing ``output``; ``None`` if it reads another output's non-final value."""
-    needed: Dict[int, None] = {}
+    needed: dict[int, None] = {}
     frontier = [body.defining[output]]
     while frontier:
         index = frontier.pop()
@@ -567,8 +565,8 @@ def backward_slice(body: StraightLineBody, output: str) -> Optional[List[int]]:
 
 
 def classify_reads(
-    tasklet: dace.nodes.Tasklet, body: StraightLineBody, output: str, statements: List[int]
-) -> Tuple[OrderedSet, OrderedSet]:
+    tasklet: dace.nodes.Tasklet, body: StraightLineBody, output: str, statements: list[int]
+) -> tuple[OrderedSet, OrderedSet]:
     """Connector names the sliced ``statements`` read before any assignment, and other outputs they read."""
     connector_reads: OrderedSet = OrderedSet()
     cross_reads: OrderedSet = OrderedSet()
@@ -583,8 +581,8 @@ def classify_reads(
 
 
 def plan_output(
-    tasklet: dace.nodes.Tasklet, body: StraightLineBody, output: str, in_edges: Dict[str, Any]
-) -> Optional[OutputPlan]:
+    tasklet: dace.nodes.Tasklet, body: StraightLineBody, output: str, in_edges: dict[str, Any]
+) -> OutputPlan | None:
     statements = backward_slice(body, output)
     if statements is None:
         return None
@@ -596,8 +594,8 @@ def plan_output(
     return OutputPlan(output, code, input_reads, cross_reads)
 
 
-def output_edges(tasklet: dace.nodes.Tasklet, state: dace.SDFGState) -> Optional[Dict[str, Any]]:
-    edges: Dict[str, Any] = {}
+def output_edges(tasklet: dace.nodes.Tasklet, state: dace.SDFGState) -> dict[str, Any] | None:
+    edges: dict[str, Any] = {}
     for edge in state.out_edges(tasklet):
         if edge.src_conn is None and edge.data.is_empty():
             continue
@@ -609,7 +607,7 @@ def output_edges(tasklet: dace.nodes.Tasklet, state: dace.SDFGState) -> Optional
     return edges
 
 
-def reads_output(by_conn: Dict[str, OutputPlan], consumer: str, producer: str) -> bool:
+def reads_output(by_conn: dict[str, OutputPlan], consumer: str, producer: str) -> bool:
     pending = list(by_conn[consumer].cross_reads)
     seen: OrderedSet = OrderedSet()
     while pending:
@@ -622,7 +620,7 @@ def reads_output(by_conn: Dict[str, OutputPlan], consumer: str, producer: str) -
     return False
 
 
-def same_array_writes_are_ordered(plans: List[OutputPlan], out_edges: Dict[str, Any]) -> bool:
+def same_array_writes_are_ordered(plans: list[OutputPlan], out_edges: dict[str, Any]) -> bool:
     """Two writes to one array keep their order only if the later output reads the earlier one."""
     by_conn = {plan.out_conn: plan for plan in plans}
     for first, second in itertools.combinations(plans, 2):
@@ -643,7 +641,7 @@ def overlaps_a_read(write, reads: Iterable[Any]) -> bool:
     return False
 
 
-def writes_stay_whole(plans: Dict[str, OutputPlan], in_edges: Dict[str, Any], out_edges: Dict[str, Any]) -> bool:
+def writes_stay_whole(plans: dict[str, OutputPlan], in_edges: dict[str, Any], out_edges: dict[str, Any]) -> bool:
     """True if a split loses an order: another output reads the written element or an in-place write's value."""
     for conn, write in out_edges.items():
         others = [plan for plan in plans.values() if plan.out_conn != conn]
@@ -656,8 +654,8 @@ def writes_stay_whole(plans: Dict[str, OutputPlan], in_edges: Dict[str, Any], ou
     return False
 
 
-def emission_order(tasklet: dace.nodes.Tasklet, plans: Dict[str, OutputPlan]) -> List[OutputPlan]:
-    placed: Dict[str, OutputPlan] = {}
+def emission_order(tasklet: dace.nodes.Tasklet, plans: dict[str, OutputPlan]) -> list[OutputPlan]:
+    placed: dict[str, OutputPlan] = {}
     while len(placed) < len(plans):
         for conn in tasklet.out_connectors:
             if conn not in placed and all(name in placed for name in plans[conn].cross_reads):
@@ -668,7 +666,7 @@ def emission_order(tasklet: dace.nodes.Tasklet, plans: Dict[str, OutputPlan]) ->
 
 def plan_output_split(
     tasklet: dace.nodes.Tasklet, state: dace.SDFGState, symbol_lifted_data: OrderedSet
-) -> Optional[List[OutputPlan]]:
+) -> list[OutputPlan] | None:
     """One plan per output in emission order, or ``None`` to keep ``tasklet`` whole."""
     if tasklet.code.language != dace.dtypes.Language.Python:
         return None
@@ -708,9 +706,9 @@ def connect_inputs(
     state: dace.SDFGState,
     split: dace.nodes.Tasklet,
     plan: OutputPlan,
-    original_in_edges: List[Any],
-    out_edges: Dict[str, Any],
-    produced: Dict[str, dace.nodes.AccessNode],
+    original_in_edges: list[Any],
+    out_edges: dict[str, Any],
+    produced: dict[str, dace.nodes.AccessNode],
     scope_entry,
 ) -> None:
     in_edges = {edge.dst_conn: edge for edge in original_in_edges if edge.dst_conn is not None}
@@ -732,7 +730,7 @@ def write_output(
     split: dace.nodes.Tasklet,
     plan: OutputPlan,
     out_edge,
-    produced: Dict[str, dace.nodes.AccessNode],
+    produced: dict[str, dace.nodes.AccessNode],
     read_outputs: OrderedSet,
 ) -> None:
     """Connect the output of ``split``; a value a later output reads is kept on an access node of its array."""
@@ -744,13 +742,13 @@ def write_output(
     route_read_output_to_destination(state, split.label, produced[plan.out_conn], out_edge)
 
 
-def chain_islands(state: dace.SDFGState, emitted: List[dace.nodes.Tasklet]) -> None:
+def chain_islands(state: dace.SDFGState, emitted: list[dace.nodes.Tasklet]) -> None:
     for first, second in zip(emitted, emitted[1:]):
         if second not in nx.weakly_connected_component(state.nx, first):
             state.add_edge(first, None, second, None, dace.Memlet())
 
 
-def emit_output_split(tasklet: dace.nodes.Tasklet, state: dace.SDFGState, plans: List[OutputPlan]) -> None:
+def emit_output_split(tasklet: dace.nodes.Tasklet, state: dace.SDFGState, plans: list[OutputPlan]) -> None:
     """Replace ``tasklet`` by one tasklet per plan, in plan order, wired to its edges as they are now."""
     out_edges = {edge.src_conn: edge for edge in state.out_edges(tasklet) if edge.src_conn is not None}
     original_in_edges = list(state.in_edges(tasklet))
@@ -758,8 +756,8 @@ def emit_output_split(tasklet: dace.nodes.Tasklet, state: dace.SDFGState, plans:
     scope_entry = state.entry_node(tasklet)
     read_outputs = OrderedSet(name for plan in plans for name in plan.cross_reads)
     state.remove_node(tasklet)
-    produced: Dict[str, dace.nodes.AccessNode] = {}
-    emitted: List[dace.nodes.Tasklet] = []
+    produced: dict[str, dace.nodes.AccessNode] = {}
+    emitted: list[dace.nodes.Tasklet] = []
     for plan in plans:
         split = state.add_tasklet(
             f"{tasklet.label}_out_{plan.out_conn}",
@@ -950,7 +948,7 @@ class SplitTasklets(ppl.Pass):
                 names.update(str(s) for s in dace.symbolic.arrays(symexpr))
         return names
 
-    def apply_pass(self, sdfg: SDFG, pipeline_results) -> Optional[Dict[str, OrderedSet]]:
+    def apply_pass(self, sdfg: SDFG, pipeline_results) -> dict[str, OrderedSet] | None:
         """
         Split every multi-output and every multi-operation Python tasklet, as the knobs select.
 
@@ -974,8 +972,8 @@ class SplitTasklets(ppl.Pass):
         return {"added_symbols": added_symbols, "split_tasklets": split_names}
 
     def plan_outputs(
-        self, sdfg: SDFG, symbol_lifted_data: Optional[OrderedSet]
-    ) -> List[Tuple[Any, dace.SDFGState, List[OutputPlan]]]:
+        self, sdfg: SDFG, symbol_lifted_data: OrderedSet | None
+    ) -> list[tuple[Any, dace.SDFGState, list[OutputPlan]]]:
         """Plan the per-output split of every multi-output tasklet that splits soundly."""
         planned = []
         for node, state in sdfg.all_nodes_recursive():
@@ -1158,8 +1156,8 @@ class SplitTasklets(ppl.Pass):
                 assert len(lhs_vars) == 1
                 t = state.add_tasklet(
                     name=f"{tasklet.name}_split_{i}",
-                    inputs={v: None for v in rhs_vars},
-                    outputs={v: None for v in lhs_vars},
+                    inputs=dict.fromkeys(rhs_vars),
+                    outputs=dict.fromkeys(lhs_vars),
                     code=ssa_statement,
                 )
                 for rhs_var in rhs_vars:

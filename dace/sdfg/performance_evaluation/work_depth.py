@@ -3,28 +3,29 @@
 from command line as a Python script."""
 
 import argparse
-from collections import deque
-from dace.sdfg import nodes as nd, propagation, InterstateEdge
-from dace import SDFG, SDFGState, dtypes
-from typing import List, Optional, Set, Tuple, Dict, Callable, Sequence, Union
-import os
-import sympy as sp
-from copy import deepcopy
-from dace.libraries.blas import MatMul, Dot, Gemm, Gemv
-from dace.libraries.standard import Reduce
-from dace.libraries.linalg import Cholesky, Inv, Solve, Transpose
-from dace.symbolic import pystr_to_symbolic, free_symbols_and_functions, symbol, int_floor, simplify
 import ast
-import astunparse
+import os
 import warnings
+from collections import deque
+from collections.abc import Callable, Sequence
+from copy import deepcopy
 
-from dace.sdfg.performance_evaluation.helpers import get_uuid, get_static_symbols, has_unstructured_control_flow
+import astunparse
+import sympy as sp
+
+from dace import SDFG, SDFGState, dtypes
+from dace.libraries.blas import Dot, Gemm, Gemv, MatMul
+from dace.libraries.linalg import Cholesky, Inv, Solve, Transpose
+from dace.libraries.standard import Reduce
+from dace.sdfg import InterstateEdge, propagation
+from dace.sdfg import nodes as nd
 from dace.sdfg.performance_evaluation.assumptions import parse_assumptions
-from dace.transformation.passes.symbol_ssa import StrictSymbolSSA
+from dace.sdfg.performance_evaluation.helpers import get_static_symbols, get_uuid, has_unstructured_control_flow
+from dace.sdfg.state import AbstractControlFlowRegion, ConditionalBlock, ControlFlowRegion, LoopRegion
+from dace.symbolic import free_symbols_and_functions, int_floor, pystr_to_symbolic, simplify, symbol
 from dace.transformation.pass_pipeline import FixedPointPipeline
 from dace.transformation.passes.analysis import loop_analysis
-
-from dace.sdfg.state import AbstractControlFlowRegion, ControlFlowRegion, LoopRegion, ConditionalBlock
+from dace.transformation.passes.symbol_ssa import StrictSymbolSSA
 
 math_funcs = set()
 
@@ -347,7 +348,7 @@ _TYPECAST_NAMES = {"int", "float", "complex", "bool", "double"} | {
 _TYPECAST_NAMES |= {f"dace.{name}" for name in _TYPECAST_NAMES}
 
 PYFUNC_TO_ARITHMETICS = {
-    **{name: 0 for name in _TYPECAST_NAMES},
+    **dict.fromkeys(_TYPECAST_NAMES, 0),
     # Transcendental intrinsics each count as one realised operation (np.* and math.* both lower to
     # the bare C name in tasklet code); a user wanting hardware flop counts overrides these.
     "math.exp": 1,
@@ -412,7 +413,7 @@ class ArithmeticCounter(ast.NodeVisitor):
         raise NotImplementedError
 
 
-def count_arithmetic_ops_code(code: Union[Sequence[ast.AST], str, ast.AST]) -> int:
+def count_arithmetic_ops_code(code: Sequence[ast.AST] | str | ast.AST) -> int:
     ctr = ArithmeticCounter()
     if isinstance(code, (tuple, list)):
         for stmt in code:
@@ -441,7 +442,7 @@ class DepthCounter(ast.NodeVisitor):
 
     def __init__(self):
         # Track the depth at which each variable was last assigned
-        self.var_depths: Dict[str, int] = {}
+        self.var_depths: dict[str, int] = {}
 
     def visit_BinOp(self, node):
         if isinstance(node.op, ast.MatMult):
@@ -589,7 +590,7 @@ class DepthCounter(ast.NodeVisitor):
         return max_depth
 
 
-def count_depth_code(code: Union[Sequence[ast.AST], str, ast.AST]) -> int:
+def count_depth_code(code: Sequence[ast.AST] | str | ast.AST) -> int:
     """
     Compute the depth (longest chain of dependent operations) of Python code.
 
@@ -679,14 +680,14 @@ def do_initial_subs(w, d, eq, subs1):
 
 def control_flow_region_work_depth(
     cfr: ControlFlowRegion,
-    w_d_map: Dict[str, Tuple[sp.Expr | List[Tuple[sp.Expr, sp.Expr]], sp.Expr | List[Tuple[sp.Expr, sp.Expr]]]],
-    analyze_tasklet: Callable[[nd.Tasklet, SDFGState], Tuple[sp.Expr, sp.Expr]],
-    symbols: Dict[str, str],
-    equality_subs: Tuple[Dict[str, sp.Symbol], Dict[str, sp.Expr]],
-    subs1: Dict[str, sp.Expr],
+    w_d_map: dict[str, tuple[sp.Expr | list[tuple[sp.Expr, sp.Expr]], sp.Expr | list[tuple[sp.Expr, sp.Expr]]]],
+    analyze_tasklet: Callable[[nd.Tasklet, SDFGState], tuple[sp.Expr, sp.Expr]],
+    symbols: dict[str, str],
+    equality_subs: tuple[dict[str, sp.Symbol], dict[str, sp.Expr]],
+    subs1: dict[str, sp.Expr],
     detailed_analysis: bool = False,
-    data_symbols: Optional[Set[str]] = None,
-) -> Tuple[sp.Expr | List[Tuple[sp.Expr, sp.Expr]], sp.Expr | List[Tuple[sp.Expr, sp.Expr]]]:
+    data_symbols: set[str] | None = None,
+) -> tuple[sp.Expr | list[tuple[sp.Expr, sp.Expr]], sp.Expr | list[tuple[sp.Expr, sp.Expr]]]:
     """
     Analyze the work and depth of a given (structured) ControlFlowRegion.
     First we determine the work and depth of each block (loops are ``LoopRegion`` and branches are
@@ -711,8 +712,8 @@ def control_flow_region_work_depth(
 
     # First determine the work and depth of each ControlFlowRegion individually.
     # Keep track of the work and depth for each state in a dictionary
-    region_depths: Dict[AbstractControlFlowRegion, sp.Expr] = {}
-    region_works: Dict[AbstractControlFlowRegion, sp.Expr] = {}
+    region_depths: dict[AbstractControlFlowRegion, sp.Expr] = {}
+    region_works: dict[AbstractControlFlowRegion, sp.Expr] = {}
     for region in cfr.nodes():
         if isinstance(region, SDFGState):
             # rename variable to make code more readable
@@ -854,7 +855,7 @@ def control_flow_region_work_depth(
             region_works[region], region_depths[region] = function_work, function_depth
             w_d_map[get_uuid(region)] = (region_works[region], region_depths[region])
 
-    edge_w_d_map: Dict[Tuple[str, str], Tuple[sp.Expr, sp.Expr]] = {}
+    edge_w_d_map: dict[tuple[str, str], tuple[sp.Expr, sp.Expr]] = {}
     for isedge in cfr.edges():
         edge_work, edge_depth = pystr_to_symbolic(0), pystr_to_symbolic(0)
         if isedge.data.assignments:
@@ -875,10 +876,10 @@ def control_flow_region_work_depth(
             cfr.add_edge(region, dummy_exit, InterstateEdge())
 
     # These two dicts save the current length of the "heaviest", resp. "deepest", paths at each state.
-    work_map: Dict[AbstractControlFlowRegion, sp.Expr] = {}
-    depth_map: Dict[AbstractControlFlowRegion, sp.Expr] = {}
+    work_map: dict[AbstractControlFlowRegion, sp.Expr] = {}
+    depth_map: dict[AbstractControlFlowRegion, sp.Expr] = {}
     # Keeps track of assignments done on InterstateEdges.
-    region_value_map: Dict[AbstractControlFlowRegion, Dict[sp.Symbol, sp.Symbol]] = {}
+    region_value_map: dict[AbstractControlFlowRegion, dict[sp.Symbol, sp.Symbol]] = {}
     # The dummy state has 0 work and depth.
     region_depths[dummy_exit] = pystr_to_symbolic(0)
     region_works[dummy_exit] = pystr_to_symbolic(0)
@@ -1026,7 +1027,7 @@ def control_flow_region_work_depth(
     return cfr_result
 
 
-def compute_symbols(sdfg: SDFG) -> Set[str]:
+def compute_symbols(sdfg: SDFG) -> set[str]:
     """
     Return the names of symbols whose value is consumed by computation (as opposed to addressing).
 
@@ -1040,7 +1041,7 @@ def compute_symbols(sdfg: SDFG) -> Set[str]:
     :param sdfg: The SDFG to inspect.
     :return: The set of compute-symbol names.
     """
-    data_symbols: Set[str] = set()
+    data_symbols: set[str] = set()
     for node, _ in sdfg.all_nodes_recursive():
         if isinstance(node, nd.Tasklet):
             data_symbols |= {str(s) for s in node.free_symbols}
@@ -1068,8 +1069,8 @@ def accumulate_over_range(
     lower: sp.Expr,
     upper: sp.Expr,
     step: sp.Expr,
-    equality_subs: Tuple[Dict[str, sp.Symbol], Dict[str, sp.Expr]],
-    subs1: Dict[str, sp.Expr],
+    equality_subs: tuple[dict[str, sp.Symbol], dict[str, sp.Expr]],
+    subs1: dict[str, sp.Expr],
 ) -> sp.Expr:
     """
     Accumulate ``expr`` over one map/loop dimension ``var`` ranging over ``lower:upper:step`` (with
@@ -1106,14 +1107,14 @@ def accumulate_over_range(
 
 def scope_work_depth(
     state: SDFGState,
-    w_d_map: Dict[str, sp.Expr],
+    w_d_map: dict[str, sp.Expr],
     analyze_tasklet,
-    symbols: Dict[str, str],
-    equality_subs: Tuple[Dict[str, sp.Symbol], Dict[str, sp.Expr]],
-    subs1: Dict[str, sp.Expr],
+    symbols: dict[str, str],
+    equality_subs: tuple[dict[str, sp.Symbol], dict[str, sp.Expr]],
+    subs1: dict[str, sp.Expr],
     entry: nd.EntryNode = None,
     detailed_analysis: bool = False,
-) -> Tuple[sp.Expr, sp.Expr]:
+) -> tuple[sp.Expr, sp.Expr]:
     """
     Analyze the work and depth of a scope.
     This works by traversing through the scope analyzing the work and depth of each encountered node.
@@ -1317,13 +1318,13 @@ def scope_work_depth(
 
 def state_work_depth(
     state: SDFGState,
-    w_d_map: Dict[str, sp.Expr],
+    w_d_map: dict[str, sp.Expr],
     analyze_tasklet,
     symbols,
     equality_subs,
     subs1,
     detailed_analysis=False,
-) -> Tuple[sp.Expr, sp.Expr]:
+) -> tuple[sp.Expr, sp.Expr]:
     """
     Analyze the work and depth of a state.
 
@@ -1345,7 +1346,7 @@ def state_work_depth(
 
 
 def analyze_sdfg(
-    sdfg: SDFG, w_d_map: Dict[str, sp.Expr], analyze_tasklet, assumptions: List[str], detailed_analysis: bool = False
+    sdfg: SDFG, w_d_map: dict[str, sp.Expr], analyze_tasklet, assumptions: list[str], detailed_analysis: bool = False
 ):
     """
     Analyze a given SDFG. We can either analyze work, work and depth or average parallelism.

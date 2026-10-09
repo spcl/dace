@@ -7,7 +7,6 @@ SDFG would name a ``gpu_streams`` array it does not have. Asserts the placement 
 """
 
 import dace
-
 from dace.codegen import common
 from dace.properties import CodeBlock
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion

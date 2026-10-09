@@ -66,9 +66,9 @@ def prepared(program) -> dace.SDFG:
     ``ForwardStoreToLoad`` reads one state's dataflow, so the frontend's per-statement states
     have to be fused first -- which is exactly where the pipeline runs it.
     """
+    from dace.transformation.interstate.state_fusion_with_happens_before import StateFusionExtended
     from dace.transformation.passes.lift_preprocess import LiftPreprocess
     from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
-    from dace.transformation.interstate.state_fusion_with_happens_before import StateFusionExtended
 
     sdfg = program.to_sdfg(simplify=True)
     PatternMatchAndApplyRepeated([StateFusionExtended()]).apply_pass(sdfg, {})

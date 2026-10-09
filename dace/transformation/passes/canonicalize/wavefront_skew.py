@@ -63,11 +63,12 @@ References:
 
 import copy
 import zlib
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
-import dace
 import islpy as isl
 import sympy
+
+import dace
 from dace import SDFG, properties, subsets, symbolic
 from dace.memlet import Memlet
 from dace.sdfg import nodes
@@ -80,17 +81,17 @@ from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 from dace.transformation.interstate.loop_to_map import carried_local_transients, control_flow_reads
 from dace.transformation.passes.analysis import loop_analysis
-from dace.transformation.passes.canonicalize.fresh_names import lowest_free_suffix
 from dace.transformation.passes.canonicalize import wavefront_polyhedron as poly
 from dace.transformation.passes.canonicalize.annotate_loop_kinds import (
     WAVEFRONT_DIAGONAL,
     WAVEFRONT_FRONT,
-    skew_label,
-    tile_label,
     WAVEFRONT_TILE_COLUMN,
     WAVEFRONT_TILE_DIAGONAL,
     WAVEFRONT_TILE_INTERIOR,
+    skew_label,
+    tile_label,
 )
+from dace.transformation.passes.canonicalize.fresh_names import lowest_free_suffix
 from dace.transformation.passes.canonicalize.fuse_consecutive_loops import commit_guarded_fusion, plan_guarded_fusion
 from dace.transformation.passes.canonicalize.privatize_reduction_accumulator import privatize_reduction_accumulator
 
@@ -136,14 +137,14 @@ SPLIT_SNAP_SUFFIX = "_split_snap"
 #: ``a > b > 0`` (seidel_2d), the ``(1, +-2)`` transposes cover the reflected
 #: nests. ``b = 0`` / ``a = 0`` is not a skew (that is the axis-aligned schedule
 #: tested for refusal).
-SKEW_CANDIDATES: Tuple[Tuple[int, int], ...] = ((1, 1), (1, -1), (2, 1), (2, -1), (1, 2), (1, -2))
+SKEW_CANDIDATES: tuple[tuple[int, int], ...] = ((1, 1), (1, -1), (2, 1), (2, -1), (1, 2), (1, -2))
 
 #: ``(parameter, lo, hi)`` of every enclosing unit-step map, innermost first.
-MapContext = List[Tuple[str, sympy.Expr, sympy.Expr]]
+MapContext = list[tuple[str, sympy.Expr, sympy.Expr]]
 #: Per-axis ``(lo, hi)`` of one access.
-Extent = List[Tuple[sympy.Expr, sympy.Expr]]
+Extent = list[tuple[sympy.Expr, sympy.Expr]]
 #: A read of the carrier: ``(per-axis (lo, hi), context, guard)``.
-ReadRecord = Tuple[Extent, MapContext, List[sympy.Expr]]
+ReadRecord = tuple[Extent, MapContext, list[sympy.Expr]]
 
 
 def sym(name: str) -> sympy.Expr:
@@ -177,7 +178,7 @@ def canonical_iterators(expr: sympy.Expr, iters: tuple[str, ...]) -> sympy.Expr:
     ``positive=True``, which :func:`offset_symbols` reads to decide whether a guard is needed.
     """
     e = as_expr(expr)
-    mp: Dict[sympy.Basic, sympy.Expr] = {}
+    mp: dict[sympy.Basic, sympy.Expr] = {}
     # sorted: the map is built from a sympy set, whose iteration order is not stable. Every entry is
     # independent so the result cannot differ, but sorting makes that provable rather than incidental.
     for s in sorted(free_symbols(e), key=str):
@@ -200,7 +201,7 @@ class WriteMap:
     inner loop leaves behind once its origin is rebased and the old begin folds
     into the subscripts (``col = N - u + v``)."""
 
-    def __init__(self, u: str, v: str, m: Tuple[int, int, int, int], c: Tuple[sympy.Expr, sympy.Expr]) -> None:
+    def __init__(self, u: str, v: str, m: tuple[int, int, int, int], c: tuple[sympy.Expr, sympy.Expr]) -> None:
         self.u = u
         self.v = v
         self.m = m
@@ -209,7 +210,7 @@ class WriteMap:
         if abs(self.det) != 1:
             raise ValueError(f"write map {m} is not unimodular (det={self.det}); it has no integer inverse")
 
-    def invert(self, row_expr: sympy.Expr, col_expr: sympy.Expr) -> Tuple[sympy.Expr, sympy.Expr]:
+    def invert(self, row_expr: sympy.Expr, col_expr: sympy.Expr) -> tuple[sympy.Expr, sympy.Expr]:
         """Iteration coordinates ``(u_r, v_r)`` that write array cell
         ``(row_expr, col_expr)``. Exact because ``det in {1, -1}``, so the adjugate
         already IS the inverse up to the factor ``1/det == det``."""
@@ -221,7 +222,7 @@ class WriteMap:
         return simplified(u_r), simplified(v_r)
 
 
-def split_var(expr: sympy.Expr, name: str) -> Tuple[sympy.Expr, sympy.Expr]:
+def split_var(expr: sympy.Expr, name: str) -> tuple[sympy.Expr, sympy.Expr]:
     """``(coeff, remainder)`` splitting the named symbol out of an affine expr;
     ``remainder`` no longer contains that symbol. Matches by name."""
     e = simplified(expr)
@@ -235,7 +236,7 @@ def split_var(expr: sympy.Expr, name: str) -> Tuple[sympy.Expr, sympy.Expr]:
     return as_expr(0), e
 
 
-def integer_value(expr: sympy.Expr) -> Optional[int]:
+def integer_value(expr: sympy.Expr) -> int | None:
     """``expr`` as a Python ``int`` when it is an integer literal, else ``None``."""
     e = simplified(expr)
     if e.is_Integer:
@@ -243,7 +244,7 @@ def integer_value(expr: sympy.Expr) -> Optional[int]:
     return None
 
 
-def affine_coeffs(expr: sympy.Expr, u: str, v: str) -> Optional[Tuple[int, int, sympy.Expr]]:
+def affine_coeffs(expr: sympy.Expr, u: str, v: str) -> tuple[int, int, sympy.Expr] | None:
     """``(cu, cv, rest)`` for ``expr == cu*u + cv*v + rest`` with INTEGER ``cu, cv``
     and ``rest`` free of ``u, v``; ``None`` when ``expr`` is not affine in ``(u, v)``
     over the integers.
@@ -264,7 +265,7 @@ def affine_coeffs(expr: sympy.Expr, u: str, v: str) -> Optional[Tuple[int, int, 
     return iu, iv, rest
 
 
-def parse_write_map(row_expr: sympy.Expr, col_expr: sympy.Expr, u: str, v: str) -> Optional[WriteMap]:
+def parse_write_map(row_expr: sympy.Expr, col_expr: sympy.Expr, u: str, v: str) -> WriteMap | None:
     """Recognise ``row/col`` as a UNIMODULAR integer affine map of ``(u, v)``.
     Returns a :class:`WriteMap`, or ``None`` when the subscripts are not integer
     affine or the map is not unimodular.
@@ -300,7 +301,7 @@ def unit_positive_stride(loop: LoopRegion) -> bool:
         return False
 
 
-def split_snapshot_window(state: SDFGState) -> Optional[subsets.Range]:
+def split_snapshot_window(state: SDFGState) -> subsets.Range | None:
     """The array window a pure anti-dependence snapshot copy state covers (one
     ``AccessNode(arr) -> AccessNode(arr_split_snap)`` edge, nothing else), or ``None`` if
     ``state`` isn't one. The window need not span the whole array -- callers must check
@@ -340,7 +341,7 @@ def is_split_snapshot_state(state: SDFGState) -> bool:
     return split_snapshot_window(state) is not None
 
 
-def extract_two_level_nest(outer: LoopRegion) -> Optional[LoopRegion]:
+def extract_two_level_nest(outer: LoopRegion) -> LoopRegion | None:
     """The single inner :class:`LoopRegion` perfectly nested in ``outer`` (its
     body may itself be imperfect); ``None`` if ``outer`` holds anything else with
     data alongside the one inner loop. A pure ``arr_split_snap = arr`` snapshot
@@ -369,12 +370,12 @@ def live_reader(state: SDFGState, name: str) -> nodes.AccessNode:
 
 #: A single snapshot read to redirect:
 #: ``(state, snap_node, edge, read_index, live_array, copied_window)``.
-SnapRead = Tuple[SDFGState, nodes.AccessNode, MultiConnectorEdge[Memlet], List[sympy.Expr], str, subsets.Range]
+SnapRead = tuple[SDFGState, nodes.AccessNode, MultiConnectorEdge[Memlet], list[sympy.Expr], str, subsets.Range]
 #: A planned absorb: ``(snap_src map, reads to redirect, copy states to drop)``.
-SnapPlan = Tuple[Dict[str, str], List[SnapRead], List[SDFGState]]
+SnapPlan = tuple[dict[str, str], list[SnapRead], list[SDFGState]]
 
 
-def plan_split_snapshots(outer: LoopRegion, inner: LoopRegion, sdfg: SDFG) -> Optional[SnapPlan]:
+def plan_split_snapshots(outer: LoopRegion, inner: LoopRegion, sdfg: SDFG) -> SnapPlan | None:
     """Gather the ``arr_split_snap = arr`` snapshots ``BreakAntiDependence`` left beside
     ``inner`` and the inner-body reads that would redirect onto the live array,
     WITHOUT mutating. The plan is only committed (:func:`commit_split_snapshots`)
@@ -387,9 +388,9 @@ def plan_split_snapshots(outer: LoopRegion, inner: LoopRegion, sdfg: SDFG) -> Op
     and the inner-body reads -- an external reader would be left consuming a dead
     transient once the copy is dropped -- or if any inner read index is not a
     single point."""
-    copy_states: List[SDFGState] = []
-    snap_src: Dict[str, str] = {}  # snapshot array -> live source array
-    snap_win: Dict[str, subsets.Range] = {}  # snapshot array -> window the copy covers
+    copy_states: list[SDFGState] = []
+    snap_src: dict[str, str] = {}  # snapshot array -> live source array
+    snap_win: dict[str, subsets.Range] = {}  # snapshot array -> window the copy covers
     for b in outer.nodes():
         if not isinstance(b, SDFGState) or b is inner:
             continue
@@ -407,7 +408,7 @@ def plan_split_snapshots(outer: LoopRegion, inner: LoopRegion, sdfg: SDFG) -> Op
     iters = (outer.loop_variable, inner.loop_variable)
     inner_states = dict.fromkeys(inner.states())
     copy_set = dict.fromkeys(copy_states)
-    snap_reads: List[SnapRead] = []
+    snap_reads: list[SnapRead] = []
     for state in sdfg.states():
         for node in state.data_nodes():
             if node.data not in snap_names:
@@ -429,7 +430,7 @@ def plan_split_snapshots(outer: LoopRegion, inner: LoopRegion, sdfg: SDFG) -> Op
     return snap_src, snap_reads, copy_states
 
 
-def snapshot_reads_forward(snap_reads: List[SnapRead], carrier: "Carrier", u: str, v: str) -> bool:
+def snapshot_reads_forward(snap_reads: list[SnapRead], carrier: "Carrier", u: str, v: str) -> bool:
     """Every snapshot read must be a FORWARD (anti) dependence in ITERATION space:
     the writer of the cell it reads runs strictly later, so its value is the
     not-yet-overwritten old element the snapshot captured -- which the diagonal
@@ -456,7 +457,7 @@ def snapshot_reads_forward(snap_reads: List[SnapRead], carrier: "Carrier", u: st
     return True
 
 
-def snapshot_reads_in_window(snap_reads: List[SnapRead], u: str, v: str, domain: List[sympy.Expr]) -> bool:
+def snapshot_reads_in_window(snap_reads: list[SnapRead], u: str, v: str, domain: list[sympy.Expr]) -> bool:
     """Every redirected read must index a cell the snapshot window actually covers; refuses
     whatever ISL cannot decide."""
     dims = [u, v]
@@ -478,7 +479,7 @@ def snapshot_reads_in_window(snap_reads: List[SnapRead], u: str, v: str, domain:
     return True
 
 
-def commit_split_snapshots(snap_reads: List[SnapRead], copy_states: List[SDFGState]) -> None:
+def commit_split_snapshots(snap_reads: list[SnapRead], copy_states: list[SDFGState]) -> None:
     """Rewire the planned snapshot reads onto the live array and drop the copies.
     Called only after a legal skew is confirmed. Structural cleanup then removes
     the emptied copy states and eliminates the dead ``arr_split_snap`` arrays."""
@@ -496,14 +497,14 @@ def commit_split_snapshots(snap_reads: List[SnapRead], copy_states: List[SDFGSta
             st.remove_node(n)
 
 
-def point_index(subset: subsets.Subset, iters: tuple[str, ...]) -> Optional[List[sympy.Expr]]:
+def point_index(subset: subsets.Subset, iters: tuple[str, ...]) -> list[sympy.Expr] | None:
     """The per-dimension index of a *point* subset (``start == end`` on every
     axis); ``None`` if any axis is a range.
 
     This is the single boundary at which memlet subsets enter the pass, so it is where the
     iterators named in ``iters`` are re-keyed (:func:`canonical_iterators`) -- everything
     downstream then works in one symbol spelling."""
-    idx: List[sympy.Expr] = []
+    idx: list[sympy.Expr] = []
     for start, end, step in ndrange_exprs(subset):
         if start != end:
             return None
@@ -511,7 +512,7 @@ def point_index(subset: subsets.Subset, iters: tuple[str, ...]) -> Optional[List
     return idx
 
 
-def access_extent(subset: subsets.Subset, iters: tuple[str, ...]) -> Optional[List[Tuple[sympy.Expr, sympy.Expr]]]:
+def access_extent(subset: subsets.Subset, iters: tuple[str, ...]) -> list[tuple[sympy.Expr, sympy.Expr]] | None:
     """The per-dimension ``(start, end)`` of a subset, keyed on the nest's iterators.
 
     The range-tolerant form of :func:`point_index`: a whole-row update ``A[i, 1:N-1]`` is a point
@@ -519,7 +520,7 @@ def access_extent(subset: subsets.Subset, iters: tuple[str, ...]) -> Optional[Li
     :func:`uniform_axes` can tell which is which -- that needs every access of the array at once,
     so the decision cannot be made here. ``None`` for a strided axis, whose two endpoints do not
     describe the elements it touches."""
-    idx: List[Tuple[sympy.Expr, sympy.Expr]] = []
+    idx: list[tuple[sympy.Expr, sympy.Expr]] = []
     for start, end, step in ndrange_exprs(subset):
         if step != 1:
             return None
@@ -527,7 +528,7 @@ def access_extent(subset: subsets.Subset, iters: tuple[str, ...]) -> Optional[Li
     return idx
 
 
-def uniform_axes(extents: List[List[Tuple[sympy.Expr, sympy.Expr]]], iters: tuple[str, ...]) -> List[int]:
+def uniform_axes(extents: list[list[tuple[sympy.Expr, sympy.Expr]]], iters: tuple[str, ...]) -> list[int]:
     """Axes that every access of one array spans identically and independently of the nest.
 
     Such an axis carries no dependence: any two iterations that touch a common cell agree on it
@@ -545,7 +546,7 @@ def uniform_axes(extents: List[List[Tuple[sympy.Expr, sympy.Expr]]], iters: tupl
     if any(len(e) != width for e in extents):
         return []
     nest = set(iters)
-    drop: List[int] = []
+    drop: list[int] = []
     for axis in range(width):
         spans = [e[axis] for e in extents]
         first = spans[0]
@@ -564,7 +565,7 @@ def uniform_axes(extents: List[List[Tuple[sympy.Expr, sympy.Expr]]], iters: tupl
 MAX_RANGE_READ_WIDTH = 8
 
 
-def reduced_points(extent: List[Tuple[sympy.Expr, sympy.Expr]], drop: List[int]) -> Optional[List[List[sympy.Expr]]]:
+def reduced_points(extent: list[tuple[sympy.Expr, sympy.Expr]], drop: list[int]) -> list[list[sympy.Expr]] | None:
     """``extent`` with the wildcard axes removed, as the list of point indices it covers.
 
     A kept axis that is a range of CONSTANT width is the union of that many point accesses --
@@ -577,7 +578,7 @@ def reduced_points(extent: List[Tuple[sympy.Expr, sympy.Expr]], drop: List[int])
     the reduction WINDOW of a lifted WCR map does not, because :func:`scan_state_accesses` reads
     that map's in-scope point subsets instead of the widened memlet at its entry.
     """
-    axes: List[List[sympy.Expr]] = []
+    axes: list[list[sympy.Expr]] = []
     for axis, (lo, hi) in enumerate(extent):
         if axis in drop:
             continue
@@ -590,13 +591,13 @@ def reduced_points(extent: List[Tuple[sympy.Expr, sympy.Expr]], drop: List[int])
         axes.append([simplified(lo + k) for k in range(int(width) + 1)])
     if not axes:
         return None
-    points: List[List[sympy.Expr]] = [[]]
+    points: list[list[sympy.Expr]] = [[]]
     for values in axes:
         points = [pt + [val] for pt in points for val in values]
     return points
 
 
-def axis_write_map(write_idxs: List[List[sympy.Expr]], u: str, v: str) -> Optional[Tuple[sympy.Expr, sympy.Expr]]:
+def axis_write_map(write_idxs: list[list[sympy.Expr]], u: str, v: str) -> tuple[sympy.Expr, sympy.Expr] | None:
     """``(coeff, const)`` for a carrier reduced to ONE axis and written at ``coeff * v + const``,
     with ``coeff`` in ``{1, -1}`` and ``const`` free of both iterators; ``None`` otherwise.
 
@@ -626,7 +627,7 @@ def axis_write_map(write_idxs: List[List[sympy.Expr]], u: str, v: str) -> Option
 
 def axis_distance(
     idx: sympy.Expr, coeff: sympy.Expr, const: sympy.Expr, u: str, v: str
-) -> Optional[Tuple[sympy.Expr, sympy.Expr]]:
+) -> tuple[sympy.Expr, sympy.Expr] | None:
     """``(du, dv) = writer - current`` for a read of the reduced carrier at ``idx``.
 
     ``coeff`` is its own inverse, so the writing ``v`` is ``coeff * (idx - const)``. Which ``u``
@@ -643,7 +644,7 @@ def axis_distance(
     return (zero, d) if d < 0 else (back, d)
 
 
-def read_guard(state: SDFGState, inner: LoopRegion, iters: tuple[str, ...]) -> List[sympy.Expr]:
+def read_guard(state: SDFGState, inner: LoopRegion, iters: tuple[str, ...]) -> list[sympy.Expr]:
     """The branch conditions ``state`` executes under, as constraints ``>= 0`` keyed on the
     nest's iterator symbols; empty when nothing guards it or the guard has no convex form.
 
@@ -656,7 +657,7 @@ def read_guard(state: SDFGState, inner: LoopRegion, iters: tuple[str, ...]) -> L
     return [canonical_iterators(c, iters) for c in cons]
 
 
-def loop_bounds(loop: LoopRegion) -> Optional[Tuple[sympy.Expr, sympy.Expr]]:
+def loop_bounds(loop: LoopRegion) -> tuple[sympy.Expr, sympy.Expr] | None:
     lo = loop_analysis.get_init_assignment(loop)
     hi = loop_analysis.get_loop_end(loop)
     if lo is None or hi is None:
@@ -664,12 +665,12 @@ def loop_bounds(loop: LoopRegion) -> Optional[Tuple[sympy.Expr, sympy.Expr]]:
     return as_expr(lo), as_expr(hi)
 
 
-def nested_loop_context(state: SDFGState, inner: LoopRegion) -> Optional[List[Tuple[str, sympy.Expr, sympy.Expr]]]:
+def nested_loop_context(state: SDFGState, inner: LoopRegion) -> list[tuple[str, sympy.Expr, sympy.Expr]] | None:
     """The reduction loops strictly between ``state`` and ``inner`` (inclusive of
     neither), innermost first: ``[(var, lo, hi), ...]``. ``None`` if a non-unit
     stride loop is on the path (its range does not translate to a clean
     interval)."""
-    ctx: List[Tuple[str, sympy.Expr, sympy.Expr]] = []
+    ctx: list[tuple[str, sympy.Expr, sympy.Expr]] = []
     g = state.parent_graph
     while g is not None and g is not inner:
         if isinstance(g, LoopRegion) and g.loop_variable:
@@ -710,9 +711,9 @@ class Dependence:
         self,
         du: sympy.Expr,
         dv: sympy.Expr,
-        nested: List[Tuple[str, sympy.Expr, sympy.Expr]],
+        nested: list[tuple[str, sympy.Expr, sympy.Expr]],
         kind: str = "flow",
-        guard: Optional[List[sympy.Expr]] = None,
+        guard: list[sympy.Expr] | None = None,
     ) -> None:
         self.du = simplified(du)
         self.dv = simplified(dv)
@@ -723,7 +724,7 @@ class Dependence:
 
 #: ``(array, write map, dependences)`` of the one array that carries the nest's dependences; the write map is
 #: ``None`` for the reduced one-axis carrier, whose location names no single writing iteration.
-Carrier = Tuple[str, Optional[WriteMap], List[Dependence]]
+Carrier = tuple[str, WriteMap | None, list[Dependence]]
 
 
 def dependence_kind(du: sympy.Expr, dv: sympy.Expr) -> str:
@@ -754,7 +755,7 @@ def dependence_kind(du: sympy.Expr, dv: sympy.Expr) -> str:
     return "flow"
 
 
-def map_scope_context(state: SDFGState, node: nodes.Node) -> Optional[List[Tuple[str, sympy.Expr, sympy.Expr]]]:
+def map_scope_context(state: SDFGState, node: nodes.Node) -> list[tuple[str, sympy.Expr, sympy.Expr]] | None:
     """The map scopes enclosing ``node`` in ``state``, innermost first, as ``[(param, lo, hi), ...]``.
 
     A reduction lifted to a WCR map is the same shape as the sequential reduction loop it replaced
@@ -763,7 +764,7 @@ def map_scope_context(state: SDFGState, node: nodes.Node) -> Optional[List[Tuple
     touches the whole array and refuse every schedule. ``None`` when a range is not a unit-stride
     interval, which has no such reading.
     """
-    ctx: List[Tuple[str, sympy.Expr, sympy.Expr]] = []
+    ctx: list[tuple[str, sympy.Expr, sympy.Expr]] = []
     # entry_node reads the cached scope map directly; scope_dict shallow-copies it on every call.
     cur = state.entry_node(node)
     while cur is not None:
@@ -820,7 +821,7 @@ def descend_into_map_scopes(state: SDFGState, data_name: str) -> bool:
 
 def in_scope_accesses(
     state: SDFGState, edge: MultiConnectorEdge[Memlet], is_read: bool
-) -> Optional[List[Tuple[subsets.Subset, MapContext]]]:
+) -> list[tuple[subsets.Subset, MapContext]] | None:
     """``[(subset, map_ctx), ...]`` for the innermost edges ``edge`` stands for.
 
     Normally the edge's own subset, which is what every previously-analysable shape uses: a
@@ -840,7 +841,7 @@ def in_scope_accesses(
     if not isinstance(other, (nodes.MapEntry, nodes.MapExit)) or not widened_beyond_reading(subset):
         return [(subset, [])]
 
-    out: List[Tuple[subsets.Subset, MapContext]] = []
+    out: list[tuple[subsets.Subset, MapContext]] = []
     for leaf in state.memlet_tree(edge).leaves():
         endpoint = leaf.dst if is_read else leaf.src
         if isinstance(endpoint, (nodes.MapEntry, nodes.MapExit)):
@@ -859,10 +860,10 @@ def scan_state_accesses(
     u: str,
     v: str,
     v_local: str,
-    snap_src: Dict[str, str],
-    sibling_cons: List[sympy.Expr],
-    writes: Dict[str, List[Extent]],
-    reads: Dict[str, List[ReadRecord]],
+    snap_src: dict[str, str],
+    sibling_cons: list[sympy.Expr],
+    writes: dict[str, list[Extent]],
+    reads: dict[str, list[ReadRecord]],
 ) -> bool:
     """Record ``state``'s point accesses to 2-D arrays into ``writes`` / ``reads``.
 
@@ -925,12 +926,12 @@ def scan_state_accesses(
 
 
 def collect_carrier(
-    inners: List[Tuple[LoopRegion, str, List[sympy.Expr]]],
+    inners: list[tuple[LoopRegion, str, list[sympy.Expr]]],
     sdfg: SDFG,
     u: str,
     v: str,
-    snap_src: Optional[Dict[str, str]] = None,
-) -> Optional[Carrier]:
+    snap_src: dict[str, str] | None = None,
+) -> Carrier | None:
     """Find the unique carrier array (written *and* self-read with a non-zero
     distance) across ``inners``' bodies, its write map, and its dependences. ``None``
     if there is no clean single carrier (refuse).
@@ -961,20 +962,20 @@ def collect_carrier(
         return None
     if any(carried_local_transients(lp, others) for lp in loops):
         return None
-    writes: Dict[str, List[Extent]] = {}
-    reads: Dict[str, List[ReadRecord]] = {}
+    writes: dict[str, list[Extent]] = {}
+    reads: dict[str, list[ReadRecord]] = {}
     for inner, v_local, sibling_guard in inners:
         sibling_cons = [canonical_iterators(g, (u, v)) for g in sibling_guard]
         for state in inner.states():
             if not scan_state_accesses(state, inner, sdfg, u, v, v_local, snap_src, sibling_cons, writes, reads):
                 return None
 
-    carriers: List[Carrier] = []
+    carriers: list[Carrier] = []
     for arr, wextents in writes.items():
         rextents = reads.get(arr, [])
         drop = uniform_axes(wextents + [r[0] for r in rextents], (u, v))
-        wsubs: List[List[sympy.Expr]] = []
-        rsubs: List[Tuple[List[sympy.Expr], MapContext, List[sympy.Expr]]] = []
+        wsubs: list[list[sympy.Expr]] = []
+        rsubs: list[tuple[list[sympy.Expr], MapContext, list[sympy.Expr]]] = []
         for extent in wextents:
             points = reduced_points(extent, drop)
             if points is None:
@@ -997,8 +998,8 @@ def collect_carrier(
 
 
 def carrier_dependences(
-    wsubs: List[List[sympy.Expr]], rsubs: List[Tuple[List[sympy.Expr], MapContext, List[sympy.Expr]]], u: str, v: str
-) -> Optional[Tuple[Optional[WriteMap], List[Dependence]]]:
+    wsubs: list[list[sympy.Expr]], rsubs: list[tuple[list[sympy.Expr], MapContext, list[sympy.Expr]]], u: str, v: str
+) -> tuple[WriteMap | None, list[Dependence]] | None:
     """``(write map, dependences)`` for one array, or ``None`` to refuse the whole nest.
 
     Two carrier shapes, by how many axes survived :func:`uniform_axes`:
@@ -1015,7 +1016,7 @@ def carrier_dependences(
         wmap = consistent_write_map(wsubs, u, v)
         if wmap is None:
             return None  # written by a non-affine or non-unimodular map -> refuse
-        deps: List[Dependence] = []
+        deps: list[Dependence] = []
         for idx, ctx, guard in rsubs:
             if len(idx) != 2:
                 return None
@@ -1047,7 +1048,7 @@ def carrier_dependences(
     return None, deps
 
 
-def consistent_write_map(write_subs: List[List[sympy.Expr]], u: str, v: str) -> Optional[WriteMap]:
+def consistent_write_map(write_subs: list[list[sympy.Expr]], u: str, v: str) -> WriteMap | None:
     """A single :class:`WriteMap` agreeing with *every* write subset, else ``None``."""
     wmap = None
     for idx in write_subs:
@@ -1062,21 +1063,21 @@ def consistent_write_map(write_subs: List[List[sympy.Expr]], u: str, v: str) -> 
 
 
 def domain_constraints(
-    u: str, v: str, ub: Tuple[sympy.Expr, sympy.Expr], vb: Tuple[sympy.Expr, sympy.Expr]
-) -> List[sympy.Expr]:
+    u: str, v: str, ub: tuple[sympy.Expr, sympy.Expr], vb: tuple[sympy.Expr, sympy.Expr]
+) -> list[sympy.Expr]:
     """The 2-D iteration polyhedron as exprs, each ``>= 0``."""
     U, V = sym(u), sym(v)
     return [U - ub[0], ub[1] - U, V - vb[0], vb[1] - V]
 
 
-def tau_dot(tau: Tuple[int, int], dep: Dependence) -> sympy.Expr:
+def tau_dot(tau: tuple[int, int], dep: Dependence) -> sympy.Expr:
     a, b = tau
     return simplified(a * dep.du + b * dep.dv)
 
 
 def dep_dims_and_cons(
-    dep: Dependence, u: str, v: str, domain: List[sympy.Expr], assume: List[sympy.Expr]
-) -> Tuple[List[str], List[sympy.Expr]]:
+    dep: Dependence, u: str, v: str, domain: list[sympy.Expr], assume: list[sympy.Expr]
+) -> tuple[list[str], list[sympy.Expr]]:
     """Dims + full constraint list (domain + this dep's nested ranges + assumptions)."""
     dims = [u, v] + [nm for (nm, _, _) in dep.nested]
     cons = list(domain)
@@ -1088,14 +1089,14 @@ def dep_dims_and_cons(
     return dims, cons
 
 
-def params_of(cons: List[sympy.Expr], dims: List[str]) -> List[str]:
-    names: Dict[str, None] = {}
+def params_of(cons: list[sympy.Expr], dims: list[str]) -> list[str]:
+    names: dict[str, None] = {}
     for c in cons:
         names.update(dict.fromkeys(s.name for s in free_symbols(simplified(c))))
     return sorted(n for n in names if n not in dims)
 
 
-def outer_axis_parallel(deps: List[Dependence], u: str, v: str, domain: List[sympy.Expr]) -> bool:
+def outer_axis_parallel(deps: list[Dependence], u: str, v: str, domain: list[sympy.Expr]) -> bool:
     """The OUTER ``u`` loop is ALREADY a parallel map in the current loop order:
     no dependence crosses ``u`` anywhere in the domain (``du == 0``), so a plain
     ``LoopToMap`` lifts it and the skew must not clobber the nest.
@@ -1122,7 +1123,7 @@ def outer_axis_parallel(deps: List[Dependence], u: str, v: str, domain: List[sym
 
 
 def schedule_legal(
-    tau: Tuple[int, int], deps: List[Dependence], u: str, v: str, domain: List[sympy.Expr], assume: List[sympy.Expr]
+    tau: tuple[int, int], deps: list[Dependence], u: str, v: str, domain: list[sympy.Expr], assume: list[sympy.Expr]
 ) -> bool:
     """``tau`` is legal iff every dependence is strictly ordered on the sequential
     ``t`` axis. For a **flow** dependence the producer must precede the consumer
@@ -1147,7 +1148,7 @@ def schedule_legal(
     return True
 
 
-def tile_signs(d: int) -> Tuple[int, ...]:
+def tile_signs(d: int) -> tuple[int, ...]:
     """Tile-index distances a single-axis element distance ``d`` can induce once
     ``|d|`` is known not to exceed the tile extent: the two iterations either sit
     in the same tile or straddle exactly one boundary, in the direction of ``d``."""
@@ -1156,7 +1157,7 @@ def tile_signs(d: int) -> Tuple[int, ...]:
     return (0, 1) if d > 0 else (-1, 0)
 
 
-def tiling_legal(deps: List[Dependence], tau: Tuple[int, int], bi: int, bj: int) -> bool:
+def tiling_legal(deps: list[Dependence], tau: tuple[int, int], bi: int, bj: int) -> bool:
     """``tau`` still orders every dependence strictly once the nest is tiled ``bi x bj``.
 
     Two conditions, both necessary.
@@ -1194,7 +1195,7 @@ def tiling_legal(deps: List[Dependence], tau: Tuple[int, int], bi: int, bj: int)
     return True
 
 
-def domain_bbox(u: str, v: str, params: List[str], domain: List[sympy.Expr]) -> Optional[List[sympy.Expr]]:
+def domain_bbox(u: str, v: str, params: list[str], domain: list[sympy.Expr]) -> list[sympy.Expr] | None:
     """``[u_lo, u_hi, v_lo, v_hi]`` -- the exact integer bounding box of the 2-D
     iteration domain -- or ``None`` when a side is not a single readable bound.
 
@@ -1205,7 +1206,7 @@ def domain_bbox(u: str, v: str, params: List[str], domain: List[sympy.Expr]) -> 
     outside it and costs no tile."""
     s, nmap = poly.make_set((u, v), params, domain)
     inv = {safe: orig for orig, safe in nmap.items()}
-    box: List[sympy.Expr] = []
+    box: list[sympy.Expr] = []
     for keep in (0, 1):
         proj = s.project_out(isl.dim_type.set, 1 - keep, 1).coalesce()
         for pw in (proj.dim_min(0), proj.dim_max(0)):
@@ -1239,10 +1240,10 @@ class TilePlan:
         self.bj = bj
 
 
-def offset_symbols(deps: List[Dependence], dims: List[str]) -> List[sympy.Symbol]:
+def offset_symbols(deps: list[Dependence], dims: list[str]) -> list[sympy.Symbol]:
     """Distinct parameter symbols appearing in any distance component."""
     nested_names = dict.fromkeys(nm for d in deps for (nm, lo, hi) in d.nested)
-    syms: Dict[str, sympy.Symbol] = {}
+    syms: dict[str, sympy.Symbol] = {}
     for dep in deps:
         for comp in (dep.du, dep.dv):
             for s in sorted(free_symbols(simplified(comp)), key=lambda s: s.name):
@@ -1314,12 +1315,12 @@ class WavefrontSkew(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> int | None:
         """Skew every eligible 2-D nest. Returns the count or ``None`` on no match."""
         with symbolic.serialization_symbol_dtypes({}, inherit=True):
             return self.skew_all(sdfg)
 
-    def skew_all(self, sdfg: SDFG) -> Optional[int]:
+    def skew_all(self, sdfg: SDFG) -> int | None:
         skewed = 0
         for sd in sdfg.all_sdfgs_recursive():
             for region in list(sd.all_control_flow_regions()):
@@ -1344,11 +1345,11 @@ class WavefrontSkew(ppl.Pass):
         # its own reads) and fused into one guarded loop only once a legal skew is confirmed.
         inner = extract_two_level_nest(outer)
         fusion = None
-        vb: Tuple[sympy.Expr, sympy.Expr]
-        inners: List[Tuple[LoopRegion, str, List[sympy.Expr]]]
-        snap_src: Dict[str, str] = {}
-        snap_reads: List[SnapRead] = []
-        copy_states: List[SDFGState] = []
+        vb: tuple[sympy.Expr, sympy.Expr]
+        inners: list[tuple[LoopRegion, str, list[sympy.Expr]]]
+        snap_src: dict[str, str] = {}
+        snap_reads: list[SnapRead] = []
+        copy_states: list[SDFGState] = []
         if inner is None:
             fusion = plan_guarded_fusion(outer)
             if fusion is None:
@@ -1422,7 +1423,7 @@ class WavefrontSkew(ppl.Pass):
         off_syms = offset_symbols(deps, dims)
         assume_annotated = [s - 1 for s in off_syms if s.is_positive]
         tau = None
-        guard_syms: List[sympy.Symbol] = []
+        guard_syms: list[sympy.Symbol] = []
         for cand in SKEW_CANDIDATES:
             if schedule_legal(cand, deps, u, v, domain, assume_annotated):
                 tau = cand
@@ -1468,8 +1469,8 @@ class WavefrontSkew(ppl.Pass):
         return True
 
     def plan_tiles(
-        self, deps: List[Dependence], u: str, v: str, domain: List[sympy.Expr], dims: List[str], tau: Tuple[int, int]
-    ) -> Optional[TilePlan]:
+        self, deps: list[Dependence], u: str, v: str, domain: list[sympy.Expr], dims: list[str], tau: tuple[int, int]
+    ) -> TilePlan | None:
         """The tile-index skew for a ``tile_i x tile_j`` blocking of this nest, or
         ``None`` to keep the element-granularity lowering.
 
@@ -1521,7 +1522,7 @@ class WavefrontSkew(ppl.Pass):
         sdfg: SDFG,
         u: str,
         v: str,
-        tau: Tuple[int, int],
+        tau: tuple[int, int],
         bounds: poly.SkewBounds,
     ) -> None:
         """Relabel ``outer -> t`` and ``inner -> p`` with the projected bounds, then
@@ -1577,9 +1578,9 @@ class WavefrontSkew(ppl.Pass):
         inner: LoopRegion,
         sdfg: SDFG,
         u: str,
-        ub: Tuple[sympy.Expr, sympy.Expr],
-        vb: Tuple[sympy.Expr, sympy.Expr],
-        tau: Tuple[int, int],
+        ub: tuple[sympy.Expr, sympy.Expr],
+        vb: tuple[sympy.Expr, sympy.Expr],
+        tau: tuple[int, int],
         plan: TilePlan,
     ) -> None:
         """Lower the wavefront as a skewed tiling::
@@ -1683,12 +1684,12 @@ class WavefrontSkew(ppl.Pass):
         sdfg: SDFG,
         u: str,
         v: str,
-        tau: Tuple[int, int],
+        tau: tuple[int, int],
         plan: TilePlan,
         i_lo: sympy.Expr,
         j_lo: sympy.Expr,
-        ub: Tuple[sympy.Expr, sympy.Expr],
-        vb: Tuple[sympy.Expr, sympy.Expr],
+        ub: tuple[sympy.Expr, sympy.Expr],
+        vb: tuple[sympy.Expr, sympy.Expr],
     ) -> None:
         """Turn a tile's two sequential interior loops into a diagonal over a parallel Map.
 
@@ -1744,12 +1745,12 @@ class WavefrontSkew(ppl.Pass):
         sdfg: SDFG,
         u: str,
         v: str,
-        tau: Tuple[int, int],
+        tau: tuple[int, int],
         plan: TilePlan,
         i_lo: sympy.Expr,
         j_lo: sympy.Expr,
         bounds: poly.SkewBounds,
-        d_range: Tuple[sympy.Expr, sympy.Expr],
+        d_range: tuple[sympy.Expr, sympy.Expr],
     ) -> None:
         """Diagonal over a CONSTANT-width parallel Map, with the real extent as a guard.
 
@@ -1839,13 +1840,13 @@ class WavefrontSkew(ppl.Pass):
             if isinstance(node, nodes.MapEntry) and itervar in node.map.params and not node.specialization_hint:
                 node.specialization_hint = hint
 
-    def emit_positive_guard(self, outer: LoopRegion, deps: List[Dependence], guard_syms: List[sympy.Symbol]) -> None:
+    def emit_positive_guard(self, outer: LoopRegion, deps: list[Dependence], guard_syms: list[sympy.Symbol]) -> None:
         """Plant an ``abort()`` guard before ``outer`` that fires if any distance
         component carrying an unannotated symbol is positive at runtime (soundness
         needs it ``<= 0``). Mirrors ``BreakAntiDependence``'s positive guard."""
         gset = dict.fromkeys(s.name for s in guard_syms)
         exprs = []
-        seen: Dict = {}
+        seen: dict = {}
         for dep in deps:
             for comp in (dep.du, dep.dv):
                 cs = simplified(comp)
@@ -1883,7 +1884,7 @@ def privatize_body_reductions(loop: LoopRegion) -> int:
     return count
 
 
-def bound_expr(terms: List[sympy.Expr], subs: Dict[str, sympy.Expr], fn: str) -> str:
+def bound_expr(terms: list[sympy.Expr], subs: dict[str, sympy.Expr], fn: str) -> str:
     """Render bound terms into a loop-bound string: a single term verbatim, or
     ``max(...)`` / ``min(...)`` (``fn``) of several. ``subs`` resolves the probe
     names -- the real ``t`` / ``p`` symbols, and for the tiled lowering the two tile
@@ -1894,7 +1895,7 @@ def bound_expr(terms: List[sympy.Expr], subs: Dict[str, sympy.Expr], fn: str) ->
     return f"{fn}(" + ", ".join(rendered) + ")"
 
 
-def substitute_by_name(expr: sympy.Expr, subs: Dict[str, sympy.Expr]) -> sympy.Expr:
+def substitute_by_name(expr: sympy.Expr, subs: dict[str, sympy.Expr]) -> sympy.Expr:
     """Substitute symbols in ``expr`` by NAME, so a probe symbol is matched whatever
     assumptions its sympy.Expr carries."""
     e = simplified(expr)

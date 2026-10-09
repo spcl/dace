@@ -28,7 +28,8 @@ this module replaces.
 
 import multiprocessing as mp
 import sys
-from typing import Any, Callable, Dict, Sequence, Tuple
+from collections.abc import Callable, Sequence
+from typing import Any
 
 import numpy as np
 
@@ -45,8 +46,8 @@ ATOL = 1e-12
 
 
 def own_arrays(
-    kwargs: Dict[str, Any], outputs: Sequence[Tuple[Any, Any]]
-) -> Tuple[Dict[str, Any], Sequence[Tuple[Any, Any]]]:
+    kwargs: dict[str, Any], outputs: Sequence[tuple[Any, Any]]
+) -> tuple[dict[str, Any], Sequence[tuple[Any, Any]]]:
     """Re-copy every unpickled array so it OWNS its buffer, sharing one copy per original.
 
     Unpickling hands back an ndarray whose ``base`` is the pickle buffer, and DaCe rejects any
@@ -54,7 +55,7 @@ def own_arrays(
     identity map is what makes this safe to do: a buffer that is both a call argument and an output
     to check must stay ONE array here, or the comparison would read a copy the kernel never wrote.
     """
-    owned: Dict[int, np.ndarray] = {}
+    owned: dict[int, np.ndarray] = {}
 
     def own(value: Any) -> Any:
         if not isinstance(value, np.ndarray):
@@ -66,7 +67,7 @@ def own_arrays(
     return {name: own(value) for name, value in kwargs.items()}, [(own(buf), ref) for buf, ref in outputs]
 
 
-def compare_in_child(sdfg: dace.SDFG, kwargs: Dict[str, Any], outputs: Sequence[Tuple[Any, Any]], exact: bool) -> None:
+def compare_in_child(sdfg: dace.SDFG, kwargs: dict[str, Any], outputs: Sequence[tuple[Any, Any]], exact: bool) -> None:
     """Child body: compile, run, compare, and report the verdict as an exit code.
 
     Compares HERE rather than shipping buffers back, because the child mutates its own copies and
@@ -94,8 +95,8 @@ def compare_in_child(sdfg: dace.SDFG, kwargs: Dict[str, Any], outputs: Sequence[
 
 def exit_code(
     sdfg: dace.SDFG,
-    kwargs: Dict[str, Any],
-    outputs: Sequence[Tuple[Any, Any]] = (),
+    kwargs: dict[str, Any],
+    outputs: Sequence[tuple[Any, Any]] = (),
     *,
     exact: bool = False,
     timeout: float = 900.0,
@@ -126,7 +127,7 @@ def exit_code_of(target: Callable[..., Any], *args: Any, timeout: float = 900.0)
 
 
 def run_isolated(
-    sdfg: dace.SDFG, kwargs: Dict[str, Any], outputs: Sequence[Tuple[Any, Any]] = (), *, exact: bool = False
+    sdfg: dace.SDFG, kwargs: dict[str, Any], outputs: Sequence[tuple[Any, Any]] = (), *, exact: bool = False
 ) -> None:
     """Compile + call ``sdfg`` in a spawned child; assert every output matched its reference."""
     code = exit_code(sdfg, kwargs, outputs, exact=exact)
@@ -135,7 +136,7 @@ def run_isolated(
     assert code == 0, f"isolated kernel failed with exit code {code}"
 
 
-def send_result(connection: Any, target: Callable[..., Any], args: Tuple[Any, ...]) -> None:
+def send_result(connection: Any, target: Callable[..., Any], args: tuple[Any, ...]) -> None:
     """Child body for :func:`call_in_child`: evaluate ``target(*args)`` and ship the result home.
 
     An exception is deliberately left to propagate: multiprocessing prints the child traceback and

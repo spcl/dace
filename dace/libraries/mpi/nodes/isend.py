@@ -2,11 +2,11 @@
 import dace.library
 import dace.properties
 import dace.sdfg.nodes
-from dace.transformation.transformation import ExpandTransformation
-from .. import environments
 from dace import dtypes
+from dace.libraries.mpi import environments
 from dace.libraries.mpi.nodes.node import MPINode, expanded_input_connectors, resolve_comm, validate_integer_descriptor
 from dace.ordered import OrderedSet
+from dace.transformation.transformation import ExpandTransformation
 
 
 @dace.library.expansion
@@ -26,7 +26,7 @@ class ExpandIsendMPI(ExpandTransformation):
         code = ""
 
         if not node.nosync and buffer.storage == dtypes.StorageType.GPU_Global:
-            code += f"""
+            code += """
             gpuStreamSynchronize(__dace_current_stream);
             """
 
@@ -44,7 +44,7 @@ class ExpandIsendMPI(ExpandTransformation):
         buffer_offset = 0
         code += f"MPI_Isend(&(_buffer[{buffer_offset}]), {count_str}, {mpi_dtype_str}, int(_dest), int(_tag), {comm}, _request);"
         if ddt is not None:
-            code += f"""// MPI_Type_free(&newtype);
+            code += """// MPI_Type_free(&newtype);
             """
 
         tasklet = dace.sdfg.nodes.Tasklet(

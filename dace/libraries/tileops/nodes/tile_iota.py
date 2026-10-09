@@ -5,11 +5,10 @@ from collections.abc import Sequence
 
 import dace
 from dace import library, properties
-from dace.sdfg import nodes
-
 from dace.libraries.tileops.expansions import ExpandTilePure
 from dace.libraries.tileops.lanes import nested_loops, tile_offset
 from dace.libraries.tileops.nodes.tile_op import TileOp
+from dace.sdfg import nodes
 
 
 @library.expansion

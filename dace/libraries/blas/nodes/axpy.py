@@ -5,13 +5,13 @@ import warnings
 import dace.library
 import dace.properties
 import dace.sdfg.nodes
-from dace.transformation.transformation import ExpandTransformation
-from dace import data as dt, memlet as mm, symbolic, SDFG, SDFGState
+from dace import SDFG, SDFGState, symbolic
+from dace import data as dt
+from dace import memlet as mm
 from dace.frontend.common import op_repository as oprepo
-from dace.libraries.blas import blas_helpers
-from .. import environments
-from dace.libraries.blas import gpu_dialect
+from dace.libraries.blas import blas_helpers, environments, gpu_dialect
 from dace.ordered import OrderedSet
+from dace.transformation.transformation import ExpandTransformation
 
 
 @dace.library.expansion

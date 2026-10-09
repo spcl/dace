@@ -8,7 +8,6 @@ falls back to a serial backend that needs no library.
 import ctypes.util
 
 import dace.library
-from typing import Dict, List
 
 
 @dace.library.environment
@@ -16,16 +15,16 @@ class ParallelSTL:
     """Links ``tbb`` when the host has it, for libstdc++'s parallel algorithm backend."""
 
     cmake_minimum_version = None
-    cmake_packages: List[str] = []
-    cmake_variables: Dict[str, str] = {}
-    cmake_includes: List[str] = []
+    cmake_packages: list[str] = []
+    cmake_variables: dict[str, str] = {}
+    cmake_includes: list[str] = []
     cmake_libraries = ["tbb"] if ctypes.util.find_library("tbb") else []
-    cmake_compile_flags: List[str] = []
-    cmake_link_flags: List[str] = []
-    cmake_files: List[str] = []
+    cmake_compile_flags: list[str] = []
+    cmake_link_flags: list[str] = []
+    cmake_files: list[str] = []
 
     headers = {"frame": ["algorithm", "execution"]}
-    state_fields: List[str] = []
+    state_fields: list[str] = []
     init_code = ""
     finalize_code = ""
-    dependencies: List[str] = []
+    dependencies: list[str] = []

@@ -5,11 +5,11 @@ import pytest
 pytest.importorskip("torch", reason="PyTorch not installed. Please install with: pip install dace[ml]")
 
 import torch
+from test_single_state import SDFGBackwardRunner, run_correctness
 
 import dace
 from dace import SDFG, InterstateEdge, Memlet
 from dace.autodiff import add_backward_pass
-from test_single_state import SDFGBackwardRunner, run_correctness
 
 
 @pytest.mark.autodiff

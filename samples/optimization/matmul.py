@@ -5,23 +5,23 @@ with Intel MKL and NVIDIA CUBLAS.
 """
 
 import click
-import dace
 import numpy as np
-from typing import Tuple
 
-# For optimizations
-from dace.transformation.dataflow import (
-    DoubleBuffering,
-    MapCollapse,
-    MapReduceFusion,
-    InLocalStorage,
-    AccumulateTransient,
-    Vectorization,
-)
-from dace.transformation import helpers as xfutil
+import dace
 
 # For library node implementations
 import dace.libraries.blas
+from dace.transformation import helpers as xfutil
+
+# For optimizations
+from dace.transformation.dataflow import (
+    AccumulateTransient,
+    DoubleBuffering,
+    InLocalStorage,
+    MapCollapse,
+    MapReduceFusion,
+    Vectorization,
+)
 
 # Define symbolic sizes for arbitrary inputs
 M = dace.symbol("M")
@@ -69,7 +69,7 @@ def find_map_by_param(sdfg: dace.SDFG, pname: str) -> dace.nodes.MapEntry:
     return next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.MapEntry) and pname in n.params)
 
 
-def find_map_and_state_by_param(sdfg: dace.SDFG, pname: str) -> Tuple[dace.nodes.MapEntry, dace.SDFGState]:
+def find_map_and_state_by_param(sdfg: dace.SDFG, pname: str) -> tuple[dace.nodes.MapEntry, dace.SDFGState]:
     """Finds the first map entry node by the given parameter name."""
     return next(
         (n, p) for n, p in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.MapEntry) and pname in n.params

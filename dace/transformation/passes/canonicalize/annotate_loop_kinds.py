@@ -27,25 +27,24 @@ A hint is a NOTE. Nothing in the pipeline dispatches on these strings, ``hint_co
 outside a standalone rendering, and this pass changes no graph.
 """
 
-from typing import Any, Dict, List, NamedTuple, Optional, Tuple
-
 import re
+from typing import Any, NamedTuple
 
 import sympy
 
 from dace import SDFG, data, symbolic
+from dace.memlet import Memlet
+from dace.optionals import required
 from dace.ordered import OrderedSet
 from dace.sdfg import nodes
+from dace.sdfg.graph import MultiConnectorEdge
+from dace.sdfg.narrowing import as_basic, as_range, free_symbols
 from dace.sdfg.state import ControlFlowRegion, LoopRegion, SDFGState
-from dace.transformation.passes.analysis import loop_analysis
+from dace.subsets import Subset
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
+from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.loop_to_reduce import loop_to_map_refusal_is_carried
-from dace.sdfg.graph import MultiConnectorEdge
-from dace.memlet import Memlet
-from dace.subsets import Subset
-from dace.optionals import required
-from dace.sdfg.narrowing import as_basic, as_range, free_symbols
 
 # Three classes, named by the first word of every loop hint: ``parallel`` and ``sequential`` are
 # settled and need no further dependence reasoning, ``unsure`` is the only open one. A role (a
@@ -128,7 +127,7 @@ def tile_label(bi: int, bj: int) -> str:
     return f"[{bi}x{bj}]"
 
 
-def refusal_reason(loop: LoopRegion) -> Optional[str]:
+def refusal_reason(loop: LoopRegion) -> str | None:
     """Why ``LoopToMap`` would refuse ``loop``, ``None`` if it would accept, ``''`` if it cannot say.
 
     Asked with ``pinned_sequential`` set aside. The pin is a schedule decision an earlier pass made,
@@ -156,7 +155,7 @@ def refusal_reason(loop: LoopRegion) -> Optional[str]:
 
 
 #: ``LoopToMap``'s refusal, as ``<kind> conflict on <array> within the loop body - src_subset=<subset>``.
-REFUSAL_SHAPE = re.compile(r"(\w+)-after-(\w+) conflict on (\w+).*?src_subset=(.*)$", re.S)
+REFUSAL_SHAPE = re.compile(r"(\w+)-after-(\w+) conflict on (\w+).*?src_subset=(.*)$", re.DOTALL)
 
 #: The three conflict kinds, as the two-letter names a reader of dependence analysis already has.
 CONFLICT_ABBREV = {("read", "write"): "RAW", ("write", "read"): "WAR", ("write", "write"): "WAW"}
@@ -192,7 +191,7 @@ def carrying_access(reason: str) -> str:
 
 
 #: Array name -> (outer array, element offset in the loop's names) for every array the body can see.
-ArrayBindings = Dict[str, Tuple[str, Tuple[sympy.Expr, ...]]]
+ArrayBindings = dict[str, tuple[str, tuple[sympy.Expr, ...]]]
 
 
 class Access(NamedTuple):
@@ -200,20 +199,20 @@ class Access(NamedTuple):
 
     array: str
     write: bool
-    index: Tuple[sympy.Expr, ...]
+    index: tuple[sympy.Expr, ...]
 
 
 class Body(NamedTuple):
     """What :func:`walk_body` collects: element accesses, names that vary within one iteration, the
     params of maps, and whether some map range moves with the loop."""
 
-    accesses: List[Access]
+    accesses: list[Access]
     varying: OrderedSet[str]
     params: OrderedSet[str]
-    moving: List[bool]
+    moving: list[bool]
 
 
-def as_loop_names(expr: symbolic.SymbolicType, mapping: Dict[str, sympy.Expr]) -> sympy.Expr:
+def as_loop_names(expr: symbolic.SymbolicType, mapping: dict[str, sympy.Expr]) -> sympy.Expr:
     """``expr`` rewritten through ``mapping`` (inner name -> outer expression) and reparsed, so one
     name is one symbol instance whichever scope minted it."""
     expr = symbolic.pystr_to_symbolic(str(expr))
@@ -223,8 +222,8 @@ def as_loop_names(expr: symbolic.SymbolicType, mapping: Dict[str, sympy.Expr]) -
 
 
 def point_index(
-    subset: Optional[Subset], mapping: Dict[str, sympy.Expr], offset: Tuple[sympy.Expr, ...]
-) -> Optional[Tuple[sympy.Expr, ...]]:
+    subset: Subset | None, mapping: dict[str, sympy.Expr], offset: tuple[sympy.Expr, ...]
+) -> tuple[sympy.Expr, ...] | None:
     """The single element ``subset`` names, in the loop's names, or ``None`` for a range."""
     if subset is None or (offset and len(offset) != as_range(subset).dims()):
         return None
@@ -238,8 +237,8 @@ def point_index(
 
 
 def edge_accesses(
-    edge: MultiConnectorEdge[Memlet], state: SDFGState, arrays: ArrayBindings, mapping: Dict[str, sympy.Expr]
-) -> List[Access]:
+    edge: MultiConnectorEdge[Memlet], state: SDFGState, arrays: ArrayBindings, mapping: dict[str, sympy.Expr]
+) -> list[Access]:
     """The element reads and writes ``edge`` makes: into or out of a tasklet, or an array copy."""
     memlet = edge.data
     if memlet.is_empty() or memlet.wcr is not None:
@@ -267,8 +266,8 @@ def edge_accesses(
 
 
 def nested_bindings(
-    state: SDFGState, node: nodes.NestedSDFG, arrays: ArrayBindings, mapping: Dict[str, sympy.Expr]
-) -> Tuple[ArrayBindings, Dict[str, sympy.Expr]]:
+    state: SDFGState, node: nodes.NestedSDFG, arrays: ArrayBindings, mapping: dict[str, sympy.Expr]
+) -> tuple[ArrayBindings, dict[str, sympy.Expr]]:
     """The arrays and symbols ``node``'s body sees, rebound to the loop's names.
 
     An inner array binds only when its connector's outer subset has the inner rank; its element
@@ -292,7 +291,7 @@ def nested_bindings(
 def walk_body(
     sdfg_or_region: ControlFlowRegion,
     arrays: ArrayBindings,
-    mapping: Dict[str, sympy.Expr],
+    mapping: dict[str, sympy.Expr],
     loop_variable: str,
     body: Body,
 ) -> None:
@@ -315,7 +314,7 @@ def walk_body(
                 walk_body(node.sdfg, inner_arrays, inner_mapping, loop_variable, body)
 
 
-def carried_distance(write: Access, read: Access, loop_var: sympy.Symbol) -> Optional[sympy.Expr]:
+def carried_distance(write: Access, read: Access, loop_var: sympy.Symbol) -> sympy.Expr | None:
     """``d`` such that ``read`` at iteration ``i`` touches what ``write`` touched at ``i - d``."""
     if len(write.index) != len(read.index):
         return None
@@ -336,7 +335,7 @@ def carried_distance(write: Access, read: Access, loop_var: sympy.Symbol) -> Opt
     return distance
 
 
-def proven_carrying_access(loop: LoopRegion) -> Optional[str]:
+def proven_carrying_access(loop: LoopRegion) -> str | None:
     """``RAW on aa[i - 1, j]`` when two element accesses in ``loop``'s body PROVE a carried dependence.
 
     ``LoopToMap`` judges a body by its propagated memlets, and a nested SDFG's are often the whole
@@ -356,7 +355,7 @@ def proven_carrying_access(loop: LoopRegion) -> Optional[str]:
     unknown = body.varying - body.params - OrderedSet([loop.loop_variable])
     stable = [a for a in body.accesses if not ({s.name for e in a.index for s in e.free_symbols} & unknown)]
     loop_var = symbolic.pystr_to_symbolic(loop.loop_variable)
-    reads: Dict[str, List[Access]] = {}
+    reads: dict[str, list[Access]] = {}
     for access in stable:
         if not access.write:
             reads.setdefault(access.array, []).append(access)
@@ -407,7 +406,7 @@ class AnnotateLoopKinds(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def apply_pass(self, sdfg: SDFG, _: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _: dict[str, Any]) -> int | None:
         """:returns: The number of loops newly labelled, or ``None`` if none was."""
         labelled = 0
         for node, parent_graph in list(sdfg.all_nodes_recursive()):

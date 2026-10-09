@@ -11,9 +11,9 @@ to decline outright when the producer's write does not pin the parameter down at
 import numpy as np
 
 import dace
-from dace.sdfg.dealias import convert_legacy_nested_sdfgs
 from dace.memlet import Memlet
 from dace.sdfg import nodes
+from dace.sdfg.dealias import convert_legacy_nested_sdfgs
 from dace.transformation.passes.canonicalize.finalize import recompute_fuse_for_gpu
 
 N = dace.symbol("N")

@@ -2,20 +2,23 @@
 """Contains functions related to pattern matching in transformations."""
 
 import collections
-from dataclasses import dataclass
 import time
 import warnings
+from collections.abc import Callable, Iterable, Iterator
+from dataclasses import dataclass
+from typing import Any, ClassVar, Optional
 
+from dace import graphlib as nx
 from dace import properties, symbolic
 from dace.config import Config
-from dace.sdfg import SDFG, SDFGState
-from dace.sdfg import graph as gr, nodes as nd
-from dace.sdfg.state import AbstractControlFlowRegion, ControlFlowRegion
-from dace import graphlib as nx
 from dace.graphlib import isomorphism as iso
-from typing import Any, Callable, ClassVar, Dict, Iterable, Iterator, List, Optional, Tuple, Type, Union
+from dace.sdfg import SDFG, SDFGState
+from dace.sdfg import graph as gr
+from dace.sdfg import nodes as nd
+from dace.sdfg.state import AbstractControlFlowRegion, ControlFlowRegion
 from dace.sdfg.validation import InvalidSDFGError, validate_state
-from dace.transformation import transformation as xf, pass_pipeline as ppl
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation import transformation as xf
 
 
 @dataclass(init=False)
@@ -78,13 +81,13 @@ class PatternMatchAndApply(ppl.Pass):
 
     def __init__(
         self,
-        transformations: Union[xf.PatternTransformation, Iterable[xf.PatternTransformation]],
+        transformations: xf.PatternTransformation | Iterable[xf.PatternTransformation],
         permissive: bool = False,
         validate: bool = True,
         validate_all: bool = False,
-        states: Optional[List[SDFGState]] = None,
-        print_report: Optional[bool] = None,
-        progress: Optional[bool] = None,
+        states: list[SDFGState] | None = None,
+        print_report: bool | None = None,
+        progress: bool | None = None,
     ) -> None:
         if isinstance(transformations, xf.TransformationBase):
             self.transformations = [transformations]
@@ -101,7 +104,7 @@ class PatternMatchAndApply(ppl.Pass):
         self.print_report = print_report
         self.progress = progress
 
-    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+    def depends_on(self) -> list[type[ppl.Pass] | ppl.Pass]:
         return ppl.unique_dependencies(self.transformations)
 
     def modifies(self) -> ppl.Modifies:
@@ -113,7 +116,7 @@ class PatternMatchAndApply(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return any(p.should_reapply(modified) for p in self.transformations)
 
-    def validate_after_match(self, match: xf.PatternTransformation, graph: Union[SDFG, SDFGState], sdfg: SDFG) -> None:
+    def validate_after_match(self, match: xf.PatternTransformation, graph: SDFG | SDFGState, sdfg: SDFG) -> None:
         """Check what the transformation that just applied could actually have broken.
 
         A full ``sdfg.validate()`` after EVERY match is O(whole SDFG) per application, which
@@ -137,7 +140,7 @@ class PatternMatchAndApply(ppl.Pass):
         #  transformation can break.
         validate_state(graph, graph.parent_graph.node_id(graph), owner, initialized_transients=set(owner.arrays.keys()))
 
-    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Dict[str, List[Any]]:
+    def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> dict[str, list[Any]]:
         applied_transformations = collections.defaultdict(list)
 
         # For every transformation in the list, find first match and apply
@@ -225,13 +228,13 @@ class PatternMatchAndApplyRepeated(PatternMatchAndApply):
 
     def __init__(
         self,
-        transformations: Union[xf.PatternTransformation, Iterable[xf.PatternTransformation]],
+        transformations: xf.PatternTransformation | Iterable[xf.PatternTransformation],
         permissive: bool = False,
         validate: bool = True,
         validate_all: bool = False,
-        states: Optional[List[SDFGState]] = None,
-        print_report: Optional[bool] = None,
-        progress: Optional[bool] = None,
+        states: list[SDFGState] | None = None,
+        print_report: bool | None = None,
+        progress: bool | None = None,
         order_by_transformation: bool = False,
         state_local: bool = False,
     ) -> None:
@@ -245,8 +248,8 @@ class PatternMatchAndApplyRepeated(PatternMatchAndApply):
         match: xf.PatternTransformation,
         sdfg: SDFG,
         start: float,
-        pipeline_results: Dict[str, Any],
-        applied_transformations: Dict[str, Any],
+        pipeline_results: dict[str, Any],
+        applied_transformations: dict[str, Any],
     ):
         tcfg = sdfg.cfg_list[match.cfg_id]
         graph = tcfg.node(match.state_id) if match.state_id >= 0 else tcfg
@@ -275,7 +278,7 @@ class PatternMatchAndApplyRepeated(PatternMatchAndApply):
                     f"Validation failed after applying {match_name}. {type(err).__name__}: {err}", tcfg, match.state_id
                 ) from err
 
-    def _apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any], apply_once: bool) -> Dict[str, List[Any]]:
+    def _apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any], apply_once: bool) -> dict[str, list[Any]]:
         """
         Internal apply pass method that can run once through the graph or repeatedly.
         """
@@ -286,7 +289,7 @@ class PatternMatchAndApplyRepeated(PatternMatchAndApply):
 
         applied_transformations = collections.defaultdict(list)
         xforms = self.transformations
-        match: Optional[xf.PatternTransformation] = None
+        match: xf.PatternTransformation | None = None
 
         # Ensure transformations are unique
         if len(xforms) != len(set(xforms)):
@@ -383,7 +386,7 @@ class PatternMatchAndApplyRepeated(PatternMatchAndApply):
         return applied_transformations
 
     def apply_state_local(
-        self, sdfg: SDFG, start: float, pipeline_results: Dict[str, Any], applied_transformations: Dict[str, Any]
+        self, sdfg: SDFG, start: float, pipeline_results: dict[str, Any], applied_transformations: dict[str, Any]
     ) -> None:
         """The ``state_local`` fixpoint: ``match_patterns``' walk, resumed after each application.
 
@@ -393,9 +396,9 @@ class PatternMatchAndApplyRepeated(PatternMatchAndApply):
         interstate, singlestate = self._metadata
         if interstate or not all(isinstance(x, xf.SingleStateTransformation) for x in self.transformations):
             raise ValueError("state_local matching takes single-state transformations only")
-        refused: Dict[SDFGState, None] = {}
+        refused: dict[SDFGState, None] = {}
         # Each frame is ``[region, child regions or None while its own states are walked, next child]``.
-        stack: List[list] = [[sdfg, None, 0]]
+        stack: list[list] = [[sdfg, None, 0]]
         while stack:
             frame = stack[-1]
             region, children, index = frame
@@ -417,9 +420,9 @@ class PatternMatchAndApplyRepeated(PatternMatchAndApply):
         sdfg: SDFG,
         region: ControlFlowRegion,
         singlestate: "TransformationData",
-        refused: Dict[SDFGState, None],
-        pipeline_results: Dict[str, Any],
-    ) -> Optional[xf.PatternTransformation]:
+        refused: dict[SDFGState, None],
+        pipeline_results: dict[str, Any],
+    ) -> xf.PatternTransformation | None:
         """The first match among ``region``'s own states, marking every state that has none as refused."""
         cfg_ids = CfgIds(sdfg)
         for state_id, state in enumerate(region.nodes()):
@@ -440,11 +443,11 @@ class PatternMatchAndApplyRepeated(PatternMatchAndApply):
             refused[state] = None
         return None
 
-    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Dict[str, List[Any]]:
+    def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> dict[str, list[Any]]:
         return self._apply_pass(sdfg, pipeline_results, apply_once=False)
 
 
-def child_regions(region: ControlFlowRegion) -> List[ControlFlowRegion]:
+def child_regions(region: ControlFlowRegion) -> list[ControlFlowRegion]:
     """The regions ``all_control_flow_regions(recursive=True)`` descends into below ``region``, in order.
 
     :param region: The region whose children to list.
@@ -470,11 +473,11 @@ class PatternApplyOnceEverywhere(PatternMatchAndApplyRepeated):
 
     CATEGORY: ClassVar[str] = "Helper"
 
-    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Dict[str, List[Any]]:
+    def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> dict[str, list[Any]]:
         return self._apply_pass(sdfg, pipeline_results, apply_once=True)
 
 
-def collapse_multigraph_to_nx(graph: Union[gr.MultiDiGraph, gr.OrderedMultiDiGraph]) -> nx.DiGraph:
+def collapse_multigraph_to_nx(graph: gr.MultiDiGraph | gr.OrderedMultiDiGraph) -> nx.DiGraph:
     """Collapses a directed multigraph into a networkx directed graph.
 
     In the output directed graph, each node is a number, which contains
@@ -486,7 +489,7 @@ def collapse_multigraph_to_nx(graph: Union[gr.MultiDiGraph, gr.OrderedMultiDiGra
     """
 
     # Create the digraph nodes.
-    digraph_nodes: List[Tuple[int, Dict[str, nd.Node]]] = [None] * graph.number_of_nodes()
+    digraph_nodes: list[tuple[int, dict[str, nd.Node]]] = [None] * graph.number_of_nodes()
     node_id = {}
     for i, node in enumerate(graph.nodes()):
         digraph_nodes[i] = (i, {"node": node})
@@ -584,7 +587,7 @@ class CfgIds:
     def __init__(self, sdfg: SDFG) -> None:
         self.cfg_list = sdfg.cfg_list
         #: Built on the first lookup: a sweep that matches its first candidate needs one scan at most.
-        self.index: Optional[Dict[ControlFlowRegion, int]] = None
+        self.index: dict[ControlFlowRegion, int] | None = None
 
     def cfg_id(self, region: ControlFlowRegion) -> int:
         """``region.cfg_id``, without the scan when ``region`` shares the indexed list."""
@@ -599,19 +602,19 @@ class CfgIds:
 
 
 def _try_to_match_transformation(
-    graph: Union[ControlFlowRegion, SDFGState],
+    graph: ControlFlowRegion | SDFGState,
     collapsed_graph: nx.DiGraph,
-    subgraph: Dict[int, int],
+    subgraph: dict[int, int],
     sdfg: SDFG,
-    xform: Union[xf.PatternTransformation, Type[xf.PatternTransformation]],
+    xform: xf.PatternTransformation | type[xf.PatternTransformation],
     expr_idx: int,
     nxpattern: nx.DiGraph,
     state_id: int,
     permissive: bool,
-    options: Dict[str, Any],
-    pipeline_results: Optional[Dict[str, Any]] = None,
+    options: dict[str, Any],
+    pipeline_results: dict[str, Any] | None = None,
     cfg_ids: Optional["CfgIds"] = None,
-) -> Optional[xf.PatternTransformation]:
+) -> xf.PatternTransformation | None:
     """
     Helper function that tries to instantiate a pattern match into a
     transformation object.
@@ -673,11 +676,7 @@ def _try_to_match_transformation(
             xft = type(xform)
         else:
             xft = xform
-        print(
-            "WARNING: {p}::can_be_applied triggered a {c} exception: {e}".format(
-                p=xft.__name__, c=e.__class__.__name__, e=e
-            )
-        )
+        print(f"WARNING: {xft.__name__}::can_be_applied triggered a {e.__class__.__name__} exception: {e}")
         return None
 
     if match_found:
@@ -686,12 +685,12 @@ def _try_to_match_transformation(
     return None
 
 
-TransformationData = List[Tuple[Type[xf.PatternTransformation], int, nx.DiGraph, Callable, Dict[str, Any]]]
-PatternMetadataType = Tuple[TransformationData, TransformationData]
+TransformationData = list[tuple[type[xf.PatternTransformation], int, nx.DiGraph, Callable, dict[str, Any]]]
+PatternMetadataType = tuple[TransformationData, TransformationData]
 
 
 def get_transformation_metadata(
-    patterns: List[Type[xf.PatternTransformation]], options: Optional[List[Dict[str, Any]]] = None
+    patterns: list[type[xf.PatternTransformation]], options: list[dict[str, Any]] | None = None
 ) -> PatternMetadataType:
     """
     Collect all transformation expressions and metadata once, for use when
@@ -747,7 +746,7 @@ def _subgraph_isomorphism_matcher(digraph, nxpattern, node_pred, edge_pred):
     yield from graph_matcher.subgraph_isomorphisms_iter()
 
 
-def chain_order(nxpattern) -> Optional[List[Any]]:
+def chain_order(nxpattern) -> list[Any] | None:
     """The pattern's nodes from source to sink if the pattern is one directed path, else ``None``."""
     if len(nxpattern.edges) != len(nxpattern.nodes) - 1:
         return None
@@ -774,7 +773,7 @@ def _chain_matcher(digraph, nxpattern, node_pred, edge_pred):
     def admissible(nid: Any, index: int) -> bool:
         return node_pred(digraph.nodes[nid], pattern_nodes[index]) and not digraph.has_edge(nid, nid)
 
-    def extend(path: List[Any]):
+    def extend(path: list[Any]):
         if len(path) == len(order):
             # Induced: the path's own edges are the only ones among the matched nodes
             for i, u in enumerate(path):
@@ -859,14 +858,14 @@ def _edge_matcher(digraph, nxpattern, node_pred, edge_pred):
 
 def match_patterns(
     sdfg: SDFG,
-    patterns: Union[Type[xf.PatternTransformation], List[Type[xf.PatternTransformation]]],
+    patterns: type[xf.PatternTransformation] | list[type[xf.PatternTransformation]],
     node_match: Callable[[Any, Any], bool] = type_match,
-    edge_match: Optional[Callable[[Any, Any], bool]] = None,
+    edge_match: Callable[[Any, Any], bool] | None = None,
     permissive: bool = False,
-    metadata: Optional[PatternMetadataType] = None,
-    states: Optional[List[SDFGState]] = None,
-    options: Optional[List[Dict[str, Any]]] = None,
-    pipeline_results: Optional[Dict[str, Any]] = None,
+    metadata: PatternMetadataType | None = None,
+    states: list[SDFGState] | None = None,
+    options: list[dict[str, Any]] | None = None,
+    pipeline_results: dict[str, Any] | None = None,
 ):
     """Returns a generator of Transformations that match the input SDFG.
     Ordered by SDFG ID.
@@ -957,9 +956,9 @@ def state_matches(
     cfr: ControlFlowRegion,
     singlestate_transformations: "TransformationData",
     node_match: Callable[[Any, Any], bool],
-    edge_match: Optional[Callable[[Any, Any], bool]],
+    edge_match: Callable[[Any, Any], bool] | None,
     permissive: bool,
-    pipeline_results: Optional[Dict[str, Any]],
+    pipeline_results: dict[str, Any] | None,
     cfg_ids: CfgIds,
 ) -> Iterator[xf.PatternTransformation]:
     """The single-state matches in ``state`` (``state_id`` in ``cfr``), in ``match_patterns`` order."""

@@ -41,7 +41,6 @@ from dace.libraries.standard.nodes import ArgReduce
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.canonicalize import finalize
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
-
 from tests.corpus.tsvc import tsvc
 from tests.corpus.tsvc.tsvc_numpy import REFERENCES
 

@@ -14,8 +14,8 @@ import pytest
 
 import dace
 from dace.sdfg.state import ConditionalBlock
-from dace.transformation.passes.canonicalize.pipeline import CANONICALIZE_STAGES
 from dace.transformation.interstate.move_map_invariant_if_up import MoveMapInvariantIfUp
+from dace.transformation.passes.canonicalize.pipeline import CANONICALIZE_STAGES
 
 N = dace.symbol("N")
 
@@ -105,7 +105,7 @@ def test_refuses_data_dependent_guard():
     a per-iteration value) is NOT map-invariant and must stay inside the map."""
     n = 16
     rng = np.random.default_rng(5)
-    a = rng.standard_normal((n))
+    a = rng.standard_normal(n)
     thr = 0.0
 
     sdfg = _collapsed_form(data_dependent_mask)

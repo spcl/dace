@@ -9,7 +9,7 @@ import functools
 import itertools
 import warnings
 from collections import deque
-from typing import TYPE_CHECKING, List, Optional, Set
+from typing import TYPE_CHECKING, Optional
 
 import sympy
 from sympy import Symbol, ceiling
@@ -28,7 +28,7 @@ if TYPE_CHECKING:
 
 
 @registry.make_registry
-class MemletPattern(object):
+class MemletPattern:
     """
     A pattern match on a memlet subset that can be used for propagation.
     """
@@ -41,7 +41,7 @@ class MemletPattern(object):
 
 
 @registry.make_registry
-class SeparableMemletPattern(object):
+class SeparableMemletPattern:
     """Memlet pattern that can be applied to each of the dimensions
     separately."""
 
@@ -1082,7 +1082,7 @@ def _collect_state_border_memlet_candidates(state: "SDFGState", border_memlets) 
                 border_memlets[direction][node.label].extend(_candidates_through_view(state, edge, direction))
 
 
-def _candidates_through_view(state: "SDFGState", edge, direction: str) -> List[Memlet]:
+def _candidates_through_view(state: "SDFGState", edge, direction: str) -> list[Memlet]:
     """
     Resolves a border candidate that reaches its container through a view.
 
@@ -1117,7 +1117,7 @@ def _candidates_through_view(state: "SDFGState", edge, direction: str) -> List[M
         return [edge.data]
 
     inner_edges = state.out_edges(view_node) if direction == "in" else state.in_edges(view_node)
-    result: List[Memlet] = []
+    result: list[Memlet] = []
     for inner in inner_edges:
         if inner.data.is_empty() or inner.data.data != view_node.data:
             return [edge.data]
@@ -1793,7 +1793,7 @@ def propagate_memlet(
     union_inner_edges: bool,
     arr=None,
     connector=None,
-    defined_variables: Optional[Set[str]] = None,
+    defined_variables: set[str] | None = None,
     symbols: Optional["SymbolResolver"] = None,
 ):
     """Tries to propagate a memlet through a scope (computes the image of
@@ -1832,7 +1832,7 @@ def propagate_memlet(
         raise TypeError("Trying to propagate through a non-scope node")
 
     sdfg = dfg_state.parent
-    scope_node_symbols = set(conn for conn in entry_node.in_connectors if not conn.startswith("IN_"))
+    scope_node_symbols = {conn for conn in entry_node.in_connectors if not conn.startswith("IN_")}
     if defined_variables is None:
         defined_variables = (
             symbols.defined_at(dfg_state, entry_node)
@@ -1886,13 +1886,13 @@ def propagate_memlet(
 
 # External API
 def propagate_subset(
-    memlets: List[Memlet],
+    memlets: list[Memlet],
     arr: data.Data,
-    params: List[str],
+    params: list[str],
     rng: subsets.Subset,
     *,
-    defined_variables: Set[symbolic.SymbolicType] = None,
-    undefined_variables: Set[symbolic.SymbolicType] = None,
+    defined_variables: set[symbolic.SymbolicType] = None,
+    undefined_variables: set[symbolic.SymbolicType] = None,
     use_dst: bool = False,
 ) -> Memlet:
     """Tries to propagate a list of memlets through a range (computes the
@@ -2020,7 +2020,7 @@ def propagate_subset(
     return new_memlet
 
 
-def _freesyms(expr) -> Set:
+def _freesyms(expr) -> set:
     """
     Helper function that either returns free symbols for sympy expressions
     or an empty set if constant.

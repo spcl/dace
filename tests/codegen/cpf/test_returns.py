@@ -21,8 +21,8 @@ import numpy as np
 import pytest
 
 import dace
-from dace.codegen.cpf import render as render_sdfg, return_containers
-
+from dace.codegen.cpf import render as render_sdfg
+from dace.codegen.cpf import return_containers
 from tests.codegen.cpf.conftest import assert_standalone, build_standalone, call_standalone
 
 
@@ -248,7 +248,7 @@ def test_transient_return_inside_a_nested_sdfg_is_refused():
     node = state.add_nested_sdfg(nested, {"a"}, set())
     state.add_edge(state.add_access("a"), None, node, "a", dace.Memlet("a[0:20]"))
 
-    owners = dict((name, owner.name) for owner, name in return_containers(sdfg))
+    owners = {name: owner.name for owner, name in return_containers(sdfg)}
     assert owners == {"__return": "inner_transient_return_inside_a_nested_sdfg_is_refused"}, (
         f"the nested return container was not found: {owners}"
     )

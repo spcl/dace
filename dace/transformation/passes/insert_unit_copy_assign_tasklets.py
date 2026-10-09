@@ -11,18 +11,18 @@ removes ``other_subset`` from such edges so subset-substituting passes (e.g.
 """
 
 import copy as _copy
-from typing import Any, Dict, Optional
+from typing import Any
 
-from dace import subsets
-from dace import nodes
+from dace import nodes, subsets
 from dace.memlet import Memlet
 from dace.sdfg import SDFG
-from dace.sdfg.state import SDFGState
-from dace.transformation import pass_pipeline as ppl, transformation
 from dace.sdfg.narrowing import as_range
+from dace.sdfg.state import SDFGState
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation import transformation
 
 
-def _is_unit_subset(subset: Optional[subsets.Subset]) -> bool:
+def _is_unit_subset(subset: subsets.Subset | None) -> bool:
     """Return whether ``subset`` provably addresses exactly one element.
 
     Conservative: a symbolic extent that is not structurally ``1`` counts as
@@ -53,7 +53,7 @@ class InsertAssignTaskletsForUnitCopies(ppl.Pass):
     def depends_on(self):
         return set()
 
-    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> int | None:
         """Split every qualifying unit copy edge in ``sdfg``.
 
         :param sdfg: The SDFG to transform in place.

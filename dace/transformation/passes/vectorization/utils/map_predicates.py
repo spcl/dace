@@ -11,12 +11,13 @@ from dataclasses import dataclass
 from typing import Any
 
 import dace
-from dace import SDFGState, data as dt, subsets, symbolic
+from dace import SDFGState, subsets, symbolic
+from dace import data as dt
+from dace.optionals import required
 from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.transformation.passes.analysis import map_scope
 from dace.transformation.passes.vectorization.utils.injectivity import scatter_write_is_injective
 from dace.transformation.passes.vectorization.utils.tasklets import LANE_ID_MATERIALISER_PREFIX
-from dace.optionals import required
 
 # Same helper as dace.transformation.passes.analysis.map_scope.map_body_nodes; re-exported here
 # (not redefined) so every existing `from ...map_predicates import map_body_nodes` keeps working.
@@ -643,8 +644,8 @@ def map_body_is_tile_lowerable(
     """
     from dace.transformation.passes.vectorization.utils.tile_access import (
         PerDimKind,
-        classify_tile_access,
         build_symbol_definition_map,
+        classify_tile_access,
     )
 
     # One symbol-definition map per body, not per subset. Building it scans every interstate edge and

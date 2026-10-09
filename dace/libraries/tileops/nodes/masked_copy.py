@@ -9,9 +9,6 @@ from dace import dtypes, library, properties
 from dace.libraries.standard.helper import collapse_shape_and_strides
 from dace.libraries.standard.nodes.copy.common import INPUT_CONNECTOR_NAME, OUTPUT_CONNECTOR_NAME
 from dace.libraries.standard.nodes.copy.node import CopyLibraryNode
-from dace.sdfg import nodes
-from dace.symbolic import symstr
-
 from dace.libraries.tileops.alignment import align_template_arg
 from dace.libraries.tileops.environments import (
     TileOpsAVX2,
@@ -24,9 +21,11 @@ from dace.libraries.tileops.environments import (
 from dace.libraries.tileops.expansions import ExpandTileIsa, ExpandTilePure
 from dace.libraries.tileops.isa import require_k1
 from dace.libraries.tileops.lanes import nested_loops, tile_offset
-from dace.libraries.tileops.validation import validate_mask_descriptor_lock
 from dace.libraries.tileops.nodes.tile_op import TileOp
+from dace.libraries.tileops.validation import validate_mask_descriptor_lock
 from dace.optionals import required
+from dace.sdfg import nodes
+from dace.symbolic import symstr
 
 MASK_CONNECTOR_NAME = "_mask"
 

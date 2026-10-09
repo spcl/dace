@@ -121,7 +121,7 @@ class NameVisitor(ast.NodeVisitor):
     def flag_import_alias(self, alias: ast.alias, stmt: ast.stmt, dotted: bool) -> None:
         line = getattr(alias, "lineno", stmt.lineno)
         col = getattr(alias, "col_offset", stmt.col_offset) + 1
-        bound_name = alias.asname if alias.asname else (alias.name.split(".")[0] if dotted else alias.name)
+        bound_name = alias.asname or (alias.name.split(".")[0] if dotted else alias.name)
         if alias.asname and alias.asname == alias.name:
             self.violations.append(Violation(self.path, line, col, "NAME004", f"redundant alias 'as {alias.asname}'"))
         if bound_name.startswith("_"):

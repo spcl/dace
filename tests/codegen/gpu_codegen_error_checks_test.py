@@ -7,7 +7,6 @@ These assert on emitted code, so they need a GPU for neither compilation nor a r
 import re
 
 import dace
-from dace.codegen import common
 from dace import dtypes
 from dace.codegen import common
 from dace.libraries import blas
@@ -30,7 +29,7 @@ def generated_code(sdfg: dace.SDFG) -> str:
 
 def init_function(code: str, name: str) -> str:
     """The body of ``__dace_init_<name>``."""
-    match = re.search(r"__dace_init_" + re.escape(name) + r"\(.*?\n\}", code, re.S)
+    match = re.search(r"__dace_init_" + re.escape(name) + r"\(.*?\n\}", code, re.DOTALL)
     assert match, f"no __dace_init_{name} was emitted, so this test is anchored on nothing"
     return match.group(0)
 

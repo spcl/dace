@@ -12,10 +12,10 @@ import pytest
 
 import dace
 from dace.libraries.standard.nodes.scan import (
-    Scan,
-    ScanOp,
     INPUT_CONNECTOR_NAME,
     OUTPUT_CONNECTOR_NAME,
+    Scan,
+    ScanOp,
     in_connector,
     init_connector,
     out_connector,

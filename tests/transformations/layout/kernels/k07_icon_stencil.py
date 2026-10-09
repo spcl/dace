@@ -24,8 +24,8 @@ simulations on GPUs," GMD 2022 ((nproma, nlev, nblocks) unit-stride order); SC26
 """
 
 import numpy
-import dace
 
+import dace
 from dace.transformation.layout.brute_force import permutation_candidates
 
 NI, NJ, NK = dace.symbol("NI"), dace.symbol("NJ"), dace.symbol("NK")

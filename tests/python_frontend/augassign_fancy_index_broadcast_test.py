@@ -8,8 +8,9 @@ instead charged it for the removed axis, squeezed its declared 1 away, and refus
 "could not broadcast input array from shape [N] into shape [N, 4]" -- lulesh's face-force scatter.
 """
 
-import dace
 import numpy as np
+
+import dace
 
 N = dace.symbol("N")
 C = dace.symbol("C")

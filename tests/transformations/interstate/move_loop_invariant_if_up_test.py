@@ -227,9 +227,9 @@ def test_empty_boundary_states_cleaned_and_e2e():
     empty boundary states are dropped (built imperatively: the frontend will
     not emit empty in-loop boundary states)."""
     rng = np.random.default_rng(42)
-    from dace.sdfg.state import ControlFlowRegion
-    from dace.sdfg.sdfg import InterstateEdge
     from dace.properties import CodeBlock
+    from dace.sdfg.sdfg import InterstateEdge
+    from dace.sdfg.state import ControlFlowRegion
 
     n = 11
     sdfg = dace.SDFG("elc")

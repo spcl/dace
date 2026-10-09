@@ -17,7 +17,6 @@ os.environ.setdefault("OMPI_MCA_pml", "ob1")
 os.environ.setdefault("OMPI_MCA_btl", "self,vader")
 os.environ.setdefault("UCX_VFS_ENABLE", "n")
 
-from typing import List, Tuple
 
 import numpy as np
 
@@ -89,7 +88,7 @@ def _canonicalize(sdfg: dace.SDFG, with_cleanup: bool) -> dace.SDFG:
     return sdfg
 
 
-def _heap_buffers(sdfg: dace.SDFG) -> List[Tuple[str, str]]:
+def _heap_buffers(sdfg: dace.SDFG) -> list[tuple[str, str]]:
     """Transients that are a real allocation, not a register (total size 1)."""
     return sorted(
         (name, str(desc.shape))
@@ -110,7 +109,7 @@ def _bulk_copies(sdfg: dace.SDFG) -> int:
     )
 
 
-def _shape(sdfg: dace.SDFG) -> Tuple[List[Tuple[str, str]], List[Tuple[str, str, str, str, str]]]:
+def _shape(sdfg: dace.SDFG) -> tuple[list[tuple[str, str]], list[tuple[str, str, str, str, str]]]:
     """Everything the cleanup could legally touch, for an exact no-op comparison."""
     arrays = sorted((nested.label, name) for nested in sdfg.all_sdfgs_recursive() for name in nested.arrays)
     edges = sorted(

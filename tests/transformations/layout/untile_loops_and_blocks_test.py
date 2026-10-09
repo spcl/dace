@@ -32,8 +32,8 @@ import pytest
 
 import dace
 from dace.sdfg.state import LoopRegion
-from dace.transformation.passes.canonicalize.untile_loops import UntileLoops
 from dace.transformation.layout.prepare import prepare_for_layout
+from dace.transformation.passes.canonicalize.untile_loops import UntileLoops
 
 N = dace.symbol("N")
 M = dace.symbol("M")

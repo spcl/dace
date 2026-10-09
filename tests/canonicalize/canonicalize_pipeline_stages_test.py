@@ -14,7 +14,6 @@ is the same program, so numbers alone cannot tell the two apart.
 """
 
 import copy
-from typing import List
 
 import numpy as np
 import pytest
@@ -24,9 +23,8 @@ from dace.libraries.standard.nodes.reduce import Reduce
 from dace.memlet import Memlet
 from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock, LoopRegion
-from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation import pass_pipeline as ppl
-from dace.transformation.passes.canonicalize import CANONICALIZE_STAGES
+from dace.transformation.passes.canonicalize import CANONICALIZE_STAGES, canonicalize
 from dace.transformation.passes.canonicalize.pipeline import PropagateAndPrune
 from dace.transformation.passes.fuse_maps import FuseMaps
 from dace.transformation.passes.pattern_matching import PatternMatchAndApply
@@ -269,7 +267,7 @@ def test_canonicalize_guarded_two_stencils(av):
         assert np.allclose(out_b, 5.0) and np.allclose(out_d, 5.0)
 
 
-def collect_validating_units(unit: ppl.Pass) -> List[ppl.Pass]:
+def collect_validating_units(unit: ppl.Pass) -> list[ppl.Pass]:
     found = [unit] if isinstance(unit, (PatternMatchAndApply, FuseMaps)) else []
     if isinstance(unit, ppl.Pipeline):
         for member in unit.passes:

@@ -23,7 +23,7 @@ host-resident transfers are touched, so a GPU graph passing through the same cod
 left alone.
 """
 
-from typing import Any, Dict, Optional
+from typing import Any
 
 from dace import SDFG, data, dtypes, properties, symbolic
 from dace.transformation import pass_pipeline as ppl
@@ -139,7 +139,7 @@ class SpecializeCpuTransfers(ppl.Pass):
     def depends_on(self):
         return set()
 
-    def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> int | None:
         """Specialize every host copy / memset library node in ``sdfg``.
 
         :param sdfg: the SDFG to specialize, in place.
@@ -154,7 +154,7 @@ class SpecializeCpuTransfers(ppl.Pass):
         # One pass's worth of enclosing-loop trip-count verdicts: many transfers share the same
         # loop nest, and the pass does not touch LoopRegion bounds, so a verdict computed for one
         # transfer's loop stays valid for the next transfer under the same loop.
-        loop_cache: Dict[int, bool] = {}
+        loop_cache: dict[int, bool] = {}
         for node, state in sdfg.all_nodes_recursive():
             is_copy = isinstance(node, CopyLibraryNode)
             if not is_copy and not isinstance(node, FillLibraryNode):

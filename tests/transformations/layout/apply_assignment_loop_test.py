@@ -10,8 +10,8 @@ import numpy
 import pytest
 
 import dace
-from dace.sdfg.state import LoopRegion
 from dace.libraries.layout.algebra import Permute
+from dace.sdfg.state import LoopRegion
 from dace.transformation.layout.apply_assignment import IDENTITY_LAYOUT, Layout, apply_assignment
 from dace.transformation.layout.line_graph import line_graph, locked_transitions, loop_spans
 

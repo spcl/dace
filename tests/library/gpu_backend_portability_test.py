@@ -25,7 +25,6 @@ import dace
 import dace.libraries.sort  # noqa: F401  (registers the CUB environments)
 from dace import dtypes
 from dace.codegen.compiler import get_environment_flags
-from dace.library import get_environments_and_dependencies
 from dace.libraries.blas.environments import openblas
 from dace.libraries.blas.nodes.gemm import Gemm
 from dace.libraries.linalg.environments import cutensor, hiptensor
@@ -34,9 +33,10 @@ from dace.libraries.linalg.nodes.ttranspose import TensorTranspose
 from dace.libraries.sort.nodes.integer_sort import IntegerSort
 from dace.libraries.sort.nodes.scatter_conflict_check import ScatterConflictCheck
 from dace.libraries.standard.nodes.arg_reduce import ArgReduce
-from dace.libraries.standard.nodes.find_first import FindFirst, INDEX_NAME, OUTPUT_CONNECTOR_NAME
+from dace.libraries.standard.nodes.find_first import INDEX_NAME, OUTPUT_CONNECTOR_NAME, FindFirst
 from dace.libraries.standard.nodes.scan import Scan, ScanOp
 from dace.libraries.standard.nodes.symmetrize import Symmetrize
+from dace.library import get_environments_and_dependencies
 from dace.transformation.auto.auto_optimize import set_fast_implementations
 from dace.transformation.passes.canonicalize.finalize import (
     canonicalize_fast_library_priority,

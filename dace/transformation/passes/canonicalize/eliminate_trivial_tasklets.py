@@ -13,17 +13,19 @@ VF2 subgraph isomorphism per state per sweep. Same reason as
 :mod:`dace.transformation.passes.canonicalize.revert_nonreduction_wcr`, which this mirrors.
 """
 
-from typing import Any, Dict, Iterator, List, Optional, Tuple, Type, Union
+from collections.abc import Iterator
+from typing import Any
 
 from dace import SDFG
 from dace.sdfg import nodes
 from dace.sdfg.state import SDFGState
-from dace.transformation import pass_pipeline as ppl, transformation
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation import transformation
 from dace.transformation.dataflow.trivial_tasklet_elimination import TrivialTaskletElimination
 from dace.transformation.passes.canonicalize.revert_nonreduction_wcr import Binding, apply_at_candidates
 
 
-def trivial_tasklet_candidates(state: SDFGState) -> Iterator[Tuple[int, Binding]]:
+def trivial_tasklet_candidates(state: SDFGState) -> Iterator[tuple[int, Binding]]:
     """Enumerate ``(expr_index, binding)`` for every single-in single-out tasklet in ``state``.
 
     The three ``TrivialTaskletElimination.expressions()`` entries are ``AccessNode -> Tasklet ->
@@ -83,10 +85,10 @@ class EliminateTrivialTasklets(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+    def depends_on(self) -> list[type[ppl.Pass] | ppl.Pass]:
         return []
 
-    def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> int | None:
         """Eliminate every trivial copy tasklet in ``sdfg`` and its nested SDFGs.
 
         Outer fixpoint over the whole SDFG, not per state: the transformation refuses a copy that

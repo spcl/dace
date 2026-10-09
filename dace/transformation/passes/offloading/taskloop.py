@@ -2,15 +2,12 @@
 """Maps that only LAUNCH work stay on the host; their bodies become the kernels.
 ICON's shape: an ``nblks`` map over one nested SDFG of ``nproma``/``nlev`` maps."""
 
-from typing import Dict, Optional
-
-from dace.ordered import OrderedSet
-
 from dace import symbolic
-from dace.sdfg import nodes, SDFG
+from dace.ordered import OrderedSet
+from dace.sdfg import SDFG, nodes
+from dace.sdfg.narrowing import as_basic
 from dace.sdfg.state import SDFGState
 from dace.subsets import Range
-from dace.sdfg.narrowing import as_basic
 
 
 def is_computation(node: nodes.Node) -> bool:
@@ -105,7 +102,7 @@ def body_extents_depend_on_entry(entry: nodes.MapEntry, scope_children: dict) ->
 NOMINAL_EXTENT = 1024
 
 
-def nominal_volume(subset: Range) -> Optional[int]:
+def nominal_volume(subset: Range) -> int | None:
     """Iterations in ``subset`` with every unpinned symbol set to :data:`NOMINAL_EXTENT`.
 
     ``None`` when the count does not survive substitution -- a data-dependent bound, say. The caller
@@ -113,13 +110,13 @@ def nominal_volume(subset: Range) -> Optional[int]:
     """
     count = subset.num_elements()
     try:
-        resolved = symbolic.evaluate(count, {symbol: NOMINAL_EXTENT for symbol in as_basic(count).free_symbols})
+        resolved = symbolic.evaluate(count, dict.fromkeys(as_basic(count).free_symbols, NOMINAL_EXTENT))
     except (TypeError, ValueError, KeyError, AttributeError):
         return None
     return int(resolved) if float(resolved).is_integer() and resolved > 0 else None
 
 
-def nest_volume(entry: nodes.MapEntry, scope_children: dict) -> Optional[int]:
+def nest_volume(entry: nodes.MapEntry, scope_children: dict) -> int | None:
     """Threads a kernel rooted at ``entry`` would have: its own iterations times its deepest nest.
 
     Nested maps under one kernel are collapsed into the launch, so their extents multiply. Sibling
@@ -164,7 +161,7 @@ def is_taskloop_map(
     entry: nodes.MapEntry,
     scope_children: dict,
     launch_only: bool = True,
-    overrides: Optional[Dict[str, bool]] = None,
+    overrides: dict[str, bool] | None = None,
 ) -> bool:
     """``entry`` launches work rather than doing it, so it belongs on the host.
 
@@ -201,7 +198,7 @@ def is_taskloop_map(
     return launches and body_has_more_threads(entry, scope_children)
 
 
-def taskloop_maps(sdfg: SDFG, launch_only: bool = True, overrides: Optional[Dict[str, bool]] = None) -> OrderedSet:
+def taskloop_maps(sdfg: SDFG, launch_only: bool = True, overrides: dict[str, bool] | None = None) -> OrderedSet:
     found = OrderedSet()
     for nested in sdfg.all_sdfgs_recursive():
         for state in nested.states():
