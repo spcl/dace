@@ -49,7 +49,7 @@ def test_an_to_an_memlet_with_zero_size():
 
     csdfg = sdfg.compile()
     assert csdfg.sdfg.number_of_nodes() == 1
-    assert list(csdfg.sdfg.states())[0].number_of_nodes() == 2
+    assert next(iter(csdfg.sdfg.states())).number_of_nodes() == 2
     csdfg(**res)
 
     assert all(np.all(ref[k] == res[k]) for k in ref.keys())

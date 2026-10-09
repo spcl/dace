@@ -588,7 +588,9 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
     def generate_states(self, sdfg: SDFG, global_stream: CodeIOStream, callsite_stream: CodeIOStream) -> set[SDFGState]:
         states_generated = set()
 
-        opbar = progress.OptionalProgressBar(len(list(sdfg.states())), title=f"Generating code (SDFG {sdfg.cfg_id})")
+        opbar = progress.OptionalProgressBar(
+            sum(1 for _ in sdfg.states()), title=f"Generating code (SDFG {sdfg.cfg_id})"
+        )
 
         # Create closure + function for state dispatcher
         def dispatch_state(state: SDFGState) -> str:
@@ -1121,7 +1123,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
         #######################################################################
 
         # Sanity check
-        if len(states_generated) != len(list(sdfg.states())):
+        if len(states_generated) != sum(1 for _ in sdfg.states()):
             raise RuntimeError(
                 f"Not all states were generated in SDFG {sdfg.label}!\n  Generated: {[s.label for s in states_generated]}\n  Missing: {[s.label for s in (set(sdfg.states()) - states_generated)]}"
             )

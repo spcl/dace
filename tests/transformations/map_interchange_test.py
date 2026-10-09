@@ -89,7 +89,7 @@ def test_map_interchange_with_dynamic_map_inputs():
 
     # Assert the pattern MapEntry[j] -> MapEntry[kB] exists
     assert ome is not None and ime is not None
-    state = list(sdfg.states())[0]
+    state = next(iter(sdfg.states()))
     assert len(list(state.edges_between(ome, ime))) > 0
     assert len(list(state.edges_between(ime, ome))) == 0
 
@@ -106,7 +106,7 @@ def test_map_interchange_with_dynamic_map_inputs():
 
     # Assert the pattern MapEntry[kB] -> MapEntry[j] exists
     assert ome is not None and ime is not None
-    state = list(sdfg.states())[0]
+    state = next(iter(sdfg.states()))
     assert len(list(state.edges_between(ome, ime))) == 0
     assert len(list(state.edges_between(ime, ome))) > 0
 

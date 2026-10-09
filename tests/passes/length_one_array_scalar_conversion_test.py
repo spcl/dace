@@ -439,7 +439,7 @@ def test_other_subset_of_untouched_side_survives(inverse):
         ConvertScalarsToLengthOneArrays().apply_pass(sdfg, {})
     else:
         ConvertLengthOneArraysToScalars().apply_pass(sdfg, {})
-    st = list(sdfg.states())[0]
+    st = next(iter(sdfg.states()))
     copy = next(e for e in st.edges() if e.data.data == "tmp" and e.data.other_subset is not None)
     assert str(copy.data.other_subset) != "0"
     sdfg.validate()

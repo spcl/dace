@@ -1187,7 +1187,7 @@ def test_iec_keeps_the_ordering_edge_on_the_node_that_writes():
     InsertExplicitCopies().apply_pass(sdfg, {})
     sdfg.validate()
 
-    state = list(sdfg.states())[0]
+    state = next(iter(sdfg.states()))
     writers = [e.src for e in state.in_edges(tmp_a) if isinstance(e.src, CopyLibraryNode)]
     assert len(writers) == 1, "the stage-in copy of tmp_A was not lifted"
     ordered_after = [e.src for e in state.in_edges(writers[0]) if e.data.is_empty()]

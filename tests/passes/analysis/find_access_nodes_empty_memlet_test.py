@@ -39,7 +39,7 @@ def ordering_edge_sdfg() -> dace.SDFG:
 def test_ordering_edge_is_neither_a_read_nor_a_write():
     sdfg = ordering_edge_sdfg()
     sdfg.validate()
-    state = list(sdfg.states())[0]
+    state = next(iter(sdfg.states()))
     written, ordered = [n for n in state.data_nodes() if n.data == "s"]
 
     reads, writes = FindAccessNodes().apply_pass(sdfg, {})[sdfg.cfg_id]["s"][state]
