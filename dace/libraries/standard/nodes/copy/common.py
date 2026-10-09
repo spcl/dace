@@ -373,7 +373,7 @@ def _make_memcpy_tasklet(node: "CopyLibraryNode", parent_state: dace.SDFGState, 
     )
 
 
-def _thread_block_maps(graph) -> List[nodes.Map]:
+def _thread_block_maps(graph) -> list[nodes.Map]:
     """Every ``GPU_ThreadBlock`` map in ``graph``, descending into nested SDFGs."""
     found = []
     for n in graph.nodes():
@@ -385,7 +385,7 @@ def _thread_block_maps(graph) -> List[nodes.Map]:
     return found
 
 
-def _block_size_to_3d(size: List[symbolic.SymExpr]) -> Tuple[symbolic.SymExpr, ...]:
+def _block_size_to_3d(size: list[symbolic.SymExpr]) -> tuple[symbolic.SymExpr, ...]:
     """Codegen's block-size normalization: flatten past the third dimension, pad up to three."""
     size = list(size)
     if len(size) > 3:
@@ -395,7 +395,7 @@ def _block_size_to_3d(size: List[symbolic.SymExpr]) -> Tuple[symbolic.SymExpr, .
 
 def _collective_block_dims(
     parent_state: dace.SDFGState, node: "CopyLibraryNode"
-) -> Optional[Tuple[symbolic.SymExpr, ...]]:
+) -> tuple[symbolic.SymExpr, ...] | None:
     """Thread-block geometry the collective will actually run under, or ``None`` outside a kernel.
 
     ``devicelevel_block_size`` only walks UP the scope chain, so a copy that is a SIBLING of the
@@ -444,7 +444,7 @@ def _collective_block_dims(
     return devicelevel_block_size(parent_state.sdfg, parent_state, node)
 
 
-def _collective_axis_order(ndims: int, lead_strides: List[symbolic.SymExpr]) -> List[int]:
+def _collective_axis_order(ndims: int, lead_strides: list[symbolic.SymExpr]) -> list[int]:
     """Loop-axis order for the block collective: the stride-1 axis of the coalescing side moves last.
 
     Permuting is legal because both endpoints carry the same collapsed shape, so reordering the loop

@@ -45,7 +45,7 @@ def combine(shape, strides, dims):
     return combined_shape, combined_strides
 
 
-def contiguous_runs(dims: List[int], shape: List[Size], strides: List[Size]) -> List[List[int]]:
+def contiguous_runs(dims: list[int], shape: list[Size], strides: list[Size]) -> list[list[int]]:
     """Maximal runs of two or more consecutive ``dims`` in which each neighbor pair is one run of memory."""
     runs = []
     run = dims[:1]

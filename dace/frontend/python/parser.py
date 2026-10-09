@@ -497,10 +497,10 @@ class DaceProgram(pycommon.SDFGConvertible):
         self,
         cachekey: cached_program.ProgramCacheKey,
         sdfg: SDFG,
-        sdfg_args: Dict[str, Any],
-        argtypes: Dict[str, Data],
-        specified: Set[str],
-        constant_args: Dict[str, Any],
+        sdfg_args: dict[str, Any],
+        argtypes: dict[str, Data],
+        specified: set[str],
+        constant_args: dict[str, Any],
     ) -> cached_program.ProgramCacheKey:
         """The key of the program auto-optimized for the values ``sdfg_args`` gives the free symbols of ``sdfg``."""
         values = {s: sdfg_args[s] for s in map(str, sdfg.free_symbols) if s in sdfg_args}

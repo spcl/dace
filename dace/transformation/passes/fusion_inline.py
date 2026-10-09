@@ -61,7 +61,7 @@ class LinearStateFusion(ppl.Pass):
         xform.apply(cfg, sd)
         return True
 
-    def apply_pass(self, sdfg: SDFG, _: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _: dict[str, Any]) -> int | None:
         """Fuse every fusible pair of blocks, walking each region's chains forward.
 
         :param sdfg: The SDFG to transform.

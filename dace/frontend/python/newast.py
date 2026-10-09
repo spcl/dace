@@ -61,6 +61,7 @@ numpy_version = numpy.lib.NumpyVersion(numpy.__version__)
 
 # The following line registers replacements in oprepo
 import dace.frontend.python.replacements
+from dace.frontend.python.memlet_parser import DaceSyntaxError
 from dace.frontend.python.replacements.utils import broadcast_to, broadcast_together, sym_type
 
 # Type hints

@@ -11,6 +11,7 @@ import sympy as sp
 
 # DaCe imports
 import dace
+import dace.sdfg.utils as utils
 from dace import data as dt
 from dace import dtypes, symbolic
 
