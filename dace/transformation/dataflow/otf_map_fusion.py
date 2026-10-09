@@ -105,8 +105,11 @@ class OTFMapFusion(transformation.SingleStateTransformation):
                 written += 1
                 if written > 1:
                     return False
+        # A producer that also READS the intermediate updates it in place: its copy would write the
+        # per-iteration buffer while still reading the array, which no single buffer can stand for.
         if (
-            not first_reads.keys().isdisjoint(second_writes)
+            self.array.data in first_reads
+            or not first_reads.keys().isdisjoint(second_writes)
             or not first_writes.keys().isdisjoint(second_reads)
             or not first_writes.keys().isdisjoint(second_writes)
         ):

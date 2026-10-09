@@ -19,6 +19,7 @@ from dace.sdfg import nodes
 from dace.sdfg.state import SDFGState
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
+from dace.transformation.passes.clean_access_node_to_scalar_slice_to_tasklet_pattern import view_keeps_a_data_binding
 
 
 def reachable(state: SDFGState, start: nodes.Node, forward: bool = True) -> set[nodes.Node]:
@@ -61,6 +62,9 @@ def foldable(sdfg: SDFG, state: SDFGState, copy: Any, counts: dict[str, int]) ->
     source = sdfg.arrays[root.data]
     if isinstance(source, (data.Scalar, data.Stream)) or source.dtype != desc.dtype:
         return None
+    # A view bound to the scalar alone would view nothing once the scalar is gone.
+    if isinstance(source, data.View) and not view_keeps_a_data_binding(state, root, copy):
+        return None
     subset = copy.data.subset if copy.data.data == root.data else copy.data.other_subset
     if subset is None or symbolic.equal(subset.num_elements(), 1) is not True:
         return None
@@ -101,6 +105,8 @@ def foldable_write(sdfg: SDFG, state: SDFGState, produce: Any, counts: dict[str,
         return None
     array = sdfg.arrays[target.dst.data]
     if isinstance(array, (data.Scalar, data.Stream)) or array.dtype != desc.dtype:
+        return None
+    if isinstance(array, data.View) and not view_keeps_a_data_binding(state, target.dst, target):
         return None
     subset = write_subset(target)
     if subset is None or symbolic.equal(subset.num_elements(), 1) is not True:
