@@ -1,8 +1,11 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """The group of a tile node: ``dace.tile`` calls make ``BLOCK`` nodes, which a CPU runs as ``THREAD`` nodes and a GPU
-kernel spreads over the threads of a block, with the tiles in shared memory."""
+kernel spreads over the threads of a block, with the tiles in shared memory. Tile nodes are supported by the new code
+generators, ``experimental_readable`` on the CPU and ``experimental`` on the GPU."""
 
+import contextlib
 import copy
+from collections.abc import Iterator
 
 import numpy as np
 import pytest
@@ -26,6 +29,15 @@ def blocked_gemm(A: dace.float64[M, K], B: dace.float64[K, N], C: dace.float64[M
         dace.tile.store(C[i : i + BM, j : j + BN], acc)
 
 
+@contextlib.contextmanager
+def new_code_generators() -> Iterator[None]:
+    with (
+        dace.config.set_temporary("compiler", "cpu", "implementation", value="experimental_readable"),
+        dace.config.set_temporary("compiler", "cuda", "implementation", value="experimental"),
+    ):
+        yield
+
+
 def tile_nodes(sdfg: dace.SDFG) -> list[TileOp]:
     return [node for node, _ in sdfg.all_nodes_recursive() if isinstance(node, TileOp)]
 
@@ -47,14 +59,16 @@ def test_a_block_node_lowers_as_a_thread_node_on_a_cpu():
     for node in tile_nodes(thread):
         node.group = TileGroup.THREAD
     code_of = lambda sdfg: next(obj.clean_code for obj in sdfg.generate_code() if obj.name == sdfg.name)
-    assert code_of(block) == code_of(thread).replace(thread.name, block.name)
+    with new_code_generators():
+        assert code_of(block) == code_of(thread).replace(thread.name, block.name)
 
 
 def test_blocked_gemm_with_mma_on_a_cpu():
     sdfg = blocked_gemm.to_sdfg()
     sdfg.name = "blocked_gemm_cpu"
     operands = gemm_operands()
-    sdfg(**operands, M=64, N=32, K=48)
+    with new_code_generators():
+        sdfg(**operands, M=64, N=32, K=48)
     np.testing.assert_allclose(operands["C"], operands["A"] @ operands["B"], rtol=1e-12)
 
 
@@ -69,13 +83,12 @@ def test_distributed_lanes_are_one_thread_strided_loop():
 
 
 @pytest.mark.gpu
-@pytest.mark.parametrize("implementation", ["legacy", "experimental"])
-def test_blocked_gemm_with_mma_on_a_gpu(implementation: str):
+def test_blocked_gemm_with_mma_on_a_gpu():
     sdfg = blocked_gemm.to_sdfg()
-    sdfg.name = f"blocked_gemm_gpu_{implementation}"
+    sdfg.name = "blocked_gemm_gpu"
     sdfg.apply_gpu_transformations()
     operands = gemm_operands()
-    with dace.config.set_temporary("compiler", "cuda", "implementation", value=implementation):
+    with new_code_generators():
         sdfg(**operands, M=64, N=32, K=48)
         kernel = next(
             obj.clean_code for obj in sdfg.generate_code() if obj.target.target_name in ("cuda", "experimental_cuda")
@@ -98,15 +111,14 @@ def fused_rows(A: dace.float64[L, 64], B: dace.float64[L, 64], D: dace.float64[L
 
 
 @pytest.mark.gpu
-@pytest.mark.parametrize("implementation", ["legacy", "experimental"])
-def test_elementwise_and_sum_on_a_gpu(implementation: str):
+def test_elementwise_and_sum_on_a_gpu():
     sdfg = fused_rows.to_sdfg()
-    sdfg.name = f"fused_rows_gpu_{implementation}"
+    sdfg.name = "fused_rows_gpu"
     sdfg.apply_gpu_transformations()
     rng = np.random.default_rng(1)
     a, b = rng.random((4, 64)), rng.random((4, 64))
     d, s = np.zeros((4, 64)), np.zeros(4)
-    with dace.config.set_temporary("compiler", "cuda", "implementation", value=implementation):
+    with new_code_generators():
         sdfg(A=a, B=b, D=d, S=s, L=4)
     expected = a * b + np.exp(a)
     np.testing.assert_allclose(d, expected, rtol=1e-12)
@@ -118,6 +130,5 @@ if __name__ == "__main__":
     test_a_block_node_lowers_as_a_thread_node_on_a_cpu()
     test_blocked_gemm_with_mma_on_a_cpu()
     test_distributed_lanes_are_one_thread_strided_loop()
-    for implementation in ("legacy", "experimental"):
-        test_blocked_gemm_with_mma_on_a_gpu(implementation)
-        test_elementwise_and_sum_on_a_gpu(implementation)
+    test_blocked_gemm_with_mma_on_a_gpu()
+    test_elementwise_and_sum_on_a_gpu()
