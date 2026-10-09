@@ -15,8 +15,9 @@ Tile nodes are supported by the new code generators: ``compiler.cpu.implementati
 Who runs a tile
 ---------------
 
-Every call makes a node of the ``BLOCK`` group (:class:`~dace.libraries.tileops.dispatch.TileGroup`). The program
-says what a whole block computes, and the compiler decides which thread computes which element:
+Every call makes a node of the ``BLOCK`` group (:class:`~dace.libraries.tileops.dispatch.TileGroup`), the only group
+the frontend offers: a call takes no group argument. The program says what a whole thread block computes, and the
+compiler decides which thread computes which element:
 
 * On a CPU one core runs the tile, as a loop over its lanes that the compiler vectorizes. A ``BLOCK`` node lowers
   exactly as a ``THREAD`` node does.
