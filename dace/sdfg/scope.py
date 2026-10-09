@@ -288,8 +288,6 @@ def devicelevel_block_size(
     :return: A tuple of sizes or None if the node is not in device-level
              code.
     """
-    from dace.sdfg import nodes as nd
-    from dace.sdfg.sdfg import SDFGState
 
     while sdfg is not None:
         sdict = state.scope_dict()

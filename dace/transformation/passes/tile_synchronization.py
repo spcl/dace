@@ -262,9 +262,7 @@ def kernel_level(state: SDFGState, node: nodes.Node) -> nodes.Node:
     return node
 
 
-def insert_barrier(
-    state: SDFGState, before: list[nodes.Node], after: list[nodes.Node], scope: SyncScope
-) -> Barrier:
+def insert_barrier(state: SDFGState, before: list[nodes.Node], after: list[nodes.Node], scope: SyncScope) -> Barrier:
     """A barrier of ``scope`` ordered after the nodes ``before`` and before the nodes ``after`` (kernel-level nodes of
     ``state`` in program order): a node merely independent of the one that waits must not slip past the barrier."""
     barrier = Barrier("tile_sync", scope)

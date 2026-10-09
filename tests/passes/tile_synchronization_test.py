@@ -53,6 +53,15 @@ def test_an_elementwise_chain_keeps_every_element_on_its_thread():
     assert InsertTileSync().apply_pass(sdfg, {}) is None
 
 
+def test_expanding_the_tiles_places_their_barriers_once():
+    """The first block-level node of a kernel to expand places the barriers of all of them, whoever expands it."""
+    sdfg = blocked_gemm.to_sdfg()
+    sdfg.apply_gpu_transformations()
+    sdfg.expand_library_nodes()
+    assert len(barriers(sdfg)) == 2
+    assert InsertTileSync().apply_pass(sdfg, {}) is None
+
+
 def test_the_slots_of_a_circular_buffer_carry_their_own_tokens():
     k = symbolic.symbol("k")
     slot = lambda index: subsets.Range([(index, index, 1), (0, 255, 1)])
@@ -68,4 +77,5 @@ def test_the_slots_of_a_circular_buffer_carry_their_own_tokens():
 if __name__ == "__main__":
     test_a_gemm_waits_for_its_loads_and_for_the_last_iteration_reads()
     test_an_elementwise_chain_keeps_every_element_on_its_thread()
+    test_expanding_the_tiles_places_their_barriers_once()
     test_the_slots_of_a_circular_buffer_carry_their_own_tokens()
