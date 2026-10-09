@@ -1544,7 +1544,7 @@ def get_parent_map(state: SDFGState, node: nodes.Node | None = None) -> tuple[no
     return None
 
 
-def get_parent_maps(state: SDFGState, node: nodes.Node) -> List[Tuple[nodes.EntryNode, SDFGState]]:
+def get_parent_maps(state: SDFGState, node: nodes.Node) -> list[tuple[nodes.EntryNode, SDFGState]]:
     """
     Returns every scope enclosing the node, innermost first, continuing through enclosing nested SDFGs.
 
