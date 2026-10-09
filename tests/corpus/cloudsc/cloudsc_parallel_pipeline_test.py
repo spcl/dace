@@ -27,7 +27,7 @@ import pytest
 
 import dace
 from dace.transformation.passes.parallelization_prep import DEFAULT_UNROLL_LIMIT, _constant_trip_count, _loops
-from tests.corpus.cloudsc.generate_data_for_cloudsc import build_cloudsc_sdfg
+from tests.corpus.cloudsc.generate_data_for_cloudsc import SPECIES_CONSTANTS, build_cloudsc_sdfg
 from tests.corpus.cloudsc.pipelines import (
     build_reference_outputs,
     gpu_is_runnable,
@@ -39,11 +39,6 @@ from tests.corpus.cloudsc.pipelines import (
     run_pipeline,
     uniquely_named,
 )
-
-#: CloudSC species PARAMETER constants (Fortran NCLV=5, NCLDQL=1..NCLDQV=5). Baking them in is the
-#: ``specialize`` phase: the species and LU loops become constant-trip, which is what gives
-#: ``ShortLoopUnroll`` anything to unroll. klev / klon / kidia / kfdia stay symbolic.
-SPECIES_CONSTANTS = {"nclv": 5, "ncldql": 1, "ncldqi": 2, "ncldqr": 3, "ncldqs": 4, "ncldqv": 5}
 
 #: Constant-trip loops the specialization is expected to expose, measured on the shipped dwarf: 29
 #: at trip 5 (the ``nclv`` species loops) and 8 at trip 4, every one of them inside

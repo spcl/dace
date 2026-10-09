@@ -66,6 +66,7 @@ from dace.transformation.passes.vectorization.config import VectorizeConfig
 from tests.corpus.cloudsc.generate_data_for_cloudsc import (
     CLOUDSC_CONSTANTS,
     IEEE_CPU_ARGS,
+    SPECIES_CONSTANTS,
     build_cloudsc_sdfg,
     compare_outputs,
 )
@@ -81,11 +82,6 @@ from tests.corpus.cloudsc.pipelines import (
     strict_fp_device_build,
 )
 from tests.corpus.cloudsc.reproduce import vectorize_gpu
-
-#: CloudSC species PARAMETER constants (Fortran NCLV=5, NCLDQL=1..NCLDQV=5), baked in so the
-#: species / LU loops become constant-trip. Same set the sibling canonicalize test specializes with;
-#: klev / klon / kidia / kfdia stay symbolic.
-SPECIES_CONSTANTS = {"nclv": 5, "ncldql": 1, "ncldqi": 2, "ncldqr": 3, "ncldqs": 4, "ncldqv": 5}
 
 #: Run-time configuration flags, baked in at the values the reference inputs carry. The
 #: ``yrecldp_nssopt`` if/elif chain has no ``else`` and the ``yrecldp_laericesed`` branch writes one

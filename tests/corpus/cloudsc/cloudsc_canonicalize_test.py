@@ -50,15 +50,12 @@ from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.canonicalize import canonicalize
 from tests.corpus.cloudsc.generate_data_for_cloudsc import (
     IEEE_CPU_ARGS,
+    SPECIES_CONSTANTS,
     build_cloudsc_sdfg,
     compare_outputs,
     generate_cloudsc_inputs,
     make_sequential,
 )
-
-#: CloudSC species PARAMETER constants (Fortran NCLV=5, NCLDQL=1..NCLDQV=5), baked in so the
-#: species/LU loops become constant-trip. klev/klon/kidia/kfdia stay symbolic.
-_SPECIES_CONSTANTS = {"nclv": 5, "ncldql": 1, "ncldqi": 2, "ncldqr": 3, "ncldqs": 4, "ncldqv": 5}
 
 #: ``(force_sequential, rtol/atol)`` per arm.
 #:
@@ -162,7 +159,7 @@ def canonical_sdfg_file(reference_sdfg_file, tmp_path_factory):
     sdfg = dace.SDFG.from_file(reference_sdfg_file)
     # The loop transforms log every refused loop; keep the test output readable.
     with open(os.devnull, "w") as devnull, contextlib.redirect_stdout(devnull):
-        canonicalize(sdfg, validate=True, validate_all=False, specialize_constants=_SPECIES_CONSTANTS)
+        canonicalize(sdfg, validate=True, validate_all=False, specialize_constants=SPECIES_CONSTANTS)
     sdfg.validate()
     path = str(tmp_path_factory.mktemp("cloudsc_canon") / "cloudsc_canonical.sdfgz")
     sdfg.save(path, compress=True)

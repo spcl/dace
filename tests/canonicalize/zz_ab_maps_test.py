@@ -39,8 +39,7 @@ from dace import SDFG
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.canonicalize import pipeline as canon_pipeline
-from tests.corpus.cloudsc.cloudsc_target_pipelines_test import SPECIES_CONSTANTS
-from tests.corpus.cloudsc.generate_data_for_cloudsc import build_cloudsc_sdfg
+from tests.corpus.cloudsc.generate_data_for_cloudsc import SPECIES_CONSTANTS, build_cloudsc_sdfg
 from tests.corpus.cloudsc.pipelines import map_entries, omp_parallel_for_count
 
 #: Stage boundaries the recipe splices ``StructuralCleanup`` into. A code fact read off
