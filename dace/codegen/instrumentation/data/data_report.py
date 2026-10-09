@@ -1,14 +1,13 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
-from dataclasses import dataclass
-import struct
-from typing import Dict, List, Set, Tuple, Union
-from numbers import Number
 import os
-
-from dace import dtypes, SDFG
+import struct
+from dataclasses import dataclass
+from numbers import Number
 
 import numpy as np
 from numpy.typing import ArrayLike
+
+from dace import SDFG, dtypes
 
 
 @dataclass
@@ -46,8 +45,8 @@ class InstrumentedDataReport:
 
     sdfg: SDFG
     folder: str
-    files: Dict[str, List[str]]
-    loaded_values: Dict[Tuple[str, int], Union[ArrayLike, Number]]
+    files: dict[str, list[str]]
+    loaded_values: dict[tuple[str, int], ArrayLike | Number]
 
     def __init__(self, sdfg: SDFG, folder: str) -> None:
         """
@@ -64,21 +63,18 @@ class InstrumentedDataReport:
         # Prepare file mapping
         array_names = os.listdir(folder)
         for aname in array_names:
-            files = []
-
             # Sort files numerically
             filenames = os.listdir(os.path.join(folder, aname))
             filenames = sorted([(*(int(s) for s in f.split(".")[0].split("_")), f) for f in filenames])
-            for entry in filenames:
-                files.append(os.path.join(folder, aname, entry[-1]))
+            files = [os.path.join(folder, aname, entry[-1]) for entry in filenames]
 
             self.files[aname] = files
 
-    def keys(self) -> Set[str]:
+    def keys(self) -> set[str]:
         """Returns the array names available in this data report."""
         return self.files.keys()
 
-    def _read_array_file(self, filename: str, npdtype: np.dtype) -> Tuple[ArrayLike, ArrayLike]:
+    def _read_array_file(self, filename: str, npdtype: np.dtype) -> tuple[ArrayLike, ArrayLike]:
         """
         Reads a formatted instrumented data file.
 
@@ -104,7 +100,7 @@ class InstrumentedDataReport:
             val = npclass(byteval)
         return val
 
-    def __getitem__(self, item: str) -> Union[ArrayLike, Number, List[ArrayLike], List[Number]]:
+    def __getitem__(self, item: str) -> ArrayLike | Number | list[ArrayLike] | list[Number]:
         """
         Returns the instrumented (saved) data from the report according to the data descriptor (array) or symbol name.
 
@@ -136,7 +132,7 @@ class InstrumentedDataReport:
             return results[0]
         return results
 
-    def get_first_version(self, item: str) -> Union[ArrayLike, Number]:
+    def get_first_version(self, item: str) -> ArrayLike | Number:
         """
         Returns the first version of the instrumented (saved) data from the report according to the data descriptor
         (array) or symbol name.

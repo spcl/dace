@@ -1,11 +1,9 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
-from dace.sdfg.graph import SubgraphView
 import numpy as np
 
-from dace.transformation.subgraph import MultiExpansion, SubgraphFusion
-
+import dace
 from dace.sdfg.graph import SubgraphView
+from dace.transformation.subgraph import MultiExpansion, SubgraphFusion
 
 N = dace.symbol("N")
 
@@ -51,7 +49,7 @@ def _test_quantitatively(sdfg):
     csdfg(A=A, B=B, C=C1, D=D1, N=1000)
     del csdfg
 
-    subgraph = SubgraphView(graph, [node for node in graph.nodes()])
+    subgraph = SubgraphView(graph, list(graph.nodes()))
 
     me = MultiExpansion()
     me.setup_match(subgraph)
@@ -137,7 +135,7 @@ def test_single_data_multiple_intermediate_accesses():
     sdfg(ZSOLQA=ZSOLQA, ZEPSEC=ZEPSEC, ZQX=ZQX, LLINDEX3=ref_LLINDEX3, ZRATIO=ref_ZRATIO, ZSINKSUM=ref_ZSINKSUM)
 
     graph = sdfg.states()[0]
-    subgraph = SubgraphView(graph, [node for node in graph.nodes()])
+    subgraph = SubgraphView(graph, list(graph.nodes()))
 
     me = MultiExpansion()
     me.setup_match(subgraph)

@@ -7,6 +7,8 @@ bit-exact execution, and -- on a GPU -- that the CPU struct and the CUDA native
 type share one byte representation so a host<->device copy is well-defined.
 """
 
+import math
+
 import ml_dtypes
 import numpy as np
 import pytest
@@ -22,7 +24,7 @@ LOWP = [
 ]
 
 # A spread that hits normals, subnormals, sign, and the overflow edges of each format.
-SAMPLE = np.array([0.0, 1.0, -1.0, 0.5, -2.0, 3.14159, 0.001, 255.0, 448.0, 480.0, 57344.0, -1e9], dtype=np.float32)
+SAMPLE = np.array([0.0, 1.0, -1.0, 0.5, -2.0, math.pi, 0.001, 255.0, 448.0, 480.0, 57344.0, -1e9], dtype=np.float32)
 
 
 @pytest.mark.parametrize("tc,scalar,nbytes,ctype,raw", LOWP)
@@ -63,7 +65,8 @@ def test_sdfg_serialization_roundtrip():
         dace.float8_e5m2,
     )
 
-    import tempfile, os
+    import os
+    import tempfile
 
     path = os.path.join(tempfile.gettempdir(), "lowp_roundtrip.sdfgz")
     sdfg.save(path)

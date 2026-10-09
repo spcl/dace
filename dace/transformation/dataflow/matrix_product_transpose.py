@@ -2,12 +2,14 @@
 """Implements the matrix-matrix product transpose transformation."""
 
 from copy import deepcopy as dcpy
+
 import dace
-from dace.sdfg import nodes, graph as gr
+from dace.properties import make_properties
+from dace.sdfg import graph as gr
+from dace.sdfg import nodes
 from dace.sdfg.sdfg import SDFG
 from dace.sdfg.state import SDFGState
 from dace.transformation import transformation
-from dace.properties import make_properties
 
 
 @make_properties
@@ -17,8 +19,10 @@ class MatrixProductTranspose(transformation.SingleStateTransformation):
     T(A) @ T(B) = T(B @ A)
     """
 
-    import dace.libraries.blas as blas  # Avoid slow imports
-    import dace.libraries.linalg as linalg  # Avoid slow imports
+    from dace.libraries import (
+        blas,  # Avoid slow imports
+        linalg,  # Avoid slow imports
+    )
 
     transpose_a = transformation.PatternNode(linalg.Transpose)
     at = transformation.PatternNode(nodes.AccessNode)
@@ -59,7 +63,7 @@ class MatrixProductTranspose(transformation.SingleStateTransformation):
         return f"{transpose_a.name} -> {a_times_b.name} <- {transpose_b.name}"
 
     def apply(self, graph: SDFGState, sdfg: SDFG):
-        import dace.libraries.linalg as linalg  # Avoid slow imports
+        from dace.libraries import linalg  # Avoid slow imports
 
         transpose_a = self.transpose_a
         _at = self.at

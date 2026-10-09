@@ -6,6 +6,7 @@ Tests float64 and int32 tensors using parametrization.
 
 import numpy as np
 import pytest
+
 import dace
 from dace import dtypes
 from dace.libraries.linalg import TensorTranspose

@@ -1,9 +1,10 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+import numpy as np
+import pytest
+from common import compare_numpy_output
+
 import dace
 from dace.frontend.python.common import DaceSyntaxError
-import numpy as np
-from common import compare_numpy_output
-import pytest
 
 # M = dace.symbol('M')
 # N = dace.symbol('N')

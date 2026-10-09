@@ -263,14 +263,13 @@ class AST_BinExpression(AST_Node):
                 + ", rhs dims: "
                 + str(rhs_dims)
             )
+        elif self.op == "*":
+            self.matrix2d_matrix2d_mult(sdfg, state)
+        elif self.op == "-" or self.op == "+":
+            self.matrix2d_matrix2d_plus_or_minus(sdfg, state, self.op)
         else:
-            if self.op == "*":
-                self.matrix2d_matrix2d_mult(sdfg, state)
-            elif self.op == "-" or self.op == "+":
-                self.matrix2d_matrix2d_plus_or_minus(sdfg, state, self.op)
-            else:
-                raise NotImplementedError(
-                    "Binary expression with two " + "matrices and op=" + str(self.op) + " not implemented"
-                )
+            raise NotImplementedError(
+                "Binary expression with two " + "matrices and op=" + str(self.op) + " not implemented"
+            )
 
     __str__ = __repr__

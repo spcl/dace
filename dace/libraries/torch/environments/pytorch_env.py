@@ -9,8 +9,7 @@ except ImportError as e:
     raise ImportError("PyTorch is required for torch integration. Install with: pip install dace[ml]") from e
 
 import dace.library
-
-from dace.codegen.common import platform_library_name, get_gpu_backend
+from dace.codegen.common import get_gpu_backend, platform_library_name
 
 
 def torch_cpp_extension():

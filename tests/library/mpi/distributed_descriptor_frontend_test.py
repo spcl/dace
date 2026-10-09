@@ -1,11 +1,11 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
 import numpy as np
 import pytest
 
+import dace
 from dace.data.distributed import ProcessGrid
-from dace.libraries.mpi.nodes.dummy import Dummy
 from dace.libraries.mpi.nodes.bcast import Bcast
+from dace.libraries.mpi.nodes.dummy import Dummy
 
 
 def _incoming_descriptor_name(sdfg, node, connector):

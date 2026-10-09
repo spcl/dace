@@ -1,9 +1,10 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
 import numpy as np
+from scipy import ndimage
+
+import dace
 from dace.transformation.dataflow.redundant_array import RedundantArray, RedundantSecondArray
 from dace.transformation.interstate.state_fusion import StateFusion
-from scipy import ndimage
 
 N = dace.symbol("N")
 KERNEL = np.array([[0, -1, 0], [-1, 0, -1], [0, -1, 0]], dtype=np.float32)

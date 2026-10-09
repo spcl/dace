@@ -1,10 +1,9 @@
-from typing import Dict
 import dace
 
 N = dace.symbol("N")
 
 
-def _get_interstate_dependent_sdfg(assignments: Dict, symbols_at_start=False):
+def _get_interstate_dependent_sdfg(assignments: dict, symbols_at_start=False):
     sdfg = dace.SDFG("interstate_dependent")
     for k in assignments:
         sdfg.add_symbol(k, dace.int32)

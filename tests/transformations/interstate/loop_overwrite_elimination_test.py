@@ -1,11 +1,13 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests loop overwrite elimination transformations."""
 
-import numpy as np
-import dace
-from dace.transformation.interstate import LoopOverwriteElimination
-from dace.sdfg.state import LoopRegion
 from copy import deepcopy
+
+import numpy as np
+
+import dace
+from dace.sdfg.state import LoopRegion
+from dace.transformation.interstate import LoopOverwriteElimination
 
 
 def _test_for_unchanged_behavior(prog, num_loops, num_eliminations):
