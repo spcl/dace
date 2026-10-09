@@ -12,10 +12,10 @@ import sympy
 import dace
 from dace import dtypes
 from dace.sdfg.state import LoopRegion
+from dace.symbolic import tile_extent
 from dace.transformation.passes.move_array_out_of_kernel import (
     MoveArrayOutOfKernel,
     prepend_subscript_indices,
-    tile_extent,
 )
 
 NX, NZ = (dace.symbol(s, dtype=dace.int64) for s in ("NX", "NZ"))

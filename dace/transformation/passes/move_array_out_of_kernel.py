@@ -24,7 +24,6 @@ from dace.transformation import helpers, pass_pipeline as ppl, transformation
 from dace.transformation.passes.length_one_array_scalar_conversion import rewrite_code_slots
 from dace.ordered import OrderedSet
 from dace.optionals import required
-from dace.sdfg.narrowing import as_basic
 
 logger = logging.getLogger(__name__)
 
@@ -34,16 +33,6 @@ GPU_HIERARCHY_SCHEDULES = (dtypes.ScheduleType.GPU_Device, dtypes.ScheduleType.G
 Scope = tuple[nodes.MapEntry, SDFGState]
 Dim = tuple[symbolic.SymbolicType, symbolic.SymbolicType, symbolic.SymbolicType]
 Prefix = list[Dim]
-
-
-def tile_extent(max_elem: symbolic.SymbolicType, min_elem: symbolic.SymbolicType) -> symbolic.SymbolicType:
-    """Per-iteration extent of an inner-map range; a ``Min``-bounded tile yields its static width."""
-    if isinstance(max_elem, sympy.Min):
-        for arg in max_elem.args:
-            diff = symbolic.simplify(arg - min_elem)
-            if as_basic(diff).is_Integer and diff >= 0:
-                return diff + 1
-    return max_elem + 1 - min_elem
 
 
 def bound_over_levels(extent: symbolic.SymbolicType, levels: list[nodes.MapEntry]) -> symbolic.SymbolicType:
@@ -558,7 +547,7 @@ class MoveArrayOutOfKernel(ppl.Pass):
         new_offsets = list(array_desc.offset)
         for level in levels:
             extended_size = [
-                tile_extent(mx, mn)
+                symbolic.tile_extent(mx, mn)
                 for mx, mn in zip(level.map.range.max_element(), level.map.range.min_element(), strict=True)
             ] + extended_size
             new_offsets = [0 for _ in level.map.params] + new_offsets

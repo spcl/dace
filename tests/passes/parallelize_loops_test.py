@@ -350,10 +350,6 @@ def test_a_lifted_gather_reduction_keeps_its_accumulator():
     assert np.isclose(out[0], np.sum(a * b[ip])), (out[0], np.sum(a * b[ip]))
 
 
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
-
-
 def test_a_mapping_the_callee_stopped_needing_is_pruned():
     """A nested SDFG node must not map a symbol its own SDFG no longer reads.
 
@@ -975,3 +971,84 @@ def test_a_gather_lifted_through_a_loop_fuses_into_its_consumer():
     sdfg(A=A, idx=idx, C=C, GATHER_LEN=20)
     assert np.allclose(C, 2 * A[idx])
     test_a_lifted_gather_reduction_keeps_its_accumulator()
+
+
+REFLECT_M = dace.symbol("REFLECT_M", dtype=dace.int64, positive=True)
+REFLECT_N = dace.symbol("REFLECT_N", dtype=dace.int64, positive=True)
+
+
+@dace.program
+def apply_reflectors(
+    Q: dace.float64[REFLECT_M, REFLECT_N], V: dace.float64[REFLECT_M, REFLECT_N], beta: dace.float64[REFLECT_N]
+):
+    for k in range(REFLECT_N - 1, -1, -1):
+        w = beta[k] * (V[k:REFLECT_M, k] @ Q[k:REFLECT_M, :])
+        Q[k:REFLECT_M, :] = Q[k:REFLECT_M, :] - V[k:REFLECT_M, k][:, None] * w[None, :]
+
+
+def test_a_loop_writing_a_slab_that_starts_at_the_iterate_stays_a_loop():
+    """householder_qr: iteration ``k`` rewrites ``Q[k:M, :]``, which overlaps every later iteration's rows.
+    The lower bound is ``a*k+b``, but the slab is wider than the stride, so the loop is carried."""
+    from dace.transformation.passes.canonicalize.pipeline import canonicalize
+
+    sdfg = apply_reflectors.to_sdfg(simplify=True)
+    canonicalize(sdfg, validate=True, target="cpu")
+    loops = [r for r in sdfg.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion)]
+    assert any("REFLECT_N" in r.loop_condition.as_string for r in loops), [r.label for r in loops]
+
+    rng = np.random.default_rng(0)
+    m, n = 40, 30
+    q, v = rng.random((m, n)), rng.random((m, n))
+    beta = np.array([2.0 / (v[k:, k] @ v[k:, k]) for k in range(n)])
+    ref = q.copy()
+    for k in range(n - 1, -1, -1):
+        ref[k:, :] -= v[k:, k][:, None] * (beta[k] * (v[k:, k] @ ref[k:, :]))[None, :]
+    sdfg(Q=q, V=v, beta=beta, REFLECT_M=m, REFLECT_N=n)
+    assert np.allclose(q, ref)
+
+
+if __name__ == "__main__":
+    test_lift_never_changes_a_surviving_blocks_free_symbols()
+    test_reused_analysis_costs_no_maps_against_the_matcher()
+    test_lifts_outermost_first()
+    test_invariants_survive_the_per_lift_context_rebuild()
+    test_a_running_max_with_a_conditional_update_stays_a_loop()
+    test_numerics_survive_the_pass()
+    test_a_lift_never_moves_the_sdfgs_own_free_symbols()
+    test_a_loop_that_declares_a_body_symbol_still_gets_it_deregistered()
+    test_a_lift_only_ever_removes_from_an_enclosing_regions_read_write_sets()
+    test_a_lifted_gather_reduction_keeps_its_accumulator()
+    test_a_mapping_the_callee_stopped_needing_is_pruned()
+    test_lifting_one_loop_leaves_the_sdfg_the_sweep_leaves()
+    test_a_loop_the_probe_refuses_is_left_untouched()
+    test_a_proven_lift_is_taken_where_the_probe_refuses()
+    test_a_lift_leaves_every_other_sdfgs_context_exact()
+    test_a_refused_smt_write_reaches_z3_once_however_often_its_loop_is_reprobed()
+    with pytest.MonkeyPatch.context() as mp:
+        test_a_sweep_never_rebuilds_the_cfg_list(mp)
+    with pytest.MonkeyPatch.context() as mp:
+        test_a_sweep_patches_its_context_instead_of_rebuilding_it_per_lift(mp)
+    with pytest.MonkeyPatch.context() as mp:
+        test_a_patched_context_is_the_context_a_rebuild_builds(mp)
+    test_the_use_index_decides_as_the_walk_does(False)
+    test_the_use_index_decides_as_the_walk_does(True)
+    test_every_lift_of_a_sweep_leaves_the_nested_references_exact()
+    test_a_lift_never_changes_what_a_surviving_edge_or_header_reads()
+    test_the_memoized_control_flow_reads_are_the_walked_ones()
+    test_a_witnessed_refusal_decides_every_probe_as_the_full_analysis(carried_time_steps)
+    test_a_witnessed_refusal_decides_every_probe_as_the_full_analysis(carried_rows)
+    with pytest.MonkeyPatch.context() as mp:
+        test_a_loop_refused_around_lifts_is_rechecked_on_its_witness(carried_time_steps, "write", mp)
+    with pytest.MonkeyPatch.context() as mp:
+        test_a_loop_refused_around_lifts_is_rechecked_on_its_witness(carried_rows, "read", mp)
+    with pytest.MonkeyPatch.context() as mp:
+        test_a_disjoint_box_verdict_is_asked_of_z3_once("i, i:M", "i:M, i", mp)
+    with pytest.MonkeyPatch.context() as mp:
+        test_a_disjoint_box_verdict_is_asked_of_z3_once("i, 0:M", "i + 1, 0:M", mp)
+    with pytest.MonkeyPatch.context() as mp:
+        test_a_disjoint_box_verdict_is_asked_of_z3_once("i, 0:M", "0:M, i", mp)
+    with pytest.MonkeyPatch.context() as mp:
+        test_a_declared_body_symbol_has_the_type_the_parent_walk_gives(mp)
+    test_a_strided_lift_ends_at_its_last_iterate()
+    test_a_gather_lifted_through_a_loop_fuses_into_its_consumer()
+    test_a_loop_writing_a_slab_that_starts_at_the_iterate_stays_a_loop()
