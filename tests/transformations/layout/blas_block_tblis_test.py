@@ -22,7 +22,7 @@ from dace.memlet import Memlet
 from dace.libraries.blas.nodes.gemm import Gemm
 from dace.libraries.linalg.nodes.tensordot import TensorDot
 from dace.transformation.layout.rewrite_libnodes import GemmToTensorDot
-from dace.transformation.layout.select_lowering import select_layout_lowering
+from dace.transformation.layout.select_lowering import select_layout_lowering, tblis_is_linkable
 
 
 def _gemm_sdfg(name, M, K, N):
@@ -63,6 +63,7 @@ def _block_k(sdfg, state, td, M, Kb, b, N):
 
 
 @pytest.mark.tblis
+@pytest.mark.skipif(not tblis_is_linkable(), reason="TBLIS not installed")
 def test_gemm_to_tblis_matches_numpy():
     """CPU-BLAS Gemm -> GemmToTensorDot -> (auto-selected) TBLIS contraction == numpy matmul."""
     rng = np.random.default_rng(42)
@@ -81,6 +82,7 @@ def test_gemm_to_tblis_matches_numpy():
 
 
 @pytest.mark.tblis
+@pytest.mark.skipif(not tblis_is_linkable(), reason="TBLIS not installed")
 def test_gemm_blocked_tblis_matches_numpy():
     """The full chain: Gemm -> GemmToTensorDot -> block K into [Kb,b] -> auto-select TBLIS == numpy."""
     rng = np.random.default_rng(42)
@@ -139,4 +141,3 @@ if __name__ == "__main__":
     test_tblis_body_locals_are_not_captured()
     test_gemm_to_tblis_matches_numpy()
     test_gemm_blocked_tblis_matches_numpy()
-    print("blas_block_tblis tests PASS")
