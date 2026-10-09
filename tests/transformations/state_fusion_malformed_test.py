@@ -338,4 +338,31 @@ def test_ordering_edge_pair_still_fuses(xform):
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    for cyclic_second in [False, True]:
+        for xform in XFORMS:
+            test_cyclic_state_refused(xform, cyclic_second)
+    for cyclic_second in [False, True]:
+        test_cyclic_state_not_fused_by_driver(cyclic_second)
+    for on_second in [False, True]:
+        for xform in XFORMS:
+            test_dangling_scope_refused(xform, on_second)
+    for xform in XFORMS:
+        test_map_scope_without_exit_refused(xform)
+    for kind in ["no_src_conn", "orphan_out_conn"]:
+        for xform in XFORMS:
+            test_damaged_scope_connector_refused(xform, kind)
+    for xform in XFORMS:
+        test_unparseable_assignment_refused(xform)
+    for xform in XFORMS:
+        test_missing_descriptor_refused(xform)
+    for xform in XFORMS:
+        test_subset_union_memlet_is_indeterminate(xform)
+    for xform in XFORMS:
+        test_start_block_repinned_without_raising(xform)
+    for xform in XFORMS:
+        test_node_shared_by_both_states(xform)
+    test_extended_preexisting_bad_memlet_does_not_crash_apply()
+    for xform in XFORMS:
+        test_well_formed_map_pair_still_fuses(xform)
+    for xform in XFORMS:
+        test_ordering_edge_pair_still_fuses(xform)

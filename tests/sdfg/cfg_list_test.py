@@ -174,8 +174,11 @@ def test_map_fusion_applies_inside_a_loop_region():
 
 
 if __name__ == "__main__":
-    for builder in BUILDERS:
-        test_fresh_sdfg_registers_every_region(builder)
-        test_deserialized_sdfg_registers_every_region(builder)
+    for build in BUILDERS:
+        test_fresh_sdfg_registers_every_region(build)
+    for build in BUILDERS:
+        test_deserialized_sdfg_registers_every_region(build)
     test_deep_region_read_first_resolves()
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        test_reads_do_not_rebuild(monkeypatch)
     test_map_fusion_applies_inside_a_loop_region()

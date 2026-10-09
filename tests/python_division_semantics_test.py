@@ -217,14 +217,27 @@ def test_a_python_program_modulo_in_a_condition_floors():
 
 
 if __name__ == "__main__":
-    for operator in ("//", "%"):
-        for dtype_name, dace_type, numpy_type in DTYPES:
-            test_floor_division_and_modulo_agree_with_numpy(operator, dtype_name, dace_type, numpy_type, "host")
-    test_neither_operator_is_emitted_infix("//", "py_floor(")
-    test_neither_operator_is_emitted_infix("%", "py_mod(")
+    for name, dtype, nptype in DTYPES:
+        for op in ("//", "%"):
+            test_floor_division_and_modulo_agree_with_numpy(op, name, dtype, nptype, "host")
+    for op, call in (("//", "py_floor("), ("%", "py_mod(")):
+        test_neither_operator_is_emitted_infix(op, call)
+    for text, value in (
+        ("(-7) % 3", -1),
+        ("7 % (-3)", 1),
+        ("CMod(-7, 3)", -1),
+        ("FtnMod(-7, 3)", -1),
+        ("Mod(-7, 3)", 2),
+        ("PyMod(-7, 3)", 2),
+        ("PyMod(7, -3)", -2),
+        ("FtnModulo(-7, 3)", 2),
+    ):
+        test_a_constant_modulo_folds_with_the_rounding_its_spelling_names(text, value)
     test_a_symbolic_modulo_reads_back_from_its_string_with_its_own_rounding()
     test_the_c_modulo_of_a_nonnegative_dividend_and_a_positive_divisor_is_sympy_mod()
-    for case in TASKLET_CASES:
-        test_a_tasklet_modulo_computes_what_its_spelling_names(*case)
+    for label, code, types, reference in TASKLET_CASES:
+        test_a_tasklet_modulo_computes_what_its_spelling_names(label, code, types, reference)
+    for label, assignment, value in (("percent", "(I - 7) % 3", -1), ("pymod", "PyMod(I - 7, 3)", 2)):
+        test_an_interstate_edge_modulo_computes_what_its_spelling_names(label, assignment, value)
     test_a_python_program_modulo_in_a_subscript_floors()
     test_a_python_program_modulo_in_a_condition_floors()

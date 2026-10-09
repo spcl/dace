@@ -84,3 +84,16 @@ def test_max_int_literal_stays_int():
     # This one SHOULD have bare 0, not 0.0
     clean = result.replace(" ", "")
     assert "0.0" not in clean, f"Integer literal 0 was promoted to float: '{result}'"
+
+
+if __name__ == "__main__":
+    test_float_zero_stays_float()
+    test_float_one_stays_float()
+    test_float_five_stays_float()
+    test_fractional_float_preserved()
+    test_float_prints_clean()
+    test_huge_python_int_becomes_oo()
+    test_huge_negative_python_int_becomes_neg_oo()
+    test_max_float_literal_roundtrip()
+    test_max_float_literal_not_int()
+    test_max_int_literal_stays_int()

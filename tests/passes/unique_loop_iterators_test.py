@@ -2,7 +2,6 @@
 """Unit tests for the ``UniqueLoopIterators`` pass."""
 
 import numpy as np
-import pytest
 
 import dace
 from dace.sdfg.state import LoopRegion
@@ -801,4 +800,21 @@ def test_loop_and_map_coexist_no_collision_value_preserving():
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    test_nested_sdfg_symbol_mapping()
+    test_loop_var_reconstruction()
+    test_nested_loops()
+    test_loop_var_in_tasklet_body()
+    test_loop_var_on_interstate_edge()
+    test_loop_bound_with_indirect_array()
+    test_while_loop_no_induction_var()
+    test_large_nested_map_for_for_map_program()
+    test_no_postamble_drops_dead_symbol_declaration()
+    test_no_postamble_clears_loop_var_for_inner_accumulator()
+    test_postamble_preserves_symbol_declaration()
+    test_idempotent_skips_already_unique_iterators()
+    test_value_preserving_sibling_kbound_loops()
+    test_triply_nested_loops_unique_and_value_preserving()
+    test_negative_step_loop_value_preserving()
+    test_seeds_counter_past_existing_loop_it_names()
+    test_seeds_counter_past_existing_map_params()
+    test_loop_and_map_coexist_no_collision_value_preserving()

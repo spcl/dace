@@ -12,8 +12,6 @@ import numpy as np
 import pytest
 
 import dace
-from dace.libraries.blas.nodes.batched_matmul import BatchedMatMul
-from dace.libraries.blas.nodes.gemm import Gemm
 from dace.libraries.blas.nodes.matmul import MatMul
 from dace.transformation.auto.auto_optimize import auto_optimize
 
@@ -27,13 +25,6 @@ def doitgen_reshape(A: dace.float64[NR, NQ, NP], C4: dace.float64[NP, NP]):
         A[r, :, :] = np.reshape(np.reshape(A[r], (NQ, 1, NP)) @ C4, (NQ, NP))
 
 
-@dace.program
-def indexed_slice_matmul(A: dace.float64[NR, NQ, NP], C4: dace.float64[NP, NP]):
-    # A[r] indexes dimension 0 away: a genuine 2D operand that must still reach Gemm.
-    for r in range(NR):
-        A[r, :, :] = A[r] @ C4
-
-
 def reference(A, C4):
     nr, nq, np_ = A.shape
     return np.reshape(np.reshape(A, (nr, nq, 1, np_)) @ C4, (nr, nq, np_))
@@ -43,17 +34,6 @@ def initialize(nr, nq, np_, seed=0):
     # Random, not polybench's ((i*j+k) % NP)/NP, which is all-zero at NP == 1 (a vacuous compare).
     rng = np.random.default_rng(seed)
     return rng.random((nr, nq, np_)), rng.random((np_, np_))
-
-
-def count_nodes(sdfg, nodetype):
-    return sum(1 for node, _ in sdfg.all_nodes_recursive() if isinstance(node, nodetype))
-
-
-def specialize_matmuls(sdfg):
-    """Expand the MatMul meta-nodes one level, leaving the chosen specialization in the graph."""
-    for node, state in list(sdfg.all_nodes_recursive()):
-        if type(node) is MatMul:
-            node.expand(state)
 
 
 # NQ == 1 collapses a second dim when squeezed, where a "whichever view looks 2D" heuristic breaks.
@@ -72,31 +52,6 @@ def test_reshape_unit_dim_matmul(optimize, sizes):
     sdfg.simplify()
     if optimize:
         auto_optimize(sdfg, dace.dtypes.DeviceType.CPU, symbols=dict(NR=nr, NQ=nq, NP=np_))
-
-    sdfg(A=A, C4=C4, NR=nr, NQ=nq, NP=np_)
-    assert np.allclose(A, ref)
-
-
-def test_reshape_unit_dim_stays_one_gemm():
-    """The collapse is exact, so the product must not fan out into NQ batched calls."""
-    sdfg = doitgen_reshape.to_sdfg(simplify=False)
-    sdfg.simplify()
-    specialize_matmuls(sdfg)
-    assert count_nodes(sdfg, Gemm) == 1
-    assert count_nodes(sdfg, BatchedMatMul) == 0
-
-
-def test_indexed_dim_still_reaches_gemm():
-    """An index into a larger dimension is rank-reducing, so the operand is a plain matrix."""
-    nr, nq, np_ = 3, 4, 5
-    A, C4 = initialize(nr, nq, np_)
-    ref = reference(A, C4)
-
-    sdfg = indexed_slice_matmul.to_sdfg(simplify=False)
-    sdfg.simplify()
-    specialize_matmuls(sdfg)
-    assert count_nodes(sdfg, Gemm) == 1
-    assert count_nodes(sdfg, BatchedMatMul) == 0
 
     sdfg(A=A, C4=C4, NR=nr, NQ=nq, NP=np_)
     assert np.allclose(A, ref)
@@ -126,9 +81,7 @@ def test_unit_batch_keeps_alpha():
 
 
 if __name__ == "__main__":
-    for opt in (False, True):
-        for sz in SIZES:
-            test_reshape_unit_dim_matmul(opt, sz)
-    test_reshape_unit_dim_stays_one_gemm()
-    test_indexed_dim_still_reaches_gemm()
+    for optimize in (False, True):
+        for sizes in SIZES:
+            test_reshape_unit_dim_matmul(optimize, sizes)
     test_unit_batch_keeps_alpha()

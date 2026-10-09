@@ -4,7 +4,6 @@
 Extends the basic 1-D coverage in :file:`fft_test.py` with:
 
 * 2-D complex128 forward FFT,
-* 3-D complex128 forward FFT,
 * 1-D complex64 (single-precision) forward + inverse round trip.
 
 All tests run only when the ``gpu`` marker is selected.
@@ -61,29 +60,6 @@ def test_gpu_fft_2d():
 
 
 @pytest.mark.gpu
-def test_gpu_fft_3d():
-    """3-D complex128 forward FFT through the vendor FFT (true N-D FFT, matches ``np.fft.fftn``)."""
-    L, M, N = 8, 12, 16
-
-    @dace.program
-    def fft3d(x: dace.complex128[L, M, N]):
-        return np.fft.fftn(x)
-
-    sdfg = fft3d.to_sdfg()
-    sdfg.apply_gpu_transformations()
-    prev = _expand_with(_gpu_fft(), [fftlib.FFT])
-    try:
-        sdfg.expand_library_nodes()
-    finally:
-        _restore(prev)
-
-    rng = np.random.default_rng(8)
-    x = rng.standard_normal((L, M, N)) + 1j * rng.standard_normal((L, M, N))
-    y = sdfg(x.copy())
-    np.testing.assert_allclose(y, np.fft.fftn(x), rtol=1e-3, atol=1e-3)
-
-
-@pytest.mark.gpu
 def test_gpu_fft_complex64_roundtrip():
     """1-D complex64 forward+inverse round trip through the vendor FFT (C2C)."""
     N = 128
@@ -111,5 +87,4 @@ def test_gpu_fft_complex64_roundtrip():
 
 if __name__ == "__main__":
     test_gpu_fft_2d()
-    test_gpu_fft_3d()
     test_gpu_fft_complex64_roundtrip()

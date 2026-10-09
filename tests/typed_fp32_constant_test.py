@@ -8,7 +8,6 @@ instead of being silently widened to fp64.  These tests pin that for the
 """
 
 import numpy as np
-import pytest
 
 from dace import dtypes, symbolic
 from dace.sdfg import type_inference
@@ -59,4 +58,9 @@ def test_fp32_constant_codegen_emits_float_literal():
 
 
 if __name__ == "__main__":
-    pytest.main([__file__])
+    test_fp32_constant_infers_float32()
+    test_fp32_constant_plus_fp32_symbol_stays_fp32()
+    test_fp32_constant_plus_fp64_symbol_promotes()
+    test_fp32_constant_plus_int_stays_fp32()
+    test_fp32_constant_serialization_roundtrip_preserves_float32()
+    test_fp32_constant_codegen_emits_float_literal()

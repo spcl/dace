@@ -45,4 +45,3 @@ def test_fft_fftw3_lowering():
 
 if __name__ == "__main__":
     test_fft_fftw3_lowering()
-    print("FFTW3 FFT lowering test PASS")

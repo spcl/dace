@@ -52,3 +52,16 @@ def test_dace_prefixed_cast_is_accepted():
     still parses to the bare typecast rather than raising
     ``'Attr' object is not callable``."""
     assert sym2cpp(pystr_to_symbolic("dace.int32(qm) + 1")) == "(dace::int32(qm) + 1)"
+
+
+if __name__ == "__main__":
+    for expr, cpp in [
+        ("int32(qm) + 1", "(dace::int32(qm) + 1)"),
+        ("int64(x)", "(dace::int64(x))"),
+        ("float32(i) * 2", "(2*dace::float32(i))"),
+        ("float64(i) - r", "(-r + dace::float64(i))"),
+    ]:
+        test_typecast_prints_to_dace_cast(expr, cpp)
+    test_typecast_roundtrips()
+    test_int_typecast_is_integer()
+    test_dace_prefixed_cast_is_accepted()

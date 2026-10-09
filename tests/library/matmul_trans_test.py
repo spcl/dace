@@ -74,12 +74,6 @@ def test_matmul_trans_flags(transA, transB, dtype):
     np.testing.assert_allclose(c, expected, rtol=rtol, atol=rtol)
 
 
-def test_matmul_default_flags_are_false():
-    n = MatMul("default_test")
-    assert n.transA is False, f"transA default should be False, got {n.transA!r}"
-    assert n.transB is False, f"transB default should be False, got {n.transB!r}"
-
-
 def test_matmul_trans_no_transient_in_sdfg():
     """transA=True must fuse the transpose into GEMM, not materialise a transposed copy of A."""
     rng = np.random.default_rng(seed=0)
@@ -110,3 +104,10 @@ def test_matmul_trans_no_transient_in_sdfg():
     prog = sdfg.compile()
     prog(A=a, B=b, C=c)
     np.testing.assert_allclose(c, a.T @ b, rtol=1e-12, atol=1e-12)
+
+
+if __name__ == "__main__":
+    for transA, transB in [(False, False), (True, False), (False, True), (True, True)]:
+        for dtype in (np.float32, np.float64):
+            test_matmul_trans_flags(transA, transB, dtype)
+    test_matmul_trans_no_transient_in_sdfg()

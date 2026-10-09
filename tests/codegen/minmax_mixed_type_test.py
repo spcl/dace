@@ -105,4 +105,8 @@ def test_min_all_integer_range_compiles_and_runs():
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    test_min_mixed_int_double_is_compile_error()
+    test_max_mixed_int_double_is_compile_error()
+    test_min_all_double_compiles_and_runs()
+    test_max_all_double_compiles_and_runs()
+    test_min_all_integer_range_compiles_and_runs()

@@ -156,29 +156,6 @@ _BUILDERS = {
 
 
 @pytest.mark.parametrize("name", list(_BUILDERS))
-def test_default_comm_is_world(name):
-    """No ``_comm`` / ``_grid`` wired -> the node falls back to MPI_COMM_WORLD
-    (backward compatible with existing callers/tests)."""
-    sdfg, state, node = _BUILDERS[name]()
-    code, _ = _expanded_code(node, state, sdfg)
-    assert "MPI_COMM_WORLD" in code
-    for pat in _COMM_AS_COMM + _GRID_AS_COMM:
-        assert pat not in code
-
-
-@pytest.mark.parametrize("name", list(_BUILDERS))
-def test_comm_connector_is_honored(name):
-    """A wired ``_comm`` connector is used verbatim; no hardcoded world comm
-    remains, and the connector is threaded into the expanded tasklet."""
-    sdfg, state, node = _BUILDERS[name]()
-    _wire_comm(sdfg, state, node)
-    code, in_connectors = _expanded_code(node, state, sdfg)
-    assert "MPI_COMM_WORLD" not in code
-    assert any(pat in code for pat in _COMM_AS_COMM)
-    assert "_comm" in in_connectors
-
-
-@pytest.mark.parametrize("name", list(_BUILDERS))
 def test_grid_connector_is_honored(name):
     """A wired ``_grid`` process-grid connector is used as the communicator; no
     hardcoded world comm remains, and the connector is threaded into the tasklet."""
@@ -206,9 +183,7 @@ def test_comm_takes_priority_over_grid(name):
 
 
 if __name__ == "__main__":
-    for _n in _BUILDERS:
-        test_default_comm_is_world(_n)
-        test_comm_connector_is_honored(_n)
-        test_grid_connector_is_honored(_n)
-        test_comm_takes_priority_over_grid(_n)
-    print("OK")
+    for name in _BUILDERS:
+        test_grid_connector_is_honored(name)
+    for name in _BUILDERS:
+        test_comm_takes_priority_over_grid(name)

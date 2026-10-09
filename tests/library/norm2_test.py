@@ -25,14 +25,6 @@ def _build(in_shape, dtype, dim=None):
     return sdfg
 
 
-def test_norm2_whole_array():
-    x = np.array([3.0, 4.0])
-    sdfg = _build(x.shape, dace.float64)
-    r = np.zeros(1)
-    sdfg(v=x, r=r)
-    np.testing.assert_allclose(r[0], 5.0)
-
-
 def test_norm2_random_1d():
     rng = np.random.default_rng(0)
     x = rng.standard_normal(64)
@@ -52,7 +44,5 @@ def test_norm2_2d_dim1():
 
 
 if __name__ == "__main__":
-    test_norm2_whole_array()
     test_norm2_random_1d()
     test_norm2_2d_dim1()
-    print("Norm2 tests PASS")

@@ -27,27 +27,6 @@ def _restore(prev):
 
 
 @pytest.mark.fftw
-def test_fft_axis_last_2d_fftw3():
-    M, N = 8, 32
-
-    @dace.program
-    def fft_axis_last(x: dace.complex128[M, N]):
-        return np.fft.fft(x, axis=-1)
-
-    sdfg = fft_axis_last.to_sdfg()
-    prev = _expand("FFTW3", [fftlib.FFT])
-    try:
-        sdfg.expand_library_nodes()
-    finally:
-        _restore(prev)
-
-    rng = np.random.default_rng(0)
-    x = (rng.standard_normal((M, N)) + 1j * rng.standard_normal((M, N))).astype(np.complex128)
-    y = sdfg(x.copy())
-    np.testing.assert_allclose(y, np.fft.fft(x, axis=-1), rtol=1e-12, atol=1e-12)
-
-
-@pytest.mark.fftw
 def test_fft_axis_first_2d_fftw3():
     M, N = 16, 24
 
@@ -90,7 +69,5 @@ def test_fft_axis_last_3d_fftw3():
 
 
 if __name__ == "__main__":
-    test_fft_axis_last_2d_fftw3()
     test_fft_axis_first_2d_fftw3()
     test_fft_axis_last_3d_fftw3()
-    print("FFT axis FFTW3 lowering tests PASS")

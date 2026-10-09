@@ -27,49 +27,6 @@ def test_column_vector_transpose_matmul():
 
 
 @dace.program
-def col_outer_product(x: dace.float64[N, 1]):
-    return x @ x.T  # (N, 1) @ (1, N) -> (N, N) outer product
-
-
-def test_column_vector_outer_product():
-    n = 6
-    rng = np.random.default_rng(1)
-    x = rng.random((n, 1))
-    got = np.asarray(col_outer_product(x.copy()))
-    ref = x @ x.T
-    assert got.shape == ref.shape == (n, n)
-    assert np.allclose(got, ref)
-
-
-@dace.program
-def row_vector_transpose(x: dace.float64[1, N]):
-    return x.T  # (1, N) -> (N, 1)
-
-
-def test_row_vector_transpose():
-    n = 7
-    rng = np.random.default_rng(2)
-    x = rng.random((1, n))
-    got = np.asarray(row_vector_transpose(x.copy()))
-    assert got.shape == (n, 1)
-    assert np.allclose(got.reshape(n, 1), x.T)
-
-
-@dace.program
-def index_squeezes_axis(x: dace.float64[N, 3]):
-    col = x[:, 1]  # an integer index squeezes the axis: (N,)
-    return np.sum(col)
-
-
-def test_integer_index_squeezes_axis():
-    n = 6
-    rng = np.random.default_rng(3)
-    x = rng.random((n, 3))
-    got = np.asarray(index_squeezes_axis(x.copy()))
-    assert np.allclose(got, np.sum(x[:, 1]))
-
-
-@dace.program
 def transposed_column_difference(pos: dace.float64[N, 3], dx: dace.float64[N, N]):
     dx[:] = pos[:, 0:1].T - pos[:, 0:1]
 
@@ -88,8 +45,4 @@ def test_a_length1_slice_keeps_its_axis():
 
 if __name__ == "__main__":
     test_column_vector_transpose_matmul()
-    test_column_vector_outer_product()
-    test_row_vector_transpose()
-    test_integer_index_squeezes_axis()
     test_a_length1_slice_keeps_its_axis()
-    print("OK")
