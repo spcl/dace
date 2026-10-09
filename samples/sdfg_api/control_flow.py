@@ -1,8 +1,9 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 """SDFG API sample that showcases state machine creation and the `simplify` call, which will fuse them."""
 
-import dace
 import numpy as np
+
+import dace
 
 # Define a symbol to be used in the SDFG
 T = dace.symbol("T")

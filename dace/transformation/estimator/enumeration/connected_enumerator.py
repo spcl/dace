@@ -1,14 +1,13 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """This file implements the ConnectedEnumerator class"""
 
-from dace.transformation.estimator.enumeration import MapScoringEnumerator
+from collections.abc import Callable
 
-from dace.transformation.subgraph import helpers
-from dace.properties import make_properties, Property
+from dace.properties import Property, make_properties
 from dace.sdfg import SDFG, SDFGState
 from dace.sdfg.graph import SubgraphView
-
-from typing import Set, List, Callable
+from dace.transformation.estimator.enumeration import MapScoringEnumerator
+from dace.transformation.subgraph import helpers
 
 
 @make_properties
@@ -35,7 +34,7 @@ class ConnectedEnumerator(MapScoringEnumerator):
 
         self.calculate_topology(subgraph)
 
-    def traverse(self, current: List, forbidden: Set):
+    def traverse(self, current: list, forbidden: set):
         if len(current) > 0:
             # get current subgraph we are inspecting
             current_subgraph = helpers.subgraph_from_maps(self._sdfg, self._graph, current, self._scope_children)
@@ -54,7 +53,7 @@ class ConnectedEnumerator(MapScoringEnumerator):
             go_next = list()
             if conditional_eval or self.prune == False or len(current) == 1:
                 go_next = list(
-                    set(m for c in current for m in self._adjacency_list[c] if m not in current and m not in forbidden)
+                    {m for c in current for m in self._adjacency_list[c] if m not in current and m not in forbidden}
                 )
 
                 # for determinism and correctness during pruning
@@ -66,7 +65,7 @@ class ConnectedEnumerator(MapScoringEnumerator):
 
         else:
             # special case at very beginning: explore every node
-            go_next = list(set(m for m in self._adjacency_list.keys()))
+            go_next = list(set(self._adjacency_list.keys()))
             go_next.sort(key=lambda me: self._labels[me])
 
         if len(go_next) > 0:

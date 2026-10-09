@@ -1,8 +1,9 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 
-import dace
 import numpy as np
 import pytest
+
+import dace
 
 
 def callback_inhibitor(f):

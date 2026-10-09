@@ -5,12 +5,12 @@ Utility functions for DaCe.
 This module provides general utility functions that are used across various parts of DaCe.
 """
 
-from typing import Container, Iterable, Union
+from collections.abc import Container, Iterable
 
 import sympy
 
 # Type alias for numeric or symbolic values
-NumericType = Union[int, float, sympy.Basic]
+NumericType = int | float | sympy.Basic
 
 
 def prod(sequence: Iterable[NumericType], start: NumericType = 1) -> NumericType:
@@ -57,7 +57,7 @@ def find_new_name(name: str, existing_names: Container[str]) -> str:
 
 def deduplicate(iterable):
     """Removes duplicates in the passed iterable."""
-    return type(iterable)([i for i in sorted(set(iterable), key=lambda x: iterable.index(x))])
+    return type(iterable)(sorted(set(iterable), key=lambda x: iterable.index(x)))
 
 
 def until(val, substr):

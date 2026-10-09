@@ -8,14 +8,13 @@ get around the 64 parameter limit of torch's dispatcher.
 
 import copy
 import itertools
-from typing import List, Dict, Tuple
 
-from dace import data
 import torch
-from dace.codegen.compiled_sdfg import CompiledSDFG
 
 import dace
+from dace import data
 from dace.autodiff import BackwardResult
+from dace.codegen.compiled_sdfg import CompiledSDFG
 from dace.frontend.ml.onnx.importer import create_output_array
 from dace.libraries.torch.dispatchers import DaceTorchFunction
 from dace.libraries.torch.dispatchers.common import compile_and_init_sdfgs, get_arglist
@@ -90,7 +89,7 @@ def callable_for_bwd_module(
     forward_compiled: CompiledSDFG,
     backward_compiled: CompiledSDFG,
     backward_result: BackwardResult,
-    forwarded_arrays: Dict[str, data.Data],
+    forwarded_arrays: dict[str, data.Data],
 ):
 
     assert forward_compiled._initialized
@@ -101,10 +100,10 @@ def callable_for_bwd_module(
     input_names, output_names = get_arglist(module)
 
     # arrays that we will forward to the backward pass using saved_for_backward
-    forwarded_io_names: List[str] = [name for name in forwarded_arrays if name in output_names or name in input_names]
+    forwarded_io_names: list[str] = [name for name in forwarded_arrays if name in output_names or name in input_names]
 
     # non input/output arrays that we are forwarding
-    forwarded_non_io_names: List[str] = [
+    forwarded_non_io_names: list[str] = [
         name for name in forwarded_arrays if name not in output_names and name not in input_names
     ]
 
@@ -112,22 +111,22 @@ def callable_for_bwd_module(
     # * name of the gradient
     # * whether the array requires zero initialization
     # * the descriptor for the array
-    gradient_descriptors: List[Tuple[str, bool, data.Data]] = []
+    gradient_descriptors: list[tuple[str, bool, data.Data]] = []
 
-    for _, grad_name in backward_result.required_grad_names.items():
+    for grad_name in backward_result.required_grad_names.values():
         zero_init = backward_result.zero_init.get(grad_name, True)
         desc = backward_compiled.sdfg.arrays[grad_name]
 
         gradient_descriptors.append((grad_name, zero_init, desc))
 
-    outputs_with_forwarded_outputs: List[str] = copy.deepcopy(output_names)
+    outputs_with_forwarded_outputs: list[str] = copy.deepcopy(output_names)
     outputs_with_forwarded_outputs.extend(n for n in forwarded_arrays if n not in input_names and n not in output_names)
 
-    output_gradient_names: List[str] = [
+    output_gradient_names: list[str] = [
         backward_result.given_grad_names[output] if output in backward_result.given_grad_names else None
         for output in output_names
     ]
-    input_gradient_names: List[str] = [
+    input_gradient_names: list[str] = [
         backward_result.required_grad_names[input] if input in backward_result.required_grad_names else None
         for input in input_names
     ]
@@ -166,12 +165,9 @@ def callable_for_bwd_module(
 
         @staticmethod
         def backward(ctx, *grad_outputs):
-            kwargs = {}
-
             # recover saved values
             saved = ctx.saved_tensors
-            for value_name, saved_value in zip(forwarded_io_names, saved):
-                kwargs[value_name] = saved_value
+            kwargs = dict(zip(forwarded_io_names, saved))
 
             for value_name in forwarded_non_io_names:
                 kwargs[value_name] = getattr(ctx, f"dace_saved_{value_name}")

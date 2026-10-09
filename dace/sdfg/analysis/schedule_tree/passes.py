@@ -4,7 +4,6 @@ Assortment of passes for schedule trees.
 """
 
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
-from typing import Set
 
 
 def remove_unused_and_duplicate_labels(stree: tn.ScheduleTreeScope):
@@ -16,14 +15,14 @@ def remove_unused_and_duplicate_labels(stree: tn.ScheduleTreeScope):
 
     class FindGotos(tn.ScheduleNodeVisitor):
         def __init__(self):
-            self.gotos: Set[str] = set()
+            self.gotos: set[str] = set()
 
         def visit_GotoNode(self, node: tn.GotoNode):
             if node.target is not None:
                 self.gotos.add(node.target)
 
     class RemoveLabels(tn.ScheduleNodeTransformer):
-        def __init__(self, labels_to_keep: Set[str]) -> None:
+        def __init__(self, labels_to_keep: set[str]) -> None:
             self.labels_to_keep = labels_to_keep
             self.labels_seen = set()
 

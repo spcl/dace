@@ -1,6 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
 import copy
+
+import dace
 
 from .ast_node import AST_Node
 
@@ -128,9 +129,9 @@ class AST_BuiltInFunCall(AST_Node):
                 dims = self.args[0].get_values_row_major()
             else:
                 dims = [self.args[0].get_value(), self.args[1].get_value()]
-        elif self.funname.get_name() in ["sqrt"]:
+        elif self.funname.get_name() == "sqrt":
             return self.args[0].get_dims()
-        elif self.funname.get_name() in ["length"]:
+        elif self.funname.get_name() == "length":
             dims = [1]
         if dims is None:
             raise NotImplementedError("Cannot infer dimensions for " + str(self))
@@ -141,7 +142,7 @@ class AST_BuiltInFunCall(AST_Node):
         # TODO: rand has options for setting seed/state and controlling
         # accuracy. We only deal with the simple use-case for now.
 
-        if self.funname.get_name() in ["sqrt"]:
+        if self.funname.get_name() == "sqrt":
             dims = self.get_dims()
             name = self.get_name_in_sdfg(sdfg)
             basetype = dace.dtypes.float64

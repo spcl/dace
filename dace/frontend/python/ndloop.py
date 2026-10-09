@@ -2,7 +2,6 @@
 """A single generator that creates an N-dimensional for loop in Python."""
 
 import itertools
-from typing import Tuple, Union
 
 
 def slicetoxrange(s):
@@ -33,7 +32,7 @@ def NDLoop(ndslice, internal_function, *args, **kwargs):
         internal_function(*(indices + args), **kwargs)
 
 
-def ndrange(slice_list: Union[Tuple[slice], slice]):
+def ndrange(slice_list: tuple[slice] | slice):
     """Generator that creates an N-dimensional for loop in Python.
 
     :param slice_list: Slice or list of slices (as tuples or ``slice`` objects) to loop over.
@@ -43,5 +42,4 @@ def ndrange(slice_list: Union[Tuple[slice], slice]):
         yield from slicetoxrange(slice_list)
     else:
         ndxrange = tuple(slicetoxrange(d) for d in slice_list)
-        for indices in itertools.product(*ndxrange):
-            yield indices
+        yield from itertools.product(*ndxrange)

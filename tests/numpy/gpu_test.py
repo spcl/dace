@@ -1,8 +1,8 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
 import pytest
-
 from common import compare_numpy_output
+
+import dace
 
 """
 Test CUDA code generation for a subset of numpy-like functions on GPU target.

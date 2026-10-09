@@ -1,7 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests the validation of nested SDFG connector descriptors against the containers they are connected to."""
 
-from typing import Dict, List, Sequence
+from collections.abc import Sequence
 
 import pytest
 
@@ -11,9 +11,9 @@ from dace.sdfg.validation import InvalidSDFGNodeError
 
 
 def _nested_write(
-    outer_shape: List[str],
-    inner_shape: List[str],
-    symbol_mapping: Dict[str, str],
+    outer_shape: list[str],
+    inner_shape: list[str],
+    symbol_mapping: dict[str, str],
     inner_symbols: Sequence[str] = ("N",),
     outer_symbols: Sequence[str] = ("M",),
 ) -> dace.SDFG:

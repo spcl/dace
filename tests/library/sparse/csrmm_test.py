@@ -1,10 +1,11 @@
-import dace
 import copy
-import pytest
-import numpy as np
 
-from dace.libraries.sparse import CSRMM
+import numpy as np
+import pytest
 from scipy.sparse import csr_matrix
+
+import dace
+from dace.libraries.sparse import CSRMM
 
 N = dace.symbol("N")
 M = dace.symbol("M")

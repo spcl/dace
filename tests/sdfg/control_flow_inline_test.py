@@ -2,8 +2,8 @@
 import sympy
 
 import dace
-from dace.sdfg.state import LoopRegion
 from dace.sdfg import utils as sdutils
+from dace.sdfg.state import LoopRegion
 
 
 def test_loop_inlining_regular_for():

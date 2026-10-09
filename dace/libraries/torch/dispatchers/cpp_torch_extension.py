@@ -6,23 +6,22 @@ import hashlib
 import itertools
 import operator
 import os
-from typing import List, Tuple, Optional, Dict
 
-import dace.library
 import numpy as np
 import torch
+
 import dace
-from dace import config, dtypes as dt, data
-from dace.codegen import targets, compiler
+import dace.library
+from dace import config, data
+from dace import dtypes as dt
+from dace.autodiff import BackwardResult
+from dace.codegen import compiler, targets
 from dace.codegen.codeobject import CodeObject
+from dace.codegen.common import platform_library_name, sym2cpp
 from dace.codegen.compiled_sdfg import CompiledSDFG
 from dace.codegen.prettycode import CodeIOStream
-from dace.codegen.common import sym2cpp, platform_library_name
-
-from dace.autodiff import BackwardResult
-from dace.libraries.torch.environments import PyTorch
-
 from dace.libraries.torch.dispatchers.common import DaceTorchFunction, compile_and_init_sdfgs, get_arglist
+from dace.libraries.torch.environments import PyTorch
 
 _REPLACED_CTYPES = {dace.int64: "int64_t", dace.uint64: "uint64_t", dace.float16: "at::Half"}
 
@@ -71,7 +70,7 @@ def typeclass_to_torch_cpp_type(type: dace.typeclass) -> str:
         return _TYPECLASS_TO_TORCH_DTYPE_STR[type]
 
 
-def tensor_init_for_desc(name: str, desc: data.Data, clean_weights: Dict[str, torch.Tensor], zeros=True) -> str:
+def tensor_init_for_desc(name: str, desc: data.Data, clean_weights: dict[str, torch.Tensor], zeros=True) -> str:
     """Emit the initialization code for a descriptor.
 
     :param name: The name of the tensor.
@@ -128,7 +127,7 @@ def tensor_init_for_desc(name: str, desc: data.Data, clean_weights: Dict[str, to
 
 
 def initialize_outputs_code(
-    module: "dace.frontend.ml.torch.DaceModule", output_names: List[str], clean_weights: Dict[str, torch.Tensor]
+    module: "dace.frontend.ml.torch.DaceModule", output_names: list[str], clean_weights: dict[str, torch.Tensor]
 ) -> str:
     """Generate the code that initializes the output tensors.
 
@@ -147,11 +146,11 @@ def initialize_outputs_code(
 
 def argument_codegen(
     sdfg: dace.SDFG,
-    clean_weights: Dict[str, torch.Tensor],
-    input_names: List[str],
-    output_names: List[str],
-    guard_contiguous: Optional[List[str]] = None,
-) -> Tuple[str, str, str]:
+    clean_weights: dict[str, torch.Tensor],
+    input_names: list[str],
+    output_names: list[str],
+    guard_contiguous: list[str] | None = None,
+) -> tuple[str, str, str]:
     """Generate the code that grabs the pointers of inputs and outputs.
 
     The names of the tensors will match the SDFG tensor names. Tensors that are not created by us (i.e. inputs)
@@ -212,7 +211,7 @@ def argument_codegen(
 
     all_access_nodes = set()
     for state in sdfg.nodes():
-        all_access_nodes |= set(n.data for n in state.data_nodes())
+        all_access_nodes |= {n.data for n in state.data_nodes()}
 
     # Initialize all remaining parameters
     remaining = set(arglist).difference(itertools.chain(input_names, output_names))
@@ -301,16 +300,16 @@ def constant_initializer_code(name: str, desc: data.Data, value) -> str:
         raise ValueError("Unsupported data descriptor")
 
 
-def return_type_str(outputs: List[str]) -> str:
+def return_type_str(outputs: list[str]) -> str:
     """Generate the return type string for the given outputs.
 
     :param outputs: List of output names.
     :return: The C++ return type string.
     """
-    return f"""{"Tensor" if len(outputs) == 1 else f"variable_list"}"""
+    return f"""{"Tensor" if len(outputs) == 1 else "variable_list"}"""
 
 
-def save_non_inputs_outputs(names: List[str]):
+def save_non_inputs_outputs(names: list[str]):
     """Generate code to save non-input/output tensors for backward pass.
 
     :param names: List of tensor names to save.
@@ -319,7 +318,7 @@ def save_non_inputs_outputs(names: List[str]):
     return "\n".join(f'ctx->saved_data["{n}"] = {n};' for n in names)
 
 
-def recover_saved_inputs_outputs(saved_inputs_outputs: List[str], other_saved: List[str]):
+def recover_saved_inputs_outputs(saved_inputs_outputs: list[str], other_saved: list[str]):
     """Generate code to recover saved tensors in backward pass.
 
     :param saved_inputs_outputs: List of saved input/output tensor names.
@@ -339,7 +338,7 @@ def recover_saved_inputs_outputs(saved_inputs_outputs: List[str], other_saved: L
 
 
 def setup_grad_values(
-    backward_result: BackwardResult, sdfg: dace.SDFG, outputs: List[str], clean_weights: Dict[str, torch.Tensor]
+    backward_result: BackwardResult, sdfg: dace.SDFG, outputs: list[str], clean_weights: dict[str, torch.Tensor]
 ) -> str:
     """Generate code to setup gradient values for backward pass.
 
@@ -367,7 +366,7 @@ def code_for_backward_function(
     forward_sdfg: dace.SDFG,
     backward_sdfg: dace.SDFG,
     backward_result: BackwardResult,
-    forwarded_arrays: Dict[str, data.Data],
+    forwarded_arrays: dict[str, data.Data],
 ) -> str:
     """Generate C++ code for a differentiable PyTorch function.
 
@@ -538,7 +537,7 @@ TORCH_LIBRARY_IMPL(dace_{sdfg_name}, {"CUDA" if module.use_cuda else "CPU"}, m) 
         """
 
 
-def get_header(fwd_sdfg: dace.SDFG, bwd_sdfg: Optional[dace.SDFG], inputs, outputs, use_cuda: bool) -> str:
+def get_header(fwd_sdfg: dace.SDFG, bwd_sdfg: dace.SDFG | None, inputs, outputs, use_cuda: bool) -> str:
     """Generate the C++ header code for the PyTorch extension.
 
     :param fwd_sdfg: The forward SDFG.

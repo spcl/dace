@@ -1,13 +1,14 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
-from typing import Dict, Optional, Any
+from typing import Any
 
-from dace import sdfg as sd, properties
+from dace import properties
+from dace import sdfg as sd
 from dace.sdfg import utils as sdutil
-from dace.sdfg.state import ContinueBlock, ConditionalBlock, LoopRegion
-from dace.transformation import transformation
-from dace.transformation import pass_pipeline as ppl
 from dace.sdfg.sdfg import SDFG
+from dace.sdfg.state import ConditionalBlock, ContinueBlock, LoopRegion
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation import transformation
 
 
 @properties.make_properties
@@ -25,7 +26,7 @@ class ContinueToCondition(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return modified & ppl.Modifies.CFG
 
-    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Any]:
+    def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> Any | None:
         for node, parent in sdfg.all_nodes_recursive():
             if self.can_be_applied(node):
                 self.apply(node, sdfg)
