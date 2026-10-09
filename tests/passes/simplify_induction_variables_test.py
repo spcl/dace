@@ -7,6 +7,7 @@ import signal
 import numpy as np
 
 import dace
+import pytest
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes import SimplifyInductionVariables
 
