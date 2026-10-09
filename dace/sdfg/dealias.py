@@ -501,11 +501,7 @@ def rebase_descendants(sdfg: SDFG, name: str, old_desc: data.Data, new_desc: dat
                 for sym in replacement.free_symbols:
                     sym_name = str(sym)
                     if sym_name not in node.sdfg.symbols:
-                        sym_type = (
-                            sdfg.symbols[sym_name]
-                            if sym_name in sdfg.symbols
-                            else dtypes.typeclass(int)
-                        )
+                        sym_type = sdfg.symbols[sym_name] if sym_name in sdfg.symbols else dtypes.typeclass(int)
                         node.sdfg.add_symbol(sym_name, sym_type)
                         if sym_name not in node.symbol_mapping:
                             node.symbol_mapping[sym_name] = symbolic.pystr_to_symbolic(sym_name)
