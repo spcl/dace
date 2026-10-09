@@ -123,6 +123,12 @@ def select_tile_implementation(node: nodes.LibraryNode, parent_state: dace.SDFGS
     """
     if node.group is not TileGroup.THREAD and is_devicelevel_gpu(parent_state.sdfg, parent_state, node):
         return "block"
+    return lane_implementation(node, parent_state)
+
+
+def lane_implementation(node: nodes.LibraryNode, parent_state: dace.SDFGState) -> str:
+    """The implementation one thread runs the lanes of ``node`` with: ``pure`` or the backend of its target ISA. A
+    ``block`` lowering runs it on each thread's share of the lanes."""
     target_isa = node.target_isa
     if target_isa is ISA.AUTO:
         target_isa = detect_host_isa()

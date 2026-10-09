@@ -69,17 +69,19 @@ def test_distributed_lanes_are_one_thread_strided_loop():
 
 
 @pytest.mark.gpu
-def test_blocked_gemm_with_mma_on_a_gpu():
+@pytest.mark.parametrize("implementation", ["legacy", "experimental"])
+def test_blocked_gemm_with_mma_on_a_gpu(implementation: str):
     sdfg = blocked_gemm.to_sdfg()
-    sdfg.name = "blocked_gemm_gpu"
+    sdfg.name = f"blocked_gemm_gpu_{implementation}"
     sdfg.apply_gpu_transformations()
     operands = gemm_operands()
-    sdfg(**operands, M=64, N=32, K=48)
+    with dace.config.set_temporary("compiler", "cuda", "implementation", value=implementation):
+        sdfg(**operands, M=64, N=32, K=48)
+        kernel = next(
+            obj.clean_code for obj in sdfg.generate_code() if obj.target.target_name in ("cuda", "experimental_cuda")
+        )
     np.testing.assert_allclose(operands["C"], operands["A"] @ operands["B"], rtol=1e-12)
     # The tiles every thread of a block reads live in shared memory
-    kernel = next(
-        obj.clean_code for obj in sdfg.generate_code() if obj.target.target_name in ("cuda", "experimental_cuda")
-    )
     for tile in ("acc[256]", "A_tile[128]", "B_tile[128]"):
         assert f"__shared__ double {tile}" in kernel
 
@@ -96,14 +98,16 @@ def fused_rows(A: dace.float64[L, 64], B: dace.float64[L, 64], D: dace.float64[L
 
 
 @pytest.mark.gpu
-def test_elementwise_and_sum_on_a_gpu():
+@pytest.mark.parametrize("implementation", ["legacy", "experimental"])
+def test_elementwise_and_sum_on_a_gpu(implementation: str):
     sdfg = fused_rows.to_sdfg()
-    sdfg.name = "fused_rows_gpu"
+    sdfg.name = f"fused_rows_gpu_{implementation}"
     sdfg.apply_gpu_transformations()
     rng = np.random.default_rng(1)
     a, b = rng.random((4, 64)), rng.random((4, 64))
     d, s = np.zeros((4, 64)), np.zeros(4)
-    sdfg(A=a, B=b, D=d, S=s, L=4)
+    with dace.config.set_temporary("compiler", "cuda", "implementation", value=implementation):
+        sdfg(A=a, B=b, D=d, S=s, L=4)
     expected = a * b + np.exp(a)
     np.testing.assert_allclose(d, expected, rtol=1e-12)
     np.testing.assert_allclose(s, expected.sum(axis=1), rtol=1e-12)
@@ -114,5 +118,6 @@ if __name__ == "__main__":
     test_a_block_node_lowers_as_a_thread_node_on_a_cpu()
     test_blocked_gemm_with_mma_on_a_cpu()
     test_distributed_lanes_are_one_thread_strided_loop()
-    test_blocked_gemm_with_mma_on_a_gpu()
-    test_elementwise_and_sum_on_a_gpu()
+    for implementation in ("legacy", "experimental"):
+        test_blocked_gemm_with_mma_on_a_gpu(implementation)
+        test_elementwise_and_sum_on_a_gpu(implementation)

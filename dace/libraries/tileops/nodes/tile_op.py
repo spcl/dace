@@ -49,6 +49,12 @@ class TileOp(nodes.LibraryNode):
         default=4,
         desc="Warps of the thread block a BLOCK node spreads its lanes over (Triton's num_warps).",
     )
+    lanes_per_thread = properties.Property(
+        dtype=int,
+        default=1,
+        desc="Consecutive lanes each thread of a WARP or BLOCK node takes at a time (Triton's sizePerThread); a node "
+        "with a target ISA runs its ISA call on them, two fp16 lanes for one half2 instruction.",
+    )
 
     def can_lower_to_isa(self, state: dace.SDFGState, sdfg: dace.SDFG) -> bool:
         """Whether a backend header has a lowering for this configuration of the node."""
@@ -59,6 +65,10 @@ class TileOp(nodes.LibraryNode):
 
     def isa_tasklet(self, state: dace.SDFGState, sdfg: dace.SDFG, backend: str) -> nodes.Tasklet:
         raise NotImplementedError(f"{type(self).__name__} defines no ISA lowering")
+
+    def reads_lane_wise(self, connector: str) -> bool:
+        """Whether lane ``l`` of the output reads lane ``l`` of ``connector`` alone (an output connector: writes)."""
+        return self.lanes_independent
 
     def output_elements(self) -> int:
         """The elements of the output tile, over which a ``block`` lowering spreads its threads."""

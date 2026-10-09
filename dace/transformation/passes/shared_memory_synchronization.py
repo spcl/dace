@@ -7,6 +7,7 @@ from ordered_set import OrderedSet
 
 import dace
 from dace import SDFG, SDFGState, dtypes, properties
+from dace.libraries.tileops.expansions import TILE_THREADS_MAP
 from dace.sdfg.nodes import AccessNode, MapEntry, MapExit, NestedSDFG, Node
 from dace.sdfg.scope import is_in_scope
 from dace.sdfg.state import LoopRegion
@@ -38,7 +39,9 @@ class DefaultSharedMemorySync(ppl.Pass):
         collaborative_smem_copies: dict[AccessNode, SDFGState] = {}
         for node, parent_state in sdfg.all_nodes_recursive():
             if isinstance(node, MapExit) and node.schedule == dtypes.ScheduleType.GPU_ThreadBlock:
-                tb_map_exits[node] = parent_state
+                # The barriers of a tile node's threads are placed by InsertTileSync
+                if not node.map.label.startswith(TILE_THREADS_MAP):
+                    tb_map_exits[node] = parent_state
             elif isinstance(node, AccessNode) and self.is_collaborative_smem_write(node, parent_state):
                 collaborative_smem_copies[node] = parent_state
 
@@ -48,6 +51,12 @@ class DefaultSharedMemorySync(ppl.Pass):
     def is_collaborative_smem_write(self, node: AccessNode, state: SDFGState) -> bool:
         """Whether ``node`` is shared memory written in a kernel but outside any thread-block map."""
         if node.desc(state).storage != dtypes.StorageType.GPU_Shared:
+            return False
+        # The barriers of a tile node's threads are placed by InsertTileSync
+        if all(
+            isinstance(pred, NestedSDFG) and pred.sdfg.name.startswith(TILE_THREADS_MAP)
+            for pred in state.predecessors(node)
+        ):
             return False
         if all(
             isinstance(pred, MapExit) and pred.map.schedule == dtypes.ScheduleType.GPU_ThreadBlock

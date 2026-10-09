@@ -141,6 +141,10 @@ class TileMMA(TileOp):
         M, _, N = self.widths
         return M * N
 
+    def reads_lane_wise(self, connector: str) -> bool:
+        # A dot product reads a row of ``_a`` and a column of ``_b``
+        return connector not in ("_a", "_b")
+
     def pure_tasklet(self, state: dace.SDFGState, sdfg: dace.SDFG) -> nodes.Tasklet:
         self.validate(sdfg, state)
         M, K_inner, N = self.widths

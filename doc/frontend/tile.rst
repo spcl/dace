@@ -18,12 +18,27 @@ says what a whole block computes, and the compiler decides which thread computes
 * On a CPU one core runs the tile, as a loop over its lanes that the compiler vectorizes. A ``BLOCK`` node lowers
   exactly as a ``THREAD`` node does.
 * In a GPU kernel the threads of the block share the tile. Each node becomes a thread-block map whose thread ``t``
-  computes every ``threads``-th element from ``t``, so consecutive threads touch consecutive elements. The tiles move
-  to shared memory, and the code generator puts a ``__syncthreads()`` wherever a tile written by some threads is read
-  by others. A node whose lanes depend on each other (``sum``) runs on one thread of the block.
+  computes every ``threads``-th element from ``t``, so consecutive threads touch consecutive elements; a node with a
+  target ISA takes ``lanes_per_thread`` consecutive elements at a time, two fp16 lanes for one half2 instruction. The
+  tiles move to shared memory. A node whose lanes depend on each other (``sum``) runs on one thread of the block.
 
 The block has ``32 * num_warps`` threads, four warps unless a node's ``num_warps`` says otherwise. The vectorizer emits
 ``THREAD`` nodes, one thread's register tile, which lower to the instructions of a target ISA.
+
+Barriers
+--------
+
+:class:`~dace.transformation.passes.tile_synchronization.InsertTileSync` runs before the tile nodes expand. Every
+write of a tile leaves a token for the subset it wrote and the threads that wrote each element. Walking the kernel in
+program order, the first node that reads the subset on other threads -- an ``mma`` reading its operands, a ``sum``,
+plain code -- gets a :class:`~dace.libraries.standard.nodes.barrier.Barrier` before it, the latest point the write can
+be waited for; one barrier settles every token. A node that overwrites a subset other threads still read waits too, and
+a loop body is walked again from what its end leaves, which places the barrier the next iteration needs. Accesses that
+keep every element on its thread (an elementwise chain over one tile) need none. Tokens are per subset, so the slots of
+a circular buffer wait only for themselves.
+
+A ``Barrier`` waits for a warp, a thread block or the grid (:class:`~dace.libraries.standard.nodes.barrier.SyncScope`)
+and lowers to ``__syncwarp()``, ``__syncthreads()`` or, on AMD, the wavefront barrier; on a CPU it is nothing.
 
 Calls
 -----
@@ -95,15 +110,14 @@ On a CPU the map runs one block per core and each ``mma`` is a loop nest over th
 .. code-block:: c++
 
     __shared__ double acc[256];
+    fill_acc(...);                          // each thread two of the 256 elements
     for (k = 0; k < K; k += 8) {
-        __syncthreads();                    // the last mma read the tiles this iteration overwrites
-        __shared__ double A_tile[128];
-        __shared__ double B_tile[128];
+        __syncthreads();                    // the last mma still read the tiles this iteration overwrites
         copy_A_tile(...);                   // 128 threads, one element each
         copy_B_tile(...);
-        mma(...);                           // __syncthreads(), then each thread two of the 256 dot products
+        __syncthreads();                    // the mma reads rows and columns other threads loaded
+        mma(...);                           // each thread the dot products of its two elements of acc
     }
-    __syncthreads();
-    copy_C(...);
+    copy_C(...);                            // the same two elements of acc per thread: no barrier
 
 The same program runs on both; the block decides nothing about threads.
