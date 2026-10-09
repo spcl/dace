@@ -106,12 +106,15 @@ def data_param(node: "ExternalCall", arg: str, site: CallSite) -> tuple[str, str
     return f"{const}{ctype}* __restrict__ {arg}", f"&{conn}" if conn in site.by_value else conn
 
 
-def symbol_param(arg: str, sdfg: dace.SDFG) -> str:
-    if arg not in sdfg.symbols:
+def symbol_param(arg: str, defined: dict[str, dtypes.typeclass], sdfg: dace.SDFG) -> str:
+    """A symbol argument, typed where it is defined at the call: an SDFG symbol, an inter-state assignment, or the
+    iterator of a loop or map around the call."""
+    if arg not in defined:
         raise ValueError(
-            f"ExternalCall argument {arg!r} is neither a connected container nor a symbol of {sdfg.name!r}"
+            f"ExternalCall argument {arg!r} is neither a connected container nor a symbol defined at the call in "
+            f"{sdfg.name!r}"
         )
-    return f"{sdfg.symbols[arg].ctype} {arg}"
+    return f"{defined[arg].ctype} {arg}"
 
 
 def params_and_args(node: "ExternalCall", state: dace.SDFGState) -> tuple[list[str], list[str]]:
@@ -125,13 +128,14 @@ def params_and_args(node: "ExternalCall", state: dace.SDFGState) -> tuple[list[s
         )
     site = call_site(node, state)
     connected = {data_name(conn) for conn in site.descriptors}
+    defined = state.symbols_defined_at(node) if any(arg not in connected for arg in order) else {}
     params: list[str] = []
     call_args: list[str] = []
     for arg in order:
         if arg in connected:
             param, call_arg = data_param(node, arg, site)
         else:
-            param, call_arg = symbol_param(arg, state.sdfg), arg
+            param, call_arg = symbol_param(arg, defined, state.sdfg), arg
         params.append(param)
         call_args.append(call_arg)
     return params, call_args

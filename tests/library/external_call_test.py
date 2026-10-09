@@ -9,7 +9,9 @@ import pytest
 import dace
 from dace.libraries.standard.nodes import external_call
 from dace.sdfg import nodes
-from dace.transformation import passes
+from dace.sdfg.state import LoopRegion
+from dace.transformation import helpers, passes
+from dace.transformation.passes.outline_to_external_calls import replace_with_external_call
 
 N = dace.symbol("N", dtype=dace.int64)
 SIZE = 64
@@ -39,6 +41,13 @@ def scale_by(a: dace.float64[N], alpha: dace.float64, b: dace.float64[N]):
 def increment(a: dace.float64[N]):
     for i in dace.map[0:N]:
         a[i] = a[i] + 1.0
+
+
+@dace.program
+def accumulate_steps(a: dace.float64[N], b: dace.float64[N], T: dace.int64):
+    for t in range(T):
+        for i in dace.map[0:N]:
+            b[i] = b[i] + a[i] * t
 
 
 def outlined(program, name: str):
@@ -209,3 +218,32 @@ def test_a_reloaded_node_keeps_its_call_but_not_its_reference_nest():
     assert twin.standalone_sdfg is None
     with pytest.raises(ValueError, match="only use ExternCall"):
         reloaded.expand_library_nodes()
+
+
+def test_a_kernel_inside_a_loop_takes_the_loop_iterator_by_value(tmp_path):
+    sdfg = accumulate_steps.to_sdfg(simplify=True)
+    sdfg.name = "extcall_in_loop"
+    loop = next(r for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion))
+    # canonical loops name their iterator only on the loop, never in sdfg.symbols
+    sdfg.remove_symbol(loop.loop_variable)
+    state = next(b for b in loop.nodes() if isinstance(b, dace.SDFGState))
+    entry = next(n for n in state.nodes() if isinstance(n, nodes.MapEntry))
+    nsdfg = helpers.nest_state_subgraph(sdfg, state, state.scope_subgraph(entry))
+    call = replace_with_external_call(state, nsdfg, "accumulate_kernel")
+    call.lib_path = shared_library(
+        tmp_path,
+        f"void {call.symbol}(const double* a, double* b, int64_t N, int64_t t) {{"
+        " for (int64_t i = 0; i < N; ++i) b[i] += 2.0 * a[i] * t; }",
+    )
+    call.implementation = "ExternCall"
+    a = np.random.default_rng(6).random(SIZE)
+    b = np.zeros(SIZE)
+
+    sdfg(a=a, b=b, T=4, N=SIZE)
+
+    assert loop.loop_variable not in sdfg.symbols
+    assert (
+        call.signature
+        == f"const double* __restrict__ a, double* __restrict__ b, int64_t N, int64_t {loop.loop_variable}"
+    )
+    assert np.allclose(b, a * 2.0 * 6)
