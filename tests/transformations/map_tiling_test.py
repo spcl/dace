@@ -15,7 +15,7 @@ def test_map_tiling_with_strides():
 
     sdfg = vector_copy_strides.to_sdfg()
     sdfg.simplify()
-    assert len(sdfg.states()) == 1
+    assert len(list(sdfg.states())) == 1
 
     state = next(iter(sdfg.states()))
     state_nodes = state.nodes()
@@ -157,7 +157,7 @@ def test_symbol_rename_reaches_strip_mined_bound():
 
     sdfg = scale.to_sdfg(simplify=True)
     assert sdfg.apply_transformations(MapTiling, options=dict(tile_sizes=(32,))) == 1
-    state = sdfg.states()[0]
+    state = list(sdfg.states())[0]
     outer = next(n for n in state.nodes() if isinstance(n, dace.nodes.MapEntry) and state.entry_node(n) is None)
     inner = next(n for n in state.nodes() if isinstance(n, dace.nodes.MapEntry) and state.entry_node(n) is outer)
     tile_param = outer.map.params[0]

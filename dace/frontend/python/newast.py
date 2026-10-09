@@ -2242,7 +2242,7 @@ class ProgramVisitor(ExtNodeVisitor):
                         name = memlet.data
                         vname = "{c}_in_from_{s}{n}".format(
                             c=conn,
-                            s=self.sdfg.states().index(state),
+                            s=list(self.sdfg.states()).index(state),
                             n=(f"_{state.node_id(entry_node)}" if entry_node else ""),
                         )
                         self.accesses[(name, scope_memlet.subset, "r")] = (vname, orng)
@@ -2331,7 +2331,7 @@ class ProgramVisitor(ExtNodeVisitor):
                         name = memlet.data
                         vname = "{c}_out_of_{s}{n}".format(
                             c=conn,
-                            s=self.sdfg.states().index(state),
+                            s=list(self.sdfg.states()).index(state),
                             n=(f"_{state.node_id(exit_node)}" if exit_node else ""),
                         )
                         self.accesses[(name, scope_memlet.subset, "w")] = (vname, orng)

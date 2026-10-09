@@ -3291,15 +3291,13 @@ class AbstractControlFlowRegion(
             if isinstance(cfg, dace.SDFG):
                 yield cfg
 
-    def states(self) -> List[SDFGState]:
-        """Returns all states in this control flow graph, recursing into nested control flow regions."""
-        result = []
+    def states(self) -> Iterator[SDFGState]:
+        """Iterate over all states in this control flow graph, recursing into nested control flow regions."""
         for block in self.nodes():
             if isinstance(block, SDFGState):
-                result.append(block)
+                yield block
             elif isinstance(block, AbstractControlFlowRegion):
-                result.extend(block.states())
-        return result
+                yield from block.states()
 
     def all_control_flow_blocks(self, recursive=False) -> Iterator[ControlFlowBlock]:
         """Iterate over all control flow blocks in this control flow graph."""

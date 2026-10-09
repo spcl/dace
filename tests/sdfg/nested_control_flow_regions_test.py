@@ -30,8 +30,8 @@ def test_states_recurse_into_nested_regions_in_graph_order():
     loop.add_edge(body, conditional, dace.InterstateEdge())
     sdfg.add_edge(first, loop, dace.InterstateEdge())
 
-    assert sdfg.states() == [first, body, then_state], sdfg.states()
-    assert loop.states() == [body, then_state], loop.states()
+    assert list(sdfg.states()) == [first, body, then_state], sdfg.states()
+    assert list(loop.states()) == [body, then_state], loop.states()
 
 
 if __name__ == "__main__":

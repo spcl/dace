@@ -56,7 +56,7 @@ class ConditionMapInterchange(transformation.MultiStateTransformation):
         branch: ControlFlowRegion = self.cond_block.branches[0][1]
         branch_cond = self.cond_block.branches[0][0]
         cond_syms = set(branch_cond.get_free_symbols())
-        all_states = branch.states()
+        all_states = list(branch.states())
 
         # Prepend the condition computation
         cond_sym = graph.sdfg.add_symbol(f"{self.cond_block.label}_cond", dtypes.bool, find_new_name=True)

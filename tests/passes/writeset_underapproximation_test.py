@@ -315,7 +315,7 @@ def test_loop_in_map_multiplied_indices():
     results = pipeline.apply_pass(sdfg, {})[UnderapproximateWrites.__name__]
 
     nsdfg = sdfg.cfg_list[1].parent_nsdfg_node
-    map_state = sdfg.states()[0]
+    map_state = list(sdfg.states())[0]
     result = results[sdfg.cfg_id].approximation
     edge = map_state.out_edges(nsdfg)[0]
     assert len(result[edge].subset.subset_list) == 0
@@ -341,7 +341,7 @@ def test_loop_in_map():
     pipeline = Pipeline([UnderapproximateWrites()])
     results = pipeline.apply_pass(sdfg, {})[UnderapproximateWrites.__name__]
 
-    map_state = sdfg.states()[0]
+    map_state = list(sdfg.states())[0]
     edge = map_state.in_edges(map_state.data_nodes()[0])[0]
     result = results[sdfg.cfg_id].approximation
     expected_subset = Range.from_string("0:N, 0:M")

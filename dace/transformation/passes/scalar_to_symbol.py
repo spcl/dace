@@ -770,7 +770,7 @@ class ScalarToSymbolPromotion(passes.Pass):
         if len(to_promote) == 0:
             return None
 
-        for state in sdfg.states():
+        for state in list(sdfg.states()):
             scalar_nodes = [n for n in state.nodes() if isinstance(n, nodes.AccessNode) and n.data in to_promote]
             # Step 2: Assignment tasklets
             for node in scalar_nodes:

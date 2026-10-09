@@ -397,8 +397,8 @@ def test_create_tasklet_raw() -> None:
     )
 
     sdfg = stree.as_sdfg(validate=True)
-    assert len(sdfg.states()) == 1
-    state = sdfg.states()[0]
+    assert len(list(sdfg.states())) == 1
+    state = list(sdfg.states())[0]
     first_tasklet, write_read_node, second_tasklet, write_node = state.nodes()
 
     assert isinstance(first_tasklet, nodes.Tasklet)
@@ -429,7 +429,7 @@ def test_create_tasklet_waw() -> None:
     )
 
     sdfg = stree.as_sdfg(validate=True)
-    assert len(sdfg.states()) == 2
+    assert len(list(sdfg.states())) == 2
     s1, s2 = sdfg.states()
 
     s1_tasklet, s1_anode = s1.nodes()
@@ -690,7 +690,7 @@ def test_create_map_scope_write() -> None:
 
     sdfg = stree.as_sdfg(validate=True)
 
-    states = sdfg.states()
+    states = list(sdfg.states())
     assert len(states) == 1
     assert [type(node) for node in states[0].nodes()] == [
         nodes.MapEntry,
@@ -1344,7 +1344,7 @@ def test_multiple_copy_nodes() -> None:
 
     sdfg = stree.as_sdfg(validate=True)
 
-    states = sdfg.states()
+    states = list(sdfg.states())
     assert len(states) == 1, "expect one state"
 
     nodes = states[0].nodes()

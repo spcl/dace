@@ -119,7 +119,7 @@ def test_single_data_multiple_intermediate_accesses():
             ZRATIO[0, i] = t0 / t1
 
     sdfg = sdmi_accesses.to_sdfg(simplify=True)
-    assert len(sdfg.states()) == 1
+    assert len(list(sdfg.states())) == 1
 
     rng = np.random.default_rng(42)
     ZSOLQA = rng.random((1, 5, 5))
@@ -134,7 +134,7 @@ def test_single_data_multiple_intermediate_accesses():
 
     sdfg(ZSOLQA=ZSOLQA, ZEPSEC=ZEPSEC, ZQX=ZQX, LLINDEX3=ref_LLINDEX3, ZRATIO=ref_ZRATIO, ZSINKSUM=ref_ZSINKSUM)
 
-    graph = sdfg.states()[0]
+    graph = list(sdfg.states())[0]
     subgraph = SubgraphView(graph, list(graph.nodes()))
 
     me = MultiExpansion()

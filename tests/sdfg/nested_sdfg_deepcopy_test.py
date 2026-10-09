@@ -135,7 +135,7 @@ def test_deepcopy_top_level():
     nsdfg_node = state.add_nested_sdfg(nsdfg, {}, {})
 
     copy_sdfg = copy.deepcopy(sdfg)
-    copy_state = copy_sdfg.states()[0]
+    copy_state = list(copy_sdfg.states())[0]
     copy_nsdfg_node = copy_state.nodes()[0]
     for sd in copy_sdfg.all_sdfgs_recursive():
         if sd is copy_sdfg:
