@@ -172,6 +172,27 @@ def test_a_result_copy_whose_reader_runs_first_folds():
     assert "r" not in {node.data for node in sdfg.start_state.data_nodes()}
 
 
+def test_a_copy_out_of_a_view_bound_to_the_scalar_alone_stays():
+    """velocity_tendencies' ``max_value`` shape: ``produce -> v -views-> s -> use``; ``v`` views ``s`` and
+    nothing else, so dropping ``s`` would leave the view without data."""
+    sdfg = dace.SDFG("copy_out_of_a_view_bound_to_the_scalar")
+    sdfg.add_view("v", [1], dace.float64)
+    sdfg.add_scalar("s", dace.float64, transient=True)
+    sdfg.add_array("B", [1], dace.float64)
+    state = sdfg.add_state()
+    produce = state.add_tasklet("produce", {}, {"o"}, "o = 3.0")
+    v = state.add_access("v")
+    state.add_edge(produce, "o", v, None, dace.Memlet("v[0]"))
+    s = state.add_access("s")
+    state.add_edge(v, "views", s, None, dace.Memlet("s[0]"))
+    use = state.add_tasklet("use", {"x"}, {"y"}, "y = x")
+    state.add_edge(s, None, use, "x", dace.Memlet("s[0]"))
+    state.add_edge(use, "y", state.add_write("B"), None, dace.Memlet("B[0]"))
+    sdfg.validate()
+    assert FoldScalarReadCopies().apply_pass(sdfg, {}) is None
+    sdfg.validate()
+
+
 if __name__ == "__main__":
     test_a_read_only_copy_folds()
     test_a_same_element_update_folds()
@@ -183,3 +204,4 @@ if __name__ == "__main__":
     test_a_scalar_read_again_in_another_state_stays()
     test_a_result_copy_beside_an_unordered_reader_stays()
     test_a_result_copy_whose_reader_runs_first_folds()
+    test_a_copy_out_of_a_view_bound_to_the_scalar_alone_stays()
