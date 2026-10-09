@@ -85,15 +85,6 @@ required:
                     "for" and "while" from state transitions, allowing
                     code generators to generate appropriate code.
 
-            symbolic_positive:
-                type: bool
-                default: true
-                title: Treat all symbolic expressions as positive
-                description: >
-                    Every expression in which a symbolic value appears
-                    is treated as strictly positive. This is necessary
-                    for certain Range evaluations using Subgraph Fusion.
-
             match_exception:
                 type: bool
                 default: false

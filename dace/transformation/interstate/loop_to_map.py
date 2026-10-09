@@ -13,7 +13,15 @@ from dace.sdfg import dealias, graph as gr, nodes
 from dace.sdfg import SDFG, SDFGState
 from dace.sdfg import utils as sdutil
 from dace.sdfg.analysis import cfg as cfg_analysis
-from dace.sdfg.state import BreakBlock, ContinueBlock, ControlFlowRegion, LoopRegion, ReturnBlock, ConditionalBlock
+from dace.sdfg.state import (
+    BreakBlock,
+    ContinueBlock,
+    ControlFlowRegion,
+    LoopRegion,
+    ReturnBlock,
+    ConditionalBlock,
+    SymbolResolver,
+)
 import dace.transformation.helpers as helpers
 from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis
@@ -628,6 +636,8 @@ class LoopToMap(xf.MultiStateTransformation):
         a = sp.Wild("a", exclude=[itersym])
         b = sp.Wild("b", exclude=[itersym])
         data = mmlt.data
+        # Inside the body: a dependence only exists if the loop runs
+        facts = SymbolResolver().facts_at(state)
 
         if mmlt.dynamic and mmlt.src_subset.num_elements() != 1:
             # If pointers are involved, give up
@@ -642,7 +652,7 @@ class LoopToMap(xf.MultiStateTransformation):
             mmlt = align_memlet(state, edge, dst=False)
             data = mmlt.data
 
-        pread = propagate_subset([mmlt], sdfg.arrays[data], [itervar], subsets.Range([(start, end, step)]))
+        pread = propagate_subset([mmlt], sdfg.arrays[data], [itervar], subsets.Range([(start, end, step)]), facts)
         for candidate in write_memlets[data]:
             # Simple case: read and write are in the same subset
             read = src_subset
@@ -667,11 +677,11 @@ class LoopToMap(xf.MultiStateTransformation):
                 continue
             # Propagated read does not overlap with propagated write
             pwrite = propagate_subset(
-                [candidate], sdfg.arrays[data], [itervar], subsets.Range([(start, end, step)]), use_dst=True
+                [candidate], sdfg.arrays[data], [itervar], subsets.Range([(start, end, step)]), facts, use_dst=True
             )
             t_pread = _sanitize_by_index(indices, pread.src_subset if pread.src_subset is not None else pread.subset)
             pwrite = _sanitize_by_index(indices, pwrite.dst_subset if pwrite.dst_subset is not None else pwrite.subset)
-            if subsets.intersects(t_pread, pwrite) is False:
+            if subsets.intersects(t_pread, pwrite, facts) is False:
                 continue
             return False
 

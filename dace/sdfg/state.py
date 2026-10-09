@@ -2756,7 +2756,11 @@ class SymbolResolver:
         """The facts that hold inside ``block`` (inside the body, for a loop), or at ``node`` of the state ``block``: the
         SDFG's own facts, the ranges of the enclosing loops and maps whose step has a known sign, and the facts of an
         enclosing SDFG, translated through the nested SDFG node's symbol mapping."""
-        entry = block.scope_dict()[node] if node is not None else None
+        return self.facts_in_scope(block, block.scope_dict()[node] if node is not None else None)
+
+    def facts_in_scope(self, block: "ControlFlowBlock", entry: Optional[nd.EntryNode]) -> symbolic.Facts:
+        """The facts that hold inside the scope ``entry`` opens in the state ``block``, or inside ``block`` when it is
+        None; see ``facts_at``."""
         key = (block, entry)
         if key not in self._facts:
             self._facts[key] = self.derive_facts(block, entry)
@@ -2796,7 +2800,11 @@ class SymbolResolver:
             entry = block.scope_dict()[entry]
         for map_entry in reversed(maps):
             bound = map_entry.new_symbols(sdfg, block, self.defined_at(block, map_entry))
-            ranges = [(param, *rng[:3]) for param, rng in zip(map_entry.map.params, map_entry.map.range.ranges)]
+            # A bound with an approximation holds as its exact expression
+            ranges = [
+                (param, *(b.expr if isinstance(b, symbolic.SymExpr) else b for b in rng[:3]))
+                for param, rng in zip(map_entry.map.params, map_entry.map.range.ranges)
+            ]
             scopes.append((map_entry, bound, ranges if isinstance(map_entry, nd.MapEntry) else []))
         for owner, bound, ranges in scopes:
             # A scope rebinds its names: what held for an outer symbol of the same name no longer does
@@ -2994,17 +3002,21 @@ class AbstractControlFlowRegion(
                 block.propagate_memlets(nested_memlets)
                 sdprop._append_border_memlet_candidates(candidates, nested_memlets)
 
+        # The candidates are accessed inside the region, but the border memlets around it: a loop's range holds only
+        # inside its body
+        inside = SymbolResolver().facts_at(self)
+        facts = SymbolResolver().facts_at(self.parent_graph) if isinstance(self, LoopRegion) else inside
         for direction in border_memlets:
             for connector in border_memlets[direction]:
                 propagated = sdprop._propagate_border_memlet_candidates(
-                    candidates, self.sdfg.arrays, direction, connector
+                    candidates, self.sdfg.arrays, direction, connector, inside
                 )
                 if propagated is None:
                     continue
 
                 array_name = propagated.data if propagated.data is not None else connector
                 border_memlets[direction][connector] = sdprop._merge_border_memlet(
-                    border_memlets[direction][connector], propagated, self.sdfg.arrays[array_name]
+                    border_memlets[direction][connector], propagated, self.sdfg.arrays[array_name], facts
                 )
 
     @property
@@ -3997,7 +4009,9 @@ class LoopRegion(ControlFlowRegion):
                                updated in-place.
         :note: ``border_memlets`` mapping is updated in-place.
         """
-        facts = self.sdfg.facts()
+        # The candidates are accessed inside the body, the border memlets around the loop, where its range does not hold
+        body_facts = SymbolResolver().facts_at(self)
+        facts = SymbolResolver().facts_at(self.parent_graph)
         # Avoid cyclic import
         from dace.transformation.passes.analysis import loop_analysis
 
@@ -4046,6 +4060,7 @@ class LoopRegion(ControlFlowRegion):
                         self.sdfg.arrays,
                         direction,
                         connector,
+                        body_facts,
                         params=[self.loop_variable],
                         rng=loop_range,
                         scale_by_range=True,
@@ -4055,7 +4070,7 @@ class LoopRegion(ControlFlowRegion):
 
                     array_name = propagated.data if propagated.data is not None else connector
                     target_memlets[direction][connector] = sdprop._merge_border_memlet(
-                        target_memlets[direction][connector], propagated, self.sdfg.arrays[array_name]
+                        target_memlets[direction][connector], propagated, self.sdfg.arrays[array_name], facts
                     )
 
         if not self.inverted:
@@ -4085,7 +4100,7 @@ class LoopRegion(ControlFlowRegion):
 
                     array_name = propagated.data if propagated.data is not None else connector
                     border_memlets[direction][connector] = sdprop._merge_border_memlet(
-                        border_memlets[direction][connector], propagated, self.sdfg.arrays[array_name]
+                        border_memlets[direction][connector], propagated, self.sdfg.arrays[array_name], facts
                     )
 
     def _used_symbols_internal(
@@ -4316,6 +4331,7 @@ class ConditionalBlock(AbstractControlFlowRegion):
         sdprop._merge_meta_read_candidates(self, border_memlets, self.sdfg.arrays)
 
         has_condition = False
+        facts = SymbolResolver().facts_at(self)
 
         for condition, region in self._branches:
             has_condition = has_condition or condition is not None
@@ -4334,7 +4350,7 @@ class ConditionalBlock(AbstractControlFlowRegion):
 
                     array_name = propagated.data if propagated.data is not None else connector
                     border_memlets[direction][connector] = sdprop._merge_border_memlet_upper_bound(
-                        border_memlets[direction][connector], propagated, self.sdfg.arrays[array_name]
+                        border_memlets[direction][connector], propagated, self.sdfg.arrays[array_name], facts
                     )
 
     def _used_symbols_internal(

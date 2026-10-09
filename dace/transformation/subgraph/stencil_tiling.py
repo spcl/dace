@@ -6,7 +6,7 @@ import dace
 from dace import dtypes, symbolic
 from dace.properties import make_properties, Property, ShapeProperty
 from dace.sdfg import nodes
-from dace.sdfg.state import SDFGState
+from dace.sdfg.state import SDFGState, SymbolResolver
 from dace.transformation import transformation
 from dace.sdfg.propagation import _propagate_node
 
@@ -64,7 +64,7 @@ class StencilTiling(transformation.SubgraphTransformation):
     )
 
     @staticmethod
-    def coverage_dicts(sdfg, graph, map_entry, outer_range=True):
+    def coverage_dicts(sdfg, graph, map_entry, facts: symbolic.Facts, outer_range=True):
         """
         returns a tuple of two dicts:
         the first dict has as a key all data entering the map
@@ -101,7 +101,7 @@ class StencilTiling(transformation.SubgraphTransformation):
                 entry_coverage[e.data.data] = rng
             else:
                 old_coverage = entry_coverage[e.data.data]
-                entry_coverage[e.data.data] = subsets.union(old_coverage, rng)
+                entry_coverage[e.data.data] = subsets.union(old_coverage, rng, facts)
 
         # look at inner memlets at map exit
         for e in graph.in_edges(map_exit):
@@ -118,7 +118,7 @@ class StencilTiling(transformation.SubgraphTransformation):
                 exit_coverage[e.data.data] = rng
             else:
                 old_coverage = exit_coverage[e.data.data]
-                exit_coverage[e.data.data] = subsets.union(old_coverage, rng)
+                exit_coverage[e.data.data] = subsets.union(old_coverage, rng, facts)
 
         # return both coverages as a tuple
         return (entry_coverage, exit_coverage)
@@ -166,6 +166,8 @@ class StencilTiling(transformation.SubgraphTransformation):
         # 1.1: There has to be more than one outermost scope map entry
         if len(map_entries) <= 1:
             return False
+        # The maps may differ in their ranges, so only what holds around them is assumed
+        facts = SymbolResolver().facts_at(graph, map_entries[0])
 
         # 1.2: check basic constraints:
         # - all parameters have to be the same (this implies same length)
@@ -229,8 +231,8 @@ class StencilTiling(transformation.SubgraphTransformation):
         coverages = {}
         memlets = {}
         for map_entry in map_entries:
-            coverages[map_entry] = StencilTiling.coverage_dicts(sdfg, graph, map_entry)
-            memlets[map_entry] = StencilTiling.coverage_dicts(sdfg, graph, map_entry, outer_range=False)
+            coverages[map_entry] = StencilTiling.coverage_dicts(sdfg, graph, map_entry, facts)
+            memlets[map_entry] = StencilTiling.coverage_dicts(sdfg, graph, map_entry, facts, outer_range=False)
 
         # get DAG neighbours for each map
         dag_neighbors = StencilTiling.topology(sdfg, graph, map_entries)
@@ -261,7 +263,9 @@ class StencilTiling(transformation.SubgraphTransformation):
                     parent_coverage = cov
                     children_coverage = None
                     if data_name in coverages[child_entry][0]:
-                        children_coverage = subsets.union(children_coverage, coverages[child_entry][0][data_name])
+                        children_coverage = subsets.union(
+                            children_coverage, coverages[child_entry][0][data_name], facts
+                        )
 
                     # TODO: Is there a better fix for this?
                     if children_coverage is None:
@@ -287,8 +291,12 @@ class StencilTiling(transformation.SubgraphTransformation):
                             return False
                         try:
                             symbol = next(iter(params))
-                            param_parent_coverage[symbol] = subsets.union(param_parent_coverage[symbol], p_subset)
-                            param_children_coverage[symbol] = subsets.union(param_children_coverage[symbol], c_subset)
+                            param_parent_coverage[symbol] = subsets.union(
+                                param_parent_coverage[symbol], p_subset, facts
+                            )
+                            param_children_coverage[symbol] = subsets.union(
+                                param_children_coverage[symbol], c_subset, facts
+                            )
 
                         except StopIteration:
                             # current dim has no symbol associated.
@@ -319,6 +327,8 @@ class StencilTiling(transformation.SubgraphTransformation):
         subgraph = self.subgraph_view(sdfg)
         graph: SDFGState = subgraph.graph
         map_entries = helpers.get_outermost_scope_maps(sdfg, graph, subgraph)
+        # The maps may differ in their ranges, so only what holds around them is assumed
+        facts = SymbolResolver().facts_at(graph, map_entries[0])
 
         result = StencilTiling.topology(sdfg, graph, map_entries)
         (children_dict, parent_dict, sink_maps) = result
@@ -351,7 +361,7 @@ class StencilTiling(transformation.SubgraphTransformation):
         # each of those two maps from data name to outer range
         coverage = {}
         for map_entry in map_entries:
-            coverage[map_entry] = StencilTiling.coverage_dicts(sdfg, graph, map_entry, outer_range=True)
+            coverage[map_entry] = StencilTiling.coverage_dicts(sdfg, graph, map_entry, facts, outer_range=True)
 
         # we have a mapping from data name to outer range
         # however we want a mapping from map parameters to outer ranges
@@ -393,13 +403,13 @@ class StencilTiling(transformation.SubgraphTransformation):
             # and from that infer mapping variable -> outer range
             local_ranges = {dn: None for dn in coverage[map_entry][1].keys()}
             for data_name, cov in coverage[map_entry][1].items():
-                local_ranges[data_name] = subsets.union(local_ranges[data_name], cov)
+                local_ranges[data_name] = subsets.union(local_ranges[data_name], cov, facts)
                 # now look at proceeding maps
                 # and union those subsets -> could be larger with stencil indent
                 for child_map in children_dict[map_entry]:
                     if data_name in coverage[child_map][0]:
                         local_ranges[data_name] = subsets.union(
-                            local_ranges[data_name], coverage[child_map][0][data_name]
+                            local_ranges[data_name], coverage[child_map][0][data_name], facts
                         )
 
             # final assignent: combine local_ranges and variable_mapping
@@ -410,7 +420,7 @@ class StencilTiling(transformation.SubgraphTransformation):
                     # create new range from this subset and assign
                     rng = subsets.Range((r,))
                     if param:
-                        inferred_ranges[map_entry][param] = subsets.union(inferred_ranges[map_entry][param], rng)
+                        inferred_ranges[map_entry][param] = subsets.union(inferred_ranges[map_entry][param], rng, facts)
 
         # get parameters -- should all be the same
         params = next(iter(map_entries)).map.params.copy()

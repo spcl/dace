@@ -3,7 +3,7 @@
 
 from dace import sdfg as sd
 from dace.sdfg import utils as sdutil
-from dace.sdfg.state import ControlFlowRegion, LoopRegion, ConditionalBlock, SDFGState
+from dace.sdfg.state import ControlFlowRegion, LoopRegion, ConditionalBlock, SDFGState, SymbolResolver
 from dace.transformation import transformation, helpers
 from dace.transformation.passes.analysis import loop_analysis
 from dace.sdfg.sdfg import InterstateEdge
@@ -121,7 +121,8 @@ class LoopOverwriteElimination(transformation.MultiStateTransformation):
                     if e.data.dynamic or e.data.wcr is not None:
                         return False
                     write_subsets.add(e.data.get_dst_subset(e, state))
-                if any(not intersects(rs, ws) for rs in read_subsets for ws in write_subsets):
+                facts = SymbolResolver().facts_at(state, dn)
+                if any(not intersects(rs, ws, facts) for rs in read_subsets for ws in write_subsets):
                     return False
 
         # Every write needs to be independent of the loop index.
@@ -158,7 +159,8 @@ class LoopOverwriteElimination(transformation.MultiStateTransformation):
                     src_subset = copy.deepcopy(e.data.get_src_subset(e, state))
                     src_subset.replace({self.loop.loop_variable: end})
                     # None of write_subsets should lie within the new subset
-                    if any(intersects(ws_ss, src_subset) for ws_ss in write_subsets[dn.data]):
+                    facts = SymbolResolver().facts_at(state, dn)
+                    if any(intersects(ws_ss, src_subset, facts) for ws_ss in write_subsets[dn.data]):
                         return False
 
         # No conditional edge may depend on the loop variable.

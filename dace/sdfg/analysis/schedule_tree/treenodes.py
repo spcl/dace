@@ -171,6 +171,8 @@ class ScheduleTreeScope(ScheduleTreeNode):
                             root.containers[memlet.data],
                             propagate_keys,
                             propagate_values,
+                            # A schedule tree carries no facts about its symbols
+                            symbolic.Facts.none(),
                             undefined_variables=current_locals,
                             use_dst=not inputs,
                         )

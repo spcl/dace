@@ -20,6 +20,7 @@ from dace.sdfg.state import (
     StateSubgraphView,
     LoopRegion,
     ControlFlowRegion,
+    SymbolResolver,
 )
 from dace.sdfg.scope import ScopeSubgraphView
 from dace.sdfg import nodes as nd, graph as gr, propagation
@@ -836,6 +837,10 @@ def consolidate_edges_scope(state: SDFGState, scope_node: Union[nd.EntryNode, nd
         elif data_to_conn[odata] != conn:  # Need to consolidate
             connectors_to_remove.add(conn)
 
+    # The outer side of the scope
+    facts = SymbolResolver().facts_at(
+        state, scope_node if isinstance(scope_node, nd.EntryNode) else state.entry_node(scope_node)
+    )
     for conn in connectors_to_remove:
         e = edges_by_connector[conn][0]
         odata = get_outer_data(e)
@@ -853,7 +858,7 @@ def consolidate_edges_scope(state: SDFGState, scope_node: Union[nd.EntryNode, nd
         assert len(edges_to_remove) == 1 and len(out_edges) == 1
         edge_to_remove = edges_to_remove[0]
         out_edge = out_edges[0]
-        set_outer_subset(out_edge, sbs.union(get_outer_subset(out_edge), get_outer_subset(edge_to_remove)))
+        set_outer_subset(out_edge, sbs.union(get_outer_subset(out_edge), get_outer_subset(edge_to_remove), facts))
 
         # Check if dangling connectors have been created and remove them,
         # as well as their parent edges

@@ -2211,9 +2211,9 @@ class ProgramVisitor(ExtNodeVisitor):
             if n == name and m == mode:
                 if r == rng:
                     return True
-                elif r.covers(rng):
+                elif r.covers(rng, self.sdfg.facts()):
                     print("WARNING: New access {n}[{rng}] already covered by {n}[{r}]".format(n=name, rng=rng, r=r))
-                elif rng.covers(r):
+                elif rng.covers(r, self.sdfg.facts()):
                     print("WARNING: New access {n}[{rng}] covers previous access {n}[{r}]".format(n=name, rng=rng, r=r))
                 return False
 
@@ -2281,7 +2281,9 @@ class ProgramVisitor(ExtNodeVisitor):
                 arr = self._get_array_or_closure(memlet.data)
 
                 for s, r in symbols.items():
-                    memlet = propagate_subset([memlet], arr, [s], r, use_dst=False, defined_variables=set())
+                    memlet = propagate_subset(
+                        [memlet], arr, [s], r, self.sdfg.facts(), use_dst=False, defined_variables=set()
+                    )
                 if _subset_has_indirection(memlet.subset, self):
                     read_node = entry_node
                     if entry_node is None:
@@ -2371,7 +2373,9 @@ class ProgramVisitor(ExtNodeVisitor):
                 arr = self._get_array_or_closure(memlet.data)
 
                 for s, r in symbols.items():
-                    memlet = propagate_subset([memlet], arr, [s], r, use_dst=True, defined_variables=set())
+                    memlet = propagate_subset(
+                        [memlet], arr, [s], r, self.sdfg.facts(), use_dst=True, defined_variables=set()
+                    )
                 if _subset_has_indirection(memlet.subset, self):
                     write_node = exit_node
                     if exit_node is None:
@@ -3911,10 +3915,7 @@ class ProgramVisitor(ExtNodeVisitor):
             if result in self.views and new_name == self.views[result][1].data:
                 # The view's memlet is built from a string, so match its symbols to the target's by name
                 read_rng = _retype_symbols_like(self.views[result][1].subset, new_rng)
-                try:
-                    needs_copy = not (new_rng.intersects(read_rng) == False)
-                except TypeError:
-                    needs_copy = True
+                needs_copy = new_rng.intersects(read_rng, self.sdfg.facts()) is not False
                 if needs_copy:
                     view = self.sdfg.arrays[result]
                     cname, carr = self.sdfg.add_transient(result, view.shape, view.dtype, find_new_name=True)

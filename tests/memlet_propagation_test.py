@@ -2,6 +2,7 @@
 import dace
 import numpy as np
 from dace.sdfg.propagation import propagate_memlets_sdfg, propagate_subset
+from dace.sdfg.state import SymbolResolver
 
 
 def test_conditional():
@@ -175,18 +176,21 @@ def test_strided_write_keeps_the_multiplier():
     propagate_memlets_sdfg(sdfg)
 
     state = next(s for s in sdfg.states() if any(isinstance(n, dace.sdfg.nodes.MapExit) for n in s.nodes()))
-    out = next(
-        e.data
+    out_edge = next(
+        e
         for e in state.edges()
         if isinstance(e.src, dace.sdfg.nodes.MapExit)
         and isinstance(e.dst, dace.sdfg.nodes.AccessNode)
         and e.dst.data == "C"
     )
+    out = out_edge.data
 
     assert out.subset.ranges == [(0, 2 * N - 2, 2)], out.subset
     assert out.subset.num_elements() == N, out.subset.num_elements()
     # The written elements must be inside the propagated set; the bug put 2*N-2 outside it.
-    assert out.subset.covers(dace.subsets.Range([(2 * N - 2, 2 * N - 2, 1)]))
+    # The element is written inside the map, so the map runs
+    facts = SymbolResolver().facts_at(state, out_edge.src)
+    assert out.subset.covers(dace.subsets.Range([(2 * N - 2, 2 * N - 2, 1)]), facts)
 
 
 def test_typed_parameter_symbol():
@@ -204,11 +208,15 @@ def test_typed_parameter_symbol():
     memlet = dace.Memlet(data="A", subset=dace.subsets.Range([(i, i, 1), (j, j, 1)]))
 
     # Scope-local range: only ``i`` and ``N`` are defined outside, so the dimension over ``j`` is overapproximated
-    local = propagate_subset([memlet], arr, ["j"], dace.subsets.Range([(b, e - 1, 1)]), defined_variables={i, N})
+    local = propagate_subset(
+        [memlet], arr, ["j"], dace.subsets.Range([(b, e - 1, 1)]), dace.symbolic.Facts.none(), defined_variables={i, N}
+    )
     assert local.subset == dace.subsets.Range([(i, i, 1), (0, N - 1, 1)]), local.subset
 
     # Defined range: the typed ``j`` is still the parameter and is propagated exactly
-    defined = propagate_subset([memlet], arr, ["j"], dace.subsets.Range([(0, N - 1, 1)]), defined_variables={i, N})
+    defined = propagate_subset(
+        [memlet], arr, ["j"], dace.subsets.Range([(0, N - 1, 1)]), dace.symbolic.Facts.none(), defined_variables={i, N}
+    )
     assert defined.subset == dace.subsets.Range([(i, i, 1), (0, N - 1, 1)]), defined.subset
     assert "j" not in defined.subset.free_symbols
 

@@ -1177,6 +1177,9 @@ def validate_state(
                 raise error
 
     if Config.get_bool("experimental.check_race_conditions"):
+        from dace.sdfg.state import SymbolResolver
+
+        facts = SymbolResolver().facts_at(state)
         node_labels = []
         write_accesses = defaultdict(list)
         read_accesses = defaultdict(list)
@@ -1200,14 +1203,14 @@ def validate_state(
                     )
                     no_wcr = writes[i]["wcr"] is None and writes[j]["wcr"] is None
                     if same_or_unreachable_nodes and no_wcr:
-                        subsets_intersect = subsets.intersects(writes[i]["subset"], writes[j]["subset"])
+                        subsets_intersect = subsets.intersects(writes[i]["subset"], writes[j]["subset"], facts)
                         if subsets_intersect:
                             warnings.warn(f'Memlet range overlap while writing to "{node}" in state "{state.label}"')
             # Check read-write data races.
             for write in writes:
                 for read in reads:
                     if not nx.has_path(state.nx, read["node"], write["node"]) and subsets.intersects(
-                        write["subset"], read["subset"]
+                        write["subset"], read["subset"], facts
                     ):
                         warnings.warn(f'Memlet range overlap while writing to "{node}" in state "{state.label}"')
 

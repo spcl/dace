@@ -9,7 +9,7 @@ import sympy
 from typing import List, Tuple
 
 from dace.sdfg.sdfg import SDFG
-from dace.sdfg.state import SDFGState, StateSubgraphView
+from dace.sdfg.state import SDFGState, StateSubgraphView, SymbolResolver
 from dace.sdfg import nodes as nds
 from dace.memlet import Memlet
 from dace.sdfg import utils as sdutil
@@ -63,10 +63,11 @@ class OTFMapFusion(transformation.SingleStateTransformation):
         # Condition: Consumed is covered by produced data
         produce_edge = next(graph.edges_between(self.first_map_exit, self.array).__iter__())
         consume_edges = graph.edges_between(self.array, self.second_map_entry)
+        facts = SymbolResolver().facts_at(graph, self.array)
         for edge in consume_edges:
             read_memlet = edge.data
             write_memlet = produce_edge.data
-            if not write_memlet.subset.covers_precise(read_memlet.subset):
+            if not write_memlet.subset.covers_precise(read_memlet.subset, facts):
                 return False
 
         # First memlets

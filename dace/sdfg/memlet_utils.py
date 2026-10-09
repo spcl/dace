@@ -87,6 +87,10 @@ class MemletReplacer(ast.NodeTransformer):
         return self.generic_visit(node)
 
 
+# Memlet sets and dictionaries have no place in a graph, so their proofs assume nothing about symbols
+_NO_FACTS = symbolic.Facts.none()
+
+
 class MemletSet(Set[Memlet]):
     """
     Implements a set of memlets that considers subsets that intersect or are covered by its other memlets.
@@ -141,14 +145,14 @@ class MemletSet(Set[Memlet]):
         # TODO(later): Consider other_subset as well
         for existing_memlet in self.internal_set[elem.data]:
             try:
-                if subsets.intersects(existing_memlet.subset, elem.subset) == True:  # Definitely intersects
-                    if existing_memlet.subset.covers(elem.subset):
+                if subsets.intersects(existing_memlet.subset, elem.subset, _NO_FACTS) == True:  # Definitely intersects
+                    if existing_memlet.subset.covers(elem.subset, _NO_FACTS):
                         break  # Nothing to do
 
                     # Create a new union memlet
                     self.internal_set[elem.data].remove(existing_memlet)
                     new_memlet = copy.deepcopy(existing_memlet)
-                    new_memlet.subset = subsets.union(existing_memlet.subset, elem.subset)
+                    new_memlet.subset = subsets.union(existing_memlet.subset, elem.subset, _NO_FACTS)
                     self.internal_set[elem.data].add(new_memlet)
                     break
             except TypeError:  # Indeterminate
@@ -163,11 +167,11 @@ class MemletSet(Set[Memlet]):
         if elem.data not in self.internal_set:
             return False
         for existing_memlet in self.internal_set[elem.data]:
-            if existing_memlet.subset.covers(elem.subset):
+            if existing_memlet.subset.covers(elem.subset, _NO_FACTS):
                 return True
             if self.intersection_is_contained:
                 try:
-                    if subsets.intersects(existing_memlet.subset, elem.subset) == False:
+                    if subsets.intersects(existing_memlet.subset, elem.subset, _NO_FACTS) == False:
                         continue
                     else:  # May intersect or indeterminate
                         return True
@@ -218,13 +222,15 @@ class MemletDict(Dict[Memlet, T]):
             key = (existing_memlet.subset, elem.subset)
             is_covered = self.covers_cache.get(key, None)
             if is_covered is None:
-                is_covered = existing_memlet.subset.covers(elem.subset)
+                is_covered = existing_memlet.subset.covers(elem.subset, _NO_FACTS)
                 self.covers_cache[key] = is_covered
             if is_covered:
                 return existing_memlet
 
             try:
-                if subsets.intersects(existing_memlet.subset, elem.subset) == False:  # Definitely does not intersect
+                if (
+                    subsets.intersects(existing_memlet.subset, elem.subset, _NO_FACTS) == False
+                ):  # Definitely does not intersect
                     continue
             except TypeError:
                 pass

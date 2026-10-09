@@ -16,6 +16,7 @@ from dace.sdfg.state import (
     ControlFlowRegion,
     LoopRegion,
     ReturnBlock,
+    SymbolResolver,
 )
 import dace.subsets as subsets
 from typing import AbstractSet, Dict, Iterable, List, Optional, Tuple, Set, Union
@@ -1188,7 +1189,9 @@ def is_symbol_unused(sdfg: SDFG, sym: str) -> bool:
     return True
 
 
-def are_subsets_contiguous(subset_a: subsets.Subset, subset_b: subsets.Subset, dim: int = None) -> bool:
+def are_subsets_contiguous(
+    subset_a: subsets.Subset, subset_b: subsets.Subset, facts: symbolic.Facts, dim: int = None
+) -> bool:
 
     if dim is not None:
         # A version that only checks for contiguity in certain
@@ -1212,7 +1215,7 @@ def are_subsets_contiguous(subset_a: subsets.Subset, subset_b: subsets.Subset, d
         return ab == True or a_overlap_b == True or ba == True or b_overlap_a == True
 
     # General case
-    bbunion = subsets.bounding_box_union(subset_a, subset_b)
+    bbunion = subsets.bounding_box_union(subset_a, subset_b, facts)
     try:
         if bbunion.num_elements() == (subset_a.num_elements() + subset_b.num_elements()):
             return True
@@ -1222,7 +1225,9 @@ def are_subsets_contiguous(subset_a: subsets.Subset, subset_b: subsets.Subset, d
     return False
 
 
-def find_contiguous_subsets(subset_list: List[subsets.Subset], dim: int = None) -> Set[subsets.Subset]:
+def find_contiguous_subsets(
+    subset_list: List[subsets.Subset], facts: symbolic.Facts, dim: int = None
+) -> Set[subsets.Subset]:
     """
     Finds the set of largest contiguous subsets in a list of subsets.
 
@@ -1236,16 +1241,16 @@ def find_contiguous_subsets(subset_list: List[subsets.Subset], dim: int = None) 
         for sa, sb in itertools.product(subset_set, subset_set):
             if sa is sb:
                 continue
-            if sa.covers(sb):
+            if sa.covers(sb, facts):
                 subset_set.remove(sb)
                 break
-            elif sb.covers(sa):
+            elif sb.covers(sa, facts):
                 subset_set.remove(sa)
                 break
-            elif are_subsets_contiguous(sa, sb, dim):
+            elif are_subsets_contiguous(sa, sb, facts, dim):
                 subset_set.remove(sa)
                 subset_set.remove(sb)
-                subset_set.add(subsets.bounding_box_union(sa, sb))
+                subset_set.add(subsets.bounding_box_union(sa, sb, facts))
                 break
         else:  # No modification performed
             break
@@ -1657,6 +1662,7 @@ def make_map_internal_write_external(
         return
 
     # Compute the union of the destination subsets of the edges that write to `access.`
+    facts = SymbolResolver().facts_at(state, access)
     in_union = None
     map_dependency = False
     for e in state.in_edges(access):
@@ -1666,7 +1672,7 @@ def make_map_internal_write_external(
         if in_union is None:
             in_union = subset
         else:
-            in_union = in_union.union(subset)
+            in_union = subsets.union(in_union, subset, facts)
 
     # If none of the input subsets depend on the map parameters, then abort, since the array is thread-local.
     if not map_dependency:
@@ -1679,7 +1685,7 @@ def make_map_internal_write_external(
     else:
         for e in state.out_edges(access):
             subset = e.data.get_src_subset(e, state)
-            if not in_union.covers(subset):
+            if not in_union.covers(subset, facts):
                 covers_out = False
                 break
 

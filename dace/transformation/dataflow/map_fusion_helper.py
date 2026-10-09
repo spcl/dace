@@ -5,6 +5,7 @@ from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Union
 import dace
 from dace import symbolic
 from dace.sdfg import graph, nodes as nodes, validation
+from dace.sdfg.state import SymbolResolver
 from dace.transformation import helpers
 
 
@@ -211,10 +212,12 @@ def get_new_conn_name(
     # NOTE: One could also say that we should only do that if `edge_that_is_already_there`
     #   covers the new one, but since the order, is kind of arbitrary, we test if
     #   either one covers.
+    # The Maps are being rewired, so the facts are the state's, without those of enclosing scopes
+    facts = SymbolResolver().facts_at(state)
     return (
         (edge_that_is_already_present.dst_conn[3:], True)
-        if edge_that_is_already_present_subset.covers(edge_to_move_subset)
-        or edge_to_move_subset.covers(edge_that_is_already_present_subset)
+        if edge_that_is_already_present_subset.covers(edge_to_move_subset, facts)
+        or edge_to_move_subset.covers(edge_that_is_already_present_subset, facts)
         else (to_node.next_connector(old_conn), False)
     )
 

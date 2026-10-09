@@ -1158,15 +1158,18 @@ def _merge_meta_read_candidates(region, border_memlets, arrays) -> None:
     :param arrays: The array descriptor mapping of the containing SDFG.
     :note: ``border_memlets`` mapping is updated in-place.
     """
+    from dace.sdfg.state import SymbolResolver
+
     candidates = _make_border_memlets(border_memlets, as_lists=True)
     _collect_region_meta_read_candidates(region, candidates)
+    facts = SymbolResolver().facts_at(region)
     for connector in border_memlets["in"]:
-        propagated = _propagate_border_memlet_candidates(candidates, arrays, "in", connector)
+        propagated = _propagate_border_memlet_candidates(candidates, arrays, "in", connector, facts)
         if propagated is None:
             continue
         array_name = propagated.data if propagated.data is not None else connector
         border_memlets["in"][connector] = _merge_border_memlet(
-            border_memlets["in"][connector], propagated, arrays[array_name]
+            border_memlets["in"][connector], propagated, arrays[array_name], facts
         )
 
 
@@ -1187,7 +1190,7 @@ def _append_border_memlet_candidates(border_memlets, propagated_memlets) -> None
                 border_memlets[direction][connector].append(memlet)
 
 
-def _merge_border_memlet(existing: Memlet, incoming: Memlet, array: data.Data) -> Memlet:
+def _merge_border_memlet(existing: Memlet, incoming: Memlet, array: data.Data, facts: symbolic.Facts) -> Memlet:
     """
     Merge two border memlets using union aggregation semantics.
 
@@ -1201,6 +1204,7 @@ def _merge_border_memlet(existing: Memlet, incoming: Memlet, array: data.Data) -
     :param incoming: The newly propagated memlet to merge into the result.
     :param array: The array descriptor used to fall back to a full-array subset
                   when subset unioning cannot preserve a more precise result.
+    :param facts: The facts that hold where the memlets are merged.
     :return: The merged memlet.
     """
     if incoming is None:
@@ -1228,7 +1232,7 @@ def _merge_border_memlet(existing: Memlet, incoming: Memlet, array: data.Data) -
         if result.subset is not None:
             if result.subset.dims() != incoming.subset.dims():
                 raise ValueError("Cannot merge subset ranges of unequal dimension!")
-            result.subset = subsets.union(result.subset, incoming.subset)
+            result.subset = subsets.union(result.subset, incoming.subset, facts)
             if result.subset is None:
                 result.subset = subsets.Range.from_array(array)
         else:
@@ -1237,7 +1241,9 @@ def _merge_border_memlet(existing: Memlet, incoming: Memlet, array: data.Data) -
     return result
 
 
-def _merge_border_memlet_upper_bound(existing: Memlet, incoming: Memlet, array: data.Data) -> Memlet:
+def _merge_border_memlet_upper_bound(
+    existing: Memlet, incoming: Memlet, array: data.Data, facts: symbolic.Facts
+) -> Memlet:
     """
     Merge two border memlets using upper-bound conditional semantics.
 
@@ -1251,6 +1257,7 @@ def _merge_border_memlet_upper_bound(existing: Memlet, incoming: Memlet, array: 
                      result.
     :param array: The array descriptor used to fall back to a full-array subset
                   when subset unioning cannot preserve a more precise result.
+    :param facts: The facts that hold where the memlets are merged.
     :return: The merged memlet that conservatively upper-bounds the branches.
     """
     if incoming is None:
@@ -1278,7 +1285,7 @@ def _merge_border_memlet_upper_bound(existing: Memlet, incoming: Memlet, array: 
         if result.subset is not None:
             if result.subset.dims() != incoming.subset.dims():
                 raise ValueError("Cannot merge subset ranges of unequal dimension!")
-            result.subset = subsets.union(result.subset, incoming.subset)
+            result.subset = subsets.union(result.subset, incoming.subset, facts)
             if result.subset is None:
                 result.subset = subsets.Range.from_array(array)
         else:
@@ -1288,7 +1295,14 @@ def _merge_border_memlet_upper_bound(existing: Memlet, incoming: Memlet, array: 
 
 
 def _propagate_border_memlet_candidates(
-    candidates, arrays, direction: str, connector: str, params=None, rng=None, scale_by_range: bool = False
+    candidates,
+    arrays,
+    direction: str,
+    connector: str,
+    facts: symbolic.Facts,
+    params=None,
+    rng=None,
+    scale_by_range: bool = False,
 ) -> Memlet:
     """
     Propagate candidate memlets through a symbolic iteration range.
@@ -1304,6 +1318,7 @@ def _propagate_border_memlet_candidates(
                       direction should be propagated.
     :param connector: The connector name whose candidate memlets should be
                       propagated.
+    :param facts: The facts that hold where the candidates are, inside ``rng``.
     :param params: Optional iteration variable names for the propagation range.
                    If omitted together with ``rng``, a dummy singleton range is
                    used.
@@ -1324,7 +1339,7 @@ def _propagate_border_memlet_candidates(
 
     array_name = next((memlet.data for memlet in memlets if memlet.data is not None), connector)
     array = arrays[array_name]
-    propagated = propagate_subset(memlets, array, params, rng, use_dst=(direction == "out"))
+    propagated = propagate_subset(memlets, array, params, rng, facts, use_dst=(direction == "out"))
 
     if any(memlet.dynamic and memlet.volume == 0 for memlet in memlets):
         propagated.dynamic = True
@@ -1352,8 +1367,11 @@ def _propagate_state_border_memlets(state: "SDFGState", border_memlets, arrays) 
                    fallback behavior.
     :note: The ``border_memlets`` mapping is updated in-place.
     """
+    from dace.sdfg.state import SymbolResolver
+
     candidates = _make_border_memlets(border_memlets, as_lists=True)
     _collect_state_border_memlet_candidates(state, candidates)
+    facts = SymbolResolver().facts_at(state)
 
     params = []
     ranges = []
@@ -1374,6 +1392,7 @@ def _propagate_state_border_memlets(state: "SDFGState", border_memlets, arrays) 
                 arrays,
                 direction,
                 connector,
+                facts,
                 params=params,
                 rng=rng,
                 scale_by_range=False,
@@ -1395,7 +1414,7 @@ def _propagate_state_border_memlets(state: "SDFGState", border_memlets, arrays) 
 
             array_name = propagated.data if propagated.data is not None else connector
             border_memlets[direction][connector] = _merge_border_memlet(
-                border_memlets[direction][connector], propagated, arrays[array_name]
+                border_memlets[direction][connector], propagated, arrays[array_name], facts
             )
 
 
@@ -1848,9 +1867,14 @@ def propagate_memlet(
 
     # Propagate subset
     if isinstance(entry_node, nodes.MapEntry):
+        from dace.sdfg.state import StateSubgraphView, SymbolResolver
+
+        # The memlets are united as images of the map's body, so the map runs
+        state = dfg_state.graph if isinstance(dfg_state, StateSubgraphView) else dfg_state
+        facts = (symbols if symbols is not None else SymbolResolver()).facts_in_scope(state, entry_node)
         mapnode = entry_node.map
         return propagate_subset(
-            aggdata, arr, mapnode.params, mapnode.range, defined_variables=defined_vars, use_dst=use_dst
+            aggdata, arr, mapnode.params, mapnode.range, facts, defined_variables=defined_vars, use_dst=use_dst
         )
 
     elif isinstance(entry_node, nodes.ConsumeEntry):
@@ -1871,6 +1895,7 @@ def propagate_subset(
     arr: data.Data,
     params: List[str],
     rng: subsets.Subset,
+    facts: symbolic.Facts,
     *,
     defined_variables: Set[symbolic.SymbolicType] = None,
     undefined_variables: Set[symbolic.SymbolicType] = None,
@@ -1885,6 +1910,8 @@ def propagate_subset(
     :param params: A list of variable names.
     :param rng: A subset with dimensionality len(params) that contains the
                 range to propagate with.
+    :param facts: The facts that hold where the memlets are, for some value of ``params`` in ``rng``: their images
+                  are united, and are only accessed when the range is not empty.
     :param defined_variables: A set of symbols defined that will remain the
                               same throughout propagation. If None, assumes
                               that all symbols outside of ``params``, except
@@ -1978,7 +2005,7 @@ def propagate_subset(
             new_subset = tmp_subset
         else:
             old_subset = new_subset
-            new_subset = subsets.union(new_subset, tmp_subset)
+            new_subset = subsets.union(new_subset, tmp_subset, facts)
             if new_subset is None:
                 warnings.warn("Subset union failed between %s and %s " % (old_subset, tmp_subset))
                 break

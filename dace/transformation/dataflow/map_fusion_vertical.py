@@ -6,6 +6,7 @@ import itertools
 import dace
 from dace import data, dtypes, properties, subsets, symbolic, transformation
 from dace.sdfg import SDFG, SDFGState, dealias, graph, nodes, propagation
+from dace.sdfg.state import SymbolResolver
 from dace.transformation.dataflow import map_fusion_helper as mfhelper
 from dace.sdfg.type_inference import infer_expr_type
 from ordered_set import OrderedSet
@@ -463,6 +464,9 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         # Set of intermediate nodes that we have already processed.
         processed_inter_nodes: Set[nodes.Node] = set()
 
+        # The producer subsets, and the consumer subsets once renamed, are written in the first Map's parameters
+        facts = SymbolResolver().facts_at(state, first_map_exit)
+
         # Now scan all output edges of the first exit and classify them
         for out_edge in state.out_edges(first_map_exit):
             intermediate_node: nodes.Node = out_edge.dst
@@ -592,12 +596,12 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             if len(producer_subsets) == 1:
                 pass
             elif len(producer_subsets) == 2:
-                if producer_subsets[0].intersects(producer_subsets[1]):
+                if producer_subsets[0].intersects(producer_subsets[1], facts) is not False:
                     return None
             else:
                 for i, psbs1 in enumerate(producer_subsets):
                     for j, psbs2 in enumerate(producer_subsets):
-                        if i < j and psbs1.intersects(psbs2):
+                        if i < j and psbs1.intersects(psbs2, facts) is not False:
                             return None
 
             # We now determine the consumers of the intermediate node. For this, we
@@ -653,7 +657,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                     prospective_producers = [
                         producer_subset
                         for producer_subset in producer_subsets
-                        if producer_subset.covers(consumer_subset)
+                        if producer_subset.covers(consumer_subset, facts)
                     ]
                     if len(prospective_producers) != 1:
                         return None
@@ -1251,6 +1255,8 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         :param sdfg: The SDFG on which we operate.
         """
         first_map_exit: nodes.MapExit = state.exit_node(first_map_entry)
+        # Every subset compared is written in the first Map's parameters
+        facts = SymbolResolver().facts_at(state, first_map_exit)
         second_map_exit: nodes.MapExit = state.exit_node(second_map_entry)
 
         # Get the read and write sets of the different maps, note that Views
@@ -1366,7 +1372,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                     param_repl=None,
                 )
             )
-            if not self.test_if_subsets_are_point_wise(all_subsets):
+            if not self.test_if_subsets_are_point_wise(all_subsets, facts):
                 return True
             del all_subsets
 
@@ -1403,14 +1409,14 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                 )
             )
             # Now we can test if these subsets are point wise
-            if not self.test_if_subsets_are_point_wise(all_subsets):
+            if not self.test_if_subsets_are_point_wise(all_subsets, facts):
                 return True
             del all_subsets
 
         # No read write dependency was found.
         return False
 
-    def test_if_subsets_are_point_wise(self, subsets_to_check: List[subsets.Subset]) -> bool:
+    def test_if_subsets_are_point_wise(self, subsets_to_check: List[subsets.Subset], facts: symbolic.Facts) -> bool:
         """Point wise means that they are all the same.
 
         If a series of subsets are point wise it means that all Memlets, access
@@ -1420,6 +1426,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         renamed.
 
         :param subsets_to_check: The list of subsets that should be checked.
+        :param facts: The facts that hold where the subsets are accessed.
         """
         assert len(subsets_to_check) > 1
 
@@ -1438,9 +1445,9 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                 #  symmetrically, i.e., `r1 - r2` and `r2 - r1`. However, if we would
                 #  have `r2_1 = 'j, 0:10'` it consider it as failing, which is not
                 #  what we want. Thus we will use symmetric cover.
-                if not master_subset.covers(subset):
+                if not master_subset.covers(subset, facts):
                     return False
-                if not subset.covers(master_subset):
+                if not subset.covers(master_subset, facts):
                     return False
 
         # All subsets are equal to the master subset, thus they are equal to each other.

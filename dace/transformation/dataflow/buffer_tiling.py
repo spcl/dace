@@ -2,6 +2,7 @@
 """Contains classes that implement the BufferTiling transformation."""
 
 from dace.sdfg import nodes
+from dace.sdfg.state import SymbolResolver
 from dace.sdfg import utils as sdutil
 from dace.properties import ShapeProperty, make_properties
 from dace.transformation import transformation
@@ -59,7 +60,7 @@ class BufferTiling(transformation.SingleStateTransformation):
             # Check that the data consumed is provided.
             provided = graph.in_edges(buf)[0].data.subset
             consumed = graph.out_edges(buf)[0].data.subset
-            if not provided.covers(consumed):
+            if not provided.covers(consumed, SymbolResolver().facts_at(graph, buf)):
                 return False
 
             # Check that buffers occur only once in this state.

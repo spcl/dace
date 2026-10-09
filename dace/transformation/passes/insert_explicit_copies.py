@@ -8,7 +8,7 @@ from dace import data, dtypes, nodes, properties, subsets, symbolic
 from dace.memlet import Memlet
 from dace.sdfg import SDFG
 from dace.sdfg import utils as sdutils
-from dace.sdfg.state import SDFGState
+from dace.sdfg.state import SDFGState, SymbolResolver
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.libraries.standard.helper import CPU_RESIDENT_STORAGES, GPU_RESIDENT_STORAGES
 from dace.libraries.standard.nodes.copy import CopyLibraryNode
@@ -33,13 +33,14 @@ def competing_writes(state: SDFGState, target: nodes.Node, edge, name: str, subs
 
     An overlap ``subsets.intersects`` cannot decide counts as one.
     """
+    facts = SymbolResolver().facts_at(state, target)
     return [
         other
         for other in state.in_edges(target)
         if other is not edge
         and not other.data.is_empty()
         and other.data.data == name
-        and subsets.intersects(other.data.get_dst_subset(other, state) or other.data.subset, subset) is not False
+        and subsets.intersects(other.data.get_dst_subset(other, state) or other.data.subset, subset, facts) is not False
     ]
 
 
