@@ -20,6 +20,38 @@ def nng(expr):
     return expr
 
 
+def _names(expr) -> set[str]:
+    if isinstance(expr, sp.Symbol):
+        return {expr.name}
+    return {str(sym) for sym in expr.free_symbols} if isinstance(expr, sp.Basic) else {str(expr)}
+
+
+def _keys_by_name(repl_dict) -> dict[str, list]:
+    """The keys of ``repl_dict`` under each name they mention."""
+    keys_by_name: dict[str, list] = {}
+    for key in repl_dict:
+        for name in _names(key):
+            keys_by_name.setdefault(name, []).append(key)
+    return keys_by_name
+
+
+def _subs(expr, repl_dict, keys_by_name: dict[str, list]):
+    """``expr.subs(repl_dict)`` restricted to the entries that can reach ``expr``: its own names and, as SymPy may apply
+    one entry to the result of another, the names those entries substitute in."""
+    if not symbolic.issymbolic(expr):
+        return expr
+    # Handing SymPy the whole dictionary costs a walk of ``expr`` per entry, thousands for an SDFG specialized wholesale
+    reachable, pending = set(), list(_names(expr))
+    while pending:
+        for key in keys_by_name.get(pending.pop(), ()):
+            if key not in reachable:
+                reachable.add(key)
+                pending.extend(_names(repl_dict[key]))
+    if not reachable:
+        return expr
+    return expr.subs({key: value for key, value in repl_dict.items() if key in reachable})
+
+
 def bounding_box_cover_exact(subset_a, subset_b, approximation=False) -> bool:
     """Test if ``subset_a`` covers ``subset_b``.
 
@@ -1051,13 +1083,14 @@ class Range(Subset):
         return Range.ndslice_to_string_list(self.ranges, self.tile_sizes)
 
     def replace(self, repl_dict):
+        keys_by_name = _keys_by_name(repl_dict)
         for i, ((rb, re, rs), ts) in enumerate(zip(self.ranges, self.tile_sizes)):
             self.ranges[i] = (
-                rb.subs(repl_dict) if symbolic.issymbolic(rb) else rb,
-                re.subs(repl_dict) if symbolic.issymbolic(re) else re,
-                rs.subs(repl_dict) if symbolic.issymbolic(rs) else rs,
+                _subs(rb, repl_dict, keys_by_name),
+                _subs(re, repl_dict, keys_by_name),
+                _subs(rs, repl_dict, keys_by_name),
             )
-            self.tile_sizes[i] = ts.subs(repl_dict) if symbolic.issymbolic(ts) else ts
+            self.tile_sizes[i] = _subs(ts, repl_dict, keys_by_name)
 
     def intersects(self, other: "Range"):
         type_error = False
