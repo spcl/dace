@@ -2150,8 +2150,6 @@ def compose_view_subset(mapping: dict[int, int], subset: sbs.Range, view_subset:
     :return: The composed subset, in the coordinates of the container. Dimensions the view squeezes keep the index
              ``subset`` gives them.
     """
-    if isinstance(view_subset, sbs.Indices):
-        view_subset = sbs.Range.from_indices(view_subset)
     new_subset: list[tuple[Any, Any, Any]] = subset.ndrange()
     for vdim, adim in mapping.items():
         rb, re, rs = new_subset[adim]
