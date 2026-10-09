@@ -1063,8 +1063,8 @@ def _insert_memory_dependency_state_boundaries(scope: tn.ScheduleTreeScope, view
     :param scope: The scope to insert state boundaries in.
     :param views: Views defined before this scope, mapping view names to memlets on the viewed containers.
     """
-    reads: mmu.MemletDict[list[tn.ScheduleTreeNode]] = mmu.MemletDict()
-    writes: mmu.MemletDict[list[tn.ScheduleTreeNode]] = mmu.MemletDict()
+    reads: mmu.MemletDict[list[tn.ScheduleTreeNode]] = mmu.MemletDict(facts=scope.tree_facts())
+    writes: mmu.MemletDict[list[tn.ScheduleTreeNode]] = mmu.MemletDict(facts=scope.tree_facts())
     parents: dict[int, set[int]] = defaultdict(set)
     boundaries_to_insert: list[int] = []
     views = dict(views) if views is not None else {}

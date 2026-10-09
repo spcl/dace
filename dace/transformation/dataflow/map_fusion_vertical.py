@@ -596,12 +596,12 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             if len(producer_subsets) == 1:
                 pass
             elif len(producer_subsets) == 2:
-                if producer_subsets[0].intersects(producer_subsets[1], facts) is not False:
+                if producer_subsets[0].intersects(producer_subsets[1], facts) is not symbolic.Truth.FALSE:
                     return None
             else:
                 for i, psbs1 in enumerate(producer_subsets):
                     for j, psbs2 in enumerate(producer_subsets):
-                        if i < j and psbs1.intersects(psbs2, facts) is not False:
+                        if i < j and psbs1.intersects(psbs2, facts) is not symbolic.Truth.FALSE:
                             return None
 
             # We now determine the consumers of the intermediate node. For this, we

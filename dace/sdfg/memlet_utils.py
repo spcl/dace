@@ -87,26 +87,30 @@ class MemletReplacer(ast.NodeTransformer):
         return self.generic_visit(node)
 
 
-# Memlet sets and dictionaries have no place in a graph, so their proofs assume nothing about symbols
-_NO_FACTS = symbolic.Facts.none()
-
-
 class MemletSet(Set[Memlet]):
     """
     Implements a set of memlets that considers subsets that intersect or are covered by its other memlets.
     Set updates and unions also perform unions on the contained memlet subsets.
     """
 
-    def __init__(self, iterable: Optional[Iterable[Memlet]] = None, *, intersection_is_contained: bool = True) -> None:
+    def __init__(
+        self,
+        iterable: Optional[Iterable[Memlet]] = None,
+        *,
+        facts: symbolic.Facts,
+        intersection_is_contained: bool = True,
+    ) -> None:
         """
         Initializes a memlet set.
 
         :param iterable: An optional iterable of memlets to initialize the set with.
+        :param facts: The facts that hold where the memlets are accessed, under which subsets are compared.
         :param intersection_is_contained: Whether the check ``m in memlet_set`` should return True if the memlet
                                           only intersects with the contents of the set. If False, only completely
                                           covered subsets would return True.
         """
         self.internal_set: Dict[str, Set[Memlet]] = {}
+        self.facts = facts
         self.intersection_is_contained = intersection_is_contained
         if iterable is not None:
             self.update(iterable)
@@ -144,19 +148,16 @@ class MemletSet(Set[Memlet]):
         # Memlet is in set, either perform a union (if possible) or add to internal set
         # TODO(later): Consider other_subset as well
         for existing_memlet in self.internal_set[elem.data]:
-            try:
-                if subsets.intersects(existing_memlet.subset, elem.subset, _NO_FACTS) == True:  # Definitely intersects
-                    if existing_memlet.subset.covers(elem.subset, _NO_FACTS):
-                        break  # Nothing to do
+            if subsets.intersects(existing_memlet.subset, elem.subset, self.facts) is symbolic.Truth.TRUE:
+                if existing_memlet.subset.covers(elem.subset, self.facts):
+                    break  # Nothing to do
 
-                    # Create a new union memlet
-                    self.internal_set[elem.data].remove(existing_memlet)
-                    new_memlet = copy.deepcopy(existing_memlet)
-                    new_memlet.subset = subsets.union(existing_memlet.subset, elem.subset, _NO_FACTS)
-                    self.internal_set[elem.data].add(new_memlet)
-                    break
-            except TypeError:  # Indeterminate
-                pass
+                # Create a new union memlet
+                self.internal_set[elem.data].remove(existing_memlet)
+                new_memlet = copy.deepcopy(existing_memlet)
+                new_memlet.subset = subsets.union(existing_memlet.subset, elem.subset, self.facts)
+                self.internal_set[elem.data].add(new_memlet)
+                break
         else:  # all intersections were False or indeterminate (may or does not intersect with existing memlets)
             self.internal_set[elem.data].add(elem)
 
@@ -167,16 +168,14 @@ class MemletSet(Set[Memlet]):
         if elem.data not in self.internal_set:
             return False
         for existing_memlet in self.internal_set[elem.data]:
-            if existing_memlet.subset.covers(elem.subset, _NO_FACTS):
+            if existing_memlet.subset.covers(elem.subset, self.facts):
                 return True
-            if self.intersection_is_contained:
-                try:
-                    if subsets.intersects(existing_memlet.subset, elem.subset, _NO_FACTS) == False:
-                        continue
-                    else:  # May intersect or indeterminate
-                        return True
-                except TypeError:
-                    return True
+            # May intersect or indeterminate
+            if (
+                self.intersection_is_contained
+                and subsets.intersects(existing_memlet.subset, elem.subset, self.facts) is not symbolic.Truth.FALSE
+            ):
+                return True
 
         return False
 
@@ -186,7 +185,7 @@ class MemletSet(Set[Memlet]):
 
         :return: New memlet set containing the union of this set and the inputs.
         """
-        newset = MemletSet(self)
+        newset = MemletSet(self, facts=self.facts)
         newset.update(s)
         return newset
 
@@ -200,7 +199,11 @@ class MemletDict(Dict[Memlet, T]):
     or are covered by its other memlets.
     """
 
-    def __init__(self, **kwargs) -> None:
+    def __init__(self, *, facts: symbolic.Facts, **kwargs) -> None:
+        """
+        :param facts: The facts that hold where the memlets are accessed, under which subsets are compared.
+        """
+        self.facts = facts
         self.internal_dict: Dict[str, Dict[Memlet, T]] = defaultdict(dict)
         self.covers_cache: Dict[Tuple, bool] = defaultdict()
 
@@ -222,18 +225,13 @@ class MemletDict(Dict[Memlet, T]):
             key = (existing_memlet.subset, elem.subset)
             is_covered = self.covers_cache.get(key, None)
             if is_covered is None:
-                is_covered = existing_memlet.subset.covers(elem.subset, _NO_FACTS)
+                is_covered = existing_memlet.subset.covers(elem.subset, self.facts)
                 self.covers_cache[key] = is_covered
             if is_covered:
                 return existing_memlet
 
-            try:
-                if (
-                    subsets.intersects(existing_memlet.subset, elem.subset, _NO_FACTS) == False
-                ):  # Definitely does not intersect
-                    continue
-            except TypeError:
-                pass
+            if subsets.intersects(existing_memlet.subset, elem.subset, self.facts) is symbolic.Truth.FALSE:
+                continue
 
             # May or will intersect
             return existing_memlet

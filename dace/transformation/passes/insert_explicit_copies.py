@@ -40,7 +40,8 @@ def competing_writes(state: SDFGState, target: nodes.Node, edge, name: str, subs
         if other is not edge
         and not other.data.is_empty()
         and other.data.data == name
-        and subsets.intersects(other.data.get_dst_subset(other, state) or other.data.subset, subset, facts) is not False
+        and subsets.intersects(other.data.get_dst_subset(other, state) or other.data.subset, subset, facts)
+        is not symbolic.Truth.FALSE
     ]
 
 

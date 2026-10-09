@@ -50,6 +50,7 @@ from dace.sdfg.state import (
     LoopRegion,
     ControlFlowRegion,
     NamedRegion,
+    SymbolResolver,
 )
 from dace.sdfg.replace import replace_datadesc_names
 from dace.sdfg.type_inference import infer_iteration_symbol_type
@@ -1533,13 +1534,17 @@ class ProgramVisitor(ExtNodeVisitor):
         self._on_block_added(state)
         return state
 
+    def facts(self) -> symbolic.Facts:
+        """What holds where the program is being parsed: the SDFG's facts and the ranges of the enclosing loops."""
+        return SymbolResolver().facts_at(self.cfg_target)
+
     def _copy_out_iterator(self, name: str, node: ast.AST) -> symbolic.symbol:
         """Makes a loop iterator readable after its loop, as in Python: the loop body copies it at the start of every
         iteration, so the copy holds the last iterated value, also after a ``break``. A loop that may not run would
         leave the iterator unbound, so it is refused."""
         loop, start, stop, step = self.ended_loops[name]
         zero = sympy.Integer(0)
-        facts = self.sdfg.facts()
+        facts = self.facts()
         if symbolic.ask(symbolic.Relation(symbolic.RelationKind.LT, zero, step), facts) is symbolic.Truth.TRUE:
             runs = symbolic.ask(symbolic.Relation(symbolic.RelationKind.LT, start, stop), facts)
         elif symbolic.ask(symbolic.Relation(symbolic.RelationKind.LT, step, zero), facts) is symbolic.Truth.TRUE:
@@ -2211,9 +2216,9 @@ class ProgramVisitor(ExtNodeVisitor):
             if n == name and m == mode:
                 if r == rng:
                     return True
-                elif r.covers(rng, self.sdfg.facts()):
+                elif r.covers(rng, self.facts()):
                     print("WARNING: New access {n}[{rng}] already covered by {n}[{r}]".format(n=name, rng=rng, r=r))
-                elif rng.covers(r, self.sdfg.facts()):
+                elif rng.covers(r, self.facts()):
                     print("WARNING: New access {n}[{rng}] covers previous access {n}[{r}]".format(n=name, rng=rng, r=r))
                 return False
 
@@ -2282,7 +2287,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
                 for s, r in symbols.items():
                     memlet = propagate_subset(
-                        [memlet], arr, [s], r, self.sdfg.facts(), use_dst=False, defined_variables=set()
+                        [memlet], arr, [s], r, self.facts(), use_dst=False, defined_variables=set()
                     )
                 if _subset_has_indirection(memlet.subset, self):
                     read_node = entry_node
@@ -2374,7 +2379,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
                 for s, r in symbols.items():
                     memlet = propagate_subset(
-                        [memlet], arr, [s], r, self.sdfg.facts(), use_dst=True, defined_variables=set()
+                        [memlet], arr, [s], r, self.facts(), use_dst=True, defined_variables=set()
                     )
                 if _subset_has_indirection(memlet.subset, self):
                     write_node = exit_node
@@ -3915,7 +3920,7 @@ class ProgramVisitor(ExtNodeVisitor):
             if result in self.views and new_name == self.views[result][1].data:
                 # The view's memlet is built from a string, so match its symbols to the target's by name
                 read_rng = _retype_symbols_like(self.views[result][1].subset, new_rng)
-                needs_copy = new_rng.intersects(read_rng, self.sdfg.facts()) is not False
+                needs_copy = new_rng.intersects(read_rng, self.facts()) is not symbolic.Truth.FALSE
                 if needs_copy:
                     view = self.sdfg.arrays[result]
                     cname, carr = self.sdfg.add_transient(result, view.shape, view.dtype, find_new_name=True)

@@ -416,8 +416,7 @@ class RedundantArray(pm.SingleStateTransformation):
                             warnings.warn(f"validate_subsets failed: {ex}")
                             return False
                         for oset in true_out_subsets:
-                            res = subsets.intersects(oset, subset, facts)
-                            if res == True or res is None:
+                            if subsets.intersects(oset, subset, facts) is not symbolic.Truth.FALSE:
                                 subsets_intersect = True
                                 break
                         if subsets_intersect:
@@ -987,8 +986,7 @@ class RedundantSecondArray(pm.SingleStateTransformation):
                                 warnings.warn(f"validate_subsets failed: {ex}")
                                 return False
                             for iset in true_in_subsets:
-                                res = subsets.intersects(iset, subset, facts)
-                                if res == True or res is None:
+                                if subsets.intersects(iset, subset, facts) is not symbolic.Truth.FALSE:
                                     subsets_intersect = True
                                     break
                             if subsets_intersect:

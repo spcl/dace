@@ -636,8 +636,8 @@ class LoopToMap(xf.MultiStateTransformation):
         a = sp.Wild("a", exclude=[itersym])
         b = sp.Wild("b", exclude=[itersym])
         data = mmlt.data
-        # Inside the body: a dependence only exists if the loop runs
-        facts = SymbolResolver().facts_at(state)
+        # Inside the body (an inter-state edge read has no state): a dependence only exists if the loop runs
+        facts = SymbolResolver().facts_at(state if state is not None else self.loop)
 
         if mmlt.dynamic and mmlt.src_subset.num_elements() != 1:
             # If pointers are involved, give up
@@ -681,7 +681,7 @@ class LoopToMap(xf.MultiStateTransformation):
             )
             t_pread = _sanitize_by_index(indices, pread.src_subset if pread.src_subset is not None else pread.subset)
             pwrite = _sanitize_by_index(indices, pwrite.dst_subset if pwrite.dst_subset is not None else pwrite.subset)
-            if subsets.intersects(t_pread, pwrite, facts) is False:
+            if subsets.intersects(t_pread, pwrite, facts) is symbolic.Truth.FALSE:
                 continue
             return False
 

@@ -1,6 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 from dace import subsets
+from dace.symbolic import Truth
 
 
 def _positive(*names: dace.symbol) -> dace.symbolic.Facts:
@@ -22,16 +23,16 @@ def test_intersects_symbolic():
     rng7 = subsets.Range([(0, N - 1, 1), (N - 1, N, 1)])
     ind1 = subsets.Indices([0, 1])
 
-    assert subsets.intersects(rng1, rng2, facts) is True
-    assert subsets.intersects(rng1, rng3_1, facts) is False
-    assert subsets.intersects(rng1, rng3_2, facts) is False
-    assert subsets.intersects(rng1, rng4, facts) is False
-    assert subsets.intersects(rng1, rng5, facts) is False
-    assert subsets.intersects(rng6, rng1, facts) is True
-    assert subsets.intersects(rng1, rng7, facts) is None
-    assert subsets.intersects(rng7, rng1, facts) is None
-    assert subsets.intersects(rng1, ind1, facts) is None
-    assert subsets.intersects(ind1, rng1, facts) is None
+    assert subsets.intersects(rng1, rng2, facts) is Truth.TRUE
+    assert subsets.intersects(rng1, rng3_1, facts) is Truth.FALSE
+    assert subsets.intersects(rng1, rng3_2, facts) is Truth.FALSE
+    assert subsets.intersects(rng1, rng4, facts) is Truth.FALSE
+    assert subsets.intersects(rng1, rng5, facts) is Truth.FALSE
+    assert subsets.intersects(rng6, rng1, facts) is Truth.TRUE
+    assert subsets.intersects(rng1, rng7, facts) is Truth.UNKNOWN
+    assert subsets.intersects(rng7, rng1, facts) is Truth.UNKNOWN
+    assert subsets.intersects(rng1, ind1, facts) is Truth.UNKNOWN
+    assert subsets.intersects(ind1, rng1, facts) is Truth.UNKNOWN
 
 
 def test_intersects_constant():
@@ -44,12 +45,12 @@ def test_intersects_constant():
     ind2 = subsets.Indices([1])
     ind3 = subsets.Indices([5])
 
-    assert subsets.intersects(rng1, rng2, facts) is True
-    assert subsets.intersects(rng1, rng3, facts) is True
-    assert subsets.intersects(rng1, rng4, facts) is False
-    assert subsets.intersects(ind1, rng1, facts) is True
-    assert subsets.intersects(rng1, ind2, facts) is True
-    assert subsets.intersects(rng1, ind3, facts) is False
+    assert subsets.intersects(rng1, rng2, facts) is Truth.TRUE
+    assert subsets.intersects(rng1, rng3, facts) is Truth.TRUE
+    assert subsets.intersects(rng1, rng4, facts) is Truth.FALSE
+    assert subsets.intersects(ind1, rng1, facts) is Truth.TRUE
+    assert subsets.intersects(rng1, ind2, facts) is Truth.TRUE
+    assert subsets.intersects(rng1, ind3, facts) is Truth.FALSE
 
 
 def test_covers_symbolic():

@@ -6,6 +6,7 @@ from typing import Dict, List, Set
 import networkx as nx
 
 from dace import data as dt, sdfg, subsets
+from dace.symbolic import Truth
 from dace.config import Config
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
@@ -127,8 +128,7 @@ class StateFusion(transformation.MultiStateTransformation):
         facts = SymbolResolver().facts_at(graph_a)
         for ea in edges_a:
             for eb in edges_b:
-                result = subsets.intersects(subset_a(ea), subset_b(eb), facts)
-                if result is True or result is None:
+                if subsets.intersects(subset_a(ea), subset_b(eb), facts) is not Truth.FALSE:
                     return True
         return False
 

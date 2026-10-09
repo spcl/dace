@@ -370,11 +370,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                         for rng, orng in zip(subset_plus, subset_minus):
                             rng_1dim = subsets.Range((rng,))
                             orng_1dim = subsets.Range((orng,))
-                            try:
-                                intersection = rng_1dim.intersects(orng_1dim, facts)
-                            except TypeError:
-                                return False
-                            if intersection is None or intersection == True:
+                            if rng_1dim.intersects(orng_1dim, facts) is not symbolic.Truth.FALSE:
                                 warnings.warn("SubgraphFusion::Disjoint Accesses found!")
                                 return False
 
@@ -1342,9 +1338,9 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                         else:
                             # NOTE: For debugging purposes
                             intersect = subsets.intersects(in_subset, oe.data.src_subset, facts)
-                            if intersect is None:
+                            if intersect is symbolic.Truth.UNKNOWN:
                                 warnings.warn(f"{dname}[{in_subset}] may intersect with {dname}[{oe.data.src_subset}]")
-                            elif intersect:
+                            elif intersect is symbolic.Truth.TRUE:
                                 raise ValueError(f"{dname}[{in_subset}] intersects with {dname}[{oe.data.src_subset}]")
                             # If the outgoing subset is not covered by the transient data, connect to the outer input node.
                             if not inode:
@@ -1369,7 +1365,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                             and not ie.data.is_empty()
                             and ie.data.get_dst_subset(ie, graph) is not None
                             and subsets.intersects(ie.data.get_dst_subset(ie, graph), outer_subset, outer_facts)
-                            is not False
+                            is not symbolic.Truth.FALSE
                             for ds in graph.data_nodes()
                             if ds.data == dname and graph.out_degree(ds) == 0
                             for ie in graph.in_edges(ds)

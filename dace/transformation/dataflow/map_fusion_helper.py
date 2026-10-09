@@ -212,7 +212,7 @@ def get_new_conn_name(
     # NOTE: One could also say that we should only do that if `edge_that_is_already_there`
     #   covers the new one, but since the order, is kind of arbitrary, we test if
     #   either one covers.
-    # The Maps are being rewired, so the facts are the state's, without those of enclosing scopes
+    # Only a top-level Map consolidates (see above), so what holds around it is what holds in the state
     facts = SymbolResolver().facts_at(state)
     return (
         (edge_that_is_already_present.dst_conn[3:], True)

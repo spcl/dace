@@ -1,7 +1,7 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 
 from dace.subsets import Indices, Range
-from dace.symbolic import Facts
+from dace.symbolic import Facts, Relation, RelationKind, symbol
 
 # Nothing is assumed about the symbols
 NO_FACTS = Facts.none()
@@ -175,6 +175,18 @@ def test_index_index():
     assert subset1.covers_precise(subset2, NO_FACTS)
 
 
+def test_symbolic_step_divides_under_facts():
+    """A range of step ``s`` contains one of step ``k`` from the same start only when the facts say ``s`` divides
+    ``k``."""
+    s, k = symbol("s"), symbol("k")
+    subset1 = Range.from_string("0:100:s")
+    subset2 = Range.from_string("0:100:k")
+    assert subset1.covers_precise(subset2, NO_FACTS) is False
+    divides = Facts([Relation(RelationKind.DIVIDES, s, k)], frozenset({"s", "k"}))
+    assert subset1.covers_precise(subset2, divides)
+    assert subset2.covers_precise(subset1, divides) is False
+
+
 if __name__ == "__main__":
     test_integer_overlap_same_step_no_cover()
     test_integer_bounding_box_cover_coprime_step()
@@ -183,3 +195,4 @@ if __name__ == "__main__":
     test_ranges_symbolic_boundaries()
     test_range_indices()
     test_index_index()
+    test_symbolic_step_divides_under_facts()

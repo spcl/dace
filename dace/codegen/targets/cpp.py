@@ -706,7 +706,7 @@ def _check_neighbor_conflicts(dfg, edge):
             continue
         # Check if there is definitely no overlap in the propagated memlet
         sibling_outer = propagation.propagate_memlet(dfg, sibling.data, edge.dst, False)
-        if subsets.intersects(outer.subset, sibling_outer.subset, facts) == False:
+        if subsets.intersects(outer.subset, sibling_outer.subset, facts) is symbolic.Truth.FALSE:
             # In that case, continue
             continue
 
@@ -802,7 +802,7 @@ def is_write_conflicted_with_reason(dfg, edge, datanode=None, sdfg_schedule=None
             facts = SymbolResolver().facts_at(dfg, dst)
             for x, y in itertools.combinations(dfg.in_edges(dst), 2):
                 x, y = x.data.subset, y.data.subset
-                if subsets.intersects(x, y, facts):
+                if subsets.intersects(x, y, facts) is symbolic.Truth.TRUE:
                     return dst
 
         # If this is a nested SDFG and the access leads outside

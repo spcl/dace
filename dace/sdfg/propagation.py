@@ -1149,20 +1149,19 @@ def _collect_region_meta_read_candidates(region, candidates) -> None:
             candidates["in"][memlet.data].append(memlet)
 
 
-def _merge_meta_read_candidates(region, border_memlets, arrays) -> None:
+def _merge_meta_read_candidates(region, border_memlets, arrays, symbols: "SymbolResolver") -> None:
     """
     Merge a region's own meta reads (interstate edges, conditions) into border input memlets.
 
     :param region: The control-flow region whose meta reads should be merged.
     :param border_memlets: The accumulated border memlet mapping to update in place.
     :param arrays: The array descriptor mapping of the containing SDFG.
+    :param symbols: The ``SymbolResolver`` of the ongoing propagation.
     :note: ``border_memlets`` mapping is updated in-place.
     """
-    from dace.sdfg.state import SymbolResolver
-
     candidates = _make_border_memlets(border_memlets, as_lists=True)
     _collect_region_meta_read_candidates(region, candidates)
-    facts = SymbolResolver().facts_at(region)
+    facts = symbols.facts_at(region)
     for connector in border_memlets["in"]:
         propagated = _propagate_border_memlet_candidates(candidates, arrays, "in", connector, facts)
         if propagated is None:
@@ -1352,7 +1351,7 @@ def _propagate_border_memlet_candidates(
     return propagated
 
 
-def _propagate_state_border_memlets(state: "SDFGState", border_memlets, arrays) -> None:
+def _propagate_state_border_memlets(state: "SDFGState", border_memlets, arrays, symbols: "SymbolResolver") -> None:
     """
     Propagate all connector-adjacent memlets contributed by one state.
 
@@ -1365,13 +1364,12 @@ def _propagate_state_border_memlets(state: "SDFGState", border_memlets, arrays) 
     :param border_memlets: The accumulated border memlet mapping to update.
     :param arrays: The array descriptor mapping used for propagation and merge
                    fallback behavior.
+    :param symbols: The ``SymbolResolver`` of the ongoing propagation.
     :note: The ``border_memlets`` mapping is updated in-place.
     """
-    from dace.sdfg.state import SymbolResolver
-
     candidates = _make_border_memlets(border_memlets, as_lists=True)
     _collect_state_border_memlet_candidates(state, candidates)
-    facts = SymbolResolver().facts_at(state)
+    facts = symbols.facts_at(state)
 
     params = []
     ranges = []
@@ -1495,9 +1493,9 @@ def propagate_memlets_nested_sdfg(
     # their own propagate_memlets implementations.
     for block in sdfg.nodes():
         if isinstance(block, SDFGState):
-            _propagate_state_border_memlets(block, border_memlets, sdfg.arrays)
+            _propagate_state_border_memlets(block, border_memlets, sdfg.arrays, symbols)
         elif isinstance(block, AbstractControlFlowRegion):
-            block.propagate_memlets(border_memlets)
+            block.propagate_memlets(border_memlets, symbols)
 
     # Make sure any potential NSDFG symbol mapping is correctly reversed
     # when propagating out.

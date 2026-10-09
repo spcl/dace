@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
+import sympy
 import numpy as np
 from dace.sdfg.propagation import propagate_memlets_sdfg, propagate_subset
 from dace.sdfg.state import SymbolResolver
@@ -153,6 +154,30 @@ def test_nested_conditional_in_loop_in_map():
     assert np.allclose(a_test, a_valid)
 
 
+def test_union_around_loop_does_not_assume_it_runs():
+    """A read before a loop and the loop's reads are united where the loop may not run: ``A[1]`` stays covered when
+    ``range(2, N)`` is empty, so the bound is ``Max(1, N - 1)``, not ``N - 1``."""
+    N = dace.symbol("N")
+    M = dace.symbol("M")
+
+    @dace.program
+    def read_before_loop(A: dace.float64[M], B: dace.float64[M]):
+        for i in dace.map[0:M]:
+            s = A[1]
+            for j in range(2, N):
+                s += A[j]
+            B[i] = s
+
+    sdfg = read_before_loop.to_sdfg(simplify=True)
+    propagate_memlets_sdfg(sdfg)
+
+    state, nsdfg_node = next(
+        (s, n) for s in sdfg.all_states() for n in s.nodes() if isinstance(n, dace.nodes.NestedSDFG)
+    )
+    (edge,) = [e for e in state.in_edges(nsdfg_node) if e.data.data == "A"]
+    assert edge.data.subset.ranges == [(1, sympy.Max(1, N - 1), 1)], edge.data.subset
+
+
 def test_strided_write_keeps_the_multiplier():
     """``C[2 * i]`` covers every second element, not the first ``N``.
 
@@ -281,6 +306,7 @@ if __name__ == "__main__":
     test_runtime_conditional()
     test_nsdfg_memlet_propagation_with_one_sparse_dimension()
     test_nested_conditional_in_loop_in_map()
+    test_union_around_loop_does_not_assume_it_runs()
     test_strided_write_keeps_the_multiplier()
     test_typed_parameter_symbol()
     test_nested_sdfg_connector_in_mapped_symbols()

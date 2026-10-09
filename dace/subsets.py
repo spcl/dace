@@ -843,26 +843,27 @@ class Range(Subset):
             )
             self.tile_sizes[i] = ts.subs(repl_dict) if symbolic.issymbolic(ts) else ts
 
-    def intersects(self, other: "Range", facts: symbolic.Facts) -> Optional[bool]:
-        """Whether this range and ``other`` overlap under ``facts``: True or False when provable, None otherwise."""
+    def intersects(self, other: "Range", facts: symbolic.Facts) -> symbolic.Truth:
+        """Whether this range and ``other`` overlap under ``facts``."""
         unknown = False
         for i, (rng, orng) in enumerate(zip(self.ranges, other.ranges)):
             if rng[2] != 1 or orng[2] != 1 or self.tile_sizes[i] != 1 or other.tile_sizes[i] != 1:
                 # TODO: This function does not consider strides or tiles
-                return None
+                return symbolic.Truth.UNKNOWN
 
             # Special case: ranges match
             if rng[0] == orng[0] or rng[1] == orng[1]:
                 continue
 
+            # An approximated bound widens its range, so the ranges are disjoint if their approximations are
             truths = [
-                symbolic.ask(symbolic.Relation(symbolic.RelationKind.LE, sp.sympify(low), sp.sympify(high)), facts)
+                symbolic.ask(symbolic.Relation(symbolic.RelationKind.LE, _approx(low), _approx(high)), facts)
                 for low, high in ((rng[0], orng[1]), (orng[0], rng[1]))
             ]
             if symbolic.Truth.FALSE in truths:
-                return False
+                return symbolic.Truth.FALSE
             unknown = unknown or symbolic.Truth.UNKNOWN in truths
-        return None if unknown else True
+        return symbolic.Truth.UNKNOWN if unknown else symbolic.Truth.TRUE
 
     def is_contiguous_subset(self, array: "dace.data.Array") -> bool:
         """
@@ -1062,20 +1063,6 @@ class SubsetUnion(Subset):
         return min
 
 
-def _union_special_cases(
-    arb: symbolic.SymbolicType, brb: symbolic.SymbolicType, are: symbolic.SymbolicType, bre: symbolic.SymbolicType
-):
-    """
-    Special cases of subset unions. If case found, returns pair of
-    (min,max), otherwise returns None.
-    """
-    if are + 1 == brb:
-        return (arb, bre)
-    elif bre + 1 == arb:
-        return (brb, are)
-    return None
-
-
 def bounding_box_union(subset_a: Subset, subset_b: Subset, facts: symbolic.Facts) -> Range:
     """Perform union by creating a bounding-box of two subsets, dropping a ``Min``/``Max`` argument ``facts`` prove
     is not the extremum."""
@@ -1089,13 +1076,6 @@ def bounding_box_union(subset_a: Subset, subset_b: Subset, facts: symbolic.Facts
         subset_a.max_element_approx(),
         subset_b.max_element_approx(),
     ):
-        # Special case
-        spcase = _union_special_cases(arb, brb, are, bre)
-        if spcase is not None:
-            minrb, maxre = spcase
-            result.append((minrb, maxre, 1))
-            continue
-
         if arb == brb or symbolic.provably_le(arb, brb, facts):
             minrb = arb
         elif symbolic.provably_le(brb, arb, facts):
@@ -1121,34 +1101,19 @@ def union(subset_a: Subset, subset_b: Subset, facts: symbolic.Facts) -> Subset:
 
     :param subset_a: The first subset.
     :param subset_b: The second subset.
+    :param facts: The facts that hold where the subsets are accessed.
     :return: A Subset object whose size is at least the union of the two
-             inputs. If union failed, returns None.
+             inputs, or None if both are None or the union of subset lists failed.
     """
-    try:
-        if subset_a is not None and subset_b is None:
-            return subset_a
-        elif subset_b is not None and subset_a is None:
-            return subset_b
-        elif subset_a is None and subset_b is None:
-            raise TypeError("Both subsets cannot be None")
-        elif isinstance(subset_a, SubsetUnion) or isinstance(subset_b, SubsetUnion):
-            return list_union(subset_a, subset_b)
-        elif type(subset_a) != type(subset_b):
-            return bounding_box_union(subset_a, subset_b, facts)
-        elif isinstance(subset_a, Indices):
-            # Two indices. If they are adjacent, returns a range that contains both,
-            # otherwise, returns a bounding box of the two
-            return bounding_box_union(subset_a, subset_b, facts)
-        elif isinstance(subset_a, Range):
-            # TODO(later): More involved Strided-Tiled Range union
-            return bounding_box_union(subset_a, subset_b, facts)
-        else:
-            warnings.warn(
-                "Unrecognized Subset type %s in union, degenerating to bounding box" % type(subset_a).__name__
-            )
-            return bounding_box_union(subset_a, subset_b, facts)
-    except TypeError:  # cannot determine truth value of Relational
-        return None
+    if subset_a is None:
+        return subset_b
+    if subset_b is None:
+        return subset_a
+    if isinstance(subset_a, SubsetUnion) or isinstance(subset_b, SubsetUnion):
+        return list_union(subset_a, subset_b)
+    if not isinstance(subset_a, (Range, Indices)):
+        warnings.warn("Unrecognized Subset type %s in union, degenerating to bounding box" % type(subset_a).__name__)
+    return bounding_box_union(subset_a, subset_b, facts)
 
 
 def list_union(subset_a: Subset, subset_b: Subset) -> Subset:
@@ -1181,24 +1146,20 @@ def list_union(subset_a: Subset, subset_b: Subset) -> Subset:
         return None
 
 
-def intersects(subset_a: Subset, subset_b: Subset, facts: symbolic.Facts) -> Union[bool, None]:
+def intersects(subset_a: Subset, subset_b: Subset, facts: symbolic.Facts) -> symbolic.Truth:
     """
-    Returns True if two subsets intersect, False if they do not, or
-    None if the answer cannot be determined.
+    Whether two subsets intersect under ``facts``. A missing subset intersects nothing.
 
     :param subset_a: The first subset.
     :param subset_b: The second subset.
-    :return: True if subsets intersect, False if not, None if indeterminate.
+    :param facts: The facts that hold where the subsets are accessed.
     """
-    try:
-        if subset_a is None or subset_b is None:
-            return False
-        if isinstance(subset_a, Indices):
-            subset_a = Range.from_indices(subset_a)
-        if isinstance(subset_b, Indices):
-            subset_b = Range.from_indices(subset_b)
-        if type(subset_a) is type(subset_b):
-            return subset_a.intersects(subset_b, facts)
-        return None
-    except TypeError:  # cannot determine truth value of Relational
-        return None
+    if subset_a is None or subset_b is None:
+        return symbolic.Truth.FALSE
+    if isinstance(subset_a, Indices):
+        subset_a = Range.from_indices(subset_a)
+    if isinstance(subset_b, Indices):
+        subset_b = Range.from_indices(subset_b)
+    if type(subset_a) is type(subset_b):
+        return subset_a.intersects(subset_b, facts)
+    return symbolic.Truth.UNKNOWN

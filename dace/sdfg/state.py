@@ -2975,7 +2975,9 @@ class AbstractControlFlowRegion(
         """
         pass
 
-    def propagate_memlets(self, border_memlets: Dict[str, Dict[str, Optional[mm.Memlet]]]) -> None:
+    def propagate_memlets(
+        self, border_memlets: Dict[str, Dict[str, Optional[mm.Memlet]]], symbols: "SymbolResolver"
+    ) -> None:
         """
         Propagate child-block memlets to this region boundary.
 
@@ -2987,6 +2989,7 @@ class AbstractControlFlowRegion(
         :param border_memlets: A mapping from connector direction and name to
                                the accumulated border memlet. The mapping is
                                updated in-place.
+        :param symbols: The ``SymbolResolver`` of the ongoing propagation.
         :note: ``border_memlets`` mapping is updated in-place.
         """
         from dace.sdfg import propagation as sdprop
@@ -2999,13 +3002,13 @@ class AbstractControlFlowRegion(
                 sdprop._collect_state_border_memlet_candidates(block, candidates)
             elif isinstance(block, AbstractControlFlowRegion):
                 nested_memlets = sdprop._make_border_memlets(border_memlets)
-                block.propagate_memlets(nested_memlets)
+                block.propagate_memlets(nested_memlets, symbols)
                 sdprop._append_border_memlet_candidates(candidates, nested_memlets)
 
         # The candidates are accessed inside the region, but the border memlets around it: a loop's range holds only
         # inside its body
-        inside = SymbolResolver().facts_at(self)
-        facts = SymbolResolver().facts_at(self.parent_graph) if isinstance(self, LoopRegion) else inside
+        inside = symbols.facts_at(self)
+        facts = symbols.facts_at(self.parent_graph) if isinstance(self, LoopRegion) else inside
         for direction in border_memlets:
             for connector in border_memlets[direction]:
                 propagated = sdprop._propagate_border_memlet_candidates(
@@ -3994,7 +3997,9 @@ class LoopRegion(ControlFlowRegion):
         if self.update_statement:
             replace_in_codeblock(self.update_statement, replacements)
 
-    def propagate_memlets(self, border_memlets: Dict[str, Dict[str, Optional[mm.Memlet]]]) -> None:
+    def propagate_memlets(
+        self, border_memlets: Dict[str, Dict[str, Optional[mm.Memlet]]], symbols: "SymbolResolver"
+    ) -> None:
         """
         Propagate memlets across a loop region boundary.
 
@@ -4007,23 +4012,24 @@ class LoopRegion(ControlFlowRegion):
         :param border_memlets: A mapping from connector direction and name to
                                the accumulated border memlet. The mapping is
                                updated in-place.
+        :param symbols: The ``SymbolResolver`` of the ongoing propagation.
         :note: ``border_memlets`` mapping is updated in-place.
         """
         # The candidates are accessed inside the body, the border memlets around the loop, where its range does not hold
-        body_facts = SymbolResolver().facts_at(self)
-        facts = SymbolResolver().facts_at(self.parent_graph)
+        body_facts = symbols.facts_at(self)
+        facts = symbols.facts_at(self.parent_graph)
         # Avoid cyclic import
         from dace.transformation.passes.analysis import loop_analysis
 
         if self.has_break:
-            super().propagate_memlets(border_memlets)
+            super().propagate_memlets(border_memlets, symbols)
             return
 
         init = loop_analysis.get_init_assignment(self)
         end = loop_analysis.get_loop_end(self)
         stride = loop_analysis.get_loop_stride(self)
         if not self.loop_variable or init is None or end is None or stride in (None, 0):
-            super().propagate_memlets(border_memlets)
+            super().propagate_memlets(border_memlets, symbols)
             return
 
         candidates = sdprop._make_border_memlets(border_memlets, as_lists=True)
@@ -4034,7 +4040,7 @@ class LoopRegion(ControlFlowRegion):
                 sdprop._collect_state_border_memlet_candidates(block, candidates)
             elif isinstance(block, AbstractControlFlowRegion):
                 nested_memlets = sdprop._make_border_memlets(border_memlets)
-                block.propagate_memlets(nested_memlets)
+                block.propagate_memlets(nested_memlets, symbols)
                 sdprop._append_border_memlet_candidates(candidates, nested_memlets)
 
         def _range_is_definitely_empty(start, stop) -> bool:
@@ -4311,7 +4317,9 @@ class ConditionalBlock(AbstractControlFlowRegion):
                 read_memlets.extend(memlets_in_ast(c.code[0], arrays, include_scalars=include_scalars))
         return read_memlets
 
-    def propagate_memlets(self, border_memlets: Dict[str, Dict[str, Optional[mm.Memlet]]]) -> None:
+    def propagate_memlets(
+        self, border_memlets: Dict[str, Dict[str, Optional[mm.Memlet]]], symbols: "SymbolResolver"
+    ) -> None:
         """
         Propagate memlets across a conditional region boundary.
 
@@ -4323,20 +4331,21 @@ class ConditionalBlock(AbstractControlFlowRegion):
         :param border_memlets: A mapping from connector direction and name to
                                the accumulated border memlet. The mapping is
                                updated in place.
+        :param symbols: The ``SymbolResolver`` of the ongoing propagation.
         :note: ``border_memlets`` mapping is updated in-place.
         """
         from dace.sdfg import propagation as sdprop
 
         # Branch conditions are evaluated regardless of which branch is taken.
-        sdprop._merge_meta_read_candidates(self, border_memlets, self.sdfg.arrays)
+        sdprop._merge_meta_read_candidates(self, border_memlets, self.sdfg.arrays, symbols)
 
         has_condition = False
-        facts = SymbolResolver().facts_at(self)
+        facts = symbols.facts_at(self)
 
         for condition, region in self._branches:
             has_condition = has_condition or condition is not None
             branch_memlets = sdprop._make_border_memlets(border_memlets)
-            region.propagate_memlets(branch_memlets)
+            region.propagate_memlets(branch_memlets, symbols)
 
             for direction in border_memlets:
                 for connector in border_memlets[direction]:
