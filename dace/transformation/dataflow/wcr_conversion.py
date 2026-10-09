@@ -1107,6 +1107,12 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
                         boundary_nodes.add(node)
                         break
 
+        # A duplicated view needs the chain it views duplicated with it, or the copy views nothing.
+        for node in list(boundary_nodes):
+            if isinstance(node.desc(state.sdfg), data.View):
+                for edge in sdutil.get_all_view_edges(state, node):
+                    boundary_nodes.update(n for n in (edge.src, edge.dst) if n in nodes_to_move)
+
         # Duplicate boundary nodes
         new_nodes = {}
         for node in boundary_nodes:
