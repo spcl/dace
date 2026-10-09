@@ -85,5 +85,14 @@ class TileOp(nodes.LibraryNode):
         else:
             state, requested = state_or_impl, kwargs.get("implementation")
         if requested is None and self.group is not TileGroup.THREAD and is_devicelevel_gpu(state.sdfg, state, self):
+            # Avoid import loop
+            from dace.transformation.passes.tile_synchronization import InsertTileSync
+
+            # The barriers between the block-level nodes go in while they are still nodes; placed ones stay. The
+            # expansion under way has passed some states already, so the new barriers expand here.
+            sync = InsertTileSync()
+            sync.apply_pass(state.sdfg.root_sdfg, {})
+            for barrier_state, barrier in sync.inserted:
+                barrier.expand(barrier_state)
             self.implementation = "block"
         return super().expand(state_or_sdfg, state_or_impl, **kwargs)

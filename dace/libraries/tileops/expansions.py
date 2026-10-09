@@ -29,6 +29,8 @@ TILE_THREADS_MAP = "tile_threads_"
 class ExpandTilePure(ExpandTransformation):
     """The per-lane C++ loop, which the compiler can still vectorize."""
 
+    runs_inside_kernel = True
+
     environments: list[type] = []
 
     @classmethod
@@ -38,6 +40,8 @@ class ExpandTilePure(ExpandTransformation):
 
 class ExpandTileIsa(ExpandTransformation):
     """A call into the header of one ISA backend; a subclass names the backend and its environment."""
+
+    runs_inside_kernel = True
 
     backend: str
 
@@ -55,6 +59,7 @@ class ExpandTileBlock(ExpandTransformation):
     """
 
     environments: list[type] = []
+    runs_inside_kernel = True
 
     @classmethod
     def expansion(cls, node: nodes.LibraryNode, parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> dace.SDFG:

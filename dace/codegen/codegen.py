@@ -243,11 +243,6 @@ def generate_code(sdfg: SDFG, validate=True) -> list[CodeObject]:
         # them to decide pointer vs. value. Storage defaults above already hold.
         infer_types.infer_connector_types(sdfg)
 
-    # Barriers between the block-level tile nodes of the GPU kernels, which their expansion spreads over threads
-    from dace.transformation.passes.tile_synchronization import InsertTileSync
-
-    InsertTileSync().apply_pass(sdfg, {})
-
     # Recursively expand library nodes that have not yet been expanded
     sdfg.expand_library_nodes()
 

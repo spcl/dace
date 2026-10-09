@@ -12,6 +12,9 @@ tokens its end leaves, the loop variable moved back by one step in their subsets
 iteration needs before it overwrites a subset the previous one still reads.
 
 A load is a token like any other write: the barrier before its first use is where an asynchronous copy is waited for.
+A block-level tile node runs the pass when it expands (:meth:`~dace.libraries.tileops.nodes.tile_op.TileOp.expand`),
+so the first node of a kernel to expand places the barriers of all of them; a kernel holding an expanded tile node is
+left alone, and a barrier already in a kernel settles the tokens like a new one.
 """
 
 import copy
@@ -21,7 +24,7 @@ from typing import NamedTuple
 from dace import SDFG, SDFGState, data, dtypes, properties, subsets, symbolic
 from dace.libraries.standard.nodes.barrier import Barrier, SyncScope
 from dace.libraries.tileops.dispatch import TileGroup
-from dace.libraries.tileops.expansions import BlockLayout, block_layout
+from dace.libraries.tileops.expansions import TILE_THREADS_MAP, BlockLayout, block_layout
 from dace.libraries.tileops.nodes.tile_op import TileOp
 from dace.memlet import Memlet
 from dace.sdfg import nodes
@@ -128,16 +131,26 @@ class InsertTileSync(ppl.Pass):
         for state in (state for sd in sdfg.all_sdfgs_recursive() for state in sd.states()):
             for node in state.nodes():
                 if isinstance(node, nodes.MapEntry) and node.map.schedule == dtypes.ScheduleType.GPU_Device:
-                    groups = {inner.group for inner, _ in kernel_nodes(state, node) if is_block_tile_node(inner)}
-                    if groups:
+                    inner_nodes = [inner for inner, _ in kernel_nodes(state, node)]
+                    groups = {inner.group for inner in inner_nodes if is_block_tile_node(inner)}
+                    # A kernel with an expanded tile node was synchronized before that node expanded
+                    if groups and not any(is_tile_expansion(inner) for inner in inner_nodes):
                         # Tiles that only warps share need only their warp to wait
                         walk.scope_of_kernel = SyncScope.WARP if groups == {TileGroup.WARP} else SyncScope.BLOCK
                         walk.scope(state, node, Tokens())
+        #: The barriers this run inserted, with their states
+        self.inserted: list[tuple[SDFGState, Barrier]] = []
         for (state, node), scope in walk.barriers.items():
             order = list(walk.order[state])
             position = order.index(node)
-            insert_barrier(state, order[:position], order[position:], scope)
-        return len(walk.barriers) or None
+            self.inserted.append((state, insert_barrier(state, order[:position], order[position:], scope)))
+        return len(self.inserted) or None
+
+
+def is_tile_expansion(node: nodes.Node) -> bool:
+    """A block-level tile node already expanded: the first one of a kernel to expand placed the barriers of all
+    of them (:meth:`~dace.libraries.tileops.nodes.tile_op.TileOp.expand`)."""
+    return isinstance(node, nodes.NestedSDFG) and node.sdfg.name.startswith(TILE_THREADS_MAP)
 
 
 def is_block_tile_node(node: nodes.Node) -> bool:
@@ -186,6 +199,10 @@ class Walk:
         return tokens
 
     def node(self, state: SDFGState, node: nodes.Node, tokens: Tokens) -> Tokens:
+        if isinstance(node, Barrier):
+            # A barrier already placed settles every token, so walking again places none twice
+            self.order.setdefault(state, {})[kernel_level(state, node)] = None
+            return Tokens()
         if not isinstance(node, nodes.CodeNode):
             return tokens
         reads, writes = accesses(state, node)
@@ -245,7 +262,7 @@ def kernel_level(state: SDFGState, node: nodes.Node) -> nodes.Node:
     return node
 
 
-def insert_barrier(state: SDFGState, before: list[nodes.Node], after: list[nodes.Node], scope: SyncScope) -> None:
+def insert_barrier(state: SDFGState, before: list[nodes.Node], after: list[nodes.Node], scope: SyncScope) -> Barrier:
     """A barrier of ``scope`` ordered after the nodes ``before`` and before the nodes ``after`` (kernel-level nodes of
     ``state`` in program order): a node merely independent of the one that waits must not slip past the barrier."""
     barrier = Barrier("tile_sync", scope)
@@ -257,6 +274,7 @@ def insert_barrier(state: SDFGState, before: list[nodes.Node], after: list[nodes
         state.add_edge(scope, None, barrier, None, Memlet())
     for node in after:
         state.add_edge(barrier, None, node, None, Memlet())
+    return barrier
 
 
 def kernel_exit(state: SDFGState, node: nodes.Node) -> nodes.Node:
