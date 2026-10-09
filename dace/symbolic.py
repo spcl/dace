@@ -2445,7 +2445,7 @@ def _pystr_to_symbolic_uncached(expr, symbol_map=None, simplify=None) -> sympy.B
 
 
 @lru_cache(maxsize=2048, typed=True)
-def _fold_extrema(expr: sympy.Expr, facts: Facts) -> sympy.Expr:
+def fold_extrema(expr: sympy.Expr, facts: Facts) -> sympy.Expr:
     """``expr`` with every argument of a ``Min``/``Max`` that the facts prove is not the extremum dropped."""
 
     def fold(extremum: sympy.Expr) -> sympy.Expr:
@@ -2467,7 +2467,7 @@ def simplify(expr: SymbolicType, facts: Facts) -> SymbolicType:
     """Simplifies ``expr`` under ``facts``. Each symbol a relation solves for is rewritten in nonnegative slacks
     (``N = s + 5`` for ``N > 4``), every other symbol carries the integrality and sign the facts prove, and the result
     is written back in the original symbols (``s = N - 5``)."""
-    expr = _fold_extrema(sympy.sympify(expr), facts)
+    expr = fold_extrema(sympy.sympify(expr), facts)
     names = {s.name: s for s in expr.free_symbols if isinstance(s, sympy.Symbol) and not isinstance(s, sympy.Dummy)}
     solved = {str(target): value for target, value in facts.substitution.items()}
     rewritten = expr.xreplace({s: solved.get(name, s) for name, s in names.items()})

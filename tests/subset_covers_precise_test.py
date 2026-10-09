@@ -84,7 +84,7 @@ def test_integer_bounding_box_symbolic_step():
 def test_ranges_symbolic_boundaries():
     """
     Tests where the boundaries of ranges are symbolic.
-    The function subset1.covers_precise(subset2, NO_FACTS) should return true only when the
+    The function subset1.covers_precise(subset2) should return true only when the
     start, end, and step size of subset1 are multiples of those in subset2
     """
     subset1 = Range.from_string("N:M:1")

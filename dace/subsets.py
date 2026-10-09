@@ -1076,20 +1076,9 @@ def bounding_box_union(subset_a: Subset, subset_b: Subset, facts: symbolic.Facts
         subset_a.max_element_approx(),
         subset_b.max_element_approx(),
     ):
-        if arb == brb or symbolic.provably_le(arb, brb, facts):
-            minrb = arb
-        elif symbolic.provably_le(brb, arb, facts):
-            minrb = brb
-        else:
-            minrb = sp.Min(arb, brb)
-        if are == bre or symbolic.provably_le(bre, are, facts):
-            maxre = are
-        elif symbolic.provably_le(are, bre, facts):
-            maxre = bre
-        else:
-            maxre = sp.Max(are, bre)
-
-        result.append((minrb, maxre, 1))
+        result.append(
+            (symbolic.fold_extrema(sp.Min(arb, brb), facts), symbolic.fold_extrema(sp.Max(are, bre), facts), 1)
+        )
 
     return Range(result)
 

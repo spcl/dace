@@ -898,8 +898,9 @@ class SubgraphFusion(transformation.SubgraphTransformation):
 
         # all maps are assumed to have the same params and range in order, so what holds inside the first holds
         # inside each; a map's range holds only inside it
-        facts = SymbolResolver().facts_at(graph, map_exits[0])
-        outer_facts = SymbolResolver().facts_at(graph, map_entries[0])
+        resolver = SymbolResolver()
+        facts = resolver.facts_at(graph, map_exits[0])
+        outer_facts = resolver.facts_at(graph, map_entries[0])
         global_map = nodes.Map(label="outer_fused", params=maps[0].params, ndrange=maps[0].range)
         global_map_entry = nodes.MapEntry(global_map)
         global_map_exit = nodes.MapExit(global_map)

@@ -3005,8 +3005,7 @@ class AbstractControlFlowRegion(
                 block.propagate_memlets(nested_memlets, symbols)
                 sdprop._append_border_memlet_candidates(candidates, nested_memlets)
 
-        # The candidates are accessed inside the region, but the border memlets around it: a loop's range holds only
-        # inside its body
+        # A loop's range holds for the candidates in its body, not for the border memlets around it
         inside = symbols.facts_at(self)
         facts = symbols.facts_at(self.parent_graph) if isinstance(self, LoopRegion) else inside
         for direction in border_memlets:
@@ -4015,7 +4014,7 @@ class LoopRegion(ControlFlowRegion):
         :param symbols: The ``SymbolResolver`` of the ongoing propagation.
         :note: ``border_memlets`` mapping is updated in-place.
         """
-        # The candidates are accessed inside the body, the border memlets around the loop, where its range does not hold
+        # The range holds for the candidates in the body, not for the border memlets around the loop
         body_facts = symbols.facts_at(self)
         facts = symbols.facts_at(self.parent_graph)
         # Avoid cyclic import
