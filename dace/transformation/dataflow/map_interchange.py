@@ -1,12 +1,11 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 """Implements the map interchange transformation."""
 
-from dace.sdfg import SDFG, SDFGState
-from dace.sdfg import nodes
+from dace.sdfg import SDFG, SDFGState, nodes
 from dace.sdfg import utils as sdutil
+from dace.sdfg.propagation import propagate_memlet
 from dace.symbolic import symlist
 from dace.transformation import transformation
-from dace.sdfg.propagation import propagate_memlet
 
 
 class MapInterchange(transformation.SingleStateTransformation):
@@ -113,12 +112,8 @@ class MapInterchange(transformation.SingleStateTransformation):
         sdutil.change_edge_src(graph, outer_map_exit, inner_map_exit)
 
         # Add edges between the map entries and exits.
-        new_entry_edges = []
-        new_exit_edges = []
-        for e in entry_edges:
-            new_entry_edges.append(graph.add_edge(e.dst, e.src_conn, e.src, e.dst_conn, e.data))
-        for e in exit_edges:
-            new_exit_edges.append(graph.add_edge(e.dst, e.src_conn, e.src, e.dst_conn, e.data))
+        new_entry_edges = [graph.add_edge(e.dst, e.src_conn, e.src, e.dst_conn, e.data) for e in entry_edges]
+        new_exit_edges = [graph.add_edge(e.dst, e.src_conn, e.src, e.dst_conn, e.data) for e in exit_edges]
 
         # Repropagate memlets in modified region
         for e in new_entry_edges:

@@ -1,8 +1,8 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 
-import dace
 import numpy as np
 
+import dace
 from dace.properties import make_properties
 
 

@@ -5,9 +5,10 @@ Currently, it is only used for fused operations.
 """
 
 import ast
-from dace.codegen.targets.sve import util as util
+
 import dace
 import dace.dtypes
+from dace.codegen.targets.sve import util as util
 
 
 class SVEBinOpFuser(ast.NodeTransformer):

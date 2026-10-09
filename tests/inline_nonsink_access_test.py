@@ -1,7 +1,8 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
 import numpy as np
 import pytest
+
+import dace
 
 
 def make_sdfg(outer_shape, inner_shape, outer_index, inner_index):

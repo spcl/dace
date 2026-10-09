@@ -5,18 +5,16 @@ import ast
 import collections
 import re
 from dataclasses import dataclass
-from typing import Any, DefaultDict, Dict, Set, Tuple
+from typing import Any
 
 import numpy as np
 
 import dace
 from dace import data as dt
-from dace import dtypes
+from dace import dtypes, nodes, subsets, symbolic
 from dace import memlet as mm
-from dace import nodes
 from dace import properties as props
 from dace import sdfg as sd
-from dace import subsets, symbolic
 from dace.frontend.python import astutils
 from dace.sdfg import SDFG
 from dace.sdfg import graph as gr
@@ -32,7 +30,7 @@ def _is_signed_integer(dtype: dtypes.typeclass) -> bool:
     return isinstance(dtype, dtypes.typeclass) and np.issubdtype(dtype.type, np.signedinteger)
 
 
-def is_lossless_integer_cast(node: ast.Call, symbols: Dict[str, dtypes.typeclass]) -> bool:
+def is_lossless_integer_cast(node: ast.Call, symbols: dict[str, dtypes.typeclass]) -> bool:
     """
     Returns True if the given call is a ``dace.<signed integer type>(name)`` cast that widens (or keeps) a signed
     integer. Such a cast does not change the value of its argument, and the Python frontend inserts one on the
@@ -60,7 +58,7 @@ class AttributedCallDetector(ast.NodeVisitor):
     Detects calls to functions that are attributes.
     """
 
-    def __init__(self, symbols: Dict[str, dtypes.typeclass]):
+    def __init__(self, symbols: dict[str, dtypes.typeclass]):
         """
         :param symbols: A mapping from names (symbols and tasklet connectors) to their data types, used to identify
                         casts that can be dropped (see :func:`is_lossless_integer_cast`).
@@ -103,7 +101,7 @@ class RemoveConstantAttributes(ast.NodeTransformer):
         return self.generic_visit(node)
 
 
-def find_promotable_scalars(sdfg: sd.SDFG, transients_only: bool = True, integers_only: bool = True) -> Set[str]:
+def find_promotable_scalars(sdfg: sd.SDFG, transients_only: bool = True, integers_only: bool = True) -> set[str]:
     """
     Finds scalars that can be promoted to symbols in the given SDFG.
     Conditions for matching a scalar for symbol-promotion are as follows:
@@ -126,7 +124,7 @@ def find_promotable_scalars(sdfg: sd.SDFG, transients_only: bool = True, integer
     :return: A set of promotable scalar names.
     """
     # Keep set of active candidates
-    candidates: Set[str] = set()
+    candidates: set[str] = set()
 
     # General array checks
     for aname, desc in sdfg.arrays.items():
@@ -143,9 +141,9 @@ def find_promotable_scalars(sdfg: sd.SDFG, transients_only: bool = True, integer
         candidates.add(aname)
 
     # Check all occurrences of candidates in SDFG and filter out
-    candidates_seen: Set[str] = set()
+    candidates_seen: set[str] = set()
     for state in sdfg.states():
-        candidates_in_state: Set[str] = set()
+        candidates_in_state: set[str] = set()
 
         for node in state.nodes():
             if not isinstance(node, nodes.AccessNode):
@@ -342,7 +340,7 @@ class TaskletPromoterDict(ast.NodeTransformer):
     If connector is used as a standard name, modify tasklet code to use symbol.
     """
 
-    def __init__(self, conn_to_sym: Dict[str, str]) -> None:
+    def __init__(self, conn_to_sym: dict[str, str]) -> None:
         """
         Initializes AST transformer.
 
@@ -373,7 +371,7 @@ class TaskletIndirectionPromoter(ast.NodeTransformer):
     """
 
     def __init__(
-        self, in_edges: Dict[str, mm.Memlet], out_edges: Dict[str, mm.Memlet], sdfg: sd.SDFG, defined_syms: Set[str]
+        self, in_edges: dict[str, mm.Memlet], out_edges: dict[str, mm.Memlet], sdfg: sd.SDFG, defined_syms: set[str]
     ) -> None:
         """
         Initializes AST transformer.
@@ -386,9 +384,9 @@ class TaskletIndirectionPromoter(ast.NodeTransformer):
         self.sdfg = sdfg
         self.defined = defined_syms
         self.connector_names = set(in_edges.keys()) | set(out_edges.keys())
-        self.in_mapping: Dict[str, Tuple[str, subsets.Range]] = {}
-        self.out_mapping: Dict[str, Tuple[str, subsets.Range]] = {}
-        self.do_not_remove: Set[str] = set()
+        self.in_mapping: dict[str, tuple[str, subsets.Range]] = {}
+        self.out_mapping: dict[str, tuple[str, subsets.Range]] = {}
+        self.do_not_remove: set[str] = set()
 
     def _get_requested_range(self, node: ast.Subscript, memlet_subset: subsets.Subset) -> subsets.Subset:
         """
@@ -451,7 +449,7 @@ class TaskletIndirectionPromoter(ast.NodeTransformer):
         return node
 
 
-def _range_is_promotable(subset: subsets.Range, defined: Set[str]) -> bool:
+def _range_is_promotable(subset: subsets.Range, defined: set[str]) -> bool:
     """Helper function that determines whether a range is promotable."""
     # Some free symbols remain, we cannot promote
     if len(subset.free_symbols - defined) > 0:
@@ -462,8 +460,8 @@ def _range_is_promotable(subset: subsets.Range, defined: Set[str]) -> bool:
 def _handle_connectors(
     state: sd.SDFGState,
     node: nodes.Tasklet,
-    mapping: Dict[str, Tuple[str, subsets.Range]],
-    ignore: Set[str],
+    mapping: dict[str, tuple[str, subsets.Range]],
+    ignore: set[str],
     in_edges: bool,
 ) -> bool:
     """
@@ -498,7 +496,7 @@ def _handle_connectors(
                 mm.Memlet(data=orig_edge.data.data, subset=subset),
             )
     # Remove connectors and edges
-    conns_to_remove = set(v[0] for v in mapping.values()) - ignore
+    conns_to_remove = {v[0] for v in mapping.values()} - ignore
     for conn in conns_to_remove:
         state.remove_edge(orig_edges[conn])
         if in_edges:
@@ -508,18 +506,18 @@ def _handle_connectors(
 
 
 def _cpp_indirection_promoter(
-    code: str, in_edges: Dict[str, mm.Memlet], out_edges: Dict[str, mm.Memlet], sdfg: sd.SDFG, defined_syms: Set[str]
-) -> Tuple[str, Dict[str, Tuple[str, subsets.Range]], Dict[str, Tuple[str, subsets.Range]], Set[str]]:
+    code: str, in_edges: dict[str, mm.Memlet], out_edges: dict[str, mm.Memlet], sdfg: sd.SDFG, defined_syms: set[str]
+) -> tuple[str, dict[str, tuple[str, subsets.Range]], dict[str, tuple[str, subsets.Range]], set[str]]:
     """
     Promotes indirect memory access in C++ Tasklets to symbolic memlets.
     """
-    in_mapping: Dict[str, Tuple[str, subsets.Range]] = {}
-    out_mapping: Dict[str, Tuple[str, subsets.Range]] = {}
-    do_not_remove: Set[str] = set()
-    latest: DefaultDict[str, int] = collections.defaultdict(int)
+    in_mapping: dict[str, tuple[str, subsets.Range]] = {}
+    out_mapping: dict[str, tuple[str, subsets.Range]] = {}
+    do_not_remove: set[str] = set()
+    latest: collections.defaultdict[str, int] = collections.defaultdict(int)
 
     # String replacement
-    repl: Dict[Tuple[int, int], str] = {}
+    repl: dict[tuple[int, int], str] = {}
 
     # Find all occurrences of "aname[subexpr]"
     for m in re.finditer(r"([a-zA-Z_][a-zA-Z_0-9]*?)\[(.*?)\]", code):
@@ -568,7 +566,7 @@ def _cpp_indirection_promoter(
                 do_not_remove.add(node_name)
 
     # Make all string replacements
-    for (begin, end), replacement in reversed(sorted(repl.items())):
+    for (begin, end), replacement in sorted(repl.items(), reverse=True):
         code = code[:begin] + replacement + code[end:]
 
     return code, in_mapping, out_mapping, do_not_remove
@@ -620,7 +618,7 @@ def remove_symbol_indirection(sdfg: sd.SDFG):
             _handle_connectors(state, node, out_mapping, do_not_remove, False)
 
 
-def remove_scalar_reads(sdfg: sd.SDFG, array_names: Dict[str, str]):
+def remove_scalar_reads(sdfg: sd.SDFG, array_names: dict[str, str]):
     """
     Removes all instances of a promoted symbol's read accesses in an SDFG.
     This removes each read-only access node as well as all of its descendant
@@ -651,10 +649,10 @@ def remove_scalar_reads(sdfg: sd.SDFG, array_names: Dict[str, str]):
                                 promo.visit(stmt)
                         elif dst.language is dtypes.Language.CPP:
                             # Replace whole-word matches (identifiers) in code
-                            dst.code.code = re.sub(r"\b%s\b" % re.escape(e.dst_conn), symname, dst.code.as_string)
+                            dst.code.code = re.sub(rf"\b{re.escape(e.dst_conn)}\b", symname, dst.code.as_string)
                     elif isinstance(dst, nodes.AccessNode):
                         # Step 3.3
-                        t = state.add_tasklet("symassign", {}, {"__out"}, "__out = %s" % symname)
+                        t = state.add_tasklet("symassign", {}, {"__out"}, f"__out = {symname}")
                         state.add_edge(
                             t, "__out", dst, e.dst_conn, mm.Memlet(data=dst.data, subset=e.data.dst_subset, volume=1)
                         )
@@ -697,7 +695,7 @@ def remove_scalar_reads(sdfg: sd.SDFG, array_names: Dict[str, str]):
                         # Skip
                         continue
                     else:
-                        raise ValueError('Node type "%s" not supported for promotion' % type(dst).__name__)
+                        raise ValueError(f'Node type "{type(dst).__name__}" not supported for promotion')
 
                     # If nodes were disconnected, reconnect with empty memlet
                     if isinstance(e.src, nodes.EntryNode) and len(state.edges_between(e.src, dst)) == 0:
@@ -735,7 +733,7 @@ class ScalarToSymbolPromotion(passes.Pass):
     def modifies(self) -> passes.Modifies:
         return passes.Modifies.Descriptors | passes.Modifies.Symbols | passes.Modifies.Nodes | passes.Modifies.Edges
 
-    def apply_pass(self, sdfg: SDFG, _: Dict[Any, Any]) -> Set[str]:
+    def apply_pass(self, sdfg: SDFG, _: dict[Any, Any]) -> set[str]:
         """
         Promotes all matching transient scalars to SDFG symbols, changing all
         tasklets to inter-state assignments. This enables the transformed symbols
@@ -806,14 +804,14 @@ class ScalarToSymbolPromotion(passes.Pass):
                     for e in new_state.in_edges(input):
                         memlet_str: str = e.data.data
                         if e.data.subset is not None and not isinstance(sdfg.arrays[memlet_str], dt.Scalar):
-                            memlet_str += "[%s]" % e.data.subset
-                        newcode = re.sub(r"\b%s\b" % re.escape(e.dst_conn), memlet_str, newcode)
+                            memlet_str += f"[{e.data.subset}]"
+                        newcode = re.sub(rf"\b{re.escape(e.dst_conn)}\b", memlet_str, newcode)
                     # Add interstate edge assignment
                     new_isedge.data.assignments[node.data] = newcode
                 elif isinstance(input, nodes.AccessNode):
                     memlet: mm.Memlet = in_edge.data
                     if memlet.src_subset and not isinstance(sdfg.arrays[memlet.data], dt.Scalar):
-                        new_isedge.data.assignments[node.data] = "%s[%s]" % (input.data, memlet.src_subset)
+                        new_isedge.data.assignments[node.data] = f"{input.data}[{memlet.src_subset}]"
                     else:
                         new_isedge.data.assignments[node.data] = input.data
 
@@ -871,5 +869,5 @@ class ScalarToSymbolPromotion(passes.Pass):
 
         return to_promote or None
 
-    def report(self, pass_retval: Set[str]) -> str:
+    def report(self, pass_retval: set[str]) -> str:
         return f"Promoted {len(pass_retval)} scalars to symbols: {pass_retval}"

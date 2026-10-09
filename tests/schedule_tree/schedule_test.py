@@ -1,10 +1,10 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 
+import numpy as np
+
 import dace
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.sdfg.analysis.schedule_tree.sdfg_to_tree import as_schedule_tree
-import numpy as np
-
 from dace.transformation.pass_pipeline import FixedPointPipeline
 from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising
 

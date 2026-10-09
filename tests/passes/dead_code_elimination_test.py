@@ -3,13 +3,14 @@
 
 import numpy as np
 import pytest
+
 import dace
 from dace.properties import CodeBlock
 from dace.sdfg.state import BreakBlock, ConditionalBlock, ContinueBlock, ControlFlowRegion, LoopRegion, ReturnBlock
 from dace.sdfg.validation import InvalidSDFGNodeError
 from dace.transformation.pass_pipeline import Pipeline
-from dace.transformation.passes.dead_state_elimination import DeadStateElimination
 from dace.transformation.passes.dead_dataflow_elimination import DeadDataflowElimination
+from dace.transformation.passes.dead_state_elimination import DeadStateElimination
 
 
 def test_dse_simple():

@@ -1,11 +1,12 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import os
 import tempfile
+
 import numpy as np
 
 import dace as dp
-from dace.sdfg import SDFG, dealias
 from dace.memlet import Memlet
+from dace.sdfg import SDFG, dealias
 
 
 def test():

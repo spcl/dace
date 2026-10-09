@@ -1,5 +1,6 @@
-import dace
 import pytest
+
+import dace
 
 
 def create_assign_sdfg():
@@ -14,8 +15,8 @@ def create_assign_sdfg():
     tasklet.add_out_connector("OUT__a")
     an = state.add_write("A")
     state.add_edge(map_entry, None, tasklet, None, dace.Memlet())
-    state.add_edge(tasklet, "OUT__a", map_exit, "IN__a", dace.Memlet(f"A[0]"))
-    state.add_edge(map_exit, "OUT__a", an, None, dace.Memlet(f"A[0]"))
+    state.add_edge(tasklet, "OUT__a", map_exit, "IN__a", dace.Memlet("A[0]"))
+    state.add_edge(map_exit, "OUT__a", an, None, dace.Memlet("A[0]"))
     sdfg.validate()
     return A, sdfg
 
@@ -35,9 +36,9 @@ def create_assign_sdfg_with_views():
     an2 = state.add_write("A")
     an.add_out_connector("views")
     state.add_edge(map_entry, None, tasklet, None, dace.Memlet(None))
-    state.add_edge(tasklet, "OUT__a", map_exit, "IN__a", dace.Memlet(f"v_A[0]"))
-    state.add_edge(map_exit, "OUT__a", an, None, dace.Memlet(f"v_A[0]"))
-    state.add_edge(an, "views", an2, None, dace.Memlet(f"A[0:1]"))
+    state.add_edge(tasklet, "OUT__a", map_exit, "IN__a", dace.Memlet("v_A[0]"))
+    state.add_edge(map_exit, "OUT__a", an, None, dace.Memlet("v_A[0]"))
+    state.add_edge(an, "views", an2, None, dace.Memlet("A[0:1]"))
     sdfg.validate()
     return v_A, sdfg
 
@@ -59,7 +60,7 @@ def create_increment_sdfg():
     an2 = state.add_write("A")
     state.add_edge(an1, None, map_entry, "IN__a", dace.Memlet(f"A[0:{array_size}]"))
     state.add_edge(map_entry, "OUT__a", tasklet, "IN__a", dace.Memlet("A[i]"))
-    state.add_edge(tasklet, "OUT__a", map_exit, "IN__a", dace.Memlet(f"A[i]"))
+    state.add_edge(tasklet, "OUT__a", map_exit, "IN__a", dace.Memlet("A[i]"))
     state.add_edge(map_exit, "OUT__a", an2, None, dace.Memlet(f"A[0:{array_size}]"))
     sdfg.validate()
     return A, sdfg
@@ -86,12 +87,12 @@ def create_increment_sdfg_with_views():
     an4 = state.add_write("v_A")
     an3.add_in_connector("views")
     an4.add_out_connector("views")
-    state.add_edge(an1, None, an3, "views", dace.Memlet(f"A[0:100]"))
-    state.add_edge(an3, None, map_entry, "IN__a", dace.Memlet(f"v_A[i]"))
+    state.add_edge(an1, None, an3, "views", dace.Memlet("A[0:100]"))
+    state.add_edge(an3, None, map_entry, "IN__a", dace.Memlet("v_A[i]"))
     state.add_edge(map_entry, "OUT__a", tasklet, "IN__a", dace.Memlet("v_A[i]"))
-    state.add_edge(tasklet, "OUT__a", map_exit, "IN__a", dace.Memlet(f"v_A[i]"))
-    state.add_edge(map_exit, "OUT__a", an4, None, dace.Memlet(f"v_A[i]"))
-    state.add_edge(an4, "views", an2, None, dace.Memlet(f"A[0:100]"))
+    state.add_edge(tasklet, "OUT__a", map_exit, "IN__a", dace.Memlet("v_A[i]"))
+    state.add_edge(map_exit, "OUT__a", an4, None, dace.Memlet("v_A[i]"))
+    state.add_edge(an4, "views", an2, None, dace.Memlet("A[0:100]"))
     sdfg.validate()
     return v_A, sdfg
 

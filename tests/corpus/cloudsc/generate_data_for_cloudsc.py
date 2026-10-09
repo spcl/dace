@@ -32,7 +32,6 @@ harmless floating-point reassociation flips branches and masquerades as a bug.
 """
 
 import copy
-from typing import Dict, List, Optional, Tuple, Union
 
 import numpy as np
 
@@ -46,7 +45,7 @@ from tests.corpus.cloudsc.cloudsc import cloudsc_py
 #: (``klev = klon = 32``) for a fast compiled run -- the physical input ranges
 #: are bounds, not vertical profiles, so they stay valid at any grid size, and
 #: ``ncldtop = 15`` still leaves a meaningful vertical microphysics loop.
-CLOUDSC_SYMBOLS: Dict[str, int] = {
+CLOUDSC_SYMBOLS: dict[str, int] = {
     "klev": 32,
     "klon": 32,
     "nclv": 5,
@@ -63,7 +62,7 @@ CLOUDSC_SYMBOLS: Dict[str, int] = {
 #: reference. The ``yrecldp_nssopt``/``ncldtop``/``laeri*`` entries are integer
 #: scalars (cast on use); the rest are doubles. Mirrored here so the harness
 #: needs no external dataset.
-CLOUDSC_CONSTANTS: Dict[str, float] = {
+CLOUDSC_CONSTANTS: dict[str, float] = {
     "ptsphy": 3600.0,
     "ydcst_rcpd": 1004.7088578330674,
     "ydcst_rd": 287.0596736665907,
@@ -171,7 +170,7 @@ CLOUDSC_CONSTANTS: Dict[str, float] = {
 #: Arrays absent here are kernel outputs (or have no reference value) and are
 #: zero-initialized. Several reference inputs are uniformly zero (``pmfd``,
 #: ``pnice``, ``plsm``, ...); their ``(0.0, 0.0)`` range reproduces that.
-CLOUDSC_INPUT_RANGES: Dict[str, Tuple[float, float]] = {
+CLOUDSC_INPUT_RANGES: dict[str, tuple[float, float]] = {
     "pa": (0.0, 1.0),
     "pap": (0.999923895048429, 101254.97084602337),
     "paph": (0.0, 101375.10057152908),
@@ -206,7 +205,7 @@ CLOUDSC_INPUT_RANGES: Dict[str, Tuple[float, float]] = {
 }
 
 #: ``[min, max]`` integer range of each integer input array in the reference.
-CLOUDSC_INT_RANGES: Dict[str, Tuple[int, int]] = {
+CLOUDSC_INT_RANGES: dict[str, tuple[int, int]] = {
     "ktype": (0, 3),
     "ldcum": (0, 1),
 }
@@ -227,7 +226,7 @@ IEEE_CPU_ARGS: str = "-std=c++14 -fPIC -O0 -fopenmp -fno-fast-math -ffp-contract
 #: cleanly -- so the suite never enables it.
 O3_CPU_ARGS: str = "-std=c++14 -fPIC -O3 -fopenmp -fno-fast-math -ffp-contract=off"
 
-PARSED_CLOUDSC: Dict[bool, dace.SDFG] = {}
+PARSED_CLOUDSC: dict[bool, dace.SDFG] = {}
 
 
 def build_cloudsc_sdfg(simplify: bool = False) -> dace.SDFG:
@@ -243,7 +242,7 @@ def build_cloudsc_sdfg(simplify: bool = False) -> dace.SDFG:
     return copy.deepcopy(PARSED_CLOUDSC[simplify])
 
 
-def generate_cloudsc_inputs(sdfg: dace.SDFG, seed: int = 0) -> Dict[str, Union[np.ndarray, int, float]]:
+def generate_cloudsc_inputs(sdfg: dace.SDFG, seed: int = 0) -> dict[str, np.ndarray | int | float]:
     """Generate a physically-realistic CloudSC input set for ``sdfg``.
 
     Every non-transient argument is filled following the dwarf reference (see
@@ -258,11 +257,11 @@ def generate_cloudsc_inputs(sdfg: dace.SDFG, seed: int = 0) -> Dict[str, Union[n
     :returns: A kwargs dict of arrays, scalars, and symbol values.
     """
     rng = np.random.default_rng(seed)
-    arrays: Dict[str, np.ndarray] = {}
+    arrays: dict[str, np.ndarray] = {}
     for name, desc in sdfg.arrays.items():
         if desc.transient:
             continue
-        dims: List[int] = [int(symbolic.evaluate(d, CLOUDSC_SYMBOLS)) for d in desc.shape]
+        dims: list[int] = [int(symbolic.evaluate(d, CLOUDSC_SYMBOLS)) for d in desc.shape]
         is_int = "int" in str(desc.dtype)
 
         if name in CLOUDSC_CONSTANTS:
@@ -279,21 +278,21 @@ def generate_cloudsc_inputs(sdfg: dace.SDFG, seed: int = 0) -> Dict[str, Union[n
                 lo, hi = CLOUDSC_INT_RANGES.get(name, (1, 1))
                 arrays[name] = rng.integers(lo, hi + 1, size=dims).astype(np.int32, order="F")
         else:
-            value_range: Optional[Tuple[float, float]] = CLOUDSC_INPUT_RANGES.get(name)
+            value_range: tuple[float, float] | None = CLOUDSC_INPUT_RANGES.get(name)
             if value_range is None:
                 arrays[name] = np.zeros(dims, order="F")  # kernel output / no reference range
             else:
                 lo, hi = value_range
                 arrays[name] = (lo + (hi - lo) * rng.random(dims)).astype(np.float64, order="F")
 
-    inputs: Dict[str, Union[np.ndarray, int, float]] = {
+    inputs: dict[str, np.ndarray | int | float] = {
         name: (data.flat[0] if data.size == 1 else data) for name, data in arrays.items()
     }
     inputs.update(CLOUDSC_SYMBOLS)
     return inputs
 
 
-def make_sequential(sdfg: dace.SDFG) -> Tuple[int, int]:
+def make_sequential(sdfg: dace.SDFG) -> tuple[int, int]:
     """Force every map and library node to a sequential schedule, in place.
 
     A numerical-equivalence comparison must be deterministic: CloudSC's
@@ -317,12 +316,12 @@ def make_sequential(sdfg: dace.SDFG) -> Tuple[int, int]:
 
 
 def compare_outputs(
-    ref_inputs: Dict[str, Union[np.ndarray, int, float]],
-    cand_inputs: Dict[str, Union[np.ndarray, int, float]],
+    ref_inputs: dict[str, np.ndarray | int | float],
+    cand_inputs: dict[str, np.ndarray | int | float],
     rtol: float = 1e-15,
     atol: float = 1e-15,
     verbose: bool = False,
-) -> Dict[str, Tuple[float, float, bool]]:
+) -> dict[str, tuple[float, float, bool]]:
     """Per-array (per-subset) tolerance check between two driven input/output sets.
 
     Returns ``{array_name: (max_abs, max_rel, ok)}`` for every shared
@@ -346,7 +345,7 @@ def compare_outputs(
     :param verbose: Print a ``name max_abs max_rel ok`` line per array.
     :returns: Mapping from array name to ``(max_abs, max_rel, ok)``.
     """
-    report: Dict[str, Tuple[float, float, bool]] = {}
+    report: dict[str, tuple[float, float, bool]] = {}
     for name, ref_val in ref_inputs.items():
         if not isinstance(ref_val, np.ndarray) or ref_val.size == 0:
             continue

@@ -2,8 +2,8 @@
 import numpy as np
 
 import dace as dp
-from dace.sdfg import SDFG
 from dace.memlet import Memlet
+from dace.sdfg import SDFG
 
 
 # Constructs an SDFG with multiple tasklets manually and runs it
