@@ -112,9 +112,9 @@ class ReferenceToView(ppl.Pass):
         # Safe: ``find_candidates`` only removes from ``result``, so the graph the helper walks is
         # unchanged for the whole span. Worth memoizing because it enumerates SIMPLE PATHS between
         # the two blocks -- exponential -- and the same pair recurs across candidates.
-        modified_between: dict[tuple[int, int], set[str]] = {}
+        modified_between: Dict[Tuple[int, int], Set[str]] = {}
 
-        def modified_syms(src, dst) -> set[str]:
+        def modified_syms(src, dst) -> Set[str]:
             key = (id(src), id(dst))
             syms = modified_between.get(key)
             if syms is None:

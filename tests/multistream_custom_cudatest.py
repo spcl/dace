@@ -4,7 +4,6 @@ import os
 import numpy as np
 import pytest
 
-import dace as dp
 from dace.codegen import common
 
 #: The vendor BLAS of the configured GPU backend: cuBLAS on CUDA, rocBLAS on HIP (same dgemm argument order)
@@ -40,6 +39,8 @@ GEMM_CODE = """
                 &beta,
                 c, N);
     """.format(**GPU_BLAS)
+
+import dace as dp
 
 # Create symbols
 N = dp.symbol("N")

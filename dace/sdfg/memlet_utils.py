@@ -4,7 +4,8 @@ import copy
 import itertools
 from collections import defaultdict
 from collections.abc import Callable, Generator, Iterable
-from typing import AbstractSet, Any, TypeVar
+from collections.abc import Set as AbstractSet
+from typing import Any, TypeVar
 
 from dace import Memlet, data, dtypes, subsets, symbolic
 from dace.frontend.python import memlet_parser

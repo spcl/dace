@@ -3,23 +3,22 @@
 SVE Vectorization: This module offers all functionality to vectorize an SDFG for the Arm SVE codegen.
 """
 
-import dace.codegen.targets.sve as sve
-import dace.codegen.targets.sve.util as util
-import dace.data as data
 import dace.dtypes
-import dace.dtypes as dtypes
 import dace.frontend.operations
 import dace.sdfg
-import dace.sdfg.analysis.vector_inference as vector_inference
 import dace.sdfg.infer_types
 import dace.transformation.dataflow
-import dace.transformation.dataflow.sve.infer_types as infer_types
 import dace.transformation.helpers
+from dace import data, dtypes
+from dace.codegen.targets import sve
+from dace.codegen.targets.sve import util
 from dace.properties import SymbolicProperty, make_properties
-from dace.sdfg import SDFG, SDFGState, nodes
+from dace.sdfg import SDFG, nodes
 from dace.sdfg import utils as sdutil
+from dace.sdfg.analysis import vector_inference
 from dace.sdfg.state import SDFGState
 from dace.transformation import transformation
+from dace.transformation.dataflow.sve import infer_types
 
 
 @make_properties

@@ -14,10 +14,9 @@ import itertools
 
 import dace
 from dace import SDFG, SDFGState, config, nodes
+from dace.frontend.common import create_einsum_sdfg
 from dace.libraries.onnx.forward_implementation_abc import ONNXForward
 from dace.libraries.onnx.nodes import onnx_op
-from dace.sdfg.nodes import Node
-from dace.sdfg.utils import in_desc_with_name, out_desc_with_name
 
 
 def _as_plain_array(desc):
@@ -35,8 +34,8 @@ def _as_plain_array(desc):
     return desc.as_array() if isinstance(desc, dace.data.View) else desc
 
 
-from dace.frontend.common import create_einsum_sdfg
 from dace.libraries.onnx.op_implementations.utils import in_desc_with_name, op_implementation, out_desc_with_name
+from dace.sdfg.nodes import Node
 
 # ============================================================================
 # Matrix Multiplication

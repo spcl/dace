@@ -12,9 +12,9 @@ import sys
 import types
 import warnings
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+from collections.abc import Set as AbstractSet
 from typing import (
     TYPE_CHECKING,
-    AbstractSet,
     Any,
     AnyStr,
     Literal,
@@ -66,7 +66,7 @@ if TYPE_CHECKING:
     from dace.sdfg import SDFG
 
 NodeT = Union[nd.Node, "ControlFlowBlock"]
-EdgeT = Union[MultiConnectorEdge[mm.Memlet], Edge["dace.sdfg.InterstateEdge"]]
+EdgeT = MultiConnectorEdge[mm.Memlet] | Edge["dace.sdfg.InterstateEdge"]
 GraphT = Union["ControlFlowRegion", "SDFGState"]
 
 
@@ -107,10 +107,10 @@ def caller_position(frame: types.FrameType) -> tuple[int, str]:
 
 
 #: One map dimension: a range string, a subset, or a ``(begin, end, step)`` triple of symbolic bounds.
-MapBound = Union[sympy.Basic, symbolic.SymExpr, int]
-MapDimension = Union[str, sbs.Subset, tuple[MapBound, MapBound, MapBound]]
+MapBound = sympy.Basic | symbolic.SymExpr | int
+MapDimension = str | sbs.Subset | tuple[MapBound, MapBound, MapBound]
 #: The dimensions of a map by parameter name, as a mapping or as a list of pairs.
-MapRanges = Union[Mapping[str, MapDimension], Sequence[tuple[str, MapDimension]]]
+MapRanges = Mapping[str, MapDimension] | Sequence[tuple[str, MapDimension]]
 
 
 def _make_iterators(ndrange: MapRanges):

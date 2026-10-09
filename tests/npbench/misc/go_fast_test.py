@@ -72,8 +72,8 @@ def go_fast_jax_kernel(jnp, lax, a):
 
 def run_go_fast_autodiff():
     import jax
-    import jax.lax as lax
     import jax.numpy as jnp
+    from jax import lax
 
     # Initialize forward data (using smaller size for AD test)
     N = 20

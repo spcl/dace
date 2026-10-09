@@ -1,6 +1,5 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 
-
 from dace import properties
 from dace.frontend.python import astutils
 from dace.sdfg.sdfg import InterstateEdge

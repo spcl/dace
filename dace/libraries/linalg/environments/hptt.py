@@ -9,7 +9,6 @@ class HPTT:
     cmake_minimum_version = None
     cmake_packages = []
     cmake_variables = {}
-    cmake_libraries = []
     cmake_compile_flags = []
     cmake_link_flags = []
     cmake_files = []

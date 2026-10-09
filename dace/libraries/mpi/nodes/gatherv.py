@@ -102,9 +102,9 @@ class Gatherv(MPINode):
             raise ValueError("Gatherv _displs must be an int32 array!")
 
         in_count_str = "XXX"
-        for _, _, _, dst_conn, data in state.in_edges(self):
+        for _, _, _, dst_conn, memlet in state.in_edges(self):
             if dst_conn == "_inbuffer":
-                dims = [symstr(e) for e in data.subset.size_exact()]
+                dims = [symstr(e) for e in memlet.subset.size_exact()]
                 in_count_str = "*".join(dims)
 
         return (inbuffer, in_count_str), outbuffer, recvcounts, displs, root

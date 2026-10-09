@@ -305,11 +305,10 @@ def run_staged(
 
 def report(records: list[dict]) -> str:
     lines = ["", f"{'phase':30s} {'total(s)':>9s} {'verify(s)':>9s}  slowest stage", "-" * 92]
-    for r in records:
-        lines.append(
-            f"{r['phase']:30s} {r['phase_seconds']:9.2f} {r.get('verify_seconds', 0.0):9.2f}  "
-            f"{r['slowest_stage'] or ''}"
-        )
+    lines.extend(
+        f"{r['phase']:30s} {r['phase_seconds']:9.2f} {r.get('verify_seconds', 0.0):9.2f}  {r['slowest_stage'] or ''}"
+        for r in records
+    )
     lines += ["", "TOP 15 STAGES BY TIME", "-" * 92]
     flat = [(s["seconds"], s["pass"], r["phase"]) for r in records for s in r["stages"]]
     for seconds, name, phase in sorted(flat, reverse=True)[:15]:

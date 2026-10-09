@@ -184,9 +184,7 @@ def test_failed_validation_shape_synced_at_root_and_validates():
     for inner in sdfg.all_sdfgs_recursive():
         if inner is sdfg:
             continue
-        for s in inner.states():
-            if _sync_tasklets(s):
-                inner_syncs.append(f"{inner.name}::{s.label}")
+        inner_syncs.extend(f"{inner.name}::{s.label}" for s in inner.states() if _sync_tasklets(s))
     assert not inner_syncs, f"No sync tasklets must exist inside any nested SDFG; got {inner_syncs}"
 
     # Split must have lifted the host deref Tasklet out into a ``*_cpu_before`` state.

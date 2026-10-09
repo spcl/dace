@@ -3,7 +3,7 @@ import numpy as np
 import pytest
 
 import dace
-import dace.libraries.mpi as mpi
+from dace.libraries import mpi
 from dace.memlet import Memlet
 
 ###############################################################################

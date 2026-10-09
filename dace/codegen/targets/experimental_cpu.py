@@ -1076,14 +1076,15 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
                     names.add(edge.data.data)
                 mentions.append((names, (id(edge.src), id(edge.dst))))
         own = (id(sdfg),)
-        for edge in sdfg.all_interstate_edges():
-            mentions.append((edge.data.read_symbols() | set(edge.data.assignments.keys()), own))
-        for block in sdfg.all_control_flow_blocks():
-            mentions.append((self.code_property_names(block), own))
-        for region in sdfg.all_control_flow_regions():
-            # ``get_meta_codeblocks``: loop control and branch conditions (ConditionalBlock keeps them
-            # outside its properties).
-            mentions.append((identifiers_in(region.get_meta_codeblocks()), own))
+        mentions.extend(
+            (edge.data.read_symbols() | set(edge.data.assignments.keys()), own) for edge in sdfg.all_interstate_edges()
+        )
+        mentions.extend((self.code_property_names(block), own) for block in sdfg.all_control_flow_blocks())
+        # ``get_meta_codeblocks``: loop control and branch conditions (ConditionalBlock keeps them
+        # outside its properties).
+        mentions.extend(
+            (identifiers_in(region.get_meta_codeblocks()), own) for region in sdfg.all_control_flow_regions()
+        )
         return mentions
 
     def name_owners(self, sdfg: SDFG) -> dict[str, set[int]] | None:

@@ -546,10 +546,7 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
             w1 = self._collect_write_subsets(s1)
         except NotImplementedError:
             return {}
-        shared = {}
-        for k, v in w0.items():
-            if k in w1 and str(v) == str(w1[k]):
-                shared[k] = v
+        shared = {k: v for k, v in w0.items() if k in w1 and str(v) == str(w1[k])}
         return shared
 
     def _rewrite(self, sdfg: dace.SDFG, cb: ConditionalBlock) -> None:
@@ -685,9 +682,11 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
                 continue
             if new.data in rename and dst.in_degree(new) > 0:
                 base_name = new.data
-                for ie in dst.in_edges(new):
-                    if ie.data is not None and ie.data.wcr is not None:
-                        wcr_escapes.append((ie, base_name, copy.deepcopy(ie.data.subset)))
+                wcr_escapes.extend(
+                    (ie, base_name, copy.deepcopy(ie.data.subset))
+                    for ie in dst.in_edges(new)
+                    if ie.data is not None and ie.data.wcr is not None
+                )
                 new.data = rename[base_name]
                 redirected_nodes.add(new)
         for e in dst.edges():

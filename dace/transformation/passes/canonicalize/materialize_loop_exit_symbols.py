@@ -216,9 +216,7 @@ def _post_loop_blocks(parent: ControlFlowRegion, loop: LoopRegion) -> dict[Contr
         if b in visited or b is loop:
             continue
         visited[b] = None
-        for e in parent.out_edges(b):
-            if e.dst not in visited:
-                frontier.append(e.dst)
+        frontier.extend(e.dst for e in parent.out_edges(b) if e.dst not in visited)
     return visited
 
 

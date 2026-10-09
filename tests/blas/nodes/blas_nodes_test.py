@@ -3,7 +3,7 @@ import numpy as np
 import pytest
 
 import dace
-import dace.libraries.blas as blas
+from dace.libraries import blas
 from dace.transformation.dataflow import RedundantSecondArray
 
 M = dace.symbol("M")

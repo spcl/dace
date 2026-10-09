@@ -430,8 +430,7 @@ class LoopLocalMemoryReduction(ppl.Pass):
                 if n in visited:
                     continue
                 visited.add(n)
-                for s in succ.get(n, ()):
-                    stack.append(s)
+                stack.extend(succ.get(n, ()))
             reach[c] = visited
 
         self.intra_loop_reach_cache[loop] = reach
@@ -497,8 +496,7 @@ class LoopLocalMemoryReduction(ppl.Pass):
                             if n in visited:
                                 continue
                             visited.add(n)
-                            for e in st_w.out_edges(n):
-                                stack.append(e.dst)
+                            stack.extend(e.dst for e in st_w.out_edges(n))
                         if not found:
                             result = False
                             break

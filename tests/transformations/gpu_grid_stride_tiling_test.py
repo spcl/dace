@@ -3,7 +3,7 @@
 
 import numpy as np
 import pytest
-import scipy.sparse as sparse
+from scipy import sparse
 
 import dace
 from dace.transformation.dataflow import GPUGridStridedTiling, TrivialTaskletElimination

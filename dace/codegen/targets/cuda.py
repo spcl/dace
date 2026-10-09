@@ -1971,12 +1971,9 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
         if is_persistent:
             dimcheck = "dace_number_blocks <= 0"
         else:
-            single_dimchecks = []
-            for gdim in grid_dims:
-                # We only issue a check if we can known at code generation time, that
-                #  the size is positive we omit the test.
-                if (gdim > 0) != True:
-                    single_dimchecks.append(f"(({_topy(gdim)}) <= 0)")
+            # We only issue a check if we can known at code generation time, that
+            #  the size is positive we omit the test.
+            single_dimchecks = [f"(({_topy(gdim)}) <= 0)" for gdim in grid_dims if (gdim > 0) != True]
             dimcheck = " || ".join(single_dimchecks)
 
         if dimcheck:

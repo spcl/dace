@@ -336,20 +336,18 @@ class MapPython:
 
     def sorter(self):
         """Prioritizes smaller ranges over larger ones"""
-        db_sorted = []
-        for dbinfo_source in self.debuginfo:
-            db_sorted.append(
-                sorted(
-                    dbinfo_source,
-                    key=lambda n: (
-                        n["debuginfo"].get("start_line", 0),
-                        n["debuginfo"].get("start_column", 0),
-                        n["debuginfo"].get("end_line", 0),
-                        n["debuginfo"].get("end_column", 0),
-                    ),
-                )
+        return [
+            sorted(
+                dbinfo_source,
+                key=lambda n: (
+                    n["debuginfo"].get("start_line", 0),
+                    n["debuginfo"].get("start_column", 0),
+                    n["debuginfo"].get("end_line", 0),
+                    n["debuginfo"].get("end_column", 0),
+                ),
             )
-        return db_sorted
+            for dbinfo_source in self.debuginfo
+        ]
 
     def make_info(self, debuginfo, node_id: int, state_id: int, cfg_id: int) -> NodeInfo:
         """Creates an object for the current node with

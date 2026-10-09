@@ -7,7 +7,6 @@ SDFG of ``nproma``/``nlev`` maps -- Which maps those are is named by the caller,
 """
 
 import itertools
-from typing import Optional
 
 import dace.transformation.passes.offloading.offloading_helpers as helpers
 from dace import symbolic
@@ -23,7 +22,7 @@ from dace.transformation.passes.offloading.taskloop import is_computation, sdfg_
 #:   the list and finds it empty.
 #: * ``True`` -- derive them with the built-in heuristics.
 #: * a list -- exactly these maps, each given as a map label or as the ``MapEntry`` itself.
-HostMapSpec = Optional[bool | list[str | nodes.MapEntry]]
+HostMapSpec = bool | list[str | nodes.MapEntry] | None
 
 
 def body_extents_depend_on_entry(entry: nodes.MapEntry, scope_children: dict) -> bool:

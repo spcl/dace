@@ -91,9 +91,9 @@ def _a_subsets(sdfg):
     out = []
     for sd in sdfg.all_sdfgs_recursive():
         for s in sd.states():
-            for e in s.edges():
-                if e.data and e.data.data == "A" and e.data.subset is not None:
-                    out.append(str(e.data.subset))
+            out.extend(
+                str(e.data.subset) for e in s.edges() if e.data and e.data.data == "A" and e.data.subset is not None
+            )
     return out
 
 
@@ -185,9 +185,11 @@ def test_iplusoffset_kernel_emits_no_gather():
     for sd in cs.all_sdfgs_recursive():
         idx_tiles += [n for n in sd.arrays if n.startswith("_idx_")]
         for st in sd.states():
-            for n in st.nodes():
-                if isinstance(n, (TileGather, TileScatter)) and getattr(n, "gather_dims", ()):
-                    gather_nodes.append((type(n).__name__, n.gather_dims))
+            gather_nodes.extend(
+                (type(n).__name__, n.gather_dims)
+                for n in st.nodes()
+                if isinstance(n, (TileGather, TileScatter)) and getattr(n, "gather_dims", ())
+            )
     assert not gather_nodes, f"contiguous a[i+offset] emitted a gather: {gather_nodes}"
     assert not idx_tiles, f"contiguous a[i+offset] minted per-lane index tiles: {idx_tiles}"
 

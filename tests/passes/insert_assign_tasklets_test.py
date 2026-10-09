@@ -25,9 +25,9 @@ from dace.transformation.passes.scalar_fission import ScalarFission
 def _an_to_an_edges(sdfg: dace.SDFG):
     out = []
     for state in sdfg.states():
-        for e in state.edges():
-            if isinstance(e.src, nodes.AccessNode) and isinstance(e.dst, nodes.AccessNode):
-                out.append(e)
+        out.extend(
+            e for e in state.edges() if isinstance(e.src, nodes.AccessNode) and isinstance(e.dst, nodes.AccessNode)
+        )
     return out
 
 

@@ -32,10 +32,7 @@ from dace.transformation.passes.prune_symbols import RemoveUnusedSymbols
 
 def remove_symbol_assignments(graph: ControlFlowRegion, sym_name: str):
     for e in graph.all_interstate_edges():
-        new_assignments = dict()
-        for k, v in e.data.assignments.items():
-            if k != sym_name:
-                new_assignments[k] = v
+        new_assignments = {k: v for k, v in e.data.assignments.items() if k != sym_name}
         e.data.assignments = new_assignments
 
 

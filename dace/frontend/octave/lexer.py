@@ -1,7 +1,7 @@
 import re
 import sys
 
-import ply.lex as lex
+from ply import lex
 from ply.lex import TOKEN
 
 tokens = [
@@ -135,7 +135,7 @@ def new():
     ws0 = ws + "*"
     ms = r"'([^']|(''))*'"
     os = r'"([^"\a\b\f\r\t\0\v\n\\]|(\\[abfn0vtr\"\n\\])|(""))*"'
-    mos = "(%s)|(%s)" % (os, ms)
+    mos = f"({os})|({ms})"
     id = r"[a-zA-Z_][a-zA-Z_0-9]*"
 
     def unescape(s):
@@ -176,12 +176,12 @@ def new():
         t.value = unescape(t.value)
         return t
 
-    @TOKEN(r"(\.%s)?%s" % (ws0, id))
+    @TOKEN(rf"(\.{ws0})?{id}")
     def t_IDENT(t):
         if t.value == "parfor":
             t.value = "for"
         if t.value == "classdef":
-            raise_exception(SyntaxError, "Not implemented: %s" % t.value, t.lexer)
+            raise_exception(SyntaxError, f"Not implemented: {t.value}", t.lexer)
         t.lexer.lineno += t.value.count("\n")
         if t.value[0] == ".":
             # Reserved words are not reserved
@@ -357,7 +357,7 @@ def new():
         pass
 
     def t_error(t):
-        raise_exception(SyntaxError, ('Unexpected "%s" (lexer)' % t.value), t.lexer)
+        raise_exception(SyntaxError, (f'Unexpected "{t.value}" (lexer)'), t.lexer)
 
     lexer = lex.lex(reflags=re.MULTILINE)
     lexer.brackets = 0  # count open square brackets

@@ -82,7 +82,7 @@ def view(sdfg: dace.SDFG, filename: str | int | None = None, verbose: bool = Tru
         f.write(html)
 
     if verbose:
-        print("File saved at %s" % html_filename)
+        print(f"File saved at {html_filename}")
 
     if fd is not None:
         os.close(fd)
@@ -118,9 +118,9 @@ def view(sdfg: dace.SDFG, filename: str | int | None = None, verbose: bool = Tru
         if system == "Windows":
             os.system(html_filename)
         elif system == "Darwin":
-            os.system("open %s" % html_filename)
+            os.system(f"open {html_filename}")
         else:
-            os.system("xdg-open %s" % html_filename)
+            os.system(f"xdg-open {html_filename}")
 
 
 def main():

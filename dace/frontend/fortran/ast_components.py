@@ -188,7 +188,6 @@ class InternalFortranAst:
             "Assignment_Stmt": self.assignment_stmt,
             "Pointer_Assignment_Stmt": self.pointer_assignment_stmt,
             "Where_Stmt": self.where_stmt,
-            "Forall_Stmt": self.forall_stmt,
             "Where_Construct": self.where_construct,
             "Where_Construct_Stmt": self.where_construct_stmt,
             "Masked_Elsewhere_Stmt": self.masked_elsewhere_stmt,
@@ -197,6 +196,7 @@ class InternalFortranAst:
             "Forall_Construct": self.forall_construct,
             "Forall_Header": self.forall_header,
             "Forall_Triplet_Spec": self.forall_triplet_spec,
+            "Forall_Stmt": self.forall_stmt,
             "End_Forall_Stmt": self.end_forall_stmt,
             "Arithmetic_If_Stmt": self.arithmetic_if_stmt,
             "If_Construct": self.if_construct,
@@ -628,40 +628,39 @@ class InternalFortranAst:
                             line_number=node.item.span,
                         )
                     )
+            elif size is None and attr_size is None:
+                self.symbols[actual_name.name] = init
+                vardecls.append(
+                    ast_internal_classes.Symbol_Decl_Node(
+                        name=actual_name.name, type=testtype, alloc=alloc, init=init, line_number=node.item.span
+                    )
+                )
+            elif attr_size is not None:
+                vardecls.append(
+                    ast_internal_classes.Symbol_Array_Decl_Node(
+                        name=actual_name.name,
+                        type=testtype,
+                        alloc=alloc,
+                        sizes=attr_size,
+                        offsets=attr_offset,
+                        kind=kind,
+                        init=init,
+                        line_number=node.item.span,
+                    )
+                )
             else:
-                if size is None and attr_size is None:
-                    self.symbols[actual_name.name] = init
-                    vardecls.append(
-                        ast_internal_classes.Symbol_Decl_Node(
-                            name=actual_name.name, type=testtype, alloc=alloc, init=init, line_number=node.item.span
-                        )
+                vardecls.append(
+                    ast_internal_classes.Symbol_Array_Decl_Node(
+                        name=actual_name.name,
+                        type=testtype,
+                        alloc=alloc,
+                        sizes=size,
+                        offsets=offset,
+                        kind=kind,
+                        init=init,
+                        line_number=node.item.span,
                     )
-                elif attr_size is not None:
-                    vardecls.append(
-                        ast_internal_classes.Symbol_Array_Decl_Node(
-                            name=actual_name.name,
-                            type=testtype,
-                            alloc=alloc,
-                            sizes=attr_size,
-                            offsets=attr_offset,
-                            kind=kind,
-                            init=init,
-                            line_number=node.item.span,
-                        )
-                    )
-                else:
-                    vardecls.append(
-                        ast_internal_classes.Symbol_Array_Decl_Node(
-                            name=actual_name.name,
-                            type=testtype,
-                            alloc=alloc,
-                            sizes=size,
-                            offsets=offset,
-                            kind=kind,
-                            init=init,
-                            line_number=node.item.span,
-                        )
-                    )
+                )
         return ast_internal_classes.Decl_Stmt_Node(vardecl=vardecls, line_number=node.item.span)
 
     def entity_decl(self, node: FASTNode):
@@ -807,9 +806,6 @@ class InternalFortranAst:
         return node
 
     def forall_triplet_spec(self, node: FASTNode):
-        return node
-
-    def forall_stmt(self, node: FASTNode):
         return node
 
     def end_forall_stmt(self, node: FASTNode):

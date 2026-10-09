@@ -122,7 +122,7 @@ from collections import Counter
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from types import ModuleType
-from typing import Any, Union
+from typing import Any
 
 from dace import SDFG, Memlet, dtypes, properties, subsets, symbolic
 from dace import data as dt
@@ -139,7 +139,7 @@ ValueEdge = MultiConnectorEdge[Memlet]
 #: ``(state, access node, edge)`` of one input read in an output's producer cone.
 ConeRead = tuple[SDFGState, nodes.AccessNode, ValueEdge]
 #: What the statement analysis walks: a nested SDFG's body, or a loop that is split in place.
-Body = Union[SDFG, LoopRegion]
+Body = SDFG | LoopRegion
 #: ``name -> [(state, node)]`` for every data node of a body.
 StageIndex = dict[str, list[tuple[SDFGState, nodes.AccessNode]]]
 #: Per-output cone reads, memoized across the checks of one split.

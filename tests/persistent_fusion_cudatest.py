@@ -157,7 +157,7 @@ def _make_sdfg():
 
 def init_scalar(state, node, value):
     tasklet = state.add_tasklet(
-        "set_%s" % node.data,
+        f"set_{node.data}",
         {},
         {"out"},
         """

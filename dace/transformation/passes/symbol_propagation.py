@@ -362,10 +362,9 @@ class SymbolPropagation(ppl.Pass):
         self._invariant_sdfg = sdfg
         self._before_free: set[str] | None = None
 
-        all_cfg_blks = dict()
-        for node, parent in sdfg.all_nodes_recursive():
-            if isinstance(node, ControlFlowBlock):
-                all_cfg_blks[node] = parent
+        all_cfg_blks = {
+            node: parent for node, parent in sdfg.all_nodes_recursive() if isinstance(node, ControlFlowBlock)
+        }
 
         # Live only for the fixed point below, which is a pure query -- rewriting starts at
         # ``_update_syms``, which may rewrite an init/update LHS and so change the answer.

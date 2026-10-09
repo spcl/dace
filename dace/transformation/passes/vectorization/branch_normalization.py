@@ -847,10 +847,9 @@ class BranchNormalization(ppl.Pass):
         # Element-disjoint (cloudsc ``zsolqa[i,a]`` vs ``zsolqa[i,b]``) split
         # cleanly; each arm gates its own subset next cycle. intersects()
         # returns True/False/None; treat None as a conservative conflict.
-        truly_overlapping = []
-        for name in set(w0) & set(w1):
-            if dace.subsets.intersects(w0[name], w1[name]) is not False:
-                truly_overlapping.append(name)
+        truly_overlapping = [
+            name for name in set(w0) & set(w1) if dace.subsets.intersects(w0[name], w1[name]) is not False
+        ]
         if truly_overlapping:
             # Same-element-write case is M3.1b's job; if it reached here,
             # M3.1b didn't match.

@@ -52,13 +52,13 @@ class Memlet:
         # Type-only view of the SubsetProperty descriptors below: reads are Optional[Subset], writes also take strings.
         # fmt: off
         @property
-        def subset(self) -> subsets.Subset | None: ...
+        def subset(self) -> Optional[subsets.Subset]: ...
         @subset.setter
-        def subset(self, value: str | subsets.Subset | None) -> None: ...
+        def subset(self, value: Union[str, subsets.Subset, None]) -> None: ...
         @property
-        def other_subset(self) -> subsets.Subset | None: ...
+        def other_subset(self) -> Optional[subsets.Subset]: ...
         @other_subset.setter
-        def other_subset(self, value: str | subsets.Subset | None) -> None: ...
+        def other_subset(self, value: Union[str, subsets.Subset, None]) -> None: ...
         # fmt: on
     else:
         subset = SubsetProperty(
@@ -169,13 +169,12 @@ class Memlet:
 
         if volume is not None:
             self.volume = volume
+        elif self.subset is not None:
+            self.volume = self.subset.num_elements()
+        elif self.other_subset is not None:
+            self.volume = self.other_subset.num_elements()
         else:
-            if self.subset is not None:
-                self.volume = self.subset.num_elements()
-            elif self.other_subset is not None:
-                self.volume = self.other_subset.num_elements()
-            else:
-                self.volume = 1
+            self.volume = 1
 
         self.dynamic = dynamic
         self.wcr = wcr
@@ -380,7 +379,7 @@ class Memlet:
     def _parse_from_subexpr(self, expr: str):
         if expr[-1] != "]":  # No subset given, try to use whole array
             if not dtypes.validate_name(expr):
-                raise SyntaxError('Invalid memlet syntax "%s"' % expr)
+                raise SyntaxError(f'Invalid memlet syntax "{expr}"')
             return expr, None
 
         # [subset] syntax
@@ -390,7 +389,7 @@ class Memlet:
         # array[subset] syntax
         arrname, subset_str = expr[:-1].split("[")
         if not dtypes.validate_name(arrname):
-            raise SyntaxError('Invalid array name "%s" in memlet' % arrname)
+            raise SyntaxError(f'Invalid array name "{arrname}" in memlet')
         return arrname, SubsetProperty.from_string(subset_str)
 
     def _parse_memlet_from_str(self, expr: str):
@@ -594,7 +593,7 @@ class Memlet:
 
     def validate(self, sdfg, state):
         if self.data is not None and self.data not in sdfg.arrays:
-            raise KeyError('Array "%s" not found in SDFG' % self.data)
+            raise KeyError(f'Array "{self.data}" not found in SDFG')
         # NOTE: We do not check here is the subsets have a negative size, because such as subset
         #  is valid, in certain cases, for example if an AccessNode is connected to a MapEntry,
         #  because the Map is not executed. Thus we do the check in the `validate_state()` function.
@@ -718,7 +717,7 @@ class Memlet:
         if self.dynamic:
             result += "(dyn) "
         elif self.volume != num_elements:
-            result += "(%s) " % SymbolicProperty.to_string(self.volume)
+            result += f"({SymbolicProperty.to_string(self.volume)}) "
         arrayNotation = True
         try:
             if shape is not None and reduce(operator.mul, shape, 1) == 1:
@@ -729,7 +728,7 @@ class Memlet:
             # Will fail if trying to check the truth value of a sympy expr
             pass
         if arrayNotation:
-            result += "[%s]" % str(self.subset)
+            result += f"[{str(self.subset)}]"
         if self.wcr is not None and str(self.wcr) != "":
             # Autodetect reduction type
             redtype = detect_reduction_type(self.wcr)
@@ -739,13 +738,13 @@ class Memlet:
                 wcrstr = str(redtype)
                 wcrstr = wcrstr[wcrstr.find(".") + 1 :]  # Skip "ReductionType."
 
-            result += " (CR: %s)" % wcrstr
+            result += f" (CR: {wcrstr})"
 
         if self.other_subset is not None:
             if self._is_data_src is False:
                 result = f"[{self.other_subset}] -> {result}"
             else:
-                result += " -> [%s]" % str(self.other_subset)
+                result += f" -> [{str(self.other_subset)}]"
         return result
 
     def __repr__(self):

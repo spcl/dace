@@ -104,12 +104,13 @@ def _structure(sdfg) -> str:
                 lines.append(f"  N{ids[node]} tasklet {node.code.as_string}")
             else:
                 lines.append(f"  N{ids[node]} {type(node).__name__}")
-        for e in state.edges():
-            lines.append(f"  E N{ids[e.src]}:{e.src_conn} -> N{ids[e.dst]}:{e.dst_conn} {e.data}")
+        lines.extend(f"  E N{ids[e.src]}:{e.src_conn} -> N{ids[e.dst]}:{e.dst_conn} {e.data}" for e in state.edges())
     for cfg in sdfg.all_control_flow_regions():
         lines.append(f"CFG {cfg.label} {[b.label for b in cfg.nodes()]}")
-        for e in cfg.edges():
-            lines.append(f"  IE {e.src.label} -> {e.dst.label} {e.data.condition.as_string} {e.data.assignments}")
+        lines.extend(
+            f"  IE {e.src.label} -> {e.dst.label} {e.data.condition.as_string} {e.data.assignments}"
+            for e in cfg.edges()
+        )
     return "\n".join(lines)
 
 

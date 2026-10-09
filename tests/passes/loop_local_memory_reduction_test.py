@@ -45,10 +45,7 @@ def check_transformation_option(orig_sdfg: dace.SDFG, N: int, options: dict[str,
             input_data_orig[argName] = argType.dtype.type(32)
             continue
 
-        shape = []
-        for entry in argType.shape:
-            shape.append(dace.symbolic.evaluate(entry, {**orig_sdfg.constants, **sym_data}))
-        shape = tuple(shape)
+        shape = tuple(dace.symbolic.evaluate(entry, {**orig_sdfg.constants, **sym_data}) for entry in argType.shape)
         arr = dace.ndarray(shape=shape, dtype=argType.dtype)
         arr[:] = np.random.rand(*arr.shape).astype(arr.dtype)
         input_data_orig[argName] = arr

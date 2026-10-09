@@ -1,5 +1,4 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
-
 import dace
 from dace import nodes as dace_nodes
 from dace.transformation.helpers import isolate_nested_sdfg
@@ -7,11 +6,7 @@ from dace.transformation.helpers import isolate_nested_sdfg
 
 def count_node(sdfg: dace.SDFG | dace.SDFGState, node_type, return_nodes: bool = False):
     states = [sdfg] if isinstance(sdfg, dace.SDFGState) else sdfg.states()
-    found_nodes = []
-    for state in states:
-        for node in state.nodes():
-            if isinstance(node, node_type):
-                found_nodes.append(node)
+    found_nodes = [node for state in states for node in state.nodes() if isinstance(node, node_type)]
 
     return found_nodes if return_nodes else len(found_nodes)
 
@@ -546,7 +541,7 @@ def test_multi_path_islolation():
     assert all(me.map.label.startswith("comp_post") for me in post_me_nodes)
 
 
-def _make_data_name_ordering_sdfg() -> tuple[dace.SDFG, dace.SDFGState, dace_nodes.NestedSDFG]:
+def _make_data_name_ordering_sdfg() -> Tuple[dace.SDFG, dace.SDFGState, dace_nodes.NestedSDFG]:
     """Build a state with TWO separate AccessNodes for transient ``T``:
     one is written by a map that feeds an array name, the other is the
     NestedSDFG's input AccessNode. There is no direct edge between them
@@ -599,7 +594,7 @@ def test_isolate_data_name_ordering():
     assert post_state.number_of_nodes() == 0
 
 
-def _make_data_name_ordering_pre_and_post_sdfg() -> tuple[dace.SDFG, dace.SDFGState, dace_nodes.NestedSDFG]:
+def _make_data_name_ordering_pre_and_post_sdfg() -> Tuple[dace.SDFG, dace.SDFGState, dace_nodes.NestedSDFG]:
     """Extend the previous case with a post-tasklet that reads the NSDFG's
     output ``B`` via a SEPARATE AccessNode and writes ``C``. The post
     tasklet must land in post_state.
@@ -664,7 +659,7 @@ def test_isolate_data_name_ordering_pre_and_post():
     assert post_me[0].map.label.startswith("comp_post")
 
 
-def _make_stencil_swap_sibling_sdfg() -> tuple[dace.SDFG, dace.SDFGState, dace_nodes.NestedSDFG]:
+def _make_stencil_swap_sibling_sdfg() -> Tuple[dace.SDFG, dace.SDFGState, dace_nodes.NestedSDFG]:
     """The stencil read-then-overwrite pair that produced the jacobi miscompile.
 
     A NestedSDFG reads ``A`` and writes ``B``; a SIBLING map then reads ``B``

@@ -120,8 +120,8 @@ def run_heat_3d(device_type: dace.dtypes.DeviceType):
 
 def run_heat_3d_autodiff():
     import jax
-    import jax.lax as lax
     import jax.numpy as jnp
+    from jax import lax
 
     # Initialize data (polybench small size)
     TSTEPS, N = sizes["small"]

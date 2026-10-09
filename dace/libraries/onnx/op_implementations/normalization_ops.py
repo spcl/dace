@@ -21,7 +21,6 @@ from dace.libraries.onnx.op_implementations.utils import (
     out_desc_with_name,
     python_pure_op_implementation,
 )
-from dace.sdfg.utils import in_desc_with_name, out_desc_with_name
 
 # ============================================================================
 # Softmax Operations

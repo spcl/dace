@@ -83,9 +83,11 @@ class OutlineToExternalCalls(ppl.Pass):
         created: list[external_call.ExternalCall] = []
         for state in [block for block in sdfg.nodes() if isinstance(block, SDFGState)]:
             nests = [n for n in state.nodes() if isinstance(n, nodes.NestedSDFG) and n.no_inline]
-            for nsdfg in nests:
-                if identity_mapping(nsdfg):
-                    created.append(replace_with_external_call(state, nsdfg, nsdfg.unique_name or nsdfg.label))
+            created.extend(
+                replace_with_external_call(state, nsdfg, nsdfg.unique_name or nsdfg.label)
+                for nsdfg in nests
+                if identity_mapping(nsdfg)
+            )
         return created or None
 
 

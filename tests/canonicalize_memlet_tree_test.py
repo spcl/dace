@@ -1,6 +1,5 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 
-
 import dace
 from dace.sdfg import nodes as dace_nodes
 from dace.sdfg.utils import canonicalize_memlet_trees

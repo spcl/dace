@@ -193,7 +193,7 @@ class InstrumentationReport:
                     self.counters[uuid][name][counter][tid].append(value)
 
     def __repr__(self):
-        return "InstrumentationReport(name=%s)" % self.name
+        return f"InstrumentationReport(name={self.name})"
 
     def sortby(self, column: str, ascending: bool = False):
         if column and column.lower() not in ("counter", "value", "min", "max", "mean", "median"):
@@ -246,10 +246,10 @@ class InstrumentationReport:
             string += row_format.format(indent + label + ":", "", "", "", "", width=colw)
             string += row_format.format(
                 indent,
-                "%.3f" % np.min(runtimes),
-                "%.3f" % np.mean(runtimes),
-                "%.3f" % np.median(runtimes),
-                "%.3f" % np.max(runtimes),
+                f"{np.min(runtimes):.3f}",
+                f"{np.mean(runtimes):.3f}",
+                f"{np.median(runtimes):.3f}",
+                f"{np.max(runtimes):.3f}",
                 width=colw,
             )
 
@@ -297,7 +297,7 @@ class InstrumentationReport:
 
             string += row_format.format(indent + "|" + label + ":", "", "", "", "", width=colw)
             string += row_format.format(
-                indent, np.min(values), "%.2f" % np.mean(values), "%.2f" % np.median(values), np.max(values), width=colw
+                indent, np.min(values), f"{np.mean(values):.2f}", f"{np.median(values):.2f}", np.max(values), width=colw
             )
 
         return string, sdfg, state

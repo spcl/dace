@@ -134,8 +134,8 @@ def run_conv2d_bias(device_type: dace.dtypes.DeviceType):
 
 def run_conv2d_bias_autodiff():
     import jax
-    import jax.lax as lax
     import jax.numpy as jnp
+    from jax import lax
 
     # Initialize data (npbench test size)
     N, C_in, C_out, K, H, W = 4, 3, 8, 2, 12, 12

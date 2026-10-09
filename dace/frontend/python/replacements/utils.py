@@ -7,7 +7,7 @@ import itertools
 import math
 from collections.abc import Sequence
 from numbers import Integral, Number
-from typing import TYPE_CHECKING, Union
+from typing import TYPE_CHECKING
 
 import ml_dtypes
 import numpy as np
@@ -25,10 +25,10 @@ if TYPE_CHECKING:
 else:
     ProgramVisitor = "dace.frontend.python.newast.ProgramVisitor"
 
-Size = Union[int, symbolic.symbol]
+Size = int | symbolic.symbol
 Shape = Sequence[Size]
-UfuncInput = Union[str, Number, sp.Basic]
-UfuncOutput = Union[str, None]
+UfuncInput = str | Number | sp.Basic
+UfuncOutput = str | None
 
 ########################################################################
 # Helper functions

@@ -57,15 +57,15 @@ def _write_only_scalar_wcr_conns(sdfg: dace.SDFG):
                     if oc in n.in_connectors:
                         continue
                     for ist in n.sdfg.states():
-                        for e in ist.edges():
-                            if (
-                                e.data is not None
-                                and e.data.wcr is not None
-                                and e.data.data == oc
-                                and e.data.subset is not None
-                                and e.data.subset.num_elements() == 1
-                            ):
-                                out.append(oc)
+                        out.extend(
+                            oc
+                            for e in ist.edges()
+                            if e.data is not None
+                            and e.data.wcr is not None
+                            and e.data.data == oc
+                            and e.data.subset is not None
+                            and e.data.subset.num_elements() == 1
+                        )
     return out
 
 

@@ -8,7 +8,7 @@ import pytest
 import scipy
 
 import dace
-import dace.libraries.blas as blas
+from dace.libraries import blas
 from dace.libraries.standard.memory import aligned_ndarray
 from dace.memlet import Memlet
 from dace.transformation.interstate.sdfg_nesting import InlineSDFG

@@ -96,9 +96,7 @@ def emit_tree_reduction(input_var: str, vector_width: int, op: str) -> str:
     _validate(op, vector_width)
     operands: list[str] = [f"{input_var}[{i}]" for i in range(vector_width)]
     while len(operands) > 1:
-        nxt: list[str] = []
-        for i in range(0, len(operands) - 1, 2):
-            nxt.append(_wrap_pair(op, operands[i], operands[i + 1]))
+        nxt: list[str] = [_wrap_pair(op, operands[i], operands[i + 1]) for i in range(0, len(operands) - 1, 2)]
         if len(operands) % 2 == 1:
             nxt.append(operands[-1])
         operands = nxt

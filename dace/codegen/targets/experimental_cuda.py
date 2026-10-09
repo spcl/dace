@@ -406,10 +406,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         self._localcode.write("{", cfg, state_id, scope_entry)
 
         # Skip launches on empty or negative-sized grids that we can't prove non-empty statically.
-        single_dimchecks = []
-        for gdim in grid_dims:
-            if (gdim > 0) != True:
-                single_dimchecks.append(f"(({sym2cpp(gdim)}) <= 0)")
+        single_dimchecks = [f"(({sym2cpp(gdim)}) <= 0)" for gdim in grid_dims if (gdim > 0) != True]
 
         dimcheck = " || ".join(single_dimchecks)
 

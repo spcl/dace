@@ -19,9 +19,9 @@ def dirichlet_tasklet(state, B, x0, y0, width, height, initval=0):
     # entry to the tasklet automatically
     _, me, mx = state.add_mapped_tasklet(
         "boundary",
-        dict(i="%s:%s" % (y0, y0 + height), j="%s:%s" % (x0, x0 + width)),
+        dict(i=f"{y0}:{y0 + height}", j=f"{x0}:{x0 + width}"),
         {},
-        """b = %f""" % initval,
+        f"""b = {initval:f}""",
         dict(b=dace.Memlet(data=B.data, subset="i,j")),
         external_edges=False,
     )

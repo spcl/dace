@@ -259,12 +259,12 @@ def format_conflict_report(rows: list[ConflictRow]) -> str:
         f"{'array':<10} {'conflict':<8} {'prefers':<28} {'chosen':<28} "
         f"{'greedy':>12} {'global':>12} {'single':>12}  trust"
     ]
-    for r in rows:
-        lines.append(
-            f"{r.array:<10} {str(r.conflicting):<8} {'/'.join(r.per_kernel_preference):<28} "
-            f"{'/'.join(r.chosen):<28} {r.greedy_cost:>12.4g} {r.global_cost:>12.4g} "
-            f"{r.single_layout_cost:>12.4g}  {'CONTENDED' if r.untrusted else 'ok'}"
-        )
+    lines.extend(
+        f"{r.array:<10} {str(r.conflicting):<8} {'/'.join(r.per_kernel_preference):<28} "
+        f"{'/'.join(r.chosen):<28} {r.greedy_cost:>12.4g} {r.global_cost:>12.4g} "
+        f"{r.single_layout_cost:>12.4g}  {'CONTENDED' if r.untrusted else 'ok'}"
+        for r in rows
+    )
     return "\n".join(lines)
 
 

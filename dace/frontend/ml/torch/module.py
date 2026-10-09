@@ -13,8 +13,7 @@ from typing import Any
 # Try importing ML dependencies
 try:
     import torch
-    import torch.nn as nn
-    from torch import Tensor
+    from torch import Tensor, nn
     from torch.onnx import TrainingMode
 
     TORCH_AVAILABLE = True

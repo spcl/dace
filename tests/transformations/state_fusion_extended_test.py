@@ -1123,12 +1123,12 @@ def _structural_fingerprint(sdfg: SDFG) -> str:
         parts.append(f"STATE {state.label}")
         for idx, node in enumerate(state.nodes()):
             parts.append(f"  N{idx} {type(node).__name__} {node}")
-        for edge in state.edges():
-            parts.append(
-                f"  E {state.node_id(edge.src)}[{edge.src_conn}] -> "
-                f"{state.node_id(edge.dst)}[{edge.dst_conn}] "
-                f"{'EMPTY' if edge.data.is_empty() else edge.data}"
-            )
+        parts.extend(
+            f"  E {state.node_id(edge.src)}[{edge.src_conn}] -> "
+            f"{state.node_id(edge.dst)}[{edge.dst_conn}] "
+            f"{'EMPTY' if edge.data.is_empty() else edge.data}"
+            for edge in state.edges()
+        )
     return "\n".join(parts)
 
 

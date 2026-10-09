@@ -10,7 +10,6 @@ try:
 except (ModuleNotFoundError, NameError, ImportError):
     raise ImportError('To use MLIR tasklets, please install the "pymlir" package.')
 
-
 import dace
 
 # Only these types and the vector version of them are supported

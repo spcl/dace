@@ -924,7 +924,7 @@ def _symbol_serializer_kwargs(expr: symbol, dtype: "dtypes.typeclass") -> dict[s
 
 
 # Type hint for symbolic expressions
-SymbolicType = Union[sympy.Expr, SymExpr]
+SymbolicType = sympy.Expr | SymExpr
 
 #: A sympy object that keeps its own type through an operation that only renames symbols.
 SympyT = TypeVar("SympyT", bound=sympy.Basic)
@@ -2849,7 +2849,7 @@ def evaluate_optional_arrays(expr, sdfg):
 
 
 _SimpleASTNode = (ast.Constant, ast.Name)
-_SimpleASTNodeT = Union[ast.Constant, ast.Name]
+_SimpleASTNodeT = ast.Constant | ast.Name
 
 
 def __comp_convert_truthy_falsy(node: _SimpleASTNodeT):

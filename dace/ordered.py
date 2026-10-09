@@ -2,7 +2,8 @@
 """DaCe's ``OrderedSet``: insertion-ordered iteration, but set equality."""
 
 from collections.abc import Iterable
-from typing import TYPE_CHECKING, AbstractSet, Any, TypeGuard, TypeVar
+from collections.abc import Set as AbstractSet
+from typing import TYPE_CHECKING, Any, TypeGuard, TypeVar
 
 from ordered_set import OrderedSet as SequenceOrderedSet
 

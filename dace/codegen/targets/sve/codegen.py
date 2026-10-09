@@ -23,7 +23,7 @@ from dace.codegen.targets.sve import util as util
 from dace.frontend.operations import detect_reduction_type
 from dace.sdfg import SDFG, ScopeSubgraphView, SDFGState, graph, nodes, state
 from dace.sdfg import graph as gr
-from dace.sdfg.scope import ScopeSubgraphView, is_in_scope
+from dace.sdfg.scope import is_in_scope
 
 
 @dace.registry.autoregister_params(name="sve")
@@ -149,7 +149,7 @@ class SVECodeGen(TargetCodeGenerator):
         # Temporary output registers
         for edge in state.out_edges(node):
             if self.generate_out_register(sdfg, state, edge, callsite_stream):
-                requires_wb.append(edge)
+                requires_wb.append(edge)  # noqa: PERF401
 
         # Tasklet code
         self.unparse_tasklet(sdfg, cfg, state, state_id, node, function_stream, callsite_stream)
@@ -381,15 +381,14 @@ class SVECodeGen(TargetCodeGenerator):
                         code.write(f"{edge.data.data} = {src_name};")
                     else:
                         raise util.NotSupportedError("Unsupported writeback")
+                elif util.is_vector(desc.dtype):
+                    ##################
+                    # Broadcast into scalar AccessNode
+                    code.write(f"{edge.data.data} = svdup_{util.TYPE_TO_SVE_SUFFIX[src_type]}({src_name});")
                 else:
-                    if util.is_vector(desc.dtype):
-                        ##################
-                        # Broadcast into scalar AccessNode
-                        code.write(f"{edge.data.data} = svdup_{util.TYPE_TO_SVE_SUFFIX[src_type]}({src_name});")
-                    else:
-                        ##################
-                        # Scalar write into scalar AccessNode
-                        code.write(f"{edge.data.data} = {src_name};")
+                    ##################
+                    # Scalar write into scalar AccessNode
+                    code.write(f"{edge.data.data} = {src_name};")
 
         else:
             raise util.NotSupportedError("Only writeback to Tasklets and AccessNodes is supported")

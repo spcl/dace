@@ -113,7 +113,7 @@ class PAPIInstrumentation(InstrumentationProvider):
         counters = PAPIUtils.available_counters()
         missing_counters = self._counters - set(counters.keys())
         if len(missing_counters) > 0:
-            warnings.warn("Skipping missing PAPI performance counters: %s" % missing_counters)
+            warnings.warn(f"Skipping missing PAPI performance counters: {missing_counters}")
         PAPIInstrumentation._counters &= set(counters.keys())
 
         # If no PAPI counters are available, disable PAPI
@@ -195,8 +195,7 @@ int _papi_nevents = _papi_events.size();
             global_stream.write("#include <dace/perf/papi.h>", sdfg)
             local_stream.write(
                 """dace::perf::PAPI::init();
-dace::perf::PAPIValueStore<%s> __perf_store (__state->report);"""
-                % (", ".join(self._counters)),
+dace::perf::PAPIValueStore<{}> __perf_store (__state->report);""".format(", ".join(self._counters)),
                 sdfg,
             )
             # Get the measured overhead and take the minimum to compensate
@@ -305,7 +304,7 @@ dace::perf::PAPIValueStore<%s> __perf_store (__state->report);"""
         ctype = dst_nodedesc.dtype.ctype
 
         fac3 = " * ".join(sym2cpp(copy_shape)) + " / " + "/".join(sym2cpp(dst_strides))
-        copy_size = "sizeof(%s) * (%s)" % (ctype, fac3)
+        copy_size = f"sizeof({ctype}) * ({fac3})"
         node_id = _unified_id(state.node_id(dst_node), state_id)
         # Mark a section start (this is not really a section in itself (it
         # would be a section with 1 entry))
@@ -361,7 +360,7 @@ __perf_cpy_{node_id}_{unique_cpy_id}.enterCritical();""",
 
         if isinstance(node, nodes.Tasklet):
             inner_stream.write(
-                "dace::perf::%s __perf_%s;\n" % (self.perf_counter_string(), node.label),
+                f"dace::perf::{self.perf_counter_string()} __perf_{node.label};\n",
                 cfg,
                 state_id,
                 node,
@@ -374,7 +373,7 @@ __perf_cpy_{node_id}_{unique_cpy_id}.enterCritical();""",
                 node,
             )
 
-            inner_stream.write("__perf_%s.enterCritical();\n" % node.label, cfg, state_id, node)
+            inner_stream.write(f"__perf_{node.label}.enterCritical();\n", cfg, state_id, node)
 
     def on_node_end(self, sdfg, cfg, state, node, outer_stream, inner_stream, global_stream):
         if not self._papi_used:
@@ -388,7 +387,7 @@ __perf_cpy_{node_id}_{unique_cpy_id}.enterCritical();""",
             if node.instrument == dace.InstrumentationType.PAPI_Counters:
                 if not PAPIInstrumentation.has_surrounding_perfcounters(node, state):
                     inner_stream.write(
-                        "__perf_%s.leaveCritical(__perf_vs_%s);" % (node.label, node.label),
+                        f"__perf_{node.label}.leaveCritical(__perf_vs_{node.label});",
                         cfg,
                         state_id,
                         node,
@@ -396,8 +395,7 @@ __perf_cpy_{node_id}_{unique_cpy_id}.enterCritical();""",
 
                 # Add bytes moved
                 inner_stream.write(
-                    "__perf_store.addBytesMoved(%s);"
-                    % PAPIUtils.get_tasklet_byte_accesses(node, state, sdfg, cfg, state_id),
+                    f"__perf_store.addBytesMoved({PAPIUtils.get_tasklet_byte_accesses(node, state, sdfg, cfg, state_id)});",
                     cfg,
                     state_id,
                     node,
@@ -716,7 +714,7 @@ class PAPIUtils:
 
         if len(step_dyn_syms) > 0:
             pass
-            print("Dynamic step symbols %s!" % str(step))
+            print(f"Dynamic step symbols {str(step)}!")
             raise NotImplementedError
 
         return begin, end, step
@@ -808,12 +806,10 @@ class PAPIUtils:
     ) -> str:
         """Get the amount of bytes processed by `tasklet`. The formula is
         sum(inedges * size) + sum(outedges * size)"""
-        in_accum = []
         out_accum = []
         in_edges = dfg.in_edges(tasklet)
 
-        for ie in in_edges:
-            in_accum.append(PAPIUtils.get_memlet_byte_size(sdfg, ie.data))
+        in_accum = [PAPIUtils.get_memlet_byte_size(sdfg, ie.data) for ie in in_edges]
 
         out_accum.append(PAPIUtils.get_out_memlet_costs(sdfg, cfg, state_id, tasklet, dfg))
 

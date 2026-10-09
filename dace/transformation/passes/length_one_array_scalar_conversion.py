@@ -39,7 +39,7 @@ import ast
 import itertools
 import re
 from collections.abc import Callable
-from typing import AbstractSet
+from collections.abc import Set as AbstractSet
 
 import dace
 from dace import Memlet, dtypes, properties, subsets, symbolic

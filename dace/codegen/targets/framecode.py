@@ -3,7 +3,8 @@ import collections
 import copy
 import pathlib
 import re
-from typing import AbstractSet, Any
+from collections.abc import Set as AbstractSet
+from typing import Any
 
 import dace
 from dace import config, cpf_lowering, data, dtypes, symbolic

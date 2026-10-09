@@ -16,7 +16,7 @@ from dace.libraries.standard.nodes.copy import node as copy_node
 from dace.libraries.standard.nodes.fill import node as fill_node
 from dace.ordered import OrderedSet
 from dace.sdfg import graph as gr
-from dace.sdfg import nodes, propagation
+from dace.sdfg import propagation
 from dace.sdfg import utils as sdutil
 from dace.sdfg.scope import ScopeTree
 from dace.sdfg.state import AbstractControlFlowRegion, ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState

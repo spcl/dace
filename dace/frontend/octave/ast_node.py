@@ -127,8 +127,7 @@ class AST_Node:
                 if isinstance(node, dace.sdfg.nodes.AccessNode):
                     m = re.match(TEMPVARS_PREFIX + r"(\d+)", node.label)
                     if m is not None:
-                        if maxvar < int(m.group(1)):
-                            maxvar = int(m.group(1))
+                        maxvar = max(maxvar, int(m.group(1)))
         newvar = maxvar + 1
         new_name = TEMPVARS_PREFIX + str(newvar)
         return new_name
@@ -195,8 +194,7 @@ class AST_Statements(AST_Node):
 
     def __repr__(self):
         res = ["Statements:"]
-        for s in self.statements:
-            res.append("    " + str(s))
+        res.extend("    " + str(s) for s in self.statements)
         return "\n".join(res)
 
     def get_children(self):

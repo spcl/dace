@@ -12,7 +12,7 @@ It is called almost everywhere in the SVEUnparser, because it checks whether:
 
 import collections
 
-import dace.dtypes as dtypes
+from dace import dtypes
 from dace.codegen.targets.sve import util as util
 
 

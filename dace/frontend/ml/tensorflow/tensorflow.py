@@ -48,17 +48,17 @@ def _tensortype(tensor: tf.Tensor):
             try:
                 dtype = tensor.get_attr("T")
                 if dtype.as_numpy_dtype == object:
-                    raise NotImplementedError("Type %s is not a valid numpy type" % str(dtype))
+                    raise NotImplementedError(f"Type {str(dtype)} is not a valid numpy type")
                 return dtype.as_numpy_dtype
             except ValueError:
                 pass
-            raise TypeError("Ambiguous type for operation %s" % tensor)
+            raise TypeError(f"Ambiguous type for operation {tensor}")
 
     try:
         if tensor.dtype.as_numpy_dtype == object:
-            raise NotImplementedError("Type %s is not a valid numpy type" % str(tensor.dtype))
+            raise NotImplementedError(f"Type {str(tensor.dtype)} is not a valid numpy type")
     except KeyError:
-        raise TypeError("Type %s is not a valid numpy type" % str(tensor.dtype))
+        raise TypeError(f"Type {str(tensor.dtype)} is not a valid numpy type")
 
     if tensor.dtype.is_bool:
         return np.int32
@@ -84,7 +84,7 @@ def _find_node(state, node_id_or_label):
         for n in state.nodes():
             if n.label == node_id_or_label:
                 return n
-        raise LookupError("Node %s not found" % node_id_or_label)
+        raise LookupError(f"Node {node_id_or_label} not found")
     elif isinstance(node_id_or_label, int):
         return state.nodes()[node_id_or_label]
     else:
@@ -743,9 +743,7 @@ class TFSession:
             node_name + "(" + ",".join(taskletOutputs) + ")",
         )
         self.callbackFunctionDict[node_name] = call_this
-        callback_types = []
-        for somenode in outputList:
-            callback_types.append(somenode.desc(self.graph))
+        callback_types = [somenode.desc(self.graph) for somenode in outputList]
         self.callbackTypeDict[node_name] = dace.data.Scalar(dace.callback(None, *callback_types))
         for _index, _out_dace in enumerate(outputList):
             self.state.add_edge(
@@ -2249,9 +2247,7 @@ class TFSession:
     def visit_ShapeN(self, node):
         outputLabels = [string_builder(op.name) for op in node.outputs]
 
-        inputNodes = []
-        for n in node.inputs:
-            inputNodes.append(self.create_and_add_input_node(n)[0])
+        inputNodes = [self.create_and_add_input_node(n)[0] for n in node.inputs]
 
         shapes = [
             np.array(input_tensor.shape, dtype=_tensortype(node.outputs[i]))
@@ -3260,7 +3256,7 @@ class TFSession:
 
         dtype = node.get_attr("DstT")
         if dtype.as_numpy_dtype == object:
-            raise NotImplementedError("Type %s is not a valid numpy type" % str(dtype))
+            raise NotImplementedError(f"Type {str(dtype)} is not a valid numpy type")
         castType = dace.typeclass(dtype.as_numpy_dtype).ctype
 
         for count, inp in enumerate(node.inputs):
@@ -3629,19 +3625,19 @@ class TFSession:
 
         if isinstance(data, Scalar):
             state.add_mapped_tasklet(
-                "reinit_%s" % arrname,
+                f"reinit_{arrname}",
                 [("unused", "0:1")],
                 {},
-                "out = %s" % value,
+                f"out = {value}",
                 {"out": dace.Memlet.simple(arrname, "0")},
                 external_edges=True,
             )
         else:
             state.add_mapped_tasklet(
-                "reinit_%s" % arrname,
-                [("o%d" % i, "0:%s" % symstr(shp)) for i, shp in enumerate(data.shape)],
+                f"reinit_{arrname}",
+                [("o%d" % i, f"0:{symstr(shp)}") for i, shp in enumerate(data.shape)],
                 {},
-                "out = %s" % value,
+                f"out = {value}",
                 {"out": dace.Memlet.simple(arrname, ",".join("o%d" % i for i in range(len(data.shape))))},
                 external_edges=True,
             )
@@ -3751,10 +3747,7 @@ class TFSession:
         :param tensor: tf.Tensor.
         :return: List of dimensions as strings ["0:N","0:M"]
         """
-        dims = []
         shape = _tensorshape(tensor)
         if shape == 1:
             shape = [1]
-        for dim in shape:
-            dims.append("0:" + str(dim))
-        return dims
+        return ["0:" + str(dim) for dim in shape]

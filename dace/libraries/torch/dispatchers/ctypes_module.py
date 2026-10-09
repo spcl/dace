@@ -171,12 +171,9 @@ def callable_for_bwd_module(
 
         @staticmethod
         def backward(ctx, *grad_outputs):
-            kwargs = {}
-
             # recover saved values
             saved = ctx.saved_tensors
-            for value_name, saved_value in zip(forwarded_io_names, saved):
-                kwargs[value_name] = saved_value
+            kwargs = dict(zip(forwarded_io_names, saved))
 
             for value_name in forwarded_non_io_names:
                 kwargs[value_name] = getattr(ctx, f"dace_saved_{value_name}")

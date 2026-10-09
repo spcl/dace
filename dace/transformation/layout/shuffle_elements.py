@@ -4,7 +4,7 @@
 import copy
 import re
 from dataclasses import dataclass
-from typing import Any, Union
+from typing import Any
 
 import dace
 from dace.libraries.layout.shuffle import emit_shuffle_globals, get_shuffle
@@ -12,7 +12,7 @@ from dace.sdfg import nodes as nd
 from dace.transformation import pass_pipeline as ppl
 
 #: A per-array shuffle spec: one ``(sigma_name, dim)`` pair, or a list of them for multiple dimensions.
-ShuffleSpec = Union[tuple[str, int], list[tuple[str, int]]]
+ShuffleSpec = tuple[str, int] | list[tuple[str, int]]
 
 
 @dataclass

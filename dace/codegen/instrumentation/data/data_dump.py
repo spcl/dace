@@ -28,12 +28,12 @@ class DataInstrumentationProviderMixin:
         elif self.backend == "hip":
             header_name = "hip/hip_runtime.h"
         else:
-            raise NameError('GPU backend "%s" not recognized' % self.backend)
+            raise NameError(f'GPU backend "{self.backend}" not recognized')
 
-        global_stream.write("#include <%s>" % header_name)
+        global_stream.write(f"#include <{header_name}>")
 
         # For other file headers
-        sdfg.append_global_code("\n#include <%s>" % header_name, None)
+        sdfg.append_global_code(f"\n#include <{header_name}>", None)
 
     def _generate_device_sync(self, sdfg: SDFG, global_stream: CodeIOStream) -> str:
         """Waits for every stream, or returns an empty string if the SDFG has no device data.
@@ -139,7 +139,7 @@ class SaveProvider(InstrumentationProvider, DataInstrumentationProviderMixin):
             elif condition.language == dtypes.Language.Python:
                 cond_string = cppunparse.py2cpp(condition.code[0], expr_semicolon=False)
             else:
-                warnings.warn("Unrecognized language %s in codeblock" % condition.language)
+                warnings.warn(f"Unrecognized language {condition.language} in codeblock")
                 cond_string = condition.as_string
             condition_preamble = f"if ({cond_string})" + " {"
             condition_postamble = "}"
@@ -174,7 +174,7 @@ class SaveProvider(InstrumentationProvider, DataInstrumentationProviderMixin):
             elif condition.language == dtypes.Language.Python:
                 cond_string = cppunparse.py2cpp(condition.code[0], expr_semicolon=False)
             else:
-                warnings.warn("Unrecognized language %s in codeblock" % condition.language)
+                warnings.warn(f"Unrecognized language {condition.language} in codeblock")
                 cond_string = condition.as_string
             condition_preamble = f"if ({cond_string})" + " {"
             condition_postamble = "}"
@@ -277,7 +277,7 @@ class RestoreProvider(InstrumentationProvider, DataInstrumentationProviderMixin)
             elif condition.language == dtypes.Language.Python:
                 cond_string = cppunparse.py2cpp(condition.code[0], expr_semicolon=False)
             else:
-                warnings.warn("Unrecognized language %s in codeblock" % condition.language)
+                warnings.warn(f"Unrecognized language {condition.language} in codeblock")
                 cond_string = condition.as_string
             condition_preamble = f"if ({cond_string})" + " {"
             condition_postamble = "}"
@@ -314,7 +314,7 @@ class RestoreProvider(InstrumentationProvider, DataInstrumentationProviderMixin)
             elif condition.language == dtypes.Language.Python:
                 cond_string = cppunparse.py2cpp(condition.code[0], expr_semicolon=False)
             else:
-                warnings.warn("Unrecognized language %s in codeblock" % condition.language)
+                warnings.warn(f"Unrecognized language {condition.language} in codeblock")
                 cond_string = condition.as_string
             condition_preamble = f"if ({cond_string})" + " {"
             condition_postamble = "}"

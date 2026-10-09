@@ -129,11 +129,10 @@ class Vectorization(transformation.SingleStateTransformation):
             create_preamble = not symbolic.is_multiple(dim_from, vector_size)
         if self.postamble is not None:
             create_postamble = self.postamble
+        elif isinstance(dim_to, symbolic.SymExpr):
+            create_postamble = not symbolic.is_multiple(dim_to.approx + 1, vector_size)
         else:
-            if isinstance(dim_to, symbolic.SymExpr):
-                create_postamble = not symbolic.is_multiple(dim_to.approx + 1, vector_size)
-            else:
-                create_postamble = not symbolic.is_multiple(dim_to + 1, vector_size)
+            create_postamble = not symbolic.is_multiple(dim_to + 1, vector_size)
 
         # Determine new range for vectorized map
         if self.strided_map:

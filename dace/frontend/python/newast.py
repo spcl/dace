@@ -9,10 +9,10 @@ import sys
 import time
 import warnings
 from collections import OrderedDict
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Iterator
 from numbers import Number
 from os import path
-from typing import Any, Literal, NamedTuple, Union
+from typing import Any, Literal, NamedTuple
 
 import numpy
 import sympy
@@ -31,7 +31,7 @@ from dace.frontend.python.common import (
     StringLiteral,
     inverse_dict_lookup,
 )
-from dace.frontend.python.memlet_parser import DaceSyntaxError, MemletExpr, ParseMemlet, inner_eval_ast, parse_memlet
+from dace.frontend.python.memlet_parser import MemletExpr, ParseMemlet, inner_eval_ast, parse_memlet
 from dace.memlet import Memlet
 from dace.properties import CodeBlock, LambdaProperty
 from dace.sdfg import SDFG, SDFGState, dealias, nodes
@@ -65,10 +65,10 @@ import dace.frontend.python.replacements
 from dace.frontend.python.replacements.utils import broadcast_to, broadcast_together, sym_type
 
 # Type hints
-Size = Union[int, dace.symbolic.symbol]
+Size = int | dace.symbolic.symbol
 ShapeTuple = tuple[Size]
 ShapeList = list[Size]
-Shape = Union[ShapeTuple, ShapeList]
+Shape = ShapeTuple | ShapeList
 
 
 class DependencyType(NamedTuple):
@@ -506,7 +506,7 @@ _DISALLOWED_STMTS = DISALLOWED_STMTS + [
     "TypeVarTuple",
 ]
 
-TaskletType = Union[ast.FunctionDef, ast.With, ast.For]
+TaskletType = ast.FunctionDef | ast.With | ast.For
 
 
 def _disallow_stmt(visitor, node):
@@ -1168,7 +1168,7 @@ class DefinedNames(collections.abc.Mapping):
     def __contains__(self, name: str) -> bool:
         return self.lookup(name) is not MISSING
 
-    def __iter__(self) -> Iterable[str]:
+    def __iter__(self) -> Iterator[str]:
         return iter(self.materialize())
 
     def __len__(self) -> int:
@@ -1575,9 +1575,8 @@ class ProgramVisitor(ExtNodeVisitor):
                 func_name = current_ast_node.func.attr
 
             # Get argument names
-            arg_names = []
-            for arg in current_ast_node.args[:3]:  # Limit to first 3 args to avoid overly long names
-                arg_names.append(self._get_name_from_node(arg))
+            # Limit to first 3 args to avoid overly long names
+            arg_names = [self._get_name_from_node(arg) for arg in current_ast_node.args[:3]]
 
             if arg_names:
                 result = f"{func_name}_{'_'.join(arg_names)}"
@@ -3245,10 +3244,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     for i, idx in enumerate(inp_idx):
                         if not symbolic.issymbolic(pystr_to_symbolic(idx)):
                             offset_indices_to_ignore.add(i)
-                    fake_subset_offs_indices = []
-                    for i in range(len(fake_subset)):
-                        if i not in offset_indices_to_ignore:
-                            fake_subset_offs_indices.append(i)
+                    fake_subset_offs_indices = [i for i in range(len(fake_subset)) if i not in offset_indices_to_ignore]
                     fake_subset.offset(squeezed, True, indices=fake_subset_offs_indices)
 
                     # we access the inp subset using the computed offset
@@ -4329,9 +4325,7 @@ class ProgramVisitor(ExtNodeVisitor):
         """
 
         if isinstance(node, (ast.List, ast.Tuple)):
-            shape = []
-            for length in node.elts:
-                shape.append(self._parse_value(length))
+            shape = [self._parse_value(length) for length in node.elts]
         elif isinstance(node, ast.Attribute):
             if node.attr != "shape":
                 raise DaceSyntaxError(self, node, f"Attribute {rname(node)} is not shape")

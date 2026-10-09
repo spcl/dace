@@ -1471,8 +1471,7 @@ def weakly_connected_component(dfg, node_in_component: Node) -> StateSubgraphVie
         if node in seen:
             continue
         seen.add(node)
-        for succ in dfg.successors(node):
-            to_search.append(succ)
+        to_search.extend(dfg.successors(node))
     to_search = [node_in_component]
     seen.remove(node_in_component)
     while to_search:
@@ -1519,9 +1518,7 @@ def concurrent_subgraphs(graph):
             if node in seen:
                 continue
             seen.add(node)
-            for e in graph.out_edges(node):
-                if e.dst not in seen:
-                    to_search.append(e.dst)
+            to_search.extend(e.dst for e in graph.out_edges(node) if e.dst not in seen)
         # If this component overlaps with any previously determined components,
         # fuse them
         to_delete = []
@@ -2901,9 +2898,11 @@ def specialize_scalar_impl(root: "dace.SDFG", sdfg: "dace.SDFG", scalars: dict[s
     nsdfgs = []
     # Before replacing anything collect all nested SDFGs and their in-out edges for recursion
     for state in sdfg.states():
-        for node in state.nodes():
-            if isinstance(node, nd.NestedSDFG):
-                nsdfgs.append((node, state, state.in_edges(node), state.out_edges(node)))
+        nsdfgs.extend(
+            (node, state, state.in_edges(node), state.out_edges(node))
+            for node in state.nodes()
+            if isinstance(node, nd.NestedSDFG)
+        )
 
     # If we are the root SDFG then we need can't remove non-transient scalar (but will just not use it)
     # For nestedSDFGs we will remove

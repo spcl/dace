@@ -5,8 +5,8 @@ import numpy as np
 from util import fusion
 
 import dace
-import dace.sdfg.utils as utils
-import dace.subsets as subsets
+from dace import subsets
+from dace.sdfg import utils
 from dace.sdfg.graph import SubgraphView
 from dace.transformation.subgraph import SubgraphFusion
 
@@ -67,9 +67,7 @@ def fix_sdfg(sdfg, graph):
     inner_sdfg = helper_sdfg.to_sdfg()
     nnode = graph.add_nested_sdfg(inner_sdfg, {"AA", "BB", "CC"}, {"CC"})
     # redirect edges
-    connectors = []
-    for e in graph.in_edges(nested_original):
-        connectors.append(e.dst_conn)
+    connectors = [e.dst_conn for e in graph.in_edges(nested_original)]
     connectors.sort()
 
     for e in graph.in_edges(nested_original):

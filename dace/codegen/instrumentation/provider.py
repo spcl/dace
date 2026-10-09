@@ -1,5 +1,4 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-
 from dace.codegen.prettycode import CodeIOStream
 from dace.dtypes import DataInstrumentationType, InstrumentationType
 from dace.memlet import Memlet

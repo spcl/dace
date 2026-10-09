@@ -102,8 +102,8 @@ def run_seidel_2d(device_type: dace.dtypes.DeviceType):
 
 def run_seidel_2d_autodiff():
     import jax
-    import jax.lax as lax
     import jax.numpy as jnp
+    from jax import lax
 
     # Initialize data (test size for efficiency)
     TSTEPS, N = (2, 8)

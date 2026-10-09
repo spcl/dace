@@ -783,8 +783,7 @@ def get_map_nest_information(
                 # while we want the size so we add 1
                 shape_list.append(rng[1] + 1)
                 start_range.append(rng[0])
-            for par in edge_src.map.params:
-                param_list.append(par)
+            param_list.extend(edge_src.map.params)
 
     if not (len(param_list) == len(shape_list) == len(start_range)):
         raise AutoDiffException(

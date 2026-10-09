@@ -135,9 +135,7 @@ KERNELS = {
 
 
 def perm_tag(permute_map):
-    parts = []
-    for name in sorted(permute_map):
-        parts.append(name + "".join(str(d) for d in permute_map[name]))
+    parts = [name + "".join(str(d) for d in permute_map[name]) for name in sorted(permute_map)]
     return "_".join(parts)
 
 
@@ -197,8 +195,7 @@ def build_cases():
     ]
     for kernel_key, n, arr in single:
         ndim = KERNELS[kernel_key]["ndim"]
-        for perm in itertools.permutations(range(ndim)):
-            cases.append((kernel_key, n, {arr: list(perm)}))
+        cases.extend((kernel_key, n, {arr: list(perm)}) for perm in itertools.permutations(range(ndim)))
 
     # Two arrays permuted with DIFFERENT perms in the same kernel.
     two = [

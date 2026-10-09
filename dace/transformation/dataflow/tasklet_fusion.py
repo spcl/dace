@@ -39,7 +39,7 @@ class CPPConnectorRenamer:
     def rename(self, code: str) -> str:
         new_code = code
         for old_val, new_val in self.repl_dict.items():
-            new_code = re.sub(r"\b%s\b" % re.escape(old_val), new_val, new_code)
+            new_code = re.sub(rf"\b{re.escape(old_val)}\b", new_val, new_code)
         return new_code
 
 
@@ -61,7 +61,7 @@ class CPPInliner:
         self.inline_val = inline_val
 
     def inline(self, code: str):
-        return re.sub(r"\b%s\b" % re.escape(self.inline_target), "(" + self.inline_val + ")", code)
+        return re.sub(rf"\b{re.escape(self.inline_target)}\b", "(" + self.inline_val + ")", code)
 
 
 @make_properties
@@ -264,7 +264,7 @@ class TaskletFusion(pm.SingleStateTransformation):
             lhs_matches = re.findall(r"[\s\t\n\r]*([\w]*)[\s\t]*=", assigned_value)
             if lhs_matches:
                 lhs = lhs_matches[0]
-                rhs_matches = re.findall(r"%s[\s\t]*=[\s\t]*([^=]*);" % lhs, assigned_value)
+                rhs_matches = re.findall(rf"{lhs}[\s\t]*=[\s\t]*([^=]*);", assigned_value)
                 if rhs_matches:
                     rhs = rhs_matches[0]
 

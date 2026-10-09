@@ -12,7 +12,7 @@ import numpy as np
 
 import dace
 import dace.codegen.targets
-import dace.dtypes as dtypes
+from dace import dtypes
 from dace.codegen.targets.sve import infer as infer
 
 # Translation of types to C++ types

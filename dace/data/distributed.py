@@ -4,15 +4,13 @@
 import copy
 from collections.abc import Sequence
 from numbers import Integral
-from typing import Union
 
-import dace.dtypes as dtypes
-from dace import serialize, symbolic
+from dace import dtypes, serialize, symbolic
 from dace.data.core import Data, SymbolMapping
 from dace.properties import ListProperty, Property, ShapeProperty, SymbolicProperty, make_properties
 
 ShapeType = Sequence[Integral | str | symbolic.symbol | symbolic.SymExpr | symbolic.sympy.Basic]
-RankType = Union[Integral, str, symbolic.symbol, symbolic.SymExpr, symbolic.sympy.Basic]
+RankType = Integral | str | symbolic.symbol | symbolic.SymExpr | symbolic.sympy.Basic
 
 
 class DistributedDescriptor(Data):

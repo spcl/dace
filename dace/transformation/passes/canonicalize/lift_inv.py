@@ -145,9 +145,7 @@ class LiftInv(ppl.Pass):
         candidates: list[tuple[dace.SDFG, SDFGState, nodes.LibraryNode]] = []
         for sd in sdfg.all_sdfgs_recursive():
             for state in sd.states():
-                for node in state.nodes():
-                    if isinstance(node, Solve):
-                        candidates.append((sd, state, node))
+                candidates.extend((sd, state, node) for node in state.nodes() if isinstance(node, Solve))
 
         count = 0
         for sd, state, solve in candidates:

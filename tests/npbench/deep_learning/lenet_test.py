@@ -261,8 +261,8 @@ def run_lenet(device_type: dace.dtypes.DeviceType):
 
 def run_lenet_autodiff():
     import jax
-    import jax.lax as lax
     import jax.numpy as jnp
+    from jax import lax
 
     # Initialize data (npbench test size)
     N, H, W = 4, 16, 16

@@ -461,9 +461,11 @@ def write_moves_with(state: SDFGState, edge, varying: set[str], depth: int = 0) 
         for region in edge.src.sdfg.all_control_flow_regions(recursive=True):
             if not isinstance(region, LoopRegion) or not region.loop_variable:
                 continue
-            for block in (region.init_statement, region.loop_condition, region.update_statement):
-                if block is not None:
-                    definitions.append((region.loop_variable, assigned_expression(block.as_string)))
+            definitions.extend(
+                (region.loop_variable, assigned_expression(block.as_string))
+                for block in (region.init_statement, region.loop_condition, region.update_statement)
+                if block is not None
+            )
         origins = symbol_origins(definitions)
 
         verdicts = []

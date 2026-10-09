@@ -121,9 +121,9 @@ def test_break_anti_dependence_symbolic_positive_offset():
     # (CPP language, no connectors -- pure side effect on a free symbol).
     guards = []
     for st in sdfg.states():
-        for n in st.nodes():
-            if isinstance(n, nodes.Tasklet) and n.label.startswith("_break_antidep_guard"):
-                guards.append(n)
+        guards.extend(
+            n for n in st.nodes() if isinstance(n, nodes.Tasklet) and n.label.startswith("_break_antidep_guard")
+        )
     assert len(guards) == 1, [g.label for g in guards]
     g = guards[0]
     assert g.code.language == dace.dtypes.Language.Python

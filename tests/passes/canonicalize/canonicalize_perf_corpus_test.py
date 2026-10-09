@@ -869,7 +869,7 @@ class _Timeout(Exception):
 
 
 def _now():
-    return datetime.datetime.now().isoformat(timespec="seconds")
+    return datetime.datetime.now(datetime.UTC).isoformat(timespec="seconds")
 
 
 def _result_path(suite, name):

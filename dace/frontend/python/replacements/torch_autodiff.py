@@ -5,7 +5,6 @@ Integration with the dace python frontend
 
 import itertools
 from collections.abc import Sequence
-from typing import Union
 
 import dace.sdfg.sdfg
 from dace import SDFG, SDFGState, data
@@ -18,7 +17,7 @@ from dace.libraries.onnx.op_implementations.common import iterables_equal
 from dace.sdfg.utils import expand_nodes
 from dace.transformation.passes.fusion_inline import InlineControlFlowRegions
 
-TensorOrTensors = Union[str, Sequence[str]]
+TensorOrTensors = str | Sequence[str]
 
 
 @op_repository.replaces("torch.autograd.backward")

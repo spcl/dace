@@ -58,7 +58,7 @@ from dace.sdfg.validation import InvalidSDFGError, validate_sdfg
 
 # NOTE: In shapes, we try to convert strings to integers. In ranks, a string should be interpreted as data (scalar).
 ShapeType = Sequence[Integral | str | symbolic.symbol | symbolic.SymExpr | symbolic.sympy.Basic]
-RankType = Union[Integral, str, symbolic.symbol, symbolic.SymExpr, symbolic.sympy.Basic]
+RankType = Integral | str | symbolic.symbol | symbolic.SymExpr | symbolic.sympy.Basic
 
 
 def normalize_shape_entry(entry: Integral | str | symbolic.SymbolicType) -> int | symbolic.SymbolicType:

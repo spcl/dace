@@ -165,22 +165,6 @@ def _make_sdfg_getrs(node, parent_state, parent_sdfg, implementation):
 
 @dace.library.expansion
 class ExpandInvPure(ExpandTransformation):
-    environments = []
-
-    @staticmethod
-    def make_sdfg(node, parent_state, parent_sdfg):
-        raise NotImplementedError("Missing pure implementation of linalg.inv.")
-
-    @staticmethod
-    def expansion(node, state, sdfg):
-        node.validate(sdfg, state)
-        if node.dtype is None:
-            raise ValueError("Data type must be set to expand " + str(node) + ".")
-        return ExpandInvPure.make_sdfg(node, state, sdfg)
-
-
-@dace.library.expansion
-class ExpandInvPure(ExpandTransformation):
     """``A^-1`` as loops and tasklets, with no library behind it.
 
     The same elimination the pure ``Solve`` runs, against the identity: inverting is solving with

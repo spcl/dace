@@ -359,8 +359,7 @@ if _BACKEND_NAME == "idxalg":
         64-bit integer -- the same silent-default bug as ``_dtype_tc``, in reverse."""
         if not _TC_TO_IDXSTR:
             _dtype_tc("int32")  # ensure the forward map is built
-            for k, v in _IDX_DTYPE_MAP.items():
-                _TC_TO_IDXSTR[v] = k
+            _TC_TO_IDXSTR.update({v: k for k, v in _IDX_DTYPE_MAP.items()})
         if tc not in _TC_TO_IDXSTR:
             raise ValueError(f"no idxalg dtype string for DaCe typeclass {tc!r}")
         return _TC_TO_IDXSTR[tc]

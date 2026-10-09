@@ -14,7 +14,7 @@ from dace.memlet import Memlet
 from dace.sdfg import SDFG, SDFGState
 
 ShapeType = Sequence[Integral | str | symbolic.symbol | symbolic.SymExpr | symbolic.sympy.Basic]
-RankType = Union[Integral, str, symbolic.symbol, symbolic.SymExpr, symbolic.sympy.Basic]
+RankType = Integral | str | symbolic.symbol | symbolic.SymExpr | symbolic.sympy.Basic
 
 ##### MPI Cartesian Communicators
 

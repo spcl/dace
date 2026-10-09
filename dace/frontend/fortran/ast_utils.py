@@ -1,7 +1,6 @@
 # Copyright 2023 ETH Zurich and the DaCe authors. All rights reserved.
 
 # dace imports
-
 from numpy import finfo as finf
 from numpy import float64 as fl
 

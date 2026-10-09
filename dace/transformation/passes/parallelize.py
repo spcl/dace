@@ -138,19 +138,18 @@ class ParallelizePipeline(ppl.Pass):
             IvSubstitutionFissionFixpoint(),
             StructuralCleanup(),
         ]
-        for _ in range(FUSE_ROUNDS):
-            # One Pipeline, four fusion passes, each the pass form of its transformation:
-            # ``FuseStates`` drives ``StateFusionExtended`` per CFG edge instead of re-enumerating
-            # whole-SDFG matches after every apply, and additionally splices out an empty state
-            # sitting next to a LoopRegion / ConditionalBlock -- an edge whose endpoints are not
-            # both ``SDFGState``, which ``StateFusionExtended`` structurally cannot match.
-            # ``FuseMaps`` fuses vertically and horizontally in one FindSingleUseData scan.
-            # ``FuseLoops`` joins the sequential loops ``ParallelizeLoops`` had to refuse (map
-            # fusion only ever sees MapEntry nodes, so those pairs are invisible to it), and
-            # ``FuseConditions`` folds the guards that keep otherwise fusable bodies apart.
-            # A fresh Pipeline per round: FuseMaps declares a FindSingleUseData dependency whose
-            # results the Pipeline caches, and the second round runs on a graph the first rewrote.
-            stages.append(Pipeline([FuseStates(), FuseMaps(), FuseLoops(), FuseConditions()]))
+        # One Pipeline, four fusion passes, each the pass form of its transformation:
+        # ``FuseStates`` drives ``StateFusionExtended`` per CFG edge instead of re-enumerating
+        # whole-SDFG matches after every apply, and additionally splices out an empty state
+        # sitting next to a LoopRegion / ConditionalBlock -- an edge whose endpoints are not
+        # both ``SDFGState``, which ``StateFusionExtended`` structurally cannot match.
+        # ``FuseMaps`` fuses vertically and horizontally in one FindSingleUseData scan.
+        # ``FuseLoops`` joins the sequential loops ``ParallelizeLoops`` had to refuse (map
+        # fusion only ever sees MapEntry nodes, so those pairs are invisible to it), and
+        # ``FuseConditions`` folds the guards that keep otherwise fusable bodies apart.
+        # A fresh Pipeline per round: FuseMaps declares a FindSingleUseData dependency whose
+        # results the Pipeline caches, and the second round runs on a graph the first rewrote.
+        stages.extend(Pipeline([FuseStates(), FuseMaps(), FuseLoops(), FuseConditions()]) for _ in range(FUSE_ROUNDS))
         return stages
 
     def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> int | None:

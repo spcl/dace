@@ -3,7 +3,7 @@ import numpy as np
 import pytest
 
 import dace
-import tests.codegen.sve.common as common
+from tests.codegen.sve import common
 
 N = dace.symbol("N", positive=True)
 

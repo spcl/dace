@@ -4,10 +4,10 @@ import collections
 import onnx
 
 import dace.frontend.common.op_repository as dace_op_repo
-import dace.libraries.onnx.nodes.onnx_op as onnx_op
 from dace import SDFG, SDFGState, config
 from dace.frontend.python.common import StringLiteral
 from dace.frontend.python.newast import ProgramVisitor
+from dace.libraries.onnx.nodes import onnx_op
 from dace.libraries.onnx.nodes.node_utils import parse_variadic_param
 from dace.libraries.onnx.schema import (
     _ATTR_TYPE_TO_PYTHON_TYPE,

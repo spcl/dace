@@ -1074,9 +1074,11 @@ class LoopToEinsum(ppl.Pass):
         # no-ops on) the whole nest. Snapshot upfront -- a lift removes the nest.
         candidates: list[tuple[LoopRegion, SDFG]] = []
         for sd in sdfg.all_sdfgs_recursive():
-            for region in sd.all_control_flow_regions():
-                if isinstance(region, LoopRegion) and region.loop_variable and not _has_loop_ancestor(region):
-                    candidates.append((region, sd))
+            candidates.extend(
+                (region, sd)
+                for region in sd.all_control_flow_regions()
+                if isinstance(region, LoopRegion) and region.loop_variable and not _has_loop_ancestor(region)
+            )
 
         # Per-SDFG data-node census, shared by every candidate of that SDFG (see
         # ``_live_outside``). A lift rewires the CFG, so drop the census after one.
@@ -1112,9 +1114,9 @@ class LoopToEinsum(ppl.Pass):
                 parent = state.parent_graph
                 if isinstance(parent, LoopRegion) or (parent is not sd and _region_in_loop(parent)):
                     continue
-                for node in state.scope_children()[None]:
-                    if isinstance(node, nodes.MapEntry):
-                        candidates.append((state, node, sd))
+                candidates.extend(
+                    (state, node, sd) for node in state.scope_children()[None] if isinstance(node, nodes.MapEntry)
+                )
 
         count = 0
         for state, entry, root in candidates:

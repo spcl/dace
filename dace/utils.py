@@ -6,12 +6,11 @@ This module provides general utility functions that are used across various part
 """
 
 from collections.abc import Container, Iterable
-from typing import Union
 
 import sympy
 
 # Type alias for numeric or symbolic values
-NumericType = Union[int, float, sympy.Basic]
+NumericType = int | float | sympy.Basic
 
 
 def prod(sequence: Iterable[NumericType], start: NumericType = 1) -> NumericType:

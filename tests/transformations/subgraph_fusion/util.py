@@ -2,10 +2,9 @@
 
 import dace
 import dace.libraries.standard as stdlib
-import dace.transformation.subgraph.helpers as helpers
 from dace.sdfg.graph import SubgraphView
 from dace.transformation.dataflow import ReduceExpansion
-from dace.transformation.subgraph import MultiExpansion, SubgraphFusion
+from dace.transformation.subgraph import MultiExpansion, SubgraphFusion, helpers
 
 
 def expand_reduce(sdfg: dace.SDFG, graph: dace.SDFGState, subgraph: SubgraphView | list[SubgraphView] = None, **kwargs):

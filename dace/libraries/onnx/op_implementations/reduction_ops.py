@@ -26,7 +26,7 @@ from dace.libraries.onnx.op_implementations.utils import (
     program_for_node,
 )
 from dace.sdfg.nodes import Node
-from dace.sdfg.utils import in_desc_with_name, in_edge_with_name, out_desc_with_name
+from dace.sdfg.utils import in_edge_with_name
 
 # ============================================================================
 # Cumulative Sum

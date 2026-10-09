@@ -66,9 +66,11 @@ def permutation_layouts(ndim: int) -> list[Layout]:
             f"pruning (task B1) is required first"
         )
     layouts = [IDENTITY_LAYOUT]
-    for perm in itertools.permutations(range(ndim)):
-        if list(perm) != list(range(ndim)):
-            layouts.append(Layout(permutation_tag(perm), (Permute(tuple(perm)),)))
+    layouts.extend(
+        Layout(permutation_tag(perm), (Permute(tuple(perm)),))
+        for perm in itertools.permutations(range(ndim))
+        if list(perm) != list(range(ndim))
+    )
     return layouts
 
 

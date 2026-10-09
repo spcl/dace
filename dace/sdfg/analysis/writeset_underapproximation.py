@@ -550,8 +550,7 @@ def _postorder_traversal(root: SDFGState, loop_nest_tree: dict[SDFGState, set[SD
             last = root
         # if not, push children in stack
         else:
-            for child in children:
-                stack.append(child)
+            stack.extend(children)
     return post_order_list
 
 

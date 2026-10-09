@@ -51,10 +51,11 @@ def cpu_implementation(node: nd.LibraryNode, descs: list[dace.data.Data], tblis_
 def operand_descriptors(node: nd.LibraryNode, state: dace.SDFGState) -> list[dace.data.Data]:
     """The data descriptors on ``node``'s in/out edges (its relayout operands)."""
     sdfg = state.sdfg
-    descs: list[dace.data.Data] = []
-    for edge in list(state.in_edges(node)) + list(state.out_edges(node)):
-        if edge.data is not None and edge.data.data is not None and edge.data.data in sdfg.arrays:
-            descs.append(sdfg.arrays[edge.data.data])
+    descs: list[dace.data.Data] = [
+        sdfg.arrays[edge.data.data]
+        for edge in list(state.in_edges(node)) + list(state.out_edges(node))
+        if edge.data is not None and edge.data.data is not None and edge.data.data in sdfg.arrays
+    ]
     return descs
 
 

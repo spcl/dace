@@ -121,8 +121,8 @@ def run_gramschmidt(device_type: dace.dtypes.DeviceType):
 
 def run_gramschmidt_autodiff():
     import jax
-    import jax.lax as lax
     import jax.numpy as jnp
+    from jax import lax
 
     # Initialize data (polybench mini size)
     M, N = sizes["mini"]

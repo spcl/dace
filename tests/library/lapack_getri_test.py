@@ -3,7 +3,7 @@ import numpy as np
 import pytest
 
 import dace
-import dace.libraries.lapack as lapack
+from dace.libraries import lapack
 from dace.memlet import Memlet
 
 ###############################################################################

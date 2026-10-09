@@ -1089,9 +1089,10 @@ def _validate_ufunc_outputs(
             visitor,
             ast_node,
             "You cannot specify 'out' in call to numpy.{f} as both a positional"
-            " and keyword argument (positional {p}, keyword {w}).".format(
+            " and keyword argument (positional {p}, keyword {k}).".format(
                 f=ufunc_name,
                 p=args[num_outputs, :],
+                k=kwargs["out"],
             ),
         )
     elif num_pos_outputs > 0:

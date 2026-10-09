@@ -5,8 +5,8 @@ import numpy as np
 import pytest
 
 import dace
-import dace.libraries.blas as blas
 from dace.config import set_temporary
+from dace.libraries import blas
 from dace.library import change_default
 from dace.memlet import Memlet
 

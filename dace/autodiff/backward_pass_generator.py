@@ -859,11 +859,9 @@ class BackwardPassGenerator:
 
         # Do the backward BFS iteratively
         for state in reversed(self.state_order):
-            state_given_gradients: list[nodes.AccessNode] = []
-
-            for node in state:
-                if isinstance(node, nodes.AccessNode) and node.data in given_gradients_all_states:
-                    state_given_gradients.append(node)
+            state_given_gradients: list[nodes.AccessNode] = [
+                node for node in state if isinstance(node, nodes.AccessNode) and node.data in given_gradients_all_states
+            ]
 
             backward_nodes = ad_utils.reverse_bfs_gradient_nodes(state, state_given_gradients)
             nodes_list = list(backward_nodes)
@@ -891,9 +889,11 @@ class BackwardPassGenerator:
                 subgraph_an = [node.data for node in state_subgraph.nodes() if isinstance(node, nodes.AccessNode)]
 
                 # For each access node in this view
-                for state_node in state:
-                    if isinstance(state_node, nodes.AccessNode) and state_node.data in subgraph_an:
-                        state_given_gradients.append(state_node)
+                state_given_gradients.extend(
+                    state_node
+                    for state_node in state
+                    if isinstance(state_node, nodes.AccessNode) and state_node.data in subgraph_an
+                )
 
                 # Do reverse BFS starting from this new set of nodes
                 backward_nodes = ad_utils.reverse_bfs_gradient_nodes(state, state_given_gradients)
@@ -1334,10 +1334,7 @@ class BackwardPassGenerator:
 
     def get_node_state(self, node: nodes.Node) -> SDFGState:
         """Return the SDFG state that contains this node."""
-        matches = []
-        for state in self.sdfg.states():
-            if node in state.nodes():
-                matches.append(state)
+        matches = [state for state in self.sdfg.states() if node in state.nodes()]
 
         if len(matches) != 1:
             raise AutoDiffException(f"Expected exactly one match, got {len(matches)}")
@@ -1538,9 +1535,7 @@ class BackwardPassGenerator:
 
             node_out_edges = forward_state.out_edges(node)
             if len(node_out_edges) > 1:
-                for edge in node_out_edges:
-                    if edge.dst in difference:
-                        nodes_to_track.append(node)
+                nodes_to_track.extend(node for edge in node_out_edges if edge.dst in difference)
             data = node.data
 
             # search for this array in the graph difference

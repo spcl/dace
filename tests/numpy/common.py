@@ -122,10 +122,8 @@ def compare_numpy_output(
             try:
                 if validation_func:
                     # Works only with 1D inputs of the same size!
-                    reference_result = []
                     reference_input = [arr.tolist() for arr in inputs.values()]
-                    for inp_args in zip(*reference_input):
-                        reference_result.append(validation_func(*inp_args))
+                    reference_result = [validation_func(*inp_args) for inp_args in zip(*reference_input)]
                 else:
                     with contextmgr:
                         reference_result = func(**reference_input)

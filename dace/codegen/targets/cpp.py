@@ -30,7 +30,7 @@ from dace.config import Config
 from dace.frontend.python import astutils
 from dace.frontend.python.astutils import ExtNodeTransformer, rname, unparse
 from dace.properties import LambdaProperty
-from dace.sdfg import SDFG, SDFGState, is_devicelevel_gpu, nodes, propagation
+from dace.sdfg import SDFG, SDFGState, is_devicelevel_gpu, propagation
 from dace.sdfg import graph as gr
 from dace.sdfg import utils as sdutil
 from dace.sdfg.state import ControlFlowRegion, LoopRegion, StateSubgraphView
@@ -714,24 +714,24 @@ def _check_range_conflicts(subset, a, itersym, b, step):
     found = False
     if isinstance(step, symbolic.SymExpr):
         step = step.approx
-    for rb, re, _ in subset.ndrange():
+    for rb, rend, _ in subset.ndrange():
         m = rb.match(a * itersym + b)
         if m is None:
             continue
         if (m[a] >= 1) != True:
             continue
-        if re != rb:
+        if rend != rb:
             if isinstance(rb, symbolic.SymExpr):
                 rb = rb.approx
-            if isinstance(re, symbolic.SymExpr):
-                re = re.approx
+            if isinstance(rend, symbolic.SymExpr):
+                rend = rend.approx
 
             # If False or indeterminate, the range may
             # overlap across iterations
-            if ((re - rb) >= m[a] * step) != False:
+            if ((rend - rb) >= m[a] * step) != False:
                 continue
 
-            m = re.match(a * itersym + b)
+            m = rend.match(a * itersym + b)
             if m is None:
                 continue
             if (m[a] >= 1) != True:

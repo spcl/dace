@@ -116,8 +116,8 @@ def run_lu(device_type: dace.dtypes.DeviceType):
 
 def run_lu_autodiff():
     import jax
-    import jax.lax as lax
     import jax.numpy as jnp
+    from jax import lax
 
     # Initialize data (polybench mini size)
     N = 5

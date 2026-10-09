@@ -5,8 +5,8 @@ import numpy as np
 import pytest
 
 import dace
-import dace.dtypes as dtypes
 import dace.frontend.python.replacements.mpi as comm
+from dace import dtypes
 from dace.sdfg import utils
 
 

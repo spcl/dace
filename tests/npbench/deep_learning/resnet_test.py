@@ -261,8 +261,8 @@ def run_resnet(device_type: dace.dtypes.DeviceType):
 
 def run_resnet_autodiff():
     import jax
-    import jax.lax as lax
     import jax.numpy as jnp
+    from jax import lax
 
     # Initialize data (npbench test size)
     N, W, H, C1, C2 = 2, 8, 8, 8, 4

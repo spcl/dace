@@ -1,13 +1,13 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
 import atexit
-import collections
 import copy
 import functools
 import inspect
 import numbers
 import os
 import re
+import types
 import warnings
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -1280,8 +1280,7 @@ class LoopUnroller(ast.NodeTransformer):
 
             elembody = [astutils.copy_tree(stmt) for stmt in node.body]
             replace = astutils.ASTFindReplace(dict(zip(to_replace, elem)))
-            for stmt in elembody:
-                new_body.append(replace.visit(stmt))
+            new_body.extend(replace.visit(stmt) for stmt in elembody)
 
         return new_body
 
@@ -1512,8 +1511,7 @@ class DisallowedAssignmentChecker(ast.NodeVisitor):
 
     def __init__(self, filename: str) -> None:
         super().__init__()
-        self.visitor = collections.namedtuple("Visitor", "filename")
-        self.visitor.filename = filename
+        self.visitor = types.SimpleNamespace(filename=filename)
 
     def _check_assignment_target(self, node: ast.expr, parent_node: ast.AST):
         if hasattr(node, "qualname"):

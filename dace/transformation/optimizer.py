@@ -181,7 +181,7 @@ class SDFGOptimizer(Optimizer):
         sdfg_file = self.sdfg.name + ".sdfg"
         if os.path.isfile(sdfg_file):
             ui_input = input(
-                'An SDFG with the filename "%s" was found. Would you like to use it instead? [Y/n] ' % sdfg_file
+                f'An SDFG with the filename "{sdfg_file}" was found. Would you like to use it instead? [Y/n] '
             )
             if len(ui_input) == 0 or ui_input[0] not in ["n", "N"]:
                 return dace.SDFG.from_file(sdfg_file)
@@ -239,8 +239,7 @@ class SDFGOptimizer(Optimizer):
             graph = sdfg.node(pattern_match.state_id) if pattern_match.state_id >= 0 else sdfg
             pattern_match._sdfg = sdfg
             print(
-                "You selected (%s) pattern %s with parameters %s"
-                % (match_id, pattern_match.print_match(sdfg), str(param_dict))
+                f"You selected ({match_id}) pattern {pattern_match.print_match(sdfg)} with parameters {str(param_dict)}"
             )
 
             # Set each parameter of the parameter dictionary separately

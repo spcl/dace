@@ -434,9 +434,11 @@ def test_conditional_gpu_kernel_in_sequential_map():
     gpu_maps = []
     for sub_sdfg in sdfg.all_sdfgs_recursive():
         for state in sub_sdfg.states():
-            for node in state.nodes():
-                if isinstance(node, dace.nodes.MapEntry) and node.map.schedule == dace.dtypes.ScheduleType.GPU_Device:
-                    gpu_maps.append((sub_sdfg, state, node))
+            gpu_maps.extend(
+                (sub_sdfg, state, node)
+                for node in state.nodes()
+                if isinstance(node, dace.nodes.MapEntry) and node.map.schedule == dace.dtypes.ScheduleType.GPU_Device
+            )
     assert gpu_maps, "Expected at least one GPU_Device MapEntry after apply_gpu_transformations"
 
     # Any SDFG that contains a GPU kernel must have the stream array declared.

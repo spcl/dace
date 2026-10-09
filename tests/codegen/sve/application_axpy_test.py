@@ -4,7 +4,7 @@ import pytest
 import scipy as sp
 
 import dace
-import tests.codegen.sve.common as common
+from tests.codegen.sve import common
 
 N = dace.symbol("N")
 

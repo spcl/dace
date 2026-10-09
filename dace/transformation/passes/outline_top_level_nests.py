@@ -18,7 +18,7 @@ units" feature; the emission side (routing each ``no_inline`` nest to its own fi
 code generator.
 """
 
-from typing import Any, Union
+from typing import Any
 
 from dace import SDFG, dtypes
 from dace.properties import make_properties
@@ -28,7 +28,7 @@ from dace.sdfg.state import LoopRegion, SDFGState
 from dace.transformation import helpers
 from dace.transformation import pass_pipeline as ppl
 
-NestNode = Union[nodes.MapEntry, LoopRegion]
+NestNode = nodes.MapEntry | LoopRegion
 
 
 def loop_defined_symbols(loop: LoopRegion) -> set[str]:
@@ -80,9 +80,9 @@ class OutlineTopLevelNests(ppl.Pass):
             if isinstance(block, LoopRegion):
                 loop_refs.append(block)
             elif isinstance(block, SDFGState):
-                for node in block.scope_children()[None]:
-                    if isinstance(node, nodes.MapEntry):
-                        map_refs.append((block, node))
+                map_refs.extend(
+                    (block, node) for node in block.scope_children()[None] if isinstance(node, nodes.MapEntry)
+                )
 
         if not loop_refs and not map_refs:
             return None

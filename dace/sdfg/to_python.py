@@ -84,8 +84,7 @@ class PythonEmitter:
         lines.append(self._module_docstring())
         lines.append("")
         lines.extend(self.HEADER_IMPORTS)
-        for extra in self._extra_imports:
-            lines.append(extra)
+        lines.extend(self._extra_imports)
         lines.append("")
         lines.append("")
         # Compact helper kit — emitted only for patterns that recur often

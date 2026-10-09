@@ -8,8 +8,9 @@ changes rather than around every kernel.
 """
 
 from collections.abc import MutableSet
+from collections.abc import Set as AbstractSet
 from copy import deepcopy
-from typing import AbstractSet, Any
+from typing import Any
 
 from dace import Memlet, data, dtypes, properties, subsets, symbolic
 from dace.config import Config
@@ -2344,9 +2345,9 @@ class OffloadToAccelerator(ppl.Pass):
         """
         found: list[nodes.MapEntry | None] = [None]
         for entry in found:  # grows as taskloops are met; a taskloop under a kernel is never reached
-            for node in scope_children[entry]:
-                if isinstance(node, nodes.MapEntry) and node in self.taskloops:
-                    found.append(node)
+            found.extend(
+                node for node in scope_children[entry] if isinstance(node, nodes.MapEntry) and node in self.taskloops
+            )
         return found
 
     def make_size1_map_wrappers(self, sdfg: SDFG, state: SDFGState):

@@ -41,9 +41,7 @@ def _sync_tasklets(state):
 def _all_sync_states(sdfg):
     out = []
     for nsdfg in sdfg.all_sdfgs_recursive():
-        for state in nsdfg.states():
-            if _sync_tasklets(state):
-                out.append((nsdfg, state))
+        out.extend((nsdfg, state) for state in nsdfg.states() if _sync_tasklets(state))
     return out
 
 

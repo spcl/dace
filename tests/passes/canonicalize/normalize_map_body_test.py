@@ -57,11 +57,11 @@ def _body_nsdfg_count(sdfg: dace.SDFG) -> int:
     """Max number of NestedSDFG nodes inside any single top-level map body."""
     counts = [0]
     for st in sdfg.states():
-        for n in st.nodes():
-            if isinstance(n, nodes.MapEntry) and st.entry_node(n) is None:
-                counts.append(
-                    sum(1 for x in st.all_nodes_between(n, st.exit_node(n)) if isinstance(x, nodes.NestedSDFG))
-                )
+        counts.extend(
+            sum(1 for x in st.all_nodes_between(n, st.exit_node(n)) if isinstance(x, nodes.NestedSDFG))
+            for n in st.nodes()
+            if isinstance(n, nodes.MapEntry) and st.entry_node(n) is None
+        )
     return max(counts)
 
 

@@ -71,17 +71,14 @@ def nest_sdfg_subgraph(
         for b in blocks:
             if isinstance(b, AbstractControlFlowRegion):
                 all_blocks.append(b)
-                for nb in b.all_control_flow_blocks():
-                    all_blocks.append(nb)
-                for e in b.all_interstate_edges():
-                    is_edges.append(e)
+                all_blocks.extend(b.all_control_flow_blocks())
+                is_edges.extend(b.all_interstate_edges())
             else:
                 all_blocks.append(b)
         states: list[SDFGState] = [b for b in all_blocks if isinstance(b, SDFGState)]
         for src in blocks:
             for dst in blocks:
-                for edge in graph.edges_between(src, dst):
-                    is_edges.append(edge)
+                is_edges.extend(graph.edges_between(src, dst))
         return_blocks: set[ReturnBlock] = {b for b in all_blocks if isinstance(b, ReturnBlock)}
         if len(return_blocks) > 0:
             did_return_inner = "_did_ret_from_nsdfg"
@@ -541,12 +538,8 @@ def nest_state_subgraph(
     inputs: list[MultiConnectorEdge] = []
     outputs: list[MultiConnectorEdge] = []
     for node in snodes:
-        for edge in state.in_edges(node):
-            if edge.src not in snodes:
-                inputs.append(edge)
-        for edge in state.out_edges(node):
-            if edge.dst not in snodes:
-                outputs.append(edge)
+        inputs.extend(edge for edge in state.in_edges(node) if edge.src not in snodes)
+        outputs.extend(edge for edge in state.out_edges(node) if edge.dst not in snodes)
 
     # Collect transients not used outside of subgraph (will be removed of
     # top-level graph)
@@ -1195,9 +1188,11 @@ def isolate_nested_sdfg(
         assert isinstance(input_node, nodes.AccessNode)
         if state.in_degree(input_node) != 0:
             to_visit.append(input_node)
-        for other_writer in data_writers.get(input_node.data, ()):
-            if other_writer is not input_node and other_writer not in forward_from_nsdfg:
-                to_visit.append(other_writer)
+        to_visit.extend(
+            other_writer
+            for other_writer in data_writers.get(input_node.data, ())
+            if other_writer is not input_node and other_writer not in forward_from_nsdfg
+        )
     visited: OrderedSet[nodes.Node] = OrderedSet()
     while len(to_visit) > 0:
         node_to_process = to_visit.pop()
@@ -1207,13 +1202,13 @@ def isolate_nested_sdfg(
         pre_nodes.add(node_to_process)
         to_visit.extend(iedge.src for iedge in state.in_edges(node_to_process))
         if isinstance(node_to_process, nodes.AccessNode):
-            for other_writer in data_writers.get(node_to_process.data, ()):
-                if (
-                    other_writer is not node_to_process
-                    and other_writer not in visited
-                    and other_writer not in forward_from_nsdfg
-                ):
-                    to_visit.append(other_writer)
+            to_visit.extend(
+                other_writer
+                for other_writer in data_writers.get(node_to_process.data, ())
+                if other_writer is not node_to_process
+                and other_writer not in visited
+                and other_writer not in forward_from_nsdfg
+            )
 
     # These are the nodes that belongs to the Post State. There are two reasons why a
     #  node belongs to the set of post nodes.

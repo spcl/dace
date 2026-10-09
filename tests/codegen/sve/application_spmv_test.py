@@ -4,7 +4,7 @@ import pytest
 import scipy
 
 import dace
-import tests.codegen.sve.common as common
+from tests.codegen.sve import common
 
 W = dace.symbol("W")
 H = dace.symbol("H")

@@ -641,15 +641,14 @@ class LoopToStreamCompaction(ppl.Pass):
         Labels are unique per region but not across nested SDFGs, so the iterator and the body
         size have to agree too; an ambiguous lookup would probe the wrong loop.
         """
-        found: list[LoopRegion] = []
-        for region in target.all_control_flow_regions():
-            if (
-                isinstance(region, LoopRegion)
-                and region.label == loop.label
-                and region.loop_variable == loop.loop_variable
-                and region.number_of_nodes() == loop.number_of_nodes()
-            ):
-                found.append(region)
+        found: list[LoopRegion] = [
+            region
+            for region in target.all_control_flow_regions()
+            if isinstance(region, LoopRegion)
+            and region.label == loop.label
+            and region.loop_variable == loop.loop_variable
+            and region.number_of_nodes() == loop.number_of_nodes()
+        ]
         return found[0] if len(found) == 1 else None
 
     # match helpers

@@ -238,14 +238,12 @@ def test_reduction_header_instantiates_the_supported_set_warning_free(cxx, tmp_p
     lines = ["#include <dace/reduction.h>"]
     for ns in ("dace::reduce", "dace::reduce::seq"):
         for op in ("sum", "product"):
-            for t in real + cplx:
-                lines.append(f"template {t} {ns}::{op}<{t}, {t}>(const {t} *, long, long, {t});")
+            lines.extend(f"template {t} {ns}::{op}<{t}, {t}>(const {t} *, long, long, {t});" for t in real + cplx)
         # ``logical_and`` / ``logical_or`` are left to the integer instantiations in
         # ``reduce_runtime_test.py``: ``acc && x`` on any floating-point operand is a float-to-bool
         # conversion clang reports under ``-Wconversion``, which is not a low-precision matter.
         for op in ("min", "max"):
-            for t in real:
-                lines.append(f"template {t} {ns}::{op}<{t}, {t}>(const {t} *, long, long, {t});")
+            lines.extend(f"template {t} {ns}::{op}<{t}, {t}>(const {t} *, long, long, {t});" for t in real)
         # Mixed accumulator/element: a low-precision or narrow-complex array folded into a wider one,
         # which is how a caller asks for a promoted accumulator.
         for t, u in (

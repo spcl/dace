@@ -235,8 +235,7 @@ def _has_self_path(state: SDFGState, data: str) -> bool:
             seen.add(cur)
             if cur is not start and isinstance(cur, nodes.AccessNode) and cur.data == data:
                 return True
-            for e in state.out_edges(cur):
-                stack.append(e.dst)
+            stack.extend(e.dst for e in state.out_edges(cur))
     return False
 
 

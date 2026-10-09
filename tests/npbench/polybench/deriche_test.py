@@ -201,8 +201,8 @@ def run_deriche(device_type: dace.dtypes.DeviceType):
 
 def run_deriche_autodiff():
     import jax
-    import jax.lax as lax
     import jax.numpy as jnp
+    from jax import lax
 
     # Initialize data (test size for efficiency)
     W, H = sizes["mini"]

@@ -302,8 +302,7 @@ def apply_assignment(sdfg: SDFG, kernels: list[KernelState], assignment: dict[st
                 live_name, live_ops = name, ops
             if name != array:
                 perm = composed_permutation(ops, ndim)
-                for k in touched:
-                    rewrites.append((k, array, name, perm))
+                rewrites.extend((k, array, name, perm) for k in touched)
         segment_names[array] = [holder_name for holder_name, _ in holders]
 
         last_write = max(

@@ -8,7 +8,7 @@ import pydoc
 import warnings
 from collections.abc import Callable, Generator
 from contextlib import ExitStack, contextmanager
-from typing import TYPE_CHECKING, Any, ContextManager
+from typing import TYPE_CHECKING, Any
 
 from dace import config
 
@@ -211,7 +211,7 @@ def on_compiled_sdfg_call(
 
 
 def _as_context_manager(
-    begin_func: Callable[..., Any] | ContextManager, end_func: Callable[..., Any] | None = None
+    begin_func: Callable[..., Any] | contextlib.AbstractContextManager, end_func: Callable[..., Any] | None = None
 ) -> GeneratorType:
     """
     Returns a context manager from a begin and end functions, if not already given.

@@ -301,12 +301,10 @@ class PermuteDimensions(ppl.Pass):
 
                 arr_shape = arr.shape
 
-                permuted_shape = []
                 assert len(permute_indices) == len(arr_shape), (
                     f"Permute indices {permute_indices} and array shape {arr_shape} must have the same length {arr_name}"
                 )
-                for i in permute_indices:
-                    permuted_shape.append(arr_shape[i])
+                permuted_shape = [arr_shape[i] for i in permute_indices]
 
                 # permuted array is packed, contiguous
                 strides = None
@@ -584,10 +582,8 @@ def rewrite_state_for_permute(
             old_name = edge.data.data
             edge.data.data = name_map[old_name]
 
-            new_subset = []
             permute_indices = permute_map[old_name]
-            for i in range(len(permute_indices)):
-                new_subset.append(required(edge.data.subset)[permute_indices[i]])
+            new_subset = [required(edge.data.subset)[permute_indices[i]] for i in range(len(permute_indices))]
             edge.data.subset = dace.subsets.Range(new_subset)
 
             flip_gemm_operand_if_transposed(edge, permute_indices)

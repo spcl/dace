@@ -342,7 +342,7 @@ class ReduceExpansion(transformation.SingleStateTransformation):
             output_size = outedge.data.subset.size()
 
             ome, omx = nstate.add_map(
-                "reduce_output", {"_o%d" % i: "0:%s" % symstr(sz) for i, sz in enumerate(outedge.data.subset.size())}
+                "reduce_output", {"_o%d" % i: f"0:{symstr(sz)}" for i, sz in enumerate(outedge.data.subset.size())}
             )
             outm = Memlet.simple("_out", ",".join(["_o%d" % i for i in range(output_dims)]), wcr_str=node.wcr)
             inmm = Memlet.simple("_in", ",".join(input_subset))
@@ -355,7 +355,7 @@ class ReduceExpansion(transformation.SingleStateTransformation):
         # an identity tasklet
         ime, imx = nstate.add_map(
             "reduce_values",
-            {"_i%d" % i: "0:%s" % symstr(inedge.data.subset.size()[axis]) for i, axis in enumerate(sorted(axes))},
+            {"_i%d" % i: f"0:{symstr(inedge.data.subset.size()[axis])}" for i, axis in enumerate(sorted(axes))},
         )
 
         # Add identity tasklet for reduction

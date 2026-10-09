@@ -5,8 +5,9 @@ import ast
 import copy
 import inspect
 import numbers
+from collections.abc import Set as AbstractSet
 from io import StringIO
-from typing import AbstractSet, Any
+from typing import Any
 
 import astunparse
 import numpy
@@ -804,9 +805,7 @@ def parse_function_arguments(node: ast.Call, argnames: list[str]) -> dict[str, a
     based on the function's argument names. If an argument was not given, it will
     not be in the result.
     """
-    result = {}
-    for arg, aname in zip(node.args, argnames):
-        result[aname] = arg
+    result = {aname: arg for arg, aname in zip(node.args, argnames)}
     for kw in node.keywords:
         result[kw.arg] = kw.value
     return result

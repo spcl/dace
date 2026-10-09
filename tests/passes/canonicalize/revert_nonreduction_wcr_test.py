@@ -38,21 +38,19 @@ def _signature(sdfg):
     for sd in sdfg.all_sdfgs_recursive():
         for s in sd.states():
             sig.append(("nodes", s.label, len(s.nodes())))
-            for e in s.edges():
-                sig.append(
-                    (
-                        "edge",
-                        s.label,
-                        type(e.src).__name__,
-                        type(e.dst).__name__,
-                        str(e.data.data),
-                        str(e.data.subset),
-                        str(e.data.wcr),
-                    )
+            sig.extend(
+                (
+                    "edge",
+                    s.label,
+                    type(e.src).__name__,
+                    type(e.dst).__name__,
+                    str(e.data.data),
+                    str(e.data.subset),
+                    str(e.data.wcr),
                 )
-            for n in s.nodes():
-                if isinstance(n, nodes.Tasklet):
-                    sig.append(("tasklet", s.label, n.code.as_string))
+                for e in s.edges()
+            )
+            sig.extend(("tasklet", s.label, n.code.as_string) for n in s.nodes() if isinstance(n, nodes.Tasklet))
     return sorted(sig)
 
 

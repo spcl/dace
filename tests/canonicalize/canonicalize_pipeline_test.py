@@ -56,8 +56,9 @@ def structure(sdfg: dace.SDFG) -> str:
         lines.extend(
             sorted(f"  E N{ids[e.src]}:{e.src_conn} -> N{ids[e.dst]}:{e.dst_conn} {e.data}" for e in state.edges())
         )
-    for region in sdfg.all_control_flow_regions(recursive=True):
-        lines.append(f"CFG {type(region).__name__} {len(region.nodes())}")
+    lines.extend(
+        f"CFG {type(region).__name__} {len(region.nodes())}" for region in sdfg.all_control_flow_regions(recursive=True)
+    )
     return "\n".join(lines)
 
 

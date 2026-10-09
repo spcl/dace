@@ -1,5 +1,4 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-
 from dace import config, dtypes, registry
 from dace.codegen import common
 from dace.codegen.instrumentation.provider import InstrumentationProvider
@@ -26,14 +25,14 @@ class GPUEventProvider(InstrumentationProvider):
         elif self.backend == "hip":
             header_name = "hip/hip_runtime.h"
         else:
-            raise NameError('GPU backend "%s" not recognized' % self.backend)
+            raise NameError(f'GPU backend "{self.backend}" not recognized')
 
         global_stream.write("#include <chrono>")
-        global_stream.write("#include <%s>" % header_name)
+        global_stream.write(f"#include <{header_name}>")
 
         # For other file headers
         sdfg.append_global_code("\n#include <chrono>", None)
-        sdfg.append_global_code("\n#include <%s>" % header_name, None)
+        sdfg.append_global_code(f"\n#include <{header_name}>", None)
 
     def _get_sobj(self, node: nodes.EntryNode | nodes.ExitNode):
         # Get object behind scope
@@ -54,7 +53,7 @@ class GPUEventProvider(InstrumentationProvider):
             streamstr = "nullptr"
         else:
             streamstr = f"__state->gpu_context->streams[{stream}]"
-        return "%sEventRecord(__dace_ev_%s, %s);" % (self.backend, id, streamstr)
+        return f"{self.backend}EventRecord(__dace_ev_{id}, {streamstr});"
 
     def _report(self, timer_name: str, cfg: ControlFlowRegion = None, state: SDFGState = None, node: nodes.Node = None):
         idstr = self._idstr(cfg, state, node)
@@ -114,7 +113,7 @@ __state->report.add_completion("{timer_name}", "GPU", __dace_ts_start_{idstr}, _
         if state.instrument == dtypes.InstrumentationType.GPU_Events:
             idstr = self._idstr(cfg, state, None)
             local_stream.write(self._record_event("e" + idstr, 0), cfg, state_id)
-            local_stream.write(self._report("State %s" % state.label, cfg, state), cfg, state_id)
+            local_stream.write(self._report(f"State {state.label}", cfg, state), cfg, state_id)
             local_stream.write(self._destroy_event("b" + idstr), cfg, state_id)
             local_stream.write(self._destroy_event("e" + idstr), cfg, state_id)
 
@@ -165,7 +164,7 @@ __state->report.add_completion("{timer_name}", "GPU", __dace_ts_start_{idstr}, _
             stream = gpu_stream_of(node, state)
             outer_stream.write(self._record_event(idstr, stream), cfg, state_id, node)
             outer_stream.write(
-                self._report("%s %s" % (type(s).__name__, s.label), cfg, state, entry_node), cfg, state_id, node
+                self._report(f"{type(s).__name__} {s.label}", cfg, state, entry_node), cfg, state_id, node
             )
 
     def on_node_begin(
@@ -208,7 +207,7 @@ __state->report.add_completion("{timer_name}", "GPU", __dace_ts_start_{idstr}, _
             stream = gpu_stream_of(node, state)
             outer_stream.write(self._record_event(idstr, stream), cfg, state_id, node)
             outer_stream.write(
-                self._report("%s %s" % (type(node).__name__, node.label), cfg, state, node), cfg, state_id, node
+                self._report(f"{type(node).__name__} {node.label}", cfg, state, node), cfg, state_id, node
             )
 
 

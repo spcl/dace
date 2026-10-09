@@ -8,15 +8,12 @@ from fparser.common.readfortran import FortranStringReader as fsr
 from fparser.two.parser import ParserFactory as pf
 from fparser.two.symbol_table import SymbolTable
 
-import dace.frontend.fortran.ast_components as ast_components
-import dace.frontend.fortran.ast_internal_classes as ast_internal_classes
-import dace.frontend.fortran.ast_transforms as ast_transforms
-import dace.frontend.fortran.ast_utils as ast_utils
 from dace import SDFG, InterstateEdge, Memlet, dtypes, nodes, pointer
 from dace import Language as lang
 from dace import data as dat
 from dace import symbolic as sym
 from dace.data import Scalar
+from dace.frontend.fortran import ast_components, ast_internal_classes, ast_transforms, ast_utils
 from dace.properties import CodeBlock
 from dace.sdfg import dealias
 from dace.sdfg.state import ControlFlowRegion, LoopRegion
@@ -533,9 +530,7 @@ class AST_translator:
                     else:
                         # This is the case where the array is not a scalar and we need to create a view
                         if not isinstance(variable_in_call, ast_internal_classes.Name_Node):
-                            offsets_zero = []
-                            for index in offsets:
-                                offsets_zero.append(0)
+                            offsets_zero = [0 for _ in offsets]
                             viewname, view = sdfg.add_view(
                                 array_name + "_view_" + str(self.views),
                                 shape,
@@ -609,18 +604,10 @@ class AST_translator:
                             )
 
         # Preparing symbol dictionary for nested sdfg
-        sym_dict = {}
-        for i in sdfg.symbols:
-            sym_dict[i] = i
+        sym_dict = {i: i for i in sdfg.symbols}
 
-        not_found_write_names = []
-        not_found_read_names = []
-        for i in write_names:
-            if self.name_mapping[new_sdfg].get(i) is None:
-                not_found_write_names.append(i)
-        for i in read_names:
-            if self.name_mapping[new_sdfg].get(i) is None:
-                not_found_read_names.append(i)
+        not_found_write_names = [i for i in write_names if self.name_mapping[new_sdfg].get(i) is None]
+        not_found_read_names = [i for i in read_names if self.name_mapping[new_sdfg].get(i) is None]
 
         # This handles the library states that are needed to inject dataflow to prevent library calls from being reordered
         # Currently not sufficient for all cases

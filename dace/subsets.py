@@ -416,17 +416,16 @@ class Range(Subset):
             raise TypeError("from_json of class \"Range\" called on json with type %s (expected 'Range')" % obj["type"])
 
         ranges = obj["ranges"]
-        tuples = []
 
-        for r in ranges:
-            tuples.append(
-                (
-                    _symbolic_deserializer(r["start"], context),
-                    _symbolic_deserializer(r["end"], context),
-                    _symbolic_deserializer(r["step"], context),
-                    _symbolic_deserializer(r["tile"], context),
-                )
+        tuples = [
+            (
+                _symbolic_deserializer(r["start"], context),
+                _symbolic_deserializer(r["end"], context),
+                _symbolic_deserializer(r["step"], context),
+                _symbolic_deserializer(r["tile"], context),
             )
+            for r in ranges
+        ]
 
         return Range(tuples)
 

@@ -4,7 +4,7 @@
 import itertools
 import os
 from collections.abc import Callable
-from typing import Any, Union
+from typing import Any
 
 import sympy
 
@@ -36,7 +36,7 @@ from dace.transformation.passes.parallelize_loops import ParallelizeLoops
 from dace.transformation.subgraph import helpers as xfsh
 from dace.transformation.subgraph.composite import CompositeFusion
 
-GraphViewType = Union[SDFG, SDFGState, gr.SubgraphView, ControlFlowRegion]
+GraphViewType = SDFG | SDFGState | gr.SubgraphView | ControlFlowRegion
 
 
 def greedy_fuse(

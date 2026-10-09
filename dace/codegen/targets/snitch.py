@@ -318,7 +318,7 @@ class SnitchCodeGen(TargetCodeGenerator):
     def memlet_definition(self, sdfg, memlet, output, local_name, conntype=None, allow_shadowing=False, codegen=None):
         # TODO: Robust rule set
         if conntype is None:
-            raise ValueError('Cannot define memlet for "%s" without connector type' % local_name)
+            raise ValueError(f'Cannot define memlet for "{local_name}" without connector type')
         codegen = codegen or self
         # Convert from Data to typeclass
         if isinstance(conntype, data.Data):
@@ -346,7 +346,7 @@ class SnitchCodeGen(TargetCodeGenerator):
 
         _ptr = ptr
         if expr != _ptr:
-            expr = "%s[%s]" % (ptr, expr)
+            expr = f"{ptr}[{expr}]"
         # If there is a type mismatch, cast pointer
         expr = cpp.make_ptr_vector_cast(expr, desc.dtype, conntype, is_scalar, var_type)
 
@@ -370,7 +370,7 @@ class SnitchCodeGen(TargetCodeGenerator):
                 else:
                     # Variable number of reads: get a const reference that can
                     # be read if necessary
-                    memlet_type = "%s const" % memlet_type
+                    memlet_type = f"{memlet_type} const"
                     result += f"{memlet_type} &{local_name} = {expr};"
                 defined = DefinedType.Scalar if is_scalar else DefinedType.Pointer
         elif var_type in [DefinedType.Stream, DefinedType.StreamArray]:
@@ -434,7 +434,7 @@ class SnitchCodeGen(TargetCodeGenerator):
                         state_id,
                         node,
                     )
-                    self.dispatcher.defined_vars.add_global(name, DefinedType.Pointer, "%s *" % nodedesc.dtype.ctype)
+                    self.dispatcher.defined_vars.add_global(name, DefinedType.Pointer, f"{nodedesc.dtype.ctype} *")
                 # Allocate in each OpenMP thread
                 allocation_stream.write(
                     f"""
@@ -476,14 +476,13 @@ class SnitchCodeGen(TargetCodeGenerator):
                     node,
                 )
                 self.dispatcher.defined_vars.add(name, DefinedType.Pointer, ctypedef)
+        elif nodedesc.storage is dtypes.StorageType.CPU_Heap or nodedesc.storage is dtypes.StorageType.Snitch_TCDM:
+            ctypedef = dtypes.pointer(nodedesc.dtype).ctype
+            declaration_stream.write(f'// allocate scalar storage "{nodedesc.storage}"')
+            declaration_stream.write(f"{nodedesc.dtype.ctype} {name}[1];\n", cfg, state_id, node)
+            self.dispatcher.defined_vars.add(name, DefinedType.Pointer, ctypedef)
         else:
-            if nodedesc.storage is dtypes.StorageType.CPU_Heap or nodedesc.storage is dtypes.StorageType.Snitch_TCDM:
-                ctypedef = dtypes.pointer(nodedesc.dtype).ctype
-                declaration_stream.write(f'// allocate scalar storage "{nodedesc.storage}"')
-                declaration_stream.write(f"{nodedesc.dtype.ctype} {name}[1];\n", cfg, state_id, node)
-                self.dispatcher.defined_vars.add(name, DefinedType.Pointer, ctypedef)
-            else:
-                raise NotImplementedError("Unimplemented storage type " + str(nodedesc.storage))
+            raise NotImplementedError("Unimplemented storage type " + str(nodedesc.storage))
 
     def deallocate_array(
         self,
@@ -675,28 +674,27 @@ class SnitchCodeGen(TargetCodeGenerator):
                     xfer = f"""*({dst_expr}) = *({src_expr});"""
                     callsite_stream.write(xfer, cfg, state_id, [src_node, dst_node])
                     return
-                else:
-                    if src_strides[0] == 1 and dst_strides[0] == 1:
-                        xfer = """__builtin_sdma_start_oned(
+                elif src_strides[0] == 1 and dst_strides[0] == 1:
+                    xfer = """__builtin_sdma_start_oned(
                                 (uint64_t)({src}), (uint64_t)({dst}),
                                 {size}, {cfg});""".format(
-                            src=src_expr,
-                            dst=dst_expr,
-                            size=f"sizeof({src_nodedesc.dtype.ctype})*({cpp.sym2cpp(copy_shape[0])})",
-                            cfg="0",
-                        )
-                    else:
-                        xfer = """__builtin_sdma_start_twod(
+                        src=src_expr,
+                        dst=dst_expr,
+                        size=f"sizeof({src_nodedesc.dtype.ctype})*({cpp.sym2cpp(copy_shape[0])})",
+                        cfg="0",
+                    )
+                else:
+                    xfer = """__builtin_sdma_start_twod(
                                 (uint64_t)({src}), (uint64_t)({dst}),
                                 {size}, {sstride}, {dstride}, {nrep}, {cfg});""".format(
-                            src=src_expr,
-                            dst=dst_expr,
-                            size=f"sizeof({src_nodedesc.dtype.ctype})",
-                            sstride=f"sizeof({src_nodedesc.dtype.ctype})*({cpp.sym2cpp(src_strides[0])})",
-                            dstride=f"sizeof({dst_nodedesc.dtype.ctype})*({cpp.sym2cpp(dst_strides[0])})",
-                            nrep=cpp.sym2cpp(copy_shape[0]),
-                            cfg="0",
-                        )
+                        src=src_expr,
+                        dst=dst_expr,
+                        size=f"sizeof({src_nodedesc.dtype.ctype})",
+                        sstride=f"sizeof({src_nodedesc.dtype.ctype})*({cpp.sym2cpp(src_strides[0])})",
+                        dstride=f"sizeof({dst_nodedesc.dtype.ctype})*({cpp.sym2cpp(dst_strides[0])})",
+                        nrep=cpp.sym2cpp(copy_shape[0]),
+                        cfg="0",
+                    )
 
             else:
                 raise NotImplementedError("Unsupported dimnesions")
@@ -1105,7 +1103,7 @@ class SnitchCodeGen(TargetCodeGenerator):
         defined_type, _ = self.dispatcher.defined_vars.get(memlet.data)
 
         if isinstance(indices, str):
-            ptr = "%s + %s" % (cpp.cpp_ptr_expr(sdfg, memlet, defined_type, codegen=self), indices)
+            ptr = f"{cpp.cpp_ptr_expr(sdfg, memlet, defined_type, codegen=self)} + {indices}"
         else:
             ptr = cpp.cpp_ptr_expr(sdfg, memlet, defined_type, indices=indices, codegen=self)
         if isinstance(dtype, dtypes.pointer):
@@ -1162,11 +1160,11 @@ class SnitchCodeGen(TargetCodeGenerator):
             call_params = ", " + call_params
         params = (sdfg.name, sdfg.name, call_params)
         exit_params = (sdfg.name, sdfg.name)
-        hdrs += "typedef void * %sHandle_t;\n" % sdfg.name
+        hdrs += f"typedef void * {sdfg.name}Handle_t;\n"
         hdrs += '#ifdef __cplusplus\nextern "C" {\n#endif\n'
-        hdrs += "%sHandle_t __dace_init_%s(%s);\n" % init_params
-        hdrs += "int __dace_exit_%s(%sHandle_t handle);\n" % exit_params
-        hdrs += "void __program_%s(%sHandle_t handle%s);\n" % params
+        hdrs += "{}Handle_t __dace_init_{}({});\n".format(*init_params)
+        hdrs += "int __dace_exit_{}({}Handle_t handle);\n".format(*exit_params)
+        hdrs += "void __program_{}({}Handle_t handle{});\n".format(*params)
         hdrs += "#ifdef __cplusplus\n}\n#endif\n"
 
         # Fixup some includes

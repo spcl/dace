@@ -257,7 +257,7 @@ def cli(m, k, n, version, verify):
         # Call program
         C = matmul_lib(A, B)
     else:
-        raise ValueError("Invalid version %s" % version)
+        raise ValueError(f"Invalid version {version}")
 
     if verify:
         expected = A @ B

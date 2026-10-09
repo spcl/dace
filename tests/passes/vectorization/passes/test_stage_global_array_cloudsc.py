@@ -69,8 +69,7 @@ def _global_write_edges(sdfg: dace.SDFG, array_name: str) -> list:
             for node in state.data_nodes():
                 if node.data != array_name:
                     continue
-                for edge in state.in_edges(node):
-                    writes.append((edge, state))
+                writes.extend((edge, state) for edge in state.in_edges(node))
     return writes
 
 

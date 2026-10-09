@@ -16,7 +16,7 @@ from dace import data as dt
 from dace import dtypes, memlet, nodes, properties, subsets, symbolic
 from dace import sdfg as sd
 from dace.ordered import OrderedSet
-from dace.sdfg import SDFG, InterstateEdge, SDFGState, dealias, nodes
+from dace.sdfg import SDFG, InterstateEdge, SDFGState, dealias
 from dace.sdfg import graph as gr
 from dace.sdfg import utils as sdutil
 from dace.sdfg.analysis import cfg as cfg_analysis

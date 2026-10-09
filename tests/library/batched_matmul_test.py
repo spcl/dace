@@ -3,7 +3,7 @@ import numpy as np
 import pytest
 
 import dace
-import dace.libraries.blas as blas
+from dace.libraries import blas
 from dace.libraries.blas.nodes.batched_matmul import BatchedMatMul
 from dace.library import change_default
 

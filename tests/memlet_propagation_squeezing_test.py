@@ -7,7 +7,7 @@ from dace.sdfg import dealias, propagation
 
 def make_sdfg(squeeze, name):
     N, M = dace.symbol("N"), dace.symbol("M")
-    sdfg = dace.SDFG("memlet_propagation_%s" % name)
+    sdfg = dace.SDFG(f"memlet_propagation_{name}")
     sdfg.add_symbol("N", dace.int64)
     sdfg.add_symbol("M", dace.int64)
     sdfg.add_array("A", [N + 1, M], dace.int64)

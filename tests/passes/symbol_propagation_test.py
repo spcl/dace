@@ -542,9 +542,7 @@ def test_dead_iedge_assignment_eliminated_after_substitution():
     # ``klev + 1`` directly, not via the shorthand symbol.
     seen = []
     for st in sdfg.states():
-        for e in st.edges():
-            if e.data is not None and e.data.data == "out":
-                seen.append(str(e.data.subset))
+        seen.extend(str(e.data.subset) for e in st.edges() if e.data is not None and e.data.data == "out")
     assert "klev + 1" in seen, f"expected memlet subset to be substituted to klev+1; got {seen}"
 
 

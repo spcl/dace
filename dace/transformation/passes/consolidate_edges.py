@@ -1,6 +1,5 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 
-
 from dace import SDFG, properties
 from dace.sdfg import utils as sdutil
 from dace.transformation import pass_pipeline as ppl

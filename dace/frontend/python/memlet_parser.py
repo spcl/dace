@@ -2,7 +2,7 @@
 import ast
 import copy
 from dataclasses import dataclass
-from typing import Any, Union
+from typing import Any
 
 from dace import data, dtypes, subsets
 from dace.frontend.python import astutils
@@ -11,7 +11,7 @@ from dace.frontend.python.common import DaceSyntaxError
 from dace.memlet import Memlet
 from dace.symbolic import SymbolicType, pystr_to_symbolic, shapes_equal
 
-MemletType = Union[ast.Call, ast.Attribute, ast.Subscript, ast.Name]
+MemletType = ast.Call | ast.Attribute | ast.Subscript | ast.Name
 
 
 @dataclass

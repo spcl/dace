@@ -5,12 +5,12 @@ import copy
 import warnings
 from collections import defaultdict
 
-import dace.transformation.helpers as helpers
 from dace import sdfg as sd
 from dace import subsets
 from dace.memlet import Memlet
 from dace.sdfg import dealias, nodes
 from dace.sdfg import graph as gr
+from dace.transformation import helpers
 from dace.transformation import transformation as xf
 
 
@@ -124,7 +124,7 @@ class DeduplicateAccess(xf.SingleStateTransformation):
                     edge_mapping[ind].append(e)
                     break
             else:
-                raise ValueError("Failed to find contiguous subset for edge %s" % e.data)
+                raise ValueError(f"Failed to find contiguous subset for edge {e.data}")
 
         # Create transients for subsets and redirect edges
         for ind, subset in enumerate(contiguous_subsets):

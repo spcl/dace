@@ -51,16 +51,15 @@ def dtypes_of(sdfg: dace.SDFG) -> dict[str, set[dtypes.typeclass]]:
 
 def respell(subset: subsets.Range, name: str, dtype: dtypes.typeclass) -> subsets.Range:
     """``subset`` with the symbol ``name`` rebuilt at ``dtype``."""
-    ranges = []
-    for rng in subset.ranges:
-        ranges.append(
-            tuple(
-                bound.xreplace({s: symbolic.symbol(name, dtype) for s in bound_symbols(bound) if s.name == name})
-                if isinstance(bound, sympy.Basic)
-                else bound
-                for bound in rng
-            )
+    ranges = [
+        tuple(
+            bound.xreplace({s: symbolic.symbol(name, dtype) for s in bound_symbols(bound) if s.name == name})
+            if isinstance(bound, sympy.Basic)
+            else bound
+            for bound in rng
         )
+        for rng in subset.ranges
+    ]
     return subsets.Range(ranges)
 
 

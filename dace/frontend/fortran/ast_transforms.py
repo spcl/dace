@@ -319,8 +319,7 @@ class CallExtractor(NodeTransformer):
             if isinstance(child, ast_internal_classes.Call_Expr_Node):
                 new_args = []
                 if hasattr(child, "args"):
-                    for i in child.args:
-                        new_args.append(self.visit(i))
+                    new_args.extend(self.visit(i) for i in child.args)
                 new_child = ast_internal_classes.Call_Expr_Node(
                     type=child.type, name=child.name, args=new_args, line_number=child.line_number
                 )
@@ -736,9 +735,7 @@ def localFunctionStatementEliminator(node: ast_internal_classes.FNode):
                         if it_is_simple:
                             still_changing = True
                             i[1] = ReplaceFunctionStatement(j[0], j[1]).visit(rval)
-    final_exec = []
-    for i in new_exec:
-        final_exec.append(ReplaceFunctionStatementPass(to_change).visit(i))
+    final_exec = [ReplaceFunctionStatementPass(to_change).visit(i) for i in new_exec]
     node.execution_part.execution = final_exec
     node.specification_part.specifications = spec
     return node

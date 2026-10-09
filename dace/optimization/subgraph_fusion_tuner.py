@@ -167,10 +167,11 @@ class SubgraphFusionTuner(cutout_tuner.CutoutTuner):
             for state in nsdfg.states():
                 i = i + 1
 
-                top_maps = []
-                for node in state.nodes():
-                    if isinstance(node, dace.nodes.MapEntry) and xfh.get_parent_map(state, node) is None:
-                        top_maps.append(node)
+                top_maps = [
+                    node
+                    for node in state.nodes()
+                    if isinstance(node, dace.nodes.MapEntry) and xfh.get_parent_map(state, node) is None
+                ]
 
                 if len(top_maps) < 2:
                     continue
@@ -187,10 +188,11 @@ class SubgraphFusionTuner(cutout_tuner.CutoutTuner):
                     best_pattern = None
                     best_pattern_runtime = math.inf
                     for j, pattern in enumerate(subgraph_patterns):
-                        maps = []
-                        for node in state.nodes():
-                            if isinstance(node, dace.nodes.MapEntry) and xfh.get_parent_map(state, node) is None:
-                                maps.append(node)
+                        maps = [
+                            node
+                            for node in state.nodes()
+                            if isinstance(node, dace.nodes.MapEntry) and xfh.get_parent_map(state, node) is None
+                        ]
 
                         if len(maps) < 2:
                             break

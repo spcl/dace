@@ -413,20 +413,14 @@ class RerollUnrolledLoops(ppl.Pass):
         seen: dict[nodes.Node, None] = {}
         frontier: list[nodes.Node] = []
         for e in lane_edges:
-            for n in (e.src, e.dst):
-                if n not in shared:
-                    frontier.append(n)
+            frontier.extend(n for n in (e.src, e.dst) if n not in shared)
         while frontier:
             n = frontier.pop()
             if n in seen:
                 continue
             seen[n] = None
-            for e in value_edges(state.in_edges(n)):
-                if e.src not in shared:
-                    frontier.append(e.src)
-            for e in value_edges(state.out_edges(n)):
-                if e.dst not in shared:
-                    frontier.append(e.dst)
+            frontier.extend(e.src for e in value_edges(state.in_edges(n)) if e.src not in shared)
+            frontier.extend(e.dst for e in value_edges(state.out_edges(n)) if e.dst not in shared)
         return seen
 
     def _try_reroll(self, loop: LoopRegion, step: int) -> bool:
@@ -858,8 +852,7 @@ class RerollUnrolledLoops(ppl.Pass):
                     continue
                 seen[n] = None
                 reached_by.setdefault(n, {})[d] = None
-                for e in st.out_edges(n):
-                    frontier.append(e.dst)
+                frontier.extend(e.dst for e in st.out_edges(n))
 
         # Classify fold nodes (>=2 offsets): each must be an associative merge of
         # ONE commutative op, or a transparent spine carrier.

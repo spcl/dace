@@ -44,36 +44,6 @@ def randn_away_from_relu_kink(model: torch.nn.Module, *shape: int) -> torch.Tens
     return x
 
 
-# DaCe and PyTorch round a float32 matmul differently, so a ReLU input closer to zero than the rounding noise (~1e-6)
-# gets a different gradient mask in each and the weight gradients of that unit disagree by far more than the test
-# tolerance. Inputs are drawn so that no ReLU input is that close to the kink.
-RELU_KINK_MARGIN = 1e-4
-
-
-def min_relu_input_magnitude(model: torch.nn.Module, x: torch.Tensor) -> float:
-    """Smallest absolute value that any ``nn.ReLU`` of ``model`` receives on input ``x``."""
-    magnitudes = []
-    hooks = [
-        module.register_forward_pre_hook(lambda _, args: magnitudes.append(args[0].abs().min().item()))
-        for module in model.modules()
-        if isinstance(module, nn.ReLU)
-    ]
-    try:
-        with torch.no_grad():
-            model(x)
-    finally:
-        for hook in hooks:
-            hook.remove()
-    return min(magnitudes)
-
-
-def randn_away_from_relu_kink(model: torch.nn.Module, *shape: int) -> torch.Tensor:
-    x = torch.randn(*shape)
-    while min_relu_input_magnitude(model, x) < RELU_KINK_MARGIN:
-        x = torch.randn(*shape)
-    return x
-
-
 def training_step(
     dace_model: torch.nn.Module,
     pt_model: torch.nn.Module,

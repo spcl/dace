@@ -2313,9 +2313,11 @@ def _misowned_memlet_data(sdfg):
     bad = []
     for sd in sdfg.all_sdfgs_recursive():
         for state in sd.states():
-            for e in state.edges():
-                if not e.data.is_empty() and e.data.data is not None and e.data.data not in sd.arrays:
-                    bad.append((sd.name, state.label, e.data.data))
+            bad.extend(
+                (sd.name, state.label, e.data.data)
+                for e in state.edges()
+                if not e.data.is_empty() and e.data.data is not None and e.data.data not in sd.arrays
+            )
     return bad
 
 

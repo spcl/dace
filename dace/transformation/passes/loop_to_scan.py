@@ -633,9 +633,11 @@ def _collect_loops(sdfg: SDFG):
     """
     out: list = []
     for sd in sdfg.all_sdfgs_recursive():
-        for region in sd.all_control_flow_regions():
-            if isinstance(region, LoopRegion) and region.loop_variable:
-                out.append((region, region.parent_graph, sd))
+        out.extend(
+            (region, region.parent_graph, sd)
+            for region in sd.all_control_flow_regions()
+            if isinstance(region, LoopRegion) and region.loop_variable
+        )
     return out
 
 

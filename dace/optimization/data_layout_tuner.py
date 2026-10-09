@@ -176,8 +176,4 @@ class DataLayoutTuner(cutout_tuner.CutoutTuner):
                     seen.add(dnode.data)
 
         # Make list from dictionary
-        groups = []
-        for group in groupdict.values():
-            groups.append(set(group))
-
-        return groups
+        return [set(group) for group in groupdict.values()]
