@@ -119,25 +119,27 @@ re-fuses whatever should recombine.
 
 import copy
 from collections import Counter
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from types import ModuleType
-from typing import Any, Iterable, List, Sequence, Type, Union
+from typing import Any
 
 from dace import SDFG, Memlet, dtypes, properties, subsets, symbolic
 from dace import data as dt
+from dace.optionals import required
 from dace.sdfg import nodes
 from dace.sdfg.graph import MultiConnectorEdge, SubgraphView
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
-from dace.transformation import pass_pipeline as ppl, transformation
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation import transformation
 from dace.transformation.passes.analysis import loop_analysis
-from dace.optionals import required
 
 #: An edge of a body state that carries a value.
 ValueEdge = MultiConnectorEdge[Memlet]
 #: ``(state, access node, edge)`` of one input read in an output's producer cone.
 ConeRead = tuple[SDFGState, nodes.AccessNode, ValueEdge]
 #: What the statement analysis walks: a nested SDFG's body, or a loop that is split in place.
-Body = Union[SDFG, LoopRegion]
+Body = SDFG | LoopRegion
 #: ``name -> [(state, node)]`` for every data node of a body.
 StageIndex = dict[str, list[tuple[SDFGState, nodes.AccessNode]]]
 #: Per-output cone reads, memoized across the checks of one split.
@@ -969,7 +971,7 @@ class SplitStatements(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+    def depends_on(self) -> list[type[ppl.Pass] | ppl.Pass]:
         return []
 
     def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> int | None:
@@ -1049,7 +1051,7 @@ class SplitStatements(ppl.Pass):
         state: SDFGState,
         node: nodes.NestedSDFG,
         groups: list[dict[str, None]],
-        simplify_cls: Type[ppl.Pass],
+        simplify_cls: type[ppl.Pass],
         rmw_read_is_dead: bool = False,
         cut_other_stores: bool = False,
     ) -> None:
@@ -1139,10 +1141,10 @@ class SplitStatements(ppl.Pass):
         is left to :meth:`_replicate_components`, which already duplicates the guard / ``sym = idx[i]``
         assignment per output. A WCR output (reduction) is never split.
         """
-        from dace.transformation.passes.simplify import SimplifyPass
+        from dace.sdfg.graph import SubgraphView
         from dace.transformation import helpers
         from dace.transformation.interstate import InlineSDFG
-        from dace.sdfg.graph import SubgraphView
+        from dace.transformation.passes.simplify import SimplifyPass
 
         count = 0
         for cfg in list(sdfg.all_sdfgs_recursive()):
@@ -1160,10 +1162,10 @@ class SplitStatements(ppl.Pass):
         cfg: ControlFlowRegion,
         state: SDFGState,
         entry: nodes.MapEntry,
-        simplify_cls: Type[ppl.Pass],
+        simplify_cls: type[ppl.Pass],
         helpers: ModuleType,
-        inline_cls: Type[transformation.TransformationBase],
-        subgraph_cls: Type[SubgraphView[Any, Any]],
+        inline_cls: type[transformation.TransformationBase],
+        subgraph_cls: type[SubgraphView[Any, Any]],
     ) -> bool:
         """Split one straight-line multi-output map into one FLAT map per output; return whether it fired.
 
@@ -1265,10 +1267,10 @@ class SplitStatements(ppl.Pass):
         (:meth:`loop_output_groups`), because the outlining is not free to undo: a refusal must
         leave the SDFG byte-identical.
         """
-        from dace.transformation.passes.simplify import SimplifyPass
+        from dace.sdfg.graph import SubgraphView
         from dace.transformation import helpers
         from dace.transformation.interstate import InlineMultistateSDFG
-        from dace.sdfg.graph import SubgraphView
+        from dace.transformation.passes.simplify import SimplifyPass
 
         count = 0
         for cfg in list(sdfg.all_sdfgs_recursive()):
@@ -1416,10 +1418,10 @@ class SplitStatements(ppl.Pass):
         loop: LoopRegion,
         groups: list[dict[str, None]],
         ordered: bool,
-        simplify_cls: Type[ppl.Pass],
+        simplify_cls: type[ppl.Pass],
         helpers: ModuleType,
-        inline_cls: Type[transformation.TransformationBase],
-        subgraph_cls: Type[SubgraphView[Any, Any]],
+        inline_cls: type[transformation.TransformationBase],
+        subgraph_cls: type[SubgraphView[Any, Any]],
     ) -> bool:
         """Outline ``loop``, clone it per group, inline the clones back; return whether it fired.
 
@@ -1456,7 +1458,7 @@ class SplitStatements(ppl.Pass):
 
     @staticmethod
     def _split_ordered(
-        state: SDFGState, node: nodes.NestedSDFG, groups: list[dict[str, None]], simplify_cls: Type[ppl.Pass]
+        state: SDFGState, node: nodes.NestedSDFG, groups: list[dict[str, None]], simplify_cls: type[ppl.Pass]
     ) -> list[nodes.NestedSDFG] | None:
         """Clone ``node`` once per group into CONSECUTIVE states; the clones, or ``None`` to refuse.
 

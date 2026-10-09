@@ -1,7 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 
 import dace
-
 from dace.transformation.helpers import all_isedges_between, reconnect_edge_through_map
 
 

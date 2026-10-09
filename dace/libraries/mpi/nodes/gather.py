@@ -1,13 +1,12 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 from dace import data, dtypes, library
-from dace.utils import prod as _prod
-from dace.libraries.mpi import utils
+from dace.libraries.mpi import environments, utils
+from dace.libraries.mpi.nodes.node import MPINode, expanded_input_connectors, input_descriptor_name, resolve_comm
+from dace.ordered import OrderedSet
 from dace.sdfg import nodes
 from dace.symbolic import symstr
 from dace.transformation.transformation import ExpandTransformation
-from .. import environments
-from dace.libraries.mpi.nodes.node import MPINode, resolve_comm, expanded_input_connectors, input_descriptor_name
-from dace.ordered import OrderedSet
+from dace.utils import prod as _prod
 
 
 @library.expansion
@@ -79,13 +78,13 @@ class Gather(MPINode):
 
         in_count_str = "XXX"
         out_count_str = "XXX"
-        for _, src_conn, _, _, data in state.out_edges(self):
+        for _, src_conn, _, _, memlet in state.out_edges(self):
             if src_conn == "_outbuffer":
-                dims = [symstr(e) for e in data.subset.size_exact()]
+                dims = [symstr(e) for e in memlet.subset.size_exact()]
                 out_count_str = "*".join(dims)
-        for _, _, _, dst_conn, data in state.in_edges(self):
+        for _, _, _, dst_conn, memlet in state.in_edges(self):
             if dst_conn == "_inbuffer":
-                dims = [symstr(e) for e in data.subset.size_exact()]
+                dims = [symstr(e) for e in memlet.subset.size_exact()]
                 in_count_str = "*".join(dims)
 
         return (inbuffer, in_count_str), (outbuffer, out_count_str), root

@@ -25,7 +25,6 @@ from dace.transformation.layout.apply_assignment import IDENTITY_LAYOUT, Layout,
 from dace.transformation.layout.line_graph import kernel_per_state, line_graph
 from dace.transformation.layout.permute_dimensions import PermuteDimensions
 from dace.transformation.layout.prepare import prepare_for_layout
-
 from tests.transformations.layout.kernels import k10_omen_windowed_contraction as k10
 
 BATCH_TRANSPOSE = Layout("perm1023", (Permute((1, 0, 2, 3)),))  # swap G's (NA, NE) batch axes

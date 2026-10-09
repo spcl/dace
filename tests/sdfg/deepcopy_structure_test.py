@@ -2,13 +2,13 @@
 """A deep copy of an SDFG reproduces every graph container of the original, in order, and shares none."""
 
 import copy
-from typing import Any, Dict, List, Tuple
+from typing import Any
 
 import dace
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 
 
-def build_sdfg() -> Tuple[dace.SDFG, dace.SDFGState]:
+def build_sdfg() -> tuple[dace.SDFG, dace.SDFGState]:
     sdfg = dace.SDFG("deepcopy_structure")
     sdfg.add_array("A", [8], dace.float64)
     sdfg.add_array("B", [8], dace.float64)
@@ -35,8 +35,8 @@ def build_sdfg() -> Tuple[dace.SDFG, dace.SDFGState]:
     return sdfg, body
 
 
-def container_orders(sdfg: dace.SDFG) -> List[Tuple[Any, ...]]:
-    positions: Dict[int, int] = {}
+def container_orders(sdfg: dace.SDFG) -> list[tuple[Any, ...]]:
+    positions: dict[int, int] = {}
 
     def position(obj: Any) -> int:
         return positions.setdefault(id(obj), len(positions))

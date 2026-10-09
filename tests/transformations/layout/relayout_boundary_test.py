@@ -12,7 +12,6 @@ from dace.libraries.layout.algebra import Permute
 from dace.transformation.layout.line_graph import is_relayout_state, kernel_per_state, line_graph
 from dace.transformation.layout.prepare import prepare_for_layout
 from dace.transformation.layout.relayout_boundary import relayout_on_boundary
-
 from tests.transformations.layout import multinest_programs as fixtures
 
 

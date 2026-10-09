@@ -13,7 +13,7 @@ import numpy as np
 import pytest
 
 import dace
-from dace.sdfg.state import LoopRegion, ConditionalBlock
+from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.transformation.passes.move_if_into_loop import MoveIfIntoLoop
 from tests.sdfg.cfg_list_in_place_test import assert_tree_consistent
 

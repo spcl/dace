@@ -17,8 +17,8 @@ import numpy as np
 import dace
 from dace import subsets, symbolic
 from dace.sdfg import nodes
-from dace.transformation.passes.canonicalize.collapse_noop_cast import CollapseNoOpCast
 from dace.transformation.dataflow.trivial_tasklet_elimination import TrivialTaskletElimination
+from dace.transformation.passes.canonicalize.collapse_noop_cast import CollapseNoOpCast
 
 
 def build_cast_sdfg(src_ty, dst_ty, body):

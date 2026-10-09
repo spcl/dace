@@ -3,18 +3,17 @@
 
 from itertools import chain
 from string import ascii_letters
-from typing import Dict, List, Optional
 
 import numpy as np
 import sympy
 
 import dace
 from dace import dtypes, subsets, symbolic
-from dace.utils import prod
-from dace.sdfg.nodes import AccessNode
-from dace.sdfg import SDFG, SDFGState, dealias
-from dace.sdfg.scope import is_devicelevel_gpu
 from dace.memlet import Memlet
+from dace.sdfg import SDFG, SDFGState, dealias
+from dace.sdfg.nodes import AccessNode
+from dace.sdfg.scope import is_devicelevel_gpu
+from dace.utils import prod
 
 
 def _is_sequential(index_list):
@@ -25,7 +24,7 @@ def _is_sequential(index_list):
     return index_list == list(range(smallest_elem, smallest_elem + len(index_list)))
 
 
-class EinsumParser(object):
+class EinsumParser:
     """String parser for einsum."""
 
     def __init__(self, string):
@@ -116,7 +115,7 @@ class EinsumParser(object):
         ):
             if batch and rest and max(batch) > min(rest):
                 return False
-        for key, val in self.fields().items():
+        for val in self.fields().values():
             if not _is_sequential(val):
                 return False
         return True
@@ -170,7 +169,7 @@ def create_batch_gemm_sdfg(dtype, strides, alpha, beta):
     gY = state.add_read("Y")
     gZ = state.add_write("Z")
 
-    import dace.libraries.blas as blas  # Avoid import loop
+    from dace.libraries import blas  # Avoid import loop
 
     libnode = blas.MatMul("einsum_gemm")
     libnode.alpha = plain_coefficient(alpha)
@@ -198,12 +197,12 @@ def create_einsum_sdfg(
     state: SDFGState,
     einsum_string: str,
     *arrays: str,
-    dtype: Optional[dtypes.typeclass] = None,
+    dtype: dtypes.typeclass | None = None,
     optimize: bool = False,
-    output: Optional[str] = None,
-    output_name: Optional[str] = None,
-    alpha: Optional[symbolic.SymbolicType] = 1.0,
-    beta: Optional[symbolic.SymbolicType] = 0.0,
+    output: str | None = None,
+    output_name: str | None = None,
+    alpha: symbolic.SymbolicType | None = 1.0,
+    beta: symbolic.SymbolicType | None = 0.0,
 ):
     return _create_einsum_internal(
         sdfg,
@@ -219,7 +218,7 @@ def create_einsum_sdfg(
     )[0]
 
 
-def _build_einsum_views(tensors: str, dimension_dict: dict) -> List[np.ndarray]:
+def _build_einsum_views(tensors: str, dimension_dict: dict) -> list[np.ndarray]:
     """
     Function taken and adjusted from opt_einsum package version 3.3.0 following unexpected removal in vesion 3.4.0.
     Reference: https://github.com/dgasmith/opt_einsum/blob/v3.3.0/opt_einsum/helpers.py#L18
@@ -237,14 +236,14 @@ def _create_einsum_internal(
     state: SDFGState,
     einsum_string: str,
     *arrays: str,
-    dtype: Optional[dtypes.typeclass] = None,
+    dtype: dtypes.typeclass | None = None,
     optimize: bool = False,
-    output: Optional[str] = None,
-    output_name: Optional[str] = None,
-    nodes: Optional[Dict[str, AccessNode]] = None,
+    output: str | None = None,
+    output_name: str | None = None,
+    nodes: dict[str, AccessNode] | None = None,
     init_output: bool = None,
-    alpha: Optional[symbolic.SymbolicType] = None,
-    beta: Optional[symbolic.SymbolicType] = None,
+    alpha: symbolic.SymbolicType | None = None,
+    beta: symbolic.SymbolicType | None = None,
 ):
     # Infer shapes and strides of input/output arrays
     einsum = EinsumParser(einsum_string)
@@ -265,7 +264,7 @@ def _create_einsum_internal(
     for inp, inpname in zip(einsum.inputs, arrays):
         inparr = sdfg.arrays[inpname]
         if len(inp) != len(inparr.shape):
-            raise ValueError('Dimensionality mismatch in input "%s"' % inpname)
+            raise ValueError(f'Dimensionality mismatch in input "{inpname}"')
         for char, shp in zip(inp, inparr.shape):
             # Equalized, not raw '!=': one name can reach here as several sympy instances (a
             # descriptor a layout pass rebuilt against one parsed from a string), which compare
@@ -285,8 +284,8 @@ def _create_einsum_internal(
             if symbolic.issymbolic(shp):
                 raise ValueError(
                     "Einsum optimization cannot be performed "
-                    'on symbolically-sized array dimension "%s" '
-                    'for subscript character "%s"' % (shp, char)
+                    f'on symbolically-sized array dimension "{shp}" '
+                    f'for subscript character "{char}"'
                 )
 
         # Create optimal contraction path
@@ -324,7 +323,7 @@ def _create_einsum_internal(
     input_nodes = nodes or {arr: state.add_read(arr) for arr in dict.fromkeys(arrays)}
 
     # Get output shape from chardict, or [1] for a scalar output
-    output_shape = list(map(lambda k: chardict[k], einsum.output)) or [1]
+    output_shape = [chardict[k] for k in einsum.output] or [1]
     # The index letters name the parameters of the maps below. A bare letter that matches an SDFG
     # symbol (``k`` contracted over a ``[..., k]``-shaped array) shadows it inside the map, emitting
     # the self-referential bound ``k = 0:k`` -- zero iterations, silently. Prefix them instead.
@@ -424,13 +423,13 @@ def _create_einsum_internal(
                     external_edges=True,
                 )
             else:  # Scalar output
-                t = init_state.add_tasklet("einsum_reset", inputs_scalar, {"out_%s" % output}, code)
+                t = init_state.add_tasklet("einsum_reset", inputs_scalar, {f"out_{output}"}, code)
                 onode = init_state.add_write(output)
-                init_state.add_edge(t, "out_%s" % output, onode, None, Memlet.simple(output, "0"))
+                init_state.add_edge(t, f"out_{output}", onode, None, Memlet.simple(output, "0"))
 
                 if not symbolic.equal_valued(0, beta):
                     inode = init_state.add_read(output)
-                    init_state.add_edge(inode, None, t, "inp_%s" % output, Memlet.simple(output, "0"))
+                    init_state.add_edge(inode, None, t, f"inp_{output}", Memlet.simple(output, "0"))
 
         wcr = "lambda a,b: a+b" if is_conflicted else None
         alphacode = "" if symbolic.equal_valued(1, alpha) else f"{alpha} * "

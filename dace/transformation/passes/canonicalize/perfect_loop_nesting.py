@@ -90,12 +90,13 @@ A no-op when the body is a single block, when a body edge carries an assignment
 the loop would increment once per clone), or when the groups do not separate.
 """
 
-from typing import Any, List, Type, Union
+from typing import Any
 
 from dace import SDFG, properties
 from dace.config import Config
 from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion, LoopRegion
-from dace.transformation import pass_pipeline as ppl, transformation
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation import transformation
 from dace.transformation.interstate.trivial_loop_elimination import TrivialLoopElimination
 from dace.transformation.passes.canonicalize.distribute_producer_consumer import _forward_flow_groups, _rw_subsets
 from dace.transformation.passes.canonicalize.sift_statements_into_perfect_nest import sift_imperfect_nests
@@ -299,7 +300,7 @@ class PerfectLoopNesting(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+    def depends_on(self) -> list[type[ppl.Pass] | ppl.Pass]:
         return []
 
     def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> int | None:

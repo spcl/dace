@@ -26,7 +26,7 @@ import pytest
 
 import dace
 from dace.properties import CodeBlock
-from dace.sdfg.state import LoopRegion, ConditionalBlock, ControlFlowRegion
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.passes import SymbolPropagation
 
 # Python-frontend kernels (must be module-level: the frontend reads source).

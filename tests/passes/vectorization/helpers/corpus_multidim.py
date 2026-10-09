@@ -28,7 +28,6 @@ untransformed baseline) differ.
 import ast
 import inspect
 import textwrap
-from typing import Dict, Tuple
 
 from dace.frontend.python.parser import DaceProgram
 from dace.libraries.tileops.dispatch import detect_host_isa
@@ -54,7 +53,7 @@ from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import Vec
 #: into the identifier. On a SCALAR-only host the two arms are the same config; both still run (the
 #: ID set must not depend on the runner's CPU either).
 HOST_ISA = detect_host_isa()
-CONFIGS: Dict[str, dict] = {
+CONFIGS: dict[str, dict] = {
     f"{label}_{short}": dict(target_isa=isa, branch_mode=mode)
     for label, isa in (("hostsimd", HOST_ISA), ("scalar", ISA.SCALAR))
     for short, mode in (("merge", BranchMode.MERGE), ("fpfac", BranchMode.FP_FACTOR))
@@ -62,7 +61,7 @@ CONFIGS: Dict[str, dict] = {
 
 #: Parametrized phases: the base (no-vectorize) numerical check plus one per
 #: vectorize config. ``base`` must pass for a vectorize config to be meaningful.
-PHASES: Tuple[str, ...] = ("base", *CONFIGS)
+PHASES: tuple[str, ...] = ("base", *CONFIGS)
 
 #: Calls that can lower to a conditional / select. Over-broad on purpose (see
 #: :func:`exercises_branch_lowering`).
@@ -125,7 +124,7 @@ def _branches(fn, seen) -> bool:
     return False
 
 
-def phases_for(program) -> Tuple[str, ...]:
+def phases_for(program) -> tuple[str, ...]:
     """Phases to run for ONE kernel: :data:`PHASES` minus the ``fp_factor`` configs when the
     kernel carries no conditional for them to act on (see :func:`exercises_branch_lowering`)."""
     if exercises_branch_lowering(program):
@@ -155,7 +154,7 @@ def base_pipeline(sdfg) -> None:
     sdfg.simplify(validate=True, validate_all=True)
 
 
-def select_widths(sdfg) -> Tuple[int, ...]:
+def select_widths(sdfg) -> tuple[int, ...]:
     """Per-kernel tile widths: ``(8, 8)`` if every innermost map carries >= 2
     params, else ``(8,)``.
 
@@ -168,7 +167,7 @@ def select_widths(sdfg) -> Tuple[int, ...]:
     return (8, 8) if (counts and min(counts) >= 2) else (8,)
 
 
-def make_pass(widths: Tuple[int, ...], config: str) -> VectorizeCPUMultiDim:
+def make_pass(widths: tuple[int, ...], config: str) -> VectorizeCPUMultiDim:
     """Build the :class:`VectorizeCPUMultiDim` for one named config in
     :data:`CONFIGS`, at the given ``widths``.
 

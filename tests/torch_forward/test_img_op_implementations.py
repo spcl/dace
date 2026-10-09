@@ -6,8 +6,8 @@ import torch
 from torch import nn
 
 from dace.ml import DaceModule
-from tests.utils import torch_tensors_close
 from tests.ml_gpu_utils import DEVICES, experimental_cuda, is_gpu, torch_device
+from tests.utils import torch_tensors_close
 
 
 class CustomBatchNorm(torch.autograd.Function):
@@ -36,7 +36,7 @@ class CustomBatchNorm(torch.autograd.Function):
 
 class BatchNorm2dMeanVar(nn.Module):
     def __init__(self, num_features, eps=1e-5, momentum=0.1, affine=True, track_running_stats=True):
-        super(BatchNorm2dMeanVar, self).__init__()
+        super().__init__()
         self.bn = nn.BatchNorm2d(
             num_features, eps=eps, momentum=momentum, affine=affine, track_running_stats=track_running_stats
         )

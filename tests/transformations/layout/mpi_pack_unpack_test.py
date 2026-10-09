@@ -7,10 +7,11 @@ is refused. Runtime correctness is covered by the 2-rank tests under tests/libra
 """
 
 import pytest
+
 import dace
-from dace.memlet import Memlet
-from dace.libraries.mpi.nodes import Send, Recv
+from dace.libraries.mpi.nodes import Recv, Send
 from dace.libraries.mpi.utils import is_access_contiguous
+from dace.memlet import Memlet
 from dace.transformation.layout.mpi_pack_unpack import MpiPackUnpack
 
 

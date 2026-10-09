@@ -17,7 +17,6 @@ import pytest
 import dace
 from dace.libraries.tileops import TileGather, TileReduce
 from dace.transformation.passes.canonicalize import canonicalize
-from tests.passes.vectorization.tile_assertions import sdfg_masked_loads
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.enums import ISA
 from dace.transformation.passes.vectorization.utils.tile_dims import (
@@ -27,6 +26,7 @@ from dace.transformation.passes.vectorization.utils.tile_dims import (
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import (
     VectorizeCPUMultiDim,
 )
+from tests.passes.vectorization.tile_assertions import sdfg_masked_loads
 
 N = dace.symbol("N")
 M = dace.symbol("M")

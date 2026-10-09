@@ -34,9 +34,10 @@ dynamic memlet, or a producer/consumer in another scope.
 
 import copy
 from collections import OrderedDict
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
-from dace import SDFG, Memlet, data as dt, properties, subsets
+from dace import SDFG, Memlet, properties, subsets
+from dace import data as dt
 from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
@@ -58,13 +59,13 @@ def in_same_scope(state: SDFGState, node: nodes.Node, other: nodes.Node) -> bool
     return state.entry_node(node) is state.entry_node(other)
 
 
-def loop_body_states(sdfg: SDFG) -> "OrderedDict[SDFGState, List[str]]":
+def loop_body_states(sdfg: SDFG) -> "OrderedDict[SDFGState, list[str]]":
     """Every state inside a loop, mapped to the iteration variables of the loops enclosing it.
 
     Built by descent from the ``LoopRegion`` s rather than by ascent from the states, so it needs
     no control-flow parent bookkeeping and keeps the pipeline's insertion order.
     """
-    found: "OrderedDict[SDFGState, List[str]]" = OrderedDict()
+    found: OrderedDict[SDFGState, list[str]] = OrderedDict()
     for region in sdfg.all_control_flow_regions(recursive=True):
         if not isinstance(region, LoopRegion) or not region.loop_variable:
             continue
@@ -74,8 +75,8 @@ def loop_body_states(sdfg: SDFG) -> "OrderedDict[SDFGState, List[str]]":
 
 
 def forwardable_store(
-    state: SDFGState, node: nodes.AccessNode, loop_variables: List[str]
-) -> Optional[Tuple[Any, List[Any], subsets.Range]]:
+    state: SDFGState, node: nodes.AccessNode, loop_variables: list[str]
+) -> tuple[Any, list[Any], subsets.Range] | None:
     """Match a store on ``node`` that the same state reads back at the same element.
 
     :param state: The state holding the candidate access node.
@@ -122,7 +123,7 @@ def forwardable_store(
 
 
 def forward_one(
-    state: SDFGState, node: nodes.AccessNode, write: Any, reads: List[Any], write_subset: subsets.Range
+    state: SDFGState, node: nodes.AccessNode, write: Any, reads: list[Any], write_subset: subsets.Range
 ) -> None:
     """Route the stored value through a fresh transient and feed the same-iteration reads from it."""
     sdfg = state.sdfg
@@ -162,7 +163,7 @@ class ForwardStoreToLoad(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> int | None:
         """Forward every proven same-iteration store-to-load in every loop body.
 
         :param sdfg: The SDFG to rewrite.

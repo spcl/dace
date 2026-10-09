@@ -15,7 +15,7 @@ import pytest
 import dace
 from dace import dtypes
 from dace.libraries.blas.nodes.syrk import Syrk
-from dace.libraries.standard.nodes.scan import Scan, ScanOp, INPUT_CONNECTOR_NAME, OUTPUT_CONNECTOR_NAME
+from dace.libraries.standard.nodes.scan import INPUT_CONNECTOR_NAME, OUTPUT_CONNECTOR_NAME, Scan, ScanOp
 
 N = 32
 

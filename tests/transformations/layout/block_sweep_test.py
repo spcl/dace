@@ -9,9 +9,9 @@ verified against the flat numpy oracle.
 """
 
 import numpy
-import dace
 
-from dace.transformation.layout.brute_force import sweep, best, block_candidates
+import dace
+from dace.transformation.layout.brute_force import best, block_candidates, sweep
 
 N = dace.symbol("N")
 

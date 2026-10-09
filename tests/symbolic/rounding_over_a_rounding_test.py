@@ -23,7 +23,7 @@ import sympy
 
 import dace
 from dace.subsets import Range
-from dace.symbolic import int_ceil, int_floor, symbol, symstr, sympy_intdiv_fix
+from dace.symbolic import int_ceil, int_floor, symbol, sympy_intdiv_fix, symstr
 
 N = symbol("N")
 M = symbol("M")

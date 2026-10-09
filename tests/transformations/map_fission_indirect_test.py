@@ -23,8 +23,8 @@ import pytest
 
 import dace
 from dace.sdfg import nodes
-from dace.transformation.passes.canonicalize.split_statements import SplitStatements
 from dace.transformation.dataflow.map_fission import MapFission
+from dace.transformation.passes.canonicalize.split_statements import SplitStatements
 
 N = dace.symbol("N")
 M = dace.symbol("M")

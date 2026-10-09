@@ -1,6 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
 import numpy as np
+
+import dace
 from dace.libraries.linalg import TensorDot
 from dace.sdfg.infer_types import set_default_schedule_and_storage_types
 

@@ -19,16 +19,16 @@ tests below pin the contracts that pass requires.
 """
 
 import numpy as np
+import pytest
 
 import dace
-import pytest
 from dace.properties import CodeBlock
 from dace.sdfg.construction_utils import (
-    copy_state_contents,
     copy_graph_contents,
+    copy_state_contents,
+    move_branch_cfg_up_discard_conditions,
     move_state_after,
     move_state_before,
-    move_branch_cfg_up_discard_conditions,
 )
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
 

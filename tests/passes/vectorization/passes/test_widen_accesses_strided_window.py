@@ -21,10 +21,10 @@ import dace
 from dace import subsets
 from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.vectorization.config import VectorizeConfig
+from dace.transformation.passes.vectorization.enums import ISA, BranchMode, RemainderStrategy
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
 from dace.transformation.passes.vectorization.widen_accesses import WidenAccesses
 from tests.passes.vectorization.tile_assertions import masked_stores
-from dace.transformation.passes.vectorization.enums import ISA, RemainderStrategy, BranchMode
 
 N = dace.symbol("N")
 

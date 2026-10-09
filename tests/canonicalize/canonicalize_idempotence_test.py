@@ -11,9 +11,9 @@ The vectorizer runs ``canonicalize`` at its OWN entry, so a caller that canonica
 takes exactly this path on every kernel.
 """
 
-import dace
 import pytest
 
+import dace
 from dace.sdfg import nodes as nd
 from dace.transformation.passes.canonicalize import canonicalize
 

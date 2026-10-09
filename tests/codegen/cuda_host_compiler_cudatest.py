@@ -48,9 +48,11 @@ def ccbin_arguments(commands: str) -> list:
     found = []
     for entry in json.loads(commands):
         arguments = shlex.split(entry["command"])
-        for argument in arguments:
-            if argument.startswith("-ccbin"):
-                found.append(argument.split("=", 1)[1] if "=" in argument else "")
+        found.extend(
+            argument.split("=", 1)[1] if "=" in argument else ""
+            for argument in arguments
+            if argument.startswith("-ccbin")
+        )
     return found
 
 

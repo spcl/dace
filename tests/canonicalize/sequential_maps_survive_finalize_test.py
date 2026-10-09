@@ -30,8 +30,6 @@ parallel (a race) or leaves a genuinely parallel map serial (a silent regression
 loses a guard.
 """
 
-import typing
-
 import numpy as np
 import pytest
 
@@ -43,8 +41,8 @@ from dace.properties import CodeBlock
 from dace.sdfg import nodes as nd
 from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, SDFGState
 from dace.transformation.helpers import get_parent_map_and_loop_scopes
-from dace.transformation.passes.canonicalize import finalize, pipeline as cp
-
+from dace.transformation.passes.canonicalize import finalize
+from dace.transformation.passes.canonicalize import pipeline as cp
 from tests.corpus.tsvc import tsvc
 from tests.corpus.tsvc.tsvc_numpy import REFERENCES
 
@@ -56,7 +54,7 @@ def canonicalized_for_cpu(sdfg: dace.SDFG) -> dace.SDFG:
     return sdfg
 
 
-def maps_with_schedule(sdfg: dace.SDFG, schedule: dace.ScheduleType) -> typing.List[typing.Tuple[nd.MapEntry, object]]:
+def maps_with_schedule(sdfg: dace.SDFG, schedule: dace.ScheduleType) -> list[tuple[nd.MapEntry, object]]:
     """``[(MapEntry, owning SDFGState)]`` for every map of ``schedule`` anywhere in ``sdfg``."""
     return [
         (n, state)
@@ -82,14 +80,14 @@ def root_name(sdfg: dace.SDFG, name: str) -> str:
     return name
 
 
-def tasklets_writing(sdfg: dace.SDFG, data: str) -> typing.List[typing.Tuple[nd.Tasklet, SDFGState]]:
+def tasklets_writing(sdfg: dace.SDFG, data: str) -> list[tuple[nd.Tasklet, SDFGState]]:
     """``[(Tasklet, owning SDFGState)]`` for every tasklet whose output lands in ``data``.
 
     The tasklet is what the guard has to sit above. An ``AccessNode`` for ``data`` in an enclosing
     state is only the outward end of a memlet path, so counting access nodes would report the
     write once more at every nesting level it passes through, outside the guard each time.
     """
-    found: typing.List[typing.Tuple[nd.Tasklet, SDFGState]] = []
+    found: list[tuple[nd.Tasklet, SDFGState]] = []
     for sd in sdfg.all_sdfgs_recursive():
         for state in sd.states():
             for node in state.nodes():
@@ -103,9 +101,9 @@ def tasklets_writing(sdfg: dace.SDFG, data: str) -> typing.List[typing.Tuple[nd.
     return found
 
 
-def enclosing_branch_conditions(block: ControlFlowBlock) -> typing.List[str]:
+def enclosing_branch_conditions(block: ControlFlowBlock) -> list[str]:
     """Predicate text of every ``ConditionalBlock`` branch ``block`` sits inside, innermost first."""
-    conditions: typing.List[str] = []
+    conditions: list[str] = []
     child, parent = block, block.parent_graph
     while parent is not None:
         if isinstance(parent, ConditionalBlock):
@@ -238,7 +236,7 @@ def fuse_move_ifs(
 
 def reference_fuse_move_ifs(
     a: np.ndarray, b: np.ndarray, src: np.ndarray, cond: np.ndarray, k: int
-) -> typing.Tuple[np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray]:
     a, b = a.copy(), b.copy()
     n = a.shape[0]
     for i in range(n):
@@ -336,7 +334,7 @@ def test_fuse_move_ifs_fuses_to_one_parallel_region_and_keeps_the_guard_as_a_pre
 # #
 
 
-def canonicalized_s1232(tag: str) -> typing.Tuple[object, dace.SDFG]:
+def canonicalized_s1232(tag: str) -> tuple[object, dace.SDFG]:
     kernel = tsvc.collect(name="s1232_d_single")[0]
     sdfg = tsvc.to_sdfg(kernel, tag, simplify=True)
     return kernel, canonicalized_for_cpu(sdfg)
@@ -350,7 +348,7 @@ def test_tsvc_2_s1232_matches_reference():
     got = {name: arr.copy() for name, arr in arrays.items()}
     csdfg = sdfg.compile()
     csdfg(**got, **call_kwargs)
-    for name, arr in arrays.items():
+    for name in arrays.keys():
         assert np.allclose(ref[name], got[name]), f"{kernel.name}: value mismatch on {name}"
 
 

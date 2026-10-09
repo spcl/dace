@@ -1,20 +1,20 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Move a loop that is a map's whole body outside the map: the inverse of ``MoveLoopIntoMap``."""
 
-from typing import Optional, Set
-
-from dace import sdfg as sd, symbolic
-from dace.sdfg import nodes, utils as sdutil
+from dace import sdfg as sd
+from dace import symbolic
+from dace.sdfg import nodes
 from dace.sdfg import state as cf
+from dace.sdfg import utils as sdutil
 from dace.transformation import transformation
 from dace.transformation.passes import move_if_into_loop
 
 
-def free_names(expression: str) -> Set[str]:
+def free_names(expression: str) -> set[str]:
     return {str(s) for s in symbolic.pystr_to_symbolic(expression).free_symbols}
 
 
-def carried_across_iterations(loop: cf.LoopRegion, body: sd.SDFG) -> Optional[str]:
+def carried_across_iterations(loop: cf.LoopRegion, body: sd.SDFG) -> str | None:
     """What keeps a value from one iteration of ``loop`` to the next inside ``body``, if anything does.
 
     Once the loop is outside the map, every iteration calls ``body`` afresh, so its transients and symbols start over.
@@ -48,7 +48,7 @@ class MapLoopInterchange(transformation.SingleStateTransformation):
     def expressions(cls):
         return [sdutil.node_path_graph(cls.map_entry, cls.nested_sdfg)]
 
-    def refusal(self, state: sd.SDFGState) -> Optional[str]:
+    def refusal(self, state: sd.SDFGState) -> str | None:
         """Why the loop cannot move outside the map, or ``None``."""
         entry, body = self.map_entry, self.nested_sdfg
         blocks = body.sdfg.nodes()

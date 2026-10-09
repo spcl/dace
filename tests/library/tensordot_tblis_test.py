@@ -8,9 +8,11 @@ are correct iff ``np.einsum(labels)`` equals ``np.tensordot``. The execution tes
 
 import numpy as np
 import pytest
+
 import dace
+from dace.libraries.linalg.nodes.tensordot import ExpandTBLIS, TensorDot
 from dace.memlet import Memlet
-from dace.libraries.linalg.nodes.tensordot import TensorDot, ExpandTBLIS
+from dace.transformation.layout.select_lowering import tblis_is_linkable
 
 # (left_shape, right_shape, left_axes, right_axes, permutation)
 CASES = [
@@ -77,6 +79,7 @@ def test_unsupported_dtype_raises():
 
 
 @pytest.mark.tblis
+@pytest.mark.skipif(not tblis_is_linkable(), reason="TBLIS not installed")
 @pytest.mark.parametrize("left_shape,right_shape,left_axes,right_axes,permutation", CASES)
 def test_tblis_execution(left_shape, right_shape, left_axes, right_axes, permutation):
     """Compile + run through TBLIS and compare to numpy. Requires the TBLIS library."""
@@ -91,3 +94,13 @@ def test_tblis_execution(left_shape, right_shape, left_axes, right_axes, permuta
     C = np.zeros(ref.shape or [1])
     sdfg(A=A.copy(), B=B.copy(), C=C)
     assert np.allclose(C, ref)
+
+
+if __name__ == "__main__":
+    test_tblis_registered()
+    for case in CASES:
+        test_contraction_labels_match_numpy(*case)
+    test_expansion_emits_tblis_call()
+    test_unsupported_dtype_raises()
+    for case in CASES:
+        test_tblis_execution(*case)

@@ -24,7 +24,7 @@ def test_notebook_exec(notebook):
             out = ep.preprocess(nb)
         except CellExecutionError:
             out = None
-            msg = 'Error executing the notebook "%s".\n\n' % notebook
+            msg = f'Error executing the notebook "{notebook}".\n\n'
             print(msg)
             raise
 

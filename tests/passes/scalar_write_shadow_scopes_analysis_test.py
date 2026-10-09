@@ -2,6 +2,7 @@
 """Tests the scalar write shadowing analysis pass."""
 
 import pytest
+
 import dace
 from dace.properties import CodeBlock
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion

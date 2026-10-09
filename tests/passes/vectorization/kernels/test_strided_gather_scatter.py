@@ -1,18 +1,19 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 
-import pytest
-import dace
 import numpy
+import pytest
+
+import dace
 from dace.libraries.tileops import TileGather
-from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.parallelize_loops import ParallelizeLoops
-from dace.transformation.passes.vectorization.enums import ISA, RemainderStrategy, BranchMode
+from dace.transformation.passes.vectorization.config import VectorizeConfig
+from dace.transformation.passes.vectorization.enums import ISA, BranchMode, RemainderStrategy
 from tests.passes.vectorization.helpers.harness import (
-    run_vectorization_test,
     N,
-    ssym,
     X,
     Y,
+    run_vectorization_test,
+    ssym,
 )
 
 # Strided / gather / scatter patterns — also exercise the K-dim tile-op config.

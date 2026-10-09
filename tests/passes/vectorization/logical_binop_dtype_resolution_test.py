@@ -188,9 +188,7 @@ def logical_tasklets(sdfg: dace.SDFG):
     found = []
     for sd in sdfg.all_sdfgs_recursive():
         for state in sd.states():
-            for n in state.nodes():
-                if isinstance(n, nodes.Tasklet) and _is_logical(n):
-                    found.append((sd, state, n))
+            found.extend((sd, state, n) for n in state.nodes() if isinstance(n, nodes.Tasklet) and _is_logical(n))
     return found
 
 

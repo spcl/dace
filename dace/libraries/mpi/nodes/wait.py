@@ -2,11 +2,11 @@
 import dace.library
 import dace.properties
 import dace.sdfg.nodes
-from dace.transformation.transformation import ExpandTransformation
-from .. import environments
 from dace import dtypes
+from dace.libraries.mpi import environments
 from dace.libraries.mpi.nodes.node import MPINode
 from dace.ordered import OrderedSet
+from dace.transformation.transformation import ExpandTransformation
 
 
 @dace.library.expansion
@@ -16,7 +16,7 @@ class ExpandWaitMPI(ExpandTransformation):
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
         req, status = node.validate(parent_sdfg, parent_state)
-        code = f"""
+        code = """
             MPI_Status _s;
             MPI_Wait(_request, &_s);
             _stat_tag = _s.MPI_TAG;

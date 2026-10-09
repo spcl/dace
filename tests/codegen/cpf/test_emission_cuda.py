@@ -12,7 +12,7 @@ import pathlib
 import re
 import shutil
 import subprocess
-from typing import Callable
+from collections.abc import Callable
 
 import numpy as np
 import pytest
@@ -22,15 +22,14 @@ from dace import data as dt
 from dace.codegen.cpf import CUDA_BUILD_FLAGS, Rendering, render
 from dace.frontend.python.parser import DaceProgram
 from dace.libraries.standard.nodes.scan import ScanOp
-
 from tests.codegen.cpf.conftest import (
-    require_gpu_backend,
     assert_matches,
     assert_standalone_units,
     canonical_gpu_sdfg,
     device_scan_sdfg,
     entry_argtypes,
     render_gpu,
+    require_gpu_backend,
 )
 
 N = dace.symbol("N")

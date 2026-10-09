@@ -11,17 +11,19 @@ copy folds by the mirror rule: no other access to the array may fall between the
 write.
 """
 
-from typing import Any, Dict, Iterator, List, Optional, Set
+from collections.abc import Iterator
+from typing import Any
 
 from dace import SDFG, Memlet, data, symbolic
 from dace.sdfg import nodes
 from dace.sdfg.state import SDFGState
-from dace.transformation import pass_pipeline as ppl, transformation
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation import transformation
 
 
-def reachable(state: SDFGState, start: nodes.Node, forward: bool = True) -> Set[nodes.Node]:
+def reachable(state: SDFGState, start: nodes.Node, forward: bool = True) -> set[nodes.Node]:
     """Every node a path of edges leads to from ``start`` (or, backward, leads from), ``start`` excluded."""
-    seen: Set[nodes.Node] = set()
+    seen: set[nodes.Node] = set()
     stack = [start]
     while stack:
         node = stack.pop()
@@ -33,12 +35,12 @@ def reachable(state: SDFGState, start: nodes.Node, forward: bool = True) -> Set[
     return seen
 
 
-def writers(state: SDFGState, name: str) -> List[nodes.Node]:
+def writers(state: SDFGState, name: str) -> list[nodes.Node]:
     """The nodes through which ``state`` writes container ``name``: the access nodes it flows into."""
     return [node for node in state.data_nodes() if node.data == name and state.in_degree(node) > 0]
 
 
-def foldable(sdfg: SDFG, state: SDFGState, copy: Any, counts: Dict[str, int]) -> Optional[Memlet]:
+def foldable(sdfg: SDFG, state: SDFGState, copy: Any, counts: dict[str, int]) -> Memlet | None:
     """The direct read of the source element if the copy edge ``copy`` may be folded, else ``None``."""
     scalar = copy.dst
     desc = sdfg.arrays[scalar.data]
@@ -80,7 +82,7 @@ def fold(state: SDFGState, copy: Any, read: Memlet) -> None:
     state.remove_node(scalar)
 
 
-def foldable_write(sdfg: SDFG, state: SDFGState, produce: Any, counts: Dict[str, int]) -> Optional[Any]:
+def foldable_write(sdfg: SDFG, state: SDFGState, produce: Any, counts: dict[str, int]) -> Any | None:
     """The copy edge out of the result scalar ``produce`` fills, if the scalar may be folded away.
 
     ``TrivialTaskletElimination`` has already turned the frontend's ``y = x`` assign tasklet into that copy, so
@@ -111,7 +113,7 @@ def foldable_write(sdfg: SDFG, state: SDFGState, produce: Any, counts: Dict[str,
     return target
 
 
-def write_subset(copy: Any) -> Optional[Any]:
+def write_subset(copy: Any) -> Any | None:
     """The subset of the destination array a scalar-to-array copy edge writes."""
     if copy.data.data == copy.dst.data:
         return copy.data.subset
@@ -149,11 +151,11 @@ class FoldScalarReadCopies(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return bool(modified & (ppl.Modifies.Nodes | ppl.Modifies.Edges))
 
-    def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> int | None:
         """:returns: the number of folded copies, or ``None`` if none."""
         folded = 0
         for owner in sdfg.all_sdfgs_recursive():
-            counts: Dict[str, int] = {}
+            counts: dict[str, int] = {}
             for state in owner.states():
                 for node in state.data_nodes():
                     counts[node.data] = counts.get(node.data, 0) + 1

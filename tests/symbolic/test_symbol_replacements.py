@@ -2,8 +2,6 @@
 """Tests for simultaneous symbol replacement: ``symbolic.symbol_replacements``, ``symbolic.replace_symbols`` and
 ``symbolic.safe_replace``."""
 
-from typing import Dict, List
-
 import pytest
 import sympy
 
@@ -26,7 +24,7 @@ CASES = [
 
 
 @pytest.mark.parametrize("mapping, expr, expected", CASES)
-def test_symbol_replacements(mapping: Dict, expr: sympy.Basic, expected: sympy.Basic):
+def test_symbol_replacements(mapping: dict, expr: sympy.Basic, expected: sympy.Basic):
     replacements = symbolic.symbol_replacements(mapping)
     assert sympy.simplify(symbolic.replace_symbols(expr, replacements) - expected) == 0
 
@@ -50,10 +48,10 @@ def test_replace_symbols_of_any_type():
 
 @pytest.mark.parametrize("value_as_string", [False, True])
 @pytest.mark.parametrize("mapping, expr, expected", CASES)
-def test_safe_replace(mapping: Dict, expr: sympy.Basic, expected: sympy.Basic, value_as_string: bool):
-    exprs: List[sympy.Basic] = [expr]
+def test_safe_replace(mapping: dict, expr: sympy.Basic, expected: sympy.Basic, value_as_string: bool):
+    exprs: list[sympy.Basic] = [expr]
 
-    def replace_callback(repl: Dict[str, str]):
+    def replace_callback(repl: dict[str, str]):
         # Sequential substitution, as performed when replacing in SDFG properties and memlets
         symrepl = {symbolic.pystr_to_symbolic(k): symbolic.pystr_to_symbolic(v) for k, v in repl.items()}
         exprs[0] = exprs[0].subs(symrepl)

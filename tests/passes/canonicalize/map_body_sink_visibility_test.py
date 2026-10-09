@@ -26,18 +26,17 @@ os.environ.setdefault("OMPI_MCA_pml", "ob1")
 os.environ.setdefault("OMPI_MCA_btl", "self,vader")
 os.environ.setdefault("UCX_VFS_ENABLE", "n")
 
-from typing import List, Tuple
 
 import numpy as np
 import pytest
 
 import dace
-from dace.sdfg.dealias import convert_legacy_nested_sdfgs
 from dace import dtypes
 from dace.libraries.blas.nodes.symm import Symm
 from dace.libraries.linalg.nodes.inv import Inv
 from dace.memlet import Memlet
 from dace.sdfg import SDFG, SDFGState, nodes
+from dace.sdfg.dealias import convert_legacy_nested_sdfgs
 from dace.transformation.passes.analysis import map_scope
 from dace.transformation.passes.canonicalize import loop_to_einsum
 from dace.transformation.passes.canonicalize.lift_inv import LiftInv
@@ -62,7 +61,7 @@ def plant_write_only_scratch(sdfg: SDFG, state: SDFGState, map_entry: nodes.MapE
     state.add_edge(writer, f"{name}_out", state.add_access(name), None, Memlet(f"{name}[0]"))
 
 
-def two_param_map_entry(sdfg: SDFG) -> Tuple[SDFGState, nodes.MapEntry]:
+def two_param_map_entry(sdfg: SDFG) -> tuple[SDFGState, nodes.MapEntry]:
     """The single two-parameter map of a freshly parsed kernel, with its state."""
     found = [
         (st, n)
@@ -75,7 +74,7 @@ def two_param_map_entry(sdfg: SDFG) -> Tuple[SDFGState, nodes.MapEntry]:
     return found[0]
 
 
-def scaled_copy_map(begin: int, extent: int, with_scratch: bool) -> Tuple[SDFG, SDFGState, nodes.MapEntry]:
+def scaled_copy_map(begin: int, extent: int, with_scratch: bool) -> tuple[SDFG, SDFGState, nodes.MapEntry]:
     """``B[i] = 2 * A[i]`` over ``i in [begin, extent)``, optionally beside a write-only scratch."""
     sdfg = SDFG("scaled_copy")
     sdfg.add_array("A", [extent], dace.float64)
@@ -92,7 +91,7 @@ def scaled_copy_map(begin: int, extent: int, with_scratch: bool) -> Tuple[SDFG, 
     return sdfg, state, entry
 
 
-def rebinding_map(begin: int, extent: int) -> Tuple[SDFG, nodes.MapEntry]:
+def rebinding_map(begin: int, extent: int) -> tuple[SDFG, nodes.MapEntry]:
     """A map whose body NestedSDFG binds the map parameter under a different inner name.
 
     That binding is what ``rebinds_params`` refuses: the rebase substitutes ``i -> i + begin`` in a
@@ -135,7 +134,7 @@ def increment_leaf(name: str) -> SDFG:
     return inner
 
 
-def map_of_sibling_nsdfgs(siblings: int, with_scratch: bool) -> Tuple[SDFG, SDFGState, nodes.MapEntry]:
+def map_of_sibling_nsdfgs(siblings: int, with_scratch: bool) -> tuple[SDFG, SDFGState, nodes.MapEntry]:
     """A map body holding ``siblings`` independent NestedSDFGs, optionally beside a scratch sink."""
     sdfg = SDFG("siblings")
     for name in ("A", "B", "C"):
@@ -250,11 +249,11 @@ def leave_body_alone(sdfg: SDFG, state: SDFGState, map_entry: nodes.MapEntry) ->
     """The no-scratch half of the planter pair."""
 
 
-def body_node_names(state: SDFGState, entry: nodes.MapEntry) -> List[str]:
+def body_node_names(state: SDFGState, entry: nodes.MapEntry) -> list[str]:
     return sorted(str(n) for n in map_scope.map_body_nodes(state, entry))
 
 
-def nsdfgs_in_body(state: SDFGState, entry: nodes.MapEntry) -> List[nodes.NestedSDFG]:
+def nsdfgs_in_body(state: SDFGState, entry: nodes.MapEntry) -> list[nodes.NestedSDFG]:
     return [n for n in map_scope.map_body_nodes(state, entry) if isinstance(n, nodes.NestedSDFG)]
 
 

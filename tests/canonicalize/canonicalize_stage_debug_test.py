@@ -16,11 +16,11 @@ from dace.sdfg import nodes
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.canonicalize import debug as cdbg
 from dace.transformation.passes.canonicalize.debug import (
-    canonicalize_with_stage_checks,
-    first_failing_stage,
     StageCheckResult,
     _build_random_inputs,
     _compare,
+    canonicalize_with_stage_checks,
+    first_failing_stage,
 )
 
 N = dace.symbol("N")

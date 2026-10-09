@@ -3,69 +3,65 @@ import ast
 import collections
 import copy
 import ctypes
-from functools import lru_cache
 import gzip
-from numbers import Integral
-import os
 import json
-from hashlib import md5, sha256
+import os
 import pathlib
 import random
 import re
 import shutil
 import sys
+import warnings
+from collections.abc import Mapping, Sequence
+from functools import lru_cache
+from hashlib import md5, sha256
+from numbers import Integral
 from typing import (
+    TYPE_CHECKING,
     Any,
     AnyStr,
-    Dict,
-    FrozenSet,
-    List,
-    Mapping,
+    BinaryIO,
     Optional,
-    Sequence,
-    Set,
-    Tuple,
-    Type,
-    TYPE_CHECKING,
     Union,
 )
-import warnings
 
 import sympy
 
 import dace
-from dace.sdfg.graph import copy_edge_index, copy_graph_field, copy_node_index, generate_element_id, SubgraphView
 import dace.serialize
-from dace import data as dt, hooks, memlet as mm, subsets as sbs, dtypes, symbolic
-from dace.sdfg.replace import replace_properties_dict, symbolic_replacements
-from dace.sdfg.validation import InvalidSDFGError, validate_sdfg
+from dace import data as dt
+from dace import dtypes, hooks, symbolic
+from dace import memlet as mm
+from dace import subsets as sbs
 from dace.config import Config
-from dace.frontend.python import astutils
-from dace.sdfg import nodes as nd
-from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, SDFGState, ControlFlowRegion, LoopRegion
-from dace.sdfg.type_inference import infer_expr_type
-from dace.data.distributed import ProcessGrid, SubArray, RedistrArray
+from dace.data.distributed import ProcessGrid, RedistrArray, SubArray
 from dace.dtypes import validate_name
+from dace.frontend.python import astutils
 from dace.properties import (
+    CodeBlock,
+    CodeProperty,
     DebugInfoProperty,
+    DictProperty,
     EnumProperty,
     ListProperty,
-    make_properties,
-    Property,
-    CodeProperty,
-    TransformationHistProperty,
     OptionalSDFGReferenceProperty,
-    DictProperty,
-    CodeBlock,
+    Property,
+    TransformationHistProperty,
+    make_properties,
 )
-from typing import BinaryIO
+from dace.sdfg import nodes as nd
+from dace.sdfg.graph import SubgraphView, copy_edge_index, copy_graph_field, copy_node_index, generate_element_id
+from dace.sdfg.replace import replace_properties_dict, symbolic_replacements
+from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState
+from dace.sdfg.type_inference import infer_expr_type
+from dace.sdfg.validation import InvalidSDFGError, validate_sdfg
 
 # NOTE: In shapes, we try to convert strings to integers. In ranks, a string should be interpreted as data (scalar).
-ShapeType = Sequence[Union[Integral, str, symbolic.symbol, symbolic.SymExpr, symbolic.sympy.Basic]]
-RankType = Union[Integral, str, symbolic.symbol, symbolic.SymExpr, symbolic.sympy.Basic]
+ShapeType = Sequence[Integral | str | symbolic.symbol | symbolic.SymExpr | symbolic.sympy.Basic]
+RankType = Integral | str | symbolic.symbol | symbolic.SymExpr | symbolic.sympy.Basic
 
 
-def normalize_shape_entry(entry: Union[Integral, str, symbolic.SymbolicType]) -> Union[int, symbolic.SymbolicType]:
+def normalize_shape_entry(entry: Integral | str | symbolic.SymbolicType) -> int | symbolic.SymbolicType:
     """One shape entry as an ``int`` or a symbolic expression, never truncated: ``int(4.7)`` floors, so only
     integers and integer strings go through ``int`` and the descriptor's integral check sees everything else."""
     if isinstance(entry, Integral):
@@ -97,9 +93,9 @@ MPI_RANK_VARS = (
 LAUNCHER_RANK_VARS = MPI_RANK_VARS + ("SLURM_PROCID",)  # srun with no MPI
 
 if TYPE_CHECKING:
-    from dace.codegen.instrumentation.report import InstrumentationReport
-    from dace.codegen.instrumentation.data.data_report import InstrumentedDataReport
     from dace.codegen.compiled_sdfg import CompiledSDFG
+    from dace.codegen.instrumentation.data.data_report import InstrumentedDataReport
+    from dace.codegen.instrumentation.report import InstrumentationReport
     from dace.sdfg.analysis.schedule_tree.treenodes import ScheduleTreeRoot
 
 
@@ -121,15 +117,15 @@ def build_folder_root() -> str:
 class NestedDict(dict):
     def __init__(self, mapping=None):
         mapping = mapping or {}
-        super(NestedDict, self).__init__(mapping)
+        super().__init__(mapping)
 
     def __getitem__(self, key):
         # Fast path: an unqualified name has no members to walk, and this is on every sdfg.arrays[...]
         if type(key) is str and "." not in key:
-            return super(NestedDict, self).__getitem__(key)
+            return super().__getitem__(key)
         tokens = key.split(".") if isinstance(key, str) else [key]
         token = tokens.pop(0)
-        result = super(NestedDict, self).__getitem__(token)
+        result = super().__getitem__(token)
         while tokens:
             token = tokens.pop(0)
             result = result.members[token]
@@ -138,18 +134,18 @@ class NestedDict(dict):
     def __setitem__(self, key, val):
         if isinstance(key, str) and "." in key:
             raise KeyError("NestedDict does not support setting nested keys")
-        super(NestedDict, self).__setitem__(key, val)
+        super().__setitem__(key, val)
 
     def __contains__(self, key):
         if type(key) is str and "." not in key:  # fast path, as in __getitem__
-            return super(NestedDict, self).__contains__(key)
+            return super().__contains__(key)
         tokens = key.split(".") if isinstance(key, str) else [key]
         token = tokens.pop(0)
-        result = super(NestedDict, self).__contains__(token)
+        result = super().__contains__(token)
         desc = None
         while tokens and result:
             if desc is None:
-                desc = super(NestedDict, self).__getitem__(token)
+                desc = super().__getitem__(token)
             else:
                 desc = desc.members[token]
             token = tokens.pop(0)
@@ -157,10 +153,10 @@ class NestedDict(dict):
         return result
 
     def keys(self):
-        result = super(NestedDict, self).keys()
+        result = super().keys()
         for k, v in self.items():
             if isinstance(v, dt.Structure):
-                result |= set(map(lambda x: k + "." + x, v.keys()))
+                result |= {k + "." + x for x in v.keys()}
         return result
 
 
@@ -191,7 +187,7 @@ def _replace_dict_keys(d, old, new):
         return
     if old in d:
         if new in d:
-            warnings.warn('"%s" already exists in SDFG' % new)
+            warnings.warn(f'"{new}" already exists in SDFG')
         d[new] = d[old]
         del d[old]
 
@@ -251,7 +247,7 @@ def _sdfg_build_folder_getter(sdfg: "SDFG") -> str:
         raise ValueError(f"Unknown cache configuration: {cache_config}")
 
 
-def _sdfg_build_folder_setter(sdfg: "SDFG", new_build_folder: Union[str, None, pathlib.Path]) -> None:
+def _sdfg_build_folder_setter(sdfg: "SDFG", new_build_folder: str | None | pathlib.Path) -> None:
     if new_build_folder is None:
         sdfg._build_folder = None
     elif isinstance(new_build_folder, (str, pathlib.Path)):
@@ -266,7 +262,7 @@ def _sdfg_build_folder_setter(sdfg: "SDFG", new_build_folder: Union[str, None, p
         )
 
 
-def memlets_in_ast(node: ast.AST, arrays: Dict[str, dt.Data], *, include_scalars: bool = False) -> List[mm.Memlet]:
+def memlets_in_ast(node: ast.AST, arrays: dict[str, dt.Data], *, include_scalars: bool = False) -> list[mm.Memlet]:
     """
     Generates a list of memlets from each of the subscripts that appear in the Python AST.
     Assumes the subscript slice can be coerced to a symbolic expression (e.g., no indirect access).
@@ -277,7 +273,7 @@ def memlets_in_ast(node: ast.AST, arrays: Dict[str, dt.Data], *, include_scalars
     :param include_scalars: If True, include Memlets for scalar accesses. Defaults to False to be backwards compatible.
     :return: A list of Memlet objects in the order they appear in the AST.
     """
-    result: List[mm.Memlet] = []
+    result: list[mm.Memlet] = []
 
     for subnode in ast.walk(node):
         if isinstance(subnode, ast.Subscript):
@@ -305,7 +301,7 @@ def memlets_in_ast(node: ast.AST, arrays: Dict[str, dt.Data], *, include_scalars
 
 
 @make_properties
-class LogicalGroup(object):
+class LogicalGroup:
     """Logical element groupings on a per-SDFG level."""
 
     nodes = ListProperty(
@@ -334,13 +330,13 @@ class LogicalGroup(object):
 
 
 @lru_cache(maxsize=16384, typed=True)
-def assignment_rhs_symbol_names(rhs: str) -> FrozenSet[str]:
+def assignment_rhs_symbol_names(rhs: str) -> frozenset[str]:
     """Names read by one interstate-edge assignment RHS; a pure function of the text, so memoized."""
     return frozenset(str(s) for s in dace.symbolic.symbols_in_ast(ast.parse(rhs)))
 
 
 @make_properties
-class InterstateEdge(object):
+class InterstateEdge:
     """An SDFG state machine edge. These edges can contain a condition
     (which may include data accesses for data-dependent decisions) and
     zero or more assignments of values to inter-state variables (e.g.,
@@ -367,8 +363,8 @@ class InterstateEdge(object):
 
     def __init__(
         self,
-        condition: Optional[Union[CodeBlock, str, ast.AST, list]] = None,
-        assignments: Optional[Mapping[str, str | ast.AST]] = None,
+        condition: CodeBlock | str | ast.AST | list | None = None,
+        assignments: Mapping[str, str | ast.AST] | None = None,
     ):
         if condition is None:
             condition = CodeBlock("1")
@@ -429,7 +425,7 @@ class InterstateEdge(object):
         self._cond_sympy = symbolic.pystr_to_symbolic(self.condition.as_string)
         return self._cond_sympy
 
-    def read_symbols(self) -> Set[str]:
+    def read_symbols(self) -> set[str]:
         """
         Returns a set of symbols read in this edge (including symbols in the condition and assignment values).
         """
@@ -440,7 +436,7 @@ class InterstateEdge(object):
 
         return result
 
-    def used_symbols(self, all_symbols: bool = False, union_lhs_symbols: bool = False) -> Set[str]:
+    def used_symbols(self, all_symbols: bool = False, union_lhs_symbols: bool = False) -> set[str]:
         """Returns a set of symbols used in this edge's properties."""
         # NOTE: The former algorithm for computing an edge's free symbols was:
         #       `self.read_symbols() - set(self.assignments.keys())`
@@ -475,7 +471,7 @@ class InterstateEdge(object):
         else:
             return (cond_symbols | rhs_symbols) - lhs_symbols
 
-    def used_sdfg_symbols(self, arrays: Dict[str, dt.Data], union_lhs_symbols: bool = False) -> Set[str]:
+    def used_sdfg_symbols(self, arrays: dict[str, dt.Data], union_lhs_symbols: bool = False) -> set[str]:
         """
         Returns a set of symbols used in this edge's properties (i.e., condition and assignments) that are not
         registered as data descriptors to the SDFG.
@@ -485,12 +481,12 @@ class InterstateEdge(object):
         """
         # all_symbols does not matter but need to provide something
         symbol_names = self.used_symbols(all_symbols=True, union_lhs_symbols=union_lhs_symbols)
-        assert all([isinstance(s, str) for s in symbol_names])
+        assert all(isinstance(s, str) for s in symbol_names)
         real_symbol_names = {s for s in symbol_names if s not in arrays}
-        assert all([isinstance(s, str) for s in real_symbol_names])
+        assert all(isinstance(s, str) for s in real_symbol_names)
         return real_symbol_names
 
-    def used_arrays(self, arrays: Mapping[str, dt.Data], union_lhs_symbols: bool = False) -> Set[str]:
+    def used_arrays(self, arrays: Mapping[str, dt.Data], union_lhs_symbols: bool = False) -> set[str]:
         """
         Returns a set of arrays used in this edge's properties (i.e., condition and assignments).
         :param arrays: A dictionary mapping names to their corresponding data descriptors (`sdfg.arrays`)
@@ -499,17 +495,17 @@ class InterstateEdge(object):
         """
         # all_symbols does not matter but need to provide something
         symbol_names = self.used_symbols(all_symbols=True, union_lhs_symbols=union_lhs_symbols)
-        assert all([isinstance(s, str) for s in symbol_names])
+        assert all(isinstance(s, str) for s in symbol_names)
         used_array_names = {s for s in symbol_names if s in arrays}
-        assert all([isinstance(s, str) for s in used_array_names])
+        assert all(isinstance(s, str) for s in used_array_names)
         return used_array_names
 
     @property
-    def free_symbols(self) -> Set[str]:
+    def free_symbols(self) -> set[str]:
         """Returns a set of symbols used in this edge's properties."""
         return self.used_symbols(all_symbols=True)
 
-    def replace_dict(self, repl: Dict[str, str], replace_keys=True) -> None:
+    def replace_dict(self, repl: dict[str, str], replace_keys=True) -> None:
         """
         Replaces all given keys with their corresponding values.
 
@@ -552,7 +548,7 @@ class InterstateEdge(object):
         """
         self.replace_dict({name: new_name}, replace_keys)
 
-    def new_symbols(self, sdfg, symbols) -> Dict[str, dtypes.typeclass]:
+    def new_symbols(self, sdfg, symbols) -> dict[str, dtypes.typeclass]:
         """
         Returns a mapping between symbols defined by this edge (i.e.,
         assignments) to their type.
@@ -581,7 +577,7 @@ class InterstateEdge(object):
         lhs_symbols = self.new_symbol_names()
         return {k: v for k, v in inferred_lhs_symbols.items() if k in lhs_symbols}
 
-    def new_symbol_names(self) -> Dict[str, None]:
+    def new_symbol_names(self) -> dict[str, None]:
         """
         The symbols this edge defines -- the keys of :meth:`new_symbols` -- without inferring their types.
         """
@@ -596,7 +592,7 @@ class InterstateEdge(object):
                 lhs_symbols[lhs] = None
         return lhs_symbols
 
-    def get_read_memlets(self, arrays: Mapping[str, dt.Data], include_scalars: bool = False) -> List[mm.Memlet]:
+    def get_read_memlets(self, arrays: Mapping[str, dt.Data], include_scalars: bool = False) -> list[mm.Memlet]:
         """
         Returns a list of memlets (with data descriptors and subsets) used in this edge. This includes
         both reads in the condition and in every assignment.
@@ -605,7 +601,7 @@ class InterstateEdge(object):
         :param include_scalars: If True, include Memlets for scalar accesses. Defaults to False to be backwards compatible.
         :return: A list of Memlet objects for each read.
         """
-        result: List[mm.Memlet] = []
+        result: list[mm.Memlet] = []
         result.extend(memlets_in_ast(self.condition.code[0], arrays, include_scalars=include_scalars))
         for assign in self.assignments.values():
             vast = ast.parse(assign)
@@ -651,7 +647,7 @@ class _UsedNames:
     def __init__(self, sdfg: "SDFG", include_connectors: bool = False) -> None:
         self.sdfg = sdfg
         self.include_connectors = include_connectors
-        self.connectors: Optional[Set[str]] = None
+        self.connectors: set[str] | None = None
 
     def __contains__(self, name: str) -> bool:
         if self.sdfg.is_name_used(name):
@@ -689,7 +685,7 @@ class SDFG(ControlFlowRegion):
     arg_names = ListProperty(
         element_type=str, category="Frontend", desc="Ordered argument names (used for calling conventions)."
     )
-    constants_prop: Dict[str, Tuple[dt.Data, Any]] = Property(
+    constants_prop: dict[str, tuple[dt.Data, Any]] = Property(
         dtype=dict,
         default={},
         category="General",
@@ -783,7 +779,7 @@ class SDFG(ControlFlowRegion):
         return self._build_folder is None
 
     def __init__(
-        self, name: str, constants: Dict[str, Tuple[dt.Data, Any]] = None, propagate: bool = True, parent=None
+        self, name: str, constants: dict[str, tuple[dt.Data, Any]] = None, propagate: bool = True, parent=None
     ):
         """Constructs a new SDFG.
 
@@ -797,10 +793,10 @@ class SDFG(ControlFlowRegion):
                           transformations.
         :param parent: The parent SDFG or SDFG state (for nested SDFGs).
         """
-        super(SDFG, self).__init__()
+        super().__init__()
         self.name = name
         if name is not None and not validate_name(name):
-            raise InvalidSDFGError('Invalid SDFG name "%s"' % name, self, None)
+            raise InvalidSDFGError(f'Invalid SDFG name "{name}"', self, None)
 
         self.constants_prop = {}
         if constants is not None:
@@ -814,7 +810,7 @@ class SDFG(ControlFlowRegion):
         self._parent_nsdfg_node = None
         self._arrays = NestedDict()  # type: Dict[str, dt.Array]
         self.arg_names = []
-        self._labels: Set[str] = set()
+        self._labels: set[str] = set()
         self.global_code = {"frame": CodeBlock("", dtypes.Language.CPP)}
         self.init_code = {"frame": CodeBlock("", dtypes.Language.CPP)}
         self.exit_code = {"frame": CodeBlock("", dtypes.Language.CPP)}
@@ -1050,7 +1046,7 @@ class SDFG(ControlFlowRegion):
 
         return ret
 
-    def hash_sdfg(self, jsondict: Optional[Dict[str, Any]] = None) -> str:
+    def hash_sdfg(self, jsondict: dict[str, Any] | None = None) -> str:
         """
         Returns a hash of the current SDFG, without considering IDs and attribute names.
 
@@ -1130,7 +1126,7 @@ class SDFG(ControlFlowRegion):
             return self.symbols[str(dataname)]
         if dataname in self.constants_prop:
             return self.constants_prop[dataname][0]
-        raise KeyError('Data descriptor with name "%s" not found in SDFG' % dataname)
+        raise KeyError(f'Data descriptor with name "{dataname}" not found in SDFG')
 
     def replace(self, name: str, new_name: str):
         """Finds and replaces all occurrences of a symbol or array name in SDFG.
@@ -1145,8 +1141,8 @@ class SDFG(ControlFlowRegion):
 
     def replace_dict(
         self,
-        repldict: Dict[str, str],
-        symrepl: Optional[Dict[symbolic.SymbolicType, symbolic.SymbolicType]] = None,
+        repldict: dict[str, str],
+        symrepl: dict[symbolic.SymbolicType, symbolic.SymbolicType] | None = None,
         replace_in_graph: bool = True,
         replace_keys: bool = True,
     ) -> None:
@@ -1392,7 +1388,7 @@ class SDFG(ControlFlowRegion):
         except StopIteration:
             return False
 
-    def get_instrumentation_reports(self) -> List["InstrumentationReport"]:
+    def get_instrumentation_reports(self) -> list["InstrumentationReport"]:
         """
         Returns a list of instrumentation reports from previous runs of
         this SDFG.
@@ -1423,7 +1419,7 @@ class SDFG(ControlFlowRegion):
                 continue
             os.unlink(os.path.join(path, fname))
 
-    def get_latest_report_path(self) -> Optional[str]:
+    def get_latest_report_path(self) -> str | None:
         """
         Returns an instrumentation report file path from the latest run of this SDFG, or
         None if the file does not exist.
@@ -1457,7 +1453,7 @@ class SDFG(ControlFlowRegion):
 
         return InstrumentationReport(path)
 
-    def get_instrumented_data(self, timestamp: Optional[int] = None) -> Optional["InstrumentedDataReport"]:
+    def get_instrumented_data(self, timestamp: int | None = None) -> Optional["InstrumentedDataReport"]:
         """
         Returns an instrumented data report from the latest run of this SDFG, with a given timestamp, or
         None if no reports exist.
@@ -1480,7 +1476,7 @@ class SDFG(ControlFlowRegion):
 
         return InstrumentedDataReport(self, folder)
 
-    def available_data_reports(self) -> List[str]:
+    def available_data_reports(self) -> list[str]:
         """
         Returns a list of available instrumented data reports for this SDFG.
         """
@@ -1598,7 +1594,7 @@ class SDFG(ControlFlowRegion):
         self.update_cfg_list(sdfg_list)
 
     @property
-    def sdfg_list(self) -> List["ControlFlowRegion"]:
+    def sdfg_list(self) -> list["ControlFlowRegion"]:
         warnings.warn("sdfg_list is deprecated, use cfg_list instead", DeprecationWarning)
         return self.cfg_list
 
@@ -1630,7 +1626,7 @@ class SDFG(ControlFlowRegion):
                 return value
             elif isinstance(dtype, dt.Scalar):
                 return dtype.dtype.type(value)
-            raise TypeError("Unsupported data type %s" % dtype)
+            raise TypeError(f"Unsupported data type {dtype}")
 
         result.update({k: cast(*v) for k, v in self.constants_prop.items()})
         return result
@@ -1715,12 +1711,12 @@ class SDFG(ControlFlowRegion):
     def _used_symbols_internal(
         self,
         all_symbols: bool,
-        defined_syms: Optional[Set] = None,
-        free_syms: Optional[Set] = None,
-        used_before_assignment: Optional[Set] = None,
+        defined_syms: set | None = None,
+        free_syms: set | None = None,
+        used_before_assignment: set | None = None,
         keep_defined_in_mapping: bool = False,
         with_contents: bool = True,
-    ) -> Tuple[Set[str], Set[str], Set[str]]:
+    ) -> tuple[set[str], set[str], set[str]]:
         defined_syms = set() if defined_syms is None else defined_syms
         free_syms = set() if free_syms is None else free_syms
         used_before_assignment = set() if used_before_assignment is None else used_before_assignment
@@ -1788,7 +1784,7 @@ class SDFG(ControlFlowRegion):
             res_free -= res_defined  # drop symbols defined inside (e.g. loop vars)
         return res_free, res_defined, res_before
 
-    def get_all_toplevel_symbols(self) -> Set[str]:
+    def get_all_toplevel_symbols(self) -> set[str]:
         """
         Returns a set of all symbol names that are used by the SDFG's state machine.
         This includes all symbols in the descriptor repository and interstate edges,
@@ -1811,7 +1807,7 @@ class SDFG(ControlFlowRegion):
         # Subtract exluded symbols
         return syms - exclude
 
-    def read_and_write_sets(self) -> Tuple[Set[AnyStr], Set[AnyStr]]:
+    def read_and_write_sets(self) -> tuple[set[AnyStr], set[AnyStr]]:
         """
         Determines what data containers are read and written in this SDFG.
 
@@ -1840,7 +1836,7 @@ class SDFG(ControlFlowRegion):
 
         return read_set, write_set
 
-    def interface_symbols(self) -> Set[str]:
+    def interface_symbols(self) -> set[str]:
         """Symbols the SDFG's own signature is described in: those in the shape, strides or offset
         of a non-transient descriptor, and registered in :attr:`symbols`.
 
@@ -1854,7 +1850,7 @@ class SDFG(ControlFlowRegion):
         """
         if self.parent_sdfg is not None:
             return set()
-        found: Set[str] = set()
+        found: set[str] = set()
         for desc in self.arrays.values():
             if desc.transient:
                 continue
@@ -1868,7 +1864,7 @@ class SDFG(ControlFlowRegion):
             and not name.startswith("__dace")
         }
 
-    def arglist(self, scalars_only=False, free_symbols=None) -> Dict[str, dt.Data]:
+    def arglist(self, scalars_only=False, free_symbols=None) -> dict[str, dt.Data]:
         """
         Returns an ordered dictionary of arguments (names and types) required
         to invoke this SDFG.
@@ -1936,7 +1932,7 @@ class SDFG(ControlFlowRegion):
             if not k.startswith("__dace")
         )
 
-    def signature_arglist(self, with_types=True, for_call=False, with_arrays=True, arglist=None) -> List[str]:
+    def signature_arglist(self, with_types=True, for_call=False, with_arrays=True, arglist=None) -> list[str]:
         """Returns a list of arguments necessary to call this SDFG,
         formatted as a list of C definitions.
 
@@ -1951,7 +1947,7 @@ class SDFG(ControlFlowRegion):
         arglist = arglist or self.arglist(scalars_only=not with_arrays)
         return [v.as_arg(name=k, with_types=with_types, for_call=for_call) for k, v in arglist.items()]
 
-    def python_signature_arglist(self, with_types=True, for_call=False, with_arrays=True, arglist=None) -> List[str]:
+    def python_signature_arglist(self, with_types=True, for_call=False, with_arrays=True, arglist=None) -> list[str]:
         """Returns a list of arguments necessary to call this SDFG,
         formatted as a list of Data-Centric Python definitions.
 
@@ -2052,7 +2048,7 @@ class SDFG(ControlFlowRegion):
 
         return result
 
-    def shared_transients(self, check_toplevel: bool = True, include_nested_data: bool = False) -> List[str]:
+    def shared_transients(self, check_toplevel: bool = True, include_nested_data: bool = False) -> list[str]:
         """Returns a list of transient data that appears in more than one state.
 
         :param check_toplevel: If True, consider the descriptors' toplevel attribute.
@@ -2089,9 +2085,9 @@ class SDFG(ControlFlowRegion):
                 is_transient = desc.transient
                 is_toplevel = desc.toplevel
                 if include_nested_data:
-                    datanames = set([".".join(tokens[: i + 1]) for i in range(len(tokens))])
+                    datanames = {".".join(tokens[: i + 1]) for i in range(len(tokens))}
                 else:
-                    datanames = set([tokens[0]])
+                    datanames = {tokens[0]}
                 for dataname in datanames:
                     desc = self.arrays[dataname]
                     if is_transient:
@@ -2110,7 +2106,7 @@ class SDFG(ControlFlowRegion):
         compress=False,
         readable=False,
         include_transformation_history=False,
-    ) -> Optional[str]:
+    ) -> str | None:
         """Save this SDFG to a file.
 
         :param filename: File name to save to.
@@ -2176,7 +2172,7 @@ class SDFG(ControlFlowRegion):
             sdfg = symbolic.SympyAwareUnpickler(fp).load()
 
         if not isinstance(sdfg, SDFG):
-            raise TypeError("Loaded file is not an SDFG (loaded type: %s)" % type(sdfg).__name__)
+            raise TypeError(f"Loaded file is not an SDFG (loaded type: {type(sdfg).__name__})")
         return sdfg
 
     @staticmethod
@@ -2266,7 +2262,7 @@ class SDFG(ControlFlowRegion):
         find_new_name=False,
         alignment=0,
         may_alias=False,
-    ) -> Tuple[str, dt.Array]:
+    ) -> tuple[str, dt.Array]:
         """Adds an array to the SDFG data descriptor store."""
 
         shape = [normalize_shape_entry(s) for s in shape]
@@ -2307,7 +2303,7 @@ class SDFG(ControlFlowRegion):
         find_new_name=False,
         alignment=0,
         may_alias=False,
-    ) -> Tuple[str, dt.ArrayView]:
+    ) -> tuple[str, dt.ArrayView]:
         """Adds a view to the SDFG data descriptor store."""
 
         shape = [normalize_shape_entry(s) for s in shape]
@@ -2346,7 +2342,7 @@ class SDFG(ControlFlowRegion):
         find_new_name=False,
         alignment=0,
         may_alias=False,
-    ) -> Tuple[str, dt.Reference]:
+    ) -> tuple[str, dt.Reference]:
         """Adds a reference to the SDFG data descriptor store."""
 
         shape = [normalize_shape_entry(s) for s in shape]
@@ -2383,7 +2379,7 @@ class SDFG(ControlFlowRegion):
         lifetime=dace.dtypes.AllocationLifetime.Scope,
         debuginfo=None,
         find_new_name=False,
-    ) -> Tuple[str, dt.Stream]:
+    ) -> tuple[str, dt.Stream]:
         """Adds a stream to the SDFG data descriptor store."""
 
         # Convert to int if possible, otherwise to symbolic
@@ -2420,7 +2416,7 @@ class SDFG(ControlFlowRegion):
         lifetime=dace.dtypes.AllocationLifetime.Scope,
         debuginfo=None,
         find_new_name=False,
-    ) -> Tuple[str, dt.Scalar]:
+    ) -> tuple[str, dt.Scalar]:
         """Adds a scalar to the SDFG data descriptor store."""
 
         if isinstance(dtype, type) and dtype in dtypes._CONSTANT_TYPES[:-1]:
@@ -2452,7 +2448,7 @@ class SDFG(ControlFlowRegion):
         find_new_name=False,
         alignment=0,
         may_alias=False,
-    ) -> Tuple[str, dt.Array]:
+    ) -> tuple[str, dt.Array]:
         """Convenience function to add a transient array to the data
         descriptor store."""
         return self.add_array(
@@ -2533,7 +2529,7 @@ class SDFG(ControlFlowRegion):
             may_alias=may_alias,
         )
 
-    def add_temp_transient_like(self, desc: Union[dt.Array, dt.Scalar], dtype=None, debuginfo=None, name=None):
+    def add_temp_transient_like(self, desc: dt.Array | dt.Scalar, dtype=None, debuginfo=None, name=None):
         """Convenience function to add a transient array with a temporary name to the data
         descriptor store."""
         debuginfo = debuginfo or desc.debuginfo
@@ -2566,7 +2562,7 @@ class SDFG(ControlFlowRegion):
         :return: Name of the new data descriptor
         """
         if not isinstance(name, str):
-            raise TypeError("Data descriptor name must be a string. Got %s" % type(name).__name__)
+            raise TypeError(f"Data descriptor name must be a string. Got {type(name).__name__}")
 
         if find_new_name:
             # These characters might be introduced through the creation of views to members
@@ -2645,10 +2641,10 @@ class SDFG(ControlFlowRegion):
         self,
         shape: ShapeType = None,
         parent_grid: str = None,
-        color: Sequence[Union[Integral, bool]] = None,
+        color: Sequence[Integral | bool] = None,
         exact_grid: RankType = None,
         root: RankType = 0,
-        name: Optional[str] = None,
+        name: str | None = None,
     ) -> str:
         """Adds a process-grid to the process-grid descriptor store.
         For more details on process-grids, please read the documentation of the ProcessGrid class.
@@ -2695,7 +2691,7 @@ class SDFG(ControlFlowRegion):
         subshape: ShapeType,
         pgrid: str = None,
         correspondence: Sequence[Integral] = None,
-        name: Optional[str] = None,
+        name: str | None = None,
     ):
         """Adds a sub-array to the sub-array descriptor store.
         For more details on sub-arrays, please read the documentation of the SubArray class.
@@ -2737,7 +2733,7 @@ class SDFG(ControlFlowRegion):
 
         return subarray_name
 
-    def add_rdistrarray(self, array_a: str, array_b: str, name: Optional[str] = None) -> str:
+    def add_rdistrarray(self, array_a: str, array_b: str, name: str | None = None) -> str:
         """Adds a sub-array redistribution to the sub-array redistribution descriptor store.
         For more details on redistributions, please read the documentation of the RedistrArray class.
 
@@ -2764,8 +2760,8 @@ class SDFG(ControlFlowRegion):
         initialize_expr: str,
         condition_expr: str,
         increment_expr: str,
-        loop_end_block: Optional[ControlFlowBlock] = None,
-        label: Optional[str] = None,
+        loop_end_block: ControlFlowBlock | None = None,
+        label: str | None = None,
     ) -> LoopRegion:
         """
         Helper function that adds a looping control flow block around a
@@ -2846,7 +2842,7 @@ class SDFG(ControlFlowRegion):
         initialize_expr: str,
         condition_expr: str,
         increment_expr: str,
-        loop_end_state: Optional[SDFGState] = None,
+        loop_end_state: SDFGState | None = None,
     ):
         """
         Helper function that adds a looping state machine around a
@@ -2931,13 +2927,13 @@ class SDFG(ControlFlowRegion):
             for s in self.nodes():
                 if s.label == state_id_or_label:
                     return s
-            raise LookupError("State %s not found" % state_id_or_label)
+            raise LookupError(f"State {state_id_or_label} not found")
         elif isinstance(state_id_or_label, int):
             return self.nodes()[state_id_or_label]
         else:
-            raise TypeError("state_id_or_label is not an int nor string: {}".format(state_id_or_label))
+            raise TypeError(f"state_id_or_label is not an int nor string: {state_id_or_label}")
 
-    def specialize(self, symbols: Dict[str, Any]):
+    def specialize(self, symbols: dict[str, Any]):
         """Sets symbolic values in this SDFG to constants.
 
         :param symbols: Values to specialize.
@@ -2946,13 +2942,14 @@ class SDFG(ControlFlowRegion):
         for k, v in symbols.items():
             self.add_constant(str(k), v)
 
-    def is_loaded(self, folder_mode: Optional[str] = None) -> bool:
+    def is_loaded(self, folder_mode: str | None = None) -> bool:
         """
         Returns True if the SDFG binary is already loaded in the current process.
         Returns `False` if the file does not exist.
         """
         # Avoid import loops
-        from dace.codegen import compiled_sdfg as cs, compiler
+        from dace.codegen import compiled_sdfg as cs
+        from dace.codegen import compiler
 
         build_folder = self.build_folder
         if folder_mode is None:
@@ -3087,7 +3084,7 @@ class SDFG(ControlFlowRegion):
         if num_args_passed < num_args_expected:
             expected_kwargs = list(expected_args.keys())[len(args) :]
             missing_args = [k for k in expected_kwargs if k not in kwargs]
-            raise RuntimeError("Missing arguments to SDFG: '%s'" % (", ".join(missing_args)))
+            raise RuntimeError("Missing arguments to SDFG: '{}'".format(", ".join(missing_args)))
         elif num_args_passed > num_args_expected:
             unnecessary_args = []
             extra_args = len(args) - len(expected_args)
@@ -3096,7 +3093,9 @@ class SDFG(ControlFlowRegion):
                 unnecessary_args.extend(kwargs.keys())
             else:
                 unnecessary_args = [k for k in kwargs.keys() if k not in expected_args]
-            raise RuntimeError("Too many arguments to SDFG. Unnecessary arguments: %s" % ", ".join(unnecessary_args))
+            raise RuntimeError(
+                "Too many arguments to SDFG. Unnecessary arguments: {}".format(", ".join(unnecessary_args))
+            )
         positional_args = list(args)
         for i, arg in enumerate(expected_args):
             expected = expected_args[arg]
@@ -3104,32 +3103,26 @@ class SDFG(ControlFlowRegion):
                 passed = positional_args[i]
             else:
                 if arg not in kwargs:
-                    raise RuntimeError("Missing argument to DaCe program: {}".format(arg))
+                    raise RuntimeError(f"Missing argument to DaCe program: {arg}")
                 passed = kwargs[arg]
             if types_only:
                 desc = dt.create_datadescriptor(passed)
                 if not expected.is_equivalent(desc):
-                    raise TypeError("Type mismatch for argument: expected %s, got %s" % (expected, desc))
+                    raise TypeError(f"Type mismatch for argument: expected {expected}, got {desc}")
                 else:
                     continue
             if isinstance(expected, dace.data.Array):
                 if not dtypes.is_array(passed):
-                    raise TypeError(
-                        "Type mismatch for argument {}: expected array type, got {}".format(arg, type(passed))
-                    )
+                    raise TypeError(f"Type mismatch for argument {arg}: expected array type, got {type(passed)}")
             elif isinstance(expected, dace.data.Scalar) or isinstance(expected, dace.dtypes.typeclass):
                 if not dtypes.isconstant(passed) and not isinstance(passed, dace.symbolic.symbol):
-                    raise TypeError(
-                        "Type mismatch for argument {}: expected scalar type, got {}".format(arg, type(passed))
-                    )
+                    raise TypeError(f"Type mismatch for argument {arg}: expected scalar type, got {type(passed)}")
             elif isinstance(expected, dace.data.Stream):
                 if not isinstance(passed, dace.dtypes.stream):
-                    raise TypeError(
-                        "Type mismatch for argument {}: expected stream type, got {}".format(arg, type(passed))
-                    )
+                    raise TypeError(f"Type mismatch for argument {arg}: expected stream type, got {type(passed)}")
             else:
                 raise NotImplementedError(
-                    "Type checking not implemented for type {} (argument {})".format(type(expected).__name__, arg)
+                    f"Type checking not implemented for type {type(expected).__name__} (argument {arg})"
                 )
 
     def __call__(self, *args, **kwargs):
@@ -3173,7 +3166,7 @@ class SDFG(ControlFlowRegion):
         before computing the given state."""
         return (e.src for e in self.edge_bfs(state, reverse=True))
 
-    def validate(self, references: Optional[Set[int]] = None, **context: bool) -> None:
+    def validate(self, references: set[int] | None = None, **context: bool) -> None:
         validate_sdfg(self, references, **context)
 
     def is_valid(self) -> bool:
@@ -3196,7 +3189,7 @@ class SDFG(ControlFlowRegion):
         warnings.warn("SDFG.apply_strict_transformations is deprecated, use SDFG.simplify instead.", DeprecationWarning)
         return self.simplify(validate, validate_all)
 
-    def simplify(self, validate=True, validate_all=False, verbose=False, skip: Optional[Set[str]] = None, options=None):
+    def simplify(self, validate=True, validate_all=False, verbose=False, skip: set[str] | None = None, options=None):
         """Applies safe transformations (that will surely increase the
         performance) on the SDFG. For example, this fuses redundant states
         (safely) and removes redundant arrays.
@@ -3214,7 +3207,7 @@ class SDFG(ControlFlowRegion):
         device: dtypes.DeviceType,
         validate: bool = True,
         validate_all: bool = False,
-        symbols: Dict[str, int] = None,
+        symbols: dict[str, int] = None,
         use_gpu_storage: bool = False,
     ):
         """
@@ -3246,9 +3239,9 @@ class SDFG(ControlFlowRegion):
 
     def _initialize_transformations_from_type(
         self,
-        xforms: Union[Type, List[Type], "dace.transformation.PatternTransformation"],
-        options: Union[Dict[str, Any], List[Dict[str, Any]], None] = None,
-    ) -> List["dace.transformation.PatternTransformation"]:
+        xforms: Union[type, list[type], "dace.transformation.PatternTransformation"],
+        options: dict[str, Any] | list[dict[str, Any]] | None = None,
+    ) -> list["dace.transformation.PatternTransformation"]:
         """
         Initializes given pattern-matching transformations with the options given.
         This method receives different formats and makes one kind of output.
@@ -3268,7 +3261,7 @@ class SDFG(ControlFlowRegion):
         if len(options) != len(xforms):
             raise ValueError("Length of options and transformations mismatch")
 
-        result: List[PatternTransformation] = []
+        result: list[PatternTransformation] = []
         for xftype, opts in zip(xforms, options):
             if isinstance(xftype, PatternTransformation):
                 # Object was given, use as-is
@@ -3290,13 +3283,13 @@ class SDFG(ControlFlowRegion):
 
     def apply_transformations(
         self,
-        xforms: Union[Type, List[Type]],
-        options: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
+        xforms: type | list[type],
+        options: dict[str, Any] | list[dict[str, Any]] | None = None,
         validate: bool = True,
         validate_all: bool = False,
         permissive: bool = False,
-        states: Optional[List[Any]] = None,
-        print_report: Optional[bool] = None,
+        states: list[Any] | None = None,
+        print_report: bool | None = None,
     ) -> int:
         """This function applies a transformation or a sequence thereof
         consecutively. Operates in-place.
@@ -3344,15 +3337,15 @@ class SDFG(ControlFlowRegion):
 
     def apply_transformations_repeated(
         self,
-        xforms: Union[Type, List[Type]],
-        options: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
+        xforms: type | list[type],
+        options: dict[str, Any] | list[dict[str, Any]] | None = None,
         validate: bool = True,
         validate_all: bool = False,
         permissive: bool = False,
-        states: Optional[List[Any]] = None,
-        print_report: Optional[bool] = None,
+        states: list[Any] | None = None,
+        print_report: bool | None = None,
         order_by_transformation: bool = False,
-        progress: Optional[bool] = None,
+        progress: bool | None = None,
     ) -> int:
         """This function repeatedly applies a transformation or a set of
         (unique) transformations until none can be found. Operates in-place.
@@ -3397,15 +3390,15 @@ class SDFG(ControlFlowRegion):
 
     def apply_transformations_once_everywhere(
         self,
-        xforms: Union[Type, List[Type]],
-        options: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
+        xforms: type | list[type],
+        options: dict[str, Any] | list[dict[str, Any]] | None = None,
         validate: bool = True,
         validate_all: bool = False,
         permissive: bool = False,
-        states: Optional[List[Any]] = None,
-        print_report: Optional[bool] = None,
+        states: list[Any] | None = None,
+        print_report: bool | None = None,
         order_by_transformation: bool = False,
-        progress: Optional[bool] = None,
+        progress: bool | None = None,
     ) -> int:
         """
         This function applies a transformation or a set of (unique) transformations
@@ -3512,11 +3505,7 @@ class SDFG(ControlFlowRegion):
                         continue
                     impl_name = node.expand(state)
                     if Config.get_bool("debugprint"):
-                        print(
-                            'Automatically expanded library node "{}" with implementation "{}".'.format(
-                                str(node), impl_name
-                            )
-                        )
+                        print(f'Automatically expanded library node "{str(node)}" with implementation "{impl_name}".')
                     # We made a copy of the original list of nodes, so we keep
                     # iterating even though this list has now changed
                     if recursive:

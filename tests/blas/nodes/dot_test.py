@@ -1,17 +1,15 @@
 #!/usr/bin/env python3
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 
-import numpy as np
-
 import argparse
+
+import numpy as np
+import pytest
 import scipy
 
 import dace
+from dace.libraries import blas
 from dace.memlet import Memlet
-
-import dace.libraries.blas as blas
-
-import pytest
 
 
 def pure_graph(implementation, dtype, veclen):
@@ -40,7 +38,7 @@ def pure_graph(implementation, dtype, veclen):
 
     state.add_memlet_path(x, dot_node, dst_conn="_x", memlet=Memlet(f"x[0:{n}/{veclen}]"))
     state.add_memlet_path(y, dot_node, dst_conn="_y", memlet=Memlet(f"y[0:{n}/{veclen}]"))
-    state.add_memlet_path(dot_node, result, src_conn="_result", memlet=Memlet(f"r[0]"))
+    state.add_memlet_path(dot_node, result, src_conn="_result", memlet=Memlet("r[0]"))
 
     return sdfg
 
@@ -69,7 +67,7 @@ def run_test(target, size, vector_length):
 
     diff = abs(result[0] - ref)
     if diff >= 1e-6 * ref:
-        raise ValueError("Unexpected result returned from dot product: got {}, expected {}".format(result[0], ref))
+        raise ValueError(f"Unexpected result returned from dot product: got {result[0]}, expected {ref}")
 
     return sdfg
 

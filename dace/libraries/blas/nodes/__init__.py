@@ -28,5 +28,3 @@ from .symv import Symv
 # BLAS Level-3 additions.
 from .trsm import Trsm
 from .trmm import Trmm
-from .symm import Symm
-from .syrk import Syrk

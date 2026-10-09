@@ -14,12 +14,11 @@ QE's ``fft_interpolate_complex``).
 
 import itertools
 
+import dace
 import dace.library
 import dace.properties
-import dace
-from dace import nodes, SDFG, SDFGState, dtypes, Memlet
+from dace import SDFG, Memlet, SDFGState, dtypes, nodes
 from dace import transformation as xf
-from typing import List
 from dace.optionals import required
 
 
@@ -168,7 +167,7 @@ class FFTInterpolatePure(xf.ExpandTransformation):
     resampled signal matches the un-aliased continuum interpolant.
     """
 
-    environments: List[type] = []
+    environments: list[type] = []
 
     @staticmethod
     def expansion(node: "FFTInterpolate", parent_state: SDFGState, parent_sdfg: SDFG) -> SDFG:
@@ -181,8 +180,8 @@ class FFTInterpolatePure(xf.ExpandTransformation):
         if rank not in (1, 2, 3):
             raise NotImplementedError(f"FFTInterpolate pure expansion supports rank 1/2/3 (got {rank})")
 
-        from dace.libraries.fft.nodes import FFT, IFFT
         from dace.libraries.fft.environments import FFTW3 as FFTW3Env
+        from dace.libraries.fft.nodes import FFT, IFFT
 
         sdfg = SDFG(node.label + "_sdfg")
         in_inner = indesc.clone()

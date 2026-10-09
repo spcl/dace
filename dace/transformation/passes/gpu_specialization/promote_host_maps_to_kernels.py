@@ -15,12 +15,13 @@ owns), Python tasklets (a native tasklet may call the host runtime, a copy among
 the same kind, and library nodes that have an in-kernel block lowering for their shape.
 """
 
-from typing import Any, Dict, Optional
+from typing import Any
 
 from dace import SDFG, SDFGState, dtypes, properties
 from dace.libraries.standard.block_reduce import gpu_block_implementation
 from dace.sdfg import nodes
-from dace.transformation import helpers as xfh, pass_pipeline as ppl
+from dace.transformation import helpers as xfh
+from dace.transformation import pass_pipeline as ppl
 
 #: Storage a kernel can address directly.
 DEVICE_ACCESSIBLE = (dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared, dtypes.StorageType.CPU_Pinned)
@@ -80,7 +81,7 @@ class PromoteHostMapsToKernels(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> int | None:
         """Promote every :func:`promotable` host map, outermost first.
 
         :param sdfg: the offloaded SDFG, in place.

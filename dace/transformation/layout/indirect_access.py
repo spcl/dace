@@ -2,7 +2,7 @@
 """Detect indirect (data-dependent) array accesses for the layout algebra: names the ``(index_array, data_array)`` pair behind each ``A[idx[i]]`` gather/scatter, via symbol promotion (``sym := idx[f(loop_var)]`` on the loop region, then a data memlet ``A[sym]``)."""
 
 import ast
-from typing import Dict, List, NamedTuple, Optional
+from typing import NamedTuple
 
 from dace import SDFG
 from dace.sdfg.state import LoopRegion
@@ -16,7 +16,7 @@ class IndirectAccess(NamedTuple):
     kind: str
 
 
-def resolve_index_source(rhs: str, loop_var: str, sdfg: SDFG) -> Optional[str]:
+def resolve_index_source(rhs: str, loop_var: str, sdfg: SDFG) -> str | None:
     """Return ``arr`` if ``rhs`` is ``arr[f(loop_var)]`` with ``arr`` a descriptor in ``sdfg``, else ``None``."""
     try:
         tree = ast.parse(str(rhs), mode="eval").body
@@ -36,10 +36,10 @@ def resolve_index_source(rhs: str, loop_var: str, sdfg: SDFG) -> Optional[str]:
     return arr
 
 
-def index_bindings(region: LoopRegion, sdfg: SDFG) -> Dict[str, str]:
+def index_bindings(region: LoopRegion, sdfg: SDFG) -> dict[str, str]:
     """``{sym: index_array}`` for every interstate assignment ``sym := index_array[f(loop_var)]`` on ``region``'s edges."""
     loop_var = region.loop_variable
-    out: Dict[str, str] = {}
+    out: dict[str, str] = {}
     if not loop_var:
         return out
     for e in region.edges():
@@ -52,9 +52,9 @@ def index_bindings(region: LoopRegion, sdfg: SDFG) -> Dict[str, str]:
     return out
 
 
-def indirect_accesses(sdfg: SDFG) -> List[IndirectAccess]:
+def indirect_accesses(sdfg: SDFG) -> list[IndirectAccess]:
     """Every indirect access site in ``sdfg`` (symbol-promotion form); duplicates removed, order preserved."""
-    found: List[IndirectAccess] = []
+    found: list[IndirectAccess] = []
     for sd in sdfg.all_sdfgs_recursive():
         for region in sd.all_control_flow_regions():
             if not isinstance(region, LoopRegion):
@@ -77,7 +77,7 @@ def indirect_accesses(sdfg: SDFG) -> List[IndirectAccess]:
                             if idx is not None and idx != node.data:
                                 found.append(IndirectAccess(idx, node.data, kind))
     seen = set()
-    unique: List[IndirectAccess] = []
+    unique: list[IndirectAccess] = []
     for access in found:
         if access not in seen:
             seen.add(access)

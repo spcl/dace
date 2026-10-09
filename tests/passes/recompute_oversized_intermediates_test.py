@@ -9,6 +9,7 @@ passing it vacuously.
 """
 
 import copy
+
 import numpy as np
 
 import dace

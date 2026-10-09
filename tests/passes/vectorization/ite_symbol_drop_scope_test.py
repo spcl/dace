@@ -9,8 +9,9 @@ four scans stopped at the top level, a top-level rewrite deleted the assignment 
 "Missing symbols on nested SDFG" the moment anything validated (CloudSC, ``zsolqa_index_58_3``).
 """
 
-import dace
 import pytest
+
+import dace
 from dace.properties import CodeBlock
 from dace.sdfg.state import ConditionalBlock
 from dace.transformation.passes.vectorization.same_write_set_if_else_to_ite_cfg import (

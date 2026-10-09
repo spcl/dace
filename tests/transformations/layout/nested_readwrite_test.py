@@ -9,14 +9,14 @@ split again. Each transform's own suite passes the array as input-only (distinct
 none of them covered this. Bit-exactness cannot catch a doubled pad either -- it is a descriptor
 inconsistency -- so these assert on the descriptors and memlets directly."""
 
-import dace
 import sympy as sp
 
+import dace
+from dace.libraries.layout.shuffle import register_shuffle
 from dace.transformation.layout.pad_dimensions import PadDimensions
 from dace.transformation.layout.shuffle_elements import ShuffleElements
 from dace.transformation.layout.split_dimensions import SplitDimensions
 from dace.transformation.layout.unblock_dimensions import UnblockDimensions
-from dace.libraries.layout.shuffle import register_shuffle
 
 N = dace.symbol("N")
 

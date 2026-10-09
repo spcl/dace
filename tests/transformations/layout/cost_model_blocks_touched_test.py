@@ -8,13 +8,13 @@ innermost-only fraction could not express."""
 
 import itertools
 
-import dace
 import pytest
 import sympy as sp
 
+import dace
 from dace.symbolic import int_floor, pystr_to_symbolic
-from dace.transformation.layout.cost_model.blocks_touched import average_blocks_touched
 from dace.transformation.layout.cost_model.access_subsets import get_access_subsets
+from dace.transformation.layout.cost_model.blocks_touched import average_blocks_touched
 
 N = dace.symbol("N")
 T = dace.symbol("T")
@@ -47,7 +47,7 @@ def _formula_avg_blocks(extents, strides, block_size):
     sub = ",".join(f"i{d}" for d in range(len(extents)))
     st.add_memlet_path(st.add_read("A"), me, t, dst_conn="a", memlet=dace.Memlet(f"A[{sub}]"))
     st.add_memlet_path(t, mx, st.add_write("B"), src_conn="b", memlet=dace.Memlet(f"B[{sub}]"))
-    lr = [{p: r for p, r in zip(me.map.params, me.map.range)}]
+    lr = [dict(zip(me.map.params, me.map.range))]
     return float(sp.simplify(average_blocks_touched(st, lr, get_access_subsets(st, me), block_size)["A"]))
 
 
@@ -60,7 +60,7 @@ def _blocks_2d(strides, block_size=8):
     t = st.add_tasklet("t", {"a"}, {"b"}, "b = a")
     st.add_memlet_path(st.add_read("A"), me, t, dst_conn="a", memlet=dace.Memlet("A[i,j]"))
     st.add_memlet_path(t, mx, st.add_write("B"), src_conn="b", memlet=dace.Memlet("B[i,j]"))
-    lr = [{p: r for p, r in zip(me.map.params, me.map.range)}]
+    lr = [dict(zip(me.map.params, me.map.range))]
     return sp.simplify(average_blocks_touched(st, lr, get_access_subsets(st, me), block_size)["A"])
 
 
@@ -75,7 +75,7 @@ def _blocks_tiled(ii_stride, block_size=8):
     t = st.add_tasklet("t", {"a"}, {"b"}, "b = a")
     st.add_memlet_path(st.add_read("C"), me, t, dst_conn="a", memlet=dace.Memlet("C[I,J,ii,jj]"))
     st.add_memlet_path(t, mx, st.add_write("D"), src_conn="b", memlet=dace.Memlet("D[I,J,ii,jj]"))
-    lr = [{p: r for p, r in zip(me.map.params, me.map.range)}]
+    lr = [dict(zip(me.map.params, me.map.range))]
     return float(sp.simplify(average_blocks_touched(st, lr, get_access_subsets(st, me), block_size)["C"]).subs(T, 64))
 
 
@@ -89,7 +89,7 @@ def nest_1d(index_expr, loop_range="0:N"):
     t = st.add_tasklet("t", {"a"}, {"b"}, "b = a")
     st.add_memlet_path(st.add_read("A"), me, t, dst_conn="a", memlet=dace.Memlet(f"A[{index_expr}]"))
     st.add_memlet_path(t, mx, st.add_write("B"), src_conn="b", memlet=dace.Memlet("B[i]"))
-    return st, [{p: r for p, r in zip(me.map.params, me.map.range)}], get_access_subsets(st, me)
+    return st, [dict(zip(me.map.params, me.map.range))], get_access_subsets(st, me)
 
 
 def test_contiguous_inner_reaches_one_over_block_size():
@@ -134,7 +134,7 @@ def test_extent_uses_integer_floor_not_c_division():
     t = st.add_tasklet("t", {"a"}, {"b"}, "b = a")
     st.add_memlet_path(st.add_read("A"), me, t, dst_conn="a", memlet=dace.Memlet("A[i]"))
     st.add_memlet_path(t, mx, st.add_write("B"), src_conn="b", memlet=dace.Memlet("B[i]"))
-    lr = [{p: r for p, r in zip(me.map.params, me.map.range)}]
+    lr = [dict(zip(me.map.params, me.map.range))]
     value = average_blocks_touched(st, lr, get_access_subsets(st, me), 8)["A"]
     # stride-2 access of a unit-stride array: 2 elements per step, so ~1/4 of a line per iteration.
     assert abs(float(sp.simplify(value).subs(N, 4096)) - 1.0 / 4.0) < 0.02
@@ -237,6 +237,7 @@ def test_replayed_blocks_bounds_an_indirect_access():
     scattered index they coincide, so the answer is exact exactly where layout matters most."""
     import numpy
     import pytest
+
     from dace.transformation.layout.cost_model.blocks_touched import replayed_blocks_touched
 
     rng = numpy.random.default_rng(0)

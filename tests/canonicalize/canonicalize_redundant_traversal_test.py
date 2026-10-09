@@ -71,13 +71,12 @@ from typing import Any
 import dace
 from dace import symbolic
 from dace.memlet import Memlet
-from dace.sdfg.graph import MultiConnectorEdge
 from dace.ordered import OrderedSet
 from dace.sdfg import nodes as nd
+from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.state import BreakBlock, LoopRegion, SDFGState
 from dace.transformation.passes.canonicalize.finalize import finalize_for_target
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
-
 from tests.corpus.tsvc import tsvc
 from tests.corpus.tsvc_2_5 import tsvc_2_5
 
@@ -167,9 +166,11 @@ def full_length_reads(sdfg: dace.SDFG) -> list[str]:
                 if scope_trips(state, node) >= FULL_LENGTH:
                     passes.extend(read_names(state.in_edges(node)))
             elif isinstance(node, nd.LibraryNode):
-                for edge in state.in_edges(node):
-                    if edge.data is not None and evaluated(edge.data.volume) >= FULL_LENGTH:
-                        passes.append(edge.data.data)
+                passes.extend(
+                    edge.data.data
+                    for edge in state.in_edges(node)
+                    if edge.data is not None and evaluated(edge.data.volume) >= FULL_LENGTH
+                )
             elif isinstance(node, nd.AccessNode):
                 for edge in state.out_edges(node):
                     if not isinstance(edge.dst, nd.AccessNode) or edge.data is None or edge.data.is_empty():

@@ -9,8 +9,9 @@ the graph topology around them, not from a property on the descriptor. These
 tests pin that representation.
 """
 
-import dace
 import pytest
+
+import dace
 
 
 def test_add_mask_creates_bool_register_transient_with_correct_shape():

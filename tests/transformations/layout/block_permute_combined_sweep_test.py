@@ -26,11 +26,10 @@ import numpy
 import pytest
 
 import dace
-
-from dace.transformation.layout.permute_dimensions import PermuteDimensions
-from dace.transformation.layout.split_dimensions import SplitDimensions
 from dace.transformation.layout.normalize_schedule import normalize_schedule_for_layout
+from dace.transformation.layout.permute_dimensions import PermuteDimensions
 from dace.transformation.layout.prepare import prepare_for_layout
+from dace.transformation.layout.split_dimensions import SplitDimensions
 
 M, N, K = (dace.symbol(s) for s in ("M", "N", "K"))
 
@@ -83,7 +82,7 @@ def apply_combined(sdfg: dace.SDFG, order: str, ndim: int, blocked_dim: int, fac
     """Apply the combined Block + Permute layout to A and C on ``sdfg`` in place."""
     masks = [d == blocked_dim for d in range(ndim)]
     factors = [factor if d == blocked_dim else 1 for d in range(ndim)]
-    split_map = {name: (masks, factors) for name in ("A", "C")}
+    split_map = dict.fromkeys(("A", "C"), (masks, factors))
     permute_map = {name: list(perm) for name in ("A", "C")}
     if order == "block_then_permute":
         SplitDimensions(split_map=split_map).apply_pass(sdfg, {})
@@ -122,7 +121,7 @@ def run_combined(ndim: int, order: str, blocked_dim: int, factor: int, perm):
     c_physical = numpy.zeros(descriptor_shape(sdfg, "C", symmap))
 
     kwargs = {"A": a_packed, "B": b_logical.copy(), "C": c_physical}
-    kwargs.update({name: sz for name, sz in zip(("M", "N", "K")[:ndim], sizes)})
+    kwargs.update(dict(zip(("M", "N", "K")[:ndim], sizes)))
     sdfg(**kwargs)
 
     got = block_unpack(c_physical, blocked_dim, factor, sizes)

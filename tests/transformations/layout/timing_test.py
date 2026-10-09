@@ -4,18 +4,18 @@ side-effect tasklet (so StateFusion cannot merge them into the compute) and Time
 compute region, so a run times the compute alone -- excluding the one-time relayout copies."""
 
 import numpy
-import dace
 
+import dace
 from dace.transformation.layout.permute_dimensions import PermuteDimensions
 from dace.transformation.layout.timing import (
     InsertLayoutTiming,
-    is_copy_state,
     add_fusion_barrier,
-    time_compute,
-    instrumentation_for,
-    state_runs_on_gpu,
     barrier_relayout_states,
     has_fusion_barrier,
+    instrumentation_for,
+    is_copy_state,
+    state_runs_on_gpu,
+    time_compute,
 )
 
 N = dace.symbol("N")
@@ -93,7 +93,7 @@ def test_add_fusion_barrier_is_side_effecting():
 def test_sweep_with_compute_region_timer():
     """The sweep can time the compute region (excluding relayout) via compute_region_timer: correct
     candidates get a compute time, and ranking still holds."""
-    from dace.transformation.layout.brute_force import sweep, best, permutation_candidates
+    from dace.transformation.layout.brute_force import best, permutation_candidates, sweep
     from dace.transformation.layout.timing import compute_region_timer
 
     _N = 32

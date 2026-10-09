@@ -23,8 +23,8 @@ import pytest
 import dace
 from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
-from dace.transformation.passes.canonicalize.pipeline import canonicalize
 from dace.transformation.passes.break_anti_dependence import BreakAntiDependence
+from dace.transformation.passes.canonicalize.pipeline import canonicalize
 from dace.transformation.passes.canonicalize.split_statements import SplitStatements
 
 N = dace.symbol("N")

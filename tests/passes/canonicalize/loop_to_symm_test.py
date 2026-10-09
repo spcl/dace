@@ -38,8 +38,8 @@ from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.canonicalize.loop_to_symm import LoopToSymm
 from dace.transformation.passes.vectorization.config import VectorizeConfig
+from dace.transformation.passes.vectorization.enums import BranchMode, RemainderStrategy
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
-from dace.transformation.passes.vectorization.enums import RemainderStrategy, BranchMode
 
 M = dace.symbol("M")
 N = dace.symbol("N")

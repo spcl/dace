@@ -20,18 +20,18 @@ import dace
 from dace import data as dt
 from dace.libraries.standard.nodes.copy.common import INPUT_CONNECTOR_NAME
 from dace.libraries.tileops import MaskedCopyLibraryNode
-from dace.transformation.passes.vectorization.bypass_trivial_assign_tasklets import BypassTrivialAssignTasklets
-from tests.passes.vectorization.tile_assertions import masked_loads, masked_stores
-from dace.transformation.passes.vectorization.nest_innermost_map_body import NestInnermostMapBodyIntoNSDFG
 from dace.transformation.interstate.expand_nested_sdfg_inputs import ExpandNestedSDFGInputs
-from dace.transformation.passes.vectorization.stage_global_array_through_scalars import (
-    StageGlobalArrayThroughScalars,
-)
-from dace.transformation.passes.vectorization.widen_accesses import WidenAccesses
+from dace.transformation.passes.vectorization.bypass_trivial_assign_tasklets import BypassTrivialAssignTasklets
 from dace.transformation.passes.vectorization.insert_tile_load_store import (
     InsertTileLoadStore,
     _assert_post_stage_invariants,
 )
+from dace.transformation.passes.vectorization.nest_innermost_map_body import NestInnermostMapBodyIntoNSDFG
+from dace.transformation.passes.vectorization.stage_global_array_through_scalars import (
+    StageGlobalArrayThroughScalars,
+)
+from dace.transformation.passes.vectorization.widen_accesses import WidenAccesses
+from tests.passes.vectorization.tile_assertions import masked_loads, masked_stores
 
 N = dace.symbol("N")
 

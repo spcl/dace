@@ -16,8 +16,8 @@ from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.state import LoopRegion
 from dace.transformation import transformation
-from dace.transformation.passes.pattern_matching import match_patterns
 from dace.transformation.passes.canonicalize import pipeline as canon
+from dace.transformation.passes.pattern_matching import match_patterns
 
 N = dace.symbol("N", dtype=dace.int64)
 

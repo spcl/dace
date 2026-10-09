@@ -14,15 +14,16 @@ range over the FULL (unguarded) iteration range, so s276 lowers to a per-lane ``
 
 import copy
 
-import dace
 import pytest
+
+import dace
+import tests.corpus.measure_parallelization as mp
 from dace.sdfg.state import ConditionalBlock
 from dace.transformation.passes.vectorization.same_write_set_if_else_to_ite_cfg import (
     arm_accesses_are_in_range_unguarded,
     condition_guards_iteration_symbol,
     provably_nonnegative,
 )
-import tests.corpus.measure_parallelization as mp
 
 N = dace.symbol("N")
 

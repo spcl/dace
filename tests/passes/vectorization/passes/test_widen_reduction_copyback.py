@@ -99,7 +99,8 @@ def test_other_endpoint_widens_guard():
 
 
 if __name__ == "__main__":
-    import pytest
     import sys
+
+    import pytest
 
     sys.exit(pytest.main([__file__, "-v"]))

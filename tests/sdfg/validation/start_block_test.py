@@ -7,7 +7,7 @@ import pytest
 
 import dace
 from dace import SDFG
-from dace.sdfg import InvalidSDFGError, InterstateEdge
+from dace.sdfg import InterstateEdge, InvalidSDFGError
 from dace.sdfg.state import ControlFlowRegion
 
 

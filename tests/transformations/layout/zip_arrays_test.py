@@ -1,10 +1,11 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
-import numpy
-import dace
 
-from dace.transformation.layout.zip_arrays import ZipArrays
+import numpy
+
+import dace
 from dace.transformation.layout.unzip_arrays import UnzipArrays
+from dace.transformation.layout.zip_arrays import ZipArrays
 
 N = dace.symbol("N")
 KRED = 5

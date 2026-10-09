@@ -12,9 +12,9 @@ These assert the emitted C++, not a runtime outcome: the guards are only worth a
 reach the generated program, and reproducing the corruption needs a specific MPI build.
 """
 
-import dace
 import pytest
 
+import dace
 from dace.libraries.pblas.environments import intel_mkl_mpich, intel_mkl_openmpi, ref_mpich, ref_openmpi
 
 #: Every ScaLAPACK environment, whichever MPI and BLAS it links.

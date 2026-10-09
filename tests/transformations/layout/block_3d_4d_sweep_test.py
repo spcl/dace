@@ -21,7 +21,6 @@ import numpy
 import pytest
 
 import dace
-
 from dace.transformation.layout.normalize_schedule import normalize_schedule_for_layout
 from dace.transformation.layout.split_dimensions import SplitDimensions
 
@@ -90,8 +89,7 @@ def build_cases():
     cases = []
     for ndim in (3, 4):
         for d in range(ndim):
-            for b in single_factors:
-                cases.append((ndim, (d,), (b,)))
+            cases.extend((ndim, (d,), (b,)) for b in single_factors)
         pair_factors = pair_factors_3d if ndim == 3 else pair_factors_4d
         for d0, d1 in itertools.combinations(range(ndim), 2):
             for b0, b1 in pair_factors:

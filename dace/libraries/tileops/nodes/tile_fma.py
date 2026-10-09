@@ -7,8 +7,6 @@ import numpy as np
 
 import dace
 from dace import library, properties
-from dace.sdfg import nodes
-
 from dace.libraries.tileops.environments import (
     TileOpsAVX2,
     TileOpsAVX512,
@@ -20,6 +18,7 @@ from dace.libraries.tileops.environments import (
 from dace.libraries.tileops.expansions import ExpandTileIsa, ExpandTilePure
 from dace.libraries.tileops.isa import IsaCall
 from dace.libraries.tileops.kinds import TILE
+from dace.libraries.tileops.nodes.tile_op import TileOp
 from dace.libraries.tileops.operands import (
     LaneOperands,
     Operand,
@@ -32,7 +31,7 @@ from dace.libraries.tileops.operands import (
     output_edge,
     validate_elementwise,
 )
-from dace.libraries.tileops.nodes.tile_op import TileOp
+from dace.sdfg import nodes
 
 #: The registered dtypes narrower than ``float``, which take the ``double``-widened spelling of the fma; every other
 #: operand type calls ``std::fma`` as it is. Read off the dtype registry, which includes the fp8 types, whose CUDA

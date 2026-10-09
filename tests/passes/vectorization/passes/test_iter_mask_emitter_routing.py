@@ -14,7 +14,6 @@ consumer logic can be validated in isolation.
 """
 
 import dace
-
 from dace.transformation.passes.vectorization.utils.tasklets import (
     EmitCtx,
     _generate_code,

@@ -16,18 +16,18 @@ import pytest
 
 import dace
 from dace import nodes
-from dace.transformation.passes.insert_unit_copy_assign_tasklets import InsertAssignTaskletsForUnitCopies
 from dace.transformation.pass_pipeline import Pipeline
 from dace.transformation.passes.insert_assign_tasklets_at_map_boundary import InsertAssignTaskletsAtMapBoundary
+from dace.transformation.passes.insert_unit_copy_assign_tasklets import InsertAssignTaskletsForUnitCopies
 from dace.transformation.passes.scalar_fission import ScalarFission
 
 
 def _an_to_an_edges(sdfg: dace.SDFG):
     out = []
     for state in sdfg.states():
-        for e in state.edges():
-            if isinstance(e.src, nodes.AccessNode) and isinstance(e.dst, nodes.AccessNode):
-                out.append(e)
+        out.extend(
+            e for e in state.edges() if isinstance(e.src, nodes.AccessNode) and isinstance(e.dst, nodes.AccessNode)
+        )
     return out
 
 

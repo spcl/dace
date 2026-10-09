@@ -31,14 +31,14 @@ that the expected per-tile-dim shape survives.
 """
 
 import numpy as np
-import dace
-from dace.transformation.passes.canonicalize import canonicalize
 
+import dace
 from dace.libraries.tileops import TileGather
+from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.canonicalize.assume_symbols_nonnegative import is_assumption_guard_block
 from dace.transformation.passes.vectorization.bypass_trivial_assign_tasklets import is_assign_tasklet
 from dace.transformation.passes.vectorization.config import VectorizeConfig
-from dace.transformation.passes.vectorization.enums import ISA, RemainderStrategy, BranchMode
+from dace.transformation.passes.vectorization.enums import ISA, BranchMode, RemainderStrategy
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
 from tests.passes.vectorization.tile_assertions import sdfg_masked_loads, sdfg_masked_stores
 

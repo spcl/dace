@@ -33,7 +33,6 @@ os.environ.setdefault("OMPI_MCA_pml", "ob1")
 os.environ.setdefault("OMPI_MCA_btl", "self,vader")
 os.environ.setdefault("UCX_VFS_ENABLE", "n")
 
-from typing import List
 
 import numpy as np
 import pytest
@@ -44,8 +43,8 @@ from dace.sdfg.state import ConditionalBlock
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.array_elimination import ArrayElimination
 from dace.transformation.passes.canonicalize import pipeline as canon_pipeline
-from dace.transformation.passes.optional_arrays import OptionalArrayInference
 from dace.transformation.passes.canonicalize.prune_and_inline_nested_sdfgs import PruneAndInlineNestedSDFGs
+from dace.transformation.passes.optional_arrays import OptionalArrayInference
 from dace.transformation.passes.simplification.prune_empty_conditional_branches import PruneEmptyConditionalBranches
 from dace.transformation.passes.simplify import SimplifyPass
 
@@ -113,7 +112,7 @@ def _is_reclaim_stage(unit: ppl.Pass) -> bool:
 CLEANUP_TYPES = frozenset(type(p).__name__ for label, p in canon_pipeline._structural_cleanup("probe"))
 
 
-def _reclaim_slots() -> List[int]:
+def _reclaim_slots() -> list[int]:
     """Recipe indices of every array-reclaiming stage, in order."""
     at = [i for i, (label, p) in enumerate(canon_pipeline._build_stages()) if _is_reclaim_stage(p)]
     assert at, "the recipe no longer reclaims arrays at all"
@@ -132,7 +131,7 @@ def _leads_a_cleanup(unit) -> bool:
     return isinstance(unit, PruneAndInlineNestedSDFGs)
 
 
-def _cleanup_slots() -> List[int]:
+def _cleanup_slots() -> list[int]:
     """Recipe indices of the terminal cleanup: the structural-cleanup helper, the inline that leads
     it, and the empty-arm prune.
 
@@ -186,17 +185,17 @@ def _canonicalize(
     return sdfg
 
 
-def _transients(sdfg: dace.SDFG) -> List[str]:
+def _transients(sdfg: dace.SDFG) -> list[str]:
     return sorted(
         name for nested in sdfg.all_sdfgs_recursive() for name, desc in nested.arrays.items() if desc.transient
     )
 
 
-def _access_nodes(sdfg: dace.SDFG) -> List[str]:
+def _access_nodes(sdfg: dace.SDFG) -> list[str]:
     return sorted(n.data for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.AccessNode))
 
 
-def _tasklets(sdfg: dace.SDFG) -> List[str]:
+def _tasklets(sdfg: dace.SDFG) -> list[str]:
     return sorted(n.label for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.Tasklet))
 
 
@@ -204,7 +203,7 @@ def _maps(sdfg: dace.SDFG) -> int:
     return sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry))
 
 
-def _units_of(unit) -> List[object]:
+def _units_of(unit) -> list[object]:
     """``unit`` and the passes it composes, so a nested ``SimplifyPass`` is not invisible here."""
     if isinstance(unit, canon_pipeline.IvSubstitutionFissionFixpoint):
         return [unit, *unit.round_units()]
@@ -281,11 +280,11 @@ def test_fission_replica_is_absent_from_the_canonical_form():
     assert set(_transients(sdfg)) == LIVE_TRANSIENTS, sorted(_transients(sdfg))
 
 
-def _states(sdfg: dace.SDFG) -> List[str]:
+def _states(sdfg: dace.SDFG) -> list[str]:
     return sorted(state.label for nested in sdfg.all_sdfgs_recursive() for state in nested.states())
 
 
-def _workless_branches(sdfg: dace.SDFG) -> List[str]:
+def _workless_branches(sdfg: dace.SDFG) -> list[str]:
     """Conditional arms that carry no dataflow at all.
 
     Named by the arm rather than by a state, because that is the whole point of the case: an arm is

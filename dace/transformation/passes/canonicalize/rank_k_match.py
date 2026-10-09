@@ -30,17 +30,20 @@ transposed operand, an extra term -- makes the comparison fail and the lift a cl
 no-op.
 """
 
-from typing import Dict, Iterable, List, NamedTuple, Optional, Sequence, Tuple, TypedDict
+from collections.abc import Iterable, Sequence
+from typing import NamedTuple, TypedDict
 
 import sympy
 
-from dace import SDFG, data as dt, memlet as mm, subsets, symbolic
+from dace import SDFG, subsets, symbolic
+from dace import data as dt
+from dace import memlet as mm
 from dace.sdfg import nodes
+from dace.sdfg.narrowing import as_expr, as_map_entry
 from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.canonicalize.split_statements import value_edges
-from dace.sdfg.narrowing import as_expr, as_map_entry
 
 # Guard against a cyclic / pathological dataflow walk (the resolver recurses through
 # producer edges; a well-formed state bottoms out in a handful of steps).
@@ -50,18 +53,18 @@ MAX_RESOLVE_DEPTH = 64
 class LeafRoles(TypedDict):
     """Leaves of a resolved expression bucketed by role, as :func:`classify_leaves` returns them."""
 
-    c: Optional[sympy.Symbol]
-    coeffs: Dict[str, sympy.Symbol]
-    row: Dict[str, sympy.Symbol]
-    col: Dict[str, sympy.Symbol]
-    trans: Optional[str]
+    c: sympy.Symbol | None
+    coeffs: dict[str, sympy.Symbol]
+    row: dict[str, sympy.Symbol]
+    col: dict[str, sympy.Symbol]
+    trans: str | None
 
 
 class ArrayRead(NamedTuple):
     """One opaque array read appearing in a resolved expression."""
 
     array: str
-    index: Tuple[object, ...]
+    index: tuple[object, ...]
 
 
 class RankKMatch(NamedTuple):
@@ -69,7 +72,7 @@ class RankKMatch(NamedTuple):
 
     c: str
     a: str
-    b: Optional[str]  # None for syrk
+    b: str | None  # None for syrk
     alpha: str
     beta: str
     uplo: str
@@ -93,8 +96,8 @@ class StateValueResolver:
 
     def __init__(self, state: SDFGState) -> None:
         self.state = state
-        self.leaves: Dict[sympy.Symbol, ArrayRead] = {}
-        self.by_key: Dict[Tuple[str, Tuple[str, ...]], sympy.Symbol] = {}
+        self.leaves: dict[sympy.Symbol, ArrayRead] = {}
+        self.by_key: dict[tuple[str, tuple[str, ...]], sympy.Symbol] = {}
 
     def leaf(self, array: str, index: Sequence[symbolic.SymbolicType]) -> sympy.Symbol:
         """A stable leaf symbol for the read ``array[index]`` (same read -> same symbol)."""
@@ -156,7 +159,7 @@ class StateValueResolver:
         raise ValueError("rank-k resolve: no producer into map exit")
 
     def eval_tasklet(
-        self, tasklet: nodes.Tasklet, binding: Dict[str, object], depth: int, out_conn: str
+        self, tasklet: nodes.Tasklet, binding: dict[str, object], depth: int, out_conn: str
     ) -> sympy.Basic:
         """Evaluate ``tasklet``'s assignment to ``out_conn``, resolving each input
         connector. ``out_conn`` picks the one line that defines it, so a tasklet with
@@ -191,18 +194,18 @@ class StateValueResolver:
         return expr.subs(substitutions).subs(bind_syms)
 
 
-def subset_indices(subset: subsets.Subset) -> List[object]:
+def subset_indices(subset: subsets.Subset) -> list[object]:
     """The per-axis begin expression of ``subset`` (its element index when every axis
     is a single point; the slice base otherwise)."""
     return [symbolic.pystr_to_symbolic(str(begin)) for begin, _, _ in subset.ndrange()]
 
 
-def unify(pattern: List[object], target: List[object], params: List[str]) -> Dict[str, object]:
+def unify(pattern: list[object], target: list[object], params: list[str]) -> dict[str, object]:
     """Bind map ``params`` so that ``pattern == target`` elementwise. Non-parameter
     axes must already agree symbolically."""
     if len(pattern) != len(target):
         raise ValueError("rank-k resolve: index rank mismatch")
-    binding: Dict[str, object] = {}
+    binding: dict[str, object] = {}
     for p, t in zip(pattern, target):
         name = str(p)
         if name in params:
@@ -212,7 +215,7 @@ def unify(pattern: List[object], target: List[object], params: List[str]) -> Dic
     return binding
 
 
-def source_access(state: SDFGState, entry: nodes.MapEntry, out_conn: str) -> Optional[nodes.AccessNode]:
+def source_access(state: SDFGState, entry: nodes.MapEntry, out_conn: str) -> nodes.AccessNode | None:
     """The AccessNode feeding ``entry``'s ``OUT_x`` connector from outside the scope."""
     in_conn = "IN_" + out_conn[len("OUT_") :] if out_conn.startswith("OUT_") else out_conn
     for edge in state.in_edges(entry):
@@ -253,7 +256,7 @@ def unit_stride(loop: LoopRegion) -> bool:
         return False
 
 
-def loop_extent(loop: LoopRegion) -> Optional[object]:
+def loop_extent(loop: LoopRegion) -> object | None:
     """``end + 1`` of a ``0``-based unit-stride loop (its trip count), else ``None``."""
     if not loop.loop_variable or not unit_stride(loop):
         return None
@@ -264,7 +267,7 @@ def loop_extent(loop: LoopRegion) -> Optional[object]:
     return symbolic.simplify(as_expr(symbolic.pystr_to_symbolic(str(end))) + 1)
 
 
-def single_body_state(region: ControlFlowRegion) -> Optional[SDFGState]:
+def single_body_state(region: ControlFlowRegion) -> SDFGState | None:
     """The region's one non-empty state (empty connective states tolerated)."""
     blocks = list(region.nodes())
     if not all(isinstance(b, SDFGState) for b in blocks):
@@ -273,12 +276,12 @@ def single_body_state(region: ControlFlowRegion) -> Optional[SDFGState]:
     return non_empty[0] if len(non_empty) == 1 else None
 
 
-def beta_and_inner_loop(outer: LoopRegion) -> Optional[Tuple[SDFGState, LoopRegion]]:
+def beta_and_inner_loop(outer: LoopRegion) -> tuple[SDFGState, LoopRegion] | None:
     """Split the outer loop body into its ``beta``-scale state and its inner
     ``k`` LoopRegion, requiring exactly one of each and that the scale runs FIRST
     (the accumulation must land on the already-scaled ``C``)."""
-    scale: Optional[SDFGState] = None
-    inner: Optional[LoopRegion] = None
+    scale: SDFGState | None = None
+    inner: LoopRegion | None = None
     for block in outer.nodes():
         if isinstance(block, LoopRegion):
             if inner is not None:
@@ -313,7 +316,7 @@ def reaches(region: ControlFlowRegion, src: ControlFlowBlock, dst: ControlFlowBl
     return False
 
 
-def sink_node(state: SDFGState) -> Optional[nodes.AccessNode]:
+def sink_node(state: SDFGState) -> nodes.AccessNode | None:
     """The state's single sink AccessNode (out-degree 0, in-degree > 0), or ``None``
     if the state has zero or several. A frontend staging temporary is never a sink --
     it always feeds a consumer -- so this picks out the state's real output."""
@@ -327,12 +330,12 @@ def sink_node(state: SDFGState) -> Optional[nodes.AccessNode]:
     return sinks[0]
 
 
-def written_arrays(state: SDFGState) -> Dict[str, None]:
+def written_arrays(state: SDFGState) -> dict[str, None]:
     """Names of arrays the state writes."""
     return dict.fromkeys(n.data for n in state.nodes() if isinstance(n, nodes.AccessNode) and state.in_degree(n) > 0)
 
 
-def nontransient_written(state: SDFGState, sdfg: SDFG) -> Dict[str, None]:
+def nontransient_written(state: SDFGState, sdfg: SDFG) -> dict[str, None]:
     """Names of NON-transient arrays the state writes.
 
     The frontend stages every indexed read through a transient scalar
@@ -373,7 +376,7 @@ def internal_writes_contained(loop: LoopRegion, root: SDFG, c_array: str) -> boo
     return True
 
 
-def triangle_of(subset: subsets.Subset, row: str, n: symbolic.SymbolicType) -> Optional[str]:
+def triangle_of(subset: subsets.Subset, row: str, n: symbolic.SymbolicType) -> str | None:
     """``'L'`` if ``subset`` is the lower-triangle row slice ``[row, 0:row+1]``,
     ``'U'`` if it is the upper-triangle row slice ``[row, row:n]``, else ``None``."""
     if subset is None or len(subset) != 2:
@@ -392,7 +395,7 @@ def triangle_of(subset: subsets.Subset, row: str, n: symbolic.SymbolicType) -> O
     return None
 
 
-def sink_write_subset(state: SDFGState, sink: nodes.AccessNode) -> Optional[subsets.Subset]:
+def sink_write_subset(state: SDFGState, sink: nodes.AccessNode) -> subsets.Subset | None:
     """The subset of the single memlet writing ``sink``."""
     edges = value_edges(state.in_edges(sink))
     if len(edges) != 1:
@@ -401,8 +404,8 @@ def sink_write_subset(state: SDFGState, sink: nodes.AccessNode) -> Optional[subs
 
 
 def classify_leaves(
-    resolver: StateValueResolver, sdfg: SDFG, c_array: str, i: str, j: sympy.Symbol, k: Optional[str]
-) -> Optional[LeafRoles]:
+    resolver: StateValueResolver, sdfg: SDFG, c_array: str, i: str, j: sympy.Symbol, k: str | None
+) -> LeafRoles | None:
     """Bucket a resolved expression's leaves by role.
 
     :returns: a dict with ``'c'`` (the prior ``C[i,j]`` leaf), ``'coeffs'`` (leaves that
@@ -460,7 +463,7 @@ def is_single_element(desc: dt.Data) -> bool:
 
 def match_beta_state(
     state: SDFGState, sdfg: SDFG, c_array: str, i: str, j: sympy.Symbol, n: symbolic.SymbolicType
-) -> Optional[Tuple[str, str]]:
+) -> tuple[str, str] | None:
     """Match ``C[i, <triangle>] *= beta[0]``.
 
     :returns: ``(beta_array, uplo)``, or ``None``.
@@ -490,7 +493,7 @@ def match_beta_state(
 
 def resolve_accumulate(
     state: SDFGState, sdfg: SDFG, c_array: str, i: str, j: sympy.Symbol, k: str, n: symbolic.SymbolicType
-) -> Optional[Tuple[sympy.Basic, LeafRoles, str]]:
+) -> tuple[sympy.Basic, LeafRoles, str] | None:
     """Resolve the inner ``k``-loop body's write to ``C[i, <triangle>]``.
 
     :returns: ``(value_expression, leaf_roles, uplo)``, or ``None`` if the state is not
@@ -563,10 +566,10 @@ def replace_loop_with_state(parent: ControlFlowRegion, loop: LoopRegion, label: 
     return state
 
 
-def outer_loop_candidates(sdfg: SDFG) -> List[Tuple[ControlFlowRegion, LoopRegion]]:
+def outer_loop_candidates(sdfg: SDFG) -> list[tuple[ControlFlowRegion, LoopRegion]]:
     """Every ``(parent, loop)`` whose ``loop`` could be a rank-k nest's outer loop:
     a unit-stride 0-based loop that directly contains another LoopRegion."""
-    found: List[Tuple[ControlFlowRegion, LoopRegion]] = []
+    found: list[tuple[ControlFlowRegion, LoopRegion]] = []
     for sd in sdfg.all_sdfgs_recursive():
         for region in sd.all_control_flow_regions(recursive=True):
             for block in region.nodes():

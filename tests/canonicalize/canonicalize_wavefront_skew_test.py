@@ -16,7 +16,7 @@ from dace.transformation.interstate.loop_to_map import LoopToMap
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.canonicalize.finalize import finalize_for_target
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
-from dace.transformation.passes.canonicalize.wavefront_skew import WavefrontSkew, SKEW_T_PREFIX, SKEW_P_PREFIX
+from dace.transformation.passes.canonicalize.wavefront_skew import SKEW_P_PREFIX, SKEW_T_PREFIX, WavefrontSkew
 
 # The corpus program itself, imported as a package: its ``@dace.tasklet`` bodies lower to the
 # exact 2-D wavefront ``WavefrontSkew`` exposes -- the one real corpus beneficiary of the skew.
@@ -642,7 +642,7 @@ def test_plan_split_snapshots_refuses_external_snapshot_reader():
 def test_plan_split_snapshots_is_non_mutating_then_commit_applies():
     """Planning must not touch the SDFG (so a later skew refusal is a no-op);
     committing then redirects the read onto the live array and empties the copy."""
-    from dace.transformation.passes.canonicalize.wavefront_skew import plan_split_snapshots, commit_split_snapshots
+    from dace.transformation.passes.canonicalize.wavefront_skew import commit_split_snapshots, plan_split_snapshots
 
     sdfg, outer, inner = _snapshot_nest(external_reader=False)
     cp = next(b for b in outer.nodes() if isinstance(b, SDFGState) and b.label == "cp")
@@ -962,7 +962,7 @@ def test_move_loop_into_map_refuses_lane_crossing_carry(prog, interchangeable):
     from dace.transformation.interstate.move_loop_into_map import MoveLoopIntoMap
 
     sdfg = _loop_over_map(prog)
-    outer = [l for l in _loops(sdfg)]
+    outer = list(_loops(sdfg))
     assert len(outer) == 1, "fixture must leave exactly the outer i-loop"
     assert any(isinstance(n, nodes.MapEntry) for n, _ in sdfg.all_nodes_recursive()), (
         "fixture must leave the inner j as a Map"

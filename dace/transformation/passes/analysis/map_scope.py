@@ -13,12 +13,10 @@ Neutral home on purpose: canonicalization must not import from vectorization, an
 the same answer.
 """
 
-from typing import List
-
 from dace.sdfg import SDFGState, nodes
 
 
-def map_body_nodes(state: SDFGState, map_entry: nodes.MapEntry) -> List[nodes.Node]:
+def map_body_nodes(state: SDFGState, map_entry: nodes.MapEntry) -> list[nodes.Node]:
     """Every node in ``map_entry``'s scope -- entry and exit excluded, inner scopes included.
 
     :param state: The state holding ``map_entry``.

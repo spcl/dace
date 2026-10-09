@@ -3,19 +3,19 @@
 
 import copy
 from dataclasses import dataclass
-from typing import Any, Dict, List, Tuple
+from typing import Any
 
 import dace
+from dace.sdfg.narrowing import as_expr
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.layout.subscript_rewrite import rewrite_subscript_indices
-from dace.sdfg.narrowing import as_expr
 
 
 @dataclass
 class UnblockDimensions(ppl.Pass):
     """``unblock_map``: ``{array_name: (masks, factors)}`` -- the same mapping the Block transform used; length equals the original (unblocked) rank."""
 
-    def __init__(self, unblock_map: Dict[str, Tuple[List[bool], List[int]]], verbose: bool = False):
+    def __init__(self, unblock_map: dict[str, tuple[list[bool], list[int]]], verbose: bool = False):
         self._unblock_map = unblock_map
         self._verbose = verbose
 
@@ -26,7 +26,7 @@ class UnblockDimensions(ppl.Pass):
         return False
 
     # Shape / subset reconstruction
-    def _inner_slot(self, masks: List[bool], d: int) -> int:
+    def _inner_slot(self, masks: list[bool], d: int) -> int:
         """Appended-inner-dimension index for original masked dimension ``d``."""
         return len(masks) + sum(1 for m in masks[:d] if m)
 
@@ -41,7 +41,7 @@ class UnblockDimensions(ppl.Pass):
             return expr.args[0]
         return dace.symbolic.simplify(as_expr(expr) * factor)
 
-    def _unblocked_shape(self, blocked_shape, masks: List[bool], factors: List[int]) -> List:
+    def _unblocked_shape(self, blocked_shape, masks: list[bool], factors: list[int]) -> list:
         new_shape = []
         for d, m in enumerate(masks):
             if m:
@@ -51,7 +51,7 @@ class UnblockDimensions(ppl.Pass):
         return new_shape
 
     def _unblocked_subset(
-        self, subset: dace.subsets.Range, masks: List[bool], factors: List[int]
+        self, subset: dace.subsets.Range, masks: list[bool], factors: list[int]
     ) -> dace.subsets.Range:
         ranges = list(subset.ranges)
         expected = len(masks) + sum(1 for m in masks if m)
@@ -76,7 +76,7 @@ class UnblockDimensions(ppl.Pass):
         return dace.subsets.Range(new_ranges)
 
     # Descriptor / memlet / interstate rewrites (recurse into nested SDFGs)
-    def _replace_array(self, sdfg: dace.SDFG, arr_name: str, new_shape: List):
+    def _replace_array(self, sdfg: dace.SDFG, arr_name: str, new_shape: list):
         arr = sdfg.arrays[arr_name]
         datadesc = copy.deepcopy(arr)
         sdfg.remove_data(arr_name, validate=False)
@@ -110,7 +110,7 @@ class UnblockDimensions(ppl.Pass):
                         seen.add(key)
                         yield node.sdfg, conn
 
-    def _replace_array_recursive(self, sdfg: dace.SDFG, arr_name: str, new_shape: List):
+    def _replace_array_recursive(self, sdfg: dace.SDFG, arr_name: str, new_shape: list):
         self._replace_array(sdfg, arr_name, new_shape)
         for nsdfg, inner in self._nested_targets(sdfg, arr_name):
             self._replace_array_recursive(nsdfg, inner, new_shape)
@@ -162,7 +162,7 @@ class UnblockDimensions(ppl.Pass):
         for nsdfg, inner in self._nested_targets(sdfg, arr_name):
             self._replace_interstate_edges_recursive(nsdfg, inner, masks, factors)
 
-    def apply_pass(self, sdfg: dace.SDFG, pipeline_results: Dict[str, Any]) -> int:
+    def apply_pass(self, sdfg: dace.SDFG, pipeline_results: dict[str, Any]) -> int:
         for arr_name, (masks, factors) in self._unblock_map.items():
             arr = sdfg.arrays[arr_name]
             expected = len(masks) + sum(1 for m in masks if m)

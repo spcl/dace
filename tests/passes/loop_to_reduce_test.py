@@ -1151,6 +1151,7 @@ def test_interleaved_two_accumulator_lifts_both_after_loop_fission():
     independently with ``reduction(+:_priv_X)`` clauses.
     """
     import numpy as np
+
     from dace.transformation.passes.loop_fission import LoopFission
 
     sdfg = _interleaved_two_accum.to_sdfg(simplify=True)
@@ -1182,8 +1183,9 @@ def test_interleaved_dual_strided_lifts_to_two_reduce_nodes():
     expansions honor.
     """
     import numpy as np
-    from dace.transformation.passes.loop_fission import LoopFission
+
     from dace.transformation.dataflow.trivial_tasklet_elimination import TrivialTaskletElimination
+    from dace.transformation.passes.loop_fission import LoopFission
 
     sdfg = _interleaved_two_accum.to_sdfg(simplify=True)
     sdfg.validate()
@@ -1234,6 +1236,7 @@ def test_geometric_iv_handled_by_induction_pass_not_loop_to_reduce():
     must NOT recognise the IV shape.
     """
     import numpy as np
+
     from dace.transformation.passes.canonicalize.induction_variable_substitution import InductionVariableSubstitution
 
     sdfg = _array_slot_const_product.to_sdfg(simplify=True)
@@ -1294,6 +1297,7 @@ def test_wcr_scalar_refuses_scan_shape_recurrence():
     ``AugAssignToWCR`` inside ``AccumulatorCopyChainToWCR``.
     """
     import numpy as np
+
     from dace.transformation.passes.canonicalize.pipeline import _build_stages
 
     NN = dace.symbol("NN")
@@ -1398,6 +1402,7 @@ def test_scalarised_scan_writeback_into_folded_array_not_lifted():
     pinned -- with the full retarget prelude -- by ``test_wcr_scalar_refuses_scan_shape_recurrence``.
     """
     import numpy as np
+
     from dace.libraries.standard.nodes.reduce import Reduce
 
     prefer = _MATCHER_ONLY_MODE
@@ -1611,12 +1616,12 @@ def _misowned_data(sdfg: dace.SDFG):
     bad = []
     for sd in sdfg.all_sdfgs_recursive():
         for state in sd.states():
-            for n in state.data_nodes():
-                if n.data not in sd.arrays:
-                    bad.append((sd.name, state.label, n.data))
-            for e in state.edges():
-                if not e.data.is_empty() and e.data.data is not None and e.data.data not in sd.arrays:
-                    bad.append((sd.name, state.label, e.data.data))
+            bad.extend((sd.name, state.label, n.data) for n in state.data_nodes() if n.data not in sd.arrays)
+            bad.extend(
+                (sd.name, state.label, e.data.data)
+                for e in state.edges()
+                if not e.data.is_empty() and e.data.data is not None and e.data.data not in sd.arrays
+            )
     return bad
 
 

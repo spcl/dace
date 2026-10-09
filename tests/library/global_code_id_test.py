@@ -51,7 +51,7 @@ def make_sibling_region_checks() -> dace.SDFG:
 def wrapper_definitions(sdfg: dace.SDFG) -> list:
     """Names of every ``__dace_scatter_conflict_*`` function DEFINED in the device global code."""
     code = sdfg.global_code["cuda"].as_string
-    return re.findall(r"^gpuError_t (__dace_scatter_conflict_\w+)\(", code, re.M)
+    return re.findall(r"^gpuError_t (__dace_scatter_conflict_\w+)\(", code, re.MULTILINE)
 
 
 def test_checks_in_sibling_regions_get_distinct_wrappers():

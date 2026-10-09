@@ -6,9 +6,9 @@ RHSs, loop and conditional-block conditions), round-tripped through ``ast.unpars
 """
 
 import dace
+from dace.sdfg.narrowing import as_basic
 from dace.symbolic import DaceSympyPrinter
 from dace.transformation.passes.vectorization.utils.name_schemes import LaneIdScheme
-from dace.sdfg.narrowing import as_basic
 
 
 def offset_symbol_in_expression(

@@ -1,10 +1,11 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """A test for the ElementWiseArrayOperation transformation."""
 
-import dace
 import numpy as np
-from dace.transformation.dataflow import ElementWiseArrayOperation, ElementWiseArrayOperation2D
 import pytest
+
+import dace
+from dace.transformation.dataflow import ElementWiseArrayOperation, ElementWiseArrayOperation2D
 
 N = dace.symbol("N", dtype=dace.int64)
 

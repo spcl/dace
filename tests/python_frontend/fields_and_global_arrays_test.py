@@ -1,13 +1,15 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests class fields and external arrays."""
 
+from dataclasses import dataclass
+from types import SimpleNamespace
+
+import numpy as np
+import pytest
+
 import dace
 from dace.data import Array
 from dace.frontend.python.common import DaceSyntaxError
-import numpy as np
-from dataclasses import dataclass
-import pytest
-from types import SimpleNamespace
 
 
 def test_dynamic_closure():

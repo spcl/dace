@@ -6,8 +6,6 @@ cegterg's gather ``for j: idx = unconv[j]; vc[:, j] = vc[:, idx]`` solves its br
 segments skip or repeat iterations whenever ``unconv`` is not increasing.
 """
 
-from typing import Tuple
-
 import numpy as np
 import pytest
 
@@ -66,7 +64,7 @@ def test_no_loop_bound_reads_a_symbol_its_body_assigns(canonical: dace.SDFG):
     assert not offending, offending
 
 
-def trial(rng: np.random.Generator) -> Tuple[np.ndarray, int, int]:
+def trial(rng: np.random.Generator) -> tuple[np.ndarray, int, int]:
     """Indices in any order, repeats allowed: nothing but ``idx < K`` holds for them."""
     count = int(rng.integers(1, 9))
     unconv = np.zeros(8, dtype=np.int64)

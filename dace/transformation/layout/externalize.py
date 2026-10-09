@@ -3,7 +3,6 @@
 
 import math
 import re
-from typing import Dict, Optional
 
 import numpy
 
@@ -18,7 +17,7 @@ def nest_entries(state: SDFGState):
     return [n for n in state.scope_children()[None] if isinstance(n, nodes.MapEntry)]
 
 
-def externalize_nest(state: SDFGState, map_entry: Optional[nodes.MapEntry] = None, name: Optional[str] = None) -> SDFG:
+def externalize_nest(state: SDFGState, map_entry: nodes.MapEntry | None = None, name: str | None = None) -> SDFG:
     """Cut the loop nest under ``map_entry`` out of ``state`` into a standalone runnable SDFG; promotes boundary transients to non-transient inputs/outputs."""
     if map_entry is None:
         entries = nest_entries(state)
@@ -47,7 +46,7 @@ def written_array_names(ext: SDFG):
     return written
 
 
-def constant_or_none(expr, symbols: Dict[str, int]) -> Optional[int]:
+def constant_or_none(expr, symbols: dict[str, int]) -> int | None:
     """``expr`` as an int, or None when ``symbols`` does not pin it down (e.g. a map parameter)."""
     try:
         return int(dace.symbolic.evaluate(expr, symbols))
@@ -74,7 +73,7 @@ def indexes_indirectly(nsdfg: nodes.NestedSDFG) -> bool:
     return False
 
 
-def indexed_extent_bound(ext: SDFG, symbols: Dict[str, int]) -> Optional[int]:
+def indexed_extent_bound(ext: SDFG, symbols: dict[str, int]) -> int | None:
     """Smallest extent of any array an index array could subscript -- the tightest in-bounds cap for an
     integer fill; None when the nest has no such access.
 
@@ -107,14 +106,14 @@ def indexed_extent_bound(ext: SDFG, symbols: Dict[str, int]) -> Optional[int]:
 
 
 def nest_arguments(
-    ext: SDFG, symbols: Dict[str, int], provided: Optional[Dict[str, numpy.ndarray]] = None, seed: int = 0
-) -> Dict[str, numpy.ndarray]:
+    ext: SDFG, symbols: dict[str, int], provided: dict[str, numpy.ndarray] | None = None, seed: int = 0
+) -> dict[str, numpy.ndarray]:
     """Deterministic argument buffers for an externalized nest. ``provided`` arrays are copied verbatim; everything else gets a deterministic fill from ``seed`` (sorted name order)."""
     provided = provided or {}
     rng = numpy.random.default_rng(seed)
     bound = indexed_extent_bound(ext, symbols)
     integer_high = 8 if bound is None else max(1, min(8, bound))
-    args: Dict[str, numpy.ndarray] = {}
+    args: dict[str, numpy.ndarray] = {}
     for aname in sorted(ext.arrays):
         desc = ext.arrays[aname]
         if desc.transient:

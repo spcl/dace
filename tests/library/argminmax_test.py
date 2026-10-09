@@ -13,7 +13,7 @@ import numpy as np
 import pytest
 
 import dace
-from dace.libraries.standard.nodes import ArgMin, ArgMax
+from dace.libraries.standard.nodes import ArgMax, ArgMin
 from dace.libraries.standard.nodes.reduce import Reduce
 
 

@@ -28,8 +28,8 @@ import pytest
 
 import dace
 from dace.transformation.passes.vectorization.config import VectorizeConfig
-from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import TILE_NODE_TYPES, VectorizeCPUMultiDim
 from dace.transformation.passes.vectorization.enums import ISA
+from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import TILE_NODE_TYPES, VectorizeCPUMultiDim
 
 M = 64  # exact multiple of every tested width (2 / 4)
 

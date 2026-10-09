@@ -37,8 +37,8 @@ gather isolation: Pad width, Block rows, Permute ELL<->SELL).
 """
 
 import numpy
-import dace
 
+import dace
 from dace.transformation.layout.brute_force import block_candidates, permutation_candidates
 from dace.transformation.layout.pad_dimensions import PadDimensions
 

@@ -19,7 +19,7 @@ pass. The merge is only performed when it is provably value-preserving (see
 ``_merge_assignments``); anything else is left untouched.
 """
 
-from typing import Any, Dict, List, Optional, Type, Union
+from typing import Any
 
 from dace import SDFG, symbolic
 from dace.sdfg.sdfg import InterstateEdge
@@ -28,7 +28,7 @@ from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 
 
-def _merge_assignments(first: Dict[str, str], second: Dict[str, str]) -> Optional[Dict[str, str]]:
+def _merge_assignments(first: dict[str, str], second: dict[str, str]) -> dict[str, str] | None:
     """Merge the assignments of two consecutive interstate edges onto one edge.
 
     One edge's assignments run in unspecified order (validation rejects reading a symbol the same
@@ -117,10 +117,10 @@ class EmptyStateElimination(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+    def depends_on(self) -> list[type[ppl.Pass] | ppl.Pass]:
         return []
 
-    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> int | None:
         """Splice out empty boundary states until none remain.
 
         :param sdfg: The SDFG to transform in place.

@@ -30,7 +30,7 @@ AccessNode with another statement; multiple independent IV updates per body
 
 import ast
 import copy
-from typing import Any, Dict, Optional, Tuple
+from typing import Any
 
 import dace
 from dace import SDFG, dtypes, nodes, properties, symbolic
@@ -102,13 +102,13 @@ def _is_iv_eligible_tasklet(tasklet: nodes.Tasklet, state: SDFGState, loop: Loop
     return True
 
 
-def _tasklet_component(state: SDFGState, tasklet: nodes.Tasklet) -> Dict[nodes.Node, None]:
+def _tasklet_component(state: SDFGState, tasklet: nodes.Tasklet) -> dict[nodes.Node, None]:
     """BFS from ``tasklet`` over the VALUE edges of ``state``.
 
     An ordering (empty) memlet decides ORDER, never membership: following one would make an
     unrelated statement part of the IV component and fission it into the sibling loop.
     """
-    seen: Dict[nodes.Node, None] = {tasklet: None}
+    seen: dict[nodes.Node, None] = {tasklet: None}
     frontier = [tasklet]
     while frontier:
         n = frontier.pop()
@@ -131,7 +131,7 @@ def _is_copy_tasklet(t: nodes.Tasklet) -> bool:
     return code in ("__out = __inp", "__out = (__inp)")
 
 
-def _is_isolated_iv_component(state: SDFGState, tasklet: nodes.Tasklet) -> Optional[Dict[nodes.Node, None]]:
+def _is_isolated_iv_component(state: SDFGState, tasklet: nodes.Tasklet) -> dict[nodes.Node, None] | None:
     """Return the IV tasklet's component if every tasklet in it is either the
     IV tasklet itself or a pure copy (``__out = __inp``) -- otherwise ``None``.
 
@@ -152,7 +152,7 @@ def _is_isolated_iv_component(state: SDFGState, tasklet: nodes.Tasklet) -> Optio
 
 
 def _split_iv_component_to_sibling_loop(
-    loop: LoopRegion, state: SDFGState, component: Dict[nodes.Node, None], sdfg: SDFG, parent: ControlFlowRegion
+    loop: LoopRegion, state: SDFGState, component: dict[nodes.Node, None], sdfg: SDFG, parent: ControlFlowRegion
 ) -> None:
     """Move the IV component into a fresh sibling loop *before* ``loop``.
 
@@ -195,7 +195,7 @@ def _split_iv_component_to_sibling_loop(
             state.remove_node(n)
 
 
-def id_for(n: nodes.Node) -> Tuple[str, ...]:
+def id_for(n: nodes.Node) -> tuple[str, ...]:
     """A stable "structural id" for a node, so we can match deepcopy-pair nodes
     by their visible shape (label/data + type) without relying on Python ``id``.
 
@@ -227,7 +227,7 @@ class HoistInductionVariableUpdates(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def apply_pass(self, sdfg: SDFG, _: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _: dict[str, Any]) -> int | None:
         """Fission every compound-body loop in ``sdfg`` (and nested SDFGs) that
         carries an independent IV update.
 

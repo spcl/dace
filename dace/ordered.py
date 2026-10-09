@@ -1,7 +1,9 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """DaCe's ``OrderedSet``: insertion-ordered iteration, but set equality."""
 
-from typing import AbstractSet, Any, Iterable, Optional, TYPE_CHECKING, TypeGuard, TypeVar
+from collections.abc import Iterable
+from collections.abc import Set as AbstractSet
+from typing import TYPE_CHECKING, Any, TypeGuard, TypeVar
 
 from ordered_set import OrderedSet as SequenceOrderedSet
 
@@ -23,11 +25,11 @@ class OrderedSet(SequenceOrderedSet[T]):
     is ordered by nature, and code comparing against one is asking about order.
     """
 
-    def __init__(self, initial: Optional[Iterable[T]] = None) -> None:
+    def __init__(self, initial: Iterable[T] | None = None) -> None:
         # ordered_set annotates its ``None`` default as non-Optional, which flags every ``OrderedSet()``.
         super().__init__(initial)  # type: ignore[arg-type]
 
-    def __eq__(self, other: Any) -> bool:
+    def __eq__(self, other: object) -> bool:
         if isinstance(other, SequenceOrderedSet):
             return len(self) == len(other) and all(item in self for item in other)
         return super().__eq__(other)

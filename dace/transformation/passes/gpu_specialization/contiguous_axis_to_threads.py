@@ -32,22 +32,22 @@ dimension of the device-memory accesses in its body, and no outer parameter may 
 """
 
 import copy
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from dace import SDFG, Memlet, SDFGState, data, dtypes, properties, symbolic
+from dace.optionals import required
 from dace.ordered import OrderedSet
 from dace.sdfg import nodes
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.dataflow.map_collapse import MapCollapse
 from dace.transformation.helpers import redirect_edge
 from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import statically_narrower_than_warp
-from dace.optionals import required
 
 SERIAL_OR_DEVICE = (dtypes.ScheduleType.Sequential, dtypes.ScheduleType.Default, dtypes.ScheduleType.GPU_Device)
 SINKABLE_STORAGE = (dtypes.StorageType.Register, dtypes.StorageType.Default)
 
 
-def unit_stride_param(state: SDFGState, sdfg: SDFG, outer: nodes.MapEntry, inner: nodes.MapEntry) -> Optional[str]:
+def unit_stride_param(state: SDFGState, sdfg: SDFG, outer: nodes.MapEntry, inner: nodes.MapEntry) -> str | None:
     outer_params = OrderedSet(outer.map.params)
     inner_params = OrderedSet(inner.map.params)
     found = OrderedSet()
@@ -68,7 +68,7 @@ def unit_stride_param(state: SDFGState, sdfg: SDFG, outer: nodes.MapEntry, inner
 
 
 def exits_adjacent(
-    state: SDFGState, outer_exit: nodes.MapExit, inner_exit: nodes.MapExit, prologue: List[nodes.Node]
+    state: SDFGState, outer_exit: nodes.MapExit, inner_exit: nodes.MapExit, prologue: list[nodes.Node]
 ) -> bool:
     if any(e.dst is not outer_exit or e.data.wcr is not None for e in state.out_edges(inner_exit)):
         return False
@@ -98,14 +98,14 @@ def written_in_scope(state: SDFGState, outer: nodes.MapEntry) -> OrderedSet:
     return written
 
 
-def private_to(sdfg: SDFG, name: str, members: List[nodes.Node]) -> bool:
+def private_to(sdfg: SDFG, name: str, members: list[nodes.Node]) -> bool:
     for state in sdfg.states():
         if any(n.data == name and n not in members for n in state.data_nodes()):
             return False
     return all(name not in e.data.read_symbols() for e in sdfg.all_interstate_edges(recursive=True))
 
 
-def sinkable_node(sdfg: SDFG, node: nodes.Node, members: List[nodes.Node]) -> bool:
+def sinkable_node(sdfg: SDFG, node: nodes.Node, members: list[nodes.Node]) -> bool:
     if isinstance(node, nodes.Tasklet):
         return not node.has_side_effects(sdfg)
     if not isinstance(node, nodes.AccessNode):
@@ -120,7 +120,7 @@ def sinkable_node(sdfg: SDFG, node: nodes.Node, members: List[nodes.Node]) -> bo
 
 
 def sink_edges_legal(
-    state: SDFGState, node: nodes.Node, members: List[nodes.Node], ends: Tuple[nodes.Node, ...], written: OrderedSet
+    state: SDFGState, node: nodes.Node, members: list[nodes.Node], ends: tuple[nodes.Node, ...], written: OrderedSet
 ) -> bool:
     outer, inner, outer_exit = ends
     for edge in state.in_edges(node):
@@ -148,8 +148,8 @@ def sink_edges_legal(
 
 
 def sink_plan(
-    state: SDFGState, sdfg: SDFG, ends: Tuple[nodes.Node, ...], prologue: List[nodes.Node]
-) -> Optional[Tuple[List[nodes.Node], List[nodes.Node]]]:
+    state: SDFGState, sdfg: SDFG, ends: tuple[nodes.Node, ...], prologue: list[nodes.Node]
+) -> tuple[list[nodes.Node], list[nodes.Node]] | None:
     outer, inner, _ = ends
     forwarded = [n for n in prologue if forwards(state, n, outer, inner)]
     sunk = [n for n in prologue if n not in forwarded]
@@ -169,7 +169,7 @@ def rewire_forwarded(state: SDFGState, node: nodes.AccessNode, outer: nodes.MapE
     state.remove_node(node)
 
 
-def sink_node(state: SDFGState, node: nodes.Node, ends: Tuple[nodes.Node, ...], inner_exit: nodes.MapExit):
+def sink_node(state: SDFGState, node: nodes.Node, ends: tuple[nodes.Node, ...], inner_exit: nodes.MapExit):
     outer, inner, outer_exit = ends
     for edge in list(state.in_edges(node)):
         if edge.src is not outer:
@@ -254,7 +254,7 @@ class ContiguousAxisToThreads(ppl.Pass):
         collapse.apply(state, sdfg)
         return True
 
-    def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> int | None:
         """Collapse every device nest whose inner map walks the unit-stride axis.
 
         :param sdfg: the offloaded SDFG, in place.

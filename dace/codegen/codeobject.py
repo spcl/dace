@@ -1,8 +1,9 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import re
+
 import dace
 from dace import sourcemap
-from dace.properties import Property, DictProperty, SetProperty, make_properties
+from dace.properties import DictProperty, Property, SetProperty, make_properties
 
 #: Trailing provenance annotation ``CodeIOStream`` pads onto every line it writes (see
 #: :mod:`dace.codegen.prettycode`). Strip it to recover the line's own code.
@@ -10,7 +11,7 @@ CODE_ANNOTATION = re.compile(r"[ \t]*////__(DACE:|CODEGEN;)[^\n]*")
 
 
 @make_properties
-class CodeObject(object):
+class CodeObject:
     name = Property(dtype=str, category="Code Generation", desc="Filename to use")
     code = Property(dtype=str, category="Code Generation", desc="The code attached to this object")
     language = Property(
@@ -48,7 +49,7 @@ class CodeObject(object):
         environments=None,
         sdfg=None,
     ):
-        super(CodeObject, self).__init__()
+        super().__init__()
 
         self.name = name
         self.code = code

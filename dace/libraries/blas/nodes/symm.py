@@ -15,21 +15,20 @@ is a correct reference lowering, and ``MKL`` / ``OpenBLAS`` / ``cuBLAS`` /
 """
 
 from copy import deepcopy as dc
-from typing import Dict, List, Optional
 
 import dace.library
 import dace.sdfg.nodes
-from dace import SDFG, SDFGState, dtypes, memlet as mm, properties, symbolic
+from dace import SDFG, SDFGState, dtypes, properties, symbolic
+from dace import memlet as mm
 from dace.frontend.common import op_repository as oprepo
-from dace.libraries.blas import gpu_dialect
+from dace.libraries.blas import environments, gpu_dialect
 from dace.libraries.blas.blas_helpers import to_blastype
+from dace.optionals import required
+from dace.sdfg.narrowing import as_range
 from dace.symbolic import symstr
 from dace.transformation.transformation import ExpandTransformation
 
-from .. import environments
 from .rank_k_helpers import gpu_coeff_pointers, host_can_read
-from dace.optionals import required
-from dace.sdfg.narrowing import as_range
 
 
 def _symm_operands(node: "Symm", state: SDFGState, sdfg: SDFG):
@@ -64,7 +63,7 @@ class ExpandSymmPure(ExpandTransformation):
     """Reference lowering: materialize the full symmetric ``A`` from its ``uplo``
     triangle, then ``C = beta*C + alpha * (A@B | B@A)`` as a WCR contraction."""
 
-    environments: List[type] = []
+    environments: list[type] = []
 
     @staticmethod
     def expansion(node: "Symm", state: SDFGState, sdfg: SDFG) -> SDFG:
@@ -171,7 +170,7 @@ class _ExpandSymmCBLAS(ExpandTransformation):
     """CBLAS ``cblas_?symm`` (row-major): handles the DaCe row-major layout
     directly, so no operand transpose trick is needed (unlike the GPU path)."""
 
-    environments: List[type] = []
+    environments: list[type] = []
 
     @staticmethod
     def expansion(node: "Symm", state: SDFGState, sdfg: SDFG):
@@ -239,7 +238,7 @@ def _blas_inplace(node: "Symm", state: SDFGState, sdfg: SDFG, code_fn):
     inner = {"_alpha": "__alpha_in", "_beta": "__beta_in"}
     pa = inner["_alpha"] if "_alpha" in scalars else None
     pb = inner["_beta"] if "_beta" in scalars else None
-    in_conns: Dict[str, Optional[dtypes.typeclass]] = {"__a": None, "__b": None}
+    in_conns: dict[str, dtypes.typeclass | None] = {"__a": None, "__b": None}
     if reads_c:
         in_conns["__cin"] = None
     # A device-resident coefficient reaches the call as a POINTER: a scalar connector would be
@@ -278,7 +277,7 @@ class _ExpandSymmGPUBLAS(ExpandTransformation):
 
     dialect: gpu_dialect.GpuBlasDialect
 
-    environments: List[type] = []
+    environments: list[type] = []
     backend = "cu"
 
     @classmethod

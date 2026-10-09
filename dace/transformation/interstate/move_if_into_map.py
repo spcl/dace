@@ -8,20 +8,20 @@ cross the conditional block.
 """
 
 import copy
-from typing import Dict, List, Optional, Set, Tuple
 
-from dace import dtypes, memlet as mm, symbolic
+from dace import dtypes, symbolic
+from dace import memlet as mm
 from dace import sdfg as sd
+from dace.optionals import required
+from dace.ordered import OrderedSet
 from dace.properties import CodeBlock
 from dace.sdfg import utils as sdutil
-from dace.sdfg.nodes import MapEntry, MapExit, NestedSDFG, AccessNode, Tasklet
+from dace.sdfg.graph import SubgraphView
+from dace.sdfg.nodes import AccessNode, MapEntry, MapExit, NestedSDFG, Tasklet
 from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, SDFGState
-from dace.sdfg.graph import SubgraphView
-from dace.transformation import transformation
 from dace.transformation import helpers as xfh
-from dace.ordered import OrderedSet
-from dace.optionals import required
+from dace.transformation import transformation
 
 
 @transformation.explicit_cf_compatible
@@ -84,7 +84,7 @@ class MoveIfIntoMap(transformation.MultiStateTransformation):
         return [sdutil.node_path_graph(cls.cond_block)]
 
     @staticmethod
-    def _single_meaningful_state(region: ControlFlowRegion) -> Optional[SDFGState]:
+    def _single_meaningful_state(region: ControlFlowRegion) -> SDFGState | None:
         """Returns the single non-empty ``SDFGState`` inside a region.
 
         :param region: The control-flow region to inspect.
@@ -103,7 +103,7 @@ class MoveIfIntoMap(transformation.MultiStateTransformation):
         return non_empty[0]
 
     @staticmethod
-    def _find_all_inner_map_pieces(branch_state: SDFGState) -> Optional[List[Tuple[MapEntry, MapExit, NestedSDFG]]]:
+    def _find_all_inner_map_pieces(branch_state: SDFGState) -> list[tuple[MapEntry, MapExit, NestedSDFG]] | None:
         """Returns the list of ``(map_entry, map_exit, inner_nsdfg)`` tuples for
         every top-level map in ``branch_state``.
 
@@ -122,7 +122,7 @@ class MoveIfIntoMap(transformation.MultiStateTransformation):
             return None
 
         map_pairs = [(me, branch_state.exit_node(me)) for me in map_entries]
-        scope_nodes: Set = set()
+        scope_nodes: set = set()
         for me, mx in map_pairs:
             scope_nodes.add(me)
             scope_nodes.add(mx)
@@ -136,7 +136,7 @@ class MoveIfIntoMap(transformation.MultiStateTransformation):
                 continue
             return None
 
-        pieces: List[Tuple[MapEntry, MapExit, NestedSDFG]] = []
+        pieces: list[tuple[MapEntry, MapExit, NestedSDFG]] = []
         for map_entry, map_exit in map_pairs:
             body = list(branch_state.all_nodes_between(map_entry, required(map_exit)))
             nsdfgs = [n for n in body if isinstance(n, NestedSDFG)]
@@ -178,7 +178,7 @@ class MoveIfIntoMap(transformation.MultiStateTransformation):
         # transformation would raise having already changed the graph.
         if any(branch_state.entry_node(me) is not None for me in map_entries):
             return False
-        scope_nodes: Set = set()
+        scope_nodes: set = set()
         for me in map_entries:
             scope_nodes.add(me)
             scope_nodes.add(branch_state.exit_node(me))
@@ -285,7 +285,7 @@ class MoveIfIntoMap(transformation.MultiStateTransformation):
         # so the last one seen wins -- while every edge's copy is deleted. Both
         # predecessors would then evaluate the guard with whichever definition
         # the iteration order happened to land on. Silently wrong; refuse.
-        guard_defs: Dict[str, int] = {}
+        guard_defs: dict[str, int] = {}
         for e in enclosing_sdfg.in_edges(cond_block):
             for lhs in e.data.assignments:
                 if lhs in cond_syms:
@@ -314,9 +314,9 @@ class MoveIfIntoMap(transformation.MultiStateTransformation):
         branch_cond: CodeBlock,
         enclosing_sdfg: sd.SDFG,
         inner_nsdfg: NestedSDFG,
-        cond_free_syms: Set[str],
-        moved_assignments: Dict[str, str],
-    ) -> Set[str]:
+        cond_free_syms: set[str],
+        moved_assignments: dict[str, str],
+    ) -> set[str]:
         """Wraps the body of one inner NestedSDFG in a copy of the moved
         condition and threads in the symbols/arrays it needs.
 
@@ -342,13 +342,13 @@ class MoveIfIntoMap(transformation.MultiStateTransformation):
         # Identify arrays referenced by the moved assignments -- they must
         # be piped as inputs into the inner NSDFG so the moved-inside
         # assignments can still evaluate.
-        arrays_to_pipe: Set[str] = set()
+        arrays_to_pipe: set[str] = set()
         for sym, rhs in moved_assignments.items():
             tmp_edge = InterstateEdge(assignments={sym: rhs})
             for mmlt in tmp_edge.get_read_memlets(enclosing_sdfg.arrays):
                 arrays_to_pipe.add(mmlt.data)
 
-        piped_array_shape_syms: Set[str] = set()
+        piped_array_shape_syms: set[str] = set()
         for arr_name in arrays_to_pipe:
             if arr_name not in inner_sdfg.arrays:
                 desc = copy.deepcopy(enclosing_sdfg.arrays[arr_name])
@@ -361,7 +361,7 @@ class MoveIfIntoMap(transformation.MultiStateTransformation):
         # Pipe free symbols that the condition and moved RHS expressions
         # reference. Skip any names that now live as data descriptors OR
         # that are themselves defined inside (LHS of a moved assignment).
-        syms_needed: Set[str] = set(cond_free_syms)
+        syms_needed: set[str] = set(cond_free_syms)
         for rhs in moved_assignments.values():
             try:
                 for s in symbolic.pystr_to_symbolic(rhs).free_symbols:
@@ -437,7 +437,7 @@ class MoveIfIntoMap(transformation.MultiStateTransformation):
         # (they would otherwise add an always-true pre-state to the outer
         # map body, blocking collapse).
         in_edges = list(enclosing_sdfg.in_edges(cond_block))
-        moved_assignments: Dict[str, str] = {}
+        moved_assignments: dict[str, str] = {}
         for e in in_edges:
             for k in list(e.data.assignments.keys()):
                 if k in cond_free_syms:
@@ -447,7 +447,7 @@ class MoveIfIntoMap(transformation.MultiStateTransformation):
         # Wrap each sibling map's inner body with its own copy of the guard.
         # All siblings share the identical condition and moved assignments;
         # the union of arrays that needed piping is rewired below.
-        arrays_to_pipe: Set[str] = set()
+        arrays_to_pipe: set[str] = set()
         for _, _, inner_nsdfg in required(all_pieces):
             arrays_to_pipe |= self._rewrite_inner_sdfg(
                 cond_block, branch_cond, enclosing_sdfg, inner_nsdfg, cond_free_syms, moved_assignments

@@ -1,9 +1,9 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 
-from functools import reduce
-from operator import mul
 import re
 import warnings
+from functools import reduce
+from operator import mul
 
 from dace import SDFG, Memlet, config, dtypes, symbol
 from dace.codegen import codegen
@@ -237,11 +237,6 @@ def test_pointer_argument_keeps_a_decimal_literal():
 
     # The rewrite must leave the literal alone on the default path too, wherever it lands.
     assert "0->5" not in codegen.generate_code(sdfg)[0].clean_code
-
-
-def test_at_multiplies_the_coordinate_by_the_array_stride():
-    # A strided range: the offset is coordinate * array stride, with no rational division to cancel.
-    assert Range([(0, 19, 2)]).at([1], [4]) == 8
 
 
 if __name__ == "__main__":

@@ -18,9 +18,9 @@ canonicalize pipeline rely on:
 
 import copy
 
-import dace
 import numpy as np
 
+import dace
 from dace import Memlet, dtypes
 from dace.sdfg import SDFG, nodes
 from dace.sdfg.state import LoopRegion

@@ -2,7 +2,6 @@
 """Tests wall-clock instrumentation of an SDFG with a steady-clock timer."""
 
 import time
-from typing import Tuple
 
 import numpy as np
 
@@ -30,7 +29,7 @@ def instrument(prog: dace.frontend.python.parser.DaceProgram) -> dace.SDFG:
     return sdfg
 
 
-def run(sdfg: dace.SDFG, a: np.ndarray, out: np.ndarray) -> Tuple[int, int]:
+def run(sdfg: dace.SDFG, a: np.ndarray, out: np.ndarray) -> tuple[int, int]:
     """Run the instrumented ``sdfg`` and return its own measurement next to one taken around the call."""
     ns = np.zeros(1, dtype=np.int64)
     csdfg = sdfg.compile()  # compiling inside the timed window would swamp the comparison

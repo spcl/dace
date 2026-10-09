@@ -10,9 +10,9 @@ These tests build the tasklet shapes imperatively (no JSON fallback)
 and pin exactly what is and is not recognised.
 """
 
-import dace
 import pytest
 
+import dace
 from dace.transformation.passes.vectorization.utils.reductions import (
     ReductionInfo,
     recognize_reduction,

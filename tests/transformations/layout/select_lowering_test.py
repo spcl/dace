@@ -11,16 +11,16 @@ right gates, an explicit choice is preserved, and a bad device is rejected."""
 
 import numpy
 import pytest
-import dace
 
+import dace
+from dace.libraries.blas.nodes.gemm import Gemm
+from dace.libraries.layout.layout_change import LayoutChange
+from dace.libraries.linalg import TensorDot, TensorTranspose
 from dace.transformation.layout import select_lowering
-from dace.transformation.layout.rewrite_libnodes import GemmToTensorDot, RewriteCopyForLayout
-from dace.transformation.layout.select_lowering import select_layout_lowering
 from dace.transformation.layout.permute_dimensions import PermuteDimensions
 from dace.transformation.layout.prepare import prepare_for_layout
-from dace.libraries.blas.nodes.gemm import Gemm
-from dace.libraries.linalg import TensorTranspose, TensorDot
-from dace.libraries.layout.layout_change import LayoutChange
+from dace.transformation.layout.rewrite_libnodes import GemmToTensorDot, RewriteCopyForLayout
+from dace.transformation.layout.select_lowering import select_layout_lowering
 
 M, Nn = 6, 4
 

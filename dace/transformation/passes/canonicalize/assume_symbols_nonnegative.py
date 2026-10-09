@@ -37,21 +37,22 @@ no data outputs (the same drop that silently removed scatter guards before they
 were marked side-effecting).
 """
 
-from typing import Any, Collection, Dict, List, Optional, Set
+from collections.abc import Collection
+from typing import Any
 
 import sympy
 
 from dace import SDFG, dtypes, symbolic
 from dace.sdfg import SDFGState, nodes
 from dace.sdfg import tasklet_utils as tutil
+from dace.sdfg.narrowing import as_basic, as_expr
+from dace.sdfg.state import ControlFlowBlock
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 from dace.transformation.passes.canonicalize.tracked_assumptions import tracked_assumptions
-from dace.sdfg.state import ControlFlowBlock
-from dace.sdfg.narrowing import as_basic, as_expr
 
 
-def names_still_plain(sdfg: SDFG, positive: Collection[str] = ()) -> Dict[str, None]:
+def names_still_plain(sdfg: SDFG, positive: Collection[str] = ()) -> dict[str, None]:
     """Names that occur SOMEWHERE in ``sdfg`` as a symbol WITHOUT ``nonnegative=True``, or, for a name in
     ``positive``, without ``positive=True``.
 
@@ -79,10 +80,10 @@ def names_still_plain(sdfg: SDFG, positive: Collection[str] = ()) -> Dict[str, N
     )
 
 
-def sized_symbols(sdfg: SDFG) -> List[sympy.Symbol]:
+def sized_symbols(sdfg: SDFG) -> list[sympy.Symbol]:
     """Every symbol in the sympy-typed properties ``replace_dict`` threads the assumption into:
     descriptor extents, map ranges, memlet subsets and volumes (one level of ``sdfg``)."""
-    found: List[sympy.Symbol] = []
+    found: list[sympy.Symbol] = []
 
     def scan(*exprs: object) -> None:
         for expr in exprs:
@@ -109,7 +110,7 @@ def passed_through(node: nodes.NestedSDFG, name: str) -> bool:
     return value is not None and str(value) == name
 
 
-def set_symbol_nonnegative_assumptions(sdfg: SDFG) -> Optional[int]:
+def set_symbol_nonnegative_assumptions(sdfg: SDFG) -> int | None:
     """Set the SymPy ``nonnegative=True`` assumption on every signed-integer argument symbol of
     ``sdfg`` (and its nested SDFGs), in place.
 
@@ -134,7 +135,7 @@ def set_symbol_nonnegative_assumptions(sdfg: SDFG) -> Optional[int]:
     # same-name symbol through its mapping, and No-View compares its connector descriptors with the parent's
     # by sympy equality, so it may mark such a name only when the parent marks it too: a loop iterator or map
     # parameter of the parent is not a free symbol there and stays plain.
-    marked: Dict[SDFG, Set[str]] = {}
+    marked: dict[SDFG, set[str]] = {}
     for g in sdfg.all_sdfgs_recursive():
         repl = {}
         plain = names_still_plain(g, positive)
@@ -182,7 +183,7 @@ class SetSymbolNonnegativeAssumptions(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> int | None:
         return set_symbol_nonnegative_assumptions(sdfg)
 
 
@@ -193,7 +194,7 @@ GUARD_STATE_LABEL = "_assume_nonneg_syms"
 #: Symbols with these dtypes can be negative and so are worth guarding. Unsigned
 #: integer symbols are nonnegative by construction; float symbols are not part
 #: of the offset/size nonnegativity contract.
-SIGNED_INTEGER_DTYPES: Dict[dtypes.typeclass, None] = dict.fromkeys(
+SIGNED_INTEGER_DTYPES: dict[dtypes.typeclass, None] = dict.fromkeys(
     [dtypes.int8, dtypes.int16, dtypes.int32, dtypes.int64]
 )
 
@@ -219,7 +220,7 @@ class AssumeSymbolConstraints(ppl.Pass):
         # Single-shot: the emitted-trap dedup below makes a re-run a no-op anyway.
         return False
 
-    def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> int | None:
         # Set the compile-time nonnegativity assumption on the symbols (so a downstream proof
         # sees ``s >= 0``) AND emit the runtime trap that checks it. Both halves of the same
         # contract; the guard makes the assumption sound rather than merely asserted.
@@ -241,7 +242,7 @@ def is_assumption_guard_block(block: ControlFlowBlock) -> bool:
     return isinstance(block, SDFGState) and block.label == GUARD_STATE_LABEL
 
 
-def _signed_integer_free_symbols(sdfg: SDFG) -> List[str]:
+def _signed_integer_free_symbols(sdfg: SDFG) -> list[str]:
     """Sorted names of the SDFG's signed-integer argument symbols that canonicalization assumed
     nonnegative.
 
@@ -261,7 +262,7 @@ def _signed_integer_free_symbols(sdfg: SDFG) -> List[str]:
     return sorted(s for s in args if sdfg.symbols.get(s) in SIGNED_INTEGER_DTYPES and s in sized)
 
 
-def sized_names(sdfg: SDFG) -> Set[str]:
+def sized_names(sdfg: SDFG) -> set[str]:
     """Names of :func:`sized_symbols` in ``sdfg``, plus the outer names a nested SDFG's sized
     symbols are bound to through its ``symbol_mapping``."""
     names = {str(s) for s in sized_symbols(sdfg)}
@@ -272,7 +273,7 @@ def sized_names(sdfg: SDFG) -> Set[str]:
     return names
 
 
-def collect_assumptions(sdfg: SDFG) -> List[symbolic.SymbolicType]:
+def collect_assumptions(sdfg: SDFG) -> list[symbolic.SymbolicType]:
     """The full list of relations that must hold at runtime for the SDFG to be
     correct, deduped and ordered for a stable guard.
 
@@ -290,7 +291,7 @@ def collect_assumptions(sdfg: SDFG) -> List[symbolic.SymbolicType]:
       assumption here, so only genuine no-fallback preconditions reach the trap.
     """
     free = dict.fromkeys(sdfg.used_symbols(all_symbols=False))
-    assumptions: List = [as_expr(symbolic.pystr_to_symbolic(s)) >= 0 for s in _signed_integer_free_symbols(sdfg)]
+    assumptions: list = [as_expr(symbolic.pystr_to_symbolic(s)) >= 0 for s in _signed_integer_free_symbols(sdfg)]
     for relation in tracked_assumptions(sdfg):
         if all(s.name in free for s in as_basic(relation).free_symbols) and relation not in assumptions:
             assumptions.append(relation)
@@ -315,7 +316,7 @@ def lead_with_assumption_guard(sdfg: SDFG) -> bool:
     return True
 
 
-def insert_assumption_guards(sdfg: SDFG) -> Optional[int]:
+def insert_assumption_guards(sdfg: SDFG) -> int | None:
     """Prepend one guard state whose tasklets trap on any violated assumption;
     return ``1`` if emitted or repositioned, else ``None``.
 

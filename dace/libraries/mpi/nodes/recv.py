@@ -2,10 +2,10 @@
 import dace.library
 import dace.properties
 import dace.sdfg.nodes
-from dace.transformation.transformation import ExpandTransformation
-from .. import environments
-from dace.libraries.mpi.nodes.node import MPINode, resolve_comm, validate_integer_descriptor, expanded_input_connectors
+from dace.libraries.mpi import environments
+from dace.libraries.mpi.nodes.node import MPINode, expanded_input_connectors, resolve_comm, validate_integer_descriptor
 from dace.ordered import OrderedSet
+from dace.transformation.transformation import ExpandTransformation
 
 
 @dace.library.expansion
@@ -35,7 +35,7 @@ class ExpandRecvMPI(ExpandTransformation):
         comm = resolve_comm(node, parent_state)
         code += f"MPI_Recv(_buffer, {count_str}, {mpi_dtype_str}, int(_src), int(_tag), {comm}, MPI_STATUS_IGNORE);"
         if ddt is not None:
-            code += f"""// MPI_Type_free(&newtype);
+            code += """// MPI_Type_free(&newtype);
             """
         tasklet = dace.sdfg.nodes.Tasklet(
             node.name,

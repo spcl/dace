@@ -3,8 +3,8 @@
 
 import copy
 import itertools
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Callable, Dict, List, Optional
 
 import numpy
 
@@ -22,11 +22,11 @@ IDENTITY_TAG = "identity"
 MAX_PERMUTE_NDIM = 3
 
 
-def default_permutation_candidates(ext: SDFG) -> Dict[str, Callable[[SDFG], None]]:
+def default_permutation_candidates(ext: SDFG) -> dict[str, Callable[[SDFG], None]]:
     """Wrap-mode permutation family: identity first, then every non-identity dimension permutation of each >=2-D non-transient array."""
     from dace.transformation.layout.permute_dimensions import PermuteDimensions
 
-    candidates: Dict[str, Callable[[SDFG], None]] = {IDENTITY_TAG: lambda sdfg: None}
+    candidates: dict[str, Callable[[SDFG], None]] = {IDENTITY_TAG: lambda sdfg: None}
     for aname in sorted(ext.arrays):
         desc = ext.arrays[aname]
         if desc.transient or len(desc.shape) < 2:
@@ -55,34 +55,34 @@ class NestEvaluation:
     """One nest's evaluated candidate sweep: externalized baseline, reference outputs, arguments, and ranked results."""
 
     ext: SDFG
-    reference: Dict[str, numpy.ndarray]
-    arguments: Dict[str, numpy.ndarray]
-    symbols: Dict[str, int]
-    results: List[SweepResult] = field(default_factory=list)
+    reference: dict[str, numpy.ndarray]
+    arguments: dict[str, numpy.ndarray]
+    symbols: dict[str, int]
+    results: list[SweepResult] = field(default_factory=list)
 
-    def best(self) -> Optional[SweepResult]:
+    def best(self) -> SweepResult | None:
         """Fastest correct candidate, or None if none verified."""
         return best(self.results)
 
 
-def call_symbols(ext: SDFG, symbols: Dict[str, int]) -> Dict[str, int]:
+def call_symbols(ext: SDFG, symbols: dict[str, int]) -> dict[str, int]:
     """Subset of `symbols` the externalized nest actually declares (SDFG calls refuse unknown kwargs)."""
     return {name: value for name, value in symbols.items() if name in ext.symbols}
 
 
 def evaluate_nest(
     state: SDFGState,
-    map_entry: Optional[nodes.MapEntry] = None,
+    map_entry: nodes.MapEntry | None = None,
     *,
-    symbols: Dict[str, int],
-    provided: Optional[Dict[str, numpy.ndarray]] = None,
-    candidates: Optional[Dict[str, Callable[[SDFG], None]]] = None,
+    symbols: dict[str, int],
+    provided: dict[str, numpy.ndarray] | None = None,
+    candidates: dict[str, Callable[[SDFG], None]] | None = None,
     device: str = "cpu",
     reps: int = 10,
     warmup: int = 2,
-    timer: Optional[Callable] = compute_region_stats_timer,
+    timer: Callable | None = compute_region_stats_timer,
     seed: int = 0,
-    name: Optional[str] = None,
+    name: str | None = None,
 ) -> NestEvaluation:
     """Externalize the nest under `map_entry` and rank its layout candidates by measured time against a reference run."""
     ext = externalize_nest(state, map_entry, name=name)
@@ -118,7 +118,7 @@ def evaluate_nest(
 
         return make
 
-    def run(sdfg: SDFG) -> Dict[str, numpy.ndarray]:
+    def run(sdfg: SDFG) -> dict[str, numpy.ndarray]:
         run_args = {k: v.copy() for k, v in args.items()}
         sdfg(**run_args, **syms)
         return {out: run_args[out] for out in sorted(written)}

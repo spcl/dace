@@ -2,15 +2,15 @@
 """NormalizeScheduleForLayout -- re-tile each top-level map to the block width its operands are laid out with, so the inner ``Mod(i, b)`` offset iterates contiguously. Run after applying a layout."""
 
 from dataclasses import dataclass
-from typing import Any, Dict, Optional
+from typing import Any
 
 import sympy
 
 import dace
+from dace.sdfg.narrowing import as_expr
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.dataflow.tiling import MapTiling
 from dace.transformation.layout.block_aware_map_tiling import provably_indivisible
-from dace.sdfg.narrowing import as_expr
 
 
 @dataclass
@@ -29,10 +29,10 @@ class NormalizeScheduleForLayout(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def _block_width(self, state, me) -> Optional[Dict[str, int]]:
+    def _block_width(self, state, me) -> dict[str, int] | None:
         """Per-parameter inner block width of ``me``, or ``None`` unless every parameter has one."""
         param_syms = {p: dace.symbolic.pystr_to_symbolic(p) for p in me.map.params}
-        widths: Dict[str, set] = {}
+        widths: dict[str, set] = {}
         for edge in state.scope_subgraph(me).edges():
             if edge.data is None or edge.data.subset is None:
                 continue
@@ -51,14 +51,14 @@ class NormalizeScheduleForLayout(ppl.Pass):
             return None
         return {p: next(iter(bs)) for p, bs in widths.items()}
 
-    def _already_tiled(self, me, widths: Dict[str, int]) -> bool:
+    def _already_tiled(self, me, widths: dict[str, int]) -> bool:
         """True if some parameter already iterates exactly a ``0:b`` block tile (idempotence)."""
         for (b, e, s), p in zip(me.map.range.ranges, me.map.params):
             if str(dace.symbolic.simplify(e - (widths[p] - 1))) == "0" and str(b) == "0" and str(s) == "1":
                 return True
         return False
 
-    def apply_pass(self, sdfg: dace.SDFG, pipeline_results: Dict[str, Any]) -> int:
+    def apply_pass(self, sdfg: dace.SDFG, pipeline_results: dict[str, Any]) -> int:
         count = 0
         for state in sdfg.states():
             scope = state.scope_dict()

@@ -2,13 +2,12 @@
 """What a layout change costs, and when it pays for itself: insert iff uses * (t_nest(L0) - t_nest(L1)) > t_relayout."""
 
 import math
-from typing import Optional
 
 import sympy as sp
 
 from dace import data
-from dace.transformation.layout.cost_model.loggp import LogGP, achievable_rate, nest_memory_time
 from dace.sdfg.narrowing import as_expr
+from dace.transformation.layout.cost_model.loggp import LogGP, achievable_rate, nest_memory_time
 
 
 def array_bytes(desc: data.Array) -> sp.Basic:
@@ -46,7 +45,7 @@ def max_layout_delta(desc: data.Array, p: LogGP, written: bool = False) -> sp.Ba
     return as_expr(array_bytes(desc)) * worst / achievable_rate(p, float("inf"))  # saturated scope
 
 
-def break_even_uses(t_nest_before: sp.Basic, t_nest_after: sp.Basic, t_relayout: sp.Basic) -> Optional[int]:
+def break_even_uses(t_nest_before: sp.Basic, t_nest_after: sp.Basic, t_relayout: sp.Basic) -> int | None:
     """Uses needed before the relayout pays for itself; None if the new layout is not faster."""
     delta = sp.simplify(as_expr(sp.sympify(t_nest_before)) - as_expr(sp.sympify(t_nest_after)))
     relayout = sp.sympify(t_relayout)
@@ -99,7 +98,7 @@ def relayout_pays_by_efficiency(
     return passes * (1.0 / eps_before - 1.0 / eps_after) >= 2.0 + overhead_passes
 
 
-def break_even_passes(eps_before: float, eps_after: float, overhead_passes: float = 0.0) -> Optional[int]:
+def break_even_passes(eps_before: float, eps_after: float, overhead_passes: float = 0.0) -> int | None:
     """Passes over the array before a relayout pays for itself; None if the new layout is not better."""
     if not (0 < eps_before <= 1) or not (0 < eps_after <= 1):
         raise ValueError(f"efficiencies must lie in (0, 1]; got before={eps_before}, after={eps_after}")

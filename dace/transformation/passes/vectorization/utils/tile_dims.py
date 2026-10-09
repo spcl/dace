@@ -17,8 +17,8 @@ from enum import Enum
 import sympy
 
 from dace import subsets, symbolic
-from dace.symbolic import equalize_symbols_across, pystr_to_symbolic
 from dace.sdfg.narrowing import as_expr
+from dace.symbolic import equalize_symbols_across, pystr_to_symbolic
 
 
 @dataclass(frozen=True, slots=True)

@@ -31,11 +31,11 @@ import dace
 from dace import memlet as mm
 from dace.codegen.exceptions import CompilationError
 from dace.libraries.standard.nodes.scan import (
-    Scan,
-    ScanOp,
+    INIT_CONNECTOR_NAME,
     INPUT_CONNECTOR_NAME,
     OUTPUT_CONNECTOR_NAME,
-    INIT_CONNECTOR_NAME,
+    Scan,
+    ScanOp,
 )
 
 _LOWP = (dace.float16, dace.bfloat16)

@@ -1,8 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Reproducers: a Python loop over an int64 size symbol whose iterator bounds a slice of an array operation."""
 
-from typing import List
-
 import numpy as np
 
 import dace
@@ -35,8 +33,8 @@ def backward_row_suffix(A: dace.float64[N, N], x: dace.float64[N]):
         A[i, i + 1 :] = A[i, i + 1 :] + x[i + 1 :]
 
 
-def iterator_dtypes(sdfg: dace.SDFG, name: str) -> List[dace.typeclass]:
-    found: List[dace.typeclass] = []
+def iterator_dtypes(sdfg: dace.SDFG, name: str) -> list[dace.typeclass]:
+    found: list[dace.typeclass] = []
     for sub in sdfg.all_sdfgs_recursive():
         for state in sub.states():
             for edge in state.edges():

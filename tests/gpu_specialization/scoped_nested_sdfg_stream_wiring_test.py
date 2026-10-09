@@ -3,7 +3,6 @@
 global access node past the entry would leave the graph without a scope path and ``scope_dict`` would refuse it."""
 
 import dace
-
 from dace.transformation.passes.gpu_specialization.gpu_specialization_pipeline import GPUStreamPipeline
 from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (
     STREAM_CONNECTOR,

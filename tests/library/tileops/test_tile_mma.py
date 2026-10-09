@@ -14,10 +14,10 @@ Tests cover:
   connector).
 """
 
-import dace
 import numpy as np
 import pytest
 
+import dace
 from dace.libraries.tileops import TileMMA
 
 

@@ -58,11 +58,11 @@ Setting the threshold to 0 turns rule 2 off, leaving only the nested-parallelism
 lever for measuring the cost model itself.
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any
 
-from dace.sdfg.narrowing import config_int
 from dace import SDFG, dtypes, properties, symbolic
 from dace.sdfg import nodes
+from dace.sdfg.narrowing import config_int
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
 
@@ -96,7 +96,7 @@ class SequentializeUnprofitableParallelScopes(ppl.Pass):
     def depends_on(self):
         return set()
 
-    def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> int | None:
         """Sequentialize the parallel scopes that do not pay for their fork/join.
 
         :param sdfg: the SDFG to specialize, in place.
@@ -109,14 +109,14 @@ class SequentializeUnprofitableParallelScopes(ppl.Pass):
         # Parameter names per SDFG: what no call can change midway, so a count written in them is
         # the one a compile-time verdict may rule on. Built once per SDFG, never rebuilt -- this
         # pass only rewrites schedules.
-        self.params: Dict[int, frozenset] = {}
+        self.params: dict[int, frozenset] = {}
         # One pass's worth of enclosing-loop trip-count verdicts: this pass never mutates a
         # LoopRegion's bounds, so a verdict computed under one scope stays valid for a sibling
         # transfer under the same loop.
-        self.loop_cache: Dict[int, bool] = {}
+        self.loop_cache: dict[int, bool] = {}
         # Trip count -> ``ask('negative', count - threshold)``. Maps share a handful of trip counts
         # (cloudsc: 2264 queries, 16 distinct), and each query is a sympy SAT problem.
-        self.below_threshold: Dict[Any, Optional[bool]] = {}
+        self.below_threshold: dict[Any, bool | None] = {}
         self.visit_region(sdfg, False)
         return (self.pinned + self.guarded) or None
 
@@ -142,8 +142,8 @@ class SequentializeUnprofitableParallelScopes(ppl.Pass):
     def visit_scope(
         self,
         state: SDFGState,
-        children: Dict[Any, List[nodes.Node]],
-        entry: Optional[nodes.MapEntry],
+        children: dict[Any, list[nodes.Node]],
+        entry: nodes.MapEntry | None,
         in_parallel: bool,
     ) -> None:
         """Decide the nodes directly inside one scope, then descend into their scopes.
@@ -192,7 +192,7 @@ class SequentializeUnprofitableParallelScopes(ppl.Pass):
             self.params[sdfg.cfg_id] = cached
         return cached
 
-    def fewer_than_threshold(self, count) -> Optional[bool]:
+    def fewer_than_threshold(self, count) -> bool | None:
         """Whether a trip count provably falls short of the break-even work (three-valued).
 
         :param count: the map's own iteration count, constant or symbolic.

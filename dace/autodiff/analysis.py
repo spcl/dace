@@ -3,14 +3,13 @@
 Analysis helpers for autodiff
 """
 
-from typing import Optional
 import collections
 
 from dace import graphlib as nx
-
-from dace.sdfg import SDFG, SDFGState, nodes, utils as sdfg_utils
-from dace.transformation.passes import analysis
+from dace.sdfg import SDFG, SDFGState, nodes
+from dace.sdfg import utils as sdfg_utils
 from dace.sdfg.state import FunctionCallRegion
+from dace.transformation.passes import analysis
 
 AccessSets = dict[SDFGState, tuple[set[str], set[str]]]
 
@@ -40,7 +39,7 @@ def dependency_analysis(sdfg: SDFG) -> dict[str, set[str]]:
     dependencies = nx.transitive_closure(dependencies)
     result = {}
     for array in dependencies:
-        result[array] = {nbr for nbr in dependencies.neighbors(array)}
+        result[array] = set(dependencies.neighbors(array))
     return result
 
 
@@ -58,7 +57,7 @@ def inverse_reachability(sdfg: SDFG) -> dict[SDFGState, set[SDFGState]]:
 
 
 def is_previously_written(
-    sdfg: SDFG, state: SDFGState, node: nodes.Node, array_name: str, access_sets: Optional[AccessSets] = None
+    sdfg: SDFG, state: SDFGState, node: nodes.Node, array_name: str, access_sets: AccessSets | None = None
 ) -> bool:
     """
     Determine whether the given array name was written before the current node.

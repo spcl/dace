@@ -1,10 +1,11 @@
-import numpy as np
 import argparse
-import scipy
-import dace
-from dace.memlet import Memlet
 
-import dace.libraries.blas as blas
+import numpy as np
+import scipy
+
+import dace
+from dace.libraries import blas
+from dace.memlet import Memlet
 
 
 def pure_graph(dtype, transposed, expansion, veclen, alpha, beta, expansion_args=None):

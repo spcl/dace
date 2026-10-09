@@ -23,8 +23,8 @@ through the transient ``tmp`` instead of writing two independent outputs.
 """
 
 import numpy
-import dace
 
+import dace
 from dace.transformation.layout.brute_force import permutation_candidates
 
 M, N = dace.symbol("M"), dace.symbol("N")

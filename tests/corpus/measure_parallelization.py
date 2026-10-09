@@ -44,9 +44,16 @@ import copy
 import csv
 import functools
 import time
-from typing import Callable, Dict, List, Tuple
+from collections.abc import Callable
 
 import dace
+from dace import dtypes
+from dace.libraries.standard.nodes import Reduce
+from dace.libraries.standard.nodes.scan import Scan
+from dace.sdfg import nodes as nd
+from dace.sdfg.state import ConditionalBlock, LoopRegion
+from dace.transformation.auto.auto_optimize import auto_optimize
+from dace.transformation.interstate import LoopToMap
 
 # Import canonicalize FIRST -- it is the clean entry that fully loads the
 # passes.vectorization + interstate packages in the right order. Importing
@@ -60,14 +67,6 @@ from dace.transformation.passes.parallelize import parallelize
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.enums import ISA
 from dace.transformation.passes.vectorization.vectorize_multi_dim import VectorizeCPUMultiDim
-from dace.transformation.auto.auto_optimize import auto_optimize
-from dace.libraries.standard.nodes import Reduce
-from dace.libraries.standard.nodes.scan import Scan
-from dace import dtypes
-from dace.sdfg import nodes as nd
-from dace.sdfg.state import ConditionalBlock, LoopRegion
-from dace.transformation.interstate import LoopToMap
-
 from tests.corpus import corpus_suite as _CS
 from tests.corpus.npbench import npbench as _NB
 from tests.corpus.polybench import polybench as _PB
@@ -87,7 +86,7 @@ from tests.corpus.tsvc_2_5 import tsvc_2_5 as _T25
 # argmax and early-exit kernels exist to test index capture, and their index went unchecked.
 
 
-def cpu_params(peel_limit: int = 4, reconstruct_wavefront_nest: bool = False) -> Dict:
+def cpu_params(peel_limit: int = 4, reconstruct_wavefront_nest: bool = False) -> dict:
     return dict(
         target="cpu",
         peel_limit=peel_limit,
@@ -132,7 +131,7 @@ def in_parallel_scope(loop: LoopRegion) -> bool:
     return False
 
 
-def count(sdfg) -> List[int]:
+def count(sdfg) -> list[int]:
     """``[loops, maps, reduces, scans, libnodes, states, guards]`` structural counts.
 
     ``states`` tracks the standing invariant that an SDFG carries as few states as
@@ -213,7 +212,7 @@ def guarded_fallback_loops(sdfg) -> int:
 # The baseline is the simplified SDFG; ``check`` compiles + runs a finalized    #
 # copy and compares to the corpus reference (value-preserving == True).         #
 # #
-def _poly_names() -> List[str]:
+def _poly_names() -> list[str]:
     return [k.name for k in _PB.collect()]
 
 
@@ -224,7 +223,7 @@ def _poly_case(name):
     return _PB.fresh_sdfg(k), lambda fin: bool(_PB.outputs_match(ref, _PB.run(fin, arrays, psize)))
 
 
-def _np_names() -> List[str]:
+def _np_names() -> list[str]:
     return [c["name"] for c in _NB.collect()]
 
 
@@ -235,7 +234,7 @@ def _np_case(name):
     return _NB.fresh_sdfg(c), lambda fin: bool(_NB.outputs_match(ref, _NB.run_outputs(c, fin, arrays, params)))
 
 
-def _tsvc_names() -> List[str]:
+def _tsvc_names() -> list[str]:
     return [k.name for k in _TS.collect()]
 
 
@@ -259,7 +258,7 @@ def _tsvc_case(name):
     return base, check
 
 
-def _tsvc25_names() -> List[str]:
+def _tsvc25_names() -> list[str]:
     return [p.name for p in _T25.collect()]
 
 
@@ -300,7 +299,7 @@ def _hpcagent_framework():
     return dfw
 
 
-def _hpcagent_names() -> List[str]:
+def _hpcagent_names() -> list[str]:
     """Path-keys of the hpcagent_bench kernels this sweep measures: every ``foundation`` /
     ``hpc`` / ``ml`` track kernel EXCEPT the ones the ``np`` / ``poly`` corpora above already
     run (``subtrack == 'polybench'`` or tagged ``'npbench'`` -- the identical kernel, ported
@@ -310,9 +309,9 @@ def _hpcagent_names() -> List[str]:
     from hpcagent_bench import paths as hpcagent_paths
     from hpcagent_bench.spec import KERNELS, BenchSpec
 
-    covered: List[str] = []
-    no_dace: List[str] = []
-    names: List[str] = []
+    covered: list[str] = []
+    no_dace: list[str] = []
+    names: list[str] = []
     for key in KERNELS.select_keys("all"):
         spec = BenchSpec.load(key)
         if spec.subtrack == "polybench" or "npbench" in spec.tags:
@@ -351,7 +350,7 @@ def _hpcagent_case(name):
     return base, check
 
 
-CORPORA: Dict[str, Tuple[Callable, Callable]] = {
+CORPORA: dict[str, tuple[Callable, Callable]] = {
     "poly": (_poly_names, _poly_case),
     "np": (_np_names, _np_case),
     "tsvc": (_tsvc_names, _tsvc_case),
@@ -380,7 +379,7 @@ def _vectorize(sdfg):
     return sdfg
 
 
-def apply_config(sdfg, config: str, params: Dict):
+def apply_config(sdfg, config: str, params: dict):
     """Run one pipeline configuration over ``sdfg`` in place.
 
     :param sdfg: The SDFG to transform.
@@ -419,9 +418,9 @@ def sweep(
     check: bool = False,
     verbose: bool = True,
     config: str = "canon",
-    shard: Tuple[int, int] = (0, 1),
+    shard: tuple[int, int] = (0, 1),
     limit: int = 0,
-) -> Dict:
+) -> dict:
     """Measure one corpus. :returns: a result dict with per-kernel rows.
 
     ``shard=(index, count)`` keeps only every ``count``-th kernel starting at ``index``,
@@ -437,7 +436,7 @@ def sweep(
     names = names_fn()
     names = (names[:limit] if limit else names)[index::total]
     params = cpu_params(peel_limit)
-    rows: Dict[str, Dict] = {}
+    rows: dict[str, dict] = {}
     t0 = time.perf_counter()
     for i, name in enumerate(names, 1):
         row = dict(base=None, l2m=None, canon=None, guarded=0, correct=None, error=None)
@@ -490,7 +489,7 @@ CSV_FIELDS = (
 )
 
 
-def write_csv(res: Dict, path: str) -> None:
+def write_csv(res: dict, path: str) -> None:
     """Append ``res``'s per-kernel rows to ``path`` (writing the header if new)."""
     fresh = not os.path.exists(path) or os.path.getsize(path) == 0
     with open(path, "a", newline="") as fh:
@@ -506,23 +505,23 @@ def write_csv(res: Dict, path: str) -> None:
             writer.writerow(flat)
 
 
-def summarize_csv(paths: List[str]) -> int:
+def summarize_csv(paths: list[str]) -> int:
     """Print per-(config, corpus) totals and every recorded error from sharded CSVs.
 
     :returns: the number of kernels that errored OR answered wrong -- the batch job's exit
               status, so a corpus that stops canonicalizing (or silently miscompiles) fails
               the job instead of scrolling past.
     """
-    rows: List[Dict[str, str]] = []
+    rows: list[dict[str, str]] = []
     for path in paths:
         with open(path, newline="") as fh:
             rows.extend(csv.DictReader(fh))
 
-    groups: Dict[Tuple[str, str], List[Dict[str, str]]] = {}
+    groups: dict[tuple[str, str], list[dict[str, str]]] = {}
     for row in rows:
         groups.setdefault((row["config"], row["corpus"]), []).append(row)
 
-    def is_wrong(row: Dict[str, str]) -> bool:
+    def is_wrong(row: dict[str, str]) -> bool:
         # Only ``--check`` runs fill this in; an unchecked run leaves it empty, which is
         # "not measured", not "correct".
         return row["correct"] == "False"
@@ -554,7 +553,7 @@ def summarize_csv(paths: List[str]) -> int:
     return len(errored) + len(wrong)
 
 
-def _agg(rows, key) -> List[int]:
+def _agg(rows, key) -> list[int]:
     tot = None
     for r in rows.values():
         c = r.get(key)
@@ -567,7 +566,7 @@ def _agg(rows, key) -> List[int]:
     return tot if tot is not None else [0] * len(COUNTERS)
 
 
-def summarize(res: Dict) -> None:
+def summarize(res: dict) -> None:
     rows = res["rows"]
     ok = [n for n, r in rows.items() if r["correct"] is True]
     bad = [n for n, r in rows.items() if r["correct"] is False and not r["error"]]

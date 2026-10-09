@@ -44,14 +44,14 @@ so the result is bit-identical.
 """
 
 import copy
-from typing import Any, Dict, Optional, Tuple
+from typing import Any
 
-from dace import data, dtypes, properties, subsets, symbolic, Memlet
+from dace import Memlet, data, dtypes, properties, subsets, symbolic
+from dace.optionals import required
 from dace.sdfg import SDFG, nodes
+from dace.sdfg.narrowing import as_basic, as_expr, as_map_entry
 from dace.sdfg.state import SDFGState
 from dace.transformation import pass_pipeline as ppl
-from dace.optionals import required
-from dace.sdfg.narrowing import as_basic, as_expr, as_map_entry
 
 #: Schedules that lower through the CPU path. A GPU-scheduled map never matches.
 _CPU_SCHEDULES = (
@@ -138,7 +138,7 @@ class ChunkAntiDependence(ppl.Pass):
     def depends_on(self):
         return set()
 
-    def _match(self, state: SDFGState, sdfg: SDFG) -> Optional[Tuple]:
+    def _match(self, state: SDFGState, sdfg: SDFG) -> tuple | None:
         """``(snap_node, arr, map_entry, lo, hi)`` for the canonical snapshot pattern, else None."""
         from dace.sdfg.scope import is_devicelevel_gpu
 
@@ -233,7 +233,7 @@ class ChunkAntiDependence(ppl.Pass):
         threads = symbolic.pystr_to_symbolic(symbolic.NUM_THREADS_SYMBOL)
         return symbolic.int_ceil(symbolic.pystr_to_symbolic(str(extent)), threads)
 
-    def _redirect_to_seam(self, state: SDFGState, snap: str, seam: str, slot, outer: Optional[Tuple]) -> None:
+    def _redirect_to_seam(self, state: SDFGState, snap: str, seam: str, slot, outer: tuple | None) -> None:
         """Repoint every ``snap`` read in ``state`` at seam slot ``slot``.
 
         ``outer`` is ``(entry, union)`` for the state whose reads sit inside a chunk map: the
@@ -301,7 +301,7 @@ class ChunkAntiDependence(ppl.Pass):
         to_loop.map_entry = me
         to_loop.apply(state, sdfg)
 
-    def _rewrite(self, state: SDFGState, sdfg: SDFG, match: Tuple) -> None:
+    def _rewrite(self, state: SDFGState, sdfg: SDFG, match: tuple) -> None:
         snap_node, arr, me, lo, hi = match
         snap = snap_node.data
         parent = state.parent_graph
@@ -393,7 +393,7 @@ class ChunkAntiDependence(ppl.Pass):
         # Nothing reads the whole-window snapshot any more; ``remove_data`` validates that.
         sdfg.remove_data(snap)
 
-    def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> int | None:
         """Rewrite every CPU snapshot-broken read-ahead map; returns how many, or ``None``."""
         applied = 0
         for sd in sdfg.all_sdfgs_recursive():

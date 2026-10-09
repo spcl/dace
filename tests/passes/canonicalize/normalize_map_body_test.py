@@ -18,16 +18,16 @@ import numpy as np
 import pytest
 
 import dace
-from dace.sdfg.dealias import convert_legacy_nested_sdfgs
-from dace.sdfg import nodes
 from dace.properties import CodeBlock
+from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
+from dace.sdfg.dealias import convert_legacy_nested_sdfgs
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
 from dace.transformation.dataflow.map_fusion_horizontal import MapFusionHorizontal
 from dace.transformation.interstate.loop_to_map import LoopToMap
 from dace.transformation.interstate.state_fusion_with_happens_before import StateFusionExtended
-from dace.transformation.passes.canonicalize.pipeline import canonicalize
 from dace.transformation.passes.canonicalize.normalize_map_body import NormalizeMapBody
+from dace.transformation.passes.canonicalize.pipeline import canonicalize
 from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
 from tests.cfg_tree import assert_tree_matches_a_reset, spy_on_resets
 
@@ -57,11 +57,11 @@ def _body_nsdfg_count(sdfg: dace.SDFG) -> int:
     """Max number of NestedSDFG nodes inside any single top-level map body."""
     counts = [0]
     for st in sdfg.states():
-        for n in st.nodes():
-            if isinstance(n, nodes.MapEntry) and st.entry_node(n) is None:
-                counts.append(
-                    sum(1 for x in st.all_nodes_between(n, st.exit_node(n)) if isinstance(x, nodes.NestedSDFG))
-                )
+        counts.extend(
+            sum(1 for x in st.all_nodes_between(n, st.exit_node(n)) if isinstance(x, nodes.NestedSDFG))
+            for n in st.nodes()
+            if isinstance(n, nodes.MapEntry) and st.entry_node(n) is None
+        )
     return max(counts)
 
 

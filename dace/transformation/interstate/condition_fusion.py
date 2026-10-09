@@ -3,10 +3,12 @@
 import copy
 
 import sympy
-from dace import sdfg as sd, properties, symbolic
+
+from dace import properties, symbolic
+from dace import sdfg as sd
 from dace.properties import CodeBlock
 from dace.sdfg import utils as sdutil
-from dace.sdfg.state import ControlFlowRegion, ConditionalBlock, rehome_claimed_block
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, rehome_claimed_block
 from dace.transformation import transformation as xf
 
 
@@ -138,10 +140,8 @@ class ConditionFusion(xf.MultiStateTransformation):
                 modified_symbols |= e.data.assignments.keys()
 
             if any(
-                [
-                    cnd is not None and cnd.get_free_symbols() & modified_symbols != set()
-                    for cnd, _ in self.cblck2.branches
-                ]
+                cnd is not None and cnd.get_free_symbols() & modified_symbols != set()
+                for cnd, _ in self.cblck2.branches
             ):
                 return False
 
@@ -181,7 +181,7 @@ class ConditionFusion(xf.MultiStateTransformation):
             return
 
         # Check if cblck1 has a single sink node for each branch
-        assert all([len(cfg.sink_nodes()) == 1 for _, cfg in cblck1.branches])
+        assert all(len(cfg.sink_nodes()) == 1 for _, cfg in cblck1.branches)
 
         # Check if it only has one successor and that successor is a conditional block
         outer_cfg = cblck1.parent_graph
@@ -199,10 +199,8 @@ class ConditionFusion(xf.MultiStateTransformation):
 
         # Edge between cblck1 and cblck2 may have assignments, but only if none of the conditions in cblck2 depend on them
         assert all(
-            [
-                cnd is None or cnd.get_free_symbols() & cblck_edge.data.assignments.keys() == set()
-                for cnd, _ in cblck2.branches
-            ]
+            cnd is None or cnd.get_free_symbols() & cblck_edge.data.assignments.keys() == set()
+            for cnd, _ in cblck2.branches
         ), "Assignments in edge are used in cblck2"
 
         # There should be exactly one or no else branches in each conditional block

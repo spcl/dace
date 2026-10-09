@@ -3,14 +3,14 @@
 
 import copy
 import json
-from typing import Any, List, Tuple
+from typing import Any
 
 import numpy as np
 import pytest
 
 import dace
-from dace.sdfg.dealias import convert_legacy_nested_sdfgs
 from dace.sdfg import nodes, propagation
+from dace.sdfg.dealias import convert_legacy_nested_sdfgs
 from dace.transformation.dataflow import map_fusion_helper as mfhelper
 from dace.transformation.passes.fuse_maps import FuseMaps
 
@@ -81,7 +81,7 @@ def serialized(sdfg: dace.SDFG) -> str:
     return json.dumps(without_identity(sdfg.to_json()), sort_keys=True, default=str)
 
 
-def cfg_tree_snapshot(sdfg: dace.SDFG) -> List[Tuple[int, int, int, int, int]]:
+def cfg_tree_snapshot(sdfg: dace.SDFG) -> list[tuple[int, int, int, int, int]]:
     """Per region of ``sdfg.cfg_list``: its identity, cfg_id and every parent pointer, by identity."""
     snapshot = []
     for region in sdfg.cfg_list:
@@ -124,9 +124,9 @@ def map_chain_with_side_inputs(inner_map: bool = False) -> dace.SDFG:
 
 def fuse_counting_propagations(
     sdfg: dace.SDFG, monkeypatch: pytest.MonkeyPatch, use_cache: bool
-) -> Tuple[List[dace.SDFG], int]:
+) -> tuple[list[dace.SDFG], int]:
     """Run FuseMaps; the nested SDFGs whose inside it propagated, and how many memlets it propagated."""
-    propagated: List[dace.SDFG] = []
+    propagated: list[dace.SDFG] = []
     memlets = [0]
     original_sdfg_propagation = propagation.propagate_memlets_sdfg
     original_memlet_propagation = propagation.propagate_memlet

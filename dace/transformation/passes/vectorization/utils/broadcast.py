@@ -9,7 +9,8 @@ purpose: ``map_body_has_foreign_language_tasklet`` would disqualify the whole ma
 tile pass, while the vectorizer's own tile ops stay transparent to that gate.
 """
 
-from dace import data as dd, symbolic
+from dace import data as dd
+from dace import symbolic
 from dace.libraries.tileops import TileGather
 from dace.memlet import Memlet
 from dace.sdfg.graph import Edge

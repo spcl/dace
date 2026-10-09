@@ -11,8 +11,9 @@ equivalence against a pure-numpy oracle and asserts that the recursive
 ``MapEntry`` count strictly increased after fission.
 """
 
-import dace
 import numpy as np
+
+import dace
 from dace.sdfg import nodes
 from dace.sdfg.dealias import convert_legacy_nested_sdfgs
 from dace.transformation.dataflow import MapFission

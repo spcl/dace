@@ -6,7 +6,7 @@ the contract, and a set must answer ``in`` and ``len`` exactly as its items do.
 """
 
 import copy
-from typing import Callable, Dict, List
+from collections.abc import Callable
 
 import pytest
 
@@ -14,7 +14,7 @@ import dace
 from dace.sdfg.state import BreakBlock, ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.passes.analysis import ControlFlowBlockReachability, StateReachability
 
-Labels = Dict[int, Dict[str, List[str]]]
+Labels = dict[int, dict[str, list[str]]]
 
 
 def cyclic_sdfg() -> dace.SDFG:
@@ -74,22 +74,22 @@ def nested_sdfg() -> dace.SDFG:
     return sdfg
 
 
-def labels(result: Dict) -> Labels:
+def labels(result: dict) -> Labels:
     return {
         cfg_id: {block.label: [r.label for r in reach] for block, reach in sets.items()}
         for cfg_id, sets in result.items()
     }
 
 
-def block_reach(sdfg: dace.SDFG) -> Dict:
+def block_reach(sdfg: dace.SDFG) -> dict:
     return ControlFlowBlockReachability().apply_pass(sdfg, {})
 
 
-def single_level_reach(sdfg: dace.SDFG) -> Dict:
+def single_level_reach(sdfg: dace.SDFG) -> dict:
     return ControlFlowBlockReachability(contain_to_single_level=True).apply_pass(sdfg, {})
 
 
-def state_reach(sdfg: dace.SDFG) -> Dict:
+def state_reach(sdfg: dace.SDFG) -> dict:
     return StateReachability().apply_pass(sdfg, {})
 
 
@@ -139,7 +139,7 @@ def state_reach(sdfg: dace.SDFG) -> Dict:
     ids=["block", "single_level", "state"],
 )
 def test_reach_sets_list_blocks_in_breadth_first_order_with_each_region_before_what_follows_it(
-    analysis: Callable[[dace.SDFG], Dict], expected: Labels
+    analysis: Callable[[dace.SDFG], dict], expected: Labels
 ):
     """Keys follow graph order, and a block reached only through a cycle lists itself where the cycle closes."""
     got = labels(analysis(cyclic_sdfg()))
@@ -149,7 +149,7 @@ def test_reach_sets_list_blocks_in_breadth_first_order_with_each_region_before_w
 @pytest.mark.parametrize(
     "analysis", [block_reach, single_level_reach, state_reach], ids=["block", "single_level", "state"]
 )
-def test_membership_and_size_of_a_reach_set_match_its_items(analysis: Callable[[dace.SDFG], Dict]):
+def test_membership_and_size_of_a_reach_set_match_its_items(analysis: Callable[[dace.SDFG], dict]):
     """``in`` and ``len`` are answered without listing the items, so they must not drift from the listing."""
     sdfg = nested_sdfg()
     universe = list(sdfg.all_control_flow_blocks(recursive=True))
@@ -169,7 +169,7 @@ def test_membership_and_size_of_a_reach_set_match_its_items(analysis: Callable[[
 @pytest.mark.parametrize(
     "analysis", [block_reach, single_level_reach, state_reach], ids=["block", "single_level", "state"]
 )
-def test_a_reach_set_describes_the_graph_as_it_was_when_the_analysis_ran(analysis: Callable[[dace.SDFG], Dict]):
+def test_a_reach_set_describes_the_graph_as_it_was_when_the_analysis_ran(analysis: Callable[[dace.SDFG], dict]):
     """A consumer holding a result while it adds blocks (``UniqueLoopIterators`` does) must keep reading the
     reachability it computed, whether it lists a set before or after the edit."""
     sdfg = nested_sdfg()
@@ -196,7 +196,7 @@ def test_a_copy_of_an_unlisted_reach_set_has_the_same_items_in_the_same_order():
 @pytest.mark.parametrize(
     "analysis", [block_reach, single_level_reach, state_reach], ids=["block", "single_level", "state"]
 )
-def test_unordered_members_of_a_reach_set_are_its_items_without_listing_them(analysis: Callable[[dace.SDFG], Dict]):
+def test_unordered_members_of_a_reach_set_are_its_items_without_listing_them(analysis: Callable[[dace.SDFG], dict]):
     """``unordered`` reads the members off the bitset: the item set, and the set stays unlisted."""
     for sdfg in (cyclic_sdfg(), nested_sdfg()):
         result = analysis(sdfg)

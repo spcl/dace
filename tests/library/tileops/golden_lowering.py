@@ -21,22 +21,22 @@ from typing import NamedTuple
 from unittest import mock
 
 import dace
+import dace.libraries.tileops.dispatch as dispatch
 from dace.libraries.tileops import (
     MaskedCopyLibraryNode,
     TileBinop,
     TileFMA,
+    TileGather,
     TileIota,
     TileITE,
-    TileGather,
     TileMaskGen,
     TileMMA,
     TileReduce,
     TileScatter,
     TileUnop,
 )
-import dace.libraries.tileops.dispatch as dispatch
-from dace.libraries.tileops.dispatch import ISA
 from dace.libraries.tileops.alignment import STRIDE_GUARD_PREFIX, TILE_GUARD_STATE_LABEL, TILE_MAIN_MARKER
+from dace.libraries.tileops.dispatch import ISA
 
 DIGEST_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "golden_lowering_digests.json")
 

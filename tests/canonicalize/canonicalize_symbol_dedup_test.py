@@ -22,9 +22,7 @@ def _all_assignments(sdfg):
     """Every interstate-edge assignment dict across the whole SDFG (recursive)."""
     out = []
     for nested in sdfg.all_sdfgs_recursive():
-        for edge in nested.all_interstate_edges():
-            if edge.data.assignments:
-                out.append(dict(edge.data.assignments))
+        out.extend(dict(edge.data.assignments) for edge in nested.all_interstate_edges() if edge.data.assignments)
     return out
 
 

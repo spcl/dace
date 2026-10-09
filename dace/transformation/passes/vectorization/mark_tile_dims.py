@@ -11,6 +11,7 @@ from typing import Any
 
 import dace
 from dace import properties, symbolic
+from dace.sdfg.narrowing import as_expr
 from dace.sdfg.nodes import MapEntry
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.vectorization.split_map_for_tile_remainder import (
@@ -25,7 +26,6 @@ from dace.transformation.passes.vectorization.utils.map_predicates import (
 )
 from dace.transformation.passes.vectorization.utils.pass_invariants import assert_invariant, no_memlet_dim_mismatch
 from dace.transformation.passes.vectorization.utils.tile_dims import TileDimSpec
-from dace.sdfg.narrowing import as_expr
 
 
 @properties.make_properties

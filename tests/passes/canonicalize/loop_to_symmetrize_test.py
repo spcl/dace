@@ -21,8 +21,8 @@ import numpy as np
 import pytest
 
 import dace
-from dace.sdfg.state import LoopRegion
 from dace.libraries.standard.nodes import Symmetrize
+from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
 
 M = dace.symbol("M")

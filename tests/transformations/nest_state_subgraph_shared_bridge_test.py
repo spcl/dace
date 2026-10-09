@@ -10,8 +10,9 @@ that other body in turn, which is exactly what the tile remainder tail does afte
 ``SplitMapForTileRemainder`` copies a body).
 """
 
-import dace
 import pytest
+
+import dace
 from dace.sdfg.graph import SubgraphView
 from dace.transformation.helpers import nest_state_subgraph
 

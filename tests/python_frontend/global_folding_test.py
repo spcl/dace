@@ -1,12 +1,12 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests constant folding with globals."""
 
-import dace
 import numpy as np
 
+import dace
 from dace.frontend.python import astutils
-from dace.frontend.python.preprocessing import GlobalResolver, ConditionalCodeResolver, DeadCodeEliminator
 from dace.frontend.python.parser import DaceProgram
+from dace.frontend.python.preprocessing import ConditionalCodeResolver, DeadCodeEliminator, GlobalResolver
 
 
 class MyConfiguration:

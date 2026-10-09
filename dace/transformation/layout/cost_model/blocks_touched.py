@@ -1,28 +1,26 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Average new memory blocks touched per iteration -- the layout-sensitive cost term (overcounts small tiles, but layout ranking is preserved)."""
 
-from typing import Dict, List
-
-import dace
 import numpy
 import sympy as sp
 
-from dace.symbolic import equalize_symbols_across, int_floor, pystr_to_symbolic, simplify
+import dace
 from dace.sdfg.narrowing import as_basic, as_expr
+from dace.symbolic import equalize_symbols_across, int_floor, pystr_to_symbolic, simplify
 
 
 def average_blocks_touched(
     state: dace.SDFGState,
-    loop_ranges: List[Dict[str, dace.subsets.Range]],  # outer-to-inner: param -> range
-    access_subsets: Dict[str, dace.subsets.Subset],  # array -> accessed subset
+    loop_ranges: list[dict[str, dace.subsets.Range]],  # outer-to-inner: param -> range
+    access_subsets: dict[str, dace.subsets.Subset],  # array -> accessed subset
     block_size: int,  # transfer granularity in ELEMENTS (cache line / GPU sector)
-) -> Dict[str, sp.Basic]:
+) -> dict[str, sp.Basic]:
     """``{array: average new blocks touched per iteration}`` (symbolic); loop_ranges is outer-to-inner."""
     sdfg = state.sdfg
 
     # flatten nest to a param -> range map, outer-to-inner order preserved
-    params: List[str] = []
-    ranges: Dict[str, dace.subsets.Range] = {}
+    params: list[str] = []
+    ranges: dict[str, dace.subsets.Range] = {}
     for nest in loop_ranges:
         for param, rng in nest.items():
             if param in ranges:
@@ -47,7 +45,7 @@ def average_blocks_touched(
         extents[param] = extent
     total_iters = sp.Mul(*[extents[p] for p in params]) if params else sp.Integer(1)
 
-    results: Dict[str, sp.Basic] = {}
+    results: dict[str, sp.Basic] = {}
     for arr, subset in access_subsets.items():
         if arr not in sdfg.arrays or not isinstance(subset, dace.subsets.Range):
             continue

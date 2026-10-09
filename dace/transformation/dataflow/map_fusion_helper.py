@@ -1,15 +1,18 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
 import itertools
-from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Union
+from collections.abc import Iterable
+from typing import Any
 
 import sympy
 
 import dace
 from dace import subsets, symbolic
-from dace.sdfg import graph, nodes as nodes, propagation, utils as sdutils, validation
-from dace.sdfg.state import SymbolResolver
+from dace.sdfg import graph, propagation, validation
+from dace.sdfg import nodes as nodes
+from dace.sdfg import utils as sdutils
 from dace.sdfg.scope import ScopeTree
+from dace.sdfg.state import SymbolResolver
 from dace.transformation import helpers
 
 
@@ -17,7 +20,7 @@ def find_parameter_remapping(
     first_map: nodes.Map,
     second_map: nodes.Map,
     simplify_ranges: bool = False,
-) -> Optional[Dict[str, str]]:
+) -> dict[str, str] | None:
     """Computes the parameter remapping for the parameters of the _second_ map.
 
     The returned `dict` maps the parameters of the second map (keys) to parameter
@@ -49,8 +52,8 @@ def find_parameter_remapping(
     """
 
     # The parameter names
-    first_params: List[str] = first_map.params
-    second_params: List[str] = second_map.params
+    first_params: list[str] = first_map.params
+    second_params: list[str] = second_map.params
 
     if len(first_params) != len(second_params):
         return None
@@ -74,10 +77,10 @@ def find_parameter_remapping(
         *(symbolic.pystr_to_symbolic(b) for rng in (*first_map.range, *second_map.range) for b in rng)
     )
     split = 3 * len(first_params)
-    first_rngs: Dict[str, Tuple[Any, Any, Any]] = {
+    first_rngs: dict[str, tuple[Any, Any, Any]] = {
         param: tuple(simp(r) for r in bounds[3 * i : 3 * i + 3]) for i, param in enumerate(first_params)
     }
-    second_rngs: Dict[str, Tuple[Any, Any, Any]] = {
+    second_rngs: dict[str, tuple[Any, Any, Any]] = {
         param: tuple(simp(r) for r in bounds[split + 3 * i : split + 3 * i + 3])
         for i, param in enumerate(second_params)
     }
@@ -88,12 +91,12 @@ def find_parameter_remapping(
     #  acts the issue that is described in the doc string. Using a list ensures
     #  that they indexes are matched in order. This assume that in real world
     #  code the order of the loop is not arbitrary but kind of matches.
-    unmapped_second_params: List[str] = list(second_params)
-    unused_first_params: List[str] = list(first_params)
+    unmapped_second_params: list[str] = list(second_params)
+    unused_first_params: list[str] = list(first_params)
 
     # This is the result (`second_param -> first_param`), note that if no renaming
     #  is needed then the parameter is not present in the mapping.
-    final_mapping: Dict[str, str] = {}
+    final_mapping: dict[str, str] = {}
 
     # First we identify the parameters that already have the correct name.
     for param in set(first_params).intersection(second_params):
@@ -153,7 +156,7 @@ def rename_map_parameters(
     :param simplify_ranges: Perform simplification on the range expressions.
     """
     # Compute the replacement dict.
-    repl_dict: Dict[str, str] = find_parameter_remapping(  # type: ignore[assignment]  # Guaranteed to be not `None`.
+    repl_dict: dict[str, str] = find_parameter_remapping(  # type: ignore[assignment]  # Guaranteed to be not `None`.
         first_map=first_map,
         second_map=second_map,
         simplify_ranges=simplify_ranges,
@@ -183,12 +186,12 @@ def rename_map_parameters(
 
 def get_new_conn_name(
     edge_to_move: graph.MultiConnectorEdge[dace.Memlet],
-    to_node: Union[nodes.MapExit, nodes.MapEntry],
+    to_node: nodes.MapExit | nodes.MapEntry,
     state: dace.SDFGState,
-    scope_dict: Dict,
+    scope_dict: dict,
     never_consolidate_edges: bool = False,
     consolidate_edges_only_if_not_extending: bool = True,
-) -> Tuple[str, bool]:
+) -> tuple[str, bool]:
     """Determine the new connector name that should be used.
 
     The function returns a pair. The first element is the name of the connector
@@ -254,11 +257,11 @@ def get_new_conn_name(
 
 
 def relocate_nodes(
-    from_node: Union[nodes.MapExit, nodes.MapEntry],
-    to_node: Union[nodes.MapExit, nodes.MapEntry],
+    from_node: nodes.MapExit | nodes.MapEntry,
+    to_node: nodes.MapExit | nodes.MapEntry,
     state: dace.SDFGState,
     sdfg: dace.SDFG,
-    scope_dict: Dict,
+    scope_dict: dict,
     never_consolidate_edges: bool = False,
     consolidate_edges_only_if_not_extending: bool = True,
 ) -> None:
@@ -294,7 +297,7 @@ def relocate_nodes(
     #  collapse every empty in-edge (they all share `dst == to_node`) down to one,
     #  dropping real dependencies and -- because the surviving one depends on edge
     #  iteration order -- producing an order-dependent miscompile.
-    seen_empty_pairs: Set[Tuple[nodes.Node, nodes.Node]] = set()
+    seen_empty_pairs: set[tuple[nodes.Node, nodes.Node]] = set()
     for empty_edge in list(filter(lambda e: e.data.is_empty(), state.all_edges(to_node))):
         pair = (empty_edge.src, empty_edge.dst)
         if pair in seen_empty_pairs:
@@ -310,7 +313,7 @@ def relocate_nodes(
     #  relocated (and their edge objects stale) by the time the loop reaches them, and handling
     #  one again mints another connector pair on `to_node` that nothing is attached to --
     #  'Dangling in-connector IN_x' out of validate().
-    relocated_in_conns: Set[str] = set()
+    relocated_in_conns: set[str] = set()
     for edge_to_move in list(state.in_edges(from_node)):
         assert isinstance(edge_to_move.dst_conn, str)
 
@@ -398,22 +401,22 @@ def relocate_nodes(
 
 
 #: What one memlet propagation through a scope connector read: the objects, and their text.
-PropagationInputs = Tuple[Tuple[Any, ...], Tuple[str, ...]]
+PropagationInputs = tuple[tuple[Any, ...], tuple[str, ...]]
 
 #: One propagation out of a scope connector: what it read, the memlet it wrote, and that memlet as text.
-ScopeRecord = Tuple[PropagationInputs, dace.Memlet, str]
+ScopeRecord = tuple[PropagationInputs, dace.Memlet, str]
 
 #: Scope records by the `id()` of the memlet they wrote, which each record keeps alive. Keyed by the memlet,
 #:  not the edge: relocating an edge onto the fused Map's scope node keeps its memlet but makes a new edge.
-ScopeRecords = Dict[int, ScopeRecord]
+ScopeRecords = dict[int, ScopeRecord]
 
 
 def propagate_fused_map_scope(
     sdfg: dace.SDFG,
     state: dace.SDFGState,
     map_entry: nodes.MapEntry,
-    propagated_nsdfgs: Optional[Dict[dace.SDFG, None]] = None,
-    scope_records: Optional[ScopeRecords] = None,
+    propagated_nsdfgs: dict[dace.SDFG, None] | None = None,
+    scope_records: ScopeRecords | None = None,
 ) -> None:
     """`propagation.propagate_memlets_map_scope()` of the fused Map, minus the work that rewrites nothing.
 
@@ -447,9 +450,9 @@ def propagate_fused_map_scope(
         propagation.propagate_memlets_scope(sdfg, state, leaves, symbols=SymbolResolver(sdfg, scope_symbols))
         return
     # `propagate_memlets_scope()`'s frontier walk; each scope's last visit comes after all of its children's.
-    frontier: Dict[ScopeTree, None] = dict.fromkeys(leaves)
+    frontier: dict[ScopeTree, None] = dict.fromkeys(leaves)
     while frontier:
-        parents: Dict[ScopeTree, None] = {}
+        parents: dict[ScopeTree, None] = {}
         for scope in frontier:
             if scope.entry is None:
                 continue
@@ -459,11 +462,11 @@ def propagate_fused_map_scope(
         frontier = parents
 
 
-def scope_leaves_below(state: dace.SDFGState, map_entry: nodes.EntryNode) -> List[ScopeTree]:
+def scope_leaves_below(state: dace.SDFGState, map_entry: nodes.EntryNode) -> list[ScopeTree]:
     """The leaf `ScopeTree`s at or below `map_entry`, linked through their parents up to the top level."""
     children = state.scope_children()
     parent = ScopeTree(None, None)
-    enclosing: List[nodes.EntryNode] = []
+    enclosing: list[nodes.EntryNode] = []
     outer = state.entry_node(map_entry)
     while outer is not None:
         enclosing.append(outer)
@@ -473,8 +476,8 @@ def scope_leaves_below(state: dace.SDFGState, map_entry: nodes.EntryNode) -> Lis
         tree.parent = parent
         parent = tree
 
-    leaves: List[ScopeTree] = []
-    pending: List[Tuple[nodes.EntryNode, ScopeTree]] = [(map_entry, parent)]
+    leaves: list[ScopeTree] = []
+    pending: list[tuple[nodes.EntryNode, ScopeTree]] = [(map_entry, parent)]
     while pending:
         entry, parent = pending.pop()
         tree = ScopeTree(entry, state.exit_node(entry))
@@ -496,8 +499,8 @@ def memlet_text(memlet: dace.Memlet) -> str:
 
 def propagate_scope_node(
     state: dace.SDFGState,
-    node: Union[nodes.EntryNode, nodes.ExitNode],
-    scope_symbols: Dict[str, dace.dtypes.typeclass],
+    node: nodes.EntryNode | nodes.ExitNode,
+    scope_symbols: dict[str, dace.dtypes.typeclass],
     scope_records: ScopeRecords,
 ) -> None:
     """`propagation.propagate_node()`, skipping each external edge whose propagation would rewrite nothing.
@@ -580,7 +583,7 @@ def propagation_inputs(
     entry_node: nodes.MapEntry,
     use_dst: bool,
     aligned_memlet: dace.Memlet,
-    connector_memlets: List[dace.Memlet],
+    connector_memlets: list[dace.Memlet],
     defined_variables: Iterable[str],
 ) -> PropagationInputs:
     """What `propagate_memlet()` reads to propagate `aligned_memlet` out of the scope of `entry_node`.
@@ -589,8 +592,8 @@ def propagation_inputs(
     """
     scope_map = entry_node.map
     desc = state.parent.arrays.get(aligned_memlet.data)
-    objects: List[Any] = [entry_node, scope_map, scope_map.params, scope_map.range, desc]
-    texts: List[str] = [
+    objects: list[Any] = [entry_node, scope_map, scope_map.params, scope_map.range, desc]
+    texts: list[str] = [
         str(use_dst),
         str(scope_map.params),
         str(scope_map.range),
@@ -614,7 +617,7 @@ def same_inputs(recorded: PropagationInputs, current: PropagationInputs) -> bool
     )
 
 
-def forget_propagated(propagated_nsdfgs: Optional[Dict[dace.SDFG, None]], sdfg: dace.SDFG) -> None:
+def forget_propagated(propagated_nsdfgs: dict[dace.SDFG, None] | None, sdfg: dace.SDFG) -> None:
     """Drop `sdfg` and every SDFG enclosing it from `propagated_nsdfgs`: `sdfg` is about to change."""
     if propagated_nsdfgs is None:
         return
@@ -626,7 +629,7 @@ def forget_propagated(propagated_nsdfgs: Optional[Dict[dace.SDFG, None]], sdfg: 
 def safe_exit_node(
     state: dace.SDFGState,
     entry_node: nodes.EntryNode,
-) -> Optional[nodes.ExitNode]:
+) -> nodes.ExitNode | None:
     """The exit node of `entry_node`'s scope, or `None` if the scope is no longer intact.
 
     `SDFGState.exit_node()` raises a bare `StopIteration` when the exit node was removed and a
@@ -641,7 +644,7 @@ def safe_exit_node(
 
 def scope_connectors_are_sound(
     state: dace.SDFGState,
-    node: Union[nodes.MapEntry, nodes.MapExit],
+    node: nodes.MapEntry | nodes.MapExit,
 ) -> bool:
     """`True` if `node`'s connectors and edges are shaped the way the rewrite assumes.
 
@@ -730,8 +733,8 @@ def is_node_reachable_from(
             if not (ignore_empty_edges and edge.data is not None and edge.data.is_empty())
         )
 
-    to_visit: List[nodes.Node] = [begin]
-    seen: Set[nodes.Node] = set()
+    to_visit: list[nodes.Node] = [begin]
+    seen: set[nodes.Node] = set()
 
     while len(to_visit) > 0:
         node: nodes.Node = to_visit.pop()
@@ -774,7 +777,7 @@ def find_happens_before_connection(
     state: dace.SDFGState,
     first_map_entry: nodes.MapEntry,
     second_map_entry: nodes.MapEntry,
-) -> Optional[List[graph.MultiConnectorEdge[dace.Memlet]]]:
+) -> list[graph.MultiConnectorEdge[dace.Memlet]] | None:
     """The empty Memlets that are the *only* connection between the two Map scopes.
 
     ``StateFusionExtended`` collapses an interstate edge and re-imposes the ordering it
@@ -794,8 +797,8 @@ def find_happens_before_connection(
     :param first_map_entry: Entry of the Map that must be the upstream one.
     :param second_map_entry: Entry of the Map that must be the downstream one.
     """
-    first_map_exit: Optional[nodes.MapExit] = safe_exit_node(state, first_map_entry)
-    second_map_exit: Optional[nodes.MapExit] = safe_exit_node(state, second_map_entry)
+    first_map_exit: nodes.MapExit | None = safe_exit_node(state, first_map_entry)
+    second_map_exit: nodes.MapExit | None = safe_exit_node(state, second_map_entry)
     if first_map_exit is None or second_map_exit is None:
         return None
 
@@ -813,13 +816,13 @@ def find_happens_before_connection(
 
     # Nodes that the first Map alone writes; an ordering edge may also start there
     #  (that is the shape a WAW hazard produces).
-    own_outputs: Set[nodes.Node] = {
+    own_outputs: set[nodes.Node] = {
         e.dst
         for e in state.out_edges(first_map_exit)
         if isinstance(e.dst, nodes.AccessNode) and all(ie.src is first_map_exit for ie in state.in_edges(e.dst))
     }
 
-    ordering_edges: List[graph.MultiConnectorEdge[dace.Memlet]] = []
+    ordering_edges: list[graph.MultiConnectorEdge[dace.Memlet]] = []
     for edge in state.edges():
         if edge.data is None or not edge.data.is_empty():
             continue
@@ -843,11 +846,11 @@ def _is_reachable_ignoring(
     state: dace.SDFGState,
     begin: nodes.Node,
     end: nodes.Node,
-    ignored_edges: Set[graph.MultiConnectorEdge[dace.Memlet]],
+    ignored_edges: set[graph.MultiConnectorEdge[dace.Memlet]],
 ) -> bool:
     """`is_node_reachable_from()` with a set of edges cut out of the graph."""
-    to_visit: List[nodes.Node] = [begin]
-    seen: Set[nodes.Node] = set()
+    to_visit: list[nodes.Node] = [begin]
+    seen: set[nodes.Node] = set()
     while to_visit:
         node = to_visit.pop()
         if node is end:
@@ -862,8 +865,8 @@ def _is_reachable_ignoring(
 def _scope_boundary_accesses(
     state: dace.SDFGState,
     map_entry: nodes.MapEntry,
-    param_repl: Optional[Dict[str, str]],
-) -> Tuple[Dict[str, List[Tuple[nodes.Node, subsets.Subset]]], Dict[str, List[Tuple[nodes.Node, subsets.Subset]]]]:
+    param_repl: dict[str, str] | None,
+) -> tuple[dict[str, list[tuple[nodes.Node, subsets.Subset]]], dict[str, list[tuple[nodes.Node, subsets.Subset]]]]:
     """Per-iteration reads and writes of a Map scope, keyed by data name.
 
     The subsets are taken from the edges immediately *inside* the scope nodes, so they
@@ -875,11 +878,11 @@ def _scope_boundary_accesses(
     :param map_entry: The entry node of the Map.
     :param param_repl: Renaming applied to the subsets, see `find_parameter_remapping()`.
     """
-    map_exit: Optional[nodes.MapExit] = safe_exit_node(state, map_entry)
+    map_exit: nodes.MapExit | None = safe_exit_node(state, map_entry)
     if map_exit is None:
         return None, None
-    reads: Dict[str, List[Tuple[nodes.Node, subsets.Subset]]] = {}
-    writes: Dict[str, List[Tuple[nodes.Node, subsets.Subset]]] = {}
+    reads: dict[str, list[tuple[nodes.Node, subsets.Subset]]] = {}
+    writes: dict[str, list[tuple[nodes.Node, subsets.Subset]]] = {}
 
     read_side = (state.out_edges(map_entry), lambda e: e.dst, reads)
     write_side = (state.in_edges(map_exit), lambda e: e.src, writes)
@@ -900,7 +903,7 @@ def _scope_boundary_accesses(
 def _boundary_access(
     state: dace.SDFGState,
     edge: graph.MultiConnectorEdge[dace.Memlet],
-) -> Tuple[Optional[str], Optional[subsets.Subset]]:
+) -> tuple[str | None, subsets.Subset | None]:
     """What a boundary edge really touches, or `(None, None)` if that cannot be determined.
 
     A copy-Memlet names one END of the edge and carries the other in `other_subset`, so `data`
@@ -918,7 +921,7 @@ def _boundary_access(
 def _outer_data_of_boundary_edge(
     state: dace.SDFGState,
     edge: graph.MultiConnectorEdge[dace.Memlet],
-) -> Optional[str]:
+) -> str | None:
     """The de-aliased array reached by following `edge` out through its scope node."""
     connector = edge.dst_conn if isinstance(edge.dst, nodes.MapExit) else edge.src_conn
     if connector is None or not connector.startswith(("IN_", "OUT_")):
@@ -938,7 +941,7 @@ def _outer_data_of_boundary_edge(
 def resolve_view_source(
     state: dace.SDFGState,
     view_node: nodes.AccessNode,
-) -> Optional[nodes.AccessNode]:
+) -> nodes.AccessNode | None:
     """The AccessNode that `view_node` ultimately views, or `None` if that is undecidable.
 
     `sdutils.get_view_edge()` reports every ambiguous View shape it has no rule for by
@@ -957,7 +960,7 @@ def resolve_view_source(
     return sdutils.get_last_view_node(state, view_node)
 
 
-def _dealias(state: dace.SDFGState, node: nodes.AccessNode) -> Optional[str]:
+def _dealias(state: dace.SDFGState, node: nodes.AccessNode) -> str | None:
     """The name of the array `node` ultimately refers to, resolving Views."""
     desc = node.desc(state.sdfg)
     if not isinstance(desc, dace.data.View):
@@ -969,7 +972,7 @@ def _dealias(state: dace.SDFGState, node: nodes.AccessNode) -> Optional[str]:
 def _is_iteration_private(
     first_subset: subsets.Subset,
     second_subset: subsets.Subset,
-    params: List[sympy.Symbol],
+    params: list[sympy.Symbol],
 ) -> bool:
     """Whether two accesses of one array can only collide within the *same* iteration.
 
@@ -992,7 +995,7 @@ def _is_iteration_private(
     if first_subset.dims() != second_subset.dims():
         return False
 
-    pinned: Set[sympy.Symbol] = set()
+    pinned: set[sympy.Symbol] = set()
     for (first_begin, first_end, _), (second_begin, second_end, _) in zip(first_subset.ranges, second_subset.ranges):
         # A bound sympy can not handle leaves this dimension unproven, which only costs a refusal.
         try:
@@ -1025,8 +1028,8 @@ def analyze_happens_before_fusion(
     sdfg: dace.SDFG,
     first_map_entry: nodes.MapEntry,
     second_map_entry: nodes.MapEntry,
-    param_repl: Dict[str, str],
-) -> Optional[Tuple[List[graph.MultiConnectorEdge[dace.Memlet]], List[Tuple[nodes.Node, nodes.Node]]]]:
+    param_repl: dict[str, str],
+) -> tuple[list[graph.MultiConnectorEdge[dace.Memlet]], list[tuple[nodes.Node, nodes.Node]]] | None:
     """Plan the fusion of two Maps that are ordered by happens-before edges only.
 
     Returns `None` if the Maps are not in that situation or if fusing them would not be
@@ -1049,9 +1052,9 @@ def analyze_happens_before_fusion(
     # The subset analysis below reads only the edges that cross the scope nodes, so it never
     #  books what an AccessNode *inside* a body touches, and a side effect is not expressed as
     #  a Memlet at all. Refuse what it can never be completed for, and remember the rest.
-    inner_data: List[Dict[str, None]] = []  # `dict` as an ordered set, one entry per Map
+    inner_data: list[dict[str, None]] = []  # `dict` as an ordered set, one entry per Map
     for map_entry in (first_map_entry, second_map_entry):
-        scope_data: Dict[str, None] = {}
+        scope_data: dict[str, None] = {}
         for node in state.scope_subgraph(map_entry, False, False).nodes():
             if isinstance(node, nodes.AccessNode):
                 # Non-transient data is reachable from outside this state entirely, so the
@@ -1093,13 +1096,13 @@ def analyze_happens_before_fusion(
     # Read once: nothing here mutates `state`, and `scope_dict()` copies the whole map per call.
     scope = state.scope_dict()
 
-    def order_source(node: nodes.Node) -> Optional[nodes.Node]:
+    def order_source(node: nodes.Node) -> nodes.Node | None:
         return safe_exit_node(state, node) if isinstance(node, nodes.EntryNode) else node
 
-    def order_target(node: nodes.Node) -> Optional[nodes.Node]:
+    def order_target(node: nodes.Node) -> nodes.Node | None:
         return scope.get(node) if isinstance(node, nodes.ExitNode) else node
 
-    inner_pairs: List[Tuple[nodes.Node, nodes.Node]] = []
+    inner_pairs: list[tuple[nodes.Node, nodes.Node]] = []
     # Read/read is not a hazard, the other three combinations are (WAW, RAW, WAR).
     hazards = [(first_writes, second_writes), (first_writes, second_reads), (first_reads, second_writes)]
     for first_side, second_side in hazards:
@@ -1121,7 +1124,7 @@ def dynamic_map_range_edge(
     state: dace.SDFGState,
     map_entry: nodes.MapEntry,
     symbol: str,
-) -> Optional[graph.MultiConnectorEdge]:
+) -> graph.MultiConnectorEdge | None:
     """The single edge that binds dynamic-map-range `symbol` on `map_entry`, if there is one."""
     # A dangling connector yields no edge; a bare `StopIteration` escaping into the matcher's
     #  generator would be converted into a `RuntimeError` by PEP 479.
@@ -1174,13 +1177,13 @@ def dynamic_map_ranges_agree(
 def can_topologically_be_fused(
     first_map_entry: nodes.MapEntry,
     second_map_entry: nodes.MapEntry,
-    graph: Union[dace.SDFGState, dace.SDFG],
+    graph: dace.SDFGState | dace.SDFG,
     sdfg: dace.SDFG,
     permissive: bool = False,
     only_inner_maps: bool = False,
     only_toplevel_maps: bool = False,
-    scope: Optional[Dict[nodes.Node, Optional[nodes.Node]]] = None,
-) -> Optional[Dict[str, str]]:
+    scope: dict[nodes.Node, nodes.Node | None] | None = None,
+) -> dict[str, str] | None:
     """Performs basic checks if the maps can be fused.
 
     This function only checks constrains that are common between serial and

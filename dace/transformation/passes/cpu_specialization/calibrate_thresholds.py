@@ -1,11 +1,11 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Calibrate the fork/join thresholds to the host CPU, at the start of the specialization band."""
 
-from typing import Any, Dict, Optional
+from typing import Any
 
-from dace.sdfg.narrowing import config_int
 from dace import SDFG, properties
 from dace.config import Config
+from dace.sdfg.narrowing import config_int
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 from dace.transformation.passes.cpu_specialization import machine
@@ -44,9 +44,9 @@ class CalibrateCpuThresholds(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def apply_pass(self, sdfg: SDFG, _: Dict[str, Any]) -> Optional[Dict[str, int]]:
+    def apply_pass(self, sdfg: SDFG, _: dict[str, Any]) -> dict[str, int] | None:
         """:returns: the keys this pass set, mapped to the derived value; ``None`` when it set none."""
-        applied: Dict[str, int] = {}
+        applied: dict[str, int] = {}
         for key, derive in CALIBRATED:
             current = config_int(*key)
             # A user-set value wins. ``Config.set`` would lose to a ``DACE_*`` environment variable

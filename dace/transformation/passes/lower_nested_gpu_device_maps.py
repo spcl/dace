@@ -7,12 +7,14 @@ from typing import TypeGuard
 
 import dace
 from dace import SDFG, dtypes, properties, subsets, symbolic
-from dace.sdfg import nodes, utils as sdutil
+from dace.optionals import required
+from dace.ordered import OrderedSet
+from dace.sdfg import nodes
+from dace.sdfg import utils as sdutil
 from dace.sdfg.nodes import CodeBlock
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, SDFGState, StateSubgraphView
-from dace.transformation import helpers, pass_pipeline as ppl, transformation
-from dace.ordered import OrderedSet
-from dace.optionals import required
+from dace.transformation import helpers, transformation
+from dace.transformation import pass_pipeline as ppl
 
 InnerMap = tuple[SDFGState, nodes.MapEntry]
 

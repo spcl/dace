@@ -41,15 +41,14 @@ import copy
 import hashlib
 import os
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import sympy
 
 import dace
 from dace import dtypes
-from dace.sdfg import nodes
 from dace.config import set_temporary
+from dace.sdfg import nodes
 from tests.corpus.cloudsc.cloudsc import cloudsc_py
 
 #: Shape symbols and named integer index scalars. The cloud species ``ncldq*``
@@ -57,7 +56,7 @@ from tests.corpus.cloudsc.cloudsc import cloudsc_py
 #: (``klev = klon = 32``) for a fast compiled run -- the physical input ranges
 #: are bounds, not vertical profiles, so they stay valid at any grid size, and
 #: ``ncldtop = 15`` still leaves a meaningful vertical microphysics loop.
-CLOUDSC_SYMBOLS: Dict[str, int] = {
+CLOUDSC_SYMBOLS: dict[str, int] = {
     "klev": 32,
     "klon": 32,
     "nclv": 5,
@@ -74,7 +73,7 @@ CLOUDSC_SYMBOLS: Dict[str, int] = {
 #: reference. The ``yrecldp_nssopt``/``ncldtop``/``laeri*`` entries are integer
 #: scalars (cast on use); the rest are doubles. Mirrored here so the harness
 #: needs no external dataset.
-CLOUDSC_CONSTANTS: Dict[str, float] = {
+CLOUDSC_CONSTANTS: dict[str, float] = {
     "ptsphy": 3600.0,
     "ydcst_rcpd": 1004.7088578330674,
     "ydcst_rd": 287.0596736665907,
@@ -182,7 +181,7 @@ CLOUDSC_CONSTANTS: Dict[str, float] = {
 #: Arrays absent here are kernel outputs (or have no reference value) and are
 #: zero-initialized. Several reference inputs are uniformly zero (``pmfd``,
 #: ``pnice``, ``plsm``, ...); their ``(0.0, 0.0)`` range reproduces that.
-CLOUDSC_INPUT_RANGES: Dict[str, Tuple[float, float]] = {
+CLOUDSC_INPUT_RANGES: dict[str, tuple[float, float]] = {
     "pa": (0.0, 1.0),
     "pap": (0.999923895048429, 101254.97084602337),
     "paph": (0.0, 101375.10057152908),
@@ -217,7 +216,7 @@ CLOUDSC_INPUT_RANGES: Dict[str, Tuple[float, float]] = {
 }
 
 #: ``[min, max]`` integer range of each integer input array in the reference.
-CLOUDSC_INT_RANGES: Dict[str, Tuple[int, int]] = {
+CLOUDSC_INT_RANGES: dict[str, tuple[int, int]] = {
     "ktype": (0, 3),
     "ldcum": (0, 1),
 }
@@ -243,7 +242,7 @@ O3_CPU_ARGS: str = "-std=c++14 -fPIC -O3 -fopenmp -fno-fast-math -ffp-contract=o
 CACHE_SOURCE_FILES = (Path(__file__), Path(cloudsc_py.f.__code__.co_filename))
 
 
-def cloudsc_cache_dir() -> Optional[Path]:
+def cloudsc_cache_dir() -> Path | None:
     """Directory holding parsed-SDFG cache entries, or ``None`` when caching is off.
 
     Off by setting ``DACE_CLOUDSC_SDFG_CACHE=0``. Otherwise ``DACE_CLOUDSC_SDFG_CACHE`` names the
@@ -340,7 +339,7 @@ def _instantiate_dim(dim) -> int:
     return int(sympy.sympify(dim).subs(CLOUDSC_SYMBOLS))
 
 
-def pressure_profile(name: str, dims: List[int]) -> np.ndarray:
+def pressure_profile(name: str, dims: list[int]) -> np.ndarray:
     """A monotone hydrostatic pressure profile for ``pap`` / ``paph``.
 
     Pressure at half levels has to INCREASE from the model top to the surface, because the kernel
@@ -373,7 +372,7 @@ def pressure_profile(name: str, dims: List[int]) -> np.ndarray:
     return np.array(levels.reshape(dims), dtype=np.float64, order="C")
 
 
-def generate_cloudsc_inputs(sdfg: dace.SDFG, seed: int = 0) -> Dict[str, Union[np.ndarray, int, float]]:
+def generate_cloudsc_inputs(sdfg: dace.SDFG, seed: int = 0) -> dict[str, np.ndarray | int | float]:
     """Generate a physically-realistic CloudSC input set for ``sdfg``.
 
     Every non-transient argument is filled following the dwarf reference (see
@@ -397,11 +396,11 @@ def generate_cloudsc_inputs(sdfg: dace.SDFG, seed: int = 0) -> Dict[str, Union[n
     :returns: A kwargs dict of arrays, scalars, and symbol values.
     """
     rng = np.random.default_rng(seed)
-    arrays: Dict[str, np.ndarray] = {}
+    arrays: dict[str, np.ndarray] = {}
     for name, desc in sdfg.arrays.items():
         if desc.transient:
             continue
-        dims: List[int] = [_instantiate_dim(d) for d in desc.shape]
+        dims: list[int] = [_instantiate_dim(d) for d in desc.shape]
         is_int = "int" in str(desc.dtype)
 
         if name in CLOUDSC_CONSTANTS:
@@ -420,21 +419,21 @@ def generate_cloudsc_inputs(sdfg: dace.SDFG, seed: int = 0) -> Dict[str, Union[n
         elif name in ("pap", "paph"):
             arrays[name] = pressure_profile(name, dims)
         else:
-            value_range: Optional[Tuple[float, float]] = CLOUDSC_INPUT_RANGES.get(name)
+            value_range: tuple[float, float] | None = CLOUDSC_INPUT_RANGES.get(name)
             if value_range is None:
                 arrays[name] = np.zeros(dims, order="C")  # kernel output / no reference range
             else:
                 lo, hi = value_range
                 arrays[name] = (lo + (hi - lo) * rng.random(dims)).astype(np.float64, order="C")
 
-    inputs: Dict[str, Union[np.ndarray, int, float]] = {
+    inputs: dict[str, np.ndarray | int | float] = {
         name: (data.flat[0] if data.size == 1 else data) for name, data in arrays.items()
     }
     inputs.update(CLOUDSC_SYMBOLS)
     return inputs
 
 
-def make_sequential(sdfg: dace.SDFG) -> Tuple[int, int]:
+def make_sequential(sdfg: dace.SDFG) -> tuple[int, int]:
     """Force every map and library node to a sequential schedule, in place.
 
     A numerical-equivalence comparison must be deterministic: CloudSC's
@@ -459,12 +458,12 @@ def make_sequential(sdfg: dace.SDFG) -> Tuple[int, int]:
 
 
 def compare_outputs(
-    ref_inputs: Dict[str, Union[np.ndarray, int, float]],
-    cand_inputs: Dict[str, Union[np.ndarray, int, float]],
+    ref_inputs: dict[str, np.ndarray | int | float],
+    cand_inputs: dict[str, np.ndarray | int | float],
     rtol: float = 1e-15,
     atol: float = 1e-15,
     verbose: bool = False,
-) -> Dict[str, Tuple[float, float, bool]]:
+) -> dict[str, tuple[float, float, bool]]:
     """Per-array (per-subset) tolerance check between two driven input/output sets.
 
     Returns ``{array_name: (max_abs, max_rel, ok)}`` for every shared
@@ -488,7 +487,7 @@ def compare_outputs(
     :param verbose: Print a ``name max_abs max_rel ok`` line per array.
     :returns: Mapping from array name to ``(max_abs, max_rel, ok)``.
     """
-    report: Dict[str, Tuple[float, float, bool]] = {}
+    report: dict[str, tuple[float, float, bool]] = {}
     for name, ref_val in ref_inputs.items():
         if not isinstance(ref_val, np.ndarray) or ref_val.size == 0:
             continue

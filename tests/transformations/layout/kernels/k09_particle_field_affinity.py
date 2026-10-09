@@ -20,8 +20,8 @@ Sung et al., in-place AoS->AoSoA (InPar'12).
 """
 
 import numpy
-import dace
 
+import dace
 from dace.transformation.layout.zip_arrays import ZipArrays, aosoa_layout
 
 N = dace.symbol("N")

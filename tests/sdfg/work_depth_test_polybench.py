@@ -4,6 +4,7 @@ Validation of the work-depth analysis on the canonical PolyBench kernels.
 """
 
 import importlib
+
 import pytest
 import sympy as sp
 

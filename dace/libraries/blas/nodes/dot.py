@@ -1,16 +1,17 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
 import warnings
+
 import dace.library
 import dace.properties
 import dace.sdfg.nodes
-from dace.transformation.transformation import ExpandTransformation
-from dace.libraries.blas import blas_helpers
-from .. import environments
-from dace import dtypes, memlet as mm, symbolic, SDFG, SDFGState
+from dace import SDFG, SDFGState, dtypes, symbolic
+from dace import memlet as mm
 from dace.frontend.common import op_repository as oprepo
+from dace.libraries.blas import blas_helpers, environments
 from dace.libraries.standard.environments.cuda import CUDA
 from dace.ordered import OrderedSet
+from dace.transformation.transformation import ExpandTransformation
 
 
 def pure_dot_sdfg(node, parent_state, parent_sdfg, n=None):

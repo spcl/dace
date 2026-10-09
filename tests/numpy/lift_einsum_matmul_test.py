@@ -19,10 +19,10 @@ import pytest
 import dace
 import dace.libraries.blas as blas
 from dace.transformation.dataflow.lift_einsum import LiftEinsum
-from dace.transformation.passes.vectorization.config import VectorizeConfig
-from dace.transformation.passes.vectorization.enums import ISA, RemainderStrategy
 from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.canonicalize.finalize import finalize_for_target
+from dace.transformation.passes.vectorization.config import VectorizeConfig
+from dace.transformation.passes.vectorization.enums import ISA, RemainderStrategy
 
 M = dace.symbol("M")
 K = dace.symbol("K")

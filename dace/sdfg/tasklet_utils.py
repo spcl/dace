@@ -7,14 +7,15 @@ computational patterns. It parses tasklet code to determine the types of operati
 and constants involved. It also provides utilities furhter manipulate and analyze tasklets.
 """
 
-import re
-import sympy
-import dace
-from typing import Dict, Tuple, Set
-from dace.properties import CodeBlock
-from enum import Enum
 import ast
+import re
 import typing
+from enum import Enum
+
+import sympy
+
+import dace
+from dace.properties import CodeBlock
 
 
 class TaskletType(Enum):
@@ -69,7 +70,7 @@ class TaskletType(Enum):
 
 
 def add_abort_guard(
-    state: dace.SDFGState, name: str, condition: str, inputs: typing.Optional[Dict[str, typing.Any]] = None
+    state: dace.SDFGState, name: str, condition: str, inputs: dict[str, typing.Any] | None = None
 ) -> dace.nodes.Tasklet:
     """Add a Python tasklet ``if <condition>: abort()`` to ``state``, marked side-effecting.
 
@@ -102,7 +103,7 @@ def is_abort_guard(node: dace.nodes.Node) -> bool:
     )
 
 
-def token_replace_dict(code: str, repldict: Dict[str, str]) -> str:
+def token_replace_dict(code: str, repldict: dict[str, str]) -> str:
     """
     Replaces exact token matches in a code string using a replacement dictionary.
     Tokens are split using whitespace and common delimiters (` `, `(`, `)`, `[`, `]`).
@@ -157,7 +158,7 @@ def token_match(string_to_check: str, pattern_str: str) -> str:
     return pattern_str in tokens
 
 
-def token_split(string_to_check: str) -> Set[str]:
+def token_split(string_to_check: str) -> set[str]:
     """
     Splits a string into a set of tokens, keeping delimiters, and returns all tokens.
     The input string is split on empty space and brackets (` `, `(`, `)`, `[`, `]`).
@@ -183,7 +184,7 @@ def token_split(string_to_check: str) -> Set[str]:
     return tokens
 
 
-def token_split_variable_names(string_to_check: str) -> Set[str]:
+def token_split_variable_names(string_to_check: str) -> set[str]:
     """
     Splits a string into variable name tokens, ignoring delimiters and non-identifiers.
     Uses `str.isidentifier` on individual tokens.
@@ -316,7 +317,7 @@ def tasklet_has_symbol(tasklet: dace.nodes.Tasklet, symbol_str: str) -> bool:
 def replace_code(
     code_str: str,
     code_lang: dace.dtypes.Language,
-    repldict: Dict[str, str],
+    repldict: dict[str, str],
     py_only: bool = False,
     use_sym_expr: bool = True,
 ) -> str:
@@ -383,7 +384,7 @@ def replace_code(
 
 
 def tasklet_replace_code(
-    tasklet: dace.nodes.Tasklet, repldict: Dict[str, str], py_only: bool = True, use_sym_expr: bool = True
+    tasklet: dace.nodes.Tasklet, repldict: dict[str, str], py_only: bool = True, use_sym_expr: bool = True
 ):
     """
     Replaces symbols in a tasklet's code according to a replacement dictionary.
@@ -427,7 +428,7 @@ def extract_bracket_tokens(s: str) -> list[tuple[str, list[str]]]:
 
         results.append((name, " ".join(content)))
 
-    return {k: v for (k, v) in results}
+    return dict(results)
 
 
 def remove_bracket_tokens(s: str) -> str:
@@ -479,7 +480,7 @@ def _extract_constant_from_ast_str(src: str) -> str:
     raise ValueError("No constant found")
 
 
-def _split_code_on_assignment(code_str: str) -> Tuple[str, str]:
+def _split_code_on_assignment(code_str: str) -> tuple[str, str]:
     """
     Returns the LHS and RHS of the first assignment in a Python tasklet.
 
@@ -512,7 +513,7 @@ def _split_code_on_assignment(code_str: str) -> Tuple[str, str]:
     return lhs_str, rhs_str
 
 
-def _extract_non_connector_syms_from_tasklet(node: dace.nodes.Tasklet, state) -> typing.Set[str]:
+def _extract_non_connector_syms_from_tasklet(node: dace.nodes.Tasklet, state) -> set[str]:
     """
     Identify free symbols in tasklet code that are not input/output connectors.
 
@@ -549,7 +550,7 @@ def _extract_non_connector_syms_from_tasklet(node: dace.nodes.Tasklet, state) ->
     return free_non_connector_syms
 
 
-def _extract_non_connector_bound_syms_from_tasklet(code_str: str) -> typing.Set[str]:
+def _extract_non_connector_bound_syms_from_tasklet(code_str: str) -> set[str]:
     """
     Recursively extract all literal constants (numbers, strings, booleans, None)
     from a Python AST node.
@@ -733,7 +734,7 @@ def _extract_single_op(src: str, default_to_assignment: bool = False) -> str:
     return found
 
 
-def _match_connector_to_data(state: dace.SDFGState, tasklet: dace.nodes.Tasklet) -> Dict:
+def _match_connector_to_data(state: dace.SDFGState, tasklet: dace.nodes.Tasklet) -> dict:
     """
     Map input connector names to their corresponding data descriptors.
 
@@ -756,7 +757,7 @@ def _match_connector_to_data(state: dace.SDFGState, tasklet: dace.nodes.Tasklet)
     return tdict
 
 
-def _get_scalar_and_array_arguments(state: dace.SDFGState, tasklet: dace.nodes.Tasklet) -> Tuple[Set[str], Set[str]]:
+def _get_scalar_and_array_arguments(state: dace.SDFGState, tasklet: dace.nodes.Tasklet) -> tuple[set[str], set[str]]:
     """
     Separate tasklet input connectors into scalars and arrays.
 
@@ -769,7 +770,7 @@ def _get_scalar_and_array_arguments(state: dace.SDFGState, tasklet: dace.nodes.T
     return scalars, arrays
 
 
-def _reorder_rhs(code_str: str, op: str, rhs1: str, rhs2: str) -> Tuple[str, str]:
+def _reorder_rhs(code_str: str, op: str, rhs1: str, rhs2: str) -> tuple[str, str]:
     """
     Determine the correct left-right ordering of operands based on their appearance in code.
 
@@ -874,7 +875,7 @@ def count_name_occurrences(expr: str, name: str) -> int:
     return count
 
 
-def classify_tasklet(state: dace.SDFGState, node: dace.nodes.Tasklet) -> Dict:
+def classify_tasklet(state: dace.SDFGState, node: dace.nodes.Tasklet) -> dict:
     """
     Analyze a tasklet and return its classification with metadata.
 
@@ -980,11 +981,11 @@ def classify_tasklet(state: dace.SDFGState, node: dace.nodes.Tasklet) -> Dict:
 
     if n_in == 1:
         rhs = in_conns[0]
-        in_edges = {ie for ie in state.in_edges_by_connector(node, rhs)}
+        in_edges = set(state.in_edges_by_connector(node, rhs))
         assert len(in_edges) == 1, f"expected 1 in-edge for connector {rhs}, found {len(in_edges)}"
         rhs_data_name = in_edges.pop().data.data
         rhs_data = state.sdfg.arrays[required(rhs_data_name)]
-        out_edges = {oe for oe in state.out_edges_by_connector(node, lhs)}
+        out_edges = set(state.out_edges_by_connector(node, lhs))
         assert len(out_edges) == 1, f"expected 1 out-edge for connector {lhs}, found {len(out_edges)}"
         lhs_data_name = out_edges.pop().data.data
         lhs_data = state.sdfg.arrays[required(lhs_data_name)]
@@ -1201,7 +1202,7 @@ def classify_tasklet(state: dace.SDFGState, node: dace.nodes.Tasklet) -> Dict:
                     c1 = bound_syms.pop()
                     # Assignment operators it will return op <- `=` and always populate `rhs1`
                     if code_str == f"{lhs} = {c1}" or code_str == f"{lhs} = {c1};":
-                        out_edges = {oe for oe in state.out_edges_by_connector(node, lhs)}
+                        out_edges = set(state.out_edges_by_connector(node, lhs))
                         assert len(out_edges) == 1, f"expected 1 out-edge for connector {lhs}, found {len(out_edges)}"
                         lhs_data_name = out_edges.pop().data.data
                         lhs_data = state.sdfg.arrays[required(lhs_data_name)]
@@ -1233,6 +1234,7 @@ def classify_tasklet(state: dace.SDFGState, node: dace.nodes.Tasklet) -> Dict:
 
 
 import ast
+
 from dace.optionals import required
 from dace.sdfg.narrowing import as_basic
 

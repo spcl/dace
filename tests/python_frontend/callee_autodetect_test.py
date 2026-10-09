@@ -4,12 +4,13 @@ Tests automatic detection and parsing of nested functions and methods that are
 not annotated with @dace decorators.
 """
 
-import dace
-from dace.frontend.python.common import DaceSyntaxError, SDFGConvertible
 from dataclasses import dataclass
+
 import numpy as np
 import pytest
-from typing import List, Tuple
+
+import dace
+from dace.frontend.python.common import DaceSyntaxError, SDFGConvertible
 
 
 @dataclass
@@ -292,7 +293,7 @@ def test_type_hints_in_nested_call():
     existing type hints if the nested function is not decorated.
     """
 
-    def nested(a: int, b: List[float], c) -> Tuple[float, float]:
+    def nested(a: int, b: list[float], c) -> tuple[float, float]:
         return np.sum(b) + a, c
 
     @dace

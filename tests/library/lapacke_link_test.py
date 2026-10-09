@@ -11,12 +11,11 @@ links with no separate reference-LAPACK/LAPACKE package. This guards that path.
 """
 
 import ctypes.util
+import functools
 import os
 
 import numpy as np
 import pytest
-
-import functools
 
 import dace
 from dace.libraries.blas.environments import OpenBLAS

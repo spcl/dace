@@ -23,10 +23,9 @@ os.environ.setdefault("UCX_VFS_ENABLE", "n")
 
 import pytest
 
+from dace.transformation.passes.normalize_wcr import NormalizeWCR
 from tests.corpus.npbench import npbench
 from tests.passes.vectorization.helpers.corpus_multidim import base_pipeline
-
-from dace.transformation.passes.normalize_wcr import NormalizeWCR
 
 CORPUS = {c["name"]: c for c in npbench.collect()}
 KERNELS = [

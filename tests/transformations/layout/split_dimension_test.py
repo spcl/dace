@@ -1,7 +1,8 @@
-import dace
 import copy
+
 import numpy
 
+import dace
 from dace.transformation.layout.split_dimensions import SplitDimensions
 
 N = dace.symbol("N")
@@ -54,7 +55,7 @@ def _add_interstate_access(sdfg: dace.SDFG, arr_name: str, arr: dace.data.Array)
     second_state.add_edge(
         second_state.add_access(arr_name), None, t2, "_in", dace.memlet.Memlet(expr=f"{arr_name}[{access_str}]")
     )
-    second_state.add_edge(t2, "_out", second_state.add_access("sc2"), None, dace.memlet.Memlet(expr=f"sc2[0]"))
+    second_state.add_edge(t2, "_out", second_state.add_access("sc2"), None, dace.memlet.Memlet(expr="sc2[0]"))
 
 
 def test_vector_dim_split_with_block_size():

@@ -5,18 +5,17 @@ For complex inputs ``?ASUM`` returns ``sum(|Re(x_i)| + |Im(x_i)|)`` and
 the output dtype is real (``SCASUM`` / ``DZASUM``).
 """
 
-from typing import List, TYPE_CHECKING
 import warnings
+from typing import TYPE_CHECKING
 
 import dace.library
 import dace.properties
 import dace.sdfg.nodes
-from dace.transformation.transformation import ExpandTransformation
-from dace.libraries.blas import blas_helpers
-from .. import environments
-from dace.libraries.blas import gpu_dialect
-from dace import dtypes, memlet as mm, SDFG, SDFGState
+from dace import SDFG, SDFGState, dtypes
+from dace import memlet as mm
 from dace.frontend.common import op_repository as oprepo
+from dace.libraries.blas import blas_helpers, environments, gpu_dialect
+from dace.transformation.transformation import ExpandTransformation
 
 if TYPE_CHECKING:
     from dace.frontend.python.newast import ProgramVisitor
@@ -26,7 +25,7 @@ if TYPE_CHECKING:
 class ExpandAsumPure(ExpandTransformation):
     """Backend-agnostic: init state + WCR ``+= abs(x_i)``."""
 
-    environments: List[type] = []
+    environments: list[type] = []
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
@@ -101,7 +100,7 @@ class ExpandAsumMKL(ExpandTransformation):
 
 @dace.library.expansion
 class ExpandAsumGPUBLAS(ExpandTransformation):
-    environments: List[type] = []
+    environments: list[type] = []
     dialect: gpu_dialect.GpuBlasDialect
 
     @classmethod

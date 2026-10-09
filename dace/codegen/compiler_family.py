@@ -8,12 +8,11 @@ match CMake's ``CMAKE_<LANG>_COMPILER_ID``, lowercased.
 import functools
 import os
 import subprocess
-from typing import Dict, Optional, Tuple
 
 from dace.config import Config
 
 #: Predefined macro -> family, most specific first: clang and nvc++ also define ``__GNUC__``.
-FAMILY_MACROS: Tuple[Tuple[str, str], ...] = (
+FAMILY_MACROS: tuple[tuple[str, str], ...] = (
     ("__NVCOMPILER", "nvhpc"),
     ("__INTEL_LLVM_COMPILER", "intelllvm"),
     ("__clang__", "clang"),
@@ -31,7 +30,7 @@ def host_compiler() -> str:
 
 
 @functools.lru_cache(maxsize=None, typed=True)
-def _predefined_macros(executable: str) -> Optional[Dict[str, str]]:
+def _predefined_macros(executable: str) -> dict[str, str] | None:
     """``{macro: value}`` for everything ``executable`` predefines, or None if it cannot be probed."""
     try:
         probe = subprocess.run(
@@ -41,7 +40,7 @@ def _predefined_macros(executable: str) -> Optional[Dict[str, str]]:
         return None
     if probe.returncode != 0:
         return None
-    macros: Dict[str, str] = {}
+    macros: dict[str, str] = {}
     for line in probe.stdout.splitlines():
         parts = line.split(maxsplit=2)
         if len(parts) > 1 and parts[0] == "#define":
@@ -63,7 +62,7 @@ def detect(executable: str) -> str:
     return FALLBACK_FAMILY
 
 
-def detect_version(executable: str) -> Optional[Tuple[int, ...]]:
+def detect_version(executable: str) -> tuple[int, ...] | None:
     """``(major, minor, patch)`` of ``executable``, or None if it cannot be determined.
 
     From the same predefined macros as :func:`detect`, not from the ``--version`` banner: invoked as

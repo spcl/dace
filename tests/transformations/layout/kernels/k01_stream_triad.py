@@ -16,8 +16,8 @@ Computers," IEEE TCCA Newsletter, 1995 (STREAM Triad); SC26 layout paper (fragme
 """
 
 import numpy
-import dace
 
+import dace
 from dace.transformation.layout.brute_force import block_candidates
 
 N = dace.symbol("N")

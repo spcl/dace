@@ -12,8 +12,8 @@ Source: Henretty et al., CC'11 (data-layout transformation for SIMD stencils).
 """
 
 import numpy
-import dace
 
+import dace
 from dace.transformation.layout.brute_force import block_candidates
 
 N = dace.symbol("N")

@@ -5,12 +5,14 @@ https://numpy.org/devdocs/reference/arrays.indexing.html
 """
 
 import ast
+
+import numpy as np
+import pytest
+
 import dace
 from dace import graphlib as nx
 from dace.frontend.python.common import DaceSyntaxError
 from dace.sdfg import nodes as dace_nodes
-import numpy as np
-import pytest
 
 N = dace.symbol("N")
 M = dace.symbol("M")

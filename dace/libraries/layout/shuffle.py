@@ -2,8 +2,8 @@
 """The shuffle registry: user-defined value-permutation sigma (forward + inverse expressions), minting sympy Function classes and C++ lowerings for codegen."""
 
 import ast
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable, Dict, List, Optional, Tuple
 
 import sympy
 
@@ -23,7 +23,7 @@ PYMOD_DEF = (
     f"{{ long long r = a % b; return (r != 0 && ((r < 0) != (b < 0))) ? r + b : r; }}\n"
 )
 
-_REGISTRY: "Dict[str, ShuffleFunction]" = {}
+_REGISTRY: "dict[str, ShuffleFunction]" = {}
 
 
 class _FlooredMod(ast.NodeTransformer):
@@ -50,7 +50,7 @@ def _as_sympy(index):
     return dace.symbolic.pystr_to_symbolic(str(index))
 
 
-def _symbol_params(*exprs: str) -> Tuple[str, ...]:
+def _symbol_params(*exprs: str) -> tuple[str, ...]:
     """Sorted SDFG-symbol identifiers used across ``exprs`` (excludes index var, math helpers, call callees)."""
     names, callees = set(), set()
     for expr in exprs:
@@ -64,9 +64,9 @@ def _symbol_params(*exprs: str) -> Tuple[str, ...]:
     return tuple(sorted(names - callees))
 
 
-def _make_function_class(cname: str, expr: str, params: Tuple[str, ...]) -> type:
+def _make_function_class(cname: str, expr: str, params: tuple[str, ...]) -> type:
     """Mint a ``sympy.Function`` subclass ``cname`` printing as ``cname(i, *params)``; folds constant-index calls."""
-    fold: Optional[Callable[[int], int]] = None
+    fold: Callable[[int], int] | None = None
     if not params:
         # Fold via a restricted eval on integer indices (expression uses only ``i``).
         code = compile(expr, f"<shuffle:{cname}>", "eval")
@@ -102,7 +102,7 @@ class ShuffleFunction:
     name: str
     forward_expr: str
     inverse_expr: str
-    params: Tuple[str, ...]
+    params: tuple[str, ...]
     forward_cls: type
     inverse_cls: type
 
@@ -112,7 +112,7 @@ class ShuffleFunction:
     def inverse_name(self) -> str:
         return f"shuffle_inv_{self.name}"
 
-    def _param_symbols(self) -> List[sympy.Symbol]:
+    def _param_symbols(self) -> list[sympy.Symbol]:
         return [dace.symbolic.symbol(p) for p in self.params]
 
     def apply_forward(self, index):

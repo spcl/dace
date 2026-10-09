@@ -11,8 +11,8 @@ alongside 5 ConditionalBlocks and a LoopRegion.
 
 import dace
 from dace.properties import CodeBlock
-from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, SDFGState
 from dace.sdfg.analysis.writeset_underapproximation import UnderapproximateWrites, _find_unconditionally_executed_states
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, SDFGState
 
 N = 8
 

@@ -6,14 +6,14 @@ import os
 
 import torch
 import torch.utils.cpp_extension
-from dace.codegen import targets, compiler
-from dace.codegen.codeobject import CodeObject
 from torch import nn
 
 import dace
+from dace.codegen import compiler, targets
+from dace.codegen.codeobject import CodeObject
 from dace.libraries.torch import PyTorch
-from tests.utils import torch_tensors_close
 from tests.ml_gpu_utils import DEVICES, experimental_cuda, is_gpu, torch_device
+from tests.utils import torch_tensors_close
 
 op_source = """
 #include <torch/torch.h>

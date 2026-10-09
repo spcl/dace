@@ -2,23 +2,22 @@
 """LogP/LogGP cost analysis of an SDFG loop nest: time = max(total_bytes * G, total_messages * L / concurrency); see loggp.nest_memory_time."""
 
 from dataclasses import dataclass
-from typing import Dict, FrozenSet, List
 
-import dace
 import sympy as sp
 
+import dace
+from dace.sdfg.narrowing import as_expr
 from dace.transformation.layout.cost_model.access_subsets import get_access_subsets
 from dace.transformation.layout.cost_model.blocks_touched import average_blocks_touched
 from dace.transformation.layout.cost_model.loggp import LogGP, bandwidth_delay_product, nest_memory_time, regime
-from dace.sdfg.narrowing import as_expr
 
 # LOCAL (free-for-now) storage: registers + GPU shared memory.
-LOCAL_STORAGE: FrozenSet[dace.dtypes.StorageType] = frozenset(
+LOCAL_STORAGE: frozenset[dace.dtypes.StorageType] = frozenset(
     {dace.dtypes.StorageType.Register, dace.dtypes.StorageType.GPU_Shared}
 )
 
 # Schedules whose iterations run concurrently (nest exposes MLP).
-PARALLEL_SCHEDULES: FrozenSet[dace.dtypes.ScheduleType] = frozenset(
+PARALLEL_SCHEDULES: frozenset[dace.dtypes.ScheduleType] = frozenset(
     {
         dace.dtypes.ScheduleType.CPU_Multicore,
         dace.dtypes.ScheduleType.GPU_Device,
@@ -45,11 +44,11 @@ class NestCounts:
     """TIER-0 result: structural block counts of one nest, no measured parameters."""
 
     total_iters: sp.Basic
-    arrays: Dict[str, ArrayLogP]
+    arrays: dict[str, ArrayLogP]
     line_bytes: int
     sector_bytes: int
 
-    def globals_(self) -> List[ArrayLogP]:
+    def globals_(self) -> list[ArrayLogP]:
         return [a for a in self.arrays.values() if not a.is_local]
 
     def messages(self) -> sp.Basic:
@@ -66,11 +65,11 @@ class LoopNestLogP:
     """The LogP cost of one loop nest, in terms of the measured parameters ``p``."""
 
     total_iters: sp.Basic
-    arrays: Dict[str, ArrayLogP]
+    arrays: dict[str, ArrayLogP]
     p: LogGP
     concurrency: float  # exposed MLP: independent block requests in flight
 
-    def _globals(self) -> List[ArrayLogP]:
+    def _globals(self) -> list[ArrayLogP]:
         return [a for a in self.arrays.values() if not a.is_local]
 
     def regime(self) -> str:
@@ -130,7 +129,7 @@ class LoopNestLogP:
         return as_expr(self.time_per_iter()) * as_expr(self.total_iters)
 
 
-def _loop_ranges(state: dace.SDFGState, map_entry: dace.nodes.MapEntry) -> List[Dict[str, dace.subsets.Range]]:
+def _loop_ranges(state: dace.SDFGState, map_entry: dace.nodes.MapEntry) -> list[dict[str, dace.subsets.Range]]:
     """The nest's ``{param: range}`` maps, outer-to-inner, over every map in the scope subtree."""
     scope_dict = state.scope_dict()
 
@@ -150,7 +149,7 @@ def _loop_ranges(state: dace.SDFGState, map_entry: dace.nodes.MapEntry) -> List[
             if cur is map_entry:
                 entries.append(node)
     entries.sort(key=depth)
-    return [{p: r for p, r in zip(e.map.params, e.map.range)} for e in entries]
+    return [dict(zip(e.map.params, e.map.range)) for e in entries]
 
 
 def exposed_concurrency(state: dace.SDFGState, map_entry: dace.nodes.MapEntry, p: LogGP, n_cores: int = None) -> float:
@@ -173,7 +172,7 @@ def exposed_concurrency(state: dace.SDFGState, map_entry: dace.nodes.MapEntry, p
     return n_cores * unit_mlp if n_cores is not None else float("inf")
 
 
-def written_arrays(state: dace.SDFGState, map_entry: dace.nodes.MapEntry) -> FrozenSet[str]:
+def written_arrays(state: dace.SDFGState, map_entry: dace.nodes.MapEntry) -> frozenset[str]:
     """Arrays the nest writes: memlets flowing to MapExit or an in-scope access node."""
     exit_node = state.exit_node(map_entry)
     names = set()
@@ -185,7 +184,7 @@ def written_arrays(state: dace.SDFGState, map_entry: dace.nodes.MapEntry) -> Fro
     return frozenset(names)
 
 
-def dynamic_memlet_arrays(state: dace.SDFGState, map_entry: dace.nodes.MapEntry) -> FrozenSet[str]:
+def dynamic_memlet_arrays(state: dace.SDFGState, map_entry: dace.nodes.MapEntry) -> frozenset[str]:
     """Arrays reached through a dynamic (data-dependent) memlet inside the scope."""
     names = set()
     for e in state.scope_subgraph(map_entry).edges():
@@ -199,10 +198,10 @@ def analyze_loop_nest(
     map_entry: dace.nodes.MapEntry,
     p: LogGP,
     block_bytes: int = None,
-    local_arrays: FrozenSet[str] = frozenset(),
+    local_arrays: frozenset[str] = frozenset(),
     concurrency: float = None,
     n_cores: int = None,
-    replayed_counts: Dict[str, tuple] = None,
+    replayed_counts: dict[str, tuple] = None,
 ) -> LoopNestLogP:
     """LogP cost of the perfectly-nested map scope at ``map_entry``; ``replayed_counts`` required for arrays behind a dynamic memlet."""
     if concurrency is None:
@@ -225,8 +224,8 @@ def count_loop_nest(
     map_entry: dace.nodes.MapEntry,
     line_bytes: int = 64,
     sector_bytes: int = None,
-    local_arrays: FrozenSet[str] = frozenset(),
-    replayed_counts: Dict[str, tuple] = None,
+    local_arrays: frozenset[str] = frozenset(),
+    replayed_counts: dict[str, tuple] = None,
 ) -> NestCounts:
     """TIER-0 structural block counts of the nest, no LogGP parameters; requires ``replayed_counts`` for dynamic memlets."""
     sdfg = state.sdfg
@@ -250,7 +249,7 @@ def count_loop_nest(
     written = written_arrays(state, map_entry)
     replayed_counts = replayed_counts or {}
 
-    arrays: Dict[str, ArrayLogP] = {}
+    arrays: dict[str, ArrayLogP] = {}
     for name, subset in subsets.items():
         if name not in sdfg.arrays:
             continue
@@ -318,7 +317,7 @@ def sign_of(expr: sp.Basic) -> str:
     return "unknown"
 
 
-def dominance_verdict(a: NestCounts, b: NestCounts, subs: Dict = None) -> str:
+def dominance_verdict(a: NestCounts, b: NestCounts, subs: dict = None) -> str:
     """TIER-0 dominance-lemma comparison: "first"|"second"|"tie"|"undecided" (undecided if counts disagree or sign unknown)."""
     dm = as_expr(a.messages()) - as_expr(b.messages())
     db = as_expr(a.bytes_moved()) - as_expr(b.bytes_moved())
@@ -336,7 +335,7 @@ def dominance_verdict(a: NestCounts, b: NestCounts, subs: Dict = None) -> str:
     return "undecided"  # genuine disagreement: fewer requests vs fewer bytes
 
 
-def pareto_front(candidates: Dict[str, NestCounts], subs: Dict = None) -> List[str]:
+def pareto_front(candidates: dict[str, NestCounts], subs: dict = None) -> list[str]:
     """TIER-0 pruning: candidates not dominated by any other, in input order. Ties keep the first-listed candidate."""
     names = list(candidates)
     survivors = []

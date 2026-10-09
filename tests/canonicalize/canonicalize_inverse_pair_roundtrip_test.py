@@ -29,11 +29,11 @@ import numpy as np
 import pytest
 
 import dace
-from dace.transformation.passes.canonicalize.fold_scalar_read_copies import FoldScalarReadCopies
 from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock, LoopRegion
-from dace.transformation.passes.move_if_into_loop import MoveIfIntoLoop
 from dace.transformation.interstate.move_loop_invariant_if_up import MoveLoopInvariantIfUp
+from dace.transformation.passes.canonicalize.fold_scalar_read_copies import FoldScalarReadCopies
+from dace.transformation.passes.move_if_into_loop import MoveIfIntoLoop
 
 N = dace.symbol("N")
 M = dace.symbol("M")
@@ -170,8 +170,8 @@ def test_looptomap_then_maptoloop_then_looptomap():
     """A parallel loop -> map -> loop -> map round-trips back to a parallel
     Map, value-preserving (extends the existing iter-index-through-NSDFG
     round-trip coverage)."""
-    from dace.transformation.interstate import LoopToMap
     from dace.transformation.dataflow import MapToForLoop
+    from dace.transformation.interstate import LoopToMap
 
     n = 12
     rng = np.random.default_rng(82)

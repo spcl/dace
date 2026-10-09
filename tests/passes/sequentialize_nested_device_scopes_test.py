@@ -8,8 +8,9 @@ model. The behaviour pinned here is the one the canonicalize finalize tail used 
 ``GPU_Device`` map inside a device scope is an illegal in-kernel launch rather than a bad trade.
 """
 
-import dace
 import pytest
+
+import dace
 from dace import dtypes
 from dace.libraries.standard.nodes.reduce import Reduce
 from dace.sdfg import nodes

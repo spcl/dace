@@ -58,14 +58,15 @@ sees a clean shape.
 """
 
 import ast
-from typing import Any, Dict, List, Optional, Tuple, Type, Union
+from typing import Any
 
 from dace import SDFG
 from dace.frontend.python import astutils
 from dace.sdfg import nodes
 from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState
-from dace.transformation import pass_pipeline as ppl, transformation
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation import transformation
 
 
 class HoistAnalysisCache:
@@ -82,30 +83,30 @@ class HoistAnalysisCache:
     __slots__ = ("reads", "writes", "preds", "region_indices")
 
     def __init__(self) -> None:
-        self.reads: Dict[int, Optional[Dict[str, None]]] = {}
-        self.writes: Dict[int, Tuple[Dict[str, None], Dict[str, None]]] = {}
-        self.preds: Dict[Tuple[int, int], Dict[ControlFlowBlock, None]] = {}
-        self.region_indices: Dict[int, Tuple[Dict[str, List[str]], Dict[str, None]]] = {}
+        self.reads: dict[int, dict[str, None] | None] = {}
+        self.writes: dict[int, tuple[dict[str, None], dict[str, None]]] = {}
+        self.preds: dict[tuple[int, int], dict[ControlFlowBlock, None]] = {}
+        self.region_indices: dict[int, tuple[dict[str, list[str]], dict[str, None]]] = {}
 
-    def block_reads(self, block: ControlFlowBlock) -> Optional[Dict[str, None]]:
+    def block_reads(self, block: ControlFlowBlock) -> dict[str, None] | None:
         block_id = id(block)
         if block_id not in self.reads:
             self.reads[block_id] = _block_reads_symbols(block)
         return self.reads[block_id]
 
-    def block_writes(self, block: ControlFlowBlock) -> Tuple[Dict[str, None], Dict[str, None]]:
+    def block_writes(self, block: ControlFlowBlock) -> tuple[dict[str, None], dict[str, None]]:
         block_id = id(block)
         if block_id not in self.writes:
             self.writes[block_id] = _block_writes(block)
         return self.writes[block_id]
 
-    def predecessors(self, parent: ControlFlowRegion, child: ControlFlowBlock) -> Dict[ControlFlowBlock, None]:
+    def predecessors(self, parent: ControlFlowRegion, child: ControlFlowBlock) -> dict[ControlFlowBlock, None]:
         pred_key = (id(parent), id(child))
         if pred_key not in self.preds:
             self.preds[pred_key] = _predecessors_in(parent, child)
         return self.preds[pred_key]
 
-    def region_index(self, region: ControlFlowRegion) -> Tuple[Dict[str, List[str]], Dict[str, None]]:
+    def region_index(self, region: ControlFlowRegion) -> tuple[dict[str, list[str]], dict[str, None]]:
         region_id = id(region)
         if region_id not in self.region_indices:
             self.region_indices[region_id] = build_region_index(region)
@@ -118,7 +119,7 @@ class HoistAnalysisCache:
         self.region_indices.clear()
 
 
-def names_read_by(expr: str) -> Dict[str, None]:
+def names_read_by(expr: str) -> dict[str, None]:
     """Every name a string expression reads: symbols AND the data containers it subscripts.
 
     Read off the AST, not off ``pystr_to_symbolic``: sympy renders ``A[0]`` as an indexed
@@ -135,14 +136,14 @@ def names_read_by(expr: str) -> Dict[str, None]:
     return dict.fromkeys(visitor.free_symbols)
 
 
-def _region_writes(region: ControlFlowRegion) -> Tuple[Dict[str, None], Dict[str, None]]:
+def _region_writes(region: ControlFlowRegion) -> tuple[dict[str, None], dict[str, None]]:
     """All symbols (interstate assignments) and data containers written
     anywhere inside ``region`` and its descendants.
 
     :returns: ``(assigned_symbols, written_data)``.
     """
-    asyms: Dict[str, None] = {}
-    wdata: Dict[str, None] = {}
+    asyms: dict[str, None] = {}
+    wdata: dict[str, None] = {}
     for e in region.all_interstate_edges():
         asyms.update(dict.fromkeys(e.data.assignments.keys()))
     for st in region.states():
@@ -152,15 +153,15 @@ def _region_writes(region: ControlFlowRegion) -> Tuple[Dict[str, None], Dict[str
     return asyms, wdata
 
 
-def build_region_index(region: ControlFlowRegion) -> Tuple[Dict[str, List[str]], Dict[str, None]]:
+def build_region_index(region: ControlFlowRegion) -> tuple[dict[str, list[str]], dict[str, None]]:
     """Every interstate assignment's rhs, grouped by lhs, and every data name an
     access node writes, anywhere inside ``region``.
 
     Backing index for :func:`_key_has_other_writer`: the region walk it needs is
     identical for every ``(key, rhs)`` pair asked about the same region.
     """
-    by_key: Dict[str, List[str]] = {}
-    written: Dict[str, None] = {}
+    by_key: dict[str, list[str]] = {}
+    written: dict[str, None] = {}
     for e in region.all_interstate_edges():
         for lhs, rhs_value in e.data.assignments.items():
             by_key.setdefault(lhs, []).append(str(rhs_value))
@@ -214,7 +215,7 @@ def _on_conditional_branch(cfg: ControlFlowRegion, dest: ControlFlowRegion, sdfg
     return False
 
 
-def _predecessors_in(parent: ControlFlowRegion, child: ControlFlowBlock) -> Dict[ControlFlowBlock, None]:
+def _predecessors_in(parent: ControlFlowRegion, child: ControlFlowBlock) -> dict[ControlFlowBlock, None]:
     """Strict predecessors of a block within its parent region.
 
     :param parent: The region whose edges are walked.
@@ -222,7 +223,7 @@ def _predecessors_in(parent: ControlFlowRegion, child: ControlFlowBlock) -> Dict
     :returns: Blocks reachable backwards from ``child`` via ``parent``'s
               edges, excluding ``child`` itself.
     """
-    out: Dict[ControlFlowBlock, None] = {}
+    out: dict[ControlFlowBlock, None] = {}
     stack = [child]
     while stack:
         cur = stack.pop()
@@ -234,7 +235,7 @@ def _predecessors_in(parent: ControlFlowRegion, child: ControlFlowBlock) -> Dict
     return out
 
 
-def _block_reads_symbols(block: ControlFlowBlock) -> Optional[Dict[str, None]]:
+def _block_reads_symbols(block: ControlFlowBlock) -> dict[str, None] | None:
     """All symbols read anywhere inside a block (state, region, etc.).
 
     This is a legality predicate, so it fails CLOSED: an unreadable ``free_symbols`` or condition
@@ -244,7 +245,7 @@ def _block_reads_symbols(block: ControlFlowBlock) -> Optional[Dict[str, None]]:
     :param block: The state or region to scan.
     :returns: The names of symbols read inside ``block``, or ``None`` if it cannot be determined.
     """
-    syms: Dict[str, None] = {}
+    syms: dict[str, None] = {}
     if isinstance(block, SDFGState):
         try:
             syms.update(dict.fromkeys(str(s) for s in block.free_symbols))
@@ -268,7 +269,7 @@ def _block_reads_symbols(block: ControlFlowBlock) -> Optional[Dict[str, None]]:
     return syms
 
 
-def _block_writes(block: ControlFlowBlock) -> Tuple[Dict[str, None], Dict[str, None]]:
+def _block_writes(block: ControlFlowBlock) -> tuple[dict[str, None], dict[str, None]]:
     """All symbols assigned and data containers written anywhere inside a block.
 
     A state-only block contributes tasklet writes to its AccessNodes; a
@@ -279,8 +280,8 @@ def _block_writes(block: ControlFlowBlock) -> Tuple[Dict[str, None], Dict[str, N
     """
     if isinstance(block, ControlFlowRegion):
         return _region_writes(block)
-    asyms: Dict[str, None] = {}
-    wdata: Dict[str, None] = {}
+    asyms: dict[str, None] = {}
+    wdata: dict[str, None] = {}
     if isinstance(block, SDFGState):
         for n in block.nodes():
             if isinstance(n, nodes.AccessNode) and block.in_degree(n) > 0:
@@ -293,7 +294,7 @@ def _legal_to_hoist_into(
     child: ControlFlowRegion,
     key: str,
     rhs: str,
-    rhs_syms: Dict[str, None],
+    rhs_syms: dict[str, None],
     sdfg: SDFG,
     cache: HoistAnalysisCache,
 ) -> bool:
@@ -377,7 +378,7 @@ def _legal_to_hoist_into(
 
 def _find_destination(
     edge_region: ControlFlowRegion, key: str, rhs: str, sdfg: SDFG, origin: ControlFlowBlock, cache: HoistAnalysisCache
-) -> Optional[ControlFlowRegion]:
+) -> ControlFlowRegion | None:
     """Walk up the ``parent_graph`` chain from ``edge_region`` to find the
     outermost ancestor ``D`` where the move is legal under L1-L6. Returns
     ``None`` if the binding all-or-nothing rule is not met or if no move
@@ -419,7 +420,7 @@ def _find_destination(
     return dest
 
 
-def _edge_landing_order(existing: Dict[str, str], key: str, rhs_syms: Dict[str, None]) -> str:
+def _edge_landing_order(existing: dict[str, str], key: str, rhs_syms: dict[str, None]) -> str:
     """How ``key = rhs`` must be sequenced against the assignments already on a landing edge.
 
     Assignments on one interstate edge are unordered -- they all read the pre-edge symbol
@@ -566,10 +567,10 @@ class CascadeInterstateEdgeAssignmentsUp(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+    def depends_on(self) -> list[type[ppl.Pass] | ppl.Pass]:
         return []
 
-    def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> int | None:
         """Repeatedly hoist legal interstate-edge assignments until a fixpoint.
 
         :param sdfg: The SDFG to transform in place.

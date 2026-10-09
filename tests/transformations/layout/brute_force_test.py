@@ -7,9 +7,9 @@ timed, best() returns a correct one) is the invariant asserted here; timing is b
 asserted (noisy on a shared host)."""
 
 import numpy
-import dace
 
-from dace.transformation.layout.brute_force import sweep, best, time_cpu, permutation_candidates
+import dace
+from dace.transformation.layout.brute_force import best, permutation_candidates, sweep, time_cpu
 
 N = dace.symbol("N")
 

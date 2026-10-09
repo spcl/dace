@@ -1,10 +1,11 @@
 import numpy as np
 import pytest
+
 import dace
 from dace.sdfg.dealias import convert_legacy_nested_sdfgs
-from dace.transformation.passes.canonicalize import canonicalize
-from dace.transformation.interstate.expand_nested_sdfg_inputs import ExpandNestedSDFGInputs
 from dace.sdfg.state import LoopRegion
+from dace.transformation.interstate.expand_nested_sdfg_inputs import ExpandNestedSDFGInputs
+from dace.transformation.passes.canonicalize import canonicalize
 
 N = dace.symbol("N")
 
@@ -75,12 +76,7 @@ def test_expand_nested_sdfg_inputs():
         )
 
 
-import numpy as np
 import dace
-
-from dace.transformation.interstate.expand_nested_sdfg_inputs import (
-    ExpandNestedSDFGInputs,
-)
 
 N = dace.symbol("N")
 

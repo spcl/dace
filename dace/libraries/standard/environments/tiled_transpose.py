@@ -2,7 +2,6 @@
 """Environment exposing the tiled transpose / symmetrize kernels to the CUDA unit."""
 
 import dace.library
-from typing import Dict, List
 
 
 @dace.library.environment
@@ -15,16 +14,16 @@ class TiledTranspose:
     """
 
     cmake_minimum_version = None
-    cmake_packages: List[str] = []
-    cmake_variables: Dict[str, str] = {}
-    cmake_includes: List[str] = []
-    cmake_libraries: List[str] = []
-    cmake_compile_flags: List[str] = []
-    cmake_link_flags: List[str] = []
-    cmake_files: List[str] = []
+    cmake_packages: list[str] = []
+    cmake_variables: dict[str, str] = {}
+    cmake_includes: list[str] = []
+    cmake_libraries: list[str] = []
+    cmake_compile_flags: list[str] = []
+    cmake_link_flags: list[str] = []
+    cmake_files: list[str] = []
 
     headers = {"frame": [], "cuda": ["dace/cuda/transpose_tiled.cuh"]}
-    state_fields: List[str] = []
+    state_fields: list[str] = []
     init_code = ""
     finalize_code = ""
-    dependencies: List[str] = []
+    dependencies: list[str] = []

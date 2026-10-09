@@ -5,14 +5,20 @@ numpy's (N, 1). Numpy is the bit-exact oracle; BROKEN_TODAY (empty) holds any id
 regresses, marked xfail(strict=True) so a fix shows up as XPASS.
 """
 
-from collections import namedtuple
+from typing import Any, NamedTuple
 
 import numpy as np
 import pytest
 
 import dace
 
-Case = namedtuple("Case", ("id", "prog", "oracle", "make_input", "reason"))
+
+class Case(NamedTuple):
+    id: str
+    prog: Any
+    oracle: Any
+    make_input: Any
+    reason: str
 
 
 def make_2d():

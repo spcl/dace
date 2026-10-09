@@ -60,6 +60,7 @@ def test_a_default_transient_inside_a_map_is_not_persistent(storage, persistent)
 def test_each_distinct_extent_is_compared_with_one_once():
     """Transients sharing extents share one ``symbolic.equal(extent, 1)``; the verdicts are unchanged."""
     from unittest import mock
+
     from dace import symbolic
 
     sdfg = dace.SDFG("shared_extents")

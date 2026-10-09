@@ -9,22 +9,21 @@ value-preserving. A no-op when the body has a single group.
 """
 
 import copy
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any
 
-from dace.ordered import OrderedSet
-
-from dace import SDFG
-from dace import symbolic
-from dace.sdfg import nodes
-from dace.sdfg.state import ControlFlowBlock, LoopRegion, SDFGState
-from dace.sdfg.sdfg import InterstateEdge
-from dace.transformation import pass_pipeline as ppl, transformation
-from dace.transformation.passes.analysis import loop_analysis, smt_dependence
+from dace import SDFG, symbolic
 from dace.optionals import required
+from dace.ordered import OrderedSet
+from dace.sdfg import nodes
 from dace.sdfg.narrowing import as_expr
+from dace.sdfg.sdfg import InterstateEdge
+from dace.sdfg.state import ControlFlowBlock, LoopRegion, SDFGState
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation import transformation
+from dace.transformation.passes.analysis import loop_analysis, smt_dependence
 
 
-def _is_per_iter_subset(subset, loop_var: Optional[str]) -> bool:
+def _is_per_iter_subset(subset, loop_var: str | None) -> bool:
     """``True`` iff every dimension of ``subset`` is a single-point access at
     the loop variable with offset zero (or loop-invariant).
 
@@ -150,7 +149,7 @@ def _fissions_after_bridge_rewrite(loop: LoopRegion, sdfg: SDFG) -> bool:
     return len(_independent_groups(probe_compute, probe, sdfg)) >= 2
 
 
-def _container_per_iter_only(state: SDFGState, data: str, loop_var: Optional[str]) -> bool:
+def _container_per_iter_only(state: SDFGState, data: str, loop_var: str | None) -> bool:
     """``True`` iff every memlet referencing ``data`` in ``state`` is per-iter."""
     for n in state.nodes():
         if not (isinstance(n, nodes.AccessNode) and n.data == data):
@@ -161,7 +160,7 @@ def _container_per_iter_only(state: SDFGState, data: str, loop_var: Optional[str
     return True
 
 
-def _rewrite_per_iter_bridges(state: SDFGState, loop_var: Optional[str], sdfg: SDFG):
+def _rewrite_per_iter_bridges(state: SDFGState, loop_var: str | None, sdfg: SDFG):
     """In-place: replace writer-side AccessNodes whose out-edges feed
     downstream consumers (the textbook fission bridge) with a fresh reader
     AccessNode for the same data.
@@ -236,12 +235,11 @@ def _has_self_path(state: SDFGState, data: str) -> bool:
             seen.add(cur)
             if cur is not start and isinstance(cur, nodes.AccessNode) and cur.data == data:
                 return True
-            for e in state.out_edges(cur):
-                stack.append(e.dst)
+            stack.extend(e.dst for e in state.out_edges(cur))
     return False
 
 
-def _is_accumulator_group(group: List[nodes.Node], state: SDFGState, sdfg: SDFG) -> bool:
+def _is_accumulator_group(group: list[nodes.Node], state: SDFGState, sdfg: SDFG) -> bool:
     """True if ``group`` contains a transient scalar that is both read and written
     in the same state, indicating a loop-carried accumulator update. Per-iteration
     transient temporaries (produced and consumed within one iteration) are excluded
@@ -258,12 +256,12 @@ def _is_accumulator_group(group: List[nodes.Node], state: SDFGState, sdfg: SDFG)
     return False
 
 
-def _written_data(groups: List[List[nodes.Node]], state: SDFGState) -> Set[str]:
+def _written_data(groups: list[list[nodes.Node]], state: SDFGState) -> set[str]:
     """Containers written by AccessNodes in ``groups``."""
     return {n.data for g in groups for n in g if isinstance(n, nodes.AccessNode) and state.in_degree(n) > 0}
 
 
-def _consumed_by_sibling_loop(state: SDFGState, data: Set[str]) -> bool:
+def _consumed_by_sibling_loop(state: SDFGState, data: set[str]) -> bool:
     """True if a sibling :class:`LoopRegion` in the same parent CFG reads any
     container in ``data``. Used after fission to keep per-element producer loops
     together when a downstream consumer loop reads them, avoiding an unnecessary
@@ -290,8 +288,8 @@ def _consumed_by_sibling_loop(state: SDFGState, data: Set[str]) -> bool:
 
 
 def _merge_side_write_groups(
-    groups: List[List[nodes.Node]], state: SDFGState, loop_var: Optional[str], sdfg: SDFG, sibling_check: bool = True
-) -> List[List[nodes.Node]]:
+    groups: list[list[nodes.Node]], state: SDFGState, loop_var: str | None, sdfg: SDFG, sibling_check: bool = True
+) -> list[list[nodes.Node]]:
     """Merge side-write groups when they are part of a compound reduction body
     (one scalar accumulator group plus multiple per-element side writes) or when
     they feed a sibling consumer loop. Both cases are value-preserving: keeping the
@@ -312,8 +310,8 @@ def _merge_side_write_groups(
     if not acc_idxs and not consumed:
         return groups
     order = {n: i for i, n in enumerate(state.nodes())}
-    merged: List[nodes.Node] = []
-    kept: List[List[nodes.Node]] = []
+    merged: list[nodes.Node] = []
+    kept: list[list[nodes.Node]] = []
     for i, g in enumerate(groups):
         if i in acc_idxs:
             kept.append(g)
@@ -327,8 +325,8 @@ def _merge_side_write_groups(
 
 
 def _independent_groups(
-    state: SDFGState, loop: Optional[LoopRegion], sdfg: SDFG, sibling_check: bool = True
-) -> List[List[nodes.Node]]:
+    state: SDFGState, loop: LoopRegion | None, sdfg: SDFG, sibling_check: bool = True
+) -> list[list[nodes.Node]]:
     """Partition ``state``'s nodes into data-independent groups.
 
     A *pure input* is an AccessNode with no in-edges whose data is never
@@ -369,7 +367,7 @@ def _independent_groups(
         if isinstance(n, nodes.AccessNode) and state.in_degree(n) == 0 and n.data not in written
     )
     core = [n for n in state.nodes() if n not in is_input]
-    parent: Dict[nodes.Node, nodes.Node] = {n: n for n in core}
+    parent: dict[nodes.Node, nodes.Node] = {n: n for n in core}
     loop_var = loop.loop_variable if loop is not None else None
 
     def find(x):
@@ -449,7 +447,7 @@ def _independent_groups(
                     for r in reps2:
                         union(reps1[0], r)
 
-    classes: Dict[nodes.Node, List[nodes.Node]] = {}
+    classes: dict[nodes.Node, list[nodes.Node]] = {}
     for n in core:
         classes.setdefault(find(n), []).append(n)
     groups = []
@@ -461,7 +459,7 @@ def _independent_groups(
     return _merge_side_write_groups(groups, state, loop_var, sdfg, sibling_check=sibling_check)
 
 
-def _single_compute_state(loop: LoopRegion) -> Optional[SDFGState]:
+def _single_compute_state(loop: LoopRegion) -> SDFGState | None:
     """The loop body's unique non-empty ``SDFGState`` if the body is that
     state plus only empty states joined by unconditional edges; else
     ``None``.
@@ -505,7 +503,7 @@ def _single_compute_state(loop: LoopRegion) -> Optional[SDFGState]:
             try:
                 from dace import symbolic
 
-                rhs_free = set(str(s) for s in symbolic.pystr_to_symbolic(rhs).free_symbols)
+                rhs_free = {str(s) for s in symbolic.pystr_to_symbolic(rhs).free_symbols}
             except Exception:
                 rhs_free = {lhs}  # conservative: assume self-reference on parse failure
             if lhs in rhs_free:
@@ -513,14 +511,14 @@ def _single_compute_state(loop: LoopRegion) -> Optional[SDFGState]:
     return nonempty[0]
 
 
-def _block_rw(block: ControlFlowBlock) -> Tuple[Set[str], Set[str]]:
+def _block_rw(block: ControlFlowBlock) -> tuple[set[str], set[str]]:
     """Recursively collect (reads, writes) data containers of a CFG block.
 
     :param block: An ``SDFGState`` or control-flow region.
     :returns: ``(reads, writes)`` sets of data-container names.
     """
-    reads: Set[str] = set()
-    writes: Set[str] = set()
+    reads: set[str] = set()
+    writes: set[str] = set()
     states = [block] if isinstance(block, SDFGState) else list(block.states())
     for st in states:
         for n in st.nodes():
@@ -532,7 +530,7 @@ def _block_rw(block: ControlFlowBlock) -> Tuple[Set[str], Set[str]]:
     return reads, writes
 
 
-def _linear_blocks(loop: LoopRegion) -> Optional[List]:
+def _linear_blocks(loop: LoopRegion) -> list | None:
     """Return ``loop``'s body blocks in execution order if it is a simple
     linear chain of unconditional, assignment-free edges; else ``None``.
 
@@ -553,7 +551,7 @@ def _linear_blocks(loop: LoopRegion) -> Optional[List]:
     return order if len(order) == len(blocks) else None
 
 
-def _independent_block_groups(loop: LoopRegion) -> Optional[List[List]]:
+def _independent_block_groups(loop: LoopRegion) -> list[list] | None:
     """Partition ``loop``'s body blocks into data-independent groups.
 
     Only a plain linear chain of >= 2 blocks qualifies. Blocks touching a
@@ -569,7 +567,7 @@ def _independent_block_groups(loop: LoopRegion) -> Optional[List[List]]:
         return None
     pos = {b: i for i, b in enumerate(order)}
     rw = {b: _block_rw(b) for b in order}
-    parent: Dict = {b: b for b in order}
+    parent: dict = {b: b for b in order}
 
     def find(x):
         while parent[x] != x:
@@ -577,7 +575,7 @@ def _independent_block_groups(loop: LoopRegion) -> Optional[List[List]]:
             x = parent[x]
         return x
 
-    written: Set[str] = set()
+    written: set[str] = set()
     for _r, w in rw.values():
         written |= w
     for data in written:
@@ -585,7 +583,7 @@ def _independent_block_groups(loop: LoopRegion) -> Optional[List[List]]:
         for b in touch[1:]:
             parent[find(b)] = find(touch[0])
 
-    classes: Dict = {}
+    classes: dict = {}
     for b in order:
         classes.setdefault(find(b), []).append(b)
     groups = sorted((sorted(g, key=lambda b: pos[b]) for g in classes.values()), key=lambda g: pos[g[0]])
@@ -613,7 +611,7 @@ class LoopFission(ppl.Pass):
     def depends_on(self):
         return set()
 
-    def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> int | None:
         """Fission every qualifying loop in ``sdfg``.
 
         :param sdfg: The SDFG to transform in place.
@@ -673,7 +671,7 @@ class LoopFission(ppl.Pass):
         return True
 
     @staticmethod
-    def _fission_blocks(loop: LoopRegion, groups: List[List]):
+    def _fission_blocks(loop: LoopRegion, groups: list[list]):
         """Distribute ``loop`` over independent body-block groups."""
         parent = loop.parent_graph
         in_edges = list(parent.in_edges(loop))
@@ -682,7 +680,7 @@ class LoopFission(ppl.Pass):
         orig_order = _linear_blocks(loop)
         keep_idx = [sorted(required(orig_order).index(b) for b in g) for g in groups]
 
-        clones: List[LoopRegion] = []
+        clones: list[LoopRegion] = []
         for gi, idxs in enumerate(keep_idx):
             clone = copy.deepcopy(loop)
             clone.label = f"{loop.label}_fis{gi}"
@@ -726,7 +724,7 @@ class LoopFission(ppl.Pass):
         cidx = list(loop.nodes()).index(compute)
         ngroups = len(_independent_groups(compute, loop, sdfg, sibling_check=False))
 
-        clones: List[LoopRegion] = []
+        clones: list[LoopRegion] = []
         for gi in range(ngroups):
             clone = copy.deepcopy(loop)
             clone.label = f"{loop.label}_fis{gi}"

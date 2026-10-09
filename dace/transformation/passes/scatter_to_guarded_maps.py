@@ -44,13 +44,16 @@ collision the abort fires before any consumer reads the corrupted output.
 
 import ast
 import copy
-from typing import Dict, List, NamedTuple, Optional, Set, Tuple
+from typing import NamedTuple
 
 import dace
-from dace import SDFG, SDFGState, data, dtypes, memlet as mm, properties, subsets, symbolic
+from dace import SDFG, SDFGState, data, dtypes, properties, subsets, symbolic
+from dace import memlet as mm
 from dace.frontend.python import astutils
+from dace.optionals import required
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
+from dace.sdfg.narrowing import as_expr
 from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
@@ -61,8 +64,6 @@ from dace.transformation.passes.scatter_conflict_guard import (
     insert_scatter_guard,
 )
 from dace.transformation.passes.vectorization.utils.map_predicates import NO_VECTORIZE_MARKER
-from dace.optionals import required
-from dace.sdfg.narrowing import as_expr
 
 
 @properties.make_properties
@@ -126,7 +127,7 @@ class ScatterToGuardedMaps(ppl.Pass):
     def depends_on(self):
         return set()
 
-    def apply_pass(self, sdfg: SDFG, _pipeline_results) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _pipeline_results) -> int | None:
         """Run the full pipeline. Returns the number of distinct ``idx`` arrays guarded,
         or ``None`` if no scatter loop was found.
         """
@@ -276,7 +277,7 @@ class ScatterToGuardedMaps(ppl.Pass):
         return (len(idx_arrays) + len(sliced_guards) + len(joint_writes)) or None
 
 
-def detect_scatter_idx_arrays(sdfg: SDFG) -> Set[str]:
+def detect_scatter_idx_arrays(sdfg: SDFG) -> set[str]:
     """Find every ``idx`` array name used as an indirect-write index in any LoopRegion.
 
     See :func:`detect_scatter_loops_and_idx_arrays` for the underlying scan; this
@@ -311,7 +312,7 @@ def detect_scatter_loops_and_idx_arrays(sdfg: SDFG):
               ``(loop, JointScatterWrite)`` pairs to key across all of their dimensions.
     """
     scatter_loops: list = []
-    idx_arrays: Set[str] = set()
+    idx_arrays: set[str] = set()
     sliced_guards: list = []
     joint_writes: list = []
     for sd in sdfg.all_sdfgs_recursive():
@@ -345,7 +346,7 @@ def detect_scatter_loops_and_idx_arrays(sdfg: SDFG):
     return scatter_loops, idx_arrays, sliced_guards, joint_writes
 
 
-def scatter_target_arrays(sdfg: SDFG, idx_name: str) -> Set[str]:
+def scatter_target_arrays(sdfg: SDFG, idx_name: str) -> set[str]:
     """Names of the arrays ``idx_name`` scatters into, across ``sdfg``'s own scatter loops.
 
     The scatter guard sizes its value-indexed tag array by these arrays' domains (see
@@ -359,7 +360,7 @@ def scatter_target_arrays(sdfg: SDFG, idx_name: str) -> Set[str]:
     :param idx_name: The scatter index array.
     :returns: The set of scattered-into array names (empty if ``idx_name`` drives no scatter).
     """
-    targets: Set[str] = set()
+    targets: set[str] = set()
     for region in sdfg.all_control_flow_regions():
         if not (isinstance(region, LoopRegion) and region.loop_variable):
             continue
@@ -407,7 +408,7 @@ def nested_write_is_accumulation(nsdfg_node: nodes.NestedSDFG, out_conn: str) ->
     return bool(writes) and all(not indirect_write_needs_injectivity(m) for m in writes)
 
 
-def _scatter_idx_arrays_for_loop(region: LoopRegion, sdfg: SDFG) -> Set[str]:
+def _scatter_idx_arrays_for_loop(region: LoopRegion, sdfg: SDFG) -> set[str]:
     """Return the scatter index-array names driving an indirect WRITE in ``region``.
 
     Names only; see :func:`_scatter_idx_targets_for_loop` for the scan and for which arrays
@@ -418,7 +419,7 @@ def _scatter_idx_arrays_for_loop(region: LoopRegion, sdfg: SDFG) -> Set[str]:
 
 def _scatter_idx_targets_for_loop(
     region: LoopRegion, sdfg: SDFG, window_1d: bool = False
-) -> Dict[str, Tuple[Set[str], Optional[ScatterIndexSlice]]]:
+) -> dict[str, tuple[set[str], ScatterIndexSlice | None]]:
     """Map each scatter index-array name driving an indirect WRITE in ``region`` to the arrays
     it writes through, plus (for a rank>=2 index array) the 1-D window the guard should scan.
 
@@ -450,8 +451,8 @@ def _scatter_idx_targets_for_loop(
     """
     loop_var = region.loop_variable
     bindings = _collect_indirect_bindings(region, sdfg)
-    loop_arrays: Dict[str, Set[str]] = {}
-    dim_nodes_by_arr: Dict[str, List[ast.AST]] = {}
+    loop_arrays: dict[str, set[str]] = {}
+    dim_nodes_by_arr: dict[str, list[ast.AST]] = {}
     for state in region.states():
         for node in state.data_nodes():
             if state.in_degree(node) == 0:
@@ -477,7 +478,7 @@ def _scatter_idx_targets_for_loop(
         for arr, tgts in _nested_dynamic_scatter_idx_arrays(state, sdfg, loop_var).items():
             loop_arrays.setdefault(arr, set()).update(tgts)
 
-    result: Dict[str, Tuple[Set[str], Optional[ScatterIndexSlice]]] = {}
+    result: dict[str, tuple[set[str], ScatterIndexSlice | None]] = {}
     for arr, tgts in loop_arrays.items():
         desc = sdfg.arrays[arr]
         one_dim = len(desc.shape) == 1
@@ -493,9 +494,7 @@ def _scatter_idx_targets_for_loop(
     return result
 
 
-def _classify_index_slice(
-    desc: data.Array, dim_nodes: List[ast.AST], region: LoopRegion
-) -> Optional[ScatterIndexSlice]:
+def _classify_index_slice(desc: data.Array, dim_nodes: list[ast.AST], region: LoopRegion) -> ScatterIndexSlice | None:
     """Classify a rank>=2 index-array subscript ``arr[dim_nodes...]`` against ``region``'s loop
     variable: accepted iff exactly one dimension is affine in the loop variable and every other
     dimension is loop-invariant. ``ScatterConflictCheck`` scans its input through a flat
@@ -530,7 +529,7 @@ def _classify_index_slice(
 
     extent = symbolic.simplify(symbolic.int_floor(end - init, lstride) + 1)
     offset = symbolic.simplify(coeff * init + const)
-    fixed: Dict[int, str] = {d: astutils.unparse(node) for d, node in enumerate(dim_nodes) if d != dim}
+    fixed: dict[int, str] = {d: astutils.unparse(node) for d, node in enumerate(dim_nodes) if d != dim}
     return ScatterIndexSlice(dim=dim, offset=str(offset), extent=str(extent), stride="1", fixed=fixed)
 
 
@@ -543,13 +542,13 @@ class JointScatterWrite(NamedTuple):
     """
 
     target: str
-    dim_exprs: Tuple[str, ...]
-    mask_expr: Optional[str]
+    dim_exprs: tuple[str, ...]
+    mask_expr: str | None
 
 
-def joint_key_read_arrays(write: JointScatterWrite) -> Set[str]:
+def joint_key_read_arrays(write: JointScatterWrite) -> set[str]:
     """Every array name subscripted inside ``write``'s index and mask expressions."""
-    names: Set[str] = set()
+    names: set[str] = set()
     for expr in write.dim_exprs + ((write.mask_expr,) if write.mask_expr else ()):
         for node in ast.walk(ast.parse(expr, mode="eval")):
             if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name):
@@ -571,7 +570,7 @@ class JointGuardPlan(NamedTuple):
     host_sdfg: SDFG
     host_region: ControlFlowRegion
     anchor: ControlFlowBlock
-    map_dims: Tuple[Tuple[str, symbolic.SymbolicType], ...]
+    map_dims: tuple[tuple[str, symbolic.SymbolicType], ...]
 
 
 def owner_is_trivial_map_wrapper(owner_sdfg: SDFG) -> bool:
@@ -591,14 +590,14 @@ def owner_is_trivial_map_wrapper(owner_sdfg: SDFG) -> bool:
     return len(owner_sdfg.nodes()) == 1
 
 
-def map_scope_chain(state: SDFGState, node: nodes.Node) -> Optional[List[nodes.MapEntry]]:
+def map_scope_chain(state: SDFGState, node: nodes.Node) -> list[nodes.MapEntry] | None:
     """The map entries enclosing ``node`` in ``state``, outermost first.
 
     :returns: the chain, or ``None`` when a scope on it is not a map -- a Consume scope has no
         ``map`` to read an extent off, and its iteration count is a runtime stream property rather
         than a range, so a key cannot be sized to cover it.
     """
-    chain: List[nodes.MapEntry] = []
+    chain: list[nodes.MapEntry] = []
     entry = state.entry_node(node)
     while entry is not None:
         if not isinstance(entry, nodes.MapEntry):
@@ -609,7 +608,7 @@ def map_scope_chain(state: SDFGState, node: nodes.Node) -> Optional[List[nodes.M
     return chain
 
 
-def joint_guard_plan(root: SDFG, loop: LoopRegion, write: JointScatterWrite) -> Optional[JointGuardPlan]:
+def joint_guard_plan(root: SDFG, loop: LoopRegion, write: JointScatterWrite) -> JointGuardPlan | None:
     """Where to put the guard for ``loop``, climbing out of any trivial map wrapper on the way.
 
     Placing the states beside the loop is the normal answer and needs no climb. When the loop's
@@ -636,13 +635,13 @@ def joint_guard_plan(root: SDFG, loop: LoopRegion, write: JointScatterWrite) -> 
     if not owner_is_trivial_map_wrapper(owner):
         return plan
 
-    free: Set[str] = set()
+    free: set[str] = set()
     for expr in write.dim_exprs + ((write.mask_expr,) if write.mask_expr else ()):
         free |= {str(sym) for sym in symbolic.pystr_to_symbolic(expr).free_symbols}
     free.discard(loop.loop_variable)
 
     current = owner
-    dims: List[Tuple[str, symbolic.SymbolicType]] = []
+    dims: list[tuple[str, symbolic.SymbolicType]] = []
     while owner_is_trivial_map_wrapper(current):
         nsdfg = current.parent_nsdfg_node
         state = current.parent
@@ -667,9 +666,9 @@ def joint_guard_plan(root: SDFG, loop: LoopRegion, write: JointScatterWrite) -> 
     return plan
 
 
-def point_index_expressions(subset) -> Optional[List[str]]:
+def point_index_expressions(subset) -> list[str] | None:
     """Per-dimension index of a subset addressing exactly one element, or ``None`` if it spans."""
-    exprs: List[str] = []
+    exprs: list[str] = []
     for rb, re_, _ in subset.ndrange():
         if (
             symbolic.simplify(
@@ -682,7 +681,7 @@ def point_index_expressions(subset) -> Optional[List[str]]:
     return exprs
 
 
-def substitute_indirect_bindings(expr: str, bindings: Dict[str, Tuple[str, List[ast.AST]]]) -> str:
+def substitute_indirect_bindings(expr: str, bindings: dict[str, tuple[str, list[ast.AST]]]) -> str:
     """Rewrite every bound scatter symbol in ``expr`` back into the index-array read it stands for.
 
     The frontend hoists a scatter index onto an interstate edge (``__sym := Xi_0[j]``) and leaves
@@ -701,12 +700,12 @@ def substitute_indirect_bindings(expr: str, bindings: Dict[str, Tuple[str, List[
     return astutils.unparse(Expand().visit(ast.parse(expr, mode="eval").body))
 
 
-def region_assigned_symbols(region: LoopRegion) -> Set[str]:
+def region_assigned_symbols(region: LoopRegion) -> set[str]:
     """Symbols an interstate edge inside ``region`` assigns, i.e. those that vary per iteration."""
     return {lhs for e in region.all_interstate_edges() for lhs in (e.data.assignments or {})}
 
 
-def key_map_can_read(expr: str, sdfg: SDFG, loop_var: str, varying: Set[str]) -> bool:
+def key_map_can_read(expr: str, sdfg: SDFG, loop_var: str, varying: set[str]) -> bool:
     """Whether ``expr`` is computable outside the loop body, one value per iteration.
 
     Array subscripts and the loop variable are readable from the key map; anything else must hold
@@ -726,8 +725,8 @@ def key_map_can_read(expr: str, sdfg: SDFG, loop_var: str, varying: Set[str]) ->
 
 
 def enclosing_branch_condition(
-    block, region: LoopRegion, bindings: Dict[str, Tuple[str, List[ast.AST]]]
-) -> Tuple[Optional[str], bool]:
+    block, region: LoopRegion, bindings: dict[str, tuple[str, list[ast.AST]]]
+) -> tuple[str | None, bool]:
     """The condition gating ``block`` inside ``region``, rewritten into index-array reads.
 
     A masked-off iteration writes nothing, so it must not be keyed onto a slot another iteration
@@ -736,7 +735,7 @@ def enclosing_branch_condition(
     does not: an ``else`` branch, whose condition is the negation of a list this does not
     reconstruct.
     """
-    conds: List[str] = []
+    conds: list[str] = []
     cur = block
     while cur is not None and cur is not region:
         parent = cur.parent_graph
@@ -751,7 +750,7 @@ def enclosing_branch_condition(
     return " and ".join(f"({c})" for c in conds), True
 
 
-def joint_scatter_writes_for_loop(region: LoopRegion, sdfg: SDFG) -> Optional[List[JointScatterWrite]]:
+def joint_scatter_writes_for_loop(region: LoopRegion, sdfg: SDFG) -> list[JointScatterWrite] | None:
     """Indirect writes in ``region`` whose target slot is picked by more than one dimension.
 
     ``N_[Xiv[j], Yiv[j]] = ...`` is the shape. Guarding ``Xiv`` and ``Yiv`` separately -- what the
@@ -768,7 +767,7 @@ def joint_scatter_writes_for_loop(region: LoopRegion, sdfg: SDFG) -> Optional[Li
     loop_var = region.loop_variable
     bindings = _collect_indirect_bindings(region, sdfg)
     varying = region_assigned_symbols(region) - set(bindings)
-    writes: List[JointScatterWrite] = []
+    writes: list[JointScatterWrite] = []
     for state in region.states():
         for node in state.data_nodes():
             desc = sdfg.arrays.get(node.data)
@@ -828,7 +827,7 @@ def flat_index_bound(desc: data.Array) -> symbolic.SymbolicType:
 
 def joint_scatter_key(
     plan: JointGuardPlan, loop: LoopRegion, write: JointScatterWrite
-) -> Optional[Tuple[str, symbolic.SymbolicType]]:
+) -> tuple[str, symbolic.SymbolicType] | None:
     """Materialize the flat target slot ``loop`` writes on each iteration, and return it.
 
     The key array is what the existing one-dimensional conflict check then runs on: two entries are
@@ -872,7 +871,7 @@ def joint_scatter_key(
     # Keyed by (array, per-dimension index expressions): an index array is read at its own rank,
     # so a rank-2 read carries two expressions and yields a rank-2 memlet below. Flattening them
     # into one string loses the split -- ``pystr_to_symbolic`` hands back a LIST for "i, j".
-    conns: Dict[Tuple[str, Tuple[str, ...]], str] = {}
+    conns: dict[tuple[str, tuple[str, ...]], str] = {}
 
     def to_connectors(expr: str) -> str:
 
@@ -937,7 +936,7 @@ def joint_scatter_key(
     return key_name, (domain if write.mask_expr is None else symbolic.simplify(domain + entries))
 
 
-def guard_joint_scatter_write(root: SDFG, loop: LoopRegion, write: JointScatterWrite, emit_trap: bool) -> Optional[str]:
+def guard_joint_scatter_write(root: SDFG, loop: LoopRegion, write: JointScatterWrite, emit_trap: bool) -> str | None:
     """Key ``write`` across all of its dimensions and splice a conflict check in before it runs.
 
     The guard sits between the key fill and the guarded block rather than at the earliest point the
@@ -969,7 +968,7 @@ def splice_guard_before(
     parent: ControlFlowRegion,
     anchor: ControlFlowBlock,
     check_state: SDFGState,
-    trap_state: Optional[SDFGState],
+    trap_state: SDFGState | None,
     count_name: str,
     trap_sym: str,
 ) -> None:
@@ -1005,7 +1004,7 @@ def index_rebuilt_around(owner_sdfg: SDFG, loop: LoopRegion, idx_name: str) -> b
     return False
 
 
-def _collect_indirect_bindings(region: LoopRegion, sdfg: SDFG) -> Dict[str, Tuple[str, List[ast.AST]]]:
+def _collect_indirect_bindings(region: LoopRegion, sdfg: SDFG) -> dict[str, tuple[str, list[ast.AST]]]:
     """Map each symbol bound by ``region``'s interstate edges to its source data
     array plus per-dimension subscript AST nodes, when the binding is of the
     form ``sym := arr[f(loop_var)]``.
@@ -1018,7 +1017,7 @@ def _collect_indirect_bindings(region: LoopRegion, sdfg: SDFG) -> Dict[str, Tupl
     frontend's scatter lowering, and extending the recognition surface risks
     misclassifying non-scatter interstate computations.
     """
-    bindings: Dict[str, Tuple[str, List[ast.AST]]] = {}
+    bindings: dict[str, tuple[str, list[ast.AST]]] = {}
     loop_var = region.loop_variable
     for e in region.all_interstate_edges():
         for lhs, rhs in (e.data.assignments or {}).items():
@@ -1030,7 +1029,7 @@ def _collect_indirect_bindings(region: LoopRegion, sdfg: SDFG) -> Dict[str, Tupl
     return bindings
 
 
-def resolve_staged_scalar_source(rhs: str, region: LoopRegion, sdfg: SDFG) -> Optional[Tuple[str, List[ast.AST]]]:
+def resolve_staged_scalar_source(rhs: str, region: LoopRegion, sdfg: SDFG) -> tuple[str, list[ast.AST]] | None:
     """``(arr, dim_nodes)`` when ``rhs`` names a scalar the body filled from ``arr[f(loop_var)]``.
 
     A multi-dimensional scatter does not reach the interstate edge in one piece: the frontend copies
@@ -1111,7 +1110,7 @@ def _hoist_slice_region(sdfg: SDFG, owner_sdfg: SDFG, index_slice: ScatterIndexS
     :returns: The outermost ``LoopRegion`` whose own loop variable appears in
               ``index_slice.fixed``, or ``owner_sdfg`` when none is found.
     """
-    free: Set[str] = set()
+    free: set[str] = set()
     for expr in index_slice.fixed.values():
         free |= {str(s) for s in symbolic.pystr_to_symbolic(expr).free_symbols}
     if not free:
@@ -1123,14 +1122,14 @@ def _hoist_slice_region(sdfg: SDFG, owner_sdfg: SDFG, index_slice: ScatterIndexS
     return owner_sdfg
 
 
-def _subscript_dims(idx) -> List[ast.AST]:
+def _subscript_dims(idx) -> list[ast.AST]:
     """Split a subscript's (already ``ast.Index``-unwrapped) ``.slice`` into one AST node per
     dimension: the elements of an ``ast.Tuple`` for ``arr[a, b]``, else the single node itself.
     """
     return list(idx.elts) if isinstance(idx, ast.Tuple) else [idx]
 
 
-def _resolve_indirect_source(rhs_str: str, loop_var: str, sdfg: SDFG) -> Optional[Tuple[str, List[ast.AST]]]:
+def _resolve_indirect_source(rhs_str: str, loop_var: str, sdfg: SDFG) -> tuple[str, list[ast.AST]] | None:
     """Return ``(arr, dim_nodes)`` if ``rhs_str`` is ``arr[f(loop_var)]`` (``arr`` a data
     descriptor in ``sdfg`` and the index a function of ``loop_var``); ``None`` otherwise.
     ``dim_nodes`` is one AST node per subscript dimension (see :func:`_subscript_dims`).
@@ -1161,7 +1160,7 @@ def _resolve_indirect_source(rhs_str: str, loop_var: str, sdfg: SDFG) -> Optiona
     return arr, _subscript_dims(idx)
 
 
-def _inline_indirect_idx_arrays(subset, loop_var: str, sdfg: SDFG) -> Dict[str, List[ast.AST]]:
+def _inline_indirect_idx_arrays(subset, loop_var: str, sdfg: SDFG) -> dict[str, list[ast.AST]]:
     """Data-array names inline-subscripted inside a memlet ``subset`` with an
     index referencing ``loop_var`` -- the ``out[idx[f(i)]]`` form where the index
     array ``idx`` is embedded directly in the write subset rather than bound on an
@@ -1172,7 +1171,7 @@ def _inline_indirect_idx_arrays(subset, loop_var: str, sdfg: SDFG) -> Dict[str, 
     :param sdfg: The SDFG whose ``arrays`` table qualifies the subscript bases.
     :returns: ``{index-array name: per-dimension subscript AST nodes}`` (empty if none).
     """
-    arrays: Dict[str, List[ast.AST]] = {}
+    arrays: dict[str, list[ast.AST]] = {}
     try:
         tree = ast.parse(str(subset), mode="eval").body
     except (SyntaxError, ValueError, TypeError):
@@ -1191,7 +1190,7 @@ def _inline_indirect_idx_arrays(subset, loop_var: str, sdfg: SDFG) -> Dict[str, 
     return arrays
 
 
-def _nested_dynamic_scatter_idx_arrays(state, sdfg: SDFG, loop_var: str) -> dict[str, Set[str]]:
+def _nested_dynamic_scatter_idx_arrays(state, sdfg: SDFG, loop_var: str) -> dict[str, set[str]]:
     """Integer index-array names driving a nested-SDFG data-dependent write in ``state``.
 
     Matches the shape a ``dace.map`` scatter (``dst[idx[i]] = ...``) lowers to: a
@@ -1209,7 +1208,7 @@ def _nested_dynamic_scatter_idx_arrays(state, sdfg: SDFG, loop_var: str) -> dict
     """
     from dace.libraries.sort.nodes._helpers import is_integer_dtype
 
-    arrays: dict[str, Set[str]] = {}
+    arrays: dict[str, set[str]] = {}
     for node in state.data_nodes():
         desc = sdfg.arrays.get(node.data)
         if desc is None or desc.transient:
@@ -1244,14 +1243,14 @@ def _nested_dynamic_scatter_idx_arrays(state, sdfg: SDFG, loop_var: str) -> dict
     return arrays
 
 
-def _write_index_input_connectors(nsdfg_node: nodes.NestedSDFG, out_conn: str) -> Set[str]:
+def _write_index_input_connectors(nsdfg_node: nodes.NestedSDFG, out_conn: str) -> set[str]:
     """Input-connector names of ``nsdfg_node`` that appear in the subset writing
     the output array ``out_conn`` inside the nested SDFG -- i.e. the connectors
     that carry the data-dependent write index.
     """
     in_conns = set(nsdfg_node.in_connectors.keys())
-    idx_conns: Set[str] = set()
-    index_symbols: Set[str] = set()
+    idx_conns: set[str] = set()
+    index_symbols: set[str] = set()
     for st in nsdfg_node.sdfg.states():
         for dn in st.data_nodes():
             if dn.data != out_conn:
@@ -1299,7 +1298,7 @@ def privatize_clone_local_transients(owner_sdfg: SDFG, loop: LoopRegion, clone: 
         if st not in loop_states and st not in clone_states
         for n in st.data_nodes()
     }
-    repl: Dict[str, str] = {}
+    repl: dict[str, str] = {}
     for name in sorted(loop_names - outside_names):
         repl[name] = owner_sdfg.add_datadesc(name + "_seq", copy.deepcopy(owner_sdfg.arrays[name]), find_new_name=True)
     if repl:

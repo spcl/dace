@@ -43,29 +43,28 @@ op must be associative -- ``+``, ``*``, ``min``, ``max`` -- so the order of the
 partial reductions does not change the result.
 """
 
-from typing import List, Optional, Tuple, Union
+import enum
 
 import numpy
 
 import dace
 from dace import dtypes, library, nodes, symbolic
 from dace.codegen.common import global_code_id, sym2cpp
-from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES, schedule_dispatch
-from dace.libraries.standard.pure_components import chain as chain_blocks
-from dace.libraries.standard.pure_components import counted_loop, element, operand_array, tasklet_state
-from dace.memlet import Memlet
-from dace.sdfg.state import LoopRegion
-from dace.sdfg.tasklet_utils import add_abort_guard
-from dace.properties import Property, EnumProperty, SymbolicProperty
-from dace.transformation.transformation import ExpandTransformation
-import enum
 
 # CUB env is imported lazily inside ``ExpandCUDA.expansion`` to break the
 # ``dace.libraries.standard.nodes.scan`` <-> ``dace.libraries.sort.environments.cub``
 # circular import (cub.py pulls in standard.environments, which loads this module).
 from dace.libraries.standard.environments.cpu import CPU as CPUEnv
-from dace.sdfg.narrowing import as_expr
+from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES, schedule_dispatch
+from dace.libraries.standard.pure_components import chain as chain_blocks
+from dace.libraries.standard.pure_components import counted_loop, element, operand_array, tasklet_state
+from dace.memlet import Memlet
 from dace.optionals import required
+from dace.properties import EnumProperty, Property, SymbolicProperty
+from dace.sdfg.narrowing import as_expr
+from dace.sdfg.state import LoopRegion
+from dace.sdfg.tasklet_utils import add_abort_guard
+from dace.transformation.transformation import ExpandTransformation
 
 # Connector names exposed for library-node builders.
 INPUT_CONNECTOR_NAME = "_scan_in"
@@ -988,11 +987,11 @@ def seed_state(nsdfg: dace.SDFG, chain: int, acc: str, seed: str, at: str) -> da
         reads["x"] = Memlet(f"{init_connector(chain)}[{at}]")
     elif seed == "first":
         reads["x"] = Memlet(element(nsdfg, in_connector(chain), at))
-    code = f"a = x" if reads else f"a = {seed}"
+    code = "a = x" if reads else f"a = {seed}"
     return tasklet_state(nsdfg, f"seed_{chain}", code, reads, {"a": Memlet(f"{acc}[0]")})
 
 
-def position_loop(nsdfg: dace.SDFG, node: "Scan", chain: int, acc: str, bounds: Tuple[str, str, str]) -> LoopRegion:
+def position_loop(nsdfg: dace.SDFG, node: "Scan", chain: int, acc: str, bounds: tuple[str, str, str]) -> LoopRegion:
     """One pass of the recurrence over positions ``range(*bounds)``, writing every prefix to the output."""
     combined = COMBINE_PY[node.op].format(a="a", x="x")
     code = f"y = a\nna = {combined}" if node.exclusive else f"na = {combined}\ny = na"
@@ -1083,10 +1082,10 @@ class ExpandPure(ExpandTransformation):
     that read the SDFG rather than compile it. Slower than :class:`ExpandSequential`, so nothing picks it for
     speed."""
 
-    environments: List[type] = []
+    environments: list[type] = []
 
     @staticmethod
-    def expansion(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG) -> Union[nodes.Tasklet, dace.SDFG]:
+    def expansion(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG) -> nodes.Tasklet | dace.SDFG:
         refuse_segments(node, "pure")
         refuse_unsupported_affine_flags(node)
         in_desc, out_desc, _in_edge, _out_edge = _validate_inputs_and_outputs(node, state, sdfg)
@@ -1326,7 +1325,7 @@ def batched_cuda_tasklet(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG, o
 BLOCK_COLLECTIVE_THREADS = 256
 
 
-def block_refusal(node: "Scan") -> Optional[str]:
+def block_refusal(node: "Scan") -> str | None:
     """Why :class:`ExpandCUDABlock` cannot lower ``node``, or ``None`` if it can.
 
     The affine, multi-chain, exclusive and explicit-init shapes have another lowering rather than an
@@ -1372,7 +1371,7 @@ class ExpandCUDABlock(ExpandTransformation):
     all fall through to another expansion instead of being silently lowered as something else.
     """
 
-    environments: List[type] = []
+    environments: list[type] = []
 
     @staticmethod
     def expansion(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG) -> dace.SDFG:
@@ -1449,7 +1448,7 @@ class ExpandCUDA(ExpandTransformation):
     """
 
     # Populated lazily in :meth:`expansion` (and below) to dodge the sort<->standard cycle.
-    environments: List[type] = []
+    environments: list[type] = []
 
     @staticmethod
     def expansion(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG) -> nodes.Tasklet:
@@ -1610,7 +1609,7 @@ class ExpandCUDA(ExpandTransformation):
 class ExpandAuto(ExpandTransformation):
     """Picks ``CPU``, ``CUDA`` or ``pure`` from the node's schedule (:func:`schedule_dispatch`)."""
 
-    environments: List[type] = []
+    environments: list[type] = []
 
     @staticmethod
     def expansion(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG):

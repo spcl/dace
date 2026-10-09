@@ -7,10 +7,11 @@ compiling or timing anything. The claim it refuses: ranking layouts whose counts
 requests vs fewer bytes) -- that ranking is genuinely concurrency-dependent (C_flip), tier 2's job.
 """
 
-import dace
 import pytest
 import sympy as sp
 
+import dace
+from dace.transformation.layout.cost_model.loggp import LogGP, gap_from_bandwidth, nest_memory_time
 from dace.transformation.layout.cost_model.logp_analysis import (
     ArrayLogP,
     NestCounts,
@@ -18,7 +19,6 @@ from dace.transformation.layout.cost_model.logp_analysis import (
     dominance_verdict,
     pareto_front,
 )
-from dace.transformation.layout.cost_model.loggp import LogGP, gap_from_bandwidth, nest_memory_time
 
 N = dace.symbol("N")
 

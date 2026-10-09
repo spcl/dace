@@ -15,7 +15,6 @@ import os
 import pathlib
 import subprocess
 import sys
-from typing import Dict
 
 import numpy as np
 import pytest
@@ -23,7 +22,6 @@ import pytest
 import dace
 from dace import nodes
 from dace.codegen.cpf import MAX_EXPANSION_STALLED_ROUNDS, force_renderable_expansions, render
-
 from tests.codegen.cpf.conftest import assert_standalone, build_standalone, call_standalone
 
 #: Fills in one state, comfortably past the stall tolerance so the old round budget is exceeded.
@@ -131,7 +129,7 @@ def test_a_library_node_that_expands_into_itself_is_reported_by_what_was_observe
     )
 
 
-def render_many_fills() -> Dict[str, str]:
+def render_many_fills() -> dict[str, str]:
     """CPF's C and C++ text, plus the pre-CPF codegen text, for one fresh build of the fills SDFG.
 
     All three go through :func:`force_renderable_expansions` on ``many_fills_sdfg`` (24

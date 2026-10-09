@@ -5,18 +5,17 @@ Uses separate ``_Bin`` and ``_Bout`` connectors (see :class:`Trsm`).
 """
 
 import copy
+from typing import TYPE_CHECKING
 
 import dace.library
 import dace.properties
 import dace.sdfg.nodes
-from dace.transformation.transformation import ExpandTransformation
-from dace.libraries.blas import blas_helpers
-from .. import environments
-from dace.libraries.blas import gpu_dialect
-from dace import memlet as mm, SDFG, SDFGState
+from dace import SDFG, SDFGState
+from dace import memlet as mm
 from dace.frontend.common import op_repository as oprepo
+from dace.libraries.blas import blas_helpers, environments, gpu_dialect
 from dace.ordered import OrderedSet
-from typing import List, TYPE_CHECKING
+from dace.transformation.transformation import ExpandTransformation
 
 if TYPE_CHECKING:
     from dace.frontend.python.newast import ProgramVisitor
@@ -73,7 +72,7 @@ class ExpandTrmmMKL(ExpandTransformation):
 
 @dace.library.expansion
 class ExpandTrmmGPUBLAS(ExpandTransformation):
-    environments: List[type] = []
+    environments: list[type] = []
     dialect: gpu_dialect.GpuBlasDialect
 
     @classmethod

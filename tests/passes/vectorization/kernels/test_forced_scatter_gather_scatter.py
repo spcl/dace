@@ -17,8 +17,8 @@ import numpy
 import pytest
 
 import dace
-from tests.passes.vectorization.helpers.harness import N, X, Y, run_vectorization_test
 from dace.transformation.passes.vectorization.enums import BranchMode
+from tests.passes.vectorization.helpers.harness import N, X, Y, run_vectorization_test
 
 pytestmark = pytest.mark.tile_nodes
 

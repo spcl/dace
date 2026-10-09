@@ -10,8 +10,8 @@ import ast
 from dataclasses import dataclass
 
 import dace
-from dace.memlet import Memlet
 from dace import typeclass
+from dace.memlet import Memlet
 from dace.optionals import required
 from dace.sdfg.narrowing import as_expr
 
@@ -83,8 +83,7 @@ def lane_loop_code(widths: tuple[int, ...], rhs: str) -> str:
         code_lines.append(f"{'    ' * d}DACE_UNROLL")
         code_lines.append(f"{'    ' * d}for (std::size_t __l{d} = 0; __l{d} < __W{d}; ++__l{d}) {{")
     code_lines.append(f"{'    ' * K}_out[{flat}] = {rhs};")
-    for d in reversed(range(K)):
-        code_lines.append(f"{'    ' * d}}}")
+    code_lines.extend(f"{'    ' * d}}}" for d in reversed(range(K)))
     return "\n".join(code_lines)
 
 

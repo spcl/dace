@@ -10,8 +10,9 @@ The baseline is produced by monkeypatching the frame's ``symbols_defined_at`` to
 ``SDFGState.symbols_defined_at``, which forces the per-node code path.
 """
 
-import dace
 import pytest
+
+import dace
 from dace.codegen import codegen
 from dace.sdfg.state import LoopRegion
 

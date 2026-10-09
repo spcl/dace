@@ -32,13 +32,11 @@ Example:
 """
 
 import abc
-import typing
 
 from dace import SDFG, SDFGState
+from dace.libraries.onnx.nodes.onnx_op import ONNXOp
 from dace.registry import make_registry
 from dace.sdfg.nodes import Node
-
-from dace.libraries.onnx.nodes.onnx_op import ONNXOp
 
 
 @make_registry
@@ -76,7 +74,7 @@ class ONNXForward(abc.ABC):
 
     @staticmethod
     @abc.abstractmethod
-    def forward(node: ONNXOp, state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
+    def forward(node: ONNXOp, state: SDFGState, sdfg: SDFG) -> Node | SDFG:
         """Expand an ONNX operation node into DaCe SDFG constructs.
 
         This is the main method that must be implemented by subclasses. It takes
@@ -91,7 +89,7 @@ class ONNXForward(abc.ABC):
         ...
 
     @classmethod
-    def registered_implementations(cls, op_name: str) -> typing.List[typing.Tuple[str, "ONNXForward"]]:
+    def registered_implementations(cls, op_name: str) -> list[tuple[str, "ONNXForward"]]:
         """Get all registered implementations for a specific ONNX operation.
 
         :param op_name: The ONNX operation name (e.g., "Conv", "MatMul").

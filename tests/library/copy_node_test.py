@@ -2,22 +2,23 @@
 """Tests for ``CopyLibraryNode`` and its pure, CPU, CUDA, cross-storage, register, and shared-memory expansions."""
 
 import contextlib
+import math
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Optional, Sequence, Tuple
+
+import numpy as np
+import pytest
 
 import dace
 from dace import symbolic
 from dace.codegen.common import get_gpu_backend
-from dace.sdfg.graph import SubgraphView
-from dace.transformation.subgraph import GPUPersistentKernel
 from dace.libraries.standard.helper import collapse_shape_and_strides
 from dace.libraries.standard.nodes.copy import CopyLibraryNode, select_copy_implementation
-from dace.libraries.standard.nodes.fill import FillLibraryNode
 from dace.libraries.standard.nodes.copy.common import _make_expansion_sdfg, cuda2d_pitch_params
+from dace.libraries.standard.nodes.fill import FillLibraryNode
+from dace.sdfg.graph import SubgraphView
 from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import is_gpu_copy_or_fill_libnode
-
-import pytest
-import numpy as np
+from dace.transformation.subgraph import GPUPersistentKernel
 
 
 @dataclass
@@ -37,23 +38,23 @@ class _ArraySpec:
 
     shape: Sequence[int]
     storage: dace.dtypes.StorageType
-    strides: Optional[Sequence[int]] = None
-    total_size: Optional[int] = None
+    strides: Sequence[int] | None = None
+    total_size: int | None = None
     transient: bool = False
-    subset: Optional[str] = None
-    name: Optional[str] = None
-    dtype: Optional[dace.dtypes.typeclass] = None
+    subset: str | None = None
+    name: str | None = None
+    dtype: dace.dtypes.typeclass | None = None
 
 
 def _make_copy_sdfg(
     src: _ArraySpec,
     dst: _ArraySpec,
     *,
-    implementation: Optional[str] = None,
+    implementation: str | None = None,
     name: str = "copy_sdfg",
     libnode_name: str = "cp",
     dtype: dace.dtypes.typeclass = dace.float64,
-) -> Tuple[dace.SDFG, CopyLibraryNode]:
+) -> tuple[dace.SDFG, CopyLibraryNode]:
     """One-state SDFG copying ``src`` -> ``dst`` via a single ``CopyLibraryNode``.
 
     :param src: source-side array spec.
@@ -1629,7 +1630,7 @@ def test_copy_single_element_h2d():
         libnode_name="copy_h2d",
     )
 
-    host = np.array([3.14159], dtype=np.float64)
+    host = np.array([math.pi], dtype=np.float64)
     dev = cp.zeros(1, dtype=cp.float64)
 
     _compile_no_copynd(sdfg)(host=host, dev=dev)
@@ -1668,7 +1669,7 @@ def test_copy_single_element_d2h():
         libnode_name="copy_d2h",
     )
 
-    dev = cp.array([2.71828], dtype=cp.float64)
+    dev = cp.array([math.e], dtype=cp.float64)
     host = np.zeros(1, dtype=np.float64)
 
     _compile_no_copynd(sdfg)(host=host, dev=dev)
@@ -2227,7 +2228,7 @@ def test_symbolic_extent_expansions_keep_their_ranges_symbolic():
 
 def _make_in_kernel_copy_sdfg(
     src_storage: dace.dtypes.StorageType, dst_storage: dace.dtypes.StorageType
-) -> Tuple[dace.SDFG, CopyLibraryNode]:
+) -> tuple[dace.SDFG, CopyLibraryNode]:
     """A multi-element ``CopyLibraryNode`` sitting inside a ``GPU_Device`` map."""
     sdfg = dace.SDFG("in_kernel_copy")
     sdfg.add_array("src", [4, 8], dace.float64, storage=src_storage)

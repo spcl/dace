@@ -4,10 +4,10 @@
 import ast
 
 from dace import data, dtypes
+from dace.properties import make_properties
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.transformation import transformation
-from dace.properties import make_properties
 
 
 def _is_carried_reduction_accumulator(sdfg, name: str) -> bool:

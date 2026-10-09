@@ -33,10 +33,9 @@ from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.canonicalize.finalize import finalize_for_target
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
 from dace.transformation.passes.cpu_specialization.hoist_parallel_region import HoistParallelRegion
-
+from tests.cfg_tree import assert_tree_matches_a_reset, spy_on_resets
 from tests.corpus.tsvc import tsvc
 from tests.corpus.tsvc.tsvc_numpy import REFERENCES
-from tests.cfg_tree import assert_tree_matches_a_reset, spy_on_resets
 
 N = dace.symbol("N")
 

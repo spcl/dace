@@ -17,9 +17,9 @@ off-by-one it was.
 in between, and bypassing it leaves the source-oriented memlet this query then misread.
 """
 
-import dace
 import pytest
 
+import dace
 from dace.transformation.passes.vectorization.utils.queries import collect_element_write_subsets
 
 N = dace.symbol("N")

@@ -22,9 +22,9 @@ import pytest
 
 import dace
 from dace.sdfg import nodes
+from dace.transformation.interstate.loop_to_map import LoopToMap
 from dace.transformation.passes import canonicalize
 from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
-from dace.transformation.interstate.loop_to_map import LoopToMap
 
 N = dace.symbol("N")
 

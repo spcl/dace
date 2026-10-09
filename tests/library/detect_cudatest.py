@@ -7,7 +7,6 @@ disagreement about what the answer is.
 """
 
 import pathlib
-from dace.codegen import common
 import shutil
 import subprocess
 
@@ -15,6 +14,7 @@ import numpy as np
 import pytest
 
 import dace
+from dace.codegen import common
 from dace.libraries.sort.nodes.scatter_conflict_check import ScatterConflictCheck
 from dace.libraries.standard.nodes import FindFirst
 from dace.libraries.standard.nodes.find_first import INDEX_NAME, OUTPUT_CONNECTOR_NAME

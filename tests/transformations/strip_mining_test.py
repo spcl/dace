@@ -1,9 +1,9 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+import numpy as np
+
 import dace
 from dace.transformation.dataflow.strip_mining import StripMining
 from dace.transformation.passes.equalize_symbol_dtypes import equalize
-
-import numpy as np
 
 N = dace.symbol("N", dtype=dace.int64)
 

@@ -13,8 +13,8 @@ import numpy
 import pytest
 
 import dace
-from dace.sdfg.state import LoopRegion
 from dace.libraries.layout.algebra import Permute
+from dace.sdfg.state import LoopRegion
 from dace.transformation.layout.apply_assignment import Layout, apply_region_layout
 from dace.transformation.layout.line_graph import kernel_per_state, line_graph, loop_spans
 from dace.transformation.layout.prepare import prepare_for_layout

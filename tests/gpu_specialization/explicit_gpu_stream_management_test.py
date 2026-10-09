@@ -12,12 +12,12 @@ from dace.transformation.pass_pipeline import Pipeline
 from dace.transformation.passes.gpu_specialization.gpu_specialization_pipeline import GPUStreamPipeline
 from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import PerComponentGPUStreamScheduler
 from dace.transformation.passes.gpu_specialization.gpu_stream_wiring import GPUStreamWiring
-from dace.transformation.passes.insert_explicit_copies import InsertExplicitCopies
-from dace.transformation.passes.move_array_out_of_kernel import MoveArrayOutOfKernel
 from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (
     STREAM_CONNECTOR,
     get_gpu_stream_array_name,
 )
+from dace.transformation.passes.insert_explicit_copies import InsertExplicitCopies
+from dace.transformation.passes.move_array_out_of_kernel import MoveArrayOutOfKernel
 
 # These tests pin behaviour specific to :class:`PerComponentGPUStreamScheduler` (per-WCC streams,
 # end-of-state fused sync tasklets). The pipeline's default is now
@@ -434,9 +434,11 @@ def test_conditional_gpu_kernel_in_sequential_map():
     gpu_maps = []
     for sub_sdfg in sdfg.all_sdfgs_recursive():
         for state in sub_sdfg.states():
-            for node in state.nodes():
-                if isinstance(node, dace.nodes.MapEntry) and node.map.schedule == dace.dtypes.ScheduleType.GPU_Device:
-                    gpu_maps.append((sub_sdfg, state, node))
+            gpu_maps.extend(
+                (sub_sdfg, state, node)
+                for node in state.nodes()
+                if isinstance(node, dace.nodes.MapEntry) and node.map.schedule == dace.dtypes.ScheduleType.GPU_Device
+            )
     assert gpu_maps, "Expected at least one GPU_Device MapEntry after apply_gpu_transformations"
 
     # Any SDFG that contains a GPU kernel must have the stream array declared.

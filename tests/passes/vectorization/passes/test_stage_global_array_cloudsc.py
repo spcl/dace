@@ -20,17 +20,16 @@ The pass module does not exist yet — the implementation agent creates it. Unti
 then this file raises an ``ImportError`` for the pass *only*.
 """
 
-import pytest
 import copy
 
 import numpy
+import pytest
 
 import dace
 from dace import data as dt
 from dace.transformation.passes.vectorization.stage_global_array_through_scalars import (
     StageGlobalArrayThroughScalars,
 )
-
 from tests.passes.vectorization.helpers.harness import (
     _get_cloudsc_snippet_four,
 )
@@ -70,8 +69,7 @@ def _global_write_edges(sdfg: dace.SDFG, array_name: str) -> list:
             for node in state.data_nodes():
                 if node.data != array_name:
                     continue
-                for edge in state.in_edges(node):
-                    writes.append((edge, state))
+                writes.extend((edge, state) for edge in state.in_edges(node))
     return writes
 
 

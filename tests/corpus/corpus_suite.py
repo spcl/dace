@@ -18,7 +18,7 @@ speedup has to be measured at).
 
 import inspect
 import os
-from typing import Callable, Dict, List, Optional, Tuple
+from collections.abc import Callable
 
 import numpy as np
 
@@ -32,7 +32,7 @@ from tests.corpus.tsvc_2_5 import tsvc_2_5 as _T25
 from tests.corpus.tsvc_2_5 import tsvc_2_5_numpy as _T25_REF
 
 
-def int_or_none(value: str) -> Optional[int]:
+def int_or_none(value: str) -> int | None:
     """``''`` -> ``None`` (npbench's "no clamp"), anything else -> its integer value."""
     return int(value) if value.strip() else None
 
@@ -91,7 +91,7 @@ PRESETS = ("S", "paper")
 _SEED = 1234
 
 
-def kernels() -> List[Tuple[str, str]]:
+def kernels() -> list[tuple[str, str]]:
     """All ``(suite, name)`` pairs, in corpus order: polybench, npbench, tsvc, tsvc_2_5."""
     out = [("poly", k.name) for k in _PB.collect()]
     out += [("np", c["name"]) for c in _NB.collect()]
@@ -106,8 +106,8 @@ def t25_program(name: str) -> DaceProgram:
 
 
 def t25_reference(
-    program: DaceProgram, arrays: Dict[str, np.ndarray], scalars: Dict[str, float], sizes: Dict[str, int]
-) -> Dict[str, np.ndarray]:
+    program: DaceProgram, arrays: dict[str, np.ndarray], scalars: dict[str, float], sizes: dict[str, int]
+) -> dict[str, np.ndarray]:
     """Run the tsvc_2_5 numpy oracle on copies of ``arrays``; return what it wrote.
 
     The oracle is ``ref_`` + the kernel name with any module prefix and ``ext_`` dropped,
@@ -115,7 +115,7 @@ def t25_reference(
     it declares (the ``iv_*`` oracles take the trip count as ``n``).
     """
     base = program.name.rsplit("tsvc_2_5_", 1)[-1]
-    oracle = vars(_T25_REF)["ref_" + (base[4:] if base.startswith("ext_") else base)]
+    oracle = vars(_T25_REF)["ref_" + (base.removeprefix("ext_"))]
     pool = {
         **{n: a.copy() for n, a in arrays.items()},
         **scalars,
@@ -126,7 +126,7 @@ def t25_reference(
     return {n: pool[n] for n in arrays}
 
 
-def make(suite: str, name: str, preset: str = "S") -> Dict:
+def make(suite: str, name: str, preset: str = "S") -> dict:
     """Build inputs + reference for one kernel at ``preset``; return a context dict."""
     if suite == "poly":
         k = _PB.collect(name)[0]
@@ -154,7 +154,7 @@ def make(suite: str, name: str, preset: str = "S") -> Dict:
     return dict(suite=suite, name=name, k=p, arrays=arrays, scalars=scalars, params=sizes, ref=ref)
 
 
-def build(ctx: Dict, transform: Callable, tag: str):
+def build(ctx: dict, transform: Callable, tag: str):
     """Fresh SDFG for ``ctx``'s kernel, apply ``transform`` in place, unique-name it."""
     suite = ctx["suite"]
     if suite == "poly":
@@ -172,7 +172,7 @@ def build(ctx: Dict, transform: Callable, tag: str):
     return s
 
 
-def call_symbols(ctx: Dict, sdfg: dace.SDFG) -> Dict:
+def call_symbols(ctx: dict, sdfg: dace.SDFG) -> dict:
     """Non-array call kwargs for a tsvc / tsvc_2_5 SDFG. Mutates ``sdfg``, so call it
     BEFORE compiling: a transform can leave a hoisted guard symbol free but unregistered,
     and the compiled signature is what the symbol has to appear in."""
@@ -184,7 +184,7 @@ def call_symbols(ctx: Dict, sdfg: dace.SDFG) -> Dict:
     return {**ctx["scalars"], **{s: v for s, v in ctx["params"].items() if s in free}}
 
 
-def run_matches(ctx: Dict, sdfg: dace.SDFG) -> bool:
+def run_matches(ctx: dict, sdfg: dace.SDFG) -> bool:
     """Compile + run ``sdfg`` and compare to the reference for this suite."""
     if ctx["suite"] == "poly":
         return _PB.outputs_match(ctx["ref"], _PB.run(sdfg, ctx["arrays"], ctx["psize"]))
@@ -198,7 +198,7 @@ def run_matches(ctx: Dict, sdfg: dace.SDFG) -> bool:
     return bool(_PB.outputs_match(ctx["ref"], got))
 
 
-def compiled_call(ctx: Dict, sdfg: dace.SDFG) -> Tuple[object, Dict]:
+def compiled_call(ctx: dict, sdfg: dace.SDFG) -> tuple[object, dict]:
     """Return ``(compiled_sdfg, call_kwargs)`` for repeated *timed* invocation.
 
     The kwargs carry fresh input copies + the dataset symbols the SDFG needs.
@@ -218,7 +218,7 @@ def compiled_call(ctx: Dict, sdfg: dace.SDFG) -> Tuple[object, Dict]:
     return cs, {**call, **{k: v for k, v in symbols.items() if k not in call}}
 
 
-def numpy_reference(ctx: Dict) -> Dict[str, np.ndarray]:
+def numpy_reference(ctx: dict) -> dict[str, np.ndarray]:
     """The NUMPY reference outputs for ``ctx`` -- the denominator polybench and npbench SHARE.
 
     polybench's other reference (the untransformed SDFG, ``_PB.reference``) is kept and is what
@@ -235,7 +235,7 @@ def numpy_reference(ctx: Dict) -> Dict[str, np.ndarray]:
     raise ValueError(f"{suite} has no numpy reference; its oracle is a scalar python loop")
 
 
-def numpy_call(ctx: Dict) -> Tuple[Callable, Dict]:
+def numpy_call(ctx: dict) -> tuple[Callable, dict]:
     """``(fn, kwargs)`` for repeated *timed* invocation of the numpy reference (cf.
     :func:`compiled_call`, which does the same for a compiled arm).
 

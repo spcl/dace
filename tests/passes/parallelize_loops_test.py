@@ -12,7 +12,7 @@ that let the pass reuse analysis across probes:
 """
 
 import copy
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import numpy as np
 import pytest
@@ -27,8 +27,8 @@ from dace.transformation.interstate.loop_to_map import (
     LoopToMap,
     block_free_symbols,
     build_lift_context,
-    control_flow_reads,
     build_lift_invariants,
+    control_flow_reads,
 )
 from dace.transformation.passes.analysis import smt_dependence
 from dace.transformation.passes.parallelize_loops import ParallelizeLoops, candidate_loops, loop_order_key
@@ -450,7 +450,7 @@ def test_a_proven_lift_is_taken_where_the_probe_refuses():
     np.testing.assert_array_equal(a, a_ref)
 
 
-def context_facts(sd: dace.SDFG) -> Tuple[Dict[str, List[dace.SDFGState]], List[Any], OrderedSet[str]]:
+def context_facts(sd: dace.SDFG) -> tuple[dict[str, list[dace.SDFGState]], list[Any], OrderedSet[str]]:
     ctx = build_lift_context(sd, build_lift_invariants(sd))
     access = {name: list(states) for name, states in ctx.access_states.items()}
     return access, list(ctx.block_order), OrderedSet(sd.free_symbols)
@@ -466,7 +466,7 @@ def test_a_lift_leaves_every_other_sdfgs_context_exact() -> None:
     """
     sdfg = three_independent_sweeps.to_sdfg(simplify=True)
     real_apply = LoopToMap.apply
-    stale: List[str] = []
+    stale: list[str] = []
     comparisons = 0
     nested_lifts = 0
 
@@ -513,12 +513,12 @@ def test_a_refused_smt_write_reaches_z3_once_however_often_its_loop_is_reprobed(
     sdfg = colliding_scatter_then_independent.to_sdfg(simplify=True)
     real_prove = smt_dependence.prove_injective_write
     real_can = LoopToMap.can_be_applied
-    questions: List[Tuple[str, str, str, str]] = []
-    probes: List[LoopRegion] = []
+    questions: list[tuple[str, str, str, str]] = []
+    probes: list[LoopRegion] = []
 
     def spy_prove(
         write_expr: sympy.Basic, itervar: str, start: Any, end: Any, *args: Any, **kwargs: Any
-    ) -> Optional[bool]:
+    ) -> bool | None:
         questions.append((str(write_expr), itervar, str(start), str(end)))
         return real_prove(write_expr, itervar, start, end, *args, **kwargs)
 
@@ -586,7 +586,7 @@ def test_a_sweep_patches_its_context_instead_of_rebuilding_it_per_lift(monkeypat
     from dace.transformation.passes import parallelize_loops
 
     sdfg = many_sibling_sweeps.to_sdfg(simplify=True)
-    built: List[dace.SDFG] = []
+    built: list[dace.SDFG] = []
     original = parallelize_loops.build_lift_context
 
     def recorded(sd, *args, **kwargs):
@@ -602,8 +602,8 @@ def test_a_sweep_patches_its_context_instead_of_rebuilding_it_per_lift(monkeypat
 def test_a_patched_context_is_the_context_a_rebuild_builds(monkeypatch) -> None:
     """A patched context that drifted from the graph hands the next probe a wrong access index or a
     wrong "used after the loop" answer, which is a miscompile."""
-    from dace.transformation.passes import parallelize_loops
     from dace.transformation.interstate.loop_to_map import symbol_bindings
+    from dace.transformation.passes import parallelize_loops
 
     sdfg = many_sibling_sweeps.to_sdfg(simplify=True)
     checked = []
@@ -634,7 +634,7 @@ def test_a_patched_context_is_the_context_a_rebuild_builds(monkeypatch) -> None:
     assert len(checked) >= 5, "no context was patched, so nothing was exercised"
 
 
-def iterator_read_after(kill: bool) -> Tuple[dace.SDFG, LoopRegion]:
+def iterator_read_after(kill: bool) -> tuple[dace.SDFG, LoopRegion]:
     """A loop whose iterator a later state reads, with or without an edge reassigning it in between."""
     sdfg = dace.SDFG("iterator_read_after")
     sdfg.add_array("a", [N], dace.float64)
@@ -687,7 +687,7 @@ def carried_rows_beside_parallel_rows(
             a[i, j] = a[i, j - 1] + 1.0
 
 
-def stale_nested_references(root: dace.SDFG) -> List[str]:
+def stale_nested_references(root: dace.SDFG) -> list[str]:
     stale = []
     pending = [root]
     while pending:
@@ -710,7 +710,7 @@ def test_every_lift_of_a_sweep_leaves_the_nested_references_exact() -> None:
     stale one sends the next lift in that body to the wrong parent mapping."""
     sdfg = carried_rows_beside_parallel_rows.to_sdfg(simplify=True)
     real_apply = LoopToMap.apply
-    stale: List[str] = []
+    stale: list[str] = []
     lifts = 0
 
     def checking_apply(self: LoopToMap, graph: ControlFlowRegion, inner_sdfg: dace.SDFG) -> Any:
@@ -730,8 +730,8 @@ def test_every_lift_of_a_sweep_leaves_the_nested_references_exact() -> None:
     assert not stale, f"nested SDFGs with stale parent references: {stale}"
 
 
-def control_flow_read_sites(root: dace.SDFG) -> Dict[Any, set]:
-    sites: Dict[Any, set] = {}
+def control_flow_read_sites(root: dace.SDFG) -> dict[Any, set]:
+    sites: dict[Any, set] = {}
     for sd in root.all_sdfgs_recursive():
         for cfg in sd.all_control_flow_regions():
             for e in cfg.edges():
@@ -746,7 +746,7 @@ def test_a_lift_never_changes_what_a_surviving_edge_or_header_reads() -> None:
     a loop-local transient and lets a lift privatize a carried value."""
     sdfg = carried_rows_beside_parallel_rows.to_sdfg(simplify=True)
     real_apply = LoopToMap.apply
-    changed: List[str] = []
+    changed: list[str] = []
     comparisons = 0
 
     def checking_apply(self: LoopToMap, graph: ControlFlowRegion, inner_sdfg: dace.SDFG) -> Any:
@@ -805,11 +805,11 @@ def carried_rows(a: dace.float64[N, N], b: dace.float64[N, N]):
             b[i, k] = a[i, k] * 2.0
 
 
-def sweep_with_witnesses(sdfg: dace.SDFG, use_witnesses: bool) -> List[Tuple[str, bool]]:
+def sweep_with_witnesses(sdfg: dace.SDFG, use_witnesses: bool) -> list[tuple[str, bool]]:
     """Run the sweep, logging every probe verdict; ``use_witnesses=False`` forces the full analysis."""
     real_can = LoopToMap.can_be_applied
     real_witness = LoopToMap.witnessed_refusal
-    log: List[Tuple[str, bool]] = []
+    log: list[tuple[str, bool]] = []
 
     def spy_can(
         self: LoopToMap, graph: ControlFlowRegion, expr_index: int, inner_sdfg: dace.SDFG, permissive: bool = False
@@ -848,10 +848,10 @@ def test_a_loop_refused_around_lifts_is_rechecked_on_its_witness(program, kind: 
     stands on the same site was 1.3 ks of CloudSC's parallelize stage (8 loops, 3051 probes each)."""
     sdfg = program.to_sdfg(simplify=True)
     outer = next(r for r in candidate_loops(sdfg) if loop_order_key(r) == (0, 0))
-    witnessed: List[str] = []
+    witnessed: list[str] = []
     real_witness = LoopToMap.witnessed_refusal
 
-    def spy(self: LoopToMap, inner_sdfg: dace.SDFG, facts: Any, *args: Any) -> Optional[str]:
+    def spy(self: LoopToMap, inner_sdfg: dace.SDFG, facts: Any, *args: Any) -> str | None:
         reason = real_witness(self, inner_sdfg, facts, *args)
         if reason is not None and self.loop is outer:
             witnessed.append(facts.refusal_witness[0])
@@ -879,12 +879,12 @@ def test_a_disjoint_box_verdict_is_asked_of_z3_once(first: str, second: str, mon
     asked = []
     real = smt_dependence.prove_disjoint_access_boxes
 
-    def spy(*args: Any, **kwargs: Any) -> Optional[bool]:
+    def spy(*args: Any, **kwargs: Any) -> bool | None:
         asked.append(args)
         return real(*args, **kwargs)
 
     monkeypatch.setattr(smt_dependence, "prove_disjoint_access_boxes", spy)
-    verdicts: Dict[Tuple[str, ...], bool] = {}
+    verdicts: dict[tuple[str, ...], bool] = {}
     got = [loop_to_map._smt_proves_disjoint_boxes(*boxes, i, 0, "M - 1", 1, set(), verdicts) for _ in range(3)]
     assert got == [want] * 3 and len(asked) == 1, (got, want, len(asked))
 
@@ -898,8 +898,8 @@ def test_a_declared_body_symbol_has_the_type_the_parent_walk_gives(monkeypatch) 
     sdfg = carried_time_steps.to_sdfg(simplify=True)
     outer = next(r for r in candidate_loops(sdfg) if loop_order_key(r) == (0, 0)).loop_variable
     real_add = dace.SDFGState.add_nested_sdfg
-    mismatches: List[str] = []
-    checked: List[str] = []
+    mismatches: list[str] = []
+    checked: list[str] = []
 
     def checking_add(self: dace.SDFGState, inner: dace.SDFG, *args: Any, **kwargs: Any) -> Any:
         walk = self.defined_symbols()

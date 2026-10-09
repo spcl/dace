@@ -2,7 +2,6 @@
 """GPU memory-pool (``cudaMallocAsync`` / ``cudaFreeAsync``) test for the experimental codegen."""
 
 import glob
-from dace.codegen import common
 import os
 
 import numpy as np
@@ -10,6 +9,7 @@ import pytest
 
 import dace as dc
 from dace import dtypes
+from dace.codegen import common
 
 N = dc.symbol("_MP_N", dtype=dc.int64)
 

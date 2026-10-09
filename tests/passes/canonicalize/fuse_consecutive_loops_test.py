@@ -22,10 +22,10 @@ import pytest
 import dace
 from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
-from dace.transformation.passes.canonicalize.pipeline import canonicalize
-from dace.transformation.passes.canonicalize.fuse_consecutive_loops import FuseConsecutiveLoops
-from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
 from dace.transformation.interstate.state_fusion_with_happens_before import StateFusionExtended
+from dace.transformation.passes.canonicalize.fuse_consecutive_loops import FuseConsecutiveLoops
+from dace.transformation.passes.canonicalize.pipeline import canonicalize
+from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
 
 N = dace.symbol("N")
 
@@ -181,6 +181,7 @@ def test_bodies_differing_only_in_a_copy_memlets_destination_are_not_fused():
     """`other_subset` is the destination side of a copy memlet: two bodies differing only there are
     two different statements, and fusing deletes one of them."""
     import copy
+
     from dace.sdfg.sdfg import InterstateEdge
     from dace.sdfg.state import LoopRegion
 

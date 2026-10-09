@@ -27,7 +27,6 @@ import numpy
 import pytest
 
 import dace
-
 from dace.transformation.layout.normalize_schedule import normalize_schedule_for_layout
 from dace.transformation.layout.split_dimensions import SplitDimensions
 
@@ -211,9 +210,7 @@ def build_cases():
         for dtn in ("float64", "float32"):
             for aname, (role, shape) in meta["arrays"].items():
                 for dim in range(len(shape)):
-                    for factor in FACTORS:
-                        if shape[dim] % factor == 0:
-                            cases.append((kname, dtn, aname, dim, factor))
+                    cases.extend((kname, dtn, aname, dim, factor) for factor in FACTORS if shape[dim] % factor == 0)
     return cases
 
 

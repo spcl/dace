@@ -1,9 +1,10 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
 from collections import defaultdict
-from typing import Any, Dict, Optional, Set, Tuple, Union
+from typing import Any, Literal
 
-from dace import SDFG, Memlet, SDFGState
+from dace import SDFG, Memlet, SDFGState, dtypes
+from dace import data as dt
 from dace.frontend.python import astutils
 from dace.properties import CodeBlock
 from dace.sdfg import nodes as nd
@@ -11,30 +12,26 @@ from dace.sdfg.graph import Edge, MultiConnectorEdge
 from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion
 from dace.transformation import pass_pipeline as ppl
-from dace import data as dt
-from dace import dtypes
-
-from typing import Literal
 
 dirtype = Literal["in", "out"]
 
 
 class RecodeAttributeNodes(ast.NodeTransformer):
     connector: str
-    data: Union[dt.Structure, dt.ContainerView]
+    data: dt.Structure | dt.ContainerView
     tasklet: nd.Tasklet
     direction: dirtype
     memlet: Memlet
     data_node: nd.AccessNode
     state: SDFGState
-    views_constructed: Set[str]
+    views_constructed: set[str]
 
     def __init__(
         self,
         state: SDFGState,
         data_node: nd.AccessNode,
         connector: str,
-        data: Union[dt.Structure, dt.ContainerView],
+        data: dt.Structure | dt.ContainerView,
         tasklet: nd.Tasklet,
         memlet: Memlet,
         direction: dirtype,
@@ -61,9 +58,8 @@ class RecodeAttributeNodes(ast.NodeTransformer):
         if self.direction == "in":
             if not self.tasklet.add_in_connector(new_connector_name):
                 raise RuntimeError(f"Failed to add connector {new_connector_name}")
-        else:
-            if not self.tasklet.add_out_connector(new_connector_name):
-                raise RuntimeError(f"Failed to add connector {new_connector_name}")
+        elif not self.tasklet.add_out_connector(new_connector_name):
+            raise RuntimeError(f"Failed to add connector {new_connector_name}")
 
         # Construct the correct AST replacement node (direct access, i.e., name node).
         replacement = ast.Name(id=new_connector_name, ctx=ast.Load())
@@ -114,9 +110,8 @@ class RecodeAttributeNodes(ast.NodeTransformer):
         if self.direction == "in":
             if not self.tasklet.add_in_connector(new_connector_name):
                 raise RuntimeError(f"Failed to add connector {new_connector_name}")
-        else:
-            if not self.tasklet.add_out_connector(new_connector_name):
-                raise RuntimeError(f"Failed to add connector {new_connector_name}")
+        elif not self.tasklet.add_out_connector(new_connector_name):
+            raise RuntimeError(f"Failed to add connector {new_connector_name}")
 
         # We first lift the slice into a separate view, and then the attribute access.
         slice_view_name = "v_" + self.data_node.data + "_slice"
@@ -211,24 +206,24 @@ class RecodeAttributeNodes(ast.NodeTransformer):
                 return self._handle_sliced_access(node, node.value)
             return self.generic_visit(node)
         else:
-            raise NotImplementedError()
+            raise NotImplementedError
 
 
 class InterstateEdgeRecoder(ast.NodeTransformer):
     sdfg: SDFG
-    element: Union[Edge[InterstateEdge], Tuple[ControlFlowBlock, CodeBlock]]
+    element: Edge[InterstateEdge] | tuple[ControlFlowBlock, CodeBlock]
     data_name: str
-    data: Union[dt.Structure, dt.ContainerArray]
-    views_constructed: Set[str]
+    data: dt.Structure | dt.ContainerArray
+    views_constructed: set[str]
     _lifting_state: SDFGState
 
     def __init__(
         self,
         sdfg: SDFG,
-        element: Union[Edge[InterstateEdge], Tuple[ControlFlowBlock, CodeBlock]],
+        element: Edge[InterstateEdge] | tuple[ControlFlowBlock, CodeBlock],
         data_name: str,
-        data: Union[dt.Structure, dt.ContainerArray],
-        lifting_state: Optional[SDFGState] = None,
+        data: dt.Structure | dt.ContainerArray,
+        lifting_state: SDFGState | None = None,
     ):
         self.sdfg = sdfg
         self.element = element
@@ -311,7 +306,7 @@ class InterstateEdgeRecoder(ast.NodeTransformer):
         lift_state.add_edge(slice_view_node, None, attr_view_node, "views", attr_memlet)
         return self.generic_visit(replacement)
 
-    def _get_or_create_lifting_state(self) -> Tuple[SDFGState, nd.AccessNode]:
+    def _get_or_create_lifting_state(self) -> tuple[SDFGState, nd.AccessNode]:
         # Add a state for lifting before the access, if there isn't one that was created already.
         if self._lifting_state is None:
             if isinstance(self.element, Edge):
@@ -380,8 +375,8 @@ class InterstateEdgeRecoder(ast.NodeTransformer):
             return self.generic_visit(node)
 
 
-def _data_containers_in_ast(node: ast.AST, arrnames: Set[str]) -> Set[str]:
-    result: Set[str] = set()
+def _data_containers_in_ast(node: ast.AST, arrnames: set[str]) -> set[str]:
+    result: set[str] = set()
     for subnode in ast.walk(node):
         if isinstance(subnode, (ast.Attribute, ast.Subscript)):
             data = astutils.rname(subnode.value)
@@ -413,7 +408,7 @@ class LiftStructViews(ppl.Pass):
     def depends_on(self):
         return []
 
-    def _lift_control_flow_region_access(self, cfg: ControlFlowRegion, result: Dict[str, Set[str]]) -> bool:
+    def _lift_control_flow_region_access(self, cfg: ControlFlowRegion, result: dict[str, set[str]]) -> bool:
         lifted_something = False
         lifting_state = None
         for code_block in cfg.get_meta_codeblocks():
@@ -433,7 +428,7 @@ class LiftStructViews(ppl.Pass):
                             lifted_something = True
         return lifted_something
 
-    def _lift_isedge(self, cfg: ControlFlowRegion, edge: Edge[InterstateEdge], result: Dict[str, Set[str]]) -> bool:
+    def _lift_isedge(self, cfg: ControlFlowRegion, edge: Edge[InterstateEdge], result: dict[str, set[str]]) -> bool:
         lifted_something = False
         for k in edge.data.assignments.keys():
             assignment = edge.data.assignments[k]
@@ -478,7 +473,7 @@ class LiftStructViews(ppl.Pass):
         data: dt.Structure,
         connector: str,
         direction: dirtype,
-    ) -> Set[str]:
+    ) -> set[str]:
         # Only handle Python at the moment.
         if not tasklet.language == dtypes.Language.Python:
             return
@@ -497,13 +492,12 @@ class LiftStructViews(ppl.Pass):
         if direction == "in":
             if len(list(state.in_edges_by_connector(tasklet, connector))) == 0:
                 tasklet.remove_in_connector(connector)
-        else:
-            if len(list(state.out_edges_by_connector(tasklet, connector))) == 0:
-                tasklet.remove_out_connector(connector)
+        elif len(list(state.out_edges_by_connector(tasklet, connector))) == 0:
+            tasklet.remove_out_connector(connector)
 
         return new_names
 
-    def apply_pass(self, sdfg: SDFG, _) -> Optional[Dict[str, Set[str]]]:
+    def apply_pass(self, sdfg: SDFG, _) -> dict[str, set[str]] | None:
         """
         Lift struct member accesses to explicit views, returning a dictionary that indicates what accesses were lifted.
         :param sdfg: The SDFG to modify.
@@ -555,7 +549,7 @@ class LiftStructViews(ppl.Pass):
         else:
             return result
 
-    def report(self, pass_retval: Optional[Dict[str, Set[str]]]) -> Optional[str]:
+    def report(self, pass_retval: dict[str, set[str]] | None) -> str | None:
         if pass_retval is not None:
             total_lifted = 0
             all_lifted = set()

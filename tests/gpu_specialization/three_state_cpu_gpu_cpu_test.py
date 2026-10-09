@@ -20,7 +20,6 @@ sync tasklets exist anywhere inside the NestedSDFG that lives inside the GPU ker
 """
 
 import dace
-
 from dace.codegen import common
 from dace.transformation.passes.gpu_specialization.gpu_specialization_pipeline import GPUStreamPipeline
 
@@ -160,9 +159,7 @@ def test_sync_at_root_with_nsdfg_inside_gpu_device_map():
     for inner in sdfg.all_sdfgs_recursive():
         if inner is sdfg:
             continue
-        for s in inner.states():
-            if _sync_tasklets(s):
-                inner_syncs.append(f"{inner.name}::{s.label}")
+        inner_syncs.extend(f"{inner.name}::{s.label}" for s in inner.states() if _sync_tasklets(s))
     assert not inner_syncs, f"Expected no sync tasklets inside any nested SDFG; found syncs in: {inner_syncs}"
 
     sdfg.validate()

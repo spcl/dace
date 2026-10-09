@@ -18,8 +18,8 @@ from dace.libraries.tileops.nodes.tile_binop import TileBinop
 from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.convert_tasklets_to_tile_ops import _FUNCTION_FORM_BINOPS, _call_spellings
-from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
 from dace.transformation.passes.vectorization.enums import ISA
+from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
 
 N = 64
 WIDTHS = (8,)

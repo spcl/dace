@@ -7,12 +7,10 @@ import dace
 from dace import properties, symbolic
 from dace.data import Scalar, View
 from dace.memlet import Memlet
-from dace.sdfg import SDFG, SDFGState
-from dace.sdfg import nodes
+from dace.sdfg import SDFG, SDFGState, nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.state import LoopRegion
 from dace.transformation import transformation
-from typing import Tuple, Optional
 
 
 def dynamic_range_ref(sdfg: SDFG, memlet: Memlet) -> str:
@@ -90,11 +88,11 @@ class MapToForLoop(transformation.SingleStateTransformation):
 
     map_entry = transformation.PatternNode(nodes.MapEntry)
 
-    loop_region: Optional[LoopRegion] = None
+    loop_region: LoopRegion | None = None
 
     #: State holding the dataflow that stayed outside the loop, set by ``apply``. With
     #: ``inline_after`` that is a fresh successor of the state passed in, not the state itself.
-    target_state: Optional[SDFGState] = None
+    target_state: SDFGState | None = None
 
     keep_reductions_parallel = properties.Property(
         dtype=bool,
@@ -221,7 +219,7 @@ class MapToForLoop(transformation.SingleStateTransformation):
                 graph.add_edge(nsdfg_node, newname, viewed, None, bmem)
                 nsdfg_node.remove_out_connector(vname)
 
-    def apply(self, graph: SDFGState, sdfg: SDFG) -> Tuple[nodes.NestedSDFG, SDFGState]:
+    def apply(self, graph: SDFGState, sdfg: SDFG) -> tuple[nodes.NestedSDFG, SDFGState]:
         """Applies the transformation and returns a tuple with the new nested
         SDFG node and the main state in the for-loop."""
 
@@ -269,10 +267,10 @@ class MapToForLoop(transformation.SingleStateTransformation):
         # Create a loop inside the nested SDFG
         loop_region = LoopRegion(
             "loop_" + map_entry.map.label,
-            "%s < %s" % (loop_idx, replace_param(loop_to + 1)),
+            f"{loop_idx} < {replace_param(loop_to + 1)}",
             loop_idx,
-            "%s = %s" % (loop_idx, replace_param(loop_from)),
-            "%s = %s + %s" % (loop_idx, loop_idx, replace_param(loop_step)),
+            f"{loop_idx} = {replace_param(loop_from)}",
+            f"{loop_idx} = {loop_idx} + {replace_param(loop_step)}",
         )
         nsdfg.add_node(loop_region, is_start_block=True)
         nsdfg.remove_node(nstate)

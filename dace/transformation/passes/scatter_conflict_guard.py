@@ -19,21 +19,23 @@ binds the count to a symbol, and a trap tasklet ``abort()``s if it is positive.
 - Abort-only; the sequential-scatter fallback is the caller's, outside the SDFG.
 """
 
-from typing import Dict, Iterable, NamedTuple, Optional, Set
+from collections.abc import Iterable
+from typing import NamedTuple
 
 import numpy as np
 
 import dace
-from dace import SDFG, SDFGState, data, dtypes, memlet as mm, properties, subsets, symbolic
+from dace import SDFG, SDFGState, data, dtypes, properties, subsets, symbolic
+from dace import memlet as mm
 from dace.frontend.python import astutils
+from dace.optionals import required
 from dace.sdfg import nodes
 from dace.sdfg import tasklet_utils as tutil
+from dace.sdfg.narrowing import as_expr
 from dace.sdfg.state import ControlFlowBlock, LoopRegion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis
-from dace.optionals import required
-from dace.sdfg.narrowing import as_expr
 
 #: Prefix for the collision-count scalar the guard allocates (one per guarded idx).
 _COUNT_PREFIX = "_scatter_guard_count_"
@@ -57,7 +59,7 @@ class ScatterIndexSlice(NamedTuple):
     offset: str
     extent: str
     stride: str
-    fixed: Dict[int, str]
+    fixed: dict[int, str]
 
 
 @properties.make_properties
@@ -89,7 +91,7 @@ class GuardScatterConflicts(ppl.Pass):
     def depends_on(self):
         return set()
 
-    def apply_pass(self, sdfg: SDFG, _pipeline_results) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _pipeline_results) -> int | None:
         emitted = 0
         for idx_name in self._idx_names:
             if idx_name not in sdfg.arrays:
@@ -223,9 +225,9 @@ def insert_scatter_guard(
     idx_name: str,
     emit_trap: bool = True,
     elide_if_injective: bool = True,
-    index_slice: Optional[ScatterIndexSlice] = None,
-    region: Optional[SDFG] = None,
-) -> Optional[str]:
+    index_slice: ScatterIndexSlice | None = None,
+    region: SDFG | None = None,
+) -> str | None:
     """Emit a tag+verify+abort guard for ``idx_name`` at the earliest legal CFG point.
 
     :param sdfg: The data-owning SDFG: ``idx_name`` and the new count/tag descriptors are
@@ -307,7 +309,7 @@ def insert_scatter_guard(
     return None if emit_trap else trap_sym
 
 
-def _find_definition_states(sdfg: SDFG, idx_name: str) -> Set[SDFGState]:
+def _find_definition_states(sdfg: SDFG, idx_name: str) -> set[SDFGState]:
     """Return every state that has an in-degree-positive AccessNode for ``idx_name``."""
     return {
         st
@@ -321,10 +323,10 @@ def build_guard_states(
     sdfg: SDFG,
     idx_name: str,
     emit_trap: bool = True,
-    index_slice: Optional[ScatterIndexSlice] = None,
-    region: Optional[SDFG] = None,
-    domain: Optional[symbolic.SymbolicType] = None,
-) -> tuple[SDFGState, Optional[SDFGState], str, str]:
+    index_slice: ScatterIndexSlice | None = None,
+    region: SDFG | None = None,
+    domain: symbolic.SymbolicType | None = None,
+) -> tuple[SDFGState, SDFGState | None, str, str]:
     """Build (but do not splice) the guard states: check, [trap].
 
     ``check`` runs the opaque ``ScatterConflictCheck`` libnode over ``idx_name`` into the
@@ -398,7 +400,7 @@ def build_guard_states(
     # trap: top-level tasklet reading only ``trap_sym`` (bound to the count on the incoming
     # edge), so no connectors. ``side_effects`` keeps DeadDataflowElimination from pruning it --
     # else the whole guard chain feeding ``trap_sym`` looks dead and the scatter goes unguarded.
-    trap_state: Optional[SDFGState] = None
+    trap_state: SDFGState | None = None
     if emit_trap:
         trap_state = region.add_state(f"_scatter_guard_trap_{idx_name}")
         tutil.add_abort_guard(trap_state, f"check_assumption_{idx_name}", f"{trap_sym} > 0")
@@ -406,7 +408,7 @@ def build_guard_states(
     return check_state, trap_state, count_name, trap_sym
 
 
-def scatter_index_domain(sdfg: SDFG, idx_name: str) -> Optional[symbolic.SymbolicType]:
+def scatter_index_domain(sdfg: SDFG, idx_name: str) -> symbolic.SymbolicType | None:
     """Exclusive upper bound on ``idx_name``'s runtime values, or ``None`` when unknown.
 
     A scatter ``a[idx[i]] = ...`` only stays in bounds while every ``idx`` value is below ``a``'s
@@ -441,7 +443,7 @@ def scatter_index_domain(sdfg: SDFG, idx_name: str) -> Optional[symbolic.Symboli
     return symbolic.pystr_to_symbolic("Max(" + ", ".join(sorted(sizes)) + ")")
 
 
-def names_are_free_symbols(sdfg: SDFG, names: Set[str]) -> bool:
+def names_are_free_symbols(sdfg: SDFG, names: set[str]) -> bool:
     """``names <= sdfg.free_symbols``, without the whole-SDFG walk when the answer is plainly yes.
 
     ``free_symbols`` holds every declared symbol and drops only what ``sdfg`` itself defines: array
@@ -463,7 +465,7 @@ def _wire_owner_scratch(
     idx_name: str,
     check_state: SDFGState,
     check_node: nodes.LibraryNode,
-    domain: Optional[symbolic.SymbolicType] = None,
+    domain: symbolic.SymbolicType | None = None,
 ) -> None:
     """Give the conflict check a DaCe-owned tag array sized by the scatter target's domain.
 
@@ -527,10 +529,10 @@ def _splice_guard_into_cfg(
     region: SDFG,
     idx_name: str,
     check_state: SDFGState,
-    trap_state: Optional[SDFGState],
+    trap_state: SDFGState | None,
     count_name: str,
     trap_sym: str,
-    def_states: Set[ControlFlowBlock],
+    def_states: set[ControlFlowBlock],
     original_start,
 ) -> None:
     """Splice ``check -> [trap] -> downstream`` in at the earliest legal CFG point of ``region``

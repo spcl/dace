@@ -6,11 +6,9 @@
 (``finalize_for_target('gpu')`` calls it).
 """
 
-from typing import Optional
-
 from dace import SDFG
-from dace.sdfg import nodes
 from dace.config import Config
+from dace.sdfg import nodes
 from dace.transformation.pass_pipeline import Pipeline
 from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import (
     AutoGPUStreamScheduler,
@@ -60,7 +58,7 @@ class GPUStreamPipeline(Pipeline):
     needs no guard of its own.
     """
 
-    def __init__(self, scheduling_strategy: Optional[GPUStreamSchedulingStrategy] = None):
+    def __init__(self, scheduling_strategy: GPUStreamSchedulingStrategy | None = None):
         if scheduling_strategy is None:
             scheduling_strategy = AutoGPUStreamScheduler(
                 synchronize_on_exit=Config.get("compiler", "cuda", "synchronize_on_exit")
@@ -80,6 +78,9 @@ class GPUCodegenPreprocessPipeline(Pipeline):
 
     def __init__(self):
         # Local imports: avoid circular import in ``dace.transformation`` package init.
+        from dace.transformation.passes.demote_kernel_internal_arrays_to_scalars import (
+            DemoteKernelInternalArraysToScalars,
+        )
         from dace.transformation.passes.gpu_specialization.codegen_preprocess_passes import (
             AddThreadBlockMaps,
             ExpandLibraryNodes,
@@ -87,15 +88,12 @@ class GPUCodegenPreprocessPipeline(Pipeline):
             ReinferConnectorTypes,
             SynchronizeStreamUnawareGPUCallbacks,
         )
+        from dace.transformation.passes.gpu_specialization.grid_stride_kernels import GridStrideKernels
+        from dace.transformation.passes.gpu_specialization.promote_warp_tiles import PromoteWarpTiles
         from dace.transformation.passes.insert_explicit_copies import InsertExplicitCopies
+        from dace.transformation.passes.lower_nested_gpu_device_maps import NestedGPUDeviceMapLowering
         from dace.transformation.passes.move_array_out_of_kernel import MoveArrayOutOfKernel
         from dace.transformation.passes.scalar_promotion import PromoteScalarOutputsToArrays
-        from dace.transformation.passes.demote_kernel_internal_arrays_to_scalars import (
-            DemoteKernelInternalArraysToScalars,
-        )
-        from dace.transformation.passes.lower_nested_gpu_device_maps import NestedGPUDeviceMapLowering
-        from dace.transformation.passes.gpu_specialization.promote_warp_tiles import PromoteWarpTiles
-        from dace.transformation.passes.gpu_specialization.grid_stride_kernels import GridStrideKernels
 
         # Order constraints:
         #   * NestedGPUDeviceMapLowering first -- everything downstream assumes one-level kernels.

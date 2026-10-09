@@ -1,24 +1,26 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-from copy import deepcopy as dc
 import numbers
-from dace import dtypes, memlet as mm, properties, data as dt
-from dace.symbolic import symstr, equal, equal_valued
+import warnings
+from copy import deepcopy as dc
+
 import dace.library
-from dace.frontend.common import op_repository as oprepo
 import dace.sdfg.nodes
-from dace.transformation.transformation import ExpandTransformation
+from dace import data as dt
+from dace import dtypes, properties
+from dace import memlet as mm
+from dace.frontend.common import op_repository as oprepo
+from dace.libraries.blas import environments, gpu_dialect
 from dace.libraries.blas.blas_helpers import (
-    to_blastype,
     check_access,
     check_one_device,
     dtype_to_cudadatatype,
+    to_blastype,
     to_cublas_computetype,
 )
-from dace.libraries.blas.nodes.matmul import _get_matmul_operands, _get_batchmm_opts, _get_codegen_gemm_opts
-from .. import environments
-from dace.libraries.blas import gpu_dialect
-import warnings
+from dace.libraries.blas.nodes.matmul import _get_batchmm_opts, _get_codegen_gemm_opts, _get_matmul_operands
 from dace.ordered import OrderedSet
+from dace.symbolic import equal, equal_valued, symstr
+from dace.transformation.transformation import ExpandTransformation
 
 
 def refuse_broadcast_batches(node, state, sdfg) -> None:
@@ -155,12 +157,12 @@ class ExpandBatchedMatMulPure(ExpandTransformation):
         # Build map parameters: batch dimensions + M, N, K
         map_params = {}
         for i in range(num_batch_dims):
-            map_params["__i%d" % i] = "0:%s" % symstr(shape_c[i])
+            map_params["__i%d" % i] = f"0:{symstr(shape_c[i])}"
 
         # M, N, K dimensions
-        map_params["__im"] = "0:%s" % symstr(shape_a[-2])
-        map_params["__in"] = "0:%s" % symstr(shape_b[-1])
-        map_params["__ik"] = "0:%s" % symstr(shape_a[-1])
+        map_params["__im"] = f"0:{symstr(shape_a[-2])}"
+        map_params["__in"] = f"0:{symstr(shape_b[-1])}"
+        map_params["__ik"] = f"0:{symstr(shape_a[-1])}"
 
         def batch_indices(operand_shape) -> str:
             """The operand's batch subscripts, following NumPy's broadcasting rules.
@@ -394,7 +396,7 @@ class ExpandBatchedMatMulGPUBLAS(ExpandTransformation):
         )
 
         dtype = cdesc.dtype.base_type
-        func = "%sgemm" % to_blastype(dtype.type)
+        func = f"{to_blastype(dtype.type)}gemm"
         if dtype == dace.float16:
             cdtype = "__half"
             factort = "Half"

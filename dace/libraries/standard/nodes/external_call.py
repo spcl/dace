@@ -18,8 +18,9 @@ by name, then outputs by name (data read and written once), then symbols by name
 import copy
 import hashlib
 import os
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any
 
 import dace
 from dace import data, dtypes, library, properties, subsets
@@ -54,10 +55,10 @@ def one_element(memlet: dace.Memlet) -> bool:
 class CallSite:
     """What the parent state says about the connectors of one ``ExternalCall``."""
 
-    outputs: Dict[str, None]
-    descriptors: Dict[str, data.Data]
-    by_value: Dict[str, None]
-    scalars: Dict[str, None]
+    outputs: dict[str, None]
+    descriptors: dict[str, data.Data]
+    by_value: dict[str, None]
+    scalars: dict[str, None]
 
 
 def call_site(node: "ExternalCall", state: dace.SDFGState) -> CallSite:
@@ -82,7 +83,7 @@ def call_site(node: "ExternalCall", state: dace.SDFGState) -> CallSite:
     return site
 
 
-def nested_sdfg_order(node: "ExternalCall", state: dace.SDFGState, symbols: Sequence[str]) -> List[str]:
+def nested_sdfg_order(node: "ExternalCall", state: dace.SDFGState, symbols: Sequence[str]) -> list[str]:
     """DaCe's nested-SDFG argument order: read-only inputs, then outputs, each by name, then ``symbols`` by name."""
     site = call_site(node, state)
     names = dict.fromkeys(data_name(conn) for conn in site.descriptors)
@@ -90,7 +91,7 @@ def nested_sdfg_order(node: "ExternalCall", state: dace.SDFGState, symbols: Sequ
     return inputs + sorted(site.outputs) + sorted(s for s in symbols if s not in names)
 
 
-def data_param(node: "ExternalCall", arg: str, site: CallSite) -> Tuple[str, str]:
+def data_param(node: "ExternalCall", arg: str, site: CallSite) -> tuple[str, str]:
     """``(parameter, call argument)`` of one data argument: a read-only Scalar by value, the rest by pointer."""
     conn = out_conn(arg) if arg in site.outputs else in_conn(arg)
     if conn not in site.descriptors:
@@ -113,7 +114,7 @@ def symbol_param(arg: str, sdfg: dace.SDFG) -> str:
     return f"{sdfg.symbols[arg].ctype} {arg}"
 
 
-def params_and_args(node: "ExternalCall", state: dace.SDFGState) -> Tuple[List[str], List[str]]:
+def params_and_args(node: "ExternalCall", state: dace.SDFGState) -> tuple[list[str], list[str]]:
     """The C parameters and the call arguments, in ``node.abi_order``. C linkage matches the name alone, so a
     wrong order links cleanly and swaps buffers."""
     order = list(node.abi_order)
@@ -124,8 +125,8 @@ def params_and_args(node: "ExternalCall", state: dace.SDFGState) -> Tuple[List[s
         )
     site = call_site(node, state)
     connected = {data_name(conn) for conn in site.descriptors}
-    params: List[str] = []
-    call_args: List[str] = []
+    params: list[str] = []
+    call_args: list[str] = []
     for arg in order:
         if arg in connected:
             param, call_arg = data_param(node, arg, site)
@@ -239,7 +240,7 @@ class ExternalCall(nodes.LibraryNode):
     implementations = {"DaceReference": ExpandDaceReference, "ExternCall": ExpandExternCall}
     default_implementation = "DaceReference"
     #: a deserialized node is built without __init__
-    _standalone_sdfg: Optional[dace.SDFG] = None
+    _standalone_sdfg: dace.SDFG | None = None
 
     numpy_source = properties.Property(dtype=str, default="", desc="NumPy reference source of the nest")
     symbol = properties.Property(dtype=str, default="", desc="extern-C symbol to call")
@@ -258,9 +259,9 @@ class ExternalCall(nodes.LibraryNode):
     def __init__(
         self,
         name: str,
-        inputs: Optional[Sequence[str]] = None,
-        outputs: Optional[Sequence[str]] = None,
-        standalone_sdfg: Optional[dace.SDFG] = None,
+        inputs: Sequence[str] | None = None,
+        outputs: Sequence[str] | None = None,
+        standalone_sdfg: dace.SDFG | None = None,
         numpy_source: str = "",
         **kwargs: Any,
     ) -> None:
@@ -269,15 +270,15 @@ class ExternalCall(nodes.LibraryNode):
         self.numpy_source = numpy_source
 
     @property
-    def standalone_sdfg(self) -> Optional[dace.SDFG]:
+    def standalone_sdfg(self) -> dace.SDFG | None:
         """The nest the ``DaceReference`` expansion copies; kept in memory only, never serialized."""
         return self._standalone_sdfg
 
     @standalone_sdfg.setter
-    def standalone_sdfg(self, value: Optional[dace.SDFG]) -> None:
+    def standalone_sdfg(self, value: dace.SDFG | None) -> None:
         self._standalone_sdfg = value
 
 
-def external_calls(sdfg: dace.SDFG) -> List[ExternalCall]:
+def external_calls(sdfg: dace.SDFG) -> list[ExternalCall]:
     """Every ``ExternalCall`` of ``sdfg``, nested SDFGs included."""
     return [node for node, _ in sdfg.all_nodes_recursive() if isinstance(node, ExternalCall)]

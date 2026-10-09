@@ -11,15 +11,16 @@ import itertools
 
 import numpy
 import pytest
-import dace
 
-from dace.libraries.layout.algebra import Permute, Block, Unblock, Pad as PadOp
+import dace
+from dace.libraries.layout.algebra import Block, Permute, Unblock
+from dace.libraries.layout.algebra import Pad as PadOp
 from dace.libraries.layout.lowering import build_relayout
+from dace.transformation.layout.block_aware_map_tiling import BlockAwareMapTiling
+from dace.transformation.layout.pad_dimensions import PadDimensions
 from dace.transformation.layout.permute_dimensions import PermuteDimensions
 from dace.transformation.layout.split_dimensions import SplitDimensions
-from dace.transformation.layout.pad_dimensions import PadDimensions
 from dace.transformation.layout.zip_arrays import ZipArrays
-from dace.transformation.layout.block_aware_map_tiling import BlockAwareMapTiling
 
 N = dace.symbol("N")
 

@@ -2,17 +2,15 @@
 """``LayoutChange`` library node: relayouts ``_inp`` to ``_out`` via a layout-algebra op sequence; pure uses a mapped tasklet, cuTENSOR/HPTT use TensorTranspose for a pure permutation (else pure)."""
 
 import json
-from typing import List, Optional, Tuple
 
 import dace
 from dace import library, nodes, properties
-from dace.transformation.transformation import ExpandTransformation
-
 from dace.libraries.layout.algebra import ops_from_list, ops_to_list, simplify_ops
 from dace.libraries.layout.lowering import build_relayout_sdfg, relayout_map
+from dace.transformation.transformation import ExpandTransformation
 
 
-def _as_permutation(out_map, logical_shape) -> Optional[Tuple[int, ...]]:
+def _as_permutation(out_map, logical_shape) -> tuple[int, ...] | None:
     """If ``out_map`` is a pure permutation of the packed-C input, return its axis list; else ``None``."""
     ndim = len(logical_shape)
     if len(out_map.digits) != ndim or out_map.element is not None or out_map.shuffles:
@@ -51,7 +49,7 @@ def _build_transpose_sdfg(label, in_desc, out_desc, axes, impl) -> dace.SDFG:
 class ExpandPure(ExpandTransformation):
     """Materialize the whole op sequence as one mapped-tasklet relayout copy."""
 
-    environments: List[type] = []
+    environments: list[type] = []
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg):
@@ -63,7 +61,7 @@ class ExpandPure(ExpandTransformation):
 class ExpandCuTensor(ExpandTransformation):
     """Pure permutation -> ``cutensorPermute`` (GPU); anything else -> ``pure``."""
 
-    environments: List[type] = []
+    environments: list[type] = []
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg):
@@ -84,7 +82,7 @@ class ExpandHipTensor(ExpandTransformation):
     cuTENSOR expansion does, so the vendor choice is a name passed down and not a second body.
     """
 
-    environments: List[type] = []
+    environments: list[type] = []
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg):
@@ -101,7 +99,7 @@ class ExpandHipTensor(ExpandTransformation):
 class ExpandHPTT(ExpandTransformation):
     """Pure permutation -> HPTT tensor transpose (CPU); anything else -> ``pure``."""
 
-    environments: List[type] = []
+    environments: list[type] = []
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg):
@@ -137,7 +135,7 @@ class LayoutChange(nodes.LibraryNode):
         else:
             self.ops = json.dumps(ops_to_list(list(ops)))
 
-    def op_sequence(self) -> List:
+    def op_sequence(self) -> list:
         """Decode the stored op sequence back to op dataclasses."""
         return ops_from_list(json.loads(self.ops))
 
@@ -162,7 +160,7 @@ class LayoutChange(nodes.LibraryNode):
 
 
 def add_layout_change(
-    sdfg: dace.SDFG, state: dace.SDFGState, in_name: str, out_name: str, ops: List, create_output: bool = True
+    sdfg: dace.SDFG, state: dace.SDFGState, in_name: str, out_name: str, ops: list, create_output: bool = True
 ) -> LayoutChange:
     """Add a LayoutChange node relaying in_name to out_name; create_output=False reuses the existing descriptor."""
     in_desc = sdfg.arrays[in_name]

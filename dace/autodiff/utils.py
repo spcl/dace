@@ -5,23 +5,24 @@ import copy
 import inspect
 import numbers
 import re
-from typing import Dict, List, Tuple, Union
 
 import astunparse
 import sympy as sp
-from dace.ordered import OrderedSet
 
 # DaCe imports
 import dace
-import dace.sdfg.utils as utils
-from dace import dtypes, symbolic
 from dace import data as dt
-from dace.frontend.python.parser import DaceProgram
-from dace.sdfg import SDFG, SDFGState, graph as dgraph, nodes as nd, state as dstate
-from dace.sdfg.state import LoopRegion
+from dace import dtypes, symbolic
 
 # Autodiff imports
 from dace.autodiff.base_abc import AutoDiffException, BackwardContext, BackwardResult
+from dace.frontend.python.parser import DaceProgram
+from dace.ordered import OrderedSet
+from dace.sdfg import SDFG, SDFGState
+from dace.sdfg import graph as dgraph
+from dace.sdfg import nodes as nd
+from dace.sdfg import state as dstate
+from dace.sdfg.state import LoopRegion
 
 #: Global that the generated ``symbolic_execution`` source reads its pre-built symbols from, so
 #: minting happens here -- where the dtypes are known -- instead of inside an exec'd string.
@@ -93,7 +94,7 @@ def add_backward_desc(
     return backward_sdfg.add_datadesc(backward_name, new_desc)
 
 
-def connector_symbol(name: str, dtype: Union[dtypes.typeclass, None] = None) -> symbolic.symbol:
+def connector_symbol(name: str, dtype: dtypes.typeclass | None = None) -> symbolic.symbol:
     """Mint the DaCe symbol standing for a tasklet connector or an SDFG symbol.
 
     Always a ``symbolic.symbol``, never a bare ``sympy.Symbol``: the two compare unequal while
@@ -106,7 +107,7 @@ def connector_symbol(name: str, dtype: Union[dtypes.typeclass, None] = None) -> 
     return symbolic.symbol(name, integer=None)
 
 
-def backward_symbol_mapping(nested_sdfg: SDFG, parent_state: SDFGState) -> Dict[str, symbolic.symbol]:
+def backward_symbol_mapping(nested_sdfg: SDFG, parent_state: SDFGState) -> dict[str, symbolic.symbol]:
     """Symbol mapping for a backward nested SDFG, resolved against the scope it is placed in.
 
     Backward SDFGs are assembled from descriptors deep-copied out of the parent, so identity is the
@@ -120,8 +121,8 @@ def backward_symbol_mapping(nested_sdfg: SDFG, parent_state: SDFGState) -> Dict[
 
 
 def add_empty_sdfg_for_node(
-    forward_node: nd.Node, required_descriptors: List[str], context: BackwardContext
-) -> Tuple[nd.NestedSDFG, BackwardResult]:
+    forward_node: nd.Node, required_descriptors: list[str], context: BackwardContext
+) -> tuple[nd.NestedSDFG, BackwardResult]:
     """Given a node, return an SDFG that can be used as a nested SDFG expansion for that node.
 
     ``required_descriptors`` may contain:
@@ -197,15 +198,13 @@ def backward_program_for_node(
     data descriptors will match the data descriptors of the inputs/outputs they correspond to.
     """
 
-    input_names = set(inp.name for inp in forward_node.schema.inputs)
-    output_names = set(outp.name for outp in forward_node.schema.outputs)
+    input_names = {inp.name for inp in forward_node.schema.inputs}
+    output_names = {outp.name for outp in forward_node.schema.outputs}
 
     if input_names.intersection(output_names):
         # this is currently the case for only one onnx op
         raise ValueError(
-            "program_for_node cannot be applied on nodes of this type; '{}' is both an input and an output".format(
-                next(input_names.intersection(output_names))
-            )
+            f"program_for_node cannot be applied on nodes of this type; '{next(input_names.intersection(output_names))}' is both an input and an output"
         )
 
     def name_without_grad_in(name, collection):
@@ -217,7 +216,7 @@ def backward_program_for_node(
 
     inputs = {}
     outputs = {}
-    for name, _ in params.items():
+    for name in params.keys():
         if name in input_names:
             inputs[name] = copy.deepcopy(forward_in_desc_with_name(forward_node, context, name))
 
@@ -233,7 +232,7 @@ def backward_program_for_node(
             backward_result.given_grad_names[name[:-5]] = name
 
         else:
-            raise ValueError("'{}' was not found as an input or output for {}".format(name, forward_node.schema.name))
+            raise ValueError(f"'{name}' was not found as an input or output for {forward_node.schema.name}")
 
     program.__annotations__ = {**inputs, **outputs}
 
@@ -371,10 +370,10 @@ def init_grad(data: str, sdfg: SDFG, current_state: SDFGState) -> None:
     if isinstance(arr, (dt.Array, dt.Scalar)):
         state.add_mapped_tasklet(
             "_init_" + data + "_",
-            {"i{}".format(i): "0:{}".format(shape) for i, shape in enumerate(arr.shape)},
+            {f"i{i}": f"0:{shape}" for i, shape in enumerate(arr.shape)},
             {},
-            "__out = {}".format(scalar),
-            {"__out": dace.Memlet.simple(data, ", ".join("i{}".format(i) for i in range(len(arr.shape))))},
+            f"__out = {scalar}",
+            {"__out": dace.Memlet.simple(data, ", ".join(f"i{i}" for i in range(len(arr.shape))))},
             schedule=dtypes.ScheduleType.GPU_Device if cuda else dtypes.ScheduleType.Default,
             external_edges=True,
         )
@@ -383,7 +382,7 @@ def init_grad(data: str, sdfg: SDFG, current_state: SDFGState) -> None:
         # (since a view can never be a required grad), and thus the viewed array will be initialized.
         pass
     else:
-        raise AutoDiffException("Unsupported data descriptor {}".format(arr))
+        raise AutoDiffException(f"Unsupported data descriptor {arr}")
 
 
 def extract_indices(expression: str) -> dict[str, list[str]]:
@@ -464,8 +463,8 @@ def resolve_differentiation_target(expr: sp.Expr, name: str, indices: list[str] 
 
 
 def code_to_exprs(
-    code: str, tasklet: nd.Tasklet, symbols: Dict[str, dtypes.typeclass]
-) -> Tuple[Dict[str, sp.Expr], Dict[str, List[str]]]:
+    code: str, tasklet: nd.Tasklet, symbols: dict[str, dtypes.typeclass]
+) -> tuple[dict[str, sp.Expr], dict[str, list[str]]]:
     """Convert a python string to a set of (simplified) symbolic sympy expressions. Currently, this
     supports only code consisting of assignment statements.
 
@@ -484,11 +483,11 @@ def code_to_exprs(
 
     # Symbols reach the generated source through this table instead of being minted inside it from a
     # bare name: minting here is the only place that still knows their dtypes.
-    symbol_table: Dict[str, sp.Expr] = {}
+    symbol_table: dict[str, sp.Expr] = {}
 
     # Symbols reach the generated source through this table instead of being minted inside it from a
     # bare name: minting here is the only place that still knows their dtypes.
-    symbol_table: Dict[str, sp.Expr] = {}
+    symbol_table: dict[str, sp.Expr] = {}
 
     # Add the definition of global constant symbols that are presen in the code
     # Prepare the Symbol declaration code
@@ -576,9 +575,7 @@ def symbolic_execution({}):
                 results = symbolic.pystr_to_symbolic(results)
             return {outputs[0]: results}, indexed_objects_map
     except Exception as e:
-        raise AutoDiffException(
-            "Exception occurred while attempting to symbolically execute code:\n{}".format(code)
-        ) from e
+        raise AutoDiffException(f"Exception occurred while attempting to symbolically execute code:\n{code}") from e
 
 
 def is_int_eq_value(value, target_value: int) -> bool:
@@ -597,7 +594,7 @@ def invert_map_connector(conn: str) -> str:
     elif conn.startswith("OUT"):
         return "IN" + conn[3:]
     else:
-        raise AutoDiffException("Could not parse map connector '{}'".format(conn))
+        raise AutoDiffException(f"Could not parse map connector '{conn}'")
 
 
 def carries_gradient(edge: dgraph.MultiConnectorEdge) -> bool:
@@ -685,7 +682,7 @@ def get_state_topological_order(graph) -> list[SDFGState]:
     return state_order
 
 
-def shape_has_symbols_to_replace(sdfg: SDFG, shape: Union[str, sp.Symbol, sp.Expr]) -> bool:
+def shape_has_symbols_to_replace(sdfg: SDFG, shape: str | sp.Symbol | sp.Expr) -> bool:
     """
     Check if the shape dimension passed as a parameter has a symbol that needs to be replaced.
     We do not replace global SDFG symbols but rather the loop indices only.
@@ -785,8 +782,7 @@ def get_map_nest_information(
                 # while we want the size so we add 1
                 shape_list.append(rng[1] + 1)
                 start_range.append(rng[0])
-            for par in edge_src.map.params:
-                param_list.append(par)
+            param_list.extend(edge_src.map.params)
 
     if not (len(param_list) == len(shape_list) == len(start_range)):
         raise AutoDiffException(
@@ -913,8 +909,7 @@ def extract_conditional_expressions(tasklet_node: nd.Tasklet) -> tuple[str, str,
         else_statement = else_statement.replace("else ", "")
 
         # remove the last closing parenthesis if it exists
-        if else_statement.endswith(")"):
-            else_statement = else_statement[:-1]
+        else_statement = else_statement.removesuffix(")")
 
         # match the out connector
         matches = re.search(r"^(.)* =", tasklet_code)
@@ -955,7 +950,7 @@ def check_edges_type_in_state(subgraph: dstate.StateSubgraphView) -> None:
 
         if edge.data.data:
             edge_type = parent_sdfg.arrays[edge.data.data].dtype
-            if edge_type in [dace.string]:
+            if edge_type is dace.string:
                 raise AutoDiffException(
                     f"Expected Subgraph to differentiate to only contain float, int, and bool edges, but data {edge.data}"
                     f" on edge {edge} has type {edge_type}"
@@ -1022,10 +1017,9 @@ def extract_loop_region_info(loop: LoopRegion) -> tuple[str, str]:
         end = end.replace("(", "")
         end = end.replace(")", "")
         end = end.replace(" ", "")
-    else:
-        if expression_to_remove.startswith("(") and not expression_to_remove.endswith(")") and expression.endswith(")"):
-            # Remove extra parenthesis
-            end = end[:-1]
+    elif expression_to_remove.startswith("(") and not expression_to_remove.endswith(")") and expression.endswith(")"):
+        # Remove extra parenthesis
+        end = end[:-1]
 
     # Get the start from the initialization code
     init_code = loop.init_statement.as_string

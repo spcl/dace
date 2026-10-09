@@ -8,10 +8,10 @@ and k06 (gather): the sweep chooses the element layout, the algebra guarantees c
 """
 
 import numpy
-import dace
 
+import dace
 from dace.libraries.layout.shuffle import register_shuffle
-from dace.transformation.layout.brute_force import sweep, best, shuffle_candidates
+from dace.transformation.layout.brute_force import best, shuffle_candidates, sweep
 
 N = dace.symbol("N")
 

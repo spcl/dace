@@ -42,14 +42,18 @@ import ast
 import copy
 import functools
 import operator
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any
 
-from dace import SDFG, SDFGState, Memlet, config, data as dt, dtypes, properties, subsets, symbolic
+from dace import SDFG, Memlet, SDFGState, config, dtypes, properties, subsets, symbolic
+from dace import data as dt
 from dace.frontend.python import astutils
 from dace.ordered import OrderedSet
-from dace.sdfg import nodes as nd, utils as sdutil, graph as gr
-from dace.transformation import pass_pipeline as ppl, transformation
+from dace.sdfg import graph as gr
+from dace.sdfg import nodes as nd
+from dace.sdfg import utils as sdutil
 from dace.sdfg.narrowing import as_expr
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation import transformation
 
 _PASS = "RemoveViews"
 _DEBUGPRINT = config.Config.get("debugprint") in (True, "1", "true", "yes")
@@ -66,7 +70,7 @@ def _ordering_side(
     view_node: nd.AccessNode,
     view_edge: gr.MultiConnectorEdge,
     is_viewed_src: bool,
-) -> Tuple[List[gr.MultiConnectorEdge], List[gr.MultiConnectorEdge]]:
+) -> tuple[list[gr.MultiConnectorEdge], list[gr.MultiConnectorEdge]]:
     """Splits ``view_node``'s non-view edges by what :meth:`RemoveViews._reconnect_edges` does.
 
     :return: ``(ordering, carriers)``. ``carriers`` are the edges the splice re-homes onto the
@@ -82,7 +86,7 @@ def _classify_view(
     state: SDFGState,
     view_node: nd.AccessNode,
     sdfg: SDFG,
-) -> Optional[Tuple[nd.AccessNode, gr.MultiConnectorEdge, subsets.Range, bool]]:
+) -> tuple[nd.AccessNode, gr.MultiConnectorEdge, subsets.Range, bool] | None:
     """
     Classifies a View access node.
 
@@ -140,8 +144,8 @@ def _classify_view(
 
 def _derive_mapping_from_subset(
     viewed_subset: subsets.Range,
-    view_shape: List,
-) -> Optional[Dict[int, int]]:
+    view_shape: list,
+) -> dict[int, int] | None:
     """
     Derive a view-dim -> array-dim mapping directly from the view edge
     subset, aligning the view's data (size != 1) dims with the array's
@@ -162,11 +166,11 @@ def _derive_mapping_from_subset(
     view_data_dims = [d for d, s in enumerate(view_shape) if s != 1]
     if len(view_data_dims) != len(array_data_dims):
         return None
-    return {vd: ad for vd, ad in zip(view_data_dims, array_data_dims)}
+    return dict(zip(view_data_dims, array_data_dims))
 
 
 def _compute_rewritten_subset(
-    mapping: Dict[int, int],
+    mapping: dict[int, int],
     view_subset: subsets.Range,
     edge_subset: subsets.Range,
 ) -> subsets.Range:
@@ -183,7 +187,7 @@ def _compute_rewritten_subset(
     where ``(rb, re, rs)`` is the array-side range from ``view_subset``
     and ``(vb, ve, vs)`` is the view-side range from ``edge_subset``.
     """
-    new_ranges: List[Tuple] = list(view_subset.ndrange())
+    new_ranges: list[tuple] = list(view_subset.ndrange())
     for vdim, adim in mapping.items():
         rb, re, rs = new_ranges[adim]
         vb, ve, vs = edge_subset.ranges[vdim]
@@ -192,7 +196,7 @@ def _compute_rewritten_subset(
     return subsets.Range(new_ranges)
 
 
-def _int_shape(desc: dt.Data) -> Optional[List[int]]:
+def _int_shape(desc: dt.Data) -> list[int] | None:
     """Return the shape as a list of Python ints, or None if symbolic."""
     try:
         return [int(s) for s in desc.shape]
@@ -200,7 +204,7 @@ def _int_shape(desc: dt.Data) -> Optional[List[int]]:
         return None
 
 
-def _int_strides(desc: dt.Data) -> Optional[List[int]]:
+def _int_strides(desc: dt.Data) -> list[int] | None:
     """Return the strides as a list of Python ints, or None if symbolic."""
     try:
         return [int(as_expr(s)) for s in desc.strides]
@@ -227,7 +231,7 @@ def _is_dense_reshape(vdesc: dt.Data, adesc: dt.Data) -> bool:
     return True
 
 
-def _delinearize_flat(flat, astrides: List[int], array_shape: List[int]):
+def _delinearize_flat(flat, astrides: list[int], array_shape: list[int]):
     """
     Convert a flat offset to multi-dimensional indices via the
     mixed-radix decomposition ``(flat // stride_d) % shape_d``
@@ -242,11 +246,11 @@ def _delinearize_flat(flat, astrides: List[int], array_shape: List[int]):
 
 def _reshape_subset(
     edge_subset: subsets.Range,
-    vstrides: List[int],
-    view_shape: List[int],
-    astrides: List[int],
-    array_shape: List[int],
-) -> Optional[subsets.Range]:
+    vstrides: list[int],
+    view_shape: list[int],
+    astrides: list[int],
+    array_shape: list[int],
+) -> subsets.Range | None:
     """
     Rewrite ``edge_subset`` from view coordinates to array coordinates
     by linearizing each range ``(b, e, s)`` with ``vstrides``, then
@@ -321,7 +325,7 @@ class _ReshapeIndexRewriter(ast.NodeTransformer):
         inp[k]     ->  inp[k // 5, k % 5] (symbolic)
     """
 
-    def __init__(self, connector: str, vstrides: List[int], astrides: List[int], array_shape: List[int]):
+    def __init__(self, connector: str, vstrides: list[int], astrides: list[int], array_shape: list[int]):
         self.connector = connector
         self.vstrides = vstrides
         self.astrides = astrides
@@ -358,7 +362,7 @@ class _ReshapeIndexRewriter(ast.NodeTransformer):
         self.changed = True
         return ast.fix_missing_locations(ast.Subscript(value=node.value, slice=new_slice, ctx=node.ctx))
 
-    def _linearize(self, indices: List[ast.expr]) -> ast.expr:
+    def _linearize(self, indices: list[ast.expr]) -> ast.expr:
         """
         Build an AST expression for the flat offset:
             flat = idx[0] * vstride[0] + idx[1] * vstride[1] + ...
@@ -375,7 +379,7 @@ class _ReshapeIndexRewriter(ast.NodeTransformer):
             result = term if result is None else ast.BinOp(left=result, op=ast.Add(), right=term)
         return result if result is not None else ast.Constant(value=0)
 
-    def _delinearize(self, flat: ast.expr) -> List[ast.expr]:
+    def _delinearize(self, flat: ast.expr) -> list[ast.expr]:
         """
         Build AST expressions for the mixed-radix decomposition:
             idx_d = (flat // astride[d]) % shape[d]
@@ -385,7 +389,7 @@ class _ReshapeIndexRewriter(ast.NodeTransformer):
         """
         if len(self.array_shape) == 1:
             return [flat]
-        out: List[ast.expr] = []
+        out: list[ast.expr] = []
         for astr, ashp in zip(self.astrides, self.array_shape):
             # flat // stride  (skip division when stride == 1)
             expr = flat if astr == 1 else ast.BinOp(left=flat, op=ast.FloorDiv(), right=ast.Constant(value=astr))
@@ -418,13 +422,13 @@ class _InterstateSubscriptRewriter(ast.NodeTransformer):
         self.mode = mode
         self.changed = False
         if mode == "affine":
-            self.mapping: Dict[int, int] = kwargs["mapping"]
+            self.mapping: dict[int, int] = kwargs["mapping"]
             self.view_subset: subsets.Range = kwargs["view_subset"]
             self.view_ndim: int = kwargs["view_ndim"]
         elif mode == "linearize":
-            self.vstrides: List[int] = kwargs["vstrides"]
-            self.astrides: List[int] = kwargs["astrides"]
-            self.array_shape: List[int] = kwargs["array_shape"]
+            self.vstrides: list[int] = kwargs["vstrides"]
+            self.astrides: list[int] = kwargs["astrides"]
+            self.array_shape: list[int] = kwargs["array_shape"]
         else:
             raise ValueError(f"Unknown mode: {mode!r}")
 
@@ -463,7 +467,7 @@ class _InterstateSubscriptRewriter(ast.NodeTransformer):
         self.changed = True
         return ast.fix_missing_locations(ast.Subscript(value=new_value, slice=new_slice, ctx=node.ctx))
 
-    def _rewrite_affine(self, indices: List[ast.expr]) -> List[ast.expr]:
+    def _rewrite_affine(self, indices: list[ast.expr]) -> list[ast.expr]:
         """
         Build per-array-dim index expressions via affine composition.
 
@@ -472,7 +476,7 @@ class _InterstateSubscriptRewriter(ast.NodeTransformer):
         view edge subset (squeezed dim).
         """
         new_ranges = list(self.view_subset.ndrange())
-        out: List[ast.expr] = []
+        out: list[ast.expr] = []
         for adim in range(len(new_ranges)):
             rb, _re, rs = new_ranges[adim]
             vdims_here = [vd for vd, ad in self.mapping.items() if ad == adim]
@@ -507,12 +511,12 @@ class _InterstateSubscriptRewriter(ast.NodeTransformer):
                 out.append(ast.BinOp(left=self._sym_to_ast(rb), op=ast.Add(), right=prod))
         return out
 
-    def _rewrite_linearize(self, indices: List[ast.expr]) -> List[ast.expr]:
+    def _rewrite_linearize(self, indices: list[ast.expr]) -> list[ast.expr]:
         """
         Linearize ``indices`` with ``vstrides`` then mixed-radix decompose
         into array coordinates using ``astrides`` and ``array_shape``.
         """
-        flat: Optional[ast.expr] = None
+        flat: ast.expr | None = None
         for idx, vs in zip(indices, self.vstrides):
             if vs == 0:
                 continue
@@ -525,7 +529,7 @@ class _InterstateSubscriptRewriter(ast.NodeTransformer):
         if len(self.array_shape) == 1:
             return [flat]
 
-        out: List[ast.expr] = []
+        out: list[ast.expr] = []
         for astr, ashp in zip(self.astrides, self.array_shape):
             expr = flat if astr == 1 else ast.BinOp(left=flat, op=ast.FloorDiv(), right=ast.Constant(value=astr))
             expr = ast.BinOp(left=expr, op=ast.Mod(), right=ast.Constant(value=ashp))
@@ -565,7 +569,7 @@ def _has_view_subscript(tree: ast.AST, view_name: str) -> bool:
 class RemoveViews(ppl.Pass):
     #: Interstate edges paired with their condition text, derived once per :meth:`apply_pass` run
     #: and dropped again at its end. Empty outside a run.
-    interstate_edges: List[Tuple[gr.Edge, str]] = []
+    interstate_edges: list[tuple[gr.Edge, str]] = []
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Descriptors | ppl.Modifies.AccessNodes | ppl.Modifies.Memlets | ppl.Modifies.Tasklets
@@ -579,9 +583,9 @@ class RemoveViews(ppl.Pass):
     def apply_pass(
         self,
         sdfg: SDFG,
-        pipeline_results: Dict[str, Any],
-    ) -> Optional[Set[str]]:
-        removed: Set[str] = set()
+        pipeline_results: dict[str, Any],
+    ) -> set[str] | None:
+        removed: set[str] = set()
 
         # Every view candidate asks three feasibility probes and three rewrites for the interstate
         # edges, and each one re-unparsed every condition AST to a string. The set of interstate
@@ -619,7 +623,7 @@ class RemoveViews(ppl.Pass):
 
         return removed or None
 
-    def report(self, pass_retval: Set[str]) -> str:
+    def report(self, pass_retval: set[str]) -> str:
         return f"Removed {len(pass_retval)} views: {pass_retval}."
 
     @staticmethod

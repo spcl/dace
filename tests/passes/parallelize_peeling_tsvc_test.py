@@ -25,11 +25,11 @@ import os
 import numpy as np
 
 import dace
-from dace.sdfg.state import LoopRegion
 from dace.sdfg import nodes
+from dace.sdfg.state import LoopRegion
 from dace.transformation.interstate.loop_to_map import LoopToMap
 from dace.transformation.passes import parallelize
-from dace.transformation.passes.parallelization_prep import BestEffortLoopPeeling, DEFAULT_PEEL_LIMIT
+from dace.transformation.passes.parallelization_prep import DEFAULT_PEEL_LIMIT, BestEffortLoopPeeling
 from dace.transformation.passes.simplify import SimplifyPass
 
 N = dace.symbol("N")

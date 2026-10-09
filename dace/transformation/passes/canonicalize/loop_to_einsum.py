@@ -81,7 +81,7 @@ never corrupt the real SDFG.
 
 import ast
 import copy
-from typing import Any, Dict, List, NamedTuple, Optional, Set, Tuple, Union
+from typing import Any, NamedTuple, Union
 
 import sympy
 
@@ -91,15 +91,15 @@ from dace.frontend.python import astutils
 from dace.memlet import Memlet
 from dace.sdfg import nodes
 from dace.sdfg.graph import MultiConnectorEdge
+from dace.sdfg.narrowing import as_basic, as_expr
 from dace.sdfg.state import AbstractControlFlowRegion, ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState
 from dace.symbolic import pystr_to_symbolic
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.analysis import loop_analysis, map_scope
 from dace.transformation.passes.canonicalize.loop_to_transpose import _is_copy_tasklet
 from dace.transformation.passes.canonicalize.rank_k_match import replace_loop_with_state
-from dace.transformation.transformation import explicit_cf_compatible
 from dace.transformation.passes.canonicalize.split_statements import value_edges
-from dace.sdfg.narrowing import as_basic, as_expr
+from dace.transformation.transformation import explicit_cf_compatible
 
 
 class EinsumSpec(NamedTuple):
@@ -108,8 +108,8 @@ class EinsumSpec(NamedTuple):
     einsum_str: str
     alpha: object
     beta: object
-    inputs: List[Tuple[str, str, subsets.Subset, object]]  # (connector, array, subset, dtype)
-    output: Tuple[str, str, subsets.Subset, object]  # (connector, array, subset, dtype)
+    inputs: list[tuple[str, str, subsets.Subset, object]]  # (connector, array, subset, dtype)
+    output: tuple[str, str, subsets.Subset, object]  # (connector, array, subset, dtype)
 
 
 class TransposeSpec(NamedTuple):
@@ -127,7 +127,7 @@ def _is_single_element(desc: data.Data) -> bool:
     return isinstance(desc, data.Scalar) or (isinstance(desc, data.Array) and all(str(s) == "1" for s in desc.shape))
 
 
-def _loop_data_census(loop: LoopRegion) -> Tuple[Dict[str, None], Dict[str, None], Dict[str, int]]:
+def _loop_data_census(loop: LoopRegion) -> tuple[dict[str, None], dict[str, None], dict[str, int]]:
     """``(referenced, written, state_counts)`` for ``loop``, in ONE walk of its states.
 
     Every candidate needs all three and they read the same nodes, so they share the walk instead
@@ -136,11 +136,11 @@ def _loop_data_census(loop: LoopRegion) -> Tuple[Dict[str, None], Dict[str, None
     states holding an AccessNode for it. Insertion order is unchanged: states in ``all_states``
     order, and within a state the data nodes before the edges.
     """
-    referenced: Dict[str, None] = {}
-    written: Dict[str, None] = {}
-    counts: Dict[str, int] = {}
+    referenced: dict[str, None] = {}
+    written: dict[str, None] = {}
+    counts: dict[str, int] = {}
     for state in loop.states():
-        seen: Dict[str, None] = {}
+        seen: dict[str, None] = {}
         for dn in state.data_nodes():
             referenced[dn.data] = None
             if state.in_degree(dn) > 0:
@@ -154,16 +154,16 @@ def _loop_data_census(loop: LoopRegion) -> Tuple[Dict[str, None], Dict[str, None
     return referenced, written, counts
 
 
-def _data_state_counts(cfg: ControlFlowRegion) -> Dict[str, int]:
+def _data_state_counts(cfg: ControlFlowRegion) -> dict[str, int]:
     """Array name -> number of states in ``cfg`` holding an AccessNode for it."""
-    counts: Dict[str, int] = {}
+    counts: dict[str, int] = {}
     for state in cfg.states():
         for name in dict.fromkeys(dn.data for dn in state.data_nodes()):
             counts[name] = counts.get(name, 0) + 1
     return counts
 
 
-def _live_outside(inside: Dict[str, int], root_counts: Dict[str, int], referenced: Dict[str, None]) -> Dict[str, None]:
+def _live_outside(inside: dict[str, int], root_counts: dict[str, int], referenced: dict[str, None]) -> dict[str, None]:
     """Referenced arrays that are also touched by data nodes OUTSIDE the loop --
     i.e. cross the loop boundary and so must stay visible (non-transient) in the
     probe, unlike the loop's purely-internal staging scratch. ``root_counts`` is the
@@ -186,7 +186,7 @@ def _has_loop_ancestor(loop: LoopRegion) -> bool:
     return False
 
 
-def _region_in_loop(region: Optional[AbstractControlFlowRegion]) -> bool:
+def _region_in_loop(region: AbstractControlFlowRegion | None) -> bool:
     """True iff ``region`` sits inside a ``LoopRegion`` (so its states' maps are already
     covered by that loop's candidate)."""
     while region is not None and not isinstance(region, SDFG):
@@ -208,7 +208,7 @@ def _nest_shape(loop: LoopRegion) -> _NestShape:
     """Summarize ``loop``'s states in one walk, nested SDFG bodies included (see :func:`_plausible_contraction`)."""
     n_dims = 1  # ``loop`` itself
     has_mul, all_copy = False, True
-    regions: List[ControlFlowRegion] = [loop]
+    regions: list[ControlFlowRegion] = [loop]
     while regions:
         region = regions.pop()
         for block in region.all_control_flow_regions(recursive=True):
@@ -227,12 +227,12 @@ def _nest_shape(loop: LoopRegion) -> _NestShape:
     return _NestShape(n_dims, has_mul, all_copy)
 
 
-def _plausible_contraction(loop: LoopRegion, root: SDFG, written: Dict[str, None], live: Dict[str, None]) -> bool:
+def _plausible_contraction(loop: LoopRegion, root: SDFG, written: dict[str, None], live: dict[str, None]) -> bool:
     """Cheap necessary conditions for the (seconds-long) probe to collapse to one ``Einsum`` /
     ``Transpose``: exactly one written non-transient array, at least two iteration dimensions, and a
     multiplication or only pure copies. Nested SDFG bodies are screened too (the probe inlines them).
     """
-    boundary: Dict[str, None] = {}
+    boundary: dict[str, None] = {}
     for name in written:
         desc = root.arrays.get(name)
         if desc is None or name in live or not desc.transient:
@@ -243,7 +243,7 @@ def _plausible_contraction(loop: LoopRegion, root: SDFG, written: Dict[str, None
     return shape.n_dims >= 2 and (shape.has_mul or shape.all_copy_tasklets)
 
 
-def _build_probe(loop: LoopRegion, root: SDFG, referenced: Dict[str, None], live: Dict[str, None]) -> Optional[SDFG]:
+def _build_probe(loop: LoopRegion, root: SDFG, referenced: dict[str, None], live: dict[str, None]) -> SDFG | None:
     """A throwaway SDFG wrapping a deep copy of ``loop``. Boundary arrays (live-out
     or non-transient in the original) become full-size non-transient descriptors;
     purely-internal staging scratch keeps its transient flag so simplification /
@@ -263,7 +263,7 @@ def _build_probe(loop: LoopRegion, root: SDFG, referenced: Dict[str, None], live
         probe.add_datadesc(name, desc)
 
     # Carry over the symbols the loop and the descriptors depend on.
-    needed: Set[str] = set(loop.used_symbols(all_symbols=True))
+    needed: set[str] = set(loop.used_symbols(all_symbols=True))
     for name in sorted(referenced):
         needed |= set(map(str, root.arrays[name].free_symbols))
     for sym in sorted(needed):  # symbol insertion order feeds free_symbols / arglist order in the probe
@@ -311,16 +311,16 @@ def _run_probe_pipeline(probe: SDFG) -> None:
     """Parallelize + lift the disposable copy so a contraction collapses to one
     ``Einsum`` and a transpose to one clean 2-D copy map. See the module docstring
     for why each step is present (and why ``MapFission`` is not)."""
-    from dace.transformation.passes.canonicalize.eliminate_trivial_tasklets import EliminateTrivialTasklets
-    from dace.transformation.passes.parallelize_loops import ParallelizeLoops
-    from dace.transformation.passes.simplify import SimplifyPass
-    from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
     from dace.transformation.dataflow.lift_einsum import LiftEinsum
     from dace.transformation.dataflow.map_collapse import MapCollapse
     from dace.transformation.dataflow.tasklet_fusion import TaskletFusion
     from dace.transformation.dataflow.wcr_conversion import AugAssignToWCR
-    from dace.transformation.interstate.sdfg_nesting import InlineSDFG
     from dace.transformation.interstate.multistate_inline import InlineMultistateSDFG
+    from dace.transformation.interstate.sdfg_nesting import InlineSDFG
+    from dace.transformation.passes.canonicalize.eliminate_trivial_tasklets import EliminateTrivialTasklets
+    from dace.transformation.passes.parallelize_loops import ParallelizeLoops
+    from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
+    from dace.transformation.passes.simplify import SimplifyPass
 
     SimplifyPass().apply_pass(probe, {})
     # Reduction-body clean-up (state level, where dataflow transforms reach).
@@ -355,22 +355,22 @@ def _run_probe_pipeline(probe: SDFG) -> None:
 
 def _probe_compute_nodes(
     probe: SDFG,
-) -> Tuple[
-    List[nodes.LibraryNode],
-    List[nodes.Tasklet],
-    List[nodes.MapEntry],
-    List[nodes.LibraryNode],
-    List[nodes.NestedSDFG],
-    List[LoopRegion],
+) -> tuple[
+    list[nodes.LibraryNode],
+    list[nodes.Tasklet],
+    list[nodes.MapEntry],
+    list[nodes.LibraryNode],
+    list[nodes.NestedSDFG],
+    list[LoopRegion],
 ]:
     """(einsum_nodes, tasklets, map_entries, other_libnodes, nested) across the probe."""
     from dace.libraries.blas.nodes.einsum import Einsum
 
-    einsums: List[nodes.LibraryNode] = []
-    tasklets: List[nodes.Tasklet] = []
-    maps: List[nodes.MapEntry] = []
-    others: List[nodes.LibraryNode] = []
-    nested: List[nodes.NestedSDFG] = []
+    einsums: list[nodes.LibraryNode] = []
+    tasklets: list[nodes.Tasklet] = []
+    maps: list[nodes.MapEntry] = []
+    others: list[nodes.LibraryNode] = []
+    nested: list[nodes.NestedSDFG] = []
     for n, _ in probe.all_nodes_recursive():
         if isinstance(n, Einsum):
             einsums.append(n)
@@ -386,7 +386,7 @@ def _probe_compute_nodes(
     return einsums, tasklets, maps, others, nested, loops
 
 
-def _extract_einsum(probe: SDFG, written: Dict[str, None]) -> Optional[EinsumSpec]:
+def _extract_einsum(probe: SDFG, written: dict[str, None]) -> EinsumSpec | None:
     """If the probe collapsed to exactly one ``Einsum`` producing one of the loop's
     output arrays (and no other compute), return its rebuildable spec."""
     einsums, tasklets, maps, others, nested, loops = _probe_compute_nodes(probe)
@@ -407,7 +407,7 @@ def _extract_einsum(probe: SDFG, written: Dict[str, None]) -> Optional[EinsumSpe
     if host is None:
         return None
 
-    inputs: List[Tuple[str, str, subsets.Subset, object]] = []
+    inputs: list[tuple[str, str, subsets.Subset, object]] = []
     for e in host.in_edges(node):
         if e.data is None or e.data.is_empty() or e.data.data is None:
             return None
@@ -424,7 +424,7 @@ def _extract_einsum(probe: SDFG, written: Dict[str, None]) -> Optional[EinsumSpe
     return EinsumSpec(node.einsum_str, node.alpha, node.beta, inputs, output)
 
 
-def _axis_order(subset: subsets.Subset) -> Optional[List[str]]:
+def _axis_order(subset: subsets.Subset) -> list[str] | None:
     """The ordered list of single-point index expressions of ``subset`` (one per
     axis), or ``None`` if any axis is not a single point."""
     order = []
@@ -435,7 +435,7 @@ def _axis_order(subset: subsets.Subset) -> Optional[List[str]]:
     return order
 
 
-def _extract_transpose(probe: SDFG, written: Dict[str, None]) -> Optional[TransposeSpec]:
+def _extract_transpose(probe: SDFG, written: dict[str, None]) -> TransposeSpec | None:
     """If the probe collapsed to exactly one 2-D full-range map that is a pure
     cross-array transposed copy ``dst[p,q] = src[q,p]``, return its spec. Pure
     copy = the map scope has no arithmetic (only transient staging AccessNodes
@@ -495,7 +495,7 @@ def _extract_transpose(probe: SDFG, written: Dict[str, None]) -> Optional[Transp
     return TransposeSpec(src, dst, sdesc.dtype, src_subset, dst_subset)
 
 
-def sweeps_whole_array(order: List[str], ends: Dict[str, object], desc: data.Data) -> bool:
+def sweeps_whole_array(order: list[str], ends: dict[str, object], desc: data.Data) -> bool:
     """Whether ``order`` (one parameter per axis, each running ``0 .. ends[param]``) covers all of ``desc``."""
     return all(
         symbolic.simplify(pystr_to_symbolic(ends[p]) - (extent - 1)) == 0 for p, extent in zip(order, desc.shape)
@@ -503,12 +503,12 @@ def sweeps_whole_array(order: List[str], ends: Dict[str, object], desc: data.Dat
 
 
 def _boundary_axis_order(
-    edges: List[MultiConnectorEdge[Memlet]], probe: SDFG, transient_ok: bool
-) -> Optional[Tuple[str, List[str], subsets.Range]]:
+    edges: list[MultiConnectorEdge[Memlet]], probe: SDFG, transient_ok: bool
+) -> tuple[str, list[str], subsets.Range] | None:
     """From a MapEntry's scope-side out-edges (or a MapExit's scope-side in-edges),
     the single non-transient boundary array touched, its per-axis index order, and
     a full-array subset. ``None`` unless exactly one such array is found."""
-    found: Optional[Tuple[str, List[str], subsets.Range]] = None
+    found: tuple[str, list[str], subsets.Range] | None = None
     for e in edges:
         if e.data is None or e.data.is_empty() or e.data.data is None:
             continue
@@ -545,23 +545,23 @@ class _Nest(NamedTuple):
     ``entry`` is the innermost ``MapEntry`` (``None`` when the whole nest is
     ``LoopRegion``s and the body is the state's top level)."""
 
-    axes: List[_Axis]
+    axes: list[_Axis]
     state: SDFGState
-    entry: Optional[nodes.MapEntry]
+    entry: nodes.MapEntry | None
 
 
 class _Leaf(NamedTuple):
     """An array read at a single point: ``array`` indexed by one expression per axis."""
 
     array: str
-    idx: List[str]
+    idx: list[str]
 
 
 class _Product(NamedTuple):
     """A tasklet-level product: ``scale`` (a number) times every term."""
 
     scale: object
-    terms: List[Union[_Leaf, "_Product"]]
+    terms: list[Union[_Leaf, "_Product"]]
 
 
 def _plain_edges(region: ControlFlowRegion) -> bool:
@@ -575,7 +575,7 @@ def _plain_edges(region: ControlFlowRegion) -> bool:
     return True
 
 
-def _single_body_block(region: ControlFlowRegion) -> Optional[ControlFlowBlock]:
+def _single_body_block(region: ControlFlowRegion) -> ControlFlowBlock | None:
     """``region``'s one meaningful child block, or ``None``. Empty scaffold states --
     the connective ``..._for_inline_pre_state`` blocks the map->loop lowering leaves
     behind -- are ignored; anything else must be alone."""
@@ -585,7 +585,7 @@ def _single_body_block(region: ControlFlowRegion) -> Optional[ControlFlowBlock]:
     return blocks[0] if len(blocks) == 1 else None
 
 
-def _loop_axis(loop: LoopRegion) -> Optional[_Axis]:
+def _loop_axis(loop: LoopRegion) -> _Axis | None:
     """``loop`` as one ``0 .. end`` unit-stride axis, or ``None`` if it is not one.
     A non-zero start or a non-unit stride is refused for the same reason
     ``LiftEinsum._partial_range`` refuses it: the contraction spans the operands' full
@@ -602,7 +602,7 @@ def _loop_axis(loop: LoopRegion) -> Optional[_Axis]:
     return _Axis(loop.loop_variable, end)
 
 
-def _map_axes(entry: nodes.MapEntry) -> Optional[List[_Axis]]:
+def _map_axes(entry: nodes.MapEntry) -> list[_Axis] | None:
     """A map's params as axes -- one MapEntry carries SEVERAL, unlike a LoopRegion."""
     axes = []
     for param, rng in zip(entry.map.params, entry.map.range):
@@ -612,7 +612,7 @@ def _map_axes(entry: nodes.MapEntry) -> Optional[List[_Axis]]:
     return axes
 
 
-def _descend_maps(state: SDFGState, axes: List[_Axis], entry: Optional[nodes.MapEntry]) -> Optional[_Nest]:
+def _descend_maps(state: SDFGState, axes: list[_Axis], entry: nodes.MapEntry | None) -> _Nest | None:
     """Follow one chain of nested map scopes down from ``entry`` (or from ``state``'s
     top level when it is ``None``), appending each map's params to ``axes``. Refuses a
     level that holds compute of its own or forks into several maps -- the lifted node
@@ -633,11 +633,11 @@ def _descend_maps(state: SDFGState, axes: List[_Axis], entry: Optional[nodes.Map
         entry = inner[0]
 
 
-def _nest_of(root: LoopRegion) -> Optional[_Nest]:
+def _nest_of(root: LoopRegion) -> _Nest | None:
     """The iteration nest rooted at a ``LoopRegion``. Loops contribute ONE axis each and
     must form a perfect chain; the innermost body may then descend through map scopes
     (a mixed ``for i: for j,k in dace.map[...]`` nest is one nest)."""
-    axes: List[_Axis] = []
+    axes: list[_Axis] = []
     block = root
     while isinstance(block, LoopRegion):
         axis = _loop_axis(block)
@@ -652,12 +652,12 @@ def _nest_of(root: LoopRegion) -> Optional[_Nest]:
     return _descend_maps(block, axes, None)
 
 
-def _nest_of_map(state: SDFGState, entry: nodes.MapEntry) -> Optional[_Nest]:
+def _nest_of_map(state: SDFGState, entry: nodes.MapEntry) -> _Nest | None:
     """The iteration nest of a map-form contraction rooted at ``entry``."""
     return _descend_maps(state, [], entry)
 
 
-def _point_index(memlet: Memlet, expect_data: Optional[str] = None) -> Optional[Tuple[str, List[str]]]:
+def _point_index(memlet: Memlet, expect_data: str | None = None) -> tuple[str, list[str]] | None:
     """``(array, one index expression per axis)`` for a single-element point access,
     else ``None``. Mirrors ``LiftEinsum``'s per-edge screen (no dynamic memlets, exactly
     one element)."""
@@ -676,7 +676,7 @@ def _point_index(memlet: Memlet, expect_data: Optional[str] = None) -> Optional[
     return memlet.data, idx
 
 
-def _tasklet_expr(tasklet: nodes.Tasklet) -> Optional[symbolic.SymbolicType]:
+def _tasklet_expr(tasklet: nodes.Tasklet) -> symbolic.SymbolicType | None:
     """The tasklet's single assigned expression as a sympy expression, or ``None``."""
     if tasklet.code.language != dtypes.Language.Python:
         return None
@@ -703,7 +703,7 @@ def _tasklet_expr(tasklet: nodes.Tasklet) -> Optional[symbolic.SymbolicType]:
     return expr
 
 
-def _product_scale(tasklet: nodes.Tasklet) -> Optional[sympy.Basic]:
+def _product_scale(tasklet: nodes.Tasklet) -> sympy.Basic | None:
     """The numeric factor of a tasklet that multiplies ALL of its inputs together
     (``__out = 2.5 * __in2`` -> ``2.5``; ``__out = __in1 * __in2`` -> ``1``), else
     ``None``. Same test ``LiftEinsum`` applies to the fused tasklet, here applied per
@@ -737,8 +737,8 @@ def _is_sum_tasklet(tasklet: nodes.Tasklet) -> bool:
 
 
 def _resolve(
-    state: SDFGState, sdfg: SDFG, edge: MultiConnectorEdge[Memlet], visited: Dict[nodes.Node, None]
-) -> Optional[Union[_Leaf, _Product]]:
+    state: SDFGState, sdfg: SDFG, edge: MultiConnectorEdge[Memlet], visited: dict[nodes.Node, None]
+) -> _Leaf | _Product | None:
     """The value flowing along ``edge``, chasing back through single-element transient
     staging scalars and product tasklets to the leaf array reads. ``visited`` collects
     every node consumed, so the caller can verify the body holds nothing else."""
@@ -769,8 +769,8 @@ def _resolve(
 
 
 def _resolve_tasklet(
-    state: SDFGState, sdfg: SDFG, tasklet: nodes.Tasklet, visited: Dict[nodes.Node, None]
-) -> Optional[_Product]:
+    state: SDFGState, sdfg: SDFG, tasklet: nodes.Tasklet, visited: dict[nodes.Node, None]
+) -> _Product | None:
     """``tasklet`` as a product of its resolved inputs, or ``None``. Single-consumer
     only: a re-used intermediate is not a tree and would be counted twice."""
     if tasklet in visited or state.out_degree(tasklet) != 1:
@@ -779,7 +779,7 @@ def _resolve_tasklet(
     if scale is None:
         return None
     visited[tasklet] = None
-    terms: List[Union[_Leaf, _Product]] = []
+    terms: list[_Leaf | _Product] = []
     for e in state.in_edges(tasklet):
         if e.data is None or e.data.is_empty():
             return None
@@ -790,7 +790,7 @@ def _resolve_tasklet(
     return _Product(scale, terms) if terms else None
 
 
-def _flatten(term: Union[_Leaf, _Product]) -> Tuple[object, List[_Leaf]]:
+def _flatten(term: _Leaf | _Product) -> tuple[object, list[_Leaf]]:
     """``(numeric coefficient, operand leaves)`` of a resolved product tree."""
     if isinstance(term, _Leaf):
         return sympy.Integer(1), [term]
@@ -807,14 +807,14 @@ class _BodyValue(NamedTuple):
     (or assigned, when ``accumulates`` is False) into ``array`` at ``idx``."""
 
     array: str
-    idx: List[str]
+    idx: list[str]
     coeff: object
-    leaves: List[_Leaf]
+    leaves: list[_Leaf]
     accumulates: bool
-    write_node: Optional[nodes.AccessNode]
+    write_node: nodes.AccessNode | None
 
 
-def _body_value(nest: _Nest, sdfg: SDFG) -> Optional[_BodyValue]:
+def _body_value(nest: _Nest, sdfg: SDFG) -> _BodyValue | None:
     """Read the nest's body as one accumulate-or-assign of a product, or ``None``."""
     state, entry = nest.state, nest.entry
     body = [n for n in state.scope_children()[entry] if not isinstance(n, (nodes.MapEntry, nodes.MapExit))]
@@ -845,7 +845,7 @@ def _body_value(nest: _Nest, sdfg: SDFG) -> Optional[_BodyValue]:
         return None
     out_array, out_idx = got
 
-    visited: Dict = {}
+    visited: dict = {}
     if out_edge.data.wcr is not None:
         # WCR encoding: the producing tasklet IS the product, the sum lives on the edge.
         if detect_reduction_type(out_edge.data.wcr) != dtypes.ReductionType.Sum:
@@ -880,14 +880,14 @@ def _body_value(nest: _Nest, sdfg: SDFG) -> Optional[_BodyValue]:
     return _BodyValue(out_array, out_idx, coeff, leaves, accumulates, write_node)
 
 
-def _axis_subset(idx: List[str], axes: Dict[str, _Axis]) -> subsets.Range:
+def _axis_subset(idx: list[str], axes: dict[str, _Axis]) -> subsets.Range:
     """The whole-operand range a point access ``idx`` sweeps over the nest -- what
     memlet propagation out of the equivalent map produces, and what ``LiftEinsum``
     hands the ``Einsum`` node."""
     return subsets.Range([(0, 0, 1) if i == "0" else (0, axes[i].end, 1) for i in idx])
 
 
-def _direct_einsum(nest: _Nest, sdfg: SDFG, value: _BodyValue) -> Optional[EinsumSpec]:
+def _direct_einsum(nest: _Nest, sdfg: SDFG, value: _BodyValue) -> EinsumSpec | None:
     """The ``Einsum`` spec for an accumulated contraction, or ``None``. The acceptance
     rule mirrors ``LiftEinsum.can_be_applied`` on the map this nest would become."""
     if not value.accumulates:
@@ -933,9 +933,9 @@ def _direct_einsum(nest: _Nest, sdfg: SDFG, value: _BodyValue) -> Optional[Einsu
     # the alpha-scaled one). Sorting by operand identity pins it.
     tensors.sort(key=lambda t: (t.array, tuple(t.idx)))
 
-    mapping: Dict[str, str] = {}
+    mapping: dict[str, str] = {}
 
-    def term(idx: List[str]) -> str:
+    def term(idx: list[str]) -> str:
         out = ""
         for i in idx:
             if i == "0":
@@ -956,7 +956,7 @@ def _direct_einsum(nest: _Nest, sdfg: SDFG, value: _BodyValue) -> Optional[Einsu
     return EinsumSpec(einsum_str, value.coeff, beta, inputs, ("_out", value.array, _axis_subset(value.idx, axes), None))
 
 
-def _fold_coefficient(sdfg: SDFG, array: str, write_node: Optional[nodes.AccessNode]) -> float:
+def _fold_coefficient(sdfg: SDFG, array: str, write_node: nodes.AccessNode | None) -> float:
     """The ``Einsum``'s ``beta``: ``out = alpha*contraction + beta*out_prior``. The SAME
     three signals ``LiftEinsum.apply`` uses, in the same order -- folding onto undefined
     memory and discarding a meaningful prior both miscompile:
@@ -985,7 +985,7 @@ def _fold_coefficient(sdfg: SDFG, array: str, write_node: Optional[nodes.AccessN
     return 1.0 if (has_prior_writer or not sdfg.arrays[array].transient) else 0.0
 
 
-def _direct_transpose(nest: _Nest, sdfg: SDFG, value: _BodyValue) -> Optional[TransposeSpec]:
+def _direct_transpose(nest: _Nest, sdfg: SDFG, value: _BodyValue) -> TransposeSpec | None:
     """The ``Transpose`` spec for a pure 2-D cross-array transposed copy, or ``None``."""
     if value.accumulates or len(nest.axes) != 2 or len(value.leaves) != 1 or value.coeff != 1:
         return None
@@ -1033,7 +1033,7 @@ def _may_hold_map_contraction(state: SDFGState) -> bool:
     return False
 
 
-def _match_nest(nest: Optional[_Nest], sdfg: SDFG) -> Optional[Union[EinsumSpec, TransposeSpec]]:
+def _match_nest(nest: _Nest | None, sdfg: SDFG) -> EinsumSpec | TransposeSpec | None:
     """An ``EinsumSpec`` / ``TransposeSpec`` read directly off ``nest``, or ``None``."""
     if nest is None or len(nest.axes) < 2:
         return None
@@ -1063,7 +1063,7 @@ class LoopToEinsum(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return bool(modified & ppl.Modifies.CFG)
 
-    def apply_pass(self, sdfg: SDFG, _: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _: dict[str, Any]) -> int | None:
         count = self._lift_loops(sdfg)
         count += self._lift_maps(sdfg)
         return count or None
@@ -1072,15 +1072,17 @@ class LoopToEinsum(ppl.Pass):
         """Lift nests rooted at a ``LoopRegion``: the whole loop is spliced out."""
         # Only the OUTERMOST loop of each nest is a candidate: matching it lifts (or
         # no-ops on) the whole nest. Snapshot upfront -- a lift removes the nest.
-        candidates: List[Tuple[LoopRegion, SDFG]] = []
+        candidates: list[tuple[LoopRegion, SDFG]] = []
         for sd in sdfg.all_sdfgs_recursive():
-            for region in sd.all_control_flow_regions():
-                if isinstance(region, LoopRegion) and region.loop_variable and not _has_loop_ancestor(region):
-                    candidates.append((region, sd))
+            candidates.extend(
+                (region, sd)
+                for region in sd.all_control_flow_regions()
+                if isinstance(region, LoopRegion) and region.loop_variable and not _has_loop_ancestor(region)
+            )
 
         # Per-SDFG data-node census, shared by every candidate of that SDFG (see
         # ``_live_outside``). A lift rewires the CFG, so drop the census after one.
-        counts_cache: Dict[int, Dict[str, int]] = {}
+        counts_cache: dict[int, dict[str, int]] = {}
         count = 0
         for loop, root in candidates:
             parent = loop.parent_graph
@@ -1104,7 +1106,7 @@ class LoopToEinsum(ppl.Pass):
         """Lift nests rooted at a top-level ``MapEntry``: the map scope is replaced in
         place, leaving the rest of its state alone. Maps under a ``LoopRegion`` are
         skipped -- the enclosing loop is the candidate that covers them."""
-        candidates: List[Tuple[SDFGState, nodes.MapEntry, SDFG]] = []
+        candidates: list[tuple[SDFGState, nodes.MapEntry, SDFG]] = []
         for sd in sdfg.all_sdfgs_recursive():
             for state in sd.states():
                 if not _may_hold_map_contraction(state):
@@ -1112,9 +1114,9 @@ class LoopToEinsum(ppl.Pass):
                 parent = state.parent_graph
                 if isinstance(parent, LoopRegion) or (parent is not sd and _region_in_loop(parent)):
                     continue
-                for node in state.scope_children()[None]:
-                    if isinstance(node, nodes.MapEntry):
-                        candidates.append((state, node, sd))
+                candidates.extend(
+                    (state, node, sd) for node in state.scope_children()[None] if isinstance(node, nodes.MapEntry)
+                )
 
         count = 0
         for state, entry, root in candidates:
@@ -1129,9 +1131,7 @@ class LoopToEinsum(ppl.Pass):
             count += 1
         return count
 
-    def _match(
-        self, loop: LoopRegion, root: SDFG, root_counts: Dict[str, int]
-    ) -> Optional[Union[EinsumSpec, TransposeSpec]]:
+    def _match(self, loop: LoopRegion, root: SDFG, root_counts: dict[str, int]) -> EinsumSpec | TransposeSpec | None:
         """Match ``loop`` directly; on a decline fall back to the probe (and count it)."""
         referenced, written, inside = _loop_data_census(loop)
         if not referenced:
@@ -1148,8 +1148,8 @@ class LoopToEinsum(ppl.Pass):
         return spec
 
     def _probe(
-        self, loop: LoopRegion, root: SDFG, referenced: Dict[str, None], live: Dict[str, None], written: Dict[str, None]
-    ) -> Optional[Union[EinsumSpec, TransposeSpec]]:
+        self, loop: LoopRegion, root: SDFG, referenced: dict[str, None], live: dict[str, None], written: dict[str, None]
+    ) -> EinsumSpec | TransposeSpec | None:
         """Copy the loop, run the lift pipeline on the copy, and return an
         ``EinsumSpec`` / ``TransposeSpec`` if it cleanly collapsed, else ``None``.
         Any probe failure is swallowed -- the lift is strictly opt-in."""

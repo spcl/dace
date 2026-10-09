@@ -31,7 +31,7 @@ is NOT skipped -- on a box with a compiler it is expected to run and pass.
 import contextlib
 import copy
 import ctypes
-from typing import Any, Dict
+from typing import Any
 
 import numpy as np
 import pytest
@@ -39,7 +39,6 @@ import pytest
 import dace
 from dace import data as dt
 from dace.codegen.cpf import render
-
 from tests.codegen.cpf.conftest import assert_standalone, call_standalone, compile_standalone
 from tests.corpus.cloudsc.generate_data_for_cloudsc import (
     IEEE_CPU_ARGS,
@@ -72,7 +71,7 @@ def ieee_build():
         dace.Config.set("compiler", "cpu", "args", value=saved)
 
 
-def entry_arguments(sdfg: dace.SDFG, values: Dict[str, Any]) -> Dict[str, Any]:
+def entry_arguments(sdfg: dace.SDFG, values: dict[str, Any]) -> dict[str, Any]:
     """``values`` restricted and shaped to what ``sdfg``'s CPF entry point takes.
 
     Two adjustments, both of which would otherwise be silent. The CloudSC input generator passes a
@@ -80,7 +79,7 @@ def entry_arguments(sdfg: dace.SDFG, values: Dict[str, Any]) -> Dict[str, Any]:
     the array the descriptor describes. And an argument the generator did not produce is raised
     here rather than defaulted: the entry point would read uninitialized memory.
     """
-    arguments: Dict[str, Any] = {}
+    arguments: dict[str, Any] = {}
     missing = []
     for name, desc in sdfg.arglist().items():
         if name not in values:

@@ -13,12 +13,13 @@ sympy printer and cppunparse to identical code.
 """
 
 import re
+
 import numpy as np
 import pytest
 
 import dace
-from dace.symbolic import pystr_to_symbolic
 from dace.codegen.targets.cpp import sym2cpp
+from dace.symbolic import pystr_to_symbolic
 
 
 # ``sym2cpp`` hands a reparsable cast to cppunparse, so the text carries cppunparse's spacing and parentheses.

@@ -14,6 +14,7 @@ from dace.transformation.passes.vectorization.utils.tile_dims import (
     build_dim_index_map,
     classify_tile_access,
 )
+
 # NOTE: this test file exercises the ``classify_tile_access`` in
 # ``tile_dims.py`` directly. Production code routes through the per-dim
 # classifier in :mod:`tile_access`. The two implementations diverge on a

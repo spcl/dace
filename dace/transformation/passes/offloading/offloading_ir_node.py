@@ -1,8 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 
 from dace.ordered import OrderedSet
-
-from dace.sdfg.state import ConditionalBlock, LoopRegion, ControlFlowBlock
+from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, LoopRegion
 
 #: Array names longer than this are left out of the IR dump.
 PRINT_NAMES = 500
@@ -72,7 +71,7 @@ class OffloadingIRNode:
         return self.type in [OffloadingIRNode.OPEN, OffloadingIRNode.OPEN_LOOP, OffloadingIRNode.OPEN_COND]
 
     def is_close_node(self) -> bool:
-        return self.type in [OffloadingIRNode.CLOSE]
+        return self.type == OffloadingIRNode.CLOSE
 
     def append_node(self, node: "OffloadingIRNode") -> None:
         self.next.append(node)

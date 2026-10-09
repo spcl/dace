@@ -12,7 +12,7 @@ into an inner ``Sequential`` map, which is the same iteration space in an order 
 conflict-free: the write leaves the outer map indexed by its own parameter, so no atomic is emitted.
 """
 
-from typing import Any, Dict, List, Optional, Set
+from typing import Any
 
 from dace import SDFG, dtypes, properties
 from dace.sdfg import nodes
@@ -21,7 +21,7 @@ from dace.transformation import pass_pipeline as ppl
 from dace.transformation.dataflow import MapDimShuffle, MapExpansion
 
 
-def reduction_output_params(state: SDFGState, entry: nodes.MapEntry) -> Optional[Set[str]]:
+def reduction_output_params(state: SDFGState, entry: nodes.MapEntry) -> set[str] | None:
     """The parameters of ``entry`` that index its write-conflict-resolved outputs.
 
     ``None`` when there is nothing to split: no such output, outputs indexed by DIFFERENT parameters
@@ -29,7 +29,7 @@ def reduction_output_params(state: SDFGState, entry: nodes.MapEntry) -> Optional
     (a reduction to one element, which OpenMP's ``reduction`` clause already serves).
     """
     params = set(entry.map.params)
-    indexing: Optional[Set[str]] = None
+    indexing: set[str] | None = None
     for edge in state.in_edges(state.exit_node(entry)):
         if edge.data.is_empty() or edge.data.wcr is None:
             continue
@@ -58,14 +58,14 @@ class SequentializeReductionAxes(ppl.Pass):
     def depends_on(self):
         return set()
 
-    def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> int | None:
         """Split every eligible ``CPU_Multicore`` map in ``sdfg``.
 
         :param sdfg: the SDFG to specialize, in place.
         :param _pipeline_results: unused.
         :returns: how many maps were split, or ``None`` if none were.
         """
-        candidates: List[tuple] = []
+        candidates: list[tuple] = []
         for node, state in sdfg.all_nodes_recursive():
             if (
                 not isinstance(node, nodes.MapEntry)

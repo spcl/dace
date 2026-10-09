@@ -15,10 +15,10 @@ import dace.library
 import dace.properties
 import dace.sdfg.nodes
 from dace import dtypes
-from dace.transformation.transformation import ExpandTransformation
-from .. import environments
-from dace.libraries.mpi.nodes.node import MPINode, resolve_comm, expanded_input_connectors, validate_integer_descriptor
+from dace.libraries.mpi import environments
+from dace.libraries.mpi.nodes.node import MPINode, expanded_input_connectors, resolve_comm, validate_integer_descriptor
 from dace.ordered import OrderedSet
+from dace.transformation.transformation import ExpandTransformation
 
 
 @dace.library.expansion

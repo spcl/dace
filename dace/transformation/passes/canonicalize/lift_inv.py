@@ -43,18 +43,18 @@ identity map to a loop and before the ITE-lowering passes rewrite its
 """
 
 import ast
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import dace
 from dace import symbolic
 from dace.memlet import Memlet
 from dace.sdfg import nodes
+from dace.sdfg.narrowing import as_expr, as_map_entry
 from dace.sdfg.state import SDFGState
 from dace.subsets import Range
 from dace.transformation import pass_pipeline as ppl
-from dace.transformation.transformation import explicit_cf_compatible
 from dace.transformation.passes.canonicalize.split_statements import value_edges
-from dace.sdfg.narrowing import as_expr, as_map_entry
+from dace.transformation.transformation import explicit_cf_compatible
 
 
 def full_range(desc: dace.data.Data) -> Range:
@@ -62,7 +62,7 @@ def full_range(desc: dace.data.Data) -> Range:
     return Range([(0, s - 1, 1) for s in desc.shape])
 
 
-def is_square_matrix(desc: dace.data.Data, dtype: Optional[dace.dtypes.typeclass] = None) -> bool:
+def is_square_matrix(desc: dace.data.Data, dtype: dace.dtypes.typeclass | None = None) -> bool:
     """``desc`` is a 2-D array whose two axes have equal length (and, when
     ``dtype`` is given, whose base dtype matches ``dtype``)."""
     if not isinstance(desc, dace.data.Array) or len(desc.shape) != 2:
@@ -79,7 +79,7 @@ def const_is(node: ast.AST, want: float) -> bool:
     return isinstance(node, ast.Constant) and isinstance(node.value, (int, float)) and float(node.value) == want
 
 
-def is_identity_tasklet(tasklet: nodes.Tasklet, params: List[str]) -> bool:
+def is_identity_tasklet(tasklet: nodes.Tasklet, params: list[str]) -> bool:
     """Whether ``tasklet`` is the input-less identity body ``out = 1 if p == q
     else 0`` over exactly the two map parameters ``params`` (diagonal offset 0)."""
     if tasklet.in_connectors or len(tasklet.out_connectors) != 1:
@@ -134,7 +134,7 @@ class LiftInv(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def apply_pass(self, sdfg: dace.SDFG, _: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: dace.SDFG, _: dict[str, Any]) -> int | None:
         # Solve is imported inside the method: the linalg library nodes import
         # dace.transformation.transformation (ExpandTransformation), so a
         # top-level import here would form a cycle -- the same reason the sibling
@@ -142,12 +142,10 @@ class LiftInv(ppl.Pass):
         # import their library nodes locally.
         from dace.libraries.linalg.nodes.solve import Solve
 
-        candidates: List[Tuple[dace.SDFG, SDFGState, nodes.LibraryNode]] = []
+        candidates: list[tuple[dace.SDFG, SDFGState, nodes.LibraryNode]] = []
         for sd in sdfg.all_sdfgs_recursive():
             for state in sd.states():
-                for node in state.nodes():
-                    if isinstance(node, Solve):
-                        candidates.append((sd, state, node))
+                candidates.extend((sd, state, node) for node in state.nodes() if isinstance(node, Solve))
 
         count = 0
         for sd, state, solve in candidates:
@@ -226,7 +224,7 @@ class LiftInv(ppl.Pass):
 
     def _identity_producer(
         self, state: SDFGState, b_node: nodes.AccessNode, n: symbolic.SymbolicType
-    ) -> Optional[Tuple[nodes.MapEntry, nodes.MapExit, nodes.Tasklet]]:
+    ) -> tuple[nodes.MapEntry, nodes.MapExit, nodes.Tasklet] | None:
         """If ``b_node`` is written, in ``state``, by exactly one identity map --
         two parameters over ``[0:n, 0:n]``, no map inputs, a single input-less
         ``out = 1 if p == q else 0`` tasklet, writing the whole array -- return

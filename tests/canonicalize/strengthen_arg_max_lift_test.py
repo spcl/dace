@@ -20,9 +20,9 @@ import numpy as np
 import pytest
 
 import dace
-from dace.sdfg.state import LoopRegion, ConditionalBlock, ControlFlowRegion, BreakBlock
-from dace.properties import CodeBlock
 from dace.libraries.standard.nodes import Reduce
+from dace.properties import CodeBlock
+from dace.sdfg.state import BreakBlock, ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.passes.canonicalize.arg_max_lift import ArgMaxLift
 
 N = dace.symbol("N")

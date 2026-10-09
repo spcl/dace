@@ -9,10 +9,10 @@ and the structural assertion on the node's own ``shift`` property -- can catch i
 
 import numpy as np
 import pytest
+from common import compare_numpy_output
 
 import dace
 from dace.libraries.standard.nodes.cshift import CShift, ShiftDirection
-from common import compare_numpy_output
 
 
 @compare_numpy_output()

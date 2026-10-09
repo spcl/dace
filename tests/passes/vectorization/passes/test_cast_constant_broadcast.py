@@ -26,7 +26,7 @@ from dace.transformation.passes.vectorization.convert_tasklets_to_tile_ops impor
     is_same_domain_constant,
     numeric_constant_domain,
 )
-from dace.transformation.passes.vectorization.enums import ISA, RemainderStrategy, BranchMode
+from dace.transformation.passes.vectorization.enums import ISA, BranchMode, RemainderStrategy
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
 
 N = dace.symbol("N")

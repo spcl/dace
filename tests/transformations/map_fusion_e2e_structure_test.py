@@ -18,8 +18,8 @@ import numpy as np
 
 import dace
 from dace.sdfg import nodes
-from dace.transformation.dataflow.map_fusion_vertical import MapFusionVertical
 from dace.transformation.dataflow.map_fusion_horizontal import MapFusionHorizontal
+from dace.transformation.dataflow.map_fusion_vertical import MapFusionVertical
 
 N = dace.symbol("N")
 L = dace.symbol("L")

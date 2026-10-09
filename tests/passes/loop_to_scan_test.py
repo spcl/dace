@@ -1790,8 +1790,8 @@ def test_fuse_body_states_refuses_carry_through_state_boundary():
     ``StateFusionExtended.can_be_applied`` (cross-state RAW/WAW hazards); slice 2.4b-B.
     Pinned with the real s252 kernel, verified end-to-end.
     """
-    from tests.corpus.tsvc.tsvc import s252_d_single
     from dace.transformation.passes.canonicalize.pipeline import canonicalize
+    from tests.corpus.tsvc.tsvc import s252_d_single
 
     sdfg = s252_d_single.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
@@ -2313,9 +2313,11 @@ def _misowned_memlet_data(sdfg):
     bad = []
     for sd in sdfg.all_sdfgs_recursive():
         for state in sd.states():
-            for e in state.edges():
-                if not e.data.is_empty() and e.data.data is not None and e.data.data not in sd.arrays:
-                    bad.append((sd.name, state.label, e.data.data))
+            bad.extend(
+                (sd.name, state.label, e.data.data)
+                for e in state.edges()
+                if not e.data.is_empty() and e.data.data is not None and e.data.data not in sd.arrays
+            )
     return bad
 
 

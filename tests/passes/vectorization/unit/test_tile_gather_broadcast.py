@@ -13,8 +13,9 @@ node express broadcasts without a strided tile source:
   (DaCe codegen passes Scalar connectors by value).
 """
 
-import dace
 import pytest
+
+import dace
 
 
 def test_tile_gather_symbol_minimal():

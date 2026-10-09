@@ -1,9 +1,10 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests for induction-variable detection in loop_analysis."""
 
-import dace
 import pytest
 import sympy
+
+import dace
 from dace import symbolic
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.analysis import loop_analysis

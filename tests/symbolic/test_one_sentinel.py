@@ -13,9 +13,9 @@ vectorisation track (design section 3.8.1 / 3.8.2). It must:
   whose shape carries ``ONE``.
 """
 
-import dace
 import sympy
 
+import dace
 from dace.symbolic import ONE
 from dace.transformation.passes.length_one_array_scalar_conversion import ConvertLengthOneArraysToScalars
 from dace.transformation.passes.vectorization.config import VectorizeConfig

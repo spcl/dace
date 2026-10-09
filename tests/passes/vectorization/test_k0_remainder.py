@@ -25,12 +25,12 @@ synthesize an explicit ``T*`` boundary upstream are not affected and
 land cleanly through the K=0 path.
 """
 
-import pytest
 import numpy as np
+import pytest
 
+from dace.transformation.passes.vectorization.enums import BranchMode
 from tests.corpus.tsvc import tsvc
 from tests.passes.vectorization.helpers.harness import run_vectorization_test
-from dace.transformation.passes.vectorization.enums import BranchMode
 
 G1D = tsvc.collect(regime="1d")
 G2D = tsvc.collect(regime="2d")

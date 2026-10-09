@@ -25,8 +25,8 @@ from dace.transformation.auto import auto_optimize as aopt
 from dace.transformation.dataflow import MapFusion
 from dace.transformation.interstate import LoopToMap
 from dace.transformation.passes.vectorization.config import VectorizeConfig
-from dace.transformation.passes.vectorization.vectorize_gpu import VectorizeGPU
 from dace.transformation.passes.vectorization.enums import RemainderStrategy
+from dace.transformation.passes.vectorization.vectorize_gpu import VectorizeGPU
 
 #: Both programs are about float16, so the module carries the marker the dedicated fp16 CI leg
 #: selects on, next to the ``gpu`` marker the GPU legs select on.

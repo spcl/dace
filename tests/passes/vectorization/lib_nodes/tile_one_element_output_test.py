@@ -14,8 +14,8 @@ import dace
 from dace.libraries.tileops import TileBinop, TileUnop
 from dace.libraries.tileops.dispatch import select_tile_implementation
 from dace.transformation.passes.vectorization.config import VectorizeConfig
-from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
 from dace.transformation.passes.vectorization.enums import ISA, RemainderStrategy
+from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
 
 N = dace.symbol("N")
 

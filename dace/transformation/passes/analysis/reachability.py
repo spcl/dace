@@ -11,12 +11,12 @@ moves if the graph is edited afterwards.
 
 import functools
 import itertools
-from typing import Callable, Dict, Iterable, Iterator, List, Optional
+from collections.abc import Callable, Iterable, Iterator
 
+from dace.optionals import required
 from dace.ordered import OrderedSet
 from dace.sdfg.sdfg import SDFG
 from dace.sdfg.state import AbstractControlFlowRegion, ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState
-from dace.optionals import required
 
 Replay = Callable[[], Iterable[ControlFlowBlock]]
 
@@ -47,15 +47,15 @@ class BlockNumbering:
     __slots__ = ("positions", "ends", "states", "order")
 
     def __init__(self, sdfg: SDFG) -> None:
-        self.positions: Dict[ControlFlowBlock, int] = {}
+        self.positions: dict[ControlFlowBlock, int] = {}
         #: ``order[position]`` is the block at ``position``.
-        self.order: List[ControlFlowBlock] = []
-        self.ends: Dict[ControlFlowBlock, int] = {}
-        state_positions: List[int] = []
+        self.order: list[ControlFlowBlock] = []
+        self.ends: dict[ControlFlowBlock, int] = {}
+        state_positions: list[int] = []
         self.number(sdfg, state_positions)
         self.states: int = bits_at(state_positions)
 
-    def number(self, region: AbstractControlFlowRegion, state_positions: List[int]) -> None:
+    def number(self, region: AbstractControlFlowRegion, state_positions: list[int]) -> None:
         for block in region.nodes():
             position = len(self.positions)
             self.positions[block] = position
@@ -92,10 +92,10 @@ class ReachSet(OrderedSet):
     out laid out.
     """
 
-    def __init__(self, initial: Optional[Iterable[ControlFlowBlock]] = None) -> None:
-        self.replay: Optional[Replay] = None
+    def __init__(self, initial: Iterable[ControlFlowBlock] | None = None) -> None:
+        self.replay: Replay | None = None
         self.bits = 0
-        self.numbering: Optional[BlockNumbering] = None
+        self.numbering: BlockNumbering | None = None
         super().__init__(initial)
 
     @classmethod
@@ -114,23 +114,23 @@ class ReachSet(OrderedSet):
         self.numbering = None
 
     @property
-    def items(self) -> List[ControlFlowBlock]:
+    def items(self) -> list[ControlFlowBlock]:
         if self.replay is not None:
             self.lay_out()
         return self.laid_out_items
 
     @items.setter
-    def items(self, items: List[ControlFlowBlock]) -> None:
+    def items(self, items: list[ControlFlowBlock]) -> None:
         self.laid_out_items = items
 
     @property
-    def map(self) -> Dict[ControlFlowBlock, int]:
+    def map(self) -> dict[ControlFlowBlock, int]:
         if self.replay is not None:
             self.lay_out()
         return self.laid_out_map
 
     @map.setter
-    def map(self, positions: Dict[ControlFlowBlock, int]) -> None:
+    def map(self, positions: dict[ControlFlowBlock, int]) -> None:
         self.laid_out_map = positions
 
     def unordered(self) -> Iterator[ControlFlowBlock]:
@@ -152,14 +152,14 @@ class ReachSet(OrderedSet):
 
 
 def breadth_first_order(
-    successors: Dict[ControlFlowBlock, List[ControlFlowBlock]], source: ControlFlowBlock
+    successors: dict[ControlFlowBlock, list[ControlFlowBlock]], source: ControlFlowBlock
 ) -> Iterator[ControlFlowBlock]:
     """The blocks reachable from ``source`` over one or more edges, level by level.
 
     ``source`` itself is yielded only when a cycle leads back to it. Within a level, blocks come in
     the order the previous level's successor lists name them.
     """
-    seen: Dict[ControlFlowBlock, None] = {}
+    seen: dict[ControlFlowBlock, None] = {}
     frontier = [source]
     while frontier:
         level = dict.fromkeys(itertools.chain.from_iterable(successors[block] for block in frontier))
@@ -169,19 +169,19 @@ def breadth_first_order(
 
 
 def condensed_reach(
-    nodes: List[ControlFlowBlock], successors: Dict[ControlFlowBlock, List[ControlFlowBlock]], numbering: BlockNumbering
-) -> Dict[ControlFlowBlock, int]:
+    nodes: list[ControlFlowBlock], successors: dict[ControlFlowBlock, list[ControlFlowBlock]], numbering: BlockNumbering
+) -> dict[ControlFlowBlock, int]:
     """For each node, the bitset of the blocks it reaches over one or more edges, regions expanded.
 
     Iterative Tarjan: a component is complete only after every component it reaches, so its bitset is
     the OR over its outgoing edges of the target's expansion and the target's own bitset. A component
     on a cycle also reaches each of its members.
     """
-    order: Dict[ControlFlowBlock, int] = {}
-    low: Dict[ControlFlowBlock, int] = {}
-    stack: List[ControlFlowBlock] = []
-    on_stack: Dict[ControlFlowBlock, None] = {}
-    reach: Dict[ControlFlowBlock, int] = {}
+    order: dict[ControlFlowBlock, int] = {}
+    low: dict[ControlFlowBlock, int] = {}
+    stack: list[ControlFlowBlock] = []
+    on_stack: dict[ControlFlowBlock, None] = {}
+    reach: dict[ControlFlowBlock, int] = {}
     for root in nodes:
         if root in order:
             continue
@@ -210,7 +210,7 @@ def condensed_reach(
                 low[parent] = min(low[parent], low[node])
             if low[node] != order[node]:
                 continue
-            component: Dict[ControlFlowBlock, None] = {}
+            component: dict[ControlFlowBlock, None] = {}
             while True:
                 member = stack.pop()
                 del on_stack[member]
@@ -243,15 +243,15 @@ class BlockReachability:
     """
 
     def __init__(self, top_sdfg: SDFG) -> None:
-        self.nodes: Dict[AbstractControlFlowRegion, List[ControlFlowBlock]] = {}
-        self.successors: Dict[AbstractControlFlowRegion, Dict[ControlFlowBlock, List[ControlFlowBlock]]] = {}
-        self.parents: Dict[AbstractControlFlowRegion, Optional[AbstractControlFlowRegion]] = {}
-        self.numberings: Dict[AbstractControlFlowRegion, BlockNumbering] = {}
-        self.single_level: Dict[AbstractControlFlowRegion, Dict[ControlFlowBlock, ReachSet]] = {}
-        self.closure_bits: Dict[AbstractControlFlowRegion, int] = {}
-        self.loop_region_bits: Dict[LoopRegion, int] = {}
-        self.closure_items: Dict[AbstractControlFlowRegion, List[ControlFlowBlock]] = {}
-        self.below_items: Dict[AbstractControlFlowRegion, List[ControlFlowBlock]] = {}
+        self.nodes: dict[AbstractControlFlowRegion, list[ControlFlowBlock]] = {}
+        self.successors: dict[AbstractControlFlowRegion, dict[ControlFlowBlock, list[ControlFlowBlock]]] = {}
+        self.parents: dict[AbstractControlFlowRegion, AbstractControlFlowRegion | None] = {}
+        self.numberings: dict[AbstractControlFlowRegion, BlockNumbering] = {}
+        self.single_level: dict[AbstractControlFlowRegion, dict[ControlFlowBlock, ReachSet]] = {}
+        self.closure_bits: dict[AbstractControlFlowRegion, int] = {}
+        self.loop_region_bits: dict[LoopRegion, int] = {}
+        self.closure_items: dict[AbstractControlFlowRegion, list[ControlFlowBlock]] = {}
+        self.below_items: dict[AbstractControlFlowRegion, list[ControlFlowBlock]] = {}
         for sdfg in top_sdfg.all_sdfgs_recursive():
             numbering = BlockNumbering(sdfg)
             for region in sdfg.all_control_flow_regions():
@@ -265,7 +265,7 @@ class BlockReachability:
 
     def single_level_sets(
         self, region: AbstractControlFlowRegion, numbering: BlockNumbering
-    ) -> Dict[ControlFlowBlock, ReachSet]:
+    ) -> dict[ControlFlowBlock, ReachSet]:
         successors = self.successors[region]
         reach = condensed_reach(list(successors), successors, numbering)
         loop_blocks = (
@@ -278,7 +278,7 @@ class BlockReachability:
             for node in successors
         }
 
-    def within(self, region: AbstractControlFlowRegion) -> List[ControlFlowBlock]:
+    def within(self, region: AbstractControlFlowRegion) -> list[ControlFlowBlock]:
         """``region.all_control_flow_blocks()`` in its traversal order, built from the snapshot the same way.
 
         A list, not a ``set``: blocks hash by identity, so a set's order follows memory addresses and every
@@ -364,13 +364,13 @@ class BlockReachability:
             self.loop_region_bits[loop] = bits
         return bits
 
-    def enclosing(self, pivot: Optional[AbstractControlFlowRegion]) -> Iterator[AbstractControlFlowRegion]:
+    def enclosing(self, pivot: AbstractControlFlowRegion | None) -> Iterator[AbstractControlFlowRegion]:
         """``pivot`` and its ancestors, stopping at the SDFG or at a region without blocks."""
         while pivot is not None and not isinstance(pivot, SDFG) and self.nodes[pivot]:
             yield pivot
             pivot = self.parents[pivot]
 
-    def closure_order(self, region: AbstractControlFlowRegion) -> List[ControlFlowBlock]:
+    def closure_order(self, region: AbstractControlFlowRegion) -> list[ControlFlowBlock]:
         items = self.closure_items.get(region)
         if items is None:
             items = list(dict.fromkeys(self.closure_sequence(region)))
@@ -391,7 +391,7 @@ class BlockReachability:
             yield from self.closure_order(pivot)
 
 
-def states_only(reach: OrderedSet) -> Optional[OrderedSet]:
+def states_only(reach: OrderedSet) -> OrderedSet | None:
     """The states in ``reach``, in its order, or ``None`` when there are none."""
     if isinstance(reach, ReachSet) and reach.replay is not None:
         bits = reach.bits & required(reach.numbering).states

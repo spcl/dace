@@ -17,7 +17,6 @@ import pytest
 
 import dace
 import dace.libraries.onnx as donnx
-
 from tests.ml_gpu_utils import DEVICES, run_sdfg
 
 

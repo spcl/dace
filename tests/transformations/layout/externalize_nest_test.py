@@ -17,7 +17,6 @@ from dace.transformation.layout.externalize import (
     written_array_names,
 )
 from dace.transformation.layout.prepare import prepare_for_layout
-
 from tests.transformations.layout import multinest_programs as fixtures
 
 # Each fixture nest writes exactly one array; its name indexes the per-nest oracle.

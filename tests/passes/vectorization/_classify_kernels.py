@@ -29,7 +29,6 @@ kernel.
 import ast
 import pathlib
 import sys
-from typing import Dict, List, Optional, Tuple
 
 import dace
 
@@ -52,16 +51,16 @@ def _count_innermost_maps_in_sdfg(sdfg: dace.SDFG) -> int:
     return count
 
 
-def _kernel_ast(module_ast: ast.Module, name: str) -> Optional[ast.FunctionDef]:
+def _kernel_ast(module_ast: ast.Module, name: str) -> ast.FunctionDef | None:
     for node in ast.walk(module_ast):
         if isinstance(node, ast.FunctionDef) and node.name == name:
             return node
     return None
 
 
-def _fingerprint_hardness(fn: ast.FunctionDef) -> Tuple[str, List[str]]:
+def _fingerprint_hardness(fn: ast.FunctionDef) -> tuple[str, list[str]]:
     """Return (tier_estimate, feature_tags) from the AST."""
-    features: List[str] = []
+    features: list[str] = []
     has_branch = False
     has_indirect = False
     has_neighbor = False  # adjacent-element read pattern (stencil)
@@ -137,7 +136,7 @@ def _fingerprint_hardness(fn: ast.FunctionDef) -> Tuple[str, List[str]]:
     return "T2", features
 
 
-def _try_count_maps(kernel) -> Optional[int]:
+def _try_count_maps(kernel) -> int | None:
     try:
         sdfg = kernel.to_sdfg()
         return _count_innermost_maps_in_sdfg(sdfg)
@@ -145,14 +144,14 @@ def _try_count_maps(kernel) -> Optional[int]:
         return None
 
 
-def classify_tsvc() -> List[Dict]:
+def classify_tsvc() -> list[dict]:
     """Walk the TSVC corpus, classify each kernel."""
     sys.path.insert(0, str(REPO_ROOT))
     from tests.corpus.tsvc import tsvc
 
     src = (REPO_ROOT / "tests" / "corpus" / "tsvc.py").read_text()
     module = ast.parse(src)
-    results: List[Dict] = []
+    results: list[dict] = []
     for regime in ("1d", "2d"):
         try:
             kernels = tsvc.collect(regime=regime)
@@ -189,7 +188,7 @@ def classify_tsvc() -> List[Dict]:
 
 def main():
     results = classify_tsvc()
-    by_tier: Dict[str, List[Dict]] = {}
+    by_tier: dict[str, list[dict]] = {}
     for r in results:
         by_tier.setdefault(r["tier"], []).append(r)
     print("=" * 78)

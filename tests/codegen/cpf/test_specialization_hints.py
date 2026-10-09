@@ -22,6 +22,7 @@ already has a target and would only be given noise.
 """
 
 import re
+
 import pytest
 
 import dace

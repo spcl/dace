@@ -6,24 +6,23 @@ predecessor state; lifting the GPU middle out leaves the CPU suffix in the origi
 (``GPU -> CPU -> GPU``, cycles, ``MIXED`` interior nodes) are refused.
 """
 
-from typing import Dict, List, Optional, Set, Tuple, Type, Union
-
 from dace import SDFG, SDFGState
+from dace.ordered import OrderedSet
 from dace.sdfg import nodes
 from dace.sdfg.graph import SubgraphView
 from dace.sdfg.utils import dfs_topological_sort
-from dace.transformation import pass_pipeline as ppl, transformation
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation import transformation
 from dace.transformation.helpers import state_fission
-from dace.transformation.passes.insert_explicit_copies import InsertExplicitCopies
-from dace.ordered import OrderedSet
-from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import classify_node, fold_kinds, NodeKind
+from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import NodeKind, classify_node, fold_kinds
 from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (
     is_stream_wiring_applied,
     weakly_connected_node_sets,
 )
+from dace.transformation.passes.insert_explicit_copies import InsertExplicitCopies
 
 #: A mixed WCC as ``(cpu_prefix, gpu_middle, cpu_suffix)``.
-Chain = Tuple[List[nodes.Node], List[nodes.Node], List[nodes.Node]]
+Chain = tuple[list[nodes.Node], list[nodes.Node], list[nodes.Node]]
 
 #: The class sequences a mixed WCC may have, with the band index of each chain part (-1 for none).
 CHAIN_SHAPES = {
@@ -33,13 +32,13 @@ CHAIN_SHAPES = {
 }
 
 
-def wcc_kind(wcc: Set[nodes.Node], sdfg: SDFG, state: SDFGState) -> NodeKind:
+def wcc_kind(wcc: set[nodes.Node], sdfg: SDFG, state: SDFGState) -> NodeKind:
     return fold_kinds(classify_node(n, sdfg, state) for n in wcc)
 
 
-def group_into_bands(order: List[nodes.Node], kinds: Dict[nodes.Node, NodeKind]) -> List[list]:
+def group_into_bands(order: list[nodes.Node], kinds: dict[nodes.Node, NodeKind]) -> list[list]:
     """Group consecutive same-class nodes into ``[kind, nodes]`` bands; a neutral node joins the current band."""
-    bands: List[list] = []
+    bands: list[list] = []
     for n in order:
         k = kinds[n]
         if bands and (k in (NodeKind.NEUTRAL, bands[-1][0]) or bands[-1][0] == NodeKind.NEUTRAL):
@@ -51,10 +50,10 @@ def group_into_bands(order: List[nodes.Node], kinds: Dict[nodes.Node, NodeKind])
     return bands
 
 
-def chain_bands(wcc: Set[nodes.Node], sdfg: SDFG, state: SDFGState) -> Optional[Chain]:
+def chain_bands(wcc: set[nodes.Node], sdfg: SDFG, state: SDFGState) -> Chain | None:
     """Partition a mixed component into ``(cpu_prefix, gpu_middle, cpu_suffix)``, or ``None`` if it has a ``MIXED``
     node, one class only or more alternations (``state_fission`` duplicates the neutral nodes at the cut)."""
-    kinds: Dict[nodes.Node, NodeKind] = {n: classify_node(n, sdfg, state) for n in wcc}
+    kinds: dict[nodes.Node, NodeKind] = {n: classify_node(n, sdfg, state) for n in wcc}
     if NodeKind.MIXED in kinds.values():
         return None
     roots = [n for n in wcc if all(e.src not in wcc for e in state.in_edges(n))]
@@ -81,11 +80,11 @@ class SplitStateByGPUClass(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+    def depends_on(self) -> list[type[ppl.Pass] | ppl.Pass]:
         # A copy is classified GPU only once lifted to a ``CopyLibraryNode``.
         return [InsertExplicitCopies]
 
-    def apply_pass(self, sdfg: SDFG, _: Dict) -> Optional[Dict[str, int]]:
+    def apply_pass(self, sdfg: SDFG, _: dict) -> dict[str, int] | None:
         # A wired SDFG must not be split again.
         if is_stream_wiring_applied(sdfg):
             return None

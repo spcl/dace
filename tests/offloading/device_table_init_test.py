@@ -8,8 +8,6 @@ CloudSC's ``iphase`` and ``zvqx`` are the same fill with interstate reads on top
 own fill and the device fills a twin.
 """
 
-from typing import Optional
-
 import numpy as np
 import pytest
 
@@ -25,7 +23,7 @@ N = 16
 TABLE = (1.0, 2.0, None, -3.0)
 
 
-def fill_then_kernel(host_read: Optional[str] = None, looped: bool = False) -> dace.SDFG:
+def fill_then_kernel(host_read: str | None = None, looped: bool = False) -> dace.SDFG:
     """``table`` filled by free tasklets in one state, read as ``table[i % 4]`` by a map in the next.
 
     ``host_read`` adds a host read: ``interstate`` of ``table[1]`` in the edge between the states
@@ -74,7 +72,7 @@ def fill_then_kernel(host_read: Optional[str] = None, looped: bool = False) -> d
     return sdfg
 
 
-def offloaded(host_read: Optional[str] = None, looped: bool = False) -> dace.SDFG:
+def offloaded(host_read: str | None = None, looped: bool = False) -> dace.SDFG:
     sdfg = fill_then_kernel(host_read, looped)
     ppl.Pipeline([OffloadToAccelerator()]).apply_pass(sdfg, {})
     sdfg.validate()

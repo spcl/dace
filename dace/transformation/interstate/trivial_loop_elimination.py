@@ -1,7 +1,8 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 """Eliminates trivial loop"""
 
-from dace import sdfg as sd, symbolic
+from dace import sdfg as sd
+from dace import symbolic
 from dace.sdfg import utils as sdutil
 from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.state import ControlFlowRegion, LoopRegion

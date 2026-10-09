@@ -1,5 +1,4 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
-from typing import List
 import dace
 from dace.transformation.dataflow import MapTiling
 
@@ -20,7 +19,7 @@ def test_map_tiling_with_strides():
 
     state = next(iter(sdfg.states()))
     state_nodes = state.nodes()
-    map_entries: List[dace.nodes.MapEntry] = [n for n in state_nodes if isinstance(n, dace.nodes.MapEntry)]
+    map_entries: list[dace.nodes.MapEntry] = [n for n in state_nodes if isinstance(n, dace.nodes.MapEntry)]
     assert len(map_entries) == 1
     map_entry = map_entries[0]
 

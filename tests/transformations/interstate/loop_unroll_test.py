@@ -6,9 +6,9 @@ import numpy as np
 import pytest
 
 import dace
-from dace.sdfg.dealias import convert_legacy_nested_sdfgs
 from dace.memlet import Memlet
 from dace.properties import CodeBlock
+from dace.sdfg.dealias import convert_legacy_nested_sdfgs
 from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.interstate.loop_unroll import LoopUnroll
@@ -202,8 +202,8 @@ def test_melt_kernel():
     assert len(src_nodes) == 1
     assert len(dst_nodes) == 1
 
-    other_nodes = set(sdfg.nodes()).difference((src_nodes.union(dst_nodes)))
-    assert all({(sdfg.in_degree(n) == 1 and sdfg.out_degree(n) == 1) for n in other_nodes})
+    other_nodes = set(sdfg.nodes()).difference(src_nodes.union(dst_nodes))
+    assert all((sdfg.in_degree(n) == 1 and sdfg.out_degree(n) == 1) for n in other_nodes)
 
 
 def test_replace_dict_inner_loop():

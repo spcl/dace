@@ -19,8 +19,8 @@ numpy reduction. Both dtypes ``float64`` and ``complex128`` are swept.
 
 import numpy
 import pytest
-import dace
 
+import dace
 from dace.transformation.layout.permute_dimensions import PermuteDimensions
 from dace.transformation.layout.prepare import prepare_for_layout
 

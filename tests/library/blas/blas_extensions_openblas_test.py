@@ -10,24 +10,24 @@ import numpy as np
 import pytest
 
 import dace
-from dace.memlet import Memlet
 from dace.libraries.blas.nodes import (
-    Axpy,
-    Scal,
-    Nrm2,
     Asum,
-    Iamax,
+    Axpy,
     Copy,
-    Swap,
-    Trsv,
-    Trmv,
-    Symv,
-    Trsm,
-    Trmm,
-    Symm,
-    Syrk,
     Ger,
+    Iamax,
+    Nrm2,
+    Scal,
+    Swap,
+    Symm,
+    Symv,
+    Syrk,
+    Trmm,
+    Trmv,
+    Trsm,
+    Trsv,
 )
+from dace.memlet import Memlet
 
 _RTOL = 1e-14
 _ATOL = 1e-14

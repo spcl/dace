@@ -14,8 +14,9 @@ Two pinning tests:
   an in-connector.
 """
 
-import dace
 import pytest
+
+import dace
 
 
 def test_tile_iota_no_extra_inputs():

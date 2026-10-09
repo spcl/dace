@@ -40,8 +40,8 @@ SC26 layout paper Listing 2 (E6_VelocityTendencies indirect stencil), connectivi
 """
 
 import numpy
-import dace
 
+import dace
 from dace.transformation.layout.brute_force import permutation_candidates
 
 NC, NV, NE, NL = dace.symbol("NC"), dace.symbol("NV"), dace.symbol("NE"), dace.symbol("NL")

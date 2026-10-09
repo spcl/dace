@@ -6,9 +6,7 @@ import pytest
 
 import dace
 from dace import dtypes
-from dace.sdfg import nodes
-from dace.sdfg import infer_types
-from dace.sdfg import propagation
+from dace.sdfg import infer_types, nodes, propagation
 from dace.sdfg.dealias import convert_legacy_nested_sdfgs
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.mark_simd_maps import MarkSIMDMaps
@@ -126,7 +124,7 @@ def test_the_marked_multidimensional_map_expands_in_order(extents):
 
     # The exits mirror the entries: one per entry, re-joining innermost first.
     exits = [state.exit_node(e) for e in chain]
-    assert len(set(id(x) for x in exits)) == len(chain)
+    assert len({id(x) for x in exits}) == len(chain)
     assert [state.entry_node(x) for x in exits] == chain
     assert all(state.edges_between(exits[i], exits[i - 1]) for i in range(len(chain) - 1, 0, -1))
 

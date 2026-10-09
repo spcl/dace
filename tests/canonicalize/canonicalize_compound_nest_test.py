@@ -84,9 +84,11 @@ def top_level_expressions(sdfg) -> list[tuple[str, set]]:
     for blk in sdfg.nodes():
         if not isinstance(blk, SDFGState):
             continue
-        for n in blk.nodes():
-            if isinstance(n, nodes.MapEntry):
-                found.append((f"map {n.map.params} range {n.map.range}", {str(x) for x in n.map.range.free_symbols}))
+        found.extend(
+            (f"map {n.map.params} range {n.map.range}", {str(x) for x in n.map.range.free_symbols})
+            for n in blk.nodes()
+            if isinstance(n, nodes.MapEntry)
+        )
     return found
 
 

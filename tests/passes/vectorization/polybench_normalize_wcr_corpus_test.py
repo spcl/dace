@@ -24,10 +24,9 @@ os.environ.setdefault("UCX_VFS_ENABLE", "n")
 
 import pytest
 
+from dace.transformation.passes.normalize_wcr import NormalizeWCR
 from tests.corpus.polybench import polybench
 from tests.passes.vectorization.helpers.corpus_multidim import base_pipeline
-
-from dace.transformation.passes.normalize_wcr import NormalizeWCR
 
 KERNELS = [pytest.param(k.name, marks=pytest.mark.lapack if k.lapack else ()) for k in polybench.collect()]
 PIPELINES = ("simplify", "simplify_l2m_mapfusion")

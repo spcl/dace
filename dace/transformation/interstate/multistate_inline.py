@@ -1,21 +1,19 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Inline multi-state SDFGs."""
 
-from copy import deepcopy as dc
 import itertools
-from typing import Any, Dict, List, Set, Tuple
+from copy import deepcopy as dc
+from typing import Any
 
-from dace import Memlet, symbolic
-from dace.sdfg import dealias, nodes
-from dace.sdfg.graph import MultiConnectorEdge
-from dace.sdfg import InterstateEdge, SDFG, SDFGState
+from dace import Memlet, data, symbolic
+from dace.properties import CodeBlock, make_properties
+from dace.sdfg import SDFG, InterstateEdge, SDFGState, dealias, nodes
 from dace.sdfg import utils as sdutil
+from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.replace import replace_datadesc_names, replace_properties_dict
-from dace.sdfg.tasklet_utils import tasklet_replace_code, token_replace_dict
-from dace.transformation import transformation, helpers
-from dace.properties import make_properties, CodeBlock
-from dace import data
 from dace.sdfg.state import AbstractControlFlowRegion, LoopRegion, ReturnBlock, cfg_tree_list
+from dace.sdfg.tasklet_utils import tasklet_replace_code, token_replace_dict
+from dace.transformation import helpers, transformation
 
 
 def _same_layout(outer_desc: data.Data, inner_desc: data.Data) -> bool:
@@ -33,7 +31,7 @@ def _same_layout(outer_desc: data.Data, inner_desc: data.Data) -> bool:
     )
 
 
-def _trailing_returns(nsdfg: SDFG) -> List[ReturnBlock]:
+def _trailing_returns(nsdfg: SDFG) -> list[ReturnBlock]:
     # A sink of the callee's own top-level graph: control leaves the callee there anyway.
     start = nsdfg.start_block
     return [
@@ -41,7 +39,7 @@ def _trailing_returns(nsdfg: SDFG) -> List[ReturnBlock]:
     ]
 
 
-def listed_subtree(sdfg: SDFG) -> Dict[AbstractControlFlowRegion, bool]:
+def listed_subtree(sdfg: SDFG) -> dict[AbstractControlFlowRegion, bool]:
     """``sdfg`` and every region below it in pre-order, each mapped to whether ``sdfg`` owns it directly.
 
     Read off the CFG list, which the graph operations keep in reset order: a subtree is one contiguous
@@ -49,7 +47,7 @@ def listed_subtree(sdfg: SDFG) -> Dict[AbstractControlFlowRegion, bool]:
     nested SDFGs and no ancestor chain has to be climbed.
     """
     cfg_list = cfg_tree_list(sdfg) or sdfg.cfg_list
-    owned: Dict[AbstractControlFlowRegion, bool] = {sdfg: True}
+    owned: dict[AbstractControlFlowRegion, bool] = {sdfg: True}
     for region in itertools.islice(cfg_list, sdfg.cfg_id + 1, None):
         nested = isinstance(region, SDFG)
         if nested:
@@ -63,7 +61,7 @@ def listed_subtree(sdfg: SDFG) -> Dict[AbstractControlFlowRegion, bool]:
     return owned
 
 
-def outer_names(sdfg: SDFG) -> Tuple[Dict[str, Any], Set[str], Set[str]]:
+def outer_names(sdfg: SDFG) -> tuple[dict[str, Any], set[str], set[str]]:
     """The names ``sdfg`` already uses that inlining must not reuse.
 
     :param sdfg: The SDFG the nested SDFG is inlined into.
@@ -72,8 +70,8 @@ def outer_names(sdfg: SDFG) -> Tuple[Dict[str, Any], Set[str], Set[str]]:
               in its tree, nested SDFGs included.
     """
     symbols = {str(k): v for k, v in sdfg.symbols.items()}
-    assignments: Set[str] = set()
-    labels: Set[str] = set()
+    assignments: set[str] = set()
+    labels: set[str] = set()
     # A region reached through a nested SDFG only contributes labels.
     for region, own in listed_subtree(sdfg).items():
         labels.update([block.label for block in region.nodes()])
@@ -90,7 +88,7 @@ def outer_names(sdfg: SDFG) -> Tuple[Dict[str, Any], Set[str], Set[str]]:
     return symbols, assignments, labels
 
 
-def _disambiguate_code_connectors(nsdfg: SDFG, reserved_names: Set[str]) -> None:
+def _disambiguate_code_connectors(nsdfg: SDFG, reserved_names: set[str]) -> None:
     """Rename tasklet connectors that clash with outer-scope names.
 
     After inlining, a tasklet connector whose name coincides with an outer
@@ -111,7 +109,7 @@ def _disambiguate_code_connectors(nsdfg: SDFG, reserved_names: Set[str]) -> None
             if not isinstance(node, nodes.Tasklet):
                 continue
             used = set(node.in_connectors.keys()) | set(node.out_connectors.keys())
-            renames: Dict[str, str] = {}
+            renames: dict[str, str] = {}
             for conn in used:
                 if conn in reserved_names:
                     renames[conn] = data.find_new_name(conn, reserved_names | used)
@@ -131,7 +129,7 @@ def _disambiguate_code_connectors(nsdfg: SDFG, reserved_names: Set[str]) -> None
             node.code = CodeBlock(token_replace_dict(node.code.as_string, renames), language=node.code.language)
 
 
-def tasklet_connector_names(sdfg: SDFG) -> Set[str]:
+def tasklet_connector_names(sdfg: SDFG) -> set[str]:
     """The connector names of every tasklet in ``sdfg``'s own namespace (not inside nested SDFGs)."""
     return {
         conn
@@ -163,8 +161,8 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
 
     @staticmethod
     def _check_strides(
-        inner_strides: List[symbolic.SymbolicType],
-        outer_strides: List[symbolic.SymbolicType],
+        inner_strides: list[symbolic.SymbolicType],
+        outer_strides: list[symbolic.SymbolicType],
         memlet: Memlet,
         nested_sdfg: nodes.NestedSDFG,
     ) -> bool:
@@ -297,10 +295,10 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
 
         # Find original source/destination edges (there is only one edge per
         # connector, according to match)
-        inputs: Dict[str, MultiConnectorEdge] = {}
-        outputs: Dict[str, MultiConnectorEdge] = {}
-        input_set: Dict[str, str] = {}
-        output_set: Dict[str, str] = {}
+        inputs: dict[str, MultiConnectorEdge] = {}
+        outputs: dict[str, MultiConnectorEdge] = {}
+        input_set: dict[str, str] = {}
+        output_set: dict[str, str] = {}
         for e in nsdfg_state.in_edges(nsdfg_node):
             inputs[e.dst_conn] = e
             input_set[e.data.data] = e.dst_conn
@@ -327,9 +325,9 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         # unless the nested SDFG assigns the symbol, whose later values the
         # constant would overwrite (a loop counter it seeds).
         _, nested_assigned, _ = outer_names(nsdfg)
-        identity_mapping: Dict[Any, Any] = {}
-        constant_mapping: Dict[Any, Any] = {}
-        non_identity_mapping: Dict[str, str] = {}
+        identity_mapping: dict[Any, Any] = {}
+        constant_mapping: dict[Any, Any] = {}
+        non_identity_mapping: dict[str, str] = {}
         for k, v in nsdfg_node.symbol_mapping.items():
             if str(k) == str(v):
                 identity_mapping[k] = v
@@ -376,7 +374,7 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         # (outer ``K`` -> inner ``K``, lowered above via ``safe_replace`` as a no-op rename).
         # Renaming such a symbol on collision (below) severs that implicit outer->inner link.
         identity_names = {str(k) for k in identity_mapping}
-        sym_replacements: Dict[str, str] = {}
+        sym_replacements: dict[str, str] = {}
         for assign in assignments_to_replace:
             newname = data.find_new_name(assign, allnames)
             allnames.add(newname)
@@ -404,7 +402,7 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         connectors = tasklet_connector_names(sdfg) | tasklet_connector_names(nsdfg)
 
         # Mapping from nested transient name to top-level name
-        transients: Dict[str, str] = {}
+        transients: dict[str, str] = {}
 
         # All transients become transients of the parent (if data already
         # exists, find new name)

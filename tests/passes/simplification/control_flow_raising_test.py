@@ -1,9 +1,11 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 
 import copy
-import pytest
-import dace
+
 import numpy as np
+import pytest
+
+import dace
 from dace.sdfg.state import ConditionalBlock, LoopRegion, UnstructuredControlFlow
 from dace.sdfg.utils import inline_control_flow_regions
 from dace.transformation.pass_pipeline import FixedPointPipeline
@@ -117,17 +119,14 @@ def test_nested_if_chain(lowered_returns: bool):
     def nested_if_chain(i: dace.int64):
         if i < 2:
             return 0
+        elif i < 4:
+            return 1
+        elif i < 6:
+            return 2
+        elif i < 8:
+            return 3
         else:
-            if i < 4:
-                return 1
-            else:
-                if i < 6:
-                    return 2
-                else:
-                    if i < 8:
-                        return 3
-                    else:
-                        return 4
+            return 4
 
     sdfg = nested_if_chain.to_sdfg()
 

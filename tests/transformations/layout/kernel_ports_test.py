@@ -14,7 +14,7 @@ candidate set (k02: 9, k13: 25) a representative SUBSET is swept so the test sta
 module's ``candidates()`` still enumerates the full family for a real (timed) sweep. Correctness is
 the invariant; timing is not asserted."""
 
-from dace.transformation.layout.brute_force import sweep, best
+from dace.transformation.layout.brute_force import best, sweep
 from tests.transformations.layout.kernels import (
     atax,
     bicg,

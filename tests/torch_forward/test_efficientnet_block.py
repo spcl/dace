@@ -6,16 +6,16 @@ pytest.importorskip(
     "efficientnet_pytorch",
     reason="efficientnet_pytorch not installed. Please install with: pip install dace[ml-testing]",
 )
-import torch
 import numpy as np
-from dace.transformation.dataflow import TrivialMapElimination
-from dace.transformation.interstate import HoistState
+import torch
 from efficientnet_pytorch import get_model_params
 from efficientnet_pytorch.model import MBConvBlock
 
 from dace.ml import DaceModule
-from tests.utils import torch_tensors_close
+from dace.transformation.dataflow import TrivialMapElimination
+from dace.transformation.interstate import HoistState
 from tests.ml_gpu_utils import DEVICES, experimental_cuda, is_gpu, torch_device
+from tests.utils import torch_tensors_close
 
 
 @pytest.mark.torch

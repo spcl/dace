@@ -25,16 +25,18 @@ block), or when a strided map leaves a lane-private container other code reads a
 would hold only its own share of it).
 """
 
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any
 
-from dace import SDFG, Memlet, SDFGState, dtypes, graphlib as nx, properties
+from dace import SDFG, Memlet, SDFGState, dtypes, properties
+from dace import graphlib as nx
 from dace.libraries.standard.block_reduce import BLOCK_COLLECTIVE_THREADS
+from dace.optionals import required
 from dace.sdfg import nodes
 from dace.sdfg.graph import SubgraphView
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
-from dace.transformation import helpers as xfh, pass_pipeline as ppl
+from dace.transformation import helpers as xfh
+from dace.transformation import pass_pipeline as ppl
 from dace.transformation.dataflow.warp_tiling import WarpTiling
-from dace.optionals import required
 
 #: What a block-tiled kernel's lane map is, for a CPF reader.
 BLOCK_TILE_HINT = (
@@ -63,7 +65,7 @@ def is_kernel(state: SDFGState, entry: nodes.MapEntry) -> bool:
     )
 
 
-def strided_maps(state: SDFGState, kernel: nodes.MapEntry) -> List[Tuple[SDFGState, nodes.MapEntry]]:
+def strided_maps(state: SDFGState, kernel: nodes.MapEntry) -> list[tuple[SDFGState, nodes.MapEntry]]:
     """The inner maps to stride across the lanes: the immediate ones that are not provably narrower than
     the block. A map is parallel by definition; the ``Sequential`` schedule inference gives a map
     nested in a kernel only says one thread would walk it."""
@@ -79,7 +81,7 @@ def lane_private(sdfg: SDFG, name: str) -> bool:
     return desc.transient and desc.storage in LANE_PRIVATE_STORAGE
 
 
-def reads_outside(sdfg: SDFG, name: str, inner: Set[nodes.Node]) -> bool:
+def reads_outside(sdfg: SDFG, name: str, inner: set[nodes.Node]) -> bool:
     """Whether any node of ``sdfg`` outside ``inner`` reads ``name``."""
     return any(
         isinstance(node, nodes.AccessNode) and node.data == name and node not in inner and state.out_degree(node) > 0
@@ -116,7 +118,7 @@ def updates_shared(node: nodes.Tasklet, state: SDFGState) -> bool:
     )
 
 
-def accumulates_outside(state: SDFGState, edges, skipped: Set[nodes.Node]) -> bool:
+def accumulates_outside(state: SDFGState, edges, skipped: set[nodes.Node]) -> bool:
     """Whether a write-conflict-resolved edge leaves a node outside the strided maps: every lane would add.
     In canonical form a WCR is ``tasklet -wcr-> MapExit* -wcr-> access node``, so a map exit only relays
     the tasklet's write (checked where the tasklet is); any other source accumulates here."""
@@ -127,8 +129,8 @@ def accumulates_outside(state: SDFGState, edges, skipped: Set[nodes.Node]) -> bo
 
 
 def single_lane_nodes(
-    state: SDFGState, kernel: nodes.MapEntry, strided: List[Tuple[SDFGState, nodes.MapEntry]]
-) -> Optional[Tuple[List[nodes.Tasklet], List[nodes.Tasklet]]]:
+    state: SDFGState, kernel: nodes.MapEntry, strided: list[tuple[SDFGState, nodes.MapEntry]]
+) -> tuple[list[nodes.Tasklet], list[nodes.Tasklet]] | None:
     """The tasklets that must run on lane 0 alone for the kernel body to run once per lane, with ``strided``
     split across the lanes, and the other tasklets that read what the strided maps wrote, which must wait at a
     barrier for every lane's share; ``None`` if no such split is sound."""
@@ -138,7 +140,7 @@ def single_lane_nodes(
     # kernel entry has no connector to follow. One that only binds an input-less node to the scope does not order.
     if any(edge.data.is_empty() and state.in_degree(edge.dst) > 1 for edge in state.out_edges(kernel)):
         return None
-    skipped: Set[nodes.Node] = set()
+    skipped: set[nodes.Node] = set()
     for s, entry in strided:
         skipped |= set(s.scope_subgraph(entry).nodes())
     scope = state.scope_subgraph(kernel)
@@ -150,8 +152,8 @@ def single_lane_nodes(
         for edge in st.out_edges(st.exit_node(entry))
         if not edge.data.is_empty() and not lane_private(st.sdfg, edge.data.data)
     }
-    single: List[nodes.Tasklet] = []
-    waiting: List[nodes.Tasklet] = []
+    single: list[nodes.Tasklet] = []
+    waiting: list[nodes.Tasklet] = []
     pending = [(state, scope.nodes())]
     while pending:
         current, nodes_in_scope = pending.pop()
@@ -226,7 +228,7 @@ class BlockTileKernels(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> int | None:
         """Tile every kernel :func:`single_lane_nodes` accepts.
 
         :param sdfg: the offloaded SDFG, in place.

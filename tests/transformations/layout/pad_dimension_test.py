@@ -1,7 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import numpy
-import dace
 
+import dace
 from dace.transformation.layout.pad_dimensions import PadDimensions
 
 N = dace.symbol("N")

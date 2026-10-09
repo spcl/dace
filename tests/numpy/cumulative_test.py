@@ -11,10 +11,10 @@ only the CPU wants.
 
 import numpy as np
 import pytest
+from common import compare_numpy_output
 
 import dace
 from dace.libraries.standard.nodes.scan import Scan, ScanOp
-from common import compare_numpy_output
 
 
 @compare_numpy_output(positive=True)

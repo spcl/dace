@@ -1,10 +1,10 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+import numpy as np
 import pytest
 
 import dace
+from dace.libraries import blas
 from dace.memlet import Memlet
-import dace.libraries.blas as blas
-import numpy as np
 
 ###############################################################################
 
@@ -16,7 +16,7 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default):
     suffix = "_device" if storage != dace.StorageType.Default else ""
     transient = storage != dace.StorageType.Default
 
-    sdfg = dace.SDFG("dot_product_{}_{}".format(implementation, dtype))
+    sdfg = dace.SDFG(f"dot_product_{implementation}_{dtype}")
     state = sdfg.add_state("dataflow")
 
     sdfg.add_array("x" + suffix, [n], dtype, storage=storage, transient=transient)

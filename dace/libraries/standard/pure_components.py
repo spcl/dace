@@ -7,14 +7,14 @@ analysis) needs no knowledge of the library. These helpers keep such expansions 
 """
 
 import copy
-from typing import Dict, Iterable, Optional
+from collections.abc import Iterable
 
 import dace
 from dace import symbolic
 from dace.memlet import Memlet
-from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion, LoopRegion
-from dace.sdfg.graph import MultiConnectorEdge
 from dace.optionals import required
+from dace.sdfg.graph import MultiConnectorEdge
+from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion, LoopRegion
 
 
 def operand_array(nsdfg: dace.SDFG, name: str, edge: MultiConnectorEdge, outer: dace.SDFG) -> dace.data.Array:
@@ -49,7 +49,7 @@ def element(nsdfg: dace.SDFG, name: str, position: str) -> str:
 
 def chain(region: ControlFlowRegion, blocks: Iterable[ControlFlowBlock]) -> None:
     """Add ``blocks`` to ``region`` to run one after the other, the first as its start block."""
-    previous: Optional[ControlFlowBlock] = None
+    previous: ControlFlowBlock | None = None
     for block in blocks:
         region.add_node(block, is_start_block=previous is None)
         if previous is not None:
@@ -63,7 +63,7 @@ def counted_loop(label: str, var: str, start: str, stop: str, step: str = "1") -
 
 
 def tasklet_state(
-    sdfg: dace.SDFG, label: str, code: str, reads: Dict[str, Memlet], writes: Dict[str, Memlet]
+    sdfg: dace.SDFG, label: str, code: str, reads: dict[str, Memlet], writes: dict[str, Memlet]
 ) -> dace.SDFGState:
     """A detached state of ``sdfg`` holding one Python tasklet; ``reads`` and ``writes`` map each connector to
     the memlet it moves, whose data names the access node."""

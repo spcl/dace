@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 
+import numpy
 import pytest
 
 # Unblocked 2026-06-12 per user direction (``enabling cloudsc tests and
@@ -7,14 +8,13 @@ import pytest
 # K-dim path e2e (gather + scatter passing); some legacy ``branch_mode`` /
 # ``emission_style`` parametrisations may still need triage.
 import dace
-import numpy
 from tests.passes.vectorization.helpers.harness import (
-    run_vectorization_test,
     N,
-    klev,
-    kfdia,
-    _get_cloudsc_snippet_three,
     _get_cloudsc_snippet_four,
+    _get_cloudsc_snippet_three,
+    kfdia,
+    klev,
+    run_vectorization_test,
 )
 
 #: Only ``insert_copies`` was ever read out of this; the discarded first element made half of

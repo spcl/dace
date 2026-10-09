@@ -32,7 +32,7 @@ checked by ``validate()`` + CUDA code generation instead.
 """
 
 import copy
-from typing import Dict, FrozenSet, Iterable, Optional, Set, Tuple
+from collections.abc import Iterable
 
 import dace
 from dace import data, dtypes, subsets, symbolic
@@ -41,16 +41,16 @@ from dace.memlet import Memlet
 from dace.sdfg import nodes
 from dace.sdfg.analysis.writeset_underapproximation import UnderapproximateWrites
 from dace.sdfg.sdfg import InterstateEdge
-from dace.transformation.passes.length_one_array_scalar_conversion import ConvertLengthOneArraysToScalars
 from dace.sdfg.state import SDFGState
 from dace.transformation.passes.analysis.analysis import FindAccessNodes, StateReachability
+from dace.transformation.passes.length_one_array_scalar_conversion import ConvertLengthOneArraysToScalars
 
 #: Symbols whose appearance in a map's range marks it as the host-side per-block orchestrator. The
 #: CloudSC Fortran driver loops ``DO IBL = 1, NBLOCKS``; the GPU SCC k-caching driver loops
 #: ``DO JKGLO = 1, NGPTOT, NPROMA`` instead, so that frontend passes ``('ngptot', )``. A name signal is
 #: needed because after canonicalization the block map is not distinguishable from a horizontal map by
 #: shape alone.
-BLOCK_MAP_SYMBOLS: Tuple[str, ...] = ("nblocks",)
+BLOCK_MAP_SYMBOLS: tuple[str, ...] = ("nblocks",)
 
 CPU_STORAGES = (dtypes.StorageType.Default, dtypes.StorageType.CPU_Heap, dtypes.StorageType.Register)
 
@@ -100,7 +100,7 @@ def pin_default_gpu_stream() -> None:
     Config.set("compiler", "cuda", "max_concurrent_streams", value=-1)
 
 
-def readonly_range_scalars(graph: dace.SDFG) -> Set[str]:
+def readonly_range_scalars(graph: dace.SDFG) -> set[str]:
     """Integer Scalars that a map range reads ONLY through a dynamic-range connector, never written.
 
     CloudSC's horizontal bounds ``kidia``/``kfdia`` arrive from the Fortran frontend as scalar
@@ -120,7 +120,7 @@ def readonly_range_scalars(graph: dace.SDFG) -> Set[str]:
     }
     if not candidates:
         return set()
-    in_range: Set[str] = set()
+    in_range: set[str] = set()
     for state in graph.states():
         for node in state.nodes():
             if isinstance(node, nodes.MapEntry):
@@ -197,7 +197,7 @@ def symbolize_readonly_range_scalars(sdfg: dace.SDFG) -> int:
 # Phase 1: schedules
 
 
-def is_block_map(entry: nodes.MapEntry, block_symbols: FrozenSet[str]) -> bool:
+def is_block_map(entry: nodes.MapEntry, block_symbols: frozenset[str]) -> bool:
     """A block map iterates over the block count, and stays on the host whatever its body holds.
 
     The body shape must not enter this decision: the canon pipelines flatten the block map's body to
@@ -207,7 +207,7 @@ def is_block_map(entry: nodes.MapEntry, block_symbols: FrozenSet[str]) -> bool:
     return bool({str(s) for s in entry.map.range.free_symbols} & block_symbols)
 
 
-def enclosed_by_kernel(node: nodes.Node, sdict: Dict, block_symbols: FrozenSet[str]) -> bool:
+def enclosed_by_kernel(node: nodes.Node, sdict: dict, block_symbols: frozenset[str]) -> bool:
     """True iff some enclosing map of ``node`` was offloaded, i.e. is a non-block map."""
     parent = sdict[node]
     while parent is not None:
@@ -217,7 +217,7 @@ def enclosed_by_kernel(node: nodes.Node, sdict: Dict, block_symbols: FrozenSet[s
     return False
 
 
-def assign_schedules(sdfg: dace.SDFG, block_symbols: FrozenSet[str], in_kernel: bool = False) -> None:
+def assign_schedules(sdfg: dace.SDFG, block_symbols: frozenset[str], in_kernel: bool = False) -> None:
     """Offload the outermost non-block map; keep block maps and everything under a kernel sequential.
 
     ``in_kernel`` carries the "already inside a device scope" flag across NestedSDFG boundaries, where
@@ -243,7 +243,7 @@ def assign_schedules(sdfg: dace.SDFG, block_symbols: FrozenSet[str], in_kernel: 
 # Phase 2: constant classification
 
 
-def constant_offload_data(sdfg: dace.SDFG, candidates: Set[str]) -> Dict[str, Optional[SDFGState]]:
+def constant_offload_data(sdfg: dace.SDFG, candidates: set[str]) -> dict[str, SDFGState | None]:
     """Which of ``candidates`` are constant, and where they are produced.
 
     Constant = the host copy is complete before the first device read and never invalidated
@@ -272,7 +272,7 @@ def constant_offload_data(sdfg: dace.SDFG, candidates: Set[str]) -> Dict[str, Op
     approximation = UnderapproximateWrites().apply_pass(sdfg, {})[sdfg.cfg_id].approximation
     acyclic = not sdfg.has_cycles()
 
-    constants: Dict[str, Optional[SDFGState]] = {}
+    constants: dict[str, SDFGState | None] = {}
     for name in candidates:
         per_state = access[name]
         writers = [(state, node) for state, (_, writes) in per_state.items() for node in writes]
@@ -301,7 +301,7 @@ def constant_offload_data(sdfg: dace.SDFG, candidates: Set[str]) -> Dict[str, Op
     return constants
 
 
-def fully_written(state: SDFGState, node: nodes.AccessNode, desc: data.Data, approximation: Dict) -> bool:
+def fully_written(state: SDFGState, node: nodes.AccessNode, desc: data.Data, approximation: dict) -> bool:
     """True iff the incoming edges provably write the whole of ``desc``.
 
     Two proofs, both under-approximating (an unprovable write just leaves the array out of the
@@ -341,7 +341,7 @@ def elementwise_writes_cover(written: Iterable[subsets.Subset], desc: data.Data)
     if total == 0:
         return False
 
-    covered: Set[Tuple[int, ...]] = set()
+    covered: set[tuple[int, ...]] = set()
     for subset in written:
         members = subset.subset_list if isinstance(subset, subsets.SubsetUnion) else [subset]
         for member in members:
@@ -356,7 +356,7 @@ def elementwise_writes_cover(written: Iterable[subsets.Subset], desc: data.Data)
     return len(covered) == total
 
 
-def as_constant(expression) -> Optional[int]:
+def as_constant(expression) -> int | None:
     """``expression`` as a Python int, or None if it is not a compile-time constant."""
     value = symbolic.simplify(symbolic.pystr_to_symbolic(expression))
     return int(value) if value.is_Integer else None
@@ -365,7 +365,7 @@ def as_constant(expression) -> Optional[int]:
 # Phase 3: mirror kernel-side non-transients
 
 
-def mirror_nontransients_to_gpu(sdfg: dace.SDFG, excluded: FrozenSet[str]) -> None:
+def mirror_nontransients_to_gpu(sdfg: dace.SDFG, excluded: frozenset[str]) -> None:
     """Give every kernel-side non-transient Array a ``gpu_<name>`` sibling on ``GPU_Global``.
 
     Non-constants round-trip: copy-in in a new head state, copy-out in a new terminal state.
@@ -432,7 +432,7 @@ def add_full_copy(state: SDFGState, src: str, src_desc: data.Data, dst: str) -> 
     state.add_edge(state.add_read(src), None, state.add_write(dst), None, Memlet.from_array(src, src_desc))
 
 
-def arrays_needing_gpu_mirror(sdfg: dace.SDFG) -> Set[str]:
+def arrays_needing_gpu_mirror(sdfg: dace.SDFG) -> set[str]:
     """Non-transient CPU-storage Arrays that are actually read/written inside a kernel. Host-only
     arrays are left alone -- including those that merely *feed* a NestedSDFG but are used only on the
     host inside it (which the ``is_kernel_side`` boundary test would wrongly flag)."""
@@ -453,7 +453,7 @@ def is_device_boundary(node: nodes.Node) -> bool:
     return False
 
 
-def touches_device(node: nodes.Node, state: SDFGState, sdict: Dict, in_kernel: bool = False) -> bool:
+def touches_device(node: nodes.Node, state: SDFGState, sdict: dict, in_kernel: bool = False) -> bool:
     """True iff ``node`` executes on the device: already inside a kernel (``in_kernel``, carried across
     NestedSDFG boundaries), inside a ``GPU_Device`` scope, or staged at top level directly against a
     ``GPU_Device`` map/library boundary.
@@ -478,8 +478,8 @@ def touches_device(node: nodes.Node, state: SDFGState, sdict: Dict, in_kernel: b
 
 
 def device_touched_per_sdfg(
-    graph: dace.SDFG, in_kernel: bool = False, out: Optional[Dict[int, Set[str]]] = None
-) -> Dict[int, Set[str]]:
+    graph: dace.SDFG, in_kernel: bool = False, out: dict[int, set[str]] | None = None
+) -> dict[int, set[str]]:
     """Map ``id(sdfg) -> local data names that reach a ``GPU_Device`` computation``, for ``graph`` and
     every SDFG below it.
 
@@ -495,7 +495,7 @@ def device_touched_per_sdfg(
     """
     if out is None:
         out = {}
-    touched: Set[str] = set()
+    touched: set[str] = set()
     for state in graph.states():
         sdict = state.scope_dict()
         for edge in state.edges():
@@ -523,14 +523,14 @@ def device_touched_per_sdfg(
     return out
 
 
-def device_touched_names(graph: dace.SDFG) -> Set[str]:
+def device_touched_names(graph: dace.SDFG) -> set[str]:
     """Device-touched local names of ``graph`` itself, treating it as a top-level (host) SDFG."""
     return device_touched_per_sdfg(graph)[id(graph)]
 
 
 def device_written_per_sdfg(
-    graph: dace.SDFG, in_kernel: bool = False, out: Optional[Dict[int, Set[str]]] = None
-) -> Dict[int, Set[str]]:
+    graph: dace.SDFG, in_kernel: bool = False, out: dict[int, set[str]] | None = None
+) -> dict[int, set[str]]:
     """Names WRITTEN by device code, per SDFG, following NestedSDFG connector bindings.
 
     The write-side twin of :func:`device_touched_per_sdfg`, and whole-SDFG for the same reason: a
@@ -540,7 +540,7 @@ def device_written_per_sdfg(
     """
     if out is None:
         out = {}
-    written: Set[str] = set()
+    written: set[str] = set()
     for state in graph.states():
         sdict = state.scope_dict()
         for node in state.nodes():
@@ -563,7 +563,7 @@ def device_written_per_sdfg(
     return out
 
 
-def sdfgs_inside_kernels(graph: dace.SDFG, in_kernel: bool = False, out: Optional[Set[int]] = None) -> Set[int]:
+def sdfgs_inside_kernels(graph: dace.SDFG, in_kernel: bool = False, out: set[int] | None = None) -> set[int]:
     """``id(sdfg)`` for every SDFG below ``graph`` that executes inside a ``GPU_Device`` kernel. Its
     top-level nodes are device nodes even though ``scope_dict`` shows no enclosing scope."""
     if out is None:
@@ -578,7 +578,7 @@ def sdfgs_inside_kernels(graph: dace.SDFG, in_kernel: bool = False, out: Optiona
     return out
 
 
-def device_facing(node: nodes.Node, state: SDFGState, sdict: Dict) -> bool:
+def device_facing(node: nodes.Node, state: SDFGState, sdict: dict) -> bool:
     """True iff ``node`` runs device code, or is a NestedSDFG whose interior may. The NestedSDFG case is
     deliberately conservative -- its inner storage is settled by
     :func:`propagate_gpu_storage_into_nested_sdfgs`, not here."""
@@ -587,7 +587,7 @@ def device_facing(node: nodes.Node, state: SDFGState, sdict: Dict) -> bool:
     return touches_device(node, state, sdict)
 
 
-def is_kernel_side(node: nodes.AccessNode, state: SDFGState, sdict: Dict) -> bool:
+def is_kernel_side(node: nodes.AccessNode, state: SDFGState, sdict: dict) -> bool:
     """True iff this access is produced or consumed on the device, resolved along the memlet PATH so a
     map's pass-through connector cannot hide the real endpoint.
 
@@ -602,7 +602,7 @@ def is_kernel_side(node: nodes.AccessNode, state: SDFGState, sdict: Dict) -> boo
     return any(device_facing(state.memlet_path(e)[-1].dst, state, sdict) for e in state.out_edges(node))
 
 
-def edge_is_kernel_side(edge, state: SDFGState, sdict: Dict, retargeted: Set[int]) -> bool:
+def edge_is_kernel_side(edge, state: SDFGState, sdict: dict, retargeted: set[int]) -> bool:
     """Kernel-side iff an endpoint was retargeted, or the memlet path this edge lies on ends in device
     code. Edges between two host-side nodes keep the original name."""
     if id(edge.src) in retargeted or id(edge.dst) in retargeted:
@@ -614,10 +614,10 @@ def edge_is_kernel_side(edge, state: SDFGState, sdict: Dict, retargeted: Set[int
 # Phase 4: transient promotion and NSDFG storage propagation
 
 
-def interstate_read_arrays(graph: dace.SDFG) -> Set[str]:
+def interstate_read_arrays(graph: dace.SDFG) -> set[str]:
     """Transient Array names read on any interstate edge within ``graph``. Interstate edges evaluate
     on the host, so these must keep a host-readable copy -- they cannot be promoted to ``GPU_Global``."""
-    names: Set[str] = set()
+    names: set[str] = set()
     arrays = set(graph.arrays)
     for edge in graph.all_interstate_edges():
         for name in edge.data.free_symbols & arrays:
@@ -627,7 +627,7 @@ def interstate_read_arrays(graph: dace.SDFG) -> Set[str]:
     return names
 
 
-def tasklet_accessed_arrays(graph: dace.SDFG, in_kernel: bool, device_side: bool, writing: bool) -> Set[str]:
+def tasklet_accessed_arrays(graph: dace.SDFG, in_kernel: bool, device_side: bool, writing: bool) -> set[str]:
     """Transient Array names a Tasklet on the requested side of the host/device split accesses.
 
     A host-side access of either direction pins the master to the host. Only ``writing=True,
@@ -641,7 +641,7 @@ def tasklet_accessed_arrays(graph: dace.SDFG, in_kernel: bool, device_side: bool
     ``in_kernel`` comes from :func:`sdfgs_inside_kernels`; inside a kernel every tasklet is device
     code no matter what the per-state scope dict says (it restarts at each NestedSDFG).
     """
-    names: Set[str] = set()
+    names: set[str] = set()
     for state in graph.states():
         sdict = state.scope_dict()
         for node in state.nodes():
@@ -664,7 +664,7 @@ def tasklet_accessed_arrays(graph: dace.SDFG, in_kernel: bool, device_side: bool
     return names
 
 
-def host_pinned_arrays(graph: dace.SDFG, in_kernel: bool) -> Set[str]:
+def host_pinned_arrays(graph: dace.SDFG, in_kernel: bool) -> set[str]:
     """Transient Arrays in ``graph`` that must keep a host-resident master, because host code accesses
     them: on an interstate edge, or from a bare tasklet reading or writing. The master cannot move to
     ``GPU_Global``; device users get a ``gpu_<name>`` mirror instead."""
@@ -707,7 +707,7 @@ def mirror_host_needed_transients(sdfg: dace.SDFG) -> int:
         mirrored = (host_pinned_arrays(graph, in_kernel) & per_graph.get(id(graph), set())) - device_written
         if not mirrored:
             continue
-        copy_states: Set[SDFGState] = set()
+        copy_states: set[SDFGState] = set()
         for name in sorted(mirrored):
             desc = graph.arrays[name]
             gpu_name = "gpu_" + name
@@ -733,7 +733,7 @@ def mirror_host_needed_transients(sdfg: dace.SDFG) -> int:
     return count
 
 
-def retarget_kernel_side_reads(graph: dace.SDFG, name: str, gpu_name: str, skip: Set[SDFGState]) -> None:
+def retarget_kernel_side_reads(graph: dace.SDFG, name: str, gpu_name: str, skip: set[SDFGState]) -> None:
     """Point kernel-side accesses of ``name`` at ``gpu_name`` (mirrors the retarget in
     :func:`mirror_nontransients_to_gpu`). Host writers and host interstate/tasklet readers are left on
     ``name``; the host -> device copy states in ``skip`` are untouched so the copy source stays host.
@@ -744,7 +744,7 @@ def retarget_kernel_side_reads(graph: dace.SDFG, name: str, gpu_name: str, skip:
     SPLIT -- a second ``gpu_name`` AccessNode takes only the device-facing edges, the original keeps the
     rest -- instead of renamed whole.
     """
-    retargeted: Set[int] = set()
+    retargeted: set[int] = set()
     for state in graph.states():
         if state in skip:
             continue
@@ -828,7 +828,7 @@ def promote_transients_to_gpu(sdfg: dace.SDFG) -> None:
                 desc.lifetime = dtypes.AllocationLifetime.State
 
 
-def propagate_gpu_storage_into_nested_sdfgs(sdfg: dace.SDFG, inside: Optional[Set[int]] = None) -> None:
+def propagate_gpu_storage_into_nested_sdfgs(sdfg: dace.SDFG, inside: set[int] | None = None) -> None:
     """Give an NSDFG's inner descriptor the ``GPU_Global`` storage of its outer binding, except where
     a host interstate edge reads that name -- interstate edges evaluate on the host, and the validator
     rejects device data there. An NSDFG inside a kernel (a loop moved into its map) evaluates its
@@ -855,9 +855,9 @@ def propagate_gpu_storage_into_nested_sdfgs(sdfg: dace.SDFG, inside: Optional[Se
             propagate_gpu_storage_into_nested_sdfgs(node.sdfg, inside)
 
 
-def names_used_on_interstate_edges(sdfg: dace.SDFG) -> Set[str]:
+def names_used_on_interstate_edges(sdfg: dace.SDFG) -> set[str]:
     """Data names referenced by any interstate edge in ``sdfg`` or its descendants."""
-    names: Set[str] = set()
+    names: set[str] = set()
     for graph in sdfg.all_sdfgs_recursive():
         arrays = set(graph.arrays)
         for edge in graph.all_interstate_edges():

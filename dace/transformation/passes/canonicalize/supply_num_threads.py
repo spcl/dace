@@ -13,7 +13,7 @@ introduces a use does not have to arrange for the symbol to exist first, and so 
 it through ``symbol_mapping`` like any other symbol.
 """
 
-from typing import Any, Dict, Optional
+from typing import Any
 
 from dace import SDFG, dtypes, nodes, properties, symbolic
 from dace.transformation import pass_pipeline as ppl
@@ -49,7 +49,7 @@ class SupplyNumThreads(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> int | None:
         """:returns: 1 when the declaration was added or corrected, else ``None``."""
         name = symbolic.NUM_THREADS_SYMBOL
         # Only the top-level graph declares it; a nested SDFG receives the value through its

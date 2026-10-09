@@ -57,7 +57,7 @@ mutates the real SDFG. The pass itself never fuses; it only restores adjacency a
 """
 
 import copy
-from typing import Any, Dict, List, Optional, Tuple, Type, Union
+from typing import Any
 
 from dace import SDFG
 from dace import data as dt
@@ -72,20 +72,21 @@ from dace.sdfg.state import (
     ReturnBlock,
     SDFGState,
 )
-from dace.transformation import pass_pipeline as ppl, transformation
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation import transformation
 from dace.transformation.interstate.loop_fusion import LoopFusion
 from dace.transformation.passes.analysis.analysis import AccessSets
 
 #: A ``(loop1, state, loop2)`` triple matching the ``loop1 -> state -> loop2`` chain, structurally
 #: eligible to be considered for the reorder (legality and fusability still to be decided).
-Candidate = Tuple[LoopRegion, SDFGState, LoopRegion]
+Candidate = tuple[LoopRegion, SDFGState, LoopRegion]
 
 #: Block types whose presence means control can leave ``loop2`` somewhere other than its normal
 #: successor edge -- see checklist item 7.
-ESCAPE_BLOCKS: Tuple[Type[ControlFlowBlock], ...] = (ReturnBlock, BreakBlock, ContinueBlock)
+ESCAPE_BLOCKS: tuple[type[ControlFlowBlock], ...] = (ReturnBlock, BreakBlock, ContinueBlock)
 
 #: Descriptor types for which two different names can name the same memory -- see checklist item 4.
-ALIASING_TYPES: Tuple[type, ...] = (dt.View, dt.Reference)
+ALIASING_TYPES: tuple[type, ...] = (dt.View, dt.Reference)
 
 
 @transformation.explicit_cf_compatible
@@ -104,10 +105,10 @@ class ReorderStateForLoopFusion(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return bool(modified & ppl.Modifies.CFG)
 
-    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+    def depends_on(self) -> list[type[ppl.Pass] | ppl.Pass]:
         return [AccessSets]
 
-    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> int | None:
         """Reorder every legal, fusion-unlocking between-loops state in ``sdfg``, to a fixpoint.
 
         :param sdfg: The SDFG to transform in place.
@@ -138,7 +139,7 @@ class ReorderStateForLoopFusion(ppl.Pass):
         return reordered or None
 
     @staticmethod
-    def candidates(cfg: ControlFlowRegion) -> List[Candidate]:
+    def candidates(cfg: ControlFlowRegion) -> list[Candidate]:
         """Every structurally-eligible ``loop1 -> state -> loop2`` chain directly inside ``cfg``
         (one level; nested chains are reached separately via ``all_control_flow_regions``).
 
@@ -146,7 +147,7 @@ class ReorderStateForLoopFusion(ppl.Pass):
         assignment-free, ``state`` the sole path in and out, ``loop2`` with no other predecessor, and
         neither of the two reordered blocks is the entry.
         """
-        found: List[Candidate] = []
+        found: list[Candidate] = []
         start = cfg.start_block
         for state in cfg.nodes():
             if not isinstance(state, SDFGState) or state is start:  # item 12
@@ -202,7 +203,7 @@ class ReorderStateForLoopFusion(ppl.Pass):
         return any(isinstance(sdfg.arrays[name], ALIASING_TYPES) for name in names if name in sdfg.arrays)
 
     @staticmethod
-    def reorder_legal(state: SDFGState, second: LoopRegion, access_sets: Dict[Any, Tuple[Any, Any]]) -> bool:
+    def reorder_legal(state: SDFGState, second: LoopRegion, access_sets: dict[Any, tuple[Any, Any]]) -> bool:
         """Whether running ``state`` after ``second`` instead of before it changes nothing. Checks items
         7, 11, 5 (+6), 4, then 1/2/3, cheapest first.
 
@@ -240,7 +241,7 @@ class ReorderStateForLoopFusion(ppl.Pass):
         them. Decided on a throwaway deep copy of the whole SDFG (memoized by object id, so the copies of
         ``first``/``state``/``second`` are recoverable) -- a refusal here must never touch the real graph.
         """
-        memo: Dict[int, Any] = {}
+        memo: dict[int, Any] = {}
         sdfg_copy = copy.deepcopy(sdfg, memo)
         ReorderStateForLoopFusion.reorder_past(memo[id(cfg)], memo[id(first)], memo[id(state)], memo[id(second)])
         return LoopFusion.can_be_applied_to(sdfg_copy, first=memo[id(first)], second=memo[id(second)])
@@ -265,7 +266,7 @@ class ReorderStateForLoopFusion(ppl.Pass):
         for e in tail_edges:
             cfg.add_edge(state, e.dst, copy.deepcopy(e.data))
 
-    def reorder_one(self, sdfg: SDFG, cfg: ControlFlowRegion, access_sets: Dict[Any, Tuple[Any, Any]]) -> bool:
+    def reorder_one(self, sdfg: SDFG, cfg: ControlFlowRegion, access_sets: dict[Any, tuple[Any, Any]]) -> bool:
         """Find and sink one legal, fusion-unlocking candidate inside ``cfg``."""
         for first, state, second in self.candidates(cfg):
             if not self.reorder_legal(state, second, access_sets):

@@ -2,10 +2,11 @@
 import contextlib
 import io
 
-import dace
 import numpy as np
+
+import dace
 import dace.libraries.standard as stdlib
-from dace.transformation.dataflow import MapReduceFusion, MapFusionVertical, MapWCRFusion
+from dace.transformation.dataflow import MapFusionVertical, MapReduceFusion, MapWCRFusion
 from dace.transformation.passes import FuseMaps
 
 W = dace.symbol("W")
@@ -238,7 +239,7 @@ def test_extradims():
     mapreduce_test_3(A, B, res)
 
     diff = np.linalg.norm(5 * A.reshape((H, W)) - B) / (H * W)
-    diff_res = abs((np.sum(B) - res[0])).view(type=np.ndarray)
+    diff_res = abs(np.sum(B) - res[0]).view(type=np.ndarray)
     print("Difference:", diff, diff_res)
     print("==== Program end ====")
     assert diff <= 1e-5 and diff_res <= 1

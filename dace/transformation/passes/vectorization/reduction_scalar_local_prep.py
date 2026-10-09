@@ -14,7 +14,7 @@ recurrence that reads the accumulator in the body is not a map-exit WCR and neve
 rewrite is value-preserving, also for zero iterations.
 """
 
-from typing import Any, Tuple
+from typing import Any
 
 from dace import SDFG, data
 from dace.dtypes import ReductionType
@@ -22,17 +22,17 @@ from dace.frontend.operations import detect_reduction_type
 from dace.memlet import Memlet
 from dace.sdfg import SDFGState, nodes
 from dace.sdfg.graph import MultiConnectorEdge
+from dace.sdfg.narrowing import as_map_entry
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 from dace.transformation.passes.canonicalize.privatize_reduction_accumulator import (
     privatize_reduction_accumulator,
 )
 from dace.transformation.passes.vectorization.utils.map_predicates import map_body_nodes
-from dace.sdfg.narrowing import as_map_entry
 
 #: Reduction ops the tile widener + ``TileReduce`` fold. A ``ReductionType.Custom`` WCR
 #: (non-associative ``-`` / ``/``) is not a foldable reduction, so it is never rewritten.
-_FOLDABLE_OPS: Tuple[ReductionType, ...] = (
+_FOLDABLE_OPS: tuple[ReductionType, ...] = (
     ReductionType.Sum,
     ReductionType.Product,
     ReductionType.Min,

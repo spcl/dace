@@ -35,10 +35,11 @@ chain):
 
 import copy
 
-import dace
-from dace.sdfg.dealias import convert_legacy_nested_sdfgs
 import numpy as np
+
+import dace
 from dace.memlet import Memlet
+from dace.sdfg.dealias import convert_legacy_nested_sdfgs
 
 
 def _ref_run(sdfg, **arrays):

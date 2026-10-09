@@ -26,7 +26,7 @@ from dace.transformation.passes.vectorization.utils.pass_invariants import (
     no_wcr_in_map_body,
     no_wcr_inside_nested_sdfgs,
 )
-from tests.passes.vectorization.helpers.harness import run_vectorization_test, N
+from tests.passes.vectorization.helpers.harness import N, run_vectorization_test
 
 
 def _all_edges_wcr_free(sdfg: dace.SDFG) -> bool:

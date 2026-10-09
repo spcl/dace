@@ -60,18 +60,18 @@ import json
 import subprocess
 import sys
 import time
-from typing import Any, Callable, Dict, List, Tuple
+from collections.abc import Callable
+from typing import Any
 
 import dace
+from dace.transformation.auto.auto_optimize import auto_optimize
 from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.canonicalize.finalize import (
     finalize_for_target,
     recompute_fuse_for_gpu,
     select_gpu_device_block_size,
 )
-from dace.transformation.auto.auto_optimize import auto_optimize
 from dace.transformation.passes.offloading.taskloop import taskloop_maps
-
 from tests.corpus import corpus_suite as suite
 
 #: Seconds per (kernel, setting) subprocess: a big CUDA compile is minutes, past this is a hang.
@@ -83,7 +83,7 @@ WARMUP = 2
 SCREEN_TIMEOUT = 900
 
 
-def canon_gpu(heuristics: bool, canon_knobs: Dict[str, Any] = {}) -> Callable[[dace.SDFG, List[str]], None]:
+def canon_gpu(heuristics: bool, canon_knobs: dict[str, Any] = {}) -> Callable[[dace.SDFG, list[str]], None]:
     """The canonicalize-then-offload GPU pipeline at one setting of the taskloop knob.
 
     ``canon_knobs`` overrides ``canonicalize``'s per-target defaults, which is how a knob whose GPU
@@ -91,7 +91,7 @@ def canon_gpu(heuristics: bool, canon_knobs: Dict[str, Any] = {}) -> Callable[[d
     ``apply_gpu_storage`` is deliberately NOT called -- see the module docstring.
     """
 
-    def apply(sdfg: dace.SDFG, taskloops: List[str]) -> None:
+    def apply(sdfg: dace.SDFG, taskloops: list[str]) -> None:
         canonicalize(sdfg, validate=False, validate_all=False, target="gpu", **canon_knobs)
         with (
             dace.config.set_temporary("optimizer", "gpu_taskloop_heuristics", value=heuristics),
@@ -110,7 +110,7 @@ def canon_gpu(heuristics: bool, canon_knobs: Dict[str, Any] = {}) -> Callable[[d
     return apply
 
 
-def autoopt_gpu(sdfg: dace.SDFG, taskloops: List[str]) -> None:
+def autoopt_gpu(sdfg: dace.SDFG, taskloops: list[str]) -> None:
     """DaCe's established pipeline, the arm every new one has to beat.
 
     ``use_gpu_storage`` defaults off, which is what keeps the signature on the host and the arm
@@ -122,7 +122,7 @@ def autoopt_gpu(sdfg: dace.SDFG, taskloops: List[str]) -> None:
 
 #: The named GPU pipelines ``--arms`` selects from. An arm costs one entry here and nothing else:
 #: the screen, the timing path, the correctness gate and the CSV are all keyed by label.
-ARMS: Dict[str, Callable[[dace.SDFG, List[str]], None]] = {
+ARMS: dict[str, Callable[[dace.SDFG, list[str]], None]] = {
     "autoopt": autoopt_gpu,
     "canon": canon_gpu(False),
     "canon+taskloop": canon_gpu(True),
@@ -139,14 +139,14 @@ ARMS: Dict[str, Callable[[dace.SDFG, List[str]], None]] = {
 }
 
 
-def offloaded_sdfg(ctx: Dict, arm: str, tag: str) -> Tuple[dace.SDFG, List[str]]:
+def offloaded_sdfg(ctx: dict, arm: str, tag: str) -> tuple[dace.SDFG, list[str]]:
     """The kernel taken through ``arm``'s GPU pipeline, plus the maps its taskloop classifier kept.
 
     ``tag`` uniquifies the SDFG name, hence the build folder. The screen hands both arms the SAME
     tag on purpose: the name reaches the emitted text, so differing tags would make every kernel
     look rewritten.
     """
-    taskloops: List[str] = []
+    taskloops: list[str] = []
     pipeline = ARMS[arm]
 
     def transform(sdfg: dace.SDFG) -> None:
@@ -169,7 +169,7 @@ def stable_json(node: Any) -> Any:
     return node
 
 
-def codegen_one(kind: str, name: str, arm: str, preset: str) -> Dict:
+def codegen_one(kind: str, name: str, arm: str, preset: str) -> dict:
     """Offload one kernel at one setting and digest the graph; no compiler and no device involved.
 
     The digest is taken from the SDFG, not from the emitted text, even though the text is what runs.
@@ -191,7 +191,7 @@ def codegen_one(kind: str, name: str, arm: str, preset: str) -> Dict:
     )
 
 
-def measure_one(kind: str, name: str, arm: str, repeats: int, preset: str) -> Dict:
+def measure_one(kind: str, name: str, arm: str, repeats: int, preset: str) -> dict:
     """Correctness + median time for one kernel at one setting; runs in its own process."""
     ctx = suite.make(kind, name, preset=preset)
     sdfg, taskloops = offloaded_sdfg(ctx, arm, arm.replace("+", "_"))
@@ -212,7 +212,7 @@ def measure_one(kind: str, name: str, arm: str, repeats: int, preset: str) -> Di
     return dict(name=name, arm=arm, correct=correct, taskloops=taskloops, median=min(times))
 
 
-def run_case(kind: str, name: str, arm: str, repeats: int, preset: str, stage: str = "full") -> Dict:
+def run_case(kind: str, name: str, arm: str, repeats: int, preset: str, stage: str = "full") -> dict:
     """Spawn ``measure_one``/``codegen_one`` and read back its JSON; a dead case reports itself
     incorrect. ``stage`` picks which, and with it the timeout: emitting cannot take minutes, so a
     screen that runs long is a hang and must not hold the sweep for the build budget."""
@@ -302,7 +302,7 @@ def main() -> int:
     index, total = (int(part) for part in args.shard.split("/"))
     cases = cases[index::total]
 
-    rows: List[Dict] = []
+    rows: list[dict] = []
     print(
         f"arms={base} vs {test} preset={args.preset} repeats={args.repeats} stage={args.stage} cases={len(cases)}",
         flush=True,

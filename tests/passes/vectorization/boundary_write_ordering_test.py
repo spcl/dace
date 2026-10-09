@@ -25,8 +25,8 @@ from dace.sdfg import nodes as nd
 from dace.transformation.dataflow.map_for_loop import MapToForLoop
 from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.vectorization.config import VectorizeConfig
+from dace.transformation.passes.vectorization.enums import ISA, BranchMode, RemainderStrategy
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
-from dace.transformation.passes.vectorization.enums import ISA, RemainderStrategy, BranchMode
 
 N = dace.symbol("N", dtype=dace.int64)
 SIZE = 16

@@ -15,9 +15,9 @@ These tests pin the detector contract:
 * ``@`` (matmul) -> refused (not a per-lane elementwise op)
 """
 
-import dace
 import pytest
 
+import dace
 from dace.transformation.passes.vectorization.convert_tasklets_to_tile_ops import (
     ConvertTaskletsToTileOps,
     _normalize_python_tasklet_body,

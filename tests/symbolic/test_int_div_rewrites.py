@@ -15,7 +15,7 @@ import sympy
 
 import dace
 from dace import dtypes
-from dace.symbolic import deserialize_symbolic, int_ceil, int_floor, pystr_to_symbolic, symbol, symstr, sympy_intdiv_fix
+from dace.symbolic import deserialize_symbolic, int_ceil, int_floor, pystr_to_symbolic, symbol, sympy_intdiv_fix, symstr
 
 N = pystr_to_symbolic("N")
 M = pystr_to_symbolic("M")
@@ -64,7 +64,7 @@ def test_rounding_of_a_non_integer_expression_is_kept(rounding):
 def test_rounding_of_a_non_integer_expression_lowers_to_the_math_call(rounding, call):
     """The kept rounding must reach C++ as the matching math-library call."""
     x = pystr_to_symbolic("x")
-    assert symstr(rounding(sympy.sin(x)), cpp_mode=True) == "(%s(sin(x)))" % call
+    assert symstr(rounding(sympy.sin(x)), cpp_mode=True) == f"({call}(sin(x)))"
 
 
 def test_ceiling_of_index_arithmetic_is_integer_typed():

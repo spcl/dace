@@ -22,14 +22,14 @@ not a concern.
 import ast
 import copy
 import re
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any
 
 from dace import SDFG, SDFGState, dtypes, properties, symbolic
-from dace.sdfg import nodes, InterstateEdge
+from dace.optionals import required
+from dace.sdfg import InterstateEdge, nodes
 from dace.sdfg.state import ControlFlowRegion, LoopRegion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
-from dace.optionals import required
 
 
 @properties.make_properties
@@ -53,7 +53,7 @@ class LoopInvariantCodeMotion(ppl.Pass):
             modified & (ppl.Modifies.States | ppl.Modifies.Nodes | ppl.Modifies.Memlets | ppl.Modifies.InterstateEdges)
         )
 
-    def apply_pass(self, sdfg: SDFG, _: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _: dict[str, Any]) -> int | None:
         total = 0
         while True:
             made = 0
@@ -155,8 +155,8 @@ def _hoist_invariant_child_regions(loop: LoopRegion) -> int:
 
     # Build a per-sibling write-set so we can alias-check one child against
     # the others that will remain in the body.
-    child_reads: Dict[Any, Set[str]] = {}
-    child_writes: Dict[Any, Set[str]] = {}
+    child_reads: dict[Any, set[str]] = {}
+    child_writes: dict[Any, set[str]] = {}
     for ch in children:
         r, w = _region_rw_sets(ch)
         child_reads[ch] = r
@@ -166,7 +166,7 @@ def _hoist_invariant_child_regions(loop: LoopRegion) -> int:
     # (b) its read-set does not intersect any OTHER child's write-set, and
     # (c) its write-set does not intersect any OTHER child's read-or-write
     # (so order w.r.t. other children is irrelevant).
-    hoistable: List[Any] = []
+    hoistable: list[Any] = []
     for ch in children:
         others = [o for o in children if o is not ch]
         r, w = child_reads[ch], child_writes[ch]
@@ -271,16 +271,16 @@ def _move_region_before(parent: ControlFlowRegion, loop: Any, child: Any) -> int
     return 1
 
 
-def _region_free_symbols(region: Any) -> Set[str]:
+def _region_free_symbols(region: Any) -> set[str]:
     try:
         return {str(s) for s in region.free_symbols}
     except Exception:
         return set()
 
 
-def _region_rw_sets(region: Any) -> Tuple[Set[str], Set[str]]:
-    reads: Set[str] = set()
-    writes: Set[str] = set()
+def _region_rw_sets(region: Any) -> tuple[set[str], set[str]]:
+    reads: set[str] = set()
+    writes: set[str] = set()
     if isinstance(region, SDFGState):
         for n in region.data_nodes():
             if region.in_degree(n) > 0:
@@ -342,8 +342,8 @@ def _region_has_side_effect(region: Any) -> bool:
     return False
 
 
-def _variant_symbols_of_loop(loop: LoopRegion) -> Set[str]:
-    syms: Set[str] = set()
+def _variant_symbols_of_loop(loop: LoopRegion) -> set[str]:
+    syms: set[str] = set()
     if loop.loop_variable:
         syms.add(loop.loop_variable)
     for e in loop.all_interstate_edges():
@@ -351,9 +351,9 @@ def _variant_symbols_of_loop(loop: LoopRegion) -> Set[str]:
     return syms
 
 
-def _written_data_in_region(region: ControlFlowRegion) -> Set[str]:
+def _written_data_in_region(region: ControlFlowRegion) -> set[str]:
     """Names of data containers written in ``region`` (any state, any depth)."""
-    written: Set[str] = set()
+    written: set[str] = set()
     for state in region.states():
         for n in state.data_nodes():
             if state.in_degree(n) > 0:
@@ -367,7 +367,7 @@ def write_edge_count(state: SDFGState, node: nodes.AccessNode) -> int:
     return sum(1 for e in state.in_edges(node) if e.data is not None and not e.data.is_empty())
 
 
-def _region_writer_counts(region: ControlFlowRegion) -> Dict[str, int]:
+def _region_writer_counts(region: ControlFlowRegion) -> dict[str, int]:
     """Per-data count of writes across every state of ``region``.
 
     Used to reject hoisting an invariant assignment (e.g. ``s = 0.0``) whose
@@ -377,7 +377,7 @@ def _region_writer_counts(region: ControlFlowRegion) -> Dict[str, int]:
     iteration, so later iterations would see the carried value instead of the
     constant.
     """
-    counts: Dict[str, int] = {}
+    counts: dict[str, int] = {}
     for state in region.states():
         for n in state.data_nodes():
             counts[n.data] = counts.get(n.data, 0) + write_edge_count(state, n)
@@ -397,10 +397,10 @@ def _get_or_create_preheader(loop: LoopRegion) -> SDFGState:
 
 def _find_one_invariant_tasklet(
     state: SDFGState,
-    variant_syms: Set[str],
-    variant_data: Set[str],
-    region_writers: Dict[str, int],
-) -> Optional[nodes.Tasklet]:
+    variant_syms: set[str],
+    variant_data: set[str],
+    region_writers: dict[str, int],
+) -> nodes.Tasklet | None:
     for n in state.nodes():
         if not isinstance(n, nodes.Tasklet):
             continue
@@ -412,9 +412,9 @@ def _find_one_invariant_tasklet(
 def _is_tasklet_invariant(
     state: SDFGState,
     tasklet: nodes.Tasklet,
-    variant_syms: Set[str],
-    variant_data: Set[str],
-    region_writers: Dict[str, int],
+    variant_syms: set[str],
+    variant_data: set[str],
+    region_writers: dict[str, int],
 ) -> bool:
     # Side effects / WCR
     try:
@@ -484,14 +484,14 @@ def _is_tasklet_invariant(
     return True
 
 
-def _code_free_symbols(tasklet: nodes.Tasklet) -> Set[str]:
+def _code_free_symbols(tasklet: nodes.Tasklet) -> set[str]:
     """Free symbols that appear in the tasklet code, minus its connectors.
 
     Non-Python code has no AST, so fall back to a plain identifier scan (an over-approximation,
     safe since the caller only refuses to hoist); an empty set would instead let a C++ tasklet
     reading its own map parameter get hoisted out of the map that defines it.
     """
-    syms: Set[str] = set()
+    syms: set[str] = set()
     code = tasklet.code
     if code is None:
         return syms
@@ -507,7 +507,7 @@ def _code_free_symbols(tasklet: nodes.Tasklet) -> Set[str]:
             return syms
     if not isinstance(stmts, list):
         stmts = [stmts]
-    names: Set[str] = set()
+    names: set[str] = set()
     for s in stmts:
         if not isinstance(s, ast.AST):
             continue
@@ -519,7 +519,7 @@ def _code_free_symbols(tasklet: nodes.Tasklet) -> Set[str]:
     return (names - connectors) - {"True", "False", "None"}
 
 
-def _subset_uses_any(subset, syms: Set[str]) -> bool:
+def _subset_uses_any(subset, syms: set[str]) -> bool:
     try:
         fs = subset.free_symbols
     except AttributeError:
@@ -560,7 +560,7 @@ def _has_integer_div_mod_by_possibly_zero(tasklet: nodes.Tasklet) -> bool:
     return False
 
 
-def _written_access_in_state(state: SDFGState, data: str) -> Optional[nodes.AccessNode]:
+def _written_access_in_state(state: SDFGState, data: str) -> nodes.AccessNode | None:
     """An AccessNode for ``data`` in ``state`` that is written (has an in-edge).
 
     Used to find an already-hoisted producer's output node so a subsequently
@@ -602,7 +602,7 @@ def _hoist_tasklet_to_preheader(
     # channel_flow hoists a split-tasklet chain ``__t0_split_N`` piecemeal, the
     # producer landing in the preheader on an earlier LICM pass than the
     # consumer).
-    new_reads: Dict[str, nodes.AccessNode] = {}
+    new_reads: dict[str, nodes.AccessNode] = {}
     for ie in in_edges:
         d = ie.src.data
         if d not in new_reads:
@@ -666,7 +666,7 @@ def _hoist_tasklet_to_preheader(
 def _hoist_map_scope(state: SDFGState, me: nodes.MapEntry) -> int:
     """Hoist invariant tasklets out of a Map scope to the enclosing state."""
     sdfg: SDFG = state.sdfg
-    variant_syms: Set[str] = set(me.map.params)
+    variant_syms: set[str] = set(me.map.params)
 
     mx = state.exit_node(me)
     inside_nodes = state.all_nodes_between(me, required(mx))
@@ -681,7 +681,7 @@ def _hoist_map_scope(state: SDFGState, me: nodes.MapEntry) -> int:
     # would be wrongly treated as invariant and hoisted -- producing a malformed
     # whole-array-to-scalar copy. Matches the loop-region criterion (a written
     # container makes its reads variant).
-    variant_data: Set[str] = set()
+    variant_data: set[str] = set()
     for n in inside_nodes:
         if isinstance(n, nodes.AccessNode) and state.in_degree(n) > 0:
             variant_data.add(n.data)
@@ -703,9 +703,9 @@ def _hoist_map_scope(state: SDFGState, me: nodes.MapEntry) -> int:
 def _find_one_map_invariant_tasklet(
     state: SDFGState,
     me: nodes.MapEntry,
-    variant_syms: Set[str],
-    variant_data: Set[str],
-) -> Optional[nodes.Tasklet]:
+    variant_syms: set[str],
+    variant_data: set[str],
+) -> nodes.Tasklet | None:
     mx = state.exit_node(me)
     inside = state.all_nodes_between(me, required(mx)) or set()
     scope_dict = state.scope_dict()
@@ -725,8 +725,8 @@ def _is_map_tasklet_invariant(
     state: SDFGState,
     me: nodes.MapEntry,
     tasklet: nodes.Tasklet,
-    variant_syms: Set[str],
-    variant_data: Set[str],
+    variant_syms: set[str],
+    variant_data: set[str],
 ) -> bool:
     try:
         if tasklet.side_effects:
@@ -758,7 +758,7 @@ def _is_map_tasklet_invariant(
         outer_conn = _matching_outer_conn(ie.src_conn)
         if outer_conn is None:
             return False
-        outer = [e for e in state.in_edges_by_connector(me, outer_conn)]
+        outer = list(state.in_edges_by_connector(me, outer_conn))
         if not outer:
             return False
         outer_edge = outer[0]
@@ -788,7 +788,7 @@ def _is_map_tasklet_invariant(
     return True
 
 
-def _matching_outer_conn(src_conn: Optional[str]) -> Optional[str]:
+def _matching_outer_conn(src_conn: str | None) -> str | None:
     """MapEntry's internal OUT_x connector pairs with the external IN_x."""
     if not src_conn or not src_conn.startswith("OUT_"):
         return None
@@ -816,7 +816,7 @@ def _hoist_tasklet_out_of_map(
     # the map scope).
 
     # Create new outer read nodes for each distinct upstream data container.
-    outer_reads: Dict[str, nodes.AccessNode] = {}
+    outer_reads: dict[str, nodes.AccessNode] = {}
     for ie in in_edges:
         outer_conn = _matching_outer_conn(ie.src_conn)
         if outer_conn is None:
@@ -897,7 +897,7 @@ def _prune_unused_map_connectors(state: SDFGState, me: nodes.MapEntry) -> None:
     # Find IN_x connectors whose OUT_x has no outgoing edges to scope; drop
     # the pair + the outer feeding edge. Any AccessNodes that become isolated
     # after the cut are removed too.
-    freed_sources: List[nodes.Node] = []
+    freed_sources: list[nodes.Node] = []
     for in_conn in list(me.in_connectors.keys()):
         if not in_conn.startswith("IN_"):
             continue

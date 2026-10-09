@@ -8,18 +8,17 @@ the calling Fortran code needs the 1-indexed value, add the +1 at the
 call site.
 """
 
-from typing import List, TYPE_CHECKING
 import warnings
+from typing import TYPE_CHECKING
 
 import dace.library
 import dace.properties
 import dace.sdfg.nodes
-from dace.transformation.transformation import ExpandTransformation
-from dace.libraries.blas import blas_helpers
-from .. import environments
-from dace.libraries.blas import gpu_dialect
-from dace import dtypes, memlet as mm, SDFG, SDFGState
+from dace import SDFG, SDFGState, dtypes
+from dace import memlet as mm
 from dace.frontend.common import op_repository as oprepo
+from dace.libraries.blas import blas_helpers, environments, gpu_dialect
+from dace.transformation.transformation import ExpandTransformation
 
 if TYPE_CHECKING:
     from dace.frontend.python.newast import ProgramVisitor
@@ -33,7 +32,7 @@ class ExpandIamaxPure(ExpandTransformation):
     WCR for argmax (WCR would need both the max value and its index).
     """
 
-    environments: List[type] = []
+    environments: list[type] = []
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
@@ -121,7 +120,7 @@ class ExpandIamaxMKL(ExpandTransformation):
 
 @dace.library.expansion
 class ExpandIamaxGPUBLAS(ExpandTransformation):
-    environments: List[type] = []
+    environments: list[type] = []
     dialect: gpu_dialect.GpuBlasDialect
 
     @classmethod
@@ -151,7 +150,7 @@ class ExpandIamaxGPUBLAS(ExpandTransformation):
                                                               &__tmp_idx));
         """,
         )
-        code += f"""
+        code += """
         __tmp_idx -= 1;
         DACE_GPU_CHECK(gpuMemcpyAsync(_result, &__tmp_idx, sizeof(int), gpuMemcpyHostToDevice,
                                       __dace_current_stream));

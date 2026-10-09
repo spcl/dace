@@ -8,7 +8,7 @@ import select
 import signal
 import time
 import warnings
-from typing import Callable, Dict
+from collections.abc import Callable
 
 #: OpenMP runtimes whose thread pool must be torn down before a fork; only ones already loaded (RTLD_NOLOAD) are touched.
 OMP_RUNTIME_SONAMES = ("libgomp.so.1", "libomp.so.5", "libomp.so", "libiomp5.so", "libnvomp.so")
@@ -107,7 +107,7 @@ def quiet_fatal_signals() -> None:
         pass
 
 
-def run_isolated(work_fn: Callable[[], Dict], timeout: float = 900.0) -> Dict:
+def run_isolated(work_fn: Callable[[], dict], timeout: float = 900.0) -> dict:
     """Run ``work_fn`` in a forked child; returns its JSON-able dict, or an ``{"error": ...}`` sentinel on crash/timeout/malformed output. ``work_fn`` must be fork-safe (no live CUDA context)."""
     pause_openmp_pools()  # a live pool across fork deadlocks the child's first parallel region
     r, w = os.pipe()

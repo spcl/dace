@@ -2,7 +2,7 @@
 """Library-node rewrites that expose an operand's layout to the layout passes: reorders einsum subscripts and rewrites ``Gemm``/``CopyLibraryNode`` into ``TensorDot``/``TensorTranspose`` so a layout change reaches node semantics, not just memlets."""
 
 from dataclasses import dataclass
-from typing import Any, Dict, List, Tuple
+from typing import Any
 
 import dace
 from dace import symbolic
@@ -10,7 +10,7 @@ from dace.sdfg import nodes as nd
 from dace.transformation import pass_pipeline as ppl
 
 
-def transform_einsum(einsum_str: str, operand_index: int, perm: Tuple[int, ...]) -> str:
+def transform_einsum(einsum_str: str, operand_index: int, perm: tuple[int, ...]) -> str:
     """Permute one einsum operand's subscripts by ``perm`` (``new[i] = old[perm[i]]``); ``operand_index`` follows sorted input-connector order."""
     lhs, sep, rhs = einsum_str.partition("->")
     groups = [t.strip() for t in lhs.split(",")]
@@ -26,12 +26,12 @@ def transform_einsum(einsum_str: str, operand_index: int, perm: Tuple[int, ...])
     return f"{out}{sep}{rhs}" if sep else out
 
 
-def remap_contracted_axes(axes: List[int], perm: Tuple[int, ...]) -> List[int]:
+def remap_contracted_axes(axes: list[int], perm: tuple[int, ...]) -> list[int]:
     """``TensorDot`` analog of :func:`transform_einsum`: remaps contracted axes for an operand permuted by ``perm``. Free-mode reorders need ``permutation`` updated separately."""
     return [perm.index(a) for a in axes]
 
 
-def permute_reduce(node, perm: Tuple[int, ...]) -> None:
+def permute_reduce(node, perm: tuple[int, ...]) -> None:
     """Remap a ``Reduce`` node's ``axes`` for an input permuted by ``perm``; reduce-all (``axes is None``) is left unchanged."""
     if node.axes is None:
         return
@@ -63,9 +63,9 @@ def flip_operand_transpose(node, connector: str) -> None:
     ``Syr2k`` carries a single ``trans`` for both ``A`` and ``B``, so a per-operand toggle is unsound (permuting both would double-flip back); it is refused. Every unhandled case raises rather than silently miscompiling."""
     from dace.libraries.blas.nodes.gemm import Gemm
     from dace.libraries.blas.nodes.matmul import MatMul
-    from dace.libraries.blas.nodes.syrk import Syrk
-    from dace.libraries.blas.nodes.syr2k import Syr2k
     from dace.libraries.blas.nodes.symm import Symm
+    from dace.libraries.blas.nodes.syr2k import Syr2k
+    from dace.libraries.blas.nodes.syrk import Syrk
 
     def toggle(v, a, b):
         return b if v == a else a
@@ -102,7 +102,7 @@ class FoldTransposeIntoMatMul(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def apply_pass(self, sdfg: dace.SDFG, pipeline_results: Dict[str, Any]) -> int:
+    def apply_pass(self, sdfg: dace.SDFG, pipeline_results: dict[str, Any]) -> int:
         from dace.libraries.blas.nodes.gemm import Gemm
         from dace.libraries.blas.nodes.matmul import MatMul
         from dace.libraries.linalg.nodes.transpose import Transpose
@@ -158,7 +158,7 @@ class GemmToTensorDot(ppl.Pass):
             and "_cin" not in node.in_connectors
         )
 
-    def apply_pass(self, sdfg: dace.SDFG, pipeline_results: Dict[str, Any]) -> int:
+    def apply_pass(self, sdfg: dace.SDFG, pipeline_results: dict[str, Any]) -> int:
         from dace.libraries.blas.nodes.gemm import Gemm
         from dace.libraries.linalg import TensorDot
 
@@ -212,7 +212,7 @@ class SyrkToTensorDot(ppl.Pass):
             and "_cin" not in node.in_connectors
         )
 
-    def apply_pass(self, sdfg: dace.SDFG, pipeline_results: Dict[str, Any]) -> int:
+    def apply_pass(self, sdfg: dace.SDFG, pipeline_results: dict[str, Any]) -> int:
         from dace.libraries.blas.nodes.syrk import Syrk
         from dace.libraries.linalg import TensorDot
 
@@ -242,7 +242,7 @@ class SyrkToTensorDot(ppl.Pass):
         return 1
 
 
-def copy_permutation_axes(in_sizes: List, out_sizes: List):
+def copy_permutation_axes(in_sizes: list, out_sizes: list):
     """Axes ``P`` such that ``out = transpose(in, P)``, or ``None`` if no transpose is needed (same order or reshape). Raises ``NotImplementedError`` on ambiguous (repeated-size) permutations."""
 
     def same(a, b) -> bool:
@@ -279,9 +279,9 @@ class RewriteCopyForLayout(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def apply_pass(self, sdfg: dace.SDFG, pipeline_results: Dict[str, Any]) -> int:
-        from dace.libraries.standard.nodes.copy import CopyLibraryNode
+    def apply_pass(self, sdfg: dace.SDFG, pipeline_results: dict[str, Any]) -> int:
         from dace.libraries.linalg import TensorTranspose
+        from dace.libraries.standard.nodes.copy import CopyLibraryNode
 
         count = 0
         for state in sdfg.states():

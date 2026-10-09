@@ -2,8 +2,9 @@
 """Time the compute region of a laid-out SDFG, excluding the relayout copy-in/copy-out states."""
 
 import statistics
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any
 
 import dace
 from dace import nodes
@@ -102,7 +103,7 @@ class InsertLayoutTiming(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def apply_pass(self, sdfg: dace.SDFG, pipeline_results: Dict[str, Any]) -> int:
+    def apply_pass(self, sdfg: dace.SDFG, pipeline_results: dict[str, Any]) -> int:
         states = list(sdfg.states())
         copy_in = {s for s in states if is_copy_state(s) and not reaches_tasklets(sdfg, s, forward=False)}
         copy_out = {s for s in states if is_copy_state(s) and not reaches_tasklets(sdfg, s, forward=True)}
@@ -124,7 +125,7 @@ class InsertLayoutTiming(ppl.Pass):
         return instrumented
 
 
-def _report_total_ms(report) -> Optional[float]:
+def _report_total_ms(report) -> float | None:
     """Sum of all instrumented state durations (ms) in one report, or ``None`` if empty."""
     if report is None:
         return None
@@ -145,13 +146,13 @@ SPREAD_CONTENDED_THRESHOLD = 0.10
 
 def time_compute_stats(
     sdfg: dace.SDFG, run: Callable[[dace.SDFG], Any], reps: int = 10, warmup: int = 2
-) -> Optional[Dict[str, Any]]:
+) -> dict[str, Any] | None:
     """Run ``run(sdfg)`` ``reps`` times and return compute-region stats from the instrumentation report: ``{"median": ms, "spread": (max-min)/min, "contended": bool, "samples": [...]}``, or ``None`` if ``sdfg`` carries no timers (see :class:`InsertLayoutTiming`). Every rep must produce a fresh report -- the build folder is keyed on SDFG name and shared across sweep candidates, so a stale or missing report is a hard error, never silently absorbed."""
     if not any(state.instrument != dace.InstrumentationType.No_Instrumentation for state in sdfg.states()):
         return None
     for _ in range(warmup):
         run(sdfg)
-    samples: List[float] = []
+    samples: list[float] = []
     for rep in range(reps):
         previous_path = sdfg.get_latest_report_path()
         run(sdfg)
@@ -180,7 +181,7 @@ def time_compute_stats(
     }
 
 
-def time_compute(sdfg: dace.SDFG, run: Callable[[dace.SDFG], Any], reps: int = 5, warmup: int = 1) -> Optional[float]:
+def time_compute(sdfg: dace.SDFG, run: Callable[[dace.SDFG], Any], reps: int = 5, warmup: int = 1) -> float | None:
     """The median compute-region time (ms) of ``run(sdfg)`` -- see :func:`time_compute_stats`."""
     stats = time_compute_stats(sdfg, run, reps, warmup)
     return None if stats is None else stats["median"]
@@ -188,7 +189,7 @@ def time_compute(sdfg: dace.SDFG, run: Callable[[dace.SDFG], Any], reps: int = 5
 
 def compute_region_timer(
     sdfg: dace.SDFG, run: Callable[[dace.SDFG], Any], reps: int = 5, warmup: int = 1
-) -> Optional[float]:
+) -> float | None:
     """A ``brute_force.sweep`` ``timer``: instruments the compute region and returns its median time (ms), so the sweep ranks by compute cost, not the one-time relayout. Mutates ``sdfg``."""
     InsertLayoutTiming().apply_pass(sdfg, {})
     return time_compute(sdfg, run, reps, warmup)

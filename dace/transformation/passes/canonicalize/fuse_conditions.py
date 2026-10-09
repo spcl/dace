@@ -14,12 +14,14 @@ itself live on the transformation -- this pass owns only the traversal, so the p
 transformation can never disagree.
 """
 
-from typing import Any, Dict, Iterator, List, Optional, Tuple, Type, Union
+from collections.abc import Iterator
+from typing import Any
 
 from dace import SDFG
 from dace.config import Config
 from dace.sdfg.state import AbstractControlFlowRegion, ConditionalBlock, ControlFlowRegion
-from dace.transformation import pass_pipeline as ppl, transformation
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation import transformation
 from dace.transformation.interstate.condition_fusion import ConditionFusion
 from dace.transformation.passes.pattern_matching import child_regions
 
@@ -29,13 +31,13 @@ CONSECUTIVE = 0
 NESTED = 1
 
 
-def matcher_candidates(region: AbstractControlFlowRegion) -> Iterator[Tuple[int, Dict[Any, ConditionalBlock]]]:
+def matcher_candidates(region: AbstractControlFlowRegion) -> Iterator[tuple[int, dict[Any, ConditionalBlock]]]:
     """``(expr_index, binding)`` of every ``ConditionFusion`` candidate in ``region``, in the order
     ``match_patterns`` enumerates them: every consecutive pair in the collapsed graph's edge order
     (source by node order, then first appearance of the edge), then every block for the nested form.
     """
     order = {block: i for i, block in enumerate(region.nodes())}
-    pairs: Dict[Tuple[Any, Any], None] = {}
+    pairs: dict[tuple[Any, Any], None] = {}
     for edge in region.edges():
         pairs.setdefault((edge.src, edge.dst), None)
     for first, second in sorted(pairs, key=lambda pair: order[pair[0]]):
@@ -48,7 +50,7 @@ def matcher_candidates(region: AbstractControlFlowRegion) -> Iterator[Tuple[int,
 
 def chain_candidates(
     block: AbstractControlFlowRegion,
-) -> Iterator[Tuple[AbstractControlFlowRegion, int, Dict[Any, Any]]]:
+) -> Iterator[tuple[AbstractControlFlowRegion, int, dict[Any, Any]]]:
     """The candidates naming ``block`` or one of its ancestors, in the region holding each, up to the SDFG."""
     while not isinstance(block, SDFG) and block.parent_graph is not None:
         region = block.parent_graph
@@ -75,7 +77,7 @@ class FuseConditions(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return bool(modified & (ppl.Modifies.CFG | ppl.Modifies.States))
 
-    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+    def depends_on(self) -> list[type[ppl.Pass] | ppl.Pass]:
         return []
 
     def __init__(self, matcher_order: bool = False) -> None:
@@ -85,7 +87,7 @@ class FuseConditions(ppl.Pass):
         """
         self.matcher_order = matcher_order
 
-    def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> int | None:
         """Fuse every qualifying conditional in ``sdfg`` and its nested SDFGs, to a fixpoint.
 
         :param sdfg: The SDFG to transform in place.
@@ -146,7 +148,7 @@ class FuseConditions(ppl.Pass):
                 return True
         return False
 
-    def apply_in_matcher_order(self, sdfg: SDFG) -> Optional[int]:
+    def apply_in_matcher_order(self, sdfg: SDFG) -> int | None:
         """Fuse every conditional ``PatternApplyOnceEverywhere([ConditionFusion()])`` would, in its order.
 
         The matcher walks every region of ``all_control_flow_regions(recursive=True)`` again after every
@@ -166,7 +168,7 @@ class FuseConditions(ppl.Pass):
         # The walk as a stack of ``[region, child regions or None while its own candidates are probed, next
         # child]`` frames, so it resumes in place instead of listing the whole tree after each fusion. A
         # fusion rewrites only the resumed region's subtree, so every frame above it stays exact.
-        stack: List[list] = [[sdfg, None, 0]]
+        stack: list[list] = [[sdfg, None, 0]]
         while stack:
             frame = stack[-1]
             region, children, index = frame
@@ -198,13 +200,13 @@ class FuseConditions(ppl.Pass):
 
     @staticmethod
     def bind(
-        xform: ConditionFusion, region: AbstractControlFlowRegion, expr_index: int, binding: Dict[Any, Any]
+        xform: ConditionFusion, region: AbstractControlFlowRegion, expr_index: int, binding: dict[Any, Any]
     ) -> None:
         xform.setup_match(region.sdfg, -1, -1, binding, expr_index, override=True)
 
     @staticmethod
     def accepts(
-        xform: ConditionFusion, region: AbstractControlFlowRegion, expr_index: int, binding: Dict[Any, Any]
+        xform: ConditionFusion, region: AbstractControlFlowRegion, expr_index: int, binding: dict[Any, Any]
     ) -> bool:
         FuseConditions.bind(xform, region, expr_index, binding)
         try:

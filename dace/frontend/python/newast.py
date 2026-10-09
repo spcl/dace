@@ -2,75 +2,72 @@
 import ast
 import collections.abc
 import contextvars
-from collections import OrderedDict
 import copy
 import itertools
+import operator
 import sys
 import time
-from os import path
 import warnings
+from collections import OrderedDict
+from collections.abc import Callable, Iterable, Iterator
 from numbers import Number
-from typing import Any, Dict, Iterable, List, NamedTuple, Set, Tuple, Union, Callable, Optional, Literal
-import operator
+from os import path
+from typing import Any, Literal, NamedTuple
+
+import numpy
+import sympy
 
 import dace
-from dace import data, dtypes, subsets, symbolic, sdfg as sd
+from dace import data, dtypes, subsets, symbolic
+from dace import sdfg as sd
 from dace.config import Config
 from dace.frontend.common import op_repository as oprepo
-from dace.frontend.python import astutils
+from dace.frontend.python import astutils, nested_call, preprocessing, replacements
+from dace.frontend.python.astutils import ExtNodeTransformer, ExtNodeVisitor, rname
 from dace.frontend.python.common import (
-    DaceSyntaxError,
     SDFGClosure,
     SDFGConvertible,
-    inverse_dict_lookup,
     StringLiteral,
+    inverse_dict_lookup,
 )
-from dace.frontend.python.astutils import ExtNodeVisitor, ExtNodeTransformer
-from dace.frontend.python.astutils import rname
-from dace.frontend.python import nested_call, replacements, preprocessing
-from dace.frontend.python.memlet_parser import DaceSyntaxError, parse_memlet, ParseMemlet, inner_eval_ast, MemletExpr
-from dace.sdfg import nodes, dealias
+from dace.frontend.python.memlet_parser import MemletExpr, ParseMemlet, inner_eval_ast, parse_memlet
+from dace.memlet import Memlet
+from dace.properties import CodeBlock, LambdaProperty
+from dace.sdfg import SDFG, SDFGState, dealias, nodes
 from dace.sdfg.propagation import (
+    align_memlet,
     propagate_memlet,
     propagate_memlets_map_scope,
     propagate_memlets_nested_sdfg,
-    propagate_subset,
     propagate_states,
-    align_memlet,
+    propagate_subset,
 )
-from dace.memlet import Memlet
-from dace.properties import LambdaProperty, CodeBlock
-from dace.sdfg import SDFG, SDFGState
+from dace.sdfg.replace import replace_datadesc_names
 from dace.sdfg.state import (
     BreakBlock,
     ConditionalBlock,
     ContinueBlock,
     ControlFlowBlock,
+    ControlFlowRegion,
     FunctionCallRegion,
     LoopRegion,
-    ControlFlowRegion,
     NamedRegion,
 )
-from dace.sdfg.replace import replace_datadesc_names
 from dace.sdfg.type_inference import infer_iteration_symbol_type
-from dace.symbolic import pystr_to_symbolic, inequal_symbols
-from dace.utils import until, find_new_name
-
-import numpy
-import sympy
+from dace.symbolic import inequal_symbols, pystr_to_symbolic
+from dace.utils import find_new_name, until
 
 numpy_version = numpy.lib.NumpyVersion(numpy.__version__)
 
 # The following line registers replacements in oprepo
 import dace.frontend.python.replacements
-
-from dace.frontend.python.replacements.utils import sym_type, broadcast_to, broadcast_together
+from dace.frontend.python.replacements.utils import broadcast_to, broadcast_together, sym_type
 
 # Type hints
-Size = Union[int, dace.symbolic.symbol]
-ShapeTuple = Tuple[Size]
-ShapeList = List[Size]
-Shape = Union[ShapeTuple, ShapeList]
+Size = int | dace.symbolic.symbol
+ShapeTuple = tuple[Size]
+ShapeList = list[Size]
+Shape = ShapeTuple | ShapeList
 
 
 class DependencyType(NamedTuple):
@@ -80,7 +77,7 @@ class DependencyType(NamedTuple):
     """
 
     block: ControlFlowBlock
-    memlet: Union[Memlet, nodes.Tasklet]
+    memlet: Memlet | nodes.Tasklet
     inner_indices: tuple[int, ...]
 
 
@@ -103,12 +100,12 @@ def deferrable_extents(target: Any, source: Any) -> bool:
     return all(isinstance(e, sympy.Basic) and bool(e.free_symbols) for e in (target, source))
 
 
-def defer_extent_equalities(sdfg: SDFG, pairs: List[Tuple[Any, Any]]) -> None:
+def defer_extent_equalities(sdfg: SDFG, pairs: list[tuple[Any, Any]]) -> None:
     """Records ``(target, source)`` extents an assignment took as equal without proof."""
     sdfg.deferred_extent_equalities = [*getattr(sdfg, "deferred_extent_equalities", []), *pairs]
 
 
-def pop_extent_equalities(sdfg: SDFG) -> List[Tuple[Tuple[Any, Any], SDFG]]:
+def pop_extent_equalities(sdfg: SDFG) -> list[tuple[tuple[Any, Any], SDFG]]:
     """Removes and returns every deferred extent equality of ``sdfg`` and the SDFGs nested in it, each
     with the SDFG that deferred it."""
     return [
@@ -116,7 +113,7 @@ def pop_extent_equalities(sdfg: SDFG) -> List[Tuple[Tuple[Any, Any], SDFG]]:
     ]
 
 
-def spell_extent_as_source(sdfg: SDFG, target: Any, source: Any, mapping: Dict[str, Any]) -> None:
+def spell_extent_as_source(sdfg: SDFG, target: Any, source: Any, mapping: dict[str, Any]) -> None:
     """Spells the bare extent symbol ``target`` as the ``source`` extent it was taken equal to, inside the
     SDFG that deferred the equality.
 
@@ -137,7 +134,7 @@ def spell_extent_as_source(sdfg: SDFG, target: Any, source: Any, mapping: Dict[s
     owner.pop(name, None)
 
 
-def bound_names(target: ast.AST) -> Set[str]:
+def bound_names(target: ast.AST) -> set[str]:
     """The names an assignment target writes: ``a[i:n] = ...`` writes ``a``, never the ``i`` or ``n`` it is indexed by."""
     if isinstance(target, ast.Name):
         return {target.id}
@@ -148,12 +145,12 @@ def bound_names(target: ast.AST) -> Set[str]:
     return set()
 
 
-def extent_mismatch(pairs: List[Tuple[Any, Any]]) -> str:
+def extent_mismatch(pairs: list[tuple[Any, Any]]) -> str:
     targets, sources = (", ".join(str(p[i]) for p in pairs) for i in (0, 1))
     return f"could not broadcast input array from extents [{sources}] into extents [{targets}]"
 
 
-def check_extent_equalities(pv: "ProgramVisitor", node: ast.Call, sdfg: SDFG, mapping: Dict[str, Any]) -> None:
+def check_extent_equalities(pv: "ProgramVisitor", node: ast.Call, sdfg: SDFG, mapping: dict[str, Any]) -> None:
     """Proves the extent equalities the callee ``sdfg`` deferred, under this call's symbol ``mapping``.
     What the caller still cannot prove is deferred to its own caller, or refused at the top level."""
     unproven = []
@@ -262,7 +259,7 @@ _BINOP_TO_NAME = {
 }
 
 
-class AddTransientMethods(object):
+class AddTransientMethods:
     """A management singleton for methods that add transient data to SDFGs."""
 
     _methods = {}
@@ -276,7 +273,7 @@ class AddTransientMethods(object):
 
 
 @dtypes.paramdec
-def specifies_datatype(func: Callable[[Any, data.Data, Any], Tuple[str, data.Data]], datatype=None):
+def specifies_datatype(func: Callable[[Any, data.Data, Any], tuple[str, data.Data]], datatype=None):
     AddTransientMethods._methods[datatype] = func
     return func
 
@@ -345,12 +342,12 @@ def _is_equivalent(first: data.Data, second: data.Data):
 def parse_dace_program(
     name: str,
     preprocessed_ast: ast.AST,
-    argtypes: Dict[str, data.Data],
-    constants: Dict[str, Any],
+    argtypes: dict[str, data.Data],
+    constants: dict[str, Any],
     closure: SDFGClosure,
-    simplify: Optional[bool] = None,
+    simplify: bool | None = None,
     save: bool = True,
-    progress: Optional[bool] = None,
+    progress: bool | None = None,
 ) -> SDFG:
     """
     Parses a ``@dace.program`` function into an SDFG.
@@ -411,7 +408,7 @@ def parse_dace_program(
         sdfg.set_sourcecode(preprocessed_ast.src, "python")
 
         # Combine nested closures with the current one
-        nested_closure_replacements: Dict[str, str] = {}
+        nested_closure_replacements: dict[str, str] = {}
         for name, (arr, _) in visitor.nested_closure_arrays.items():
             # Check if the same array is already passed as part of a nested closure
             if id(arr) in closure.array_mapping:
@@ -508,14 +505,14 @@ _DISALLOWED_STMTS = DISALLOWED_STMTS + [
     "TypeVarTuple",
 ]
 
-TaskletType = Union[ast.FunctionDef, ast.With, ast.For]
+TaskletType = ast.FunctionDef | ast.With | ast.For
 
 
 def _disallow_stmt(visitor, node):
-    raise DaceSyntaxError(visitor, node, 'Keyword "%s" disallowed' % (type(node).__name__))
+    raise DaceSyntaxError(visitor, node, f'Keyword "{type(node).__name__}" disallowed')
 
 
-def _connected_container(dependency: Union[Memlet, nodes.Tasklet], connector: str) -> str:
+def _connected_container(dependency: Memlet | nodes.Tasklet, connector: str) -> str:
     """
     Returns the name of the container a dependency of a call refers to.
 
@@ -580,7 +577,7 @@ def _subset_is_local_symbol_dependent(subset: subsets.Subset, pvisitor: "Program
     return False
 
 
-def _subset_symbols(subset: subsets.Subset) -> Set[symbolic.symbol]:
+def _subset_symbols(subset: subsets.Subset) -> set[symbolic.symbol]:
     result = set()
     for dim in subset:
         if not isinstance(dim, tuple):
@@ -719,7 +716,7 @@ def add_indirection_subgraph(
                 mapped_rng.append(r)
         ind_entry, ind_exit = graph.add_map(
             "indirection",
-            {"__i%d" % i: "%s:%s+1:%s" % (s, e, t) for i, (s, e, t) in enumerate(mapped_rng)},
+            {"__i%d" % i: f"{s}:{e}+1:{t}" for i, (s, e, t) in enumerate(mapped_rng)},
             debuginfo=pvisitor.current_lineinfo,
         )
         inp_base_path.insert(0, ind_entry)
@@ -818,7 +815,7 @@ def add_indirection_subgraph(
     tmp_shape = storage.shape
     indirectRange = subsets.Range([(0, s - 1, 1) for s in tmp_shape])
     if ind_entry:  # Amend indirected range
-        indirectRange = ",".join(["{} - {}".format(ind, r[0]) for ind, r in zip(ind_entry.map.params, mapped_rng)])
+        indirectRange = ",".join([f"{ind} - {r[0]}" for ind, r in zip(ind_entry.map.params, mapped_rng)])
 
     # Create memlet that depends on the full array that we look up in
     fullRange = subsets.Range([(0, s - 1, 1) for s in array.shape])
@@ -899,9 +896,9 @@ class TaskletTransformer(ExtNodeTransformer):
         filename: str,
         lang=None,
         location: dict = {},
-        scope_vars: Dict[str, str] = dict(),
-        variables: Dict[str, str] = dict(),
-        accesses: Dict[Tuple[str, dace.subsets.Subset, str], str] = dict(),
+        scope_vars: dict[str, str] = dict(),
+        variables: dict[str, str] = dict(),
+        accesses: dict[tuple[str, dace.subsets.Subset, str], str] = dict(),
     ):
         """Creates an AST parser for tasklets.
 
@@ -917,8 +914,8 @@ class TaskletTransformer(ExtNodeTransformer):
         self.filename = filename
 
         # Connectors generated from memlets
-        self.inputs: Dict[str, Memlet] = {}
-        self.outputs: Dict[str, Memlet] = {}
+        self.inputs: dict[str, Memlet] = {}
+        self.outputs: dict[str, Memlet] = {}
 
         self.extcode = None
         self.lang = lang
@@ -935,7 +932,7 @@ class TaskletTransformer(ExtNodeTransformer):
         for stmt in _DISALLOWED_STMTS:
             setattr(self, "visit_" + stmt, lambda n: _disallow_stmt(self, n))
 
-    def parse_tasklet(self, tasklet_ast: TaskletType, name: Optional[str] = None):
+    def parse_tasklet(self, tasklet_ast: TaskletType, name: str | None = None):
         """
         Parses the AST of a tasklet and returns the tasklet node, as well as input and output memlets.
 
@@ -979,7 +976,7 @@ class TaskletTransformer(ExtNodeTransformer):
 
         return t, self.inputs, self.outputs, self.accesses
 
-    def _update_names(self, node: Union[ast.Name, ast.Subscript, ast.Call], name: str):
+    def _update_names(self, node: ast.Name | ast.Subscript | ast.Call, name: str):
         if isinstance(node, ast.Name):
             node.id = name
         elif isinstance(node, ast.Subscript):
@@ -1170,24 +1167,24 @@ class DefinedNames(collections.abc.Mapping):
     def __contains__(self, name: str) -> bool:
         return self.lookup(name) is not MISSING
 
-    def __iter__(self) -> Iterable[str]:
+    def __iter__(self) -> Iterator[str]:
         return iter(self.materialize())
 
     def __len__(self) -> int:
         return len(self.materialize())
 
-    def materialize(self) -> Dict[str, Any]:
+    def materialize(self) -> dict[str, Any]:
         return self.pv.defined_dict()
 
 
-def transient_python_renames(arrays: Dict[str, data.Data], variables: Dict[str, str]) -> List[Dict[str, str]]:
+def transient_python_renames(arrays: dict[str, data.Data], variables: dict[str, str]) -> list[dict[str, str]]:
     """The transient renames ``ProgramVisitor.parse_program`` makes, in order, one replacement dict each.
 
     Replays the per-variable checks against a copy of ``arrays``, moving each renamed key the way
     ``SDFG.replace_dict`` does, so a later variable sees the names earlier renames left behind.
     """
     current = dict(arrays)
-    renames: List[Dict[str, str]] = []
+    renames: list[dict[str, str]] = []
     for pyname, arrname in variables.items():
         if arrname not in current or pyname in FORBIDDEN_ARRAY_NAMES:
             continue
@@ -1221,14 +1218,14 @@ class ProgramVisitor(ExtNodeVisitor):
         filename: str,
         line_offset: int,
         col_offset: int,
-        global_vars: Dict[str, Any],
-        constants: Dict[str, Any],
-        scope_arrays: Dict[str, data.Data],
-        scope_vars: Dict[str, str],
-        map_symbols: Set[Union[str, symbolic.symbol]] = None,
-        annotated_types: Dict[str, data.Data] = None,
+        global_vars: dict[str, Any],
+        constants: dict[str, Any],
+        scope_arrays: dict[str, data.Data],
+        scope_vars: dict[str, str],
+        map_symbols: set[str | symbolic.symbol] = None,
+        annotated_types: dict[str, data.Data] = None,
         closure: SDFGClosure = None,
-        simplify: Optional[bool] = None,
+        simplify: bool | None = None,
     ):
         """ProgramVisitor init method
 
@@ -1263,13 +1260,13 @@ class ProgramVisitor(ExtNodeVisitor):
         self.numbers = dict()  # Dict[str, str]
         self.variables = dict()  # Dict[str, str]
         self.accesses = dict()
-        self.views: Dict[str, Tuple[str, Memlet]] = {}  # Keeps track of views
+        self.views: dict[str, tuple[str, Memlet]] = {}  # Keeps track of views
         #: ``{copy name: source name}`` for a reshape whose layout was not PROVABLY viewable
         #: and so had to materialize. A read of one is fine; a write through it cannot reach
         #: the source, and dropping that write silently is the quieter of the two miscompiles.
-        self.detached_reshapes: Dict[str, str] = {}
-        self.nested_closure_arrays: Dict[str, Tuple[Any, data.Data]] = {}
-        self.annotated_types: Dict[str, data.Data] = annotated_types or {}
+        self.detached_reshapes: dict[str, str] = {}
+        self.nested_closure_arrays: dict[str, tuple[Any, data.Data]] = {}
+        self.annotated_types: dict[str, data.Data] = annotated_types or {}
 
         # Keep track of map symbols from upper scopes
         map_symbols = map_symbols or set()
@@ -1293,7 +1290,7 @@ class ProgramVisitor(ExtNodeVisitor):
         self.inputs: dict[str, DependencyType] = {}
         self.outputs: dict[str, DependencyType] = {}
         self.current_lineinfo = dtypes.DebugInfo(line_offset, col_offset, line_offset, col_offset, filename)
-        self.current_ast_stack: List[ast.AST] = []
+        self.current_ast_stack: list[ast.AST] = []
         self.default_output_index: int = 0
 
         self.modules = {k: v.__name__ for k, v in self.globals.items() if dtypes.ismodule(v)}
@@ -1317,17 +1314,17 @@ class ProgramVisitor(ExtNodeVisitor):
         self.indirections = dict()
         #: The shape symbol each scalar's current version was promoted to, with the region its assignment ran in.
         #: A write to the scalar drops it, so every shape sized from one value shares one symbol.
-        self.shape_promotions: Dict[str, Tuple[symbolic.symbol, ControlFlowRegion]] = dict()
+        self.shape_promotions: dict[str, tuple[symbolic.symbol, ControlFlowRegion]] = dict()
         #: Integer scalars whose last assignment was a symbolic value, with the region it ran in.
-        self.symbolic_scalar_values: Dict[str, Tuple[symbolic.SymbolicType, ControlFlowRegion]] = dict()
+        self.symbolic_scalar_values: dict[str, tuple[symbolic.SymbolicType, ControlFlowRegion]] = dict()
         #: Promoted symbols every read so far provably set to a symbolic value, with the region it holds in.
-        self.promoted_symbol_values: Dict[symbolic.symbol, Tuple[symbolic.SymbolicType, ControlFlowRegion]] = dict()
+        self.promoted_symbol_values: dict[symbolic.symbol, tuple[symbolic.SymbolicType, ControlFlowRegion]] = dict()
         #: Promoted symbols some read may have set to another value.
-        self.unproven_symbols: Set[str] = set()
+        self.unproven_symbols: set[str] = set()
 
         #: The one symbol a computed index (``A[i + 1]``) of each scalar is promoted to, re-assigned at every
         #: promotion (No-View nested SDFGs); a bare scalar and a shape use their version above instead.
-        self.promoted_scalars: Dict[str, symbolic.symbol] = dict()
+        self.promoted_scalars: dict[str, symbolic.symbol] = dict()
 
     @classmethod
     def progress_count(cls) -> int:
@@ -1431,7 +1428,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 arr.transient = False
                 self.outputs[arrname] = (None, Memlet.from_array(arrname, arr), [])
 
-        def _views_to_data(state: SDFGState, nodes: List[dace.nodes.AccessNode]) -> List[dace.nodes.AccessNode]:
+        def _views_to_data(state: SDFGState, nodes: list[dace.nodes.AccessNode]) -> list[dace.nodes.AccessNode]:
             new_nodes = []
             for vnode in nodes:
                 if vnode.data in self.views:
@@ -1480,7 +1477,7 @@ class ProgramVisitor(ExtNodeVisitor):
     def defined(self) -> DefinedNames:
         return DefinedNames(self)
 
-    def defined_dict(self) -> Dict[str, Any]:
+    def defined_dict(self) -> dict[str, Any]:
         """The names ``defined`` resolves, merged into one dict: a later source overwrites an earlier one."""
         # Check parent SDFG arrays first
         result = {}
@@ -1504,13 +1501,13 @@ class ProgramVisitor(ExtNodeVisitor):
 
         return result
 
-    def get_target_name(self, output_index: Optional[int] = None, default: Optional[str] = None) -> str:
+    def get_target_name(self, output_index: int | None = None, default: str | None = None) -> str:
         """:meth:`target_name_candidate`, unless that is a name no container may take (``max`` for ``a.max()``):
         then that name with ``_value`` appended."""
         name = self.target_name_candidate(output_index, default)
         return f"{name}_value" if name in FORBIDDEN_ARRAY_NAMES else name
 
-    def target_name_candidate(self, output_index: Optional[int] = None, default: Optional[str] = None) -> str:
+    def target_name_candidate(self, output_index: int | None = None, default: str | None = None) -> str:
         """
         A heuristic that returns a human-readable name of the current assignment target or expression,
         in a way that is closest to the original Python code.
@@ -1577,9 +1574,8 @@ class ProgramVisitor(ExtNodeVisitor):
                 func_name = current_ast_node.func.attr
 
             # Get argument names
-            arg_names = []
-            for arg in current_ast_node.args[:3]:  # Limit to first 3 args to avoid overly long names
-                arg_names.append(self._get_name_from_node(arg))
+            # Limit to first 3 args to avoid overly long names
+            arg_names = [self._get_name_from_node(arg) for arg in current_ast_node.args[:3]]
 
             if arg_names:
                 result = f"{func_name}_{'_'.join(arg_names)}"
@@ -1631,7 +1627,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 pass
             return "expr"
 
-    def add_temp_transient(self, *args, output_index=None, **kwargs) -> Tuple[str, data.Data]:
+    def add_temp_transient(self, *args, output_index=None, **kwargs) -> tuple[str, data.Data]:
         """
         Helper shorthand method to add a transient array to the SDFG with a heuristically-generated name.
         Takes the same arguments as ``SDFG.add_temp_transient()``.
@@ -1665,9 +1661,9 @@ class ProgramVisitor(ExtNodeVisitor):
         self,
         condition_expr: str,
         label: str = "loop",
-        loop_var: Optional[str] = None,
-        init_expr: Optional[str] = None,
-        update_expr: Optional[str] = None,
+        loop_var: str | None = None,
+        init_expr: str | None = None,
+        update_expr: str | None = None,
         inverted: bool = False,
     ) -> LoopRegion:
         loop_region = LoopRegion(label, condition_expr, loop_var, init_expr, update_expr, inverted)
@@ -1695,7 +1691,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
         return arg
 
-    def _decorator_or_annotation_params(self, node: ast.FunctionDef) -> List[Tuple[str, Any]]:
+    def _decorator_or_annotation_params(self, node: ast.FunctionDef) -> list[tuple[str, Any]]:
         """Returns a list of parameters, either from the function parameters
         and decorator arguments or parameters and their annotations (type
         hints).
@@ -1719,7 +1715,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
         # Ensure all arguments are annotated
         if len(result) != len(node.args.args):
-            raise DaceSyntaxError(self, node, "All arguments in primitive %s must be annotated" % node.name)
+            raise DaceSyntaxError(self, node, f"All arguments in primitive {node.name} must be annotated")
         return result
 
     def _parse_subprogram(self, name, node, is_tasklet=False, extra_symbols=None, extra_map_symbols=None):
@@ -1758,7 +1754,7 @@ class ProgramVisitor(ExtNodeVisitor):
             # Add inputs and outputs to nested inputs/outputs
             cached_defined = self.defined
 
-            def _container_root(name: str) -> Optional[str]:
+            def _container_root(name: str) -> str | None:
                 # The structure itself, not the member, is the container of the enclosing scope
                 if name in cached_defined:
                     return name
@@ -1795,8 +1791,8 @@ class ProgramVisitor(ExtNodeVisitor):
             raise
 
     def _symbols_from_params(
-        self, params: List[Tuple[str, Union[str, dtypes.typeclass]]], memlet_inputs: Dict[str, Memlet]
-    ) -> Dict[str, symbolic.symbol]:
+        self, params: list[tuple[str, str | dtypes.typeclass]], memlet_inputs: dict[str, Memlet]
+    ) -> dict[str, symbolic.symbol]:
         """
         Returns a mapping between symbol names to their type, as a symbol
         object to maintain compatibility with global symbols. Used to maintain
@@ -1849,7 +1845,7 @@ class ProgramVisitor(ExtNodeVisitor):
             dec = rname(dec_ast)
 
         # Create a new state for the statement
-        state = self._add_state("s{l}_{c}".format(l=node.lineno, c=node.col_offset))
+        state = self._add_state(f"s{node.lineno}_{node.col_offset}")
 
         # Define internal node for reconnection
         internal_node = None
@@ -1889,7 +1885,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     extra_map_symbols=map_symbols,
                 )
             else:  # Scope + tasklet (e.g., @dace.map)
-                name = "{}_body".format(entry.label)
+                name = f"{entry.label}_body"
                 # TODO: Now that we return the nested for-loop symbols,
                 # can we use them for something here?
                 sdfg, inputs, outputs, _ = self._parse_subprogram(
@@ -1984,12 +1980,12 @@ class ProgramVisitor(ExtNodeVisitor):
                 raise DaceSyntaxError(self, n, "For-loop iterator must be ast.Name")
             idx_id = n.id
             if idx_id in indices:
-                raise DaceSyntaxError(self, n, "Duplicate index id ({}) in for-loop".format(idx_id))
+                raise DaceSyntaxError(self, n, f"Duplicate index id ({idx_id}) in for-loop")
             indices.append(idx_id)
 
         return indices
 
-    def _parse_value(self, node: Union[ast.Name, ast.Constant]):
+    def _parse_value(self, node: ast.Name | ast.Constant):
         """Parses a value
 
         Arguments:
@@ -2047,7 +2043,7 @@ class ProgramVisitor(ExtNodeVisitor):
             return astutils.unparse(node)
         return self._parse_value(node)
 
-    def _parse_map_slice(self, node: ast.Slice) -> Tuple[str, str, str]:
+    def _parse_map_slice(self, node: ast.Slice) -> tuple[str, str, str]:
         """
         Parses a range of a map (see ``_parse_map_bound``).
 
@@ -2060,7 +2056,7 @@ class ProgramVisitor(ExtNodeVisitor):
             self._parse_map_bound(node.step) if node.step is not None else "1",
         )
 
-    def _parse_index_as_range(self, node: Union[Index, ast.Tuple]):
+    def _parse_index_as_range(self, node: Index | ast.Tuple):
         """
         Parses an index as range
 
@@ -2145,7 +2141,7 @@ class ProgramVisitor(ExtNodeVisitor):
         ast_ranges = []
 
         if iterator not in {"range", "prange", "parrange", "dace.map"}:
-            raise DaceSyntaxError(self, node, "Iterator {} is unsupported".format(iterator))
+            raise DaceSyntaxError(self, node, f"Iterator {iterator} is unsupported")
         if schedule is not None and iterator == "range":
             raise DaceSyntaxError(self, node, "Cannot specify schedule on range loops")
         elif iterator in ["range", "prange", "parrange"]:
@@ -2174,7 +2170,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 ranges = [(valr0, valr1, valr2)]
                 ast_ranges = [(astr0, astr1, astr2)]
             else:
-                raise DaceSyntaxError(self, node, 'Invalid number of arguments for "%s"' % iterator)
+                raise DaceSyntaxError(self, node, f'Invalid number of arguments for "{iterator}"')
             if iterator in ("prange", "parrange"):
                 iterator = "dace.map"
         else:
@@ -2190,8 +2186,8 @@ class ProgramVisitor(ExtNodeVisitor):
         return (iterator, ranges, ast_ranges, schedule)
 
     def _parse_map_inputs(
-        self, name: str, params: List[Tuple[str, str]], node: ast.AST
-    ) -> Tuple[Dict[str, str], Dict[str, Memlet]]:
+        self, name: str, params: list[tuple[str, str]], node: ast.AST
+    ) -> tuple[dict[str, str], dict[str, Memlet]]:
         """Parse map parameters for data-dependent inputs, modifying the
         parameter dictionary and returning relevant memlets.
 
@@ -2218,7 +2214,7 @@ class ProgramVisitor(ExtNodeVisitor):
                         # Check for undefined variables
                         atomstr = str(atom)
                         if atomstr not in self.defined and atomstr not in self.sdfg.arrays:
-                            raise DaceSyntaxError(self, node, 'Undefined variable "%s"' % atom)
+                            raise DaceSyntaxError(self, node, f'Undefined variable "{atom}"')
                         # Add to global SDFG symbols
 
                         # If scalar, should add dynamic map connector
@@ -2273,7 +2269,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
         return new_params, map_inputs
 
-    def _parse_consume_inputs(self, node: ast.FunctionDef) -> Tuple[str, str, Tuple[str, str], str, str]:
+    def _parse_consume_inputs(self, node: ast.FunctionDef) -> tuple[str, str, tuple[str, str], str, str]:
         """Parse consume parameters from AST.
 
         :return: A 5-tuple of Stream name, internal stream name,
@@ -2317,9 +2313,9 @@ class ProgramVisitor(ExtNodeVisitor):
                 if r == rng:
                     return True
                 elif r.covers(rng):
-                    print("WARNING: New access {n}[{rng}] already covered by {n}[{r}]".format(n=name, rng=rng, r=r))
+                    print(f"WARNING: New access {name}[{rng}] already covered by {name}[{r}]")
                 elif rng.covers(r):
-                    print("WARNING: New access {n}[{rng}] covers previous access {n}[{r}]".format(n=name, rng=rng, r=r))
+                    print(f"WARNING: New access {name}[{rng}] covers previous access {name}[{r}]")
                 return False
 
     def _get_array_or_closure(self, name: str) -> data.Data:
@@ -2340,8 +2336,8 @@ class ProgramVisitor(ExtNodeVisitor):
         exit_node: nodes.ExitNode,
         inputs: DependencyType,
         outputs: DependencyType,
-        map_inputs: Dict[str, Memlet] = None,
-        symbols: Dict[str, "dace.symbol"] = dict(),
+        map_inputs: dict[str, Memlet] = None,
+        symbols: dict[str, "dace.symbol"] = dict(),
     ):
 
         # Parse map inputs (for memory-based ranges)
@@ -2428,7 +2424,7 @@ class ProgramVisitor(ExtNodeVisitor):
                         vname = "{c}_in_from_{s}{n}".format(
                             c=conn,
                             s=self.sdfg.states().index(state),
-                            n=("_%s" % state.node_id(entry_node) if entry_node else ""),
+                            n=(f"_{state.node_id(entry_node)}" if entry_node else ""),
                         )
                         self.accesses[(name, scope_memlet.subset, "r")] = (vname, orng)
                         orig_shape = orng.size()
@@ -2462,9 +2458,8 @@ class ProgramVisitor(ExtNodeVisitor):
                     )
                 else:
                     state.add_edge(read_node, None, internal_node, conn, memlet)
-        else:
-            if entry_node is not None:
-                state.add_nedge(entry_node, internal_node, dace.Memlet())
+        elif entry_node is not None:
+            state.add_nedge(entry_node, internal_node, dace.Memlet())
 
         # Parse internal node outputs
         if outputs:
@@ -2518,7 +2513,7 @@ class ProgramVisitor(ExtNodeVisitor):
                         vname = "{c}_out_of_{s}{n}".format(
                             c=conn,
                             s=self.sdfg.states().index(state),
-                            n=("_%s" % state.node_id(exit_node) if exit_node else ""),
+                            n=(f"_{state.node_id(exit_node)}" if exit_node else ""),
                         )
                         self.accesses[(name, scope_memlet.subset, "w")] = (vname, orng)
                         orig_shape = orng.size()
@@ -2551,9 +2546,8 @@ class ProgramVisitor(ExtNodeVisitor):
                     )
                 else:
                     state.add_edge(internal_node, conn, write_node, None, inner_memlet)
-        else:
-            if exit_node is not None:
-                state.add_nedge(internal_node, exit_node, dace.Memlet())
+        elif exit_node is not None:
+            state.add_nedge(internal_node, exit_node, dace.Memlet())
 
         # After parsing and connecting the nested SDFG, ensure the data descriptors match the outer SDFG
         if isinstance(internal_node, nodes.NestedSDFG):
@@ -2580,13 +2574,13 @@ class ProgramVisitor(ExtNodeVisitor):
 
     def _recursive_visit(
         self,
-        body: List[ast.AST],
+        body: list[ast.AST],
         name: str,
         lineno: int,
         parent: ControlFlowRegion,
         unconnected_last_block=True,
         extra_symbols=None,
-    ) -> Tuple[SDFGState, SDFGState, SDFGState, bool]:
+    ) -> tuple[SDFGState, SDFGState, SDFGState, bool]:
         """Visits a subtree of the AST, creating special states before and after the visit. Returns the previous state,
         and the first and last internal states of the recursive visit. Also returns a boolean value indicating
         whether a return statement was met or not. This value can be used by other visitor methods, e.g., visit_If,
@@ -2750,7 +2744,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 loop_cond_expr,
                 label=f"for_{node.lineno}",
                 loop_var=indices[0],
-                init_expr="%s = %s" % (indices[0], astutils.unparse(ast_ranges[0][0])),
+                init_expr=f"{indices[0]} = {astutils.unparse(ast_ranges[0][0])}",
                 update_expr=incr[indices[0]],
                 inverted=False,
             )
@@ -2792,7 +2786,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
             self.last_block = loop_region
         else:
-            raise DaceSyntaxError(self, node, 'Unsupported for-loop iterator "%s"' % iterator)
+            raise DaceSyntaxError(self, node, f'Unsupported for-loop iterator "{iterator}"')
 
     def _is_test_simple(self, node: ast.AST):
         # Fix for scalar promotion tests
@@ -2810,8 +2804,8 @@ class ProgramVisitor(ExtNodeVisitor):
         return is_test_simple
 
     def _visit_complex_test(self, node: ast.Expr):
-        test_region = ControlFlowRegion("%s_%s" % ("cond_prep", node.lineno), self.sdfg)
-        inner_start = test_region.add_state("%s_start_%s" % ("cond_prep", node.lineno))
+        test_region = ControlFlowRegion("{}_{}".format("cond_prep", node.lineno), self.sdfg)
+        inner_start = test_region.add_state("{}_start_{}".format("cond_prep", node.lineno))
 
         p_last_cfg_target, p_last_block, p_target = self.last_cfg_target, self.last_block, self.cfg_target
         self.cfg_target, self.last_block, self.last_cfg_target = test_region, inner_start, test_region
@@ -2828,7 +2822,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
         return parsed_node, test_region
 
-    def _visit_test(self, node: ast.Expr) -> Tuple[str, str, Optional[ControlFlowRegion]]:
+    def _visit_test(self, node: ast.Expr) -> tuple[str, str, ControlFlowRegion | None]:
         is_test_simple = self._is_test_simple(node)
 
         # Visit test-condition
@@ -2875,7 +2869,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 continue
             # Check for undefined variables
             if astr not in self.defined and not ("." in astr and astr in self.sdfg.arrays):
-                raise DaceSyntaxError(self, node, 'Undefined variable "%s"' % atom)
+                raise DaceSyntaxError(self, node, f'Undefined variable "{atom}"')
             # Add to global SDFG symbols if not a scalar
             if astr not in self.sdfg.symbols and astr not in self.variables and astr not in self.sdfg.arrays:
                 # Prefer the dtype of the originally-declared symbol object (if any), since re-parsing the condition
@@ -2917,7 +2911,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
             # Make sure the entire sub-graph of the test_region copy has proper sdfg references and that each block has
             # a unique name in the SDFG.
-            loop_region.sdfg._labels = set(s.label for s in loop_region.sdfg.all_control_flow_blocks())
+            loop_region.sdfg._labels = {s.label for s in loop_region.sdfg.all_control_flow_blocks()}
             for block in test_region_copy.all_control_flow_blocks():
                 block.sdfg = loop_region.sdfg
                 block.label = data.find_new_name(block.label, loop_region.sdfg._labels)
@@ -3062,8 +3056,8 @@ class ProgramVisitor(ExtNodeVisitor):
         return node, inputs, outputs
 
     def indirect_index_group(
-        self, node: ast.AST, aname: str, indirect_indices: Dict[int, str]
-    ) -> Tuple[str, Tuple, Dict[int, str]]:
+        self, node: ast.AST, aname: str, indirect_indices: dict[int, str]
+    ) -> tuple[str, tuple, dict[int, str]]:
         """
         Computes the shared iteration of the index arrays of a store. numpy broadcasts them against
         ONE iteration space, so all indexed dimensions take a single map parameter; a parameter each
@@ -3089,7 +3083,7 @@ class ProgramVisitor(ExtNodeVisitor):
         reads = {dim: ("0" if self.sdfg.arrays[a].shape[0] == 1 else param) for dim, a in indirect_indices.items()}
         return param, (0, extent - 1, 1), reads
 
-    def indirect_index_footprint(self, aname: str, subset: subsets.Range, dim: int) -> Tuple:
+    def indirect_index_footprint(self, aname: str, subset: subsets.Range, dim: int) -> tuple:
         """
         Computes the memlet range of an indexed dimension of a store. The write can land anywhere in
         that dimension, so the memlet covers all of it. An index array's length is the extent of the
@@ -3108,12 +3102,12 @@ class ProgramVisitor(ExtNodeVisitor):
 
     def _add_assignment(
         self,
-        node: Union[ast.Assign, ast.AugAssign],
-        target: Union[str, Tuple[str, subsets.Range]],
-        operand: Union[str, Tuple[str, subsets.Range]],
-        op: Optional[str] = None,
-        boolarr: Optional[str] = None,
-        indirect_indices: Optional[Dict[int, subsets.Range]] = None,
+        node: ast.Assign | ast.AugAssign,
+        target: str | tuple[str, subsets.Range],
+        operand: str | tuple[str, subsets.Range],
+        op: str | None = None,
+        boolarr: str | None = None,
+        indirect_indices: dict[int, subsets.Range] | None = None,
     ):
         # TODO: Refactor these if/else blocks. Maybe
         # the subset should never be None?
@@ -3191,7 +3185,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 outind.append(f"__ind_{i}")
             output_suffix = f"[{', '.join(outind)}]"
 
-        state = self._add_state("assign_{l}_{c}".format(l=node.lineno, c=node.col_offset))
+        state = self._add_state(f"assign_{node.lineno}_{node.col_offset}")
 
         if target_subset.num_elements() != 1:
             if op_subset.num_elements() != 1:
@@ -3247,10 +3241,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     for i, idx in enumerate(inp_idx):
                         if not symbolic.issymbolic(pystr_to_symbolic(idx)):
                             offset_indices_to_ignore.add(i)
-                    fake_subset_offs_indices = []
-                    for i in range(len(fake_subset)):
-                        if i not in offset_indices_to_ignore:
-                            fake_subset_offs_indices.append(i)
+                    fake_subset_offs_indices = [i for i in range(len(fake_subset)) if i not in offset_indices_to_ignore]
                     fake_subset.offset(squeezed, True, indices=fake_subset_offs_indices)
 
                     # we access the inp subset using the computed offset
@@ -3260,9 +3251,9 @@ class ProgramVisitor(ExtNodeVisitor):
                     inp_memlet = Memlet(
                         "{a}[{s}]".format(a=op_name, s=",".join([f"{idx} + {s}" for idx, (s, _, _) in idx_and_subset]))
                     )
-                    out_memlet = Memlet("{a}[{s}]".format(a=target_name, s=target_index))
+                    out_memlet = Memlet(f"{target_name}[{target_index}]")
                     map_range = {
-                        "__i%d" % i: "%s:%s+1:%s" % (start, end, step) for i, (start, end, step) in enumerate(squeezed)
+                        "__i%d" % i: f"{start}:{end}+1:{step}" for i, (start, end, step) in enumerate(squeezed)
                     }
 
                     if indirect_indices:
@@ -3271,7 +3262,7 @@ class ProgramVisitor(ExtNodeVisitor):
                         map_range[adv_param] = adv_range
 
                     if op:
-                        out_memlet.wcr = LambdaProperty.from_string("lambda x, y: x {} y".format(op))
+                        out_memlet.wcr = LambdaProperty.from_string(f"lambda x, y: x {op} y")
 
                     if boolarr is not None:
                         inp_memlet.dynamic = True
@@ -3294,7 +3285,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     memlet = Memlet(data=target_name, subset=target_subset)
                     memlet.other_subset = op_subset
                     if op:
-                        memlet.wcr = LambdaProperty.from_string("lambda x, y: x {} y".format(op))
+                        memlet.wcr = LambdaProperty.from_string(f"lambda x, y: x {op} y")
                     if isinstance(self.sdfg.arrays[target_name], data.Reference):
                         e = state.add_edge(op1, None, op2, "set", memlet)
                         # Align memlet to referenced array
@@ -3306,7 +3297,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     "{a}[{s}]".format(a=target_name, s=",".join(["__i%d" % i for i in range(len(target_subset))]))
                 )
                 map_range = {
-                    "__i%d" % i: "%s:%s+1:%s" % (start, end, step) for i, (start, end, step) in enumerate(target_subset)
+                    "__i%d" % i: f"{start}:{end}+1:{step}" for i, (start, end, step) in enumerate(target_subset)
                 }
 
                 if indirect_indices:
@@ -3317,9 +3308,9 @@ class ProgramVisitor(ExtNodeVisitor):
                     map_range[adv_param] = adv_range
 
                 if op:
-                    memlet.wcr = LambdaProperty.from_string("lambda x, y: x {} y".format(op))
+                    memlet.wcr = LambdaProperty.from_string(f"lambda x, y: x {op} y")
                 if op_name:
-                    inp_memlet = {"__inp": Memlet("{a}[{s}]".format(a=op_name, s=op_subset))}
+                    inp_memlet = {"__inp": Memlet(f"{op_name}[{op_subset}]")}
                     tasklet_code += f"__out{output_suffix} = __inp"
                 else:
                     inp_memlet = dict()
@@ -3342,7 +3333,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 )
         else:
             if op_subset.num_elements() != 1:
-                raise DaceSyntaxError(self, node, "Incompatible subsets %s and %s" % (target_subset, op_subset))
+                raise DaceSyntaxError(self, node, f"Incompatible subsets {target_subset} and {op_subset}")
             if op_name:
                 op1 = state.add_read(op_name, debuginfo=self.current_lineinfo)
                 inp_conn = {"__inp"}
@@ -3356,12 +3347,12 @@ class ProgramVisitor(ExtNodeVisitor):
                 name=state.label, inputs=inp_conn, outputs={"__out"}, code=tasklet_code, debuginfo=self.current_lineinfo
             )
             if op_name:
-                inp_memlet = Memlet.simple(op_name, "%s" % op_subset)
+                inp_memlet = Memlet.simple(op_name, f"{op_subset}")
                 if boolarr is not None:
                     inp_memlet.dynamic = True
                 state.add_edge(op1, None, tasklet, "__inp", inp_memlet)
 
-            out_memlet = Memlet.simple(target_name, "%s" % target_subset)
+            out_memlet = Memlet.simple(target_name, f"{target_subset}")
             if boolarr is not None:
                 out_memlet.dynamic = True
             for i in indirect_indices:
@@ -3371,19 +3362,19 @@ class ProgramVisitor(ExtNodeVisitor):
                 state.add_edge(r, None, tasklet, cname, memlet)
 
             if op:
-                out_memlet.wcr = LambdaProperty.from_string("lambda x, y: x {} y".format(op))
+                out_memlet.wcr = LambdaProperty.from_string(f"lambda x, y: x {op} y")
 
             state.add_edge(tasklet, "__out", op2, None, out_memlet)
 
     def _add_aug_assignment(
         self,
-        node: Union[ast.Assign, ast.AugAssign],
-        rtarget: Union[str, Tuple[str, subsets.Range]],
-        wtarget: Union[str, Tuple[str, subsets.Range]],
-        operand: Union[str, Tuple[str, subsets.Range]],
+        node: ast.Assign | ast.AugAssign,
+        rtarget: str | tuple[str, subsets.Range],
+        wtarget: str | tuple[str, subsets.Range],
+        operand: str | tuple[str, subsets.Range],
         op: str,
-        boolarr: Optional[str] = None,
-        indirect_indices: Optional[Dict[int, subsets.Range]] = None,
+        boolarr: str | None = None,
+        indirect_indices: dict[int, subsets.Range] | None = None,
     ):
 
         # TODO: Refactor these if/else blocks. Maybe
@@ -3472,7 +3463,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 outind.append(f"__ind_{i}")
             output_suffix = f"[{', '.join(outind)}]"
 
-        state = self._add_state("augassign_{l}_{c}".format(l=node.lineno, c=node.col_offset))
+        state = self._add_state(f"augassign_{node.lineno}_{node.col_offset}")
 
         if wtarget_subset.num_elements() != 1:
             if op_subset.num_elements() != 1:
@@ -3500,7 +3491,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 # numpy aligns an operand with the result of the indexing, where an integer index already removed
                 # its axis (``pf[:, corners, 0]`` is rank 2): an operand already carrying that rank drops nothing.
                 if len(op_subset) == len(sqz_wsub) < len(wtarget_subset):
-                    op_drop: Set[int] = set()
+                    op_drop: set[int] = set()
                 else:
                     shift = len(wtarget_subset) - len(op_subset)
                     op_drop = {i - shift for i in wdropped if 0 <= i - shift < len(op_subset)}
@@ -3516,7 +3507,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 # broadcast axis at 0, which the mapped tasklet expresses; the copy path below cannot. The read
                 # and write targets must still agree: they are the same buffer.
                 if boolarr or indirect_indices or sqz_wsub.size() == sqz_rsub.size():
-                    map_range = {i: rng for i, rng in all_idx_tuples}
+                    map_range = dict(all_idx_tuples)
                     in1_memlet = Memlet.simple(rtarget_name, out_idx)
                     in1_memlet.subset.unsqueeze(rsqueezed)
                     in1_memlet.subset.offset(rtarget_subset, False)
@@ -3562,7 +3553,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     memlet = Memlet.simple(wtarget_name, wtarget_subset)
                     memlet.other_subset = op_subset
                     if op is not None:
-                        memlet.wcr = LambdaProperty.from_string("lambda x, y: x {} y".format(op))
+                        memlet.wcr = LambdaProperty.from_string(f"lambda x, y: x {op} y")
                         memlet.wcr_nonatomic = True
                     state.add_nedge(op1, op2, memlet)
             else:
@@ -3572,11 +3563,10 @@ class ProgramVisitor(ExtNodeVisitor):
                     rtarget_name, ",".join(["__i%d + %s" % (i, s) for i, (s, _, _) in enumerate(in1_subset)])
                 )
                 if op_name:
-                    in2_memlet = Memlet.simple(op_name, "%s" % op_subset)
+                    in2_memlet = Memlet.simple(op_name, f"{op_subset}")
                 out_memlet = Memlet.simple(wtarget_name, ",".join(["__i%d" % i for i in range(len(wtarget_subset))]))
                 map_range = {
-                    "__i%d" % i: "%s:%s+1:%s" % (start, end, step)
-                    for i, (start, end, step) in enumerate(wtarget_subset)
+                    "__i%d" % i: f"{start}:{end}+1:{step}" for i, (start, end, step) in enumerate(wtarget_subset)
                 }
                 if boolarr is not None:
                     in1_memlet.dynamic = True
@@ -3609,45 +3599,44 @@ class ProgramVisitor(ExtNodeVisitor):
                     external_edges=True,
                     debuginfo=self.current_lineinfo,
                 )
+        elif op_subset.num_elements() != 1:
+            raise DaceSyntaxError(
+                self, node, f"Incompatible subsets {rtarget_subset}, {op_subset} and {wtarget_subset}"
+            )
         else:
-            if op_subset.num_elements() != 1:
-                raise DaceSyntaxError(
-                    self, node, "Incompatible subsets %s, %s and %s" % (rtarget_subset, op_subset, wtarget_subset)
-                )
+            op1 = state.add_read(rtarget_name, debuginfo=self.current_lineinfo)
+            if op_name:
+                op2 = state.add_read(op_name, debuginfo=self.current_lineinfo)
+                inp_conns = {"__in1", "__in2"}
+                tasklet_code += f"__out = __in1 {op} __in2"
             else:
-                op1 = state.add_read(rtarget_name, debuginfo=self.current_lineinfo)
-                if op_name:
-                    op2 = state.add_read(op_name, debuginfo=self.current_lineinfo)
-                    inp_conns = {"__in1", "__in2"}
-                    tasklet_code += f"__out = __in1 {op} __in2"
-                else:
-                    inp_conns = {"__in1"}
-                    tasklet_code += f"__out = __in1 {op} {operand}"
-                inp_conns |= set(input_memlets.keys())
-                op3 = state.add_write(wtarget_name, debuginfo=self.current_lineinfo)
-                tasklet = state.add_tasklet(
-                    name=state.label,
-                    inputs=inp_conns,
-                    outputs={"__out"},
-                    code=tasklet_code,
-                    debuginfo=self.current_lineinfo,
-                )
-                in1_memlet = Memlet.simple(rtarget_name, "%s" % rtarget_subset)
-                if op_name:
-                    in2_memlet = Memlet.simple(op_name, "%s" % op_subset)
-                    state.add_edge(op2, None, tasklet, "__in2", in2_memlet)
-                for cname, memlet in input_memlets.items():
-                    r = state.add_read(memlet.data)
-                    state.add_edge(r, None, tasklet, cname, memlet)
+                inp_conns = {"__in1"}
+                tasklet_code += f"__out = __in1 {op} {operand}"
+            inp_conns |= set(input_memlets.keys())
+            op3 = state.add_write(wtarget_name, debuginfo=self.current_lineinfo)
+            tasklet = state.add_tasklet(
+                name=state.label,
+                inputs=inp_conns,
+                outputs={"__out"},
+                code=tasklet_code,
+                debuginfo=self.current_lineinfo,
+            )
+            in1_memlet = Memlet.simple(rtarget_name, f"{rtarget_subset}")
+            if op_name:
+                in2_memlet = Memlet.simple(op_name, f"{op_subset}")
+                state.add_edge(op2, None, tasklet, "__in2", in2_memlet)
+            for cname, memlet in input_memlets.items():
+                r = state.add_read(memlet.data)
+                state.add_edge(r, None, tasklet, cname, memlet)
 
-                out_memlet = Memlet.simple(wtarget_name, "%s" % wtarget_subset)
-                if boolarr is not None:
-                    in1_memlet.dynamic = True
-                    out_memlet.dynamic = True
-                state.add_edge(op1, None, tasklet, "__in1", in1_memlet)
-                state.add_edge(tasklet, "__out", op3, None, out_memlet)
+            out_memlet = Memlet.simple(wtarget_name, f"{wtarget_subset}")
+            if boolarr is not None:
+                in1_memlet.dynamic = True
+                out_memlet.dynamic = True
+            state.add_edge(op1, None, tasklet, "__in1", in1_memlet)
+            state.add_edge(tasklet, "__out", op3, None, out_memlet)
 
-    def detached_reshape_source(self, name: str) -> Optional[str]:
+    def detached_reshape_source(self, name: str) -> str | None:
         """The array a materialized reshape along ``name``'s view chain was taken from, or None.
 
         The mark never sits on the name an assignment resolves to: binding the reshape's result to a
@@ -3668,16 +3657,16 @@ class ProgramVisitor(ExtNodeVisitor):
         name: str,
         rng: subsets.Range,
         access_type: Literal["r", "w"],
-        target: Union[ast.Name, ast.Subscript],
+        target: ast.Name | ast.Subscript,
         new_name: str = None,
         arr_type: data.Data = None,
     ) -> str:
         if access_type not in ("r", "w"):
-            raise ValueError("Access type {} is invalid".format(access_type))
+            raise ValueError(f"Access type {access_type} is invalid")
         if new_name:
             var_name = new_name
         elif target:
-            var_name = "__tmp_{l}_{c}_{a}".format(l=target.lineno, c=target.col_offset, a=access_type)
+            var_name = f"__tmp_{target.lineno}_{target.col_offset}_{access_type}"
         else:
             var_name = self.get_target_name()
 
@@ -3729,7 +3718,7 @@ class ProgramVisitor(ExtNodeVisitor):
         elif arr_type == data.Structure:
             var_name = self.sdfg.add_datadesc(var_name, copy.deepcopy(parent_array), find_new_name=True)
         else:
-            raise NotImplementedError("Data type {} is not implemented".format(arr_type))
+            raise NotImplementedError(f"Data type {arr_type} is not implemented")
 
         self.accesses[(name, rng, access_type)] = (var_name, nested_rng)
 
@@ -3750,11 +3739,10 @@ class ProgramVisitor(ExtNodeVisitor):
                 self.inputs[var_name] = (state, new_memlet, inner_indices)
             else:
                 self.inputs[var_name] = (state, new_memlet, inner_indices)
+        elif has_indirection:
+            self.outputs[var_name] = (state, new_memlet, inner_indices)
         else:
-            if has_indirection:
-                self.outputs[var_name] = (state, new_memlet, inner_indices)
-            else:
-                self.outputs[var_name] = (state, new_memlet, inner_indices)
+            self.outputs[var_name] = (state, new_memlet, inner_indices)
 
         self.variables[var_name] = var_name
         return (var_name, nested_rng)
@@ -3763,7 +3751,7 @@ class ProgramVisitor(ExtNodeVisitor):
         self,
         name: str,
         rng: subsets.Range,
-        target: Union[ast.Name, ast.Subscript],
+        target: ast.Name | ast.Subscript,
         new_name: str = None,
         arr_type: data.Data = None,
     ):
@@ -3792,7 +3780,7 @@ class ProgramVisitor(ExtNodeVisitor):
         self,
         name: str,
         rng: subsets.Range,
-        target: Union[ast.Name, ast.Subscript],
+        target: ast.Name | ast.Subscript,
         new_name: str = None,
         arr_type: data.Data = None,
     ):
@@ -3840,7 +3828,7 @@ class ProgramVisitor(ExtNodeVisitor):
             dtype = None
             storage = dtypes.StorageType.Default
             type_name = rname(node.annotation)
-            warnings.warn("typeclass {} is not supported".format(type_name))
+            warnings.warn(f"typeclass {type_name} is not supported")
         if dtype is not None:
             self.annotated_types[rname(node.target)] = dtype
             if node.value is None:  # Annotating type without assignment
@@ -4007,7 +3995,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 if true_name in self.views:
                     if self.view_already_sees(true_name, result):
                         continue
-                    raise DaceSyntaxError(self, target, 'Cannot reassign View "{}"'.format(name))
+                    raise DaceSyntaxError(self, target, f'Cannot reassign View "{name}"')
                 if (
                     isinstance(result, str)
                     and result in self.sdfg.arrays
@@ -4019,7 +4007,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     target = ast.copy_location(target, node_target)
                     assert isinstance(target, ast.Subscript)
                 else:
-                    raise DaceSyntaxError(self, target, 'Cannot reassign value to variable "{}"'.format(name))
+                    raise DaceSyntaxError(self, target, f'Cannot reassign value to variable "{name}"')
 
                 # If the target is a view, we can't assign two different arrays to it
                 if isinstance(result, str) and true_name in self.views and self.views[true_name][0] != result:
@@ -4042,7 +4030,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     )
 
             if not true_name and (op or isinstance(target, ast.Subscript)):
-                raise DaceSyntaxError(self, target, 'Variable "{}" used before definition'.format(name))
+                raise DaceSyntaxError(self, target, f'Variable "{name}" used before definition')
 
             new_data, rng = None, None
             dtype_keys = tuple(dtypes.dtype_to_typeclass().keys())
@@ -4255,7 +4243,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 # indirection edge.
                 with_wcr = False
                 if op and not independent:
-                    memlet.wcr = LambdaProperty.from_string("lambda x, y: x {} y".format(op))
+                    memlet.wcr = LambdaProperty.from_string(f"lambda x, y: x {op} y")
                     with_wcr = True
                     # WCR not needed in the assignment edge any longer.
                     op = None
@@ -4296,7 +4284,7 @@ class ProgramVisitor(ExtNodeVisitor):
     def visit_AugAssign(self, node: ast.AugAssign):
         self._visit_assign(node, node.target, augassign_ops[type(node.op).__name__])
 
-    def _get_keyword_value(self, keywords: List[ast.keyword], arg: str):
+    def _get_keyword_value(self, keywords: list[ast.keyword], arg: str):
         """Finds a keyword in list and returns its value
 
         Arguments:
@@ -4314,9 +4302,9 @@ class ProgramVisitor(ExtNodeVisitor):
             if kword.arg == arg:
                 return kword.value
 
-        raise DaceSyntaxError(self, keywords, "Keyword {} not found".format(arg))
+        raise DaceSyntaxError(self, keywords, f"Keyword {arg} not found")
 
-    def _parse_shape(self, node: Union[ast.List, ast.Tuple, ast.Attribute]):
+    def _parse_shape(self, node: ast.List | ast.Tuple | ast.Attribute):
         """Parses the shape of an array
 
         Arguments:
@@ -4331,12 +4319,10 @@ class ProgramVisitor(ExtNodeVisitor):
         """
 
         if isinstance(node, (ast.List, ast.Tuple)):
-            shape = []
-            for length in node.elts:
-                shape.append(self._parse_value(length))
+            shape = [self._parse_value(length) for length in node.elts]
         elif isinstance(node, ast.Attribute):
             if node.attr != "shape":
-                raise DaceSyntaxError(self, node, "Attribute {} is not shape".format(rname(node)))
+                raise DaceSyntaxError(self, node, f"Attribute {rname(node)} is not shape")
             shape = self.scope_arrays[node.value.id].shape
         else:
             raise DaceSyntaxError(
@@ -4365,7 +4351,7 @@ class ProgramVisitor(ExtNodeVisitor):
             if node.value.id in {"dace", "numpy"}:
                 dtype = getattr(self.globals[node.value.id], node.attr)
             elif node.attr != "dtype":
-                raise DaceSyntaxError(self, node, "Attribute {} is not dtype".format(rname(node)))
+                raise DaceSyntaxError(self, node, f"Attribute {rname(node)} is not dtype")
             else:
                 dtype = self.scope_arrays[node.value.id].dtype
         else:
@@ -4476,7 +4462,7 @@ class ProgramVisitor(ExtNodeVisitor):
                         if state.in_degree(node) > 0:
                             return True
 
-    def _get_sdfg(self, value: Any, args: Tuple[Any], kwargs: Dict[str, Any]) -> SDFG:
+    def _get_sdfg(self, value: Any, args: tuple[Any], kwargs: dict[str, Any]) -> SDFG:
         if isinstance(value, SDFG):  # Already an SDFG
             return value
         if hasattr(value, "__sdfg__"):  # Object that can be converted to SDFG
@@ -4486,7 +4472,7 @@ class ProgramVisitor(ExtNodeVisitor):
     def _has_sdfg(self, value: Any) -> bool:
         return isinstance(value, SDFG) or hasattr(value, "__sdfg__")
 
-    def _eval_arg(self, arg: Union[str, Any]) -> Any:
+    def _eval_arg(self, arg: str | Any) -> Any:
         if not isinstance(arg, str):
             return arg
         if arg in self.defined:
@@ -4497,7 +4483,7 @@ class ProgramVisitor(ExtNodeVisitor):
             return self.sdfg.symbols[arg]
         return arg
 
-    def _assert_arg_constant(self, node: ast.Call, aname: str, aval: Union[ast.AST, Any], parsed: Tuple[str, Any]):
+    def _assert_arg_constant(self, node: ast.Call, aname: str, aval: ast.AST | Any, parsed: tuple[str, Any]):
         """
         Checks if given argument is constant. If not, raises a DaceSyntaxError exception.
 
@@ -4518,7 +4504,7 @@ class ProgramVisitor(ExtNodeVisitor):
             self, node, f'Argument "{aname}" was defined as dace.compiletime but was not given a constant'
         )
 
-    def _parse_sdfg_call(self, funcname: str, func: Union[SDFG, SDFGConvertible], node: ast.Call):
+    def _parse_sdfg_call(self, funcname: str, func: SDFG | SDFGConvertible, node: ast.Call):
         # Avoid import loops
         from dace.frontend.python.common import SDFGConvertible
         from dace.frontend.python.parser import DaceProgram
@@ -4658,9 +4644,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     args.append((aname, outer_name))
                     required_args.append(aname)
         else:
-            raise DaceSyntaxError(
-                self, node, 'Unrecognized SDFG type "%s" in call to "%s"' % (type(func).__name__, funcname)
-            )
+            raise DaceSyntaxError(self, node, f'Unrecognized SDFG type "{type(func).__name__}" in call to "{funcname}"')
         # Avoid import loops
         from dace.frontend.python.parser import infer_symbols_from_datadescriptor
 
@@ -4670,7 +4654,7 @@ class ProgramVisitor(ExtNodeVisitor):
             mapping = infer_symbols_from_datadescriptor(
                 sdfg,
                 {k: self.sdfg.arrays[v] for k, v in args if v in self.sdfg.arrays},
-                set(sym.arg for sym in node.keywords if sym.arg in symbols),
+                {sym.arg for sym in node.keywords if sym.arg in symbols},
             )
         except ValueError as ex:
             raise DaceSyntaxError(self, node, str(ex))
@@ -4686,7 +4670,7 @@ class ProgramVisitor(ExtNodeVisitor):
         else:
             required_args.extend(symbols)
         required_args = dtypes.deduplicate(required_args)
-        gargs = set(a[0] for a in args)
+        gargs = {a[0] for a in args}
         for rarg in required_args:
             if rarg not in gargs and rarg in self.sdfg.symbols:
                 args.append((rarg, rarg))
@@ -4698,9 +4682,9 @@ class ProgramVisitor(ExtNodeVisitor):
                 required_args.append(aname)
                 continue
             if aname not in required_args and aname not in all_args:
-                raise DaceSyntaxError(self, node, 'Invalid keyword argument "%s" in call to "%s"' % (aname, funcname))
+                raise DaceSyntaxError(self, node, f'Invalid keyword argument "{aname}" in call to "{funcname}"')
         if len(args) != len(required_args):
-            gargs = set(a[0] for a in args)
+            gargs = {a[0] for a in args}
             if len(args) > len(required_args):
                 extra = set(gargs) - set(required_args)
                 raise DaceSyntaxError(
@@ -4737,7 +4721,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
         # Change connector names
         updated_args = []
-        names_to_replace: Dict[str, str] = {}
+        names_to_replace: dict[str, str] = {}
         for i, (conn, arg) in enumerate(args):
             updated_args.append((conn, arg))
         args = updated_args
@@ -4875,7 +4859,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
         # Add return values as additional outputs
         rets = []
-        given_args = set(a for a, _ in args)
+        given_args = {a for a, _ in args}
         for arrname, arr in sdfg.arrays.items():
             if arrname.startswith("__return") and not arr.transient and arrname not in given_args:
                 # Add a transient to the current SDFG
@@ -4941,9 +4925,8 @@ class ProgramVisitor(ExtNodeVisitor):
                 if inv_mapping:
                     symbolic.safe_replace(inv_mapping, lambda m: sd.replace_properties_dict(sdfg.arrays[a], m))
                 dealias.rebase_descendants(sdfg, a, old_desc, sdfg.arrays[a])
-            else:
-                if strides and (strides[-1] != 1 or sdfg.arrays[a].strides[-1] != 1):
-                    warnings.warn(f"Incompatible strides: inner {sdfg.arrays[a].strides} - outer {strides}")
+            elif strides and (strides[-1] != 1 or sdfg.arrays[a].strides[-1] != 1):
+                warnings.warn(f"Incompatible strides: inner {sdfg.arrays[a].strides} - outer {strides}")
 
         nsdfg = state.add_nested_sdfg(sdfg, inputs.keys(), outputs.keys(), mapping, debuginfo=self.current_lineinfo)
         self._add_nested_symbols(nsdfg)
@@ -5105,7 +5088,7 @@ class ProgramVisitor(ExtNodeVisitor):
             return_names = []
             return_type = []
 
-            def parse_target(t: Union[ast.Name, ast.Subscript]):
+            def parse_target(t: ast.Name | ast.Subscript):
                 name = rname(t)
                 if name in defined_vars:
                     tname = defined_vars[name]
@@ -5114,11 +5097,10 @@ class ProgramVisitor(ExtNodeVisitor):
                         dtype, shape = self.visit_Subscript(copy.deepcopy(t), True)
                         n = name + "_slice"
                         n, arr = self.sdfg.add_transient(n, shape, dtype, find_new_name=True)
+                    elif isinstance(tarr, data.Scalar):
+                        n, arr = self.sdfg.add_scalar(name, tarr.dtype, transient=True, find_new_name=True)
                     else:
-                        if isinstance(tarr, data.Scalar):
-                            n, arr = self.sdfg.add_scalar(name, tarr.dtype, transient=True, find_new_name=True)
-                        else:
-                            n, arr = self.sdfg.add_temp_transient_like(tarr, name=name)
+                        n, arr = self.sdfg.add_temp_transient_like(tarr, name=name)
                 elif name in self.annotated_types:
                     dtype = self.annotated_types[name]
                     if isinstance(dtype, data.Data):
@@ -5385,7 +5367,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     )
                     return self.create_callback(node)
                 raise DaceSyntaxError(
-                    self, node, 'Method "%s" is not registered for object type "%s"' % (methodname, classname)
+                    self, node, f'Method "{methodname}" is not registered for object type "{classname}"'
                 )
             # Add object as first argument
             if modname in self.variables.keys():
@@ -5413,7 +5395,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     )
                     return self.create_callback(node)
                 raise DaceSyntaxError(
-                    self, node, 'Function "%s" is not registered with an SDFG implementation' % funcname
+                    self, node, f'Function "{funcname}" is not registered with an SDFG implementation'
                 )
 
         # Parsing the arguments with `_parse_function_arg` will generate
@@ -5573,7 +5555,9 @@ class ProgramVisitor(ExtNodeVisitor):
             # Return values can either be tuples or a single object
             if isinstance(node.value, (ast.Tuple, ast.List)):
                 ast_tuple = ast.copy_location(
-                    ast.parse("(%s,)" % ",".join("__return_%d" % i for i in range(len(node.value.elts)))).body[0].value,
+                    ast.parse("({},)".format(",".join("__return_%d" % i for i in range(len(node.value.elts)))))
+                    .body[0]
+                    .value,
                     node,
                 )
                 self._visit_assign(new_node, ast_tuple, None, is_return=True)
@@ -5661,7 +5645,7 @@ class ProgramVisitor(ExtNodeVisitor):
             return name
 
         if name not in self.scope_vars:
-            raise DaceSyntaxError(self, node, 'Use of undefined variable "%s"' % name)
+            raise DaceSyntaxError(self, node, f'Use of undefined variable "{name}"')
         rname = self.scope_vars[name]
         if rname in self.scope_arrays:
             rng = subsets.Range.from_array(self.scope_arrays[rname])
@@ -5737,7 +5721,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
     def visit_Set(self, node: ast.Set):
         # Recursively loop over elements
-        return set(self.visit(a) for a in node.elts)
+        return {self.visit(a) for a in node.elts}
 
     def visit_Dict(self, node: ast.Dict):
         # Recursively loop over elements and return an ordered dictionary (for callback consistency)
@@ -5752,7 +5736,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
     ############################################################
 
-    def _gettype(self, opnode: ast.AST) -> List[Tuple[str, str]]:
+    def _gettype(self, opnode: ast.AST) -> list[tuple[str, str]]:
         """Returns an operand and its type as a 2-tuple of strings."""
         if isinstance(opnode, ast.AST):
             operands = self.visit(opnode)
@@ -5785,7 +5769,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
         return result
 
-    def _visit_op(self, node: Union[ast.UnaryOp, ast.BinOp, ast.BoolOp], op1: ast.AST, op2: ast.AST):
+    def _visit_op(self, node: ast.UnaryOp | ast.BinOp | ast.BoolOp, op1: ast.AST, op2: ast.AST):
         opname = None
         try:
             opname = type(node.op).__name__
@@ -5851,7 +5835,7 @@ class ProgramVisitor(ExtNodeVisitor):
         for r in results:
             if isinstance(r, str) and r in self.sdfg.arrays:
                 if r in self.variables.keys():
-                    raise DaceSyntaxError(self, node, "Variable {v} has been already defined".format(v=r))
+                    raise DaceSyntaxError(self, node, f"Variable {r} has been already defined")
                 self.variables[r] = r
 
         self.last_block.set_default_lineinfo(None)
@@ -6071,7 +6055,7 @@ class ProgramVisitor(ExtNodeVisitor):
             region = region.parent_graph
         return True
 
-    def drop_shape_versions_written_in(self, loop: Union[ast.For, ast.While]):
+    def drop_shape_versions_written_in(self, loop: ast.For | ast.While):
         """A loop that assigns a scalar re-enters its body with a new value, which a version read before the loop
         does not see: a shape in the body ahead of the write must read the scalar again."""
         # By assignment target, not by ``ctx``: a name the preprocessing builds may carry none (Python 3.12 then has
@@ -6116,7 +6100,7 @@ class ProgramVisitor(ExtNodeVisitor):
         )
         return not any(str(sym) in assigned for sym in value.free_symbols)
 
-    def proven_symbol_values(self) -> Dict[symbolic.symbol, symbolic.SymbolicType]:
+    def proven_symbol_values(self) -> dict[symbolic.symbol, symbolic.SymbolicType]:
         """Promoted symbols that provably equal a symbolic value at the current region.
 
         ``n = N; hc[:n, :n] = c`` bounds the store by ``n``'s promoted symbol while ``c`` is sized by
@@ -6129,7 +6113,7 @@ class ProgramVisitor(ExtNodeVisitor):
             if self.value_holds_here(value, region)
         }
 
-    def promote_scalar_to_symbol(self, scalar: str, key: Optional[str] = None) -> symbolic.symbol:
+    def promote_scalar_to_symbol(self, scalar: str, key: str | None = None) -> symbolic.symbol:
         """
         Reads a scalar into a symbol on an interstate edge, leaving its descriptor in place.
 
@@ -6268,14 +6252,12 @@ class ProgramVisitor(ExtNodeVisitor):
         # minted from the source text. Only the scalar case is this method's business.
         return expr.subs(repl) if repl else None
 
-    def _parse_subscript_slice(
-        self, s: ast.AST, multidim: bool = False
-    ) -> Union[Any, Tuple[Union[Any, str, symbolic.symbol]]]:
+    def _parse_subscript_slice(self, s: ast.AST, multidim: bool = False) -> Any | tuple[Any | str | symbolic.symbol]:
         """Parses the slice attribute of an ast.Subscript node.
         Scalar data are promoted to symbols.
         """
 
-        def _promote(node: ast.AST, slice_bound: bool = False) -> Union[Any, str, symbolic.symbol]:
+        def _promote(node: ast.AST, slice_bound: bool = False) -> Any | str | symbolic.symbol:
             node_str = astutils.unparse(node)
             if isinstance(node, str):
                 scalar = node_str
@@ -6325,7 +6307,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 res = ((lower, upper, step),)
         elif isinstance(s, ast.Tuple):
             if multidim:  # Tuple inside the multi-dimensional index (i.e., "A[(1,2,3),]")
-                res = list(self._parse_subscript_slice(d, multidim=True) for d in s.elts)
+                res = [self._parse_subscript_slice(d, multidim=True) for d in s.elts]
             else:
                 res = tuple(self._parse_subscript_slice(d, multidim=True) for d in s.elts)
         else:
@@ -6368,7 +6350,7 @@ class ProgramVisitor(ExtNodeVisitor):
             )
         array, arrtype = node_parsed[0]
         if arrtype == "str" or arrtype in dtypes._CTYPES:
-            raise DaceSyntaxError(self, node, 'Type "%s" cannot be sliced' % arrtype)
+            raise DaceSyntaxError(self, node, f'Type "{arrtype}" cannot be sliced')
         if arrtype == "NumConstant":
             return array
 
@@ -6446,7 +6428,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
         # Add slicing state
         # TODO: naming issue, we don't have the linenumber here
-        self._add_state("slice_%s" % (array))
+        self._add_state(f"slice_{array}")
         rnode = self.current_state.add_read(array, debuginfo=self.current_lineinfo)
         other_subset = copy.deepcopy(rng)
         other_subset.squeeze()
@@ -6471,7 +6453,7 @@ class ProgramVisitor(ExtNodeVisitor):
             )
         return tmp, other_subset
 
-    def _index_literal_to_constant(self, aname: str, indices: Union[List[Any], Tuple[Any, ...]]) -> numpy.ndarray:
+    def _index_literal_to_constant(self, aname: str, indices: list[Any] | tuple[Any, ...]) -> numpy.ndarray:
         """
         Converts a list or tuple literal used as an advanced index (e.g., ``A[[0, 2, 4]]``) to a constant
         integer array.
@@ -6500,7 +6482,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
         return numpy.array(values, dtype=dtypes.typeclass(int).type)
 
-    def _compute_output_shape_from_advanced_indexing(self, aname: str, expr: MemletExpr) -> List[symbolic.SymbolicType]:
+    def _compute_output_shape_from_advanced_indexing(self, aname: str, expr: MemletExpr) -> list[symbolic.SymbolicType]:
         """
         Computes the output shape of a slicing operation with advanced indexing.
 
@@ -6544,7 +6526,7 @@ class ProgramVisitor(ExtNodeVisitor):
         # Broadcast all advanced indexing expressions together
         chunk_shape = None
         # Get the advanced indexing expressions
-        for _, arrname in expr.arrdims.items():
+        for arrname in expr.arrdims.values():
             if isinstance(arrname, str):  # Array or constant
                 if arrname in self.sdfg.arrays:
                     desc = self.sdfg.arrays[arrname]
@@ -6568,7 +6550,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
     def _create_memlets_from_advanced_indexing(
         self, aname: str, expr: MemletExpr
-    ) -> Tuple[Dict[str, subsets.Range], Memlet, Memlet, List[Memlet]]:
+    ) -> tuple[dict[str, subsets.Range], Memlet, Memlet, list[Memlet]]:
         """
         Creates the input memlets and index expression of a slicing operation with advanced indexing.
         Returns four elements: a dictionary mapping an index name (e.g., ``__i0``) to the range to access, a memlet
@@ -6594,7 +6576,7 @@ class ProgramVisitor(ExtNodeVisitor):
         index_mapping = {
             f"__i{i}": (0, s - 1, 1) for i, (s, rng) in enumerate(zip(expr.subset.size(), ndrange)) if rng[0] != rng[1]
         }
-        index_memlets: List[Memlet] = []
+        index_memlets: list[Memlet] = []
 
         # Fast path: no advanced indexing
         if not expr.arrdims:

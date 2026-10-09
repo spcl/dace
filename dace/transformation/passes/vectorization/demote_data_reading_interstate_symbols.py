@@ -18,11 +18,9 @@ the invisible read turns into a refusal.
 """
 
 import dataclasses
-from typing import Any, List, Type, Union
+from typing import Any
 
-from dace import SDFG
-from dace import properties
-from dace import symbolic
+from dace import SDFG, properties, symbolic
 from dace.memlet import Memlet
 from dace.ordered import OrderedSet
 from dace.sdfg import nodes
@@ -108,7 +106,7 @@ class DemoteDataReadingInterstateSymbols(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+    def depends_on(self) -> list[type[ppl.Pass] | ppl.Pass]:
         return []
 
     def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> int | None:

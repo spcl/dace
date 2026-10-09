@@ -1,19 +1,18 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+import networkx as nx
+import numpy as np
 import pytest
 
 import dace
-from dace.sdfg.analysis.schedule_tree import sdfg_to_tree, treenodes as tn
-from dace.transformation.dataflow.prune_connectors import PruneConnectors
-from dace.transformation.helpers import nest_state_subgraph, nest_sdfg_subgraph, nest_sdfg_control_flow
-from dace.transformation.pass_pipeline import Pipeline
-from dace.transformation.passes.scalar_fission import ScalarFission
 from dace.sdfg import nodes
+from dace.sdfg.analysis.schedule_tree import sdfg_to_tree
+from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.sdfg.graph import SubgraphView
 from dace.sdfg.state import ControlFlowRegion, LoopRegion, StateSubgraphView
-import networkx as nx
-
-from dace.sdfg.state import LoopRegion, StateSubgraphView
-import numpy as np
+from dace.transformation.dataflow.prune_connectors import PruneConnectors
+from dace.transformation.helpers import nest_sdfg_control_flow, nest_sdfg_subgraph, nest_state_subgraph
+from dace.transformation.pass_pipeline import Pipeline
+from dace.transformation.passes.scalar_fission import ScalarFission
 
 
 @dace.program
@@ -591,7 +590,7 @@ def test_folded_write_ordering_is_not_reanchored_into_a_cycle():
     nsdfg = next(n for n in state.nodes() if isinstance(n, nodes.NestedSDFG))
     assert list(nsdfg.out_connectors) == ["B"] and state.out_degree(nsdfg) == 1
     assert nx.has_path(state._nx, mx1, me2), "the fold dropped the ordering of m2 after fold"
-    assert [n for n in state.data_nodes()] == [kept]
+    assert list(state.data_nodes()) == [kept]
     got = np.zeros(10)
     sdfg(B=got)
     assert np.array_equal(got, np.array([1, 1, 1, 1, 2, 2, 3, 3, 3, 3], dtype=np.float64))

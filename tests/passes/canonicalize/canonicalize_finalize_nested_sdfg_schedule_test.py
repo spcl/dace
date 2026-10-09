@@ -18,9 +18,9 @@ by the loop that follows -- the "Sequential nested SDFG" case was never a distin
 """
 
 import dace
-from dace.sdfg.dealias import convert_legacy_nested_sdfgs
 from dace import dtypes
 from dace.libraries.standard.nodes.reduce import Reduce
+from dace.sdfg.dealias import convert_legacy_nested_sdfgs
 from dace.transformation.passes.canonicalize.finalize import libnode_is_sequential
 from dace.transformation.passes.cpu_specialization import SequentializeUnprofitableParallelScopes
 

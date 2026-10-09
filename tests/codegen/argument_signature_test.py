@@ -168,7 +168,7 @@ def test_argument_signature_test():
             break
 
     # Now get the argument list of the map.
-    res_arglist = {k: v for k, v in state.scope_subgraph(map_entry).arglist().items()}
+    res_arglist = dict(state.scope_subgraph(map_entry).arglist().items())
 
     ref_arglist = {
         "A": dace.data.Array,

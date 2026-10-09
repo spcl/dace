@@ -14,14 +14,13 @@ import pytest
 import sympy
 
 import dace
+import dace.autodiff.data_forwarding.store as ad_store
+import dace.autodiff.utils as ad_utils
 import dace.sdfg.nodes as nd
 from dace import symbolic
-from dace.sdfg.state import LoopRegion
-
-import dace.autodiff.utils as ad_utils
-import dace.autodiff.data_forwarding.store as ad_store
 from dace.autodiff import add_backward_pass
 from dace.autodiff.backward_pass_generator import BackwardPassGenerator
+from dace.sdfg.state import LoopRegion
 
 N = dace.symbol("N", dtype=dace.int64)
 

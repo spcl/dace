@@ -470,7 +470,7 @@ def test_else_branch_permutation_takes_parallel_path():
     a = np.zeros(n)
     sdfg(a=a, ip=ip.astype(np.int32), b=b, N=n)
     assert np.allclose(a, _vas_sequential(b, ip, n)), (
-        f"parallel branch must compute the same values as the sequential reference for a permutation idx"
+        "parallel branch must compute the same values as the sequential reference for a permutation idx"
     )
 
 
@@ -496,7 +496,7 @@ def test_else_branch_duplicate_idx_takes_sequential_path():
     a = np.zeros(n)
     sdfg(a=a, ip=ip, b=b, N=n)
     assert np.allclose(a, _vas_sequential(b, ip, n)), (
-        f"sequential fallback must produce the last-write-wins result on duplicated idx"
+        "sequential fallback must produce the last-write-wins result on duplicated idx"
     )
 
 

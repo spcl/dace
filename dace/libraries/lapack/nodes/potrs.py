@@ -13,13 +13,12 @@ import dace.library
 import dace.properties
 import dace.sdfg.nodes
 from dace import dtypes, symbolic
-from dace.transformation.transformation import ExpandTransformation
-from .. import environments
-from dace.libraries.blas import environments as blas_environments
 from dace.libraries.blas import blas_helpers
-from dace.symbolic import equal_valued
+from dace.libraries.blas import environments as blas_environments
+from dace.libraries.lapack import environments
 from dace.ordered import OrderedSet
-from typing import List
+from dace.symbolic import equal_valued
+from dace.transformation.transformation import ExpandTransformation
 
 
 @dace.library.expansion
@@ -57,7 +56,7 @@ class ExpandPotrsMKL(ExpandTransformation):
 class ExpandPotrsGPUSolver(ExpandTransformation):
     """Cholesky solve on a vendor GPU solver; the two differ only in the vocabulary below."""
 
-    environments: List[type] = []
+    environments: list[type] = []
 
     @classmethod
     def fill_enum(cls, lower: bool) -> str:

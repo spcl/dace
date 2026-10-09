@@ -8,13 +8,14 @@ a NumPy reference to verify the transform is semantically sound.
 """
 
 import numpy as np
-import dace
-from dace.sdfg.dealias import convert_legacy_nested_sdfgs
-from dace import dtypes, memlet as mm, nodes
-from dace.sdfg import SDFG, SDFGState
-from dace.transformation.interstate import LoopToMap, StateFusion
 
+import dace
+from dace import dtypes, nodes
+from dace import memlet as mm
+from dace.sdfg import SDFG, SDFGState
+from dace.sdfg.dealias import convert_legacy_nested_sdfgs
 from dace.transformation.dataflow.perf_loop_nesting import PerfLoopNesting
+from dace.transformation.interstate import LoopToMap, StateFusion
 
 
 def _force_sequential_maps(sdfg: dace.SDFG):

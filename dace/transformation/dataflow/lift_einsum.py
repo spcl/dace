@@ -2,7 +2,6 @@
 
 import ast
 import copy
-from typing import Dict, List
 
 import sympy
 
@@ -100,7 +99,7 @@ class LiftEinsum(xf.SingleStateTransformation):
                 return False
             if memlet.volume != 1 or memlet.subset.num_elements() != 1:
                 return False
-            ind = set(str(rb) for rb, _, _ in memlet.subset.ndrange())
+            ind = {str(rb) for rb, _, _ in memlet.subset.ndrange()}
             unique_chars |= ind
             if any(i != "0" and i not in self.map_entry.map.params for i in ind):
                 return False
@@ -216,7 +215,7 @@ class LiftEinsum(xf.SingleStateTransformation):
         return True
 
     def apply(self, state: SDFGState, sdfg: SDFG):
-        import dace.libraries.blas as blas
+        from dace.libraries import blas
 
         map_exit = state.exit_node(self.map_entry)
 
@@ -230,17 +229,17 @@ class LiftEinsum(xf.SingleStateTransformation):
         # map-parameter-free input (e.g. ``alpha[0]``) is a runtime scalar
         # COEFFICIENT, wired as the einsum's explicit ``_alpha`` scalar input
         # connector (the data read stays explicit; the expansion consumes it).
-        connectors: Dict[str, str] = {}
+        connectors: dict[str, str] = {}
         # One map input can feed several operands (``centroids * centroids``), so each keeps its own.
-        operands: Dict[str, List[str]] = {}
+        operands: dict[str, list[str]] = {}
         in_edges = []
         out_edge = None
         coeff_edges = []  # scalar-coefficient input edges (alpha-like)
-        coeff_map_conns: Dict[str, str] = {}  # map-entry IN-conn -> einsum coeff conn
+        coeff_map_conns: dict[str, str] = {}  # map-entry IN-conn -> einsum coeff conn
         for e in state.in_edges(self.tasklet):
             if e.data.is_empty():
                 continue
-            ind = set(str(rb) for rb, _, _ in e.data.subset.ndrange())
+            ind = {str(rb) for rb, _, _ in e.data.subset.ndrange()}
             if not (ind - {"0"}):  # scalar coefficient: no map parameter
                 coeff_edges.append(e)
                 coeff_map_conns[state.memlet_path(e)[-2].dst_conn] = "_alpha"
@@ -277,8 +276,8 @@ class LiftEinsum(xf.SingleStateTransformation):
         # operand<->term pairing (and hence the contracted dimensions) is wrong
         # whenever the tasklet's edge order differs from alphabetical (e.g. 2mm/3mm,
         # where it manifested as a dimension mismatch / silently wrong result).
-        param_mapping: Dict[str, str] = {}
-        input_terms: Dict[str, str] = {}  # einsum in-connector -> index string
+        param_mapping: dict[str, str] = {}
+        input_terms: dict[str, str] = {}  # einsum in-connector -> index string
         einsum_output = ""
         for e in in_edges + [out_edge]:
             # Create parameter mapping

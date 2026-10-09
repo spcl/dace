@@ -18,11 +18,10 @@ from dataclasses import dataclass
 
 import dace
 from dace.memlet import Memlet
+from dace.optionals import required
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.transformation.passes.vectorization.utils.map_predicates import map_body_nodes
 from dace.transformation.passes.vectorization.utils.tasklets import single_assignment
-from typing import Dict, Type
-from dace.optionals import required
 
 _INFIX_OPS = {"+", "-", "*", "/", "&", "|", "^"}
 _FUNCALL_OPS = {"max", "min"}
@@ -97,9 +96,7 @@ def emit_tree_reduction(input_var: str, vector_width: int, op: str) -> str:
     _validate(op, vector_width)
     operands: list[str] = [f"{input_var}[{i}]" for i in range(vector_width)]
     while len(operands) > 1:
-        nxt: list[str] = []
-        for i in range(0, len(operands) - 1, 2):
-            nxt.append(_wrap_pair(op, operands[i], operands[i + 1]))
+        nxt: list[str] = [_wrap_pair(op, operands[i], operands[i + 1]) for i in range(0, len(operands) - 1, 2)]
         if len(operands) % 2 == 1:
             nxt.append(operands[-1])
         operands = nxt
@@ -110,14 +107,14 @@ def emit_tree_reduction(input_var: str, vector_width: int, op: str) -> str:
 # loop_to_reduce WCR tables but yields this module's short op token
 # rather than a ``lambda a, b: ...`` string (a different representation,
 # not duplicated behaviour). max / min are function calls, not infix.
-_AST_BINOP_TO_OP: Dict[Type[ast.operator], str] = {
+_AST_BINOP_TO_OP: dict[type[ast.operator], str] = {
     ast.Add: "+",
     ast.Mult: "*",
     ast.BitAnd: "&",
     ast.BitOr: "|",
     ast.BitXor: "^",
 }
-_AST_BOOLOP_TO_OP: Dict[Type[ast.boolop], str] = {
+_AST_BOOLOP_TO_OP: dict[type[ast.boolop], str] = {
     ast.Or: "|",
     ast.And: "&",
 }

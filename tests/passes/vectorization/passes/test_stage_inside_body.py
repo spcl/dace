@@ -7,12 +7,12 @@ import dace
 from dace.libraries.standard.nodes.copy.common import INPUT_CONNECTOR_NAME, OUTPUT_CONNECTOR_NAME
 from dace.libraries.tileops import MaskedCopyLibraryNode, TileGather
 from dace.memlet import Memlet
-from tests.passes.vectorization.tile_assertions import masked_loads, masked_stores
 from dace.transformation.passes.vectorization.insert_tile_load_store import (
     InsertTileLoadStore,
     stage_constant_access,
     stage_tile_load,
 )
+from tests.passes.vectorization.tile_assertions import masked_loads, masked_stores
 
 
 def _shape_eq_ignoring_one(actual, expected):

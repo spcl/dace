@@ -16,14 +16,15 @@ uniformity fix on barrier, and confirm backward compatibility (no connector ->
 
 from unittest import mock
 
-import dace
 import numpy as np
 import pytest
-from dace.memlet import Memlet
+
+import dace
+import dace.frontend.python.replacements.mpi as comm_repl
 import dace.libraries.mpi as mpi
 from dace.libraries.mpi.nodes.comm_f2c import CommF2c
 from dace.libraries.mpi.nodes.redistribute import Redistribute
-import dace.frontend.python.replacements.mpi as comm_repl
+from dace.memlet import Memlet
 
 # Comm-argument spellings of the wired connectors; used to prove a connector is
 # (or is not) the communicator of an emitted MPI call.  Matching the bare name is

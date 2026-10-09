@@ -4,10 +4,10 @@ import os
 import subprocess
 import sys
 
-import dace
 import numpy as np
 import pytest
 
+import dace
 from dace.libraries.standard.nodes.reduce import Reduce
 
 N = dace.symbol("N")

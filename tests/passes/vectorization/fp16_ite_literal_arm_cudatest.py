@@ -32,8 +32,8 @@ import pytest
 
 import dace
 from dace.transformation.passes.vectorization.config import VectorizeConfig
-from dace.transformation.passes.vectorization.vectorize_gpu import VectorizeGPU
 from dace.transformation.passes.vectorization.enums import RemainderStrategy
+from dace.transformation.passes.vectorization.vectorize_gpu import VectorizeGPU
 
 #: Every test here is about float16, so the whole module carries the marker the fp16 CI leg
 #: selects on.

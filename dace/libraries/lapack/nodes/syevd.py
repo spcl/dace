@@ -13,7 +13,7 @@ were never computed. On the device that check costs one stream synchronization.
 """
 
 import copy
-from typing import Any, List
+from typing import Any
 
 import dace.library
 import dace.properties
@@ -22,10 +22,10 @@ from dace import SDFG, SDFGState, dtypes, symbolic
 from dace.libraries.blas import blas_helpers
 from dace.libraries.blas import environments as blas_environments
 from dace.libraries.lapack import environments
-from dace.ordered import OrderedSet
-from dace.transformation.transformation import ExpandTransformation
 from dace.optionals import required
+from dace.ordered import OrderedSet
 from dace.sdfg.narrowing import as_range
+from dace.transformation.transformation import ExpandTransformation
 
 #: The eigenvalue type of each vendor matrix type: the real type underneath a complex one.
 REAL_CTYPE = {"cuComplex": "float", "cuDoubleComplex": "double"}
@@ -82,7 +82,7 @@ class ExpandSyevdGPUSolver(ExpandTransformation):
     once the stream has drained.
     """
 
-    environments: List[type] = []
+    environments: list[type] = []
 
     @classmethod
     def expansion(

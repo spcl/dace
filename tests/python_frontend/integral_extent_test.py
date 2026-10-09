@@ -1,9 +1,10 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Array extents that are not whole numbers."""
 
-import dace
 import numpy as np
 import pytest
+
+import dace
 
 N = dace.symbol("N", dtype=dace.int64, positive=True)
 FN = dace.symbol("FN", dtype=dace.float64)

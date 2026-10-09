@@ -33,17 +33,17 @@ that write the SAME array at provably-disjoint subsets (e.g. covariance's
 those needs subset-disjointness reasoning and is out of scope for this pass.
 """
 
-from typing import Any, Dict, List, Optional, Tuple, Type, Union
+from typing import Any
 
-from dace.sdfg import nodes
 from dace import SDFG
+from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
-from dace.transformation.passes.loop_fission import _linear_blocks, _is_per_iter_subset
+from dace.transformation.passes.loop_fission import _is_per_iter_subset, _linear_blocks
 
 
-def _interstate_reads(block: ControlFlowBlock) -> List[str]:
+def _interstate_reads(block: ControlFlowBlock) -> list[str]:
     """Containers ``block`` reads through an interstate edge or a branch condition.
 
     Such a read never becomes an AccessNode: ``if mask[i]:`` lowers to an assignment
@@ -54,7 +54,7 @@ def _interstate_reads(block: ControlFlowBlock) -> List[str]:
     if isinstance(block, SDFGState):
         return []
     arrays = block.sdfg.arrays
-    found: Dict[str, None] = {}
+    found: dict[str, None] = {}
     for edge in block.all_interstate_edges(recursive=True):
         found.update(dict.fromkeys(name for name in edge.data.free_symbols if name in arrays))
     for region in block.all_control_flow_regions(recursive=True):
@@ -67,7 +67,7 @@ def _interstate_reads(block: ControlFlowBlock) -> List[str]:
     return list(found)
 
 
-def _rw_subsets(block: ControlFlowBlock, loop_var: Optional[str]) -> Tuple[Dict[str, bool], Dict[str, bool]]:
+def _rw_subsets(block: ControlFlowBlock, loop_var: str | None) -> tuple[dict[str, bool], dict[str, bool]]:
     """For every container ``block`` writes / reads, whether ALL of its accesses
     are per-iteration (single-point at ``loop_var`` with zero offset).
 
@@ -76,8 +76,8 @@ def _rw_subsets(block: ControlFlowBlock, loop_var: Optional[str]) -> Tuple[Dict[
         ``loop_var`` (``_is_per_iter_subset``). A container absent from a dict
         is not written / read by the block.
     """
-    writes: Dict[str, bool] = {}
-    reads: Dict[str, bool] = {}
+    writes: dict[str, bool] = {}
+    reads: dict[str, bool] = {}
     states = [block] if isinstance(block, SDFGState) else list(block.states())
     for st in states:
         for n in st.nodes():
@@ -104,7 +104,7 @@ def _rw_subsets(block: ControlFlowBlock, loop_var: Optional[str]) -> Tuple[Dict[
     return writes, reads
 
 
-def _forward_flow_groups(loop: LoopRegion) -> Optional[List[List[ControlFlowBlock]]]:
+def _forward_flow_groups(loop: LoopRegion) -> list[list[ControlFlowBlock]] | None:
     """Partition ``loop``'s linear body into ordered groups split only across aligned forward flow.
 
     ``Bi`` and ``Bj`` (``i < j``) sharing ``X`` merge if ``Bj`` writes ``X`` (backward WAR / WAW /
@@ -119,7 +119,7 @@ def _forward_flow_groups(loop: LoopRegion) -> Optional[List[List[ControlFlowBloc
     lv = loop.loop_variable
     pos = {b: i for i, b in enumerate(order)}
     rw = {b: _rw_subsets(b, lv) for b in order}
-    parent: Dict[ControlFlowBlock, ControlFlowBlock] = {b: b for b in order}
+    parent: dict[ControlFlowBlock, ControlFlowBlock] = {b: b for b in order}
 
     def find(x: ControlFlowBlock) -> ControlFlowBlock:
         while parent[x] != x:
@@ -148,7 +148,7 @@ def _forward_flow_groups(loop: LoopRegion) -> Optional[List[List[ControlFlowBloc
             if merge:
                 parent[find(bi)] = find(bj)
 
-    classes: Dict = {}
+    classes: dict = {}
     for b in order:
         classes.setdefault(find(b), []).append(b)
     groups = sorted((sorted(g, key=lambda b: pos[b]) for g in classes.values()), key=lambda g: pos[g[0]])
@@ -174,10 +174,10 @@ class DistributeProducerConsumerLoop(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+    def depends_on(self) -> list[type[ppl.Pass] | ppl.Pass]:
         return []
 
-    def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> int | None:
         # Function-local: ``perfect_loop_nesting`` imports this module.
         from dace.transformation.passes.canonicalize.perfect_loop_nesting import distribute_loops
 

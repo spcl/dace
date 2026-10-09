@@ -17,13 +17,13 @@ import pytest
 
 import dace
 from dace.sdfg import nodes
-from dace.transformation.passes.canonicalize.split_statements import SplitStatements
 from dace.transformation.dataflow.map_fission import MapFission
-from dace.transformation.dataflow.map_fusion_vertical import MapFusionVertical
 from dace.transformation.dataflow.map_fusion_horizontal import MapFusionHorizontal
-from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
-from dace.transformation.interstate.state_fusion_with_happens_before import StateFusionExtended
+from dace.transformation.dataflow.map_fusion_vertical import MapFusionVertical
 from dace.transformation.interstate.sdfg_nesting import InlineSDFG
+from dace.transformation.interstate.state_fusion_with_happens_before import StateFusionExtended
+from dace.transformation.passes.canonicalize.split_statements import SplitStatements
+from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
 
 N = dace.symbol("N")
 

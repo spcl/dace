@@ -3,11 +3,12 @@
 One-dimensional Discrete Fourier Transform (DFT) native implementations.
 """
 
-import dace
-import sympy
-import numpy as np
 import math
 
+import numpy as np
+import sympy
+
+import dace
 from dace.libraries.fft.nodes.fft import normalize_fft_axes
 
 

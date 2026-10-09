@@ -1,15 +1,17 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 """Demote free symbols used in conditional-assignment tasklets to scalars."""
 
-from typing import Any, List, Type, Union
+from typing import Any
+
 import dace
-from dace import dtypes, SDFG, properties, SDFGState, symbolic
-from dace.sdfg import ControlFlowRegion, nodes
-from dace.sdfg.state import BreakBlock, ConditionalBlock, LoopRegion
-from dace.transformation.passes.vectorization.utils.tasklets import is_python_tasklet
-from dace.transformation import pass_pipeline as ppl, transformation
 import dace.sdfg.utils as sdutil
+from dace import SDFG, SDFGState, dtypes, properties, symbolic
+from dace.sdfg import ControlFlowRegion, nodes
 from dace.sdfg.narrowing import as_basic
+from dace.sdfg.state import BreakBlock, ConditionalBlock, LoopRegion
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation import transformation
+from dace.transformation.passes.vectorization.utils.tasklets import is_python_tasklet
 
 
 @properties.make_properties
@@ -64,7 +66,7 @@ class LowerInterstateConditionalAssignmentsToTasklets(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+    def depends_on(self) -> list[type[ppl.Pass] | ppl.Pass]:
         return []
 
     @staticmethod

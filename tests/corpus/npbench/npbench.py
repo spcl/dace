@@ -18,7 +18,6 @@ kernels, from the mutated arrays.
 import importlib
 import inspect
 import pkgutil
-from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -30,13 +29,13 @@ def _package():
     return importlib.import_module(__name__.rsplit(".", 1)[0])
 
 
-def collect(name: Optional[str] = None) -> List[dict]:
+def collect(name: str | None = None) -> list[dict]:
     """Discover benchmark ``CORPUS`` descriptors recursively across dwarf folders.
 
     A descriptor with ``lapack=True`` links LAPACKE; tests running it carry the ``lapack`` marker.
     """
     pkg = _package()
-    found: List[dict] = []
+    found: list[dict] = []
     for info in pkgutil.walk_packages(pkg.__path__, prefix=pkg.__name__ + "."):
         if info.name.rsplit(".", 1)[-1] in ("npbench", "__init__"):
             continue
@@ -60,7 +59,7 @@ def collect(name: Optional[str] = None) -> List[dict]:
 SIZE_CAP = 16
 
 
-def sizes_for(c: dict, preset: str = "S") -> Dict[str, object]:
+def sizes_for(c: dict, preset: str = "S") -> dict[str, object]:
     """The dataset symbols for ``preset``.
 
     npbench declares several rows per benchmark (``S``/``M``/``L``/``paper`` in its ``bench_info``
@@ -73,7 +72,7 @@ def sizes_for(c: dict, preset: str = "S") -> Dict[str, object]:
     return dict(c["sizes"])
 
 
-def _capped_sizes(c: dict, cap: Optional[int] = SIZE_CAP, preset: str = "S") -> Dict[str, object]:
+def _capped_sizes(c: dict, cap: int | None = SIZE_CAP, preset: str = "S") -> dict[str, object]:
     sizes = sizes_for(c, preset)
     if cap is None:
         return sizes
@@ -81,8 +80,8 @@ def _capped_sizes(c: dict, cap: Optional[int] = SIZE_CAP, preset: str = "S") -> 
 
 
 def make_inputs(
-    c: dict, cap: Optional[int] = SIZE_CAP, preset: str = "S"
-) -> Tuple[Dict[str, np.ndarray], Dict[str, object]]:
+    c: dict, cap: int | None = SIZE_CAP, preset: str = "S"
+) -> tuple[dict[str, np.ndarray], dict[str, object]]:
     """Initialize the named arrays at the dataset size; return ``(arrays, params)``
     where ``params`` holds the dataset symbols + any scalar kernel arguments.
 
@@ -116,7 +115,7 @@ def _map_call(fn_or_program, arrays, params):
 
 
 def _collect_outputs(c, ret, work):
-    out: Dict[str, np.ndarray] = {}
+    out: dict[str, np.ndarray] = {}
     rets = ret if isinstance(ret, tuple) else (ret,)
     for i, name in enumerate(c["output_args"]):
         if ret is not None and i < len(rets) and rets[i] is not None:
@@ -126,7 +125,7 @@ def _collect_outputs(c, ret, work):
     return out
 
 
-def reference_outputs(c: dict, arrays: Dict[str, np.ndarray], params: Dict[str, object]) -> Dict[str, np.ndarray]:
+def reference_outputs(c: dict, arrays: dict[str, np.ndarray], params: dict[str, object]) -> dict[str, np.ndarray]:
     """Run the numpy reference on copies of the inputs; return the ``output_args``."""
     work = {k: (v.copy() if isinstance(v, np.ndarray) else v) for k, v in arrays.items()}
     call = _map_call(c["reference"], work, params)
@@ -141,8 +140,8 @@ def fresh_sdfg(c: dict, *, simplify: bool = True) -> dace.SDFG:
 
 
 def run_outputs(
-    c: dict, sdfg: dace.SDFG, arrays: Dict[str, np.ndarray], params: Dict[str, object]
-) -> Dict[str, np.ndarray]:
+    c: dict, sdfg: dace.SDFG, arrays: dict[str, np.ndarray], params: dict[str, object]
+) -> dict[str, np.ndarray]:
     """Compile + run ``sdfg`` on copies of the inputs; return the ``output_args``."""
     work = {k: (v.copy() if isinstance(v, np.ndarray) else v) for k, v in arrays.items()}
     call = _map_call(c["program"], work, params)
@@ -152,7 +151,7 @@ def run_outputs(
     return _collect_outputs(c, ret, work)
 
 
-def _tol_for(dtype) -> Tuple[float, float]:
+def _tol_for(dtype) -> tuple[float, float]:
     """``(rtol, atol)`` appropriate to an array's numeric precision.
 
     A single global tolerance is wrong for this corpus: it mixes single-precision
@@ -171,7 +170,7 @@ def _tol_for(dtype) -> Tuple[float, float]:
 
 
 def outputs_match(
-    ref: Dict[str, np.ndarray], got: Dict[str, np.ndarray], *, rtol: float = None, atol: float = None
+    ref: dict[str, np.ndarray], got: dict[str, np.ndarray], *, rtol: float = None, atol: float = None
 ) -> bool:
     """Compare reference vs candidate ``output_args`` with a DTYPE-AWARE tolerance
     (:func:`_tol_for`): fp64 tight, fp32 fp32-appropriate, integers exact. The default

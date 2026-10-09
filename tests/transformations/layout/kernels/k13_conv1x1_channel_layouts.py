@@ -22,11 +22,11 @@ SC'18 (blocked conv layouts).
 """
 
 import numpy
-import dace
 
+import dace
 from dace.transformation.layout.brute_force import permutation_candidates
-from dace.transformation.layout.split_dimensions import SplitDimensions
 from dace.transformation.layout.normalize_schedule import normalize_schedule_for_layout
+from dace.transformation.layout.split_dimensions import SplitDimensions
 
 N, C, H, W, K = (dace.symbol(s) for s in ("N", "C", "H", "W", "K"))
 CBLOCK = 16  # nChw16c SIMD-lane panel width (C must be divisible by it for the Block candidate)

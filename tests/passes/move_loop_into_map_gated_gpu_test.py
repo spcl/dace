@@ -11,8 +11,7 @@ import pytest
 
 import dace
 from dace.sdfg.state import LoopRegion
-from dace.transformation.passes.canonicalize import canonicalize
-from dace.transformation.passes.canonicalize import finalize
+from dace.transformation.passes.canonicalize import canonicalize, finalize
 from dace.transformation.passes.canonicalize.move_loop_into_map_gated import MoveLoopIntoMapGated, launches_saved
 from dace.transformation.passes.gpu_block_size_selection import select_gpu_device_block_size
 

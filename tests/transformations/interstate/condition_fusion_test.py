@@ -6,10 +6,10 @@ import pytest
 
 import dace
 from dace import symbolic
-from dace.transformation.interstate import ConditionFusion
-from dace.transformation.interstate.condition_fusion import simplify_conjunction
 from dace.properties import CodeBlock
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
+from dace.transformation.interstate import ConditionFusion
+from dace.transformation.interstate.condition_fusion import simplify_conjunction
 from tests.sdfg.cfg_list_in_place_test import assert_tree_consistent
 
 

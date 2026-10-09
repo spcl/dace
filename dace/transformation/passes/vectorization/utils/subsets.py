@@ -14,11 +14,11 @@ import dace
 from dace import symbolic
 from dace.memlet import Memlet
 from dace.sdfg.graph import MultiConnectorEdge
+from dace.sdfg.narrowing import as_basic
 from dace.sdfg.nodes import AccessNode
 from dace.subsets import Range
 from dace.transformation.passes.analysis import scopes
 from dace.transformation.passes.vectorization.utils.name_schemes import LaneIdScheme
-from dace.sdfg.narrowing import as_basic
 
 
 def infer_edge_endpoints(

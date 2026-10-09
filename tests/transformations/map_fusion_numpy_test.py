@@ -19,7 +19,7 @@ import pytest
 
 import dace
 from dace.sdfg import nodes
-from dace.transformation.dataflow import MapFusionVertical, MapFusionHorizontal
+from dace.transformation.dataflow import MapFusionHorizontal, MapFusionVertical
 
 N = dace.symbol("N")
 M = dace.symbol("M")

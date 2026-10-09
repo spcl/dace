@@ -12,6 +12,7 @@ CPU graph wearing a GPU label. :func:`assert_offloaded` turns that into a raise.
 """
 
 import copy
+
 import pytest
 
 import dace

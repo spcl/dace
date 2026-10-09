@@ -14,7 +14,8 @@ import copy
 import functools
 import numpy
 from numbers import Integral, Number
-from typing import Any, Callable, Optional, Union
+from typing import Any
+from collections.abc import Callable
 
 
 @oprepo.replaces("dace.reduce")
@@ -146,7 +147,7 @@ def _mean(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str, axis=None):
     else:
         div_amount = sdfg.arrays[a].shape[axis]
 
-    return nest, nest(elementwise)("lambda x: x / ({})".format(div_amount), sum)
+    return nest, nest(elementwise)(f"lambda x: x / ({div_amount})", sum)
 
 
 @oprepo.replaces("numpy.prod")
@@ -183,7 +184,7 @@ def _var(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str, axis=None, dd
     deviation = nest(_array_array_binop)(a, nest(reshape)(mean, keepdims), "Sub", "-")
     total = nest(_sum)(nest(elementwise)("lambda x: x * x", deviation), axis=axis)
     count = functools.reduce(lambda x, y: x * y, (shape[i] for i in axes))
-    return nest, nest(elementwise)("lambda x: x / ({})".format(count - ddof), total)
+    return nest, nest(elementwise)(f"lambda x: x / ({count - ddof})", total)
 
 
 @oprepo.replaces("numpy.std")
@@ -231,7 +232,7 @@ def nan_filled(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str, fill: s
         dtypes.float64,
     ):
         raise NotImplementedError("the nan-aware reductions are supported for floating-point arrays")
-    return elementwise(pv, sdfg, state, "lambda x: x if x == x else ({})".format(fill), a)
+    return elementwise(pv, sdfg, state, f"lambda x: x if x == x else ({fill})", a)
 
 
 @oprepo.replaces("numpy.nansum")
@@ -340,7 +341,7 @@ def _minmax2(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str, b: str, i
         conn_b = symbolic.symstr(b)
 
     dtype_c, [cast_a, cast_b] = result_type([desc_a, desc_b])
-    arg_a, arg_b = "{in1}".format(in1=conn_a), "{in2}".format(in2=conn_b)
+    arg_a, arg_b = f"{conn_a}", f"{conn_b}"
     if cast_a:
         arg_a = "{ca}({in1})".format(ca=str(cast_a).replace("::", "."), in1=conn_a)
     if cast_b:
@@ -364,7 +365,7 @@ def _minmax2(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str, b: str, i
 # NOTE: We support only the version of Python max that takes scalar arguments.
 # For iterable arguments one must use the equivalent NumPy methods.
 @oprepo.replaces("max")
-def _pymax(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: Union[str, Number, symbolic.symbol], *args):
+def _pymax(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str | Number | symbolic.symbol, *args):
     left_arg = a
     current_state = state
     for i, b in enumerate(args):
@@ -379,7 +380,7 @@ def _pymax(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: Union[str, Numbe
 # NOTE: We support only the version of Python min that takes scalar arguments.
 # For iterable arguments one must use the equivalent NumPy methods.
 @oprepo.replaces("min")
-def _pymin(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: Union[str, Number, symbolic.symbol], *args):
+def _pymin(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str | Number | symbolic.symbol, *args):
     left_arg = a
     current_state = state
     for i, b in enumerate(args):
@@ -393,14 +394,14 @@ def _pymin(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: Union[str, Numbe
 
 @oprepo.replaces("numpy.argmax")
 def _argmax(
-    pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str, axis: Optional[int] = None, result_type=dtypes.int32
+    pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str, axis: int | None = None, result_type=dtypes.int32
 ):
     return _argminmax(pv, sdfg, state, a, axis, func="max", result_type=result_type)
 
 
 @oprepo.replaces("numpy.argmin")
 def _argmin(
-    pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str, axis: Optional[int] = None, result_type=dtypes.int32
+    pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str, axis: int | None = None, result_type=dtypes.int32
 ):
     return _argminmax(pv, sdfg, state, a, axis, func="min", result_type=result_type)
 
@@ -410,7 +411,7 @@ def _argminmax(
     sdfg: SDFG,
     state: SDFGState,
     a: str,
-    axis: Optional[int],
+    axis: int | None,
     func: str,
     result_type: dtypes.typeclass = dtypes.int32,
     return_both: bool = False,
@@ -432,7 +433,7 @@ def _argminmax(
     a_arr = sdfg.arrays[a]
 
     if not 0 <= axis < len(a_arr.shape):
-        raise SyntaxError("Expected 0 <= axis < len({}.shape), got {}".format(a, axis))
+        raise SyntaxError(f"Expected 0 <= axis < len({a}.shape), got {axis}")
 
     reduced_shape = list(copy.deepcopy(a_arr.shape))
     reduced_shape.pop(axis)
@@ -440,7 +441,7 @@ def _argminmax(
         reduced_shape = [1]
 
     reduced_expr = ",".join("__i%d" % i for i in range(len(a_arr.shape)) if i != axis)
-    reduced_maprange = {"__i%d" % i: "0:%s" % n for i, n in enumerate(a_arr.shape) if i != axis}
+    reduced_maprange = {"__i%d" % i: f"0:{n}" for i, n in enumerate(a_arr.shape) if i != axis}
     if not reduced_expr:
         reduced_expr = "0"
         reduced_maprange = {"__i0": "0:1"}
@@ -455,7 +456,7 @@ def _argminmax(
     # Both reductions need their identity written first: a fresh transient is zero-filled, and
     # ``min(0, ...)`` / ``max(0, ...)`` would clamp every all-positive / all-negative input.
     nest.add_state().add_mapped_tasklet(
-        name="_arg{}_value_init_".format(func),
+        name=f"_arg{func}_value_init_",
         map_ranges=reduced_maprange,
         inputs={},
         code="__out = {}".format(dtypes.min_value(a_arr.dtype) if func == "max" else dtypes.max_value(a_arr.dtype)),
@@ -463,11 +464,11 @@ def _argminmax(
         external_edges=True,
     )
     nest.add_state().add_mapped_tasklet(
-        name="_arg{}_value_".format(func),
+        name=f"_arg{func}_value_",
         map_ranges={"__i%d" % i: "0:%s" % n for i, n in enumerate(a_arr.shape)},
         inputs={"__in": Memlet.simple(a, ",".join("__i%d" % i for i in range(len(a_arr.shape))))},
         code="__out = __in",
-        outputs={"__out": Memlet.simple(extremum, reduced_expr, wcr_str="lambda x, y: {}(x, y)".format(func))},
+        outputs={"__out": Memlet.simple(extremum, reduced_expr, wcr_str=f"lambda x, y: {func}(x, y)")},
         external_edges=True,
     )
 
@@ -475,15 +476,15 @@ def _argminmax(
     # over the indices attaining the extremum yields the FIRST one, as numpy specifies.
     outidx, _ = pv.add_temp_transient(reduced_shape, result_type, output_index=0 if return_both else None)
     nest.add_state().add_mapped_tasklet(
-        name="_arg{}_index_init_".format(func),
+        name=f"_arg{func}_index_init_",
         map_ranges=reduced_maprange,
         inputs={},
-        code="__out = {}".format(dtypes.max_value(result_type)),
+        code=f"__out = {dtypes.max_value(result_type)}",
         outputs={"__out": Memlet.simple(outidx, reduced_expr)},
         external_edges=True,
     )
     nest.add_state().add_mapped_tasklet(
-        name="_arg{}_index_".format(func),
+        name=f"_arg{func}_index_",
         map_ranges={"__i%d" % i: "0:%s" % n for i, n in enumerate(a_arr.shape)},
         inputs={
             "__in": Memlet.simple(a, ",".join("__i%d" % i for i in range(len(a_arr.shape)))),
@@ -497,7 +498,7 @@ def _argminmax(
     if return_both:
         outval, _ = pv.add_temp_transient(reduced_shape, a_arr.dtype, output_index=1)
         nest.add_state().add_mapped_tasklet(
-            name="_arg{}_value_out_".format(func),
+            name=f"_arg{func}_value_out_",
             map_ranges=reduced_maprange,
             inputs={"__in": Memlet.simple(extremum, reduced_expr)},
             code="__out = __in",

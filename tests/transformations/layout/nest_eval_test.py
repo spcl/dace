@@ -12,7 +12,6 @@ from dace.transformation.layout.externalize import nest_entries
 from dace.transformation.layout.nest_eval import IDENTITY_TAG, default_permutation_candidates, evaluate_nest
 from dace.transformation.layout.prepare import prepare_for_layout
 from dace.transformation.layout.timing import compute_region_stats_timer
-
 from tests.transformations.layout import multinest_programs as fixtures
 
 
@@ -69,7 +68,7 @@ def test_provided_inputs_reach_the_reference(n=32):
             warmup=1,
             name=f"ev_a2_{entry.map.label}",
         )
-        by_output.update({out: ev for out in ev.reference})
+        by_output.update(dict.fromkeys(ev.reference, ev))
     assert numpy.allclose(by_output["B"].reference["B"], 2.0 * inputs["A"])
     ref = fixtures.agree2_oracle(inputs["A"])
     assert numpy.allclose(by_output["C"].reference["C"], ref["C"])

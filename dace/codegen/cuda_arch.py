@@ -6,13 +6,12 @@ import os
 import re
 import shutil
 import subprocess
-from typing import Optional
 
 from dace.config import Config
 
 
 @functools.lru_cache(maxsize=None, typed=True)
-def find_nvcc(root: Optional[str], path_env: str) -> Optional[str]:
+def find_nvcc(root: str | None, path_env: str) -> str | None:
     """``<root>/bin/nvcc`` when it exists, else the ``nvcc`` on ``path_env``; cached per (root, PATH)."""
     if root:
         candidate = os.path.join(root, "bin", "nvcc")
@@ -22,7 +21,7 @@ def find_nvcc(root: Optional[str], path_env: str) -> Optional[str]:
 
 
 @functools.lru_cache(maxsize=None, typed=True)
-def nvcc_supported_arches(nvcc: str) -> Optional[frozenset]:
+def nvcc_supported_arches(nvcc: str) -> frozenset | None:
     """The ``sm_XX`` numbers ``nvcc`` can target, from ``--list-gpu-arch``; ``None`` if the probe fails. A newer
     toolkit drops old architectures (CUDA 13 no longer builds ``sm_60``)."""
     try:
@@ -65,7 +64,7 @@ MINIMUM_CUDA_ARCH = 53
 FALLBACK_CUDA_ARCH = 80
 
 
-def fallback_arch(supported: Optional[set]) -> int:
+def fallback_arch(supported: set | None) -> int:
     """``FALLBACK_CUDA_ARCH`` unless this toolkit cannot build it, then the oldest it can that the runtime's device
     code still works on."""
     if not supported or FALLBACK_CUDA_ARCH in supported:

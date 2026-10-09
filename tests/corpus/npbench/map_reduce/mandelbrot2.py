@@ -2,6 +2,7 @@
 """npbench corpus benchmark: ``mandelbrot2`` (map_reduce) -- auto-ported from the npbench repo."""
 
 import numpy as np
+
 import dace
 import dace as dc
 

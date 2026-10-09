@@ -69,19 +69,19 @@
 ##########################################################################
 ### END OF astunparse LICENSES
 
-from functools import lru_cache
+import ast
 import inspect
 import sys
-import ast
-import numpy as np
 import warnings
-
-import sympy
-import dace
-from numbers import Number
+from functools import lru_cache
 from io import StringIO
-from typing import Dict, List, Optional, Tuple
-from dace import dtypes, cpf_lowering
+from numbers import Number
+
+import numpy as np
+import sympy
+
+import dace
+from dace import cpf_lowering, dtypes
 from dace.sdfg import type_inference
 
 # Large float and imaginary literals get turned into infinities in the AST.
@@ -220,7 +220,7 @@ def numeric_power_value(node: ast.AST):
     return None
 
 
-class LocalScheme(object):
+class LocalScheme:
     def is_defined(self, local_name, current_depth):
         raise NotImplementedError("Abstract class")
 
@@ -237,7 +237,7 @@ class CPPLocals(LocalScheme):
         self.locals = {}
         #: The C dialect's dace type name of each local a standalone printer declared, which every later
         #: statement of the tasklet reads through its own printer.
-        self.c_types: Dict[str, str] = {}
+        self.c_types: dict[str, str] = {}
 
     def is_defined(self, local_name, current_depth):
         return local_name in self.locals
@@ -264,7 +264,7 @@ class CPPLocals(LocalScheme):
             self.c_types.pop(var, None)
 
 
-def c_literal_type(value) -> Optional[str]:
+def c_literal_type(value) -> str | None:
     """The dace type name of the C literal :meth:`CPPUnparser._Num` prints for ``value``, or ``None``.
 
     A Python integer carries the suffix ``_Num`` gives it; a NumPy integer is printed bare, and a bare
@@ -288,7 +288,7 @@ def c_literal_type(value) -> Optional[str]:
     return None
 
 
-def runtime_call(name: str, arguments: List[str], types: Optional[Tuple[Optional[str], ...]] = None) -> str:
+def runtime_call(name: str, arguments: list[str], types: tuple[str | None, ...] | None = None) -> str:
     """A call to a DaCe runtime function, spelled for the ambient dialect.
 
     Under :attr:`~dace.cpf_lowering.Dialect.RUNTIME` this is the call the generators have always
@@ -363,7 +363,7 @@ class CPPUnparser:
         self.c_operators = c_operators
 
         self.dispatch(tree)
-        print("", file=self.f)
+        print(file=self.f)
         self.f.flush()
 
     def fill(self, text=""):
@@ -375,11 +375,10 @@ class CPPUnparser:
             else:
                 self.f.write(text)
             self.firstfill = False
+        elif self.indent_output:
+            self.f.write("\n" + "    " * (self._indent + self.indent_offset) + text)
         else:
-            if self.indent_output:
-                self.f.write("\n" + "    " * (self._indent + self.indent_offset) + text)
-            else:
-                self.f.write("\n" + text)
+            self.f.write("\n" + text)
 
     def write(self, text):
         """Append a piece of text to the current line"""
@@ -417,11 +416,11 @@ class CPPUnparser:
             and self.c_type(ast.BinOp(left=left, op=op, right=right)) in cpf_lowering.C_FLOATING_RANKS
         )
 
-    def c_argument_types(self, arguments) -> Optional[Tuple[Optional[str], ...]]:
+    def c_argument_types(self, arguments) -> tuple[str | None, ...] | None:
         """Each argument node's C type (:meth:`c_type`) when rendering the C dialect, else ``None``."""
         return tuple(self.c_type(node) for node in arguments) if cpf_lowering.standalone_c() else None
 
-    def c_power_type(self, node: ast.BinOp) -> Optional[str]:
+    def c_power_type(self, node: ast.BinOp) -> str | None:
         """The C type of a printed power: an integer literal exponent is a product, ``0.5`` a square root."""
         base = self.c_type(node.left)
         if base is None:
@@ -438,7 +437,7 @@ class CPPUnparser:
         """The type the caller declared ``name`` with, or ``None``."""
         return self.defined_symbols.get(name)
 
-    def c_scalar_type(self, dtype) -> Optional[str]:
+    def c_scalar_type(self, dtype) -> str | None:
         """The dace type name of an arithmetic ``dtype``, a typeclass or a C spelling, or ``None``."""
         if isinstance(dtype, str):
             return cpf_lowering.C_CTYPE_DTYPES.get(dtype)
@@ -479,7 +478,7 @@ class CPPUnparser:
         self.locals.c_types[name] = dtype
         return cpf_lowering.ctype_for(dtypes.dtype_to_typeclass(np.dtype(dtype).type).ctype)
 
-    def c_type(self, node: ast.AST) -> Optional[str]:
+    def c_type(self, node: ast.AST) -> str | None:
         """The dace type name of the C value ``node`` prints as, or ``None`` when it cannot be told.
 
         Follows C rather than NumPy: an integer literal is an ``int``, an integer operand beside a
@@ -514,7 +513,7 @@ class CPPUnparser:
         ):
             # ``dace.int64(x)`` prints as the C cast ``(int64_t)(x)`` (see ``_Call``), so it has the cast's type.
             return node.func.attr if cpf_lowering.c_arithmetic(node.func.attr) else None
-        operands: List[ast.AST] = []
+        operands: list[ast.AST] = []
         if isinstance(node, ast.UnaryOp):
             operands = [node.operand]
         elif isinstance(node, ast.BinOp) and isinstance(node.op, (ast.LShift, ast.RShift)):
@@ -953,36 +952,34 @@ class CPPUnparser:
         if isinstance(value, (float, complex)):
             # Substitute overflowing decimal literal for AST infinities.
             self.write(result.replace("inf", INFSTR))
+        # Special case for strings of containing byte literals (but are still strings).
+        elif result.find("b'") >= 0:
+            self.write(result)
         else:
-            # Special case for strings of containing byte literals (but are still strings).
-            if result.find("b'") >= 0:
-                self.write(result)
-            else:
-                towrite = result
-                if result.startswith("'"):
-                    towrite = result[1:-1].replace('"', '\\"')
-                    towrite = f'"{towrite}"'
-                self.write(towrite)
+            towrite = result
+            if result.startswith("'"):
+                towrite = result[1:-1].replace('"', '\\"')
+                towrite = f'"{towrite}"'
+            self.write(towrite)
 
     def _Constant(self, t):
         value = t.value
         if value is True or value is False or value is None:
             self.write(_py2c_nameconst[value])
-        else:
-            if isinstance(value, (Number, np.bool_)):
-                self._Num(t)
-            elif isinstance(value, tuple):
-                self.write("(")
-                if len(value) == 1:
-                    self._write_constant(value[0])
-                    self.write(",")
-                else:
-                    interleave(lambda: self.write(", "), self._write_constant, value)
-                self.write(")")
-            elif value is Ellipsis:  # instead of `...` for Py2 compatibility
-                self.write("...")
+        elif isinstance(value, (Number, np.bool_)):
+            self._Num(t)
+        elif isinstance(value, tuple):
+            self.write("(")
+            if len(value) == 1:
+                self._write_constant(value[0])
+                self.write(",")
             else:
-                self._write_constant(t.value)
+                interleave(lambda: self.write(", "), self._write_constant, value)
+            self.write(")")
+        elif value is Ellipsis:  # instead of `...` for Py2 compatibility
+            self.write("...")
+        else:
+            self._write_constant(t.value)
 
     def _ClassDef(self, t):
         raise NotImplementedError("Classes are unsupported")
@@ -1488,7 +1485,7 @@ class CPPUnparser:
 
     def _BoolOp(self, t):
         self.write("(")
-        s = " %s " % self.boolops[t.op.__class__]
+        s = f" {self.boolops[t.op.__class__]} "
         interleave(lambda: self.write(s), self.dispatch, t.values)
         self.write(")")
 

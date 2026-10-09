@@ -307,7 +307,7 @@ def test_squeeze_refuses_an_axis_that_is_not_one():
 
 
 if __name__ == "__main__":
-    for name, fn in sorted(list(globals().items())):
+    for name, fn in sorted(globals().items()):
         if name.startswith("test_"):
             fn()
             print(name, "ok")

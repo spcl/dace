@@ -1,10 +1,10 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import warnings
+
 import numpy as np
 
 import dace
-from dace import data, nodes, Memlet
-
+from dace import Memlet, data, nodes
 from dace.transformation.passes.remove_views import RemoveViews
 
 
@@ -228,11 +228,11 @@ def test_squeeze_view():
     v = state.add_access("V")
     a = state.add_write("A")
 
-    state.add_edge(v, "views", a, None, Memlet(data="A", subset="0, 0:{}".format(N), other_subset="0:{}".format(N)))
+    state.add_edge(v, "views", a, None, Memlet(data="A", subset=f"0, 0:{N}", other_subset=f"0:{N}"))
 
     state.add_mapped_tasklet(
         "produce",
-        {"i": "0:{}".format(N)},
+        {"i": f"0:{N}"},
         {},
         "out = double(i)",
         {"out": Memlet("V[i]")},
@@ -341,11 +341,11 @@ def test_unsqueeze_view():
     v = state.add_access("V")
     a = state.add_write("A")
 
-    state.add_edge(v, "views", a, None, Memlet(data="A", subset="0:{}".format(N), other_subset="0, 0:{}, 0".format(N)))
+    state.add_edge(v, "views", a, None, Memlet(data="A", subset=f"0:{N}", other_subset=f"0, 0:{N}, 0"))
 
     state.add_mapped_tasklet(
         "produce",
-        {"i": "0:{}".format(N)},
+        {"i": f"0:{N}"},
         {},
         "out = double(i) + 1.0",
         {"out": Memlet("V[0, i, 0]")},

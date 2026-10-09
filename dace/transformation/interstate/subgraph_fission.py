@@ -1,12 +1,13 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Split a map whose body is a nested SDFG into two maps at a chosen block of that body."""
 
-from typing import Optional
-
-from dace import properties, sdfg as sd
+from dace import properties
+from dace import sdfg as sd
 from dace.ordered import OrderedSet
-from dace.sdfg import graph as gr, nodes, utils as sdutil
+from dace.sdfg import graph as gr
+from dace.sdfg import nodes
 from dace.sdfg import state as cf
+from dace.sdfg import utils as sdutil
 from dace.transformation import helpers, transformation
 from dace.transformation.dataflow import map_fission
 from dace.transformation.interstate import multistate_inline
@@ -49,7 +50,7 @@ class SubgraphFission(transformation.SingleStateTransformation):
     def expressions(cls):
         return [sdutil.node_path_graph(cls.map_entry, cls.nested_sdfg)]
 
-    def cut_block(self) -> Optional[cf.ControlFlowBlock]:
+    def cut_block(self) -> cf.ControlFlowBlock | None:
         return next((b for b in self.nested_sdfg.sdfg.nodes() if b.label == self.cut), None)
 
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):

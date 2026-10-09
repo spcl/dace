@@ -1,8 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
+import numpy as np
 
 import dace
-import numpy as np
 from dace.transformation.layout.split_array import SplitArray
 
 klev = dace.symbol("klev", dtype=dace.int32)

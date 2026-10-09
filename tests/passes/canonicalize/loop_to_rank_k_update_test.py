@@ -20,7 +20,6 @@ from dace.libraries.blas.nodes.syrk import Syrk
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.canonicalize.loop_to_rank_k_update import LoopToRankKUpdate
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
-
 from tests.corpus.polybench import polybench
 
 N = dace.symbol("N")

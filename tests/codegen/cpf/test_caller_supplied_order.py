@@ -25,7 +25,6 @@ import pytest
 
 import dace
 from dace.codegen.cpf import entry_parameter_name, render
-
 from tests.codegen.cpf.conftest import assert_standalone, build_standalone, call_standalone
 
 N = dace.symbol("N")

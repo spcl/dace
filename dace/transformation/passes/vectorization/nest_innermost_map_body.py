@@ -9,6 +9,7 @@ from typing import Any
 
 import dace
 from dace import properties, symbolic
+from dace.optionals import required
 from dace.ordered import OrderedSet
 from dace.sdfg.graph import SubgraphView
 from dace.transformation import pass_pipeline as ppl
@@ -27,7 +28,6 @@ from dace.transformation.passes.vectorization.utils.map_predicates import (
     map_body_nodes,
 )
 from dace.transformation.passes.vectorization.utils.pass_invariants import assert_invariant, no_memlet_dim_mismatch
-from dace.optionals import required
 
 
 @properties.make_properties

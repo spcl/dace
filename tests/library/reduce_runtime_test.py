@@ -22,8 +22,8 @@ import pytest
 import dace
 from dace import memlet as mm
 from dace.codegen.codegen import inline_host_nested_sdfgs
-from dace.sdfg import dealias
 from dace.libraries.standard.nodes.reduce import Reduce
+from dace.sdfg import dealias
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.loop_to_reduce import LoopToReduce
 
@@ -224,14 +224,16 @@ def test_reduction_header_compiles_warning_free(cxx, tmp_path):
     lines = ["#include <dace/reduction.h>"]
     for ns in ("dace::reduce", "dace::reduce::seq"):
         for op in ("sum", "product"):
-            for t in ordered + complexes:
-                lines.append(f"template {t} {ns}::{op}<{t}, {t}>(const {t} *, long, long, {t});")
+            lines.extend(
+                f"template {t} {ns}::{op}<{t}, {t}>(const {t} *, long, long, {t});" for t in ordered + complexes
+            )
         for op in ("min", "max"):
-            for t in ordered:
-                lines.append(f"template {t} {ns}::{op}<{t}, {t}>(const {t} *, long, long, {t});")
+            lines.extend(f"template {t} {ns}::{op}<{t}, {t}>(const {t} *, long, long, {t});" for t in ordered)
         for op in ("bitwise_and", "bitwise_or", "bitwise_xor", "logical_and", "logical_or"):
-            for t in ("int", "long", "short", "unsigned int", "bool"):
-                lines.append(f"template {t} {ns}::{op}<{t}, {t}>(const {t} *, long, long, {t});")
+            lines.extend(
+                f"template {t} {ns}::{op}<{t}, {t}>(const {t} *, long, long, {t});"
+                for t in ("int", "long", "short", "unsigned int", "bool")
+            )
         # Mixed accumulator/element types: an integer array reduced into a real output.
         lines.append(f"template double {ns}::sum<double, int>(const int *, long, long, double);")
         lines.append(f"template double {ns}::min<double, float>(const float *, long, long, double);")

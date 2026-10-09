@@ -1,6 +1,6 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 from collections import defaultdict, deque
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any
 
 from dace import SDFG, SDFGState, symbolic
 from dace.ordered import OrderedSet
@@ -16,9 +16,10 @@ from dace.sdfg.state import (
     LoopRegion,
     ReturnBlock,
 )
-from dace.utils import find_new_name
-from dace.transformation import pass_pipeline as ppl, transformation
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation import transformation
 from dace.transformation.passes import analysis as ap
+from dace.utils import find_new_name
 
 
 @transformation.explicit_cf_compatible
@@ -38,7 +39,7 @@ class StrictSymbolSSA(ppl.ControlFlowRegionPass):
     def depends_on(self):
         return [ap.SymbolWriteScopes]
 
-    def apply(self, region, pipeline_results) -> Optional[Dict[str, Set[str]]]:
+    def apply(self, region, pipeline_results) -> dict[str, set[str]] | None:
         """
         Rename symbols in a restricted SSA manner.
 
@@ -48,7 +49,7 @@ class StrictSymbolSSA(ppl.ControlFlowRegionPass):
                                  pipeline, an empty dictionary is expected.
         :return: A dictionary mapping the original name to a set of all new names created for each symbol.
         """
-        results: Dict[str, Set[str]] = defaultdict(lambda: set())
+        results: dict[str, set[str]] = defaultdict(lambda: set())
         sdfg = region if isinstance(region, SDFG) else region.sdfg
 
         symbol_scope_dict: ap.SymbolScopeDict = pipeline_results[ap.SymbolWriteScopes.__name__][region.cfg_id]
@@ -75,11 +76,10 @@ class StrictSymbolSSA(ppl.ControlFlowRegionPass):
                     for read in shadowed_reads:
                         if isinstance(read, ControlFlowBlock):
                             read.replace(name, newname)
+                        elif read not in scope_dict:
+                            read.data.replace(name, newname)
                         else:
-                            if read not in scope_dict:
-                                read.data.replace(name, newname)
-                            else:
-                                read.data.replace(name, newname, replace_keys=False)
+                            read.data.replace(name, newname, replace_keys=False)
 
                     results[name].add(newname)
 
@@ -88,12 +88,12 @@ class StrictSymbolSSA(ppl.ControlFlowRegionPass):
         else:
             return results
 
-    def report(self, pass_retval: Any) -> Optional[str]:
+    def report(self, pass_retval: Any) -> str | None:
         return f"Renamed {len(pass_retval)} symbols: {pass_retval}."
 
 
 #: A program point of the flattened control flow: ``(kind, block_or_edge)``.
-Point = Tuple[str, Any]
+Point = tuple[str, Any]
 
 
 class FlatControlFlow:
@@ -105,8 +105,8 @@ class FlatControlFlow:
     """
 
     def __init__(self, sdfg: SDFG):
-        self.succ: Dict[Point, List[Point]] = defaultdict(list)
-        self.reads: Dict[Point, Set[str]] = {}
+        self.succ: dict[Point, list[Point]] = defaultdict(list)
+        self.reads: dict[Point, set[str]] = {}
         self.entry: Point = ("rin", sdfg)
         self.exit: Point = ("rout", sdfg)
         self.add_region(sdfg, None)
@@ -114,7 +114,7 @@ class FlatControlFlow:
     def link(self, src: Point, dst: Point):
         self.succ[src].append(dst)
 
-    def add_region(self, region: ControlFlowRegion, loop: Optional[LoopRegion]):
+    def add_region(self, region: ControlFlowRegion, loop: LoopRegion | None):
         if region.number_of_nodes() == 0:
             self.link(("rin", region), ("rout", region))
             return
@@ -128,7 +128,7 @@ class FlatControlFlow:
             self.link(("edge", edge), ("in", edge.dst))
             self.reads[("edge", edge)] = edge.data.read_symbols()
 
-    def add_block(self, block: ControlFlowBlock, loop: Optional[LoopRegion]):
+    def add_block(self, block: ControlFlowBlock, loop: LoopRegion | None):
         entry, leave = ("in", block), ("out", block)
         if isinstance(block, SDFGState):
             self.reads[entry] = block.used_symbols(all_symbols=True)
@@ -171,9 +171,9 @@ class FlatControlFlow:
             self.add_region(block, loop)
             self.link(("rout", block), leave)
 
-    def reaching(self, gen: Dict[Point, int], incoming: int) -> Dict[Point, Set[int]]:
+    def reaching(self, gen: dict[Point, int], incoming: int) -> dict[Point, set[int]]:
         """Definitions live on entry to each point; ``incoming`` stands for the value held at SDFG entry."""
-        arriving: Dict[Point, Set[int]] = defaultdict(set)
+        arriving: dict[Point, set[int]] = defaultdict(set)
         arriving[self.entry].add(incoming)
         work = deque([self.entry])
         while work:
@@ -211,24 +211,24 @@ class SymbolSSA(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return bool(modified & (ppl.Modifies.Symbols | ppl.Modifies.Edges | ppl.Modifies.CFG))
 
-    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Dict[str, Set[str]]]:
+    def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> dict[str, set[str]] | None:
         """Version every symbol web that can carry its own name.
 
         :param sdfg: The SDFG to transform in place, nested SDFGs included.
         :param pipeline_results: Prior pass results; unused.
         :returns: ``{original name: {new names}}``, or ``None`` if nothing was renamed.
         """
-        results: Dict[str, OrderedSet] = defaultdict(OrderedSet)
+        results: dict[str, OrderedSet] = defaultdict(OrderedSet)
         for nested in sdfg.all_sdfgs_recursive():
             for name, new_names in self.version_sdfg(nested).items():
                 results[name] |= new_names
         return dict(results) or None
 
     @staticmethod
-    def candidates(sdfg: SDFG) -> Dict[str, List[Edge]]:
+    def candidates(sdfg: SDFG) -> dict[str, list[Edge]]:
         """Symbols assigned on several of ``sdfg``'s own interstate edges that may be renamed."""
-        defs: Dict[str, List[Edge]] = defaultdict(list)
-        blocked: Set[str] = {str(s) for desc in sdfg.arrays.values() for s in desc.used_symbols(True)}
+        defs: dict[str, list[Edge]] = defaultdict(list)
+        blocked: set[str] = {str(s) for desc in sdfg.arrays.values() for s in desc.used_symbols(True)}
         for region in sdfg.all_control_flow_regions():
             if isinstance(region, LoopRegion):
                 blocked.add(region.loop_variable)
@@ -247,7 +247,7 @@ class SymbolSSA(ppl.Pass):
         return {name: edges for name, edges in defs.items() if len(edges) > 1 and name not in blocked}
 
     @staticmethod
-    def taken_names(sdfg: SDFG) -> Set[str]:
+    def taken_names(sdfg: SDFG) -> set[str]:
         taken = set(sdfg.arrays) | set(sdfg.symbols) | set(sdfg.constants_prop)
         for region in sdfg.all_control_flow_regions():
             if isinstance(region, LoopRegion):
@@ -262,8 +262,8 @@ class SymbolSSA(ppl.Pass):
                     taken |= set(node.map.params)
         return taken
 
-    def version_sdfg(self, sdfg: SDFG) -> Dict[str, OrderedSet]:
-        renamed: Dict[str, OrderedSet] = defaultdict(OrderedSet)
+    def version_sdfg(self, sdfg: SDFG) -> dict[str, OrderedSet]:
+        renamed: dict[str, OrderedSet] = defaultdict(OrderedSet)
         candidates = self.candidates(sdfg)
         if not candidates:
             return renamed
@@ -291,7 +291,7 @@ class SymbolSSA(ppl.Pass):
             else:
                 live = [roots[d] for d in range(len(defs)) if d in arriving[flat.exit]]
                 keeper = live[-1] if live else roots[0]
-            fresh: Dict[int, str] = {}
+            fresh: dict[int, str] = {}
             for root in roots:
                 if root != keeper and root not in fresh:
                     fresh[root] = find_new_name(name, taken)

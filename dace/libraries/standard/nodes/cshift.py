@@ -25,15 +25,17 @@ Callers: the HLFIR frontend routes ``hlfir.cshift`` here, and the Python
 frontend lowers ``numpy.roll`` here (``replacements/array_manipulation.py``).
 """
 
+import enum
+from typing import TYPE_CHECKING
+
 import dace
 import dace.library
 import dace.properties
 import dace.sdfg.nodes
-from dace import SDFG, SDFGState, memlet as mm, symbolic
+from dace import SDFG, SDFGState, symbolic
+from dace import memlet as mm
 from dace.frontend.common import op_repository as oprepo
 from dace.transformation.transformation import ExpandTransformation
-import enum
-from typing import List, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from dace.frontend.python.newast import ProgramVisitor
@@ -69,7 +71,7 @@ class ExpandCShiftPure(ExpandTransformation):
     needed.
     """
 
-    environments: List[type] = []
+    environments: list[type] = []
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, **kwargs):

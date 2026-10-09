@@ -2,6 +2,7 @@
 """npbench corpus benchmark: ``compute`` (map_reduce) -- auto-ported from the npbench repo."""
 
 import numpy as np
+
 import dace as dc
 
 dc_float = dc.float64

@@ -4,6 +4,7 @@
 import re
 
 import pytest
+
 import dace
 from dace import config
 

@@ -47,18 +47,17 @@ fed the moved blocks is re-emitted inside the guarded region so nothing is silen
 """
 
 import copy
-from typing import Dict, List, Optional, Tuple
 
 from dace import SDFG, symbolic
+from dace.optionals import required
 from dace.properties import CodeBlock
 from dace.sdfg import nodes
+from dace.sdfg.narrowing import as_basic, as_expr
 from dace.sdfg.sdfg import InterstateEdge
-from dace.subsets import Subset
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
+from dace.subsets import Subset
 from dace.transformation.passes.analysis.loop_analysis import get_init_assignment, get_loop_end, get_loop_stride
 from dace.transformation.passes.move_if_into_loop import _linear_order
-from dace.sdfg.narrowing import as_basic, as_expr
-from dace.optionals import required
 
 
 def _provably_nonempty(loop: LoopRegion) -> bool:
@@ -84,7 +83,7 @@ def _provably_nonempty(loop: LoopRegion) -> bool:
     return as_basic(diff).is_nonnegative is True
 
 
-def _last_reached_iterate(loop: LoopRegion) -> Optional[symbolic.SymbolicType]:
+def _last_reached_iterate(loop: LoopRegion) -> symbolic.SymbolicType | None:
     """The value of the loop variable on the final executed iteration.
 
     ``get_loop_end`` normalizes the raw bound (``i < a -> a-1``, ``i <= a -> a``); with a
@@ -108,7 +107,7 @@ def _last_reached_iterate(loop: LoopRegion) -> Optional[symbolic.SymbolicType]:
     return symbolic.simplify(init_s + symbolic.int_floor(as_expr(end_s) - as_expr(init_s), stride_s) * stride_s)
 
 
-def _has_outer_carry(subset: Optional[Subset], iv: str) -> bool:
+def _has_outer_carry(subset: Subset | None, iv: str) -> bool:
     """``True`` iff ``subset`` indexes the outer iterator ``iv`` at a non-zero offset.
 
     A single-point / range begin or end of the form ``iv`` (offset 0) is per-iteration and
@@ -133,7 +132,7 @@ def _has_outer_carry(subset: Optional[Subset], iv: str) -> bool:
     return False
 
 
-def _outer_axis_independent(outer: LoopRegion, inner: LoopRegion, pre: List[SDFGState], post: List[SDFGState]) -> bool:
+def _outer_axis_independent(outer: LoopRegion, inner: LoopRegion, pre: list[SDFGState], post: list[SDFGState]) -> bool:
     """S7: refuse if the outer axis carries a dependence a later interchange would break.
 
     Restricted to the outer iterator: any *written* container that is accessed at ``iv +/- c``
@@ -142,9 +141,9 @@ def _outer_axis_independent(outer: LoopRegion, inner: LoopRegion, pre: List[SDFG
     carries and stay clear of this check.
     """
     iv = str(outer.loop_variable)
-    states: List[SDFGState] = list(pre) + list(post) + list(inner.states())
+    states: list[SDFGState] = list(pre) + list(post) + list(inner.states())
 
-    written: Dict[str, None] = {}
+    written: dict[str, None] = {}
     for st in states:
         for n in st.nodes():
             if isinstance(n, nodes.AccessNode) and st.in_degree(n) > 0:
@@ -159,9 +158,9 @@ def _outer_axis_independent(outer: LoopRegion, inner: LoopRegion, pre: List[SDFG
     return True
 
 
-def _body_written_names(inner: LoopRegion) -> Dict[str, None]:
+def _body_written_names(inner: LoopRegion) -> dict[str, None]:
     """Symbols (interstate-edge LHS) and data containers written inside ``inner``'s body."""
-    names: Dict[str, None] = {}
+    names: dict[str, None] = {}
     for e in inner.all_interstate_edges(recursive=True):
         names.update(dict.fromkeys(e.data.assignments.keys()))
     for st in inner.states():
@@ -171,7 +170,7 @@ def _body_written_names(inner: LoopRegion) -> Dict[str, None]:
     return names
 
 
-def _match(sdfg: SDFG) -> Optional[Tuple[LoopRegion, LoopRegion, List[SDFGState], List[SDFGState]]]:
+def _match(sdfg: SDFG) -> tuple[LoopRegion, LoopRegion, list[SDFGState], list[SDFGState]] | None:
     """Find an outer ``LoopRegion`` whose linear body is ``[pre..., one inner loop, post...]``
     and that satisfies every soundness gate.
 
@@ -205,7 +204,7 @@ def _match(sdfg: SDFG) -> Optional[Tuple[LoopRegion, LoopRegion, List[SDFGState]
         if not _outer_axis_independent(outer, inner, pre, post):  # S7
             continue
         # Refuse a sifted interstate assignment whose LHS the body reassigns.
-        sifted_lhs: Dict[str, None] = {}
+        sifted_lhs: dict[str, None] = {}
         edge_of = {(e.src, e.dst): e for e in outer.edges()}
         chain = pre + [inner] + post
         for a, b in zip(chain, chain[1:]):
@@ -218,7 +217,7 @@ def _match(sdfg: SDFG) -> Optional[Tuple[LoopRegion, LoopRegion, List[SDFGState]
     return None
 
 
-def _assemble_region(pairs: List[Tuple[SDFGState, Optional[InterstateEdge]]], label: str) -> ControlFlowRegion:
+def _assemble_region(pairs: list[tuple[SDFGState, InterstateEdge | None]], label: str) -> ControlFlowRegion:
     """Build a fresh linear ``ControlFlowRegion`` from ``(block, incoming-edge-data)`` pairs.
 
     The first pair's edge data is ``None`` (it is the region start); every other block is
@@ -236,7 +235,7 @@ def _assemble_region(pairs: List[Tuple[SDFGState, Optional[InterstateEdge]]], la
     return region
 
 
-def _sift(outer: LoopRegion, inner: LoopRegion, pre: List[SDFGState], post: List[SDFGState]) -> None:
+def _sift(outer: LoopRegion, inner: LoopRegion, pre: list[SDFGState], post: list[SDFGState]) -> None:
     """Sink ``pre`` / ``post`` into ``inner``'s body under boundary guards; make ``outer`` perfect."""
     lv = str(inner.loop_variable)
     first_val = get_init_assignment(inner)
@@ -249,7 +248,7 @@ def _sift(outer: LoopRegion, inner: LoopRegion, pre: List[SDFGState], post: List
     pre_if = None
     if pre:
         pre_copies = [copy.deepcopy(b) for b in pre]
-        pairs: List[Tuple[SDFGState, Optional[InterstateEdge]]] = [(pre_copies[0], None)]
+        pairs: list[tuple[SDFGState, InterstateEdge | None]] = [(pre_copies[0], None)]
         for k in range(1, len(pre)):
             e = edge_of[(pre[k - 1], pre[k])]
             pairs.append((pre_copies[k], copy.deepcopy(e.data)))

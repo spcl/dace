@@ -1,7 +1,8 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import pytest
 import sympy
-from dace.symbolic import sympy_numeric_fix, pystr_to_symbolic, symstr
+
+from dace.symbolic import pystr_to_symbolic, sympy_numeric_fix, symstr
 
 
 def test_float_zero_stays_float():
@@ -143,7 +144,7 @@ def test_serialize_symbolic_float_path_is_idempotent(value):
     the SDFG save -> load -> save equality check (e.g. FFT/IFFT
     ``factor = 1/21`` regressed this way).
     """
-    from dace.symbolic import serialize_symbolic, deserialize_symbolic
+    from dace.symbolic import deserialize_symbolic, serialize_symbolic
 
     s1 = serialize_symbolic(value)
     loaded = deserialize_symbolic(s1)
@@ -171,7 +172,7 @@ def test_int_floor_survives_codegen_where_floordiv_does_not(numerator, denominat
     assert "1 / 2" not in floored, f"a rational leaked into an integer index: {floored}"
 
     for value in range(0, 8):
-        substituted = {s: value for s in expr.free_symbols}
+        substituted = dict.fromkeys(expr.free_symbols, value)
         expected = int(expr.subs(substituted)) // denominator
         actual = int(int_floor(expr, denominator).subs(substituted))
         assert actual == expected, f"int_floor({expr}, {denominator}) at {value}: {actual} != {expected}"

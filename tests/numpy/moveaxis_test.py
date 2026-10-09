@@ -2,9 +2,9 @@
 """``numpy.moveaxis``, which lowers as the axis permutation it is."""
 
 import numpy as np
-import dace
 from common import compare_numpy_output
 
+import dace
 from dace.sdfg.nodes import LibraryNode
 
 N = dace.symbol("N", dtype=dace.int64)

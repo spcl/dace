@@ -2,19 +2,21 @@
 """Lift contiguous zero-assignments and element-wise copies out of maps into Memset / Copy library nodes."""
 
 import warnings
-from typing import Dict, Iterable, List, Optional, Set, Tuple
+from collections.abc import Iterable
 
 import dace
 from dace import properties
-from dace.memlet import Memlet
-from dace.sdfg import graph, utils as sdutils
-from dace.sdfg.state import LoopRegion
-from dace.transformation import helpers, pass_pipeline as ppl, transformation
-from dace.transformation.passes.analysis import loop_analysis
 from dace.libraries.standard.nodes import copy, fill
-from dace.ordered import OrderedSet
+from dace.memlet import Memlet
 from dace.optionals import required
+from dace.ordered import OrderedSet
+from dace.sdfg import graph
+from dace.sdfg import utils as sdutils
 from dace.sdfg.narrowing import as_expr, as_map_entry
+from dace.sdfg.state import LoopRegion
+from dace.transformation import helpers, transformation
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation.passes.analysis import loop_analysis
 
 
 @properties.make_properties
@@ -46,9 +48,7 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
 
     rmid = 0
 
-    def __init__(
-        self, overapproximate_first_dimensions: bool = False, node_label_whitelist: Optional[List[str]] = None
-    ):
+    def __init__(self, overapproximate_first_dimensions: bool = False, node_label_whitelist: list[str] | None = None):
         self.overapproximate_first_dimension = overapproximate_first_dimensions
         self.node_label_whitelist = node_label_whitelist if node_label_whitelist is not None else []
 
@@ -59,8 +59,8 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
         return False
 
     def _get_edges_from_path(
-        self, state: dace.SDFGState, node_path: List[dace.nodes.Node]
-    ) -> List[graph.MultiConnectorEdge]:
+        self, state: dace.SDFGState, node_path: list[dace.nodes.Node]
+    ) -> list[graph.MultiConnectorEdge]:
         if len(node_path) == 1:
             return []
         edges = []
@@ -76,7 +76,7 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
         return edges
 
     @staticmethod
-    def _subset_param_order(subset, map_params: List[str]) -> List[str]:
+    def _subset_param_order(subset, map_params: list[str]) -> list[str]:
         """Per-dimension list of which map parameter the subset uses.
 
         Dimensions that don't reference any map param drop out. Used to compare
@@ -100,7 +100,7 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
                 order.append(next(iter(free)))
         return order
 
-    def _in_out_subsets_are_pure_copy(self, in_subset, out_subset, map_params: List[str]) -> bool:
+    def _in_out_subsets_are_pure_copy(self, in_subset, out_subset, map_params: list[str]) -> bool:
         """Reject permutations (e.g. transpose) but accept copies and broadcasts.
 
         ``_out = _in`` is identical for a copy, a broadcast and a transpose;
@@ -122,7 +122,7 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
 
     def _detect_contiguous_paths(
         self, state: dace.SDFGState, node: dace.nodes.MapEntry, is_memset: bool
-    ) -> List[List[graph.MultiConnectorEdge]]:
+    ) -> list[list[graph.MultiConnectorEdge]]:
         """Find ``MapEntry -> tasklet -> MapExit`` data-movement paths under a map.
 
         Matches a tasklet that is a pure element-wise copy (``is_memset=False``)
@@ -222,7 +222,7 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
 
     def _detect_contiguous_memcpy_paths(
         self, state: dace.SDFGState, node: dace.nodes.MapEntry
-    ) -> List[List[graph.MultiConnectorEdge]]:
+    ) -> list[list[graph.MultiConnectorEdge]]:
         """Element-wise-copy specialization of :meth:`_detect_contiguous_paths`.
 
         :param state: State containing the map.
@@ -233,7 +233,7 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
 
     def _detect_contiguous_memset_paths(
         self, state: dace.SDFGState, node: dace.nodes.MapEntry
-    ) -> List[List[graph.MultiConnectorEdge]]:
+    ) -> list[list[graph.MultiConnectorEdge]]:
         """Constant-zero-write specialization of :meth:`_detect_contiguous_paths`.
 
         :param state: State containing the map.
@@ -260,7 +260,7 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
         return len(n)
 
     @staticmethod
-    def _subst_range(data_range: List, range_list: Dict) -> List:
+    def _subst_range(data_range: list, range_list: dict) -> list:
         """Substitute map parameters into ``data_range``, one dimension at a time.
 
         Each map symbol is replaced by its own ``(begin, end)`` bound, yielding the exact
@@ -283,7 +283,7 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
             new_range.append((nb, ne, ns))
         return new_range
 
-    def _overapprox_first_dimension(self, subst_range: List, data_name: str, sdfg: dace.SDFG) -> Optional[List]:
+    def _overapprox_first_dimension(self, subst_range: list, data_name: str, sdfg: dace.SDFG) -> list | None:
         """Widen the stride-1 axis of a substituted range to the array's full contiguous extent.
 
         Applies only when ``overapproximate_first_dimension`` is set; otherwise the range is
@@ -312,7 +312,7 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
         return widened
 
     @staticmethod
-    def _reject_if_not_contiguous(new_range: List, data_name: str, sdfg: dace.SDFG, *, is_input: bool) -> bool:
+    def _reject_if_not_contiguous(new_range: list, data_name: str, sdfg: dace.SDFG, *, is_input: bool) -> bool:
         """Warn and return ``False`` when ``new_range`` is non-contiguous in its array.
 
         :param new_range: the rewritten subset range.
@@ -333,7 +333,7 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
         return False
 
     @staticmethod
-    def _collapsed_length(new_range: List) -> dace.symbolic.SymExpr:
+    def _collapsed_length(new_range: list) -> dace.symbolic.SymExpr:
         """Product of per-dimension lengths of a (contiguous) subset range."""
         total = dace.symbolic.SymExpr(1)
         for b, e, s in new_range:
@@ -342,7 +342,7 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
 
     def _get_write_begin_and_length(
         self, state: dace.SDFGState, map_entry: dace.nodes.MapEntry, tasklet: dace.nodes.Tasklet
-    ) -> Tuple[Optional[List], Optional[List], Optional[dace.symbolic.SymExpr]]:
+    ) -> tuple[list | None, list | None, dace.symbolic.SymExpr | None]:
         range_list = {
             dace.symbolic.symbol(p): (b, e, s) for (p, (b, e, s)) in zip(map_entry.map.params, map_entry.map.range)
         }
@@ -355,8 +355,8 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
         )
 
     def _begin_and_length_from_ranges(
-        self, sdfg: dace.SDFG, range_list: Dict, in_subset, in_data: Optional[str], out_subset, out_data: Optional[str]
-    ) -> Tuple[Optional[List], Optional[List], Optional[dace.symbolic.SymExpr]]:
+        self, sdfg: dace.SDFG, range_list: dict, in_subset, in_data: str | None, out_subset, out_data: str | None
+    ) -> tuple[list | None, list | None, dace.symbolic.SymExpr | None]:
         """Substitute ``range_list`` into the in/out subsets, reject non-contiguous or
         length-mismatched transfers, and return the source begin range, destination begin
         range, and collapsed transfer length. Shared by the map and loop lift paths;
@@ -422,7 +422,7 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
         return new_in, new_out, out_length_collapsed
 
     def _hoist_dynamic_inputs_to_symbols(
-        self, state: dace.SDFGState, map_entry: dace.nodes.MapEntry, used_symbols: Set[str]
+        self, state: dace.SDFGState, map_entry: dace.nodes.MapEntry, used_symbols: set[str]
     ) -> bool:
         """Promote dynamic map-input connectors referenced by ``used_symbols`` to in-scope symbols.
 
@@ -491,7 +491,7 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
         return len(in_edges) > 1 or len(out_edges) > 1
 
     @staticmethod
-    def _subset_symbols(*subsets: Optional[List]) -> Set[str]:
+    def _subset_symbols(*subsets: list | None) -> set[str]:
         """Collect free-symbol names referenced by one or more ``(begin, end, step)`` range lists."""
         used = set()
         for subset in subsets:
@@ -523,10 +523,10 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
         map_entry: dace.nodes.MapEntry,
         *,
         kind: str,
-        passthrough_conns: List,
-        libnode_conn_names: Set[str],
-        begin_subset: Optional[List],
-        exit_subset: List,
+        passthrough_conns: list,
+        libnode_conn_names: set[str],
+        begin_subset: list | None,
+        exit_subset: list,
         copy_length: dace.symbolic.SymExpr,
         verbose: bool,
     ) -> bool:
@@ -770,8 +770,8 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
         in_conns = n.in_connectors
         out_conns = n.out_connectors
 
-        has_passtrough = any({c.startswith("IN_") for c in in_conns})
-        has_passtrough |= any({c.startswith("OUT_") for c in out_conns})
+        has_passtrough = any(c.startswith("IN_") for c in in_conns)
+        has_passtrough |= any(c.startswith("OUT_") for c in out_conns)
 
         return has_passtrough
 
@@ -1085,7 +1085,7 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
                         break
         return count
 
-    def apply_pass(self, sdfg: dace.SDFG, pipeline_res: Dict) -> int:
+    def apply_pass(self, sdfg: dace.SDFG, pipeline_res: dict) -> int:
         """Walk every map in ``sdfg`` and lift its element-wise-copy / constant-zero paths.
 
         :param sdfg: SDFG to mutate in place.
@@ -1101,7 +1101,7 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
 
         rmed_memcpies = dict()
         rmed_memsets = dict()
-        visited_states: Dict[dace.SDFGState, None] = {}
+        visited_states: dict[dace.SDFGState, None] = {}
 
         for node, state in map_entries:
             # A node may have been nested away by an earlier iteration's fallback.

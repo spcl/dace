@@ -20,19 +20,19 @@ import sympy
 
 import dace
 from dace import subsets, symbolic
+from dace.libraries.tileops.alignment import TILE_MAIN_MARKER
 from dace.sdfg import nodes
 from dace.sdfg.sdfg import SDFG
 from dace.sdfg.state import SDFGState
 from dace.transformation.passes.analysis import scopes
 from dace.transformation.passes.vectorization.fuse_branched_tail_remainder import FuseBranchedTailRemainder
 from dace.transformation.passes.vectorization.split_map_for_tile_remainder import MASKED_TAIL_MARKER
-from dace.libraries.tileops.alignment import TILE_MAIN_MARKER
 from dace.transformation.passes.vectorization.utils.mask_scaffold import thread_symbols_into_nsdfg
 from dace.transformation.passes.vectorization.utils.subsets import repl_subset_to_use_laneid_offset
 from dace.transformation.passes.vectorization.utils.tasklets import materialise_lane_id_index_tile
 from dace.transformation.passes.vectorization.vectorize_multi_dim import (
-    _RunExpandNestedSDFGInputs,
     _resolve_body_nsdfg_symbol_aliases,
+    _RunExpandNestedSDFGInputs,
 )
 from dace.transformation.passes.vectorization.widen_accesses import emit_per_lane_symbol_fanout
 

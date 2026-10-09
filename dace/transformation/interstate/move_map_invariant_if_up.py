@@ -48,22 +48,21 @@ Anything else is a no-op.
 """
 
 import copy
-from typing import Any, Dict, Optional, Set, Tuple
-
 import re
+from typing import Any
 
-from dace import SDFG, dtypes
-from dace import properties, symbolic
+from dace import SDFG, dtypes, properties, symbolic
 from dace.properties import CodeBlock
+from dace.sdfg.narrowing import as_map_entry
 from dace.sdfg.nodes import AccessNode, MapEntry, MapExit, NestedSDFG
 from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, SDFGState
-from dace.transformation import pass_pipeline as ppl, transformation
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation import transformation
 from dace.transformation.helpers import nest_state_subgraph
-from dace.sdfg.narrowing import as_map_entry
 
 
-def _identifiers(expr: str) -> Set[str]:
+def _identifiers(expr: str) -> set[str]:
     """Every bare identifier appearing in an expression source.
 
     Used instead of sympy free symbols because a lifted expression may contain
@@ -84,7 +83,7 @@ def _is_predicate(expr: str) -> bool:
     return bool(re.search(r"[<>]|==|!=|\band\b|\bor\b|\bnot\b", expr))
 
 
-def _single_meaningful_conditional(inner: SDFG) -> Optional[ConditionalBlock]:
+def _single_meaningful_conditional(inner: SDFG) -> ConditionalBlock | None:
     """The inner SDFG's sole ``ConditionalBlock`` if every other block is an
     empty ``SDFGState``; else ``None``.
 
@@ -102,7 +101,7 @@ def _single_meaningful_conditional(inner: SDFG) -> Optional[ConditionalBlock]:
     return cbs[0]
 
 
-def _resolve_through_mapping(cond: CodeBlock, symbol_mapping: Dict[str, Any]) -> Tuple[str, Set[str]]:
+def _resolve_through_mapping(cond: CodeBlock, symbol_mapping: dict[str, Any]) -> tuple[str, set[str]]:
     """Rewrite ``cond`` from inner-SDFG symbol names to the enclosing scope's
     names via ``symbol_mapping`` and return its resolved free symbols.
 
@@ -121,7 +120,7 @@ def _resolve_through_mapping(cond: CodeBlock, symbol_mapping: Dict[str, Any]) ->
     return symbolic.symstr(resolved), {str(s) for s in resolved.free_symbols}
 
 
-def _inner_assignments(ns: NestedSDFG) -> Dict[str, str]:
+def _inner_assignments(ns: NestedSDFG) -> dict[str, str]:
     """Every symbol assigned on an interstate edge inside a map body, mapped to
     its defining expression.
 
@@ -129,14 +128,14 @@ def _inner_assignments(ns: NestedSDFG) -> Dict[str, str]:
     :returns: ``{symbol: rhs_expression}``; a symbol assigned more than once
               maps to ``None`` (it is not a single stable definition).
     """
-    defs: Dict[str, str] = {}
+    defs: dict[str, str] = {}
     for e in ns.sdfg.all_interstate_edges():
         for lhs, rhs in e.data.assignments.items():
             defs[lhs] = None if lhs in defs else rhs
     return defs
 
 
-def _connector_reads(ns: NestedSDFG, state: SDFGState) -> Dict[str, Set[str]]:
+def _connector_reads(ns: NestedSDFG, state: SDFGState) -> dict[str, set[str]]:
     """The free symbols of the memlet subset feeding each of ``ns``'s inputs.
 
     An interstate assignment inside the body may read one of these connectors
@@ -147,7 +146,7 @@ def _connector_reads(ns: NestedSDFG, state: SDFGState) -> Dict[str, Set[str]]:
     :param state: The state ``ns`` lives in.
     :returns: ``{connector_name: symbols_used_by_its_incoming_memlet}``.
     """
-    reads: Dict[str, Set[str]] = {}
+    reads: dict[str, set[str]] = {}
     for e in state.in_edges(ns):
         if e.dst_conn is None or e.data.is_empty():
             continue
@@ -157,7 +156,7 @@ def _connector_reads(ns: NestedSDFG, state: SDFGState) -> Dict[str, Set[str]]:
 
 
 def _condition_invariant(
-    cond: CodeBlock, ns: NestedSDFG, state: SDFGState, map_params: Set[str], allow_inner_defs: bool = True
+    cond: CodeBlock, ns: NestedSDFG, state: SDFGState, map_params: set[str], allow_inner_defs: bool = True
 ) -> bool:
     """Report whether ``cond`` picks the same branch for every element of the map.
 
@@ -216,7 +215,7 @@ def _condition_invariant(
     return all(qualifies(s, 0) for s in {str(x) for x in cond.get_free_symbols()})
 
 
-def _free_names(expr: str) -> Set[str]:
+def _free_names(expr: str) -> set[str]:
     """Free symbol names of an interstate-assignment right-hand side.
 
     :param expr: The expression source.
@@ -227,7 +226,7 @@ def _free_names(expr: str) -> Set[str]:
 
 def _match(
     sdfg: SDFG, require_full_hoist: bool = False
-) -> Optional[Tuple[SDFGState, MapEntry, NestedSDFG, ConditionalBlock]]:
+) -> tuple[SDFGState, MapEntry, NestedSDFG, ConditionalBlock] | None:
     """Find a single-map state whose map body is one ``NestedSDFG`` guarding a
     map-invariant ``ConditionalBlock``.
 
@@ -271,14 +270,14 @@ def _branch_holds_a_map(cb: ConditionalBlock) -> bool:
     return any(isinstance(n, MapEntry) for cond, branch in cb.branches for bst in branch.states() for n in bst.nodes())
 
 
-def _enclosing_map_params(st: SDFGState, me: MapEntry) -> Set[str]:
+def _enclosing_map_params(st: SDFGState, me: MapEntry) -> set[str]:
     """Parameters of every map enclosing ``me`` in its own state.
 
     :param st: The state holding the map.
     :param me: The innermost map entry.
     :returns: The union of the enclosing maps' parameter names.
     """
-    params: Set[str] = set()
+    params: set[str] = set()
     scope = st.entry_node(me)
     while scope is not None:
         params |= {str(p) for p in as_map_entry(scope).map.params}
@@ -326,7 +325,7 @@ def _candidates(sdfg: SDFG, allow_inner_defs: bool = True, require_full_hoist: b
 
 def _candidate_at(
     st: SDFGState, me: MapEntry, allow_inner_defs: bool = True
-) -> Optional[Tuple[SDFGState, MapEntry, NestedSDFG, ConditionalBlock]]:
+) -> tuple[SDFGState, MapEntry, NestedSDFG, ConditionalBlock] | None:
     """The candidate rooted at one map entry, if it qualifies.
 
     :param st: The state holding the map.
@@ -362,7 +361,7 @@ def _candidate_at(
 
 def _match_inner(
     sdfg: SDFG, require_full_hoist: bool = False
-) -> Optional[Tuple[SDFGState, MapEntry, NestedSDFG, ConditionalBlock]]:
+) -> tuple[SDFGState, MapEntry, NestedSDFG, ConditionalBlock] | None:
     """Find a guard that is invariant w.r.t. an *inner* map of a chain, so it
     can be hoisted to sit between that map and its parent.
 
@@ -378,7 +377,7 @@ def _match_inner(
     return None
 
 
-def _liftable_prelude(ns: NestedSDFG, state: SDFGState, map_params: Set[str]) -> Optional[Dict[str, str]]:
+def _liftable_prelude(ns: NestedSDFG, state: SDFGState, map_params: set[str]) -> dict[str, str] | None:
     """Re-express the body's interstate assignments in the scope *outside* the map.
 
     A condition symbol defined inside the body (``__tmp0 = __conn > 0``) has to
@@ -394,7 +393,7 @@ def _liftable_prelude(ns: NestedSDFG, state: SDFGState, map_params: Set[str]) ->
     :returns: ``{symbol: outer_expression}``, or ``None`` if any definition
               cannot be expressed outside the map.
     """
-    conn_expr: Dict[str, str] = {}
+    conn_expr: dict[str, str] = {}
     for e in state.in_edges(ns):
         if e.dst_conn is None or e.data.is_empty() or e.data.data is None:
             continue
@@ -403,7 +402,7 @@ def _liftable_prelude(ns: NestedSDFG, state: SDFGState, map_params: Set[str]) ->
         subset = str(e.data.subset) if e.data.subset is not None else ""
         conn_expr[e.dst_conn] = f"{e.data.data}[{subset}]" if subset else e.data.data
 
-    lifted: Dict[str, str] = {}
+    lifted: dict[str, str] = {}
     for lhs, rhs in _inner_assignments(ns).items():
         if rhs is None:
             return None
@@ -515,7 +514,7 @@ class MoveMapInvariantIfUp(ppl.Pass):
     def depends_on(self):
         return set()
 
-    def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> int | None:
         """Hoist invariant guards out of their maps until none remain.
 
         :param sdfg: The SDFG to transform in place.
@@ -523,7 +522,7 @@ class MoveMapInvariantIfUp(ppl.Pass):
         """
         count = 0
         structural_changes = 0
-        isolated: Set[Tuple[int, str]] = set()
+        isolated: set[tuple[int, str]] = set()
         while True:
             m = _match(sdfg, self.require_full_hoist)
             if m is not None:

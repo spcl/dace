@@ -12,7 +12,7 @@ by one ``Scan`` with ``segments = rows``. The staging and apply maps collapse in
 kernels, and the scans run as one batched device call.
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from dace import SDFG, dtypes, properties, subsets, symbolic
 from dace.libraries.standard.nodes.scan import (
@@ -115,7 +115,7 @@ class BatchRowScans(ppl.Pass):
     def depends_on(self):
         return set()
 
-    def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> int | None:
         """Batch the row scans of every top-level map in ``sdfg``.
 
         :param sdfg: the SDFG to transform, in place, before the device offload.
@@ -144,7 +144,7 @@ class BatchRowScans(ppl.Pass):
         return batched or None
 
     @classmethod
-    def row_scan_maps(cls, state: SDFGState) -> List[tuple]:
+    def row_scan_maps(cls, state: SDFGState) -> list[tuple]:
         """``(map entry, scan)`` for every top-level one-dimensional map holding a batchable scan."""
         found = []
         children = state.scope_children()

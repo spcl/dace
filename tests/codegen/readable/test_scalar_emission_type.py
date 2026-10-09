@@ -44,8 +44,8 @@ def test_scalar_keeps_gpu_kernel_output_as_length1_array():
     """A GPU_Global output is scalarized and then widened back: a by-value Scalar cannot live in
     device memory."""
     from dace.transformation.pass_pipeline import Pipeline
-    from dace.transformation.passes.length_one_array_scalar_conversion import ConvertLengthOneArraysToScalars
     from dace.transformation.passes.gpu_specialization.codegen_preprocess_passes import InferDefaultSchedulesAndStorages
+    from dace.transformation.passes.length_one_array_scalar_conversion import ConvertLengthOneArraysToScalars
     from dace.transformation.passes.scalar_promotion import PromoteScalarOutputsToArrays
 
     sdfg = dace.SDFG("gpu_out")

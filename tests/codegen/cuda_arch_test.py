@@ -5,8 +5,8 @@ import os
 import subprocess
 
 import dace
-from dace.config import set_temporary
 from dace.codegen import cuda_arch
+from dace.config import set_temporary
 
 
 def fake_nvcc_run(stderr: str):

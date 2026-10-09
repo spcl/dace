@@ -3,8 +3,9 @@
 
 import re
 import warnings
-from typing import TYPE_CHECKING, Any, Dict, Iterable, Optional
+from collections.abc import Iterable
 from copy import deepcopy
+from typing import TYPE_CHECKING, Any, Optional
 
 import sympy as sp
 
@@ -44,8 +45,7 @@ def _internal_replace(sym, symrepl):
     for s in set(fsyms):
         if "." in s:
             tokens = s.split(".")
-            for i in range(1, len(tokens)):
-                fsyms.add(".".join(tokens[:i]))
+            fsyms.update(".".join(tokens[:i]) for i in range(1, len(tokens)))
     newrepl = {k: v for k, v in symrepl.items() if _symbol_name(k) in fsyms}
     if not newrepl:
         return sym
@@ -53,13 +53,13 @@ def _internal_replace(sym, symrepl):
     return sym.subs(newrepl)
 
 
-def symbol_names(exprs: Iterable[Any]) -> Optional[Dict[str, None]]:
+def symbol_names(exprs: Iterable[Any]) -> dict[str, None] | None:
     """Names of every Symbol node in ``exprs``, bound or free, including the container of a ``Subscript``.
 
     :param exprs: SymPy expressions, ``SymExpr`` pairs and plain numbers.
     :return: The names, or ``None`` when an expression is of a type whose symbols cannot be listed.
     """
-    names: Dict[str, None] = {}
+    names: dict[str, None] = {}
     for expr in exprs:
         if isinstance(expr, symbolic.SymExpr):
             names.update(dict.fromkeys(atom.name for atom in expr.expr.atoms(sp.Symbol)))
@@ -71,7 +71,7 @@ def symbol_names(exprs: Iterable[Any]) -> Optional[Dict[str, None]]:
     return names
 
 
-def replacements_for(exprs: Iterable[Any], symrepl: Dict[Any, Any]) -> Dict[Any, Any]:
+def replacements_for(exprs: Iterable[Any], symrepl: dict[Any, Any]) -> dict[Any, Any]:
     """The entries of ``symrepl`` that ``subs`` can apply to any of ``exprs``, in the order of ``symrepl``.
 
     ``subs`` applies the entries one after another, so an entry counts if its key names a symbol of an expression or
@@ -88,7 +88,7 @@ def replacements_for(exprs: Iterable[Any], symrepl: Dict[Any, Any]) -> Dict[Any,
     names = symbol_names(exprs)
     if names is None:
         return symrepl
-    chosen: Dict[Any, None] = {}
+    chosen: dict[Any, None] = {}
     grew = True
     while grew:
         grew = False
@@ -118,7 +118,7 @@ def _replsym(symlist, symrepl):
     return symlist
 
 
-def symbolic_replacements(repl: Dict[str, Any], symbols: Dict[str, "dace.dtypes.typeclass"]) -> Dict:
+def symbolic_replacements(repl: dict[str, Any], symbols: dict[str, "dace.dtypes.typeclass"]) -> dict:
     """``repl`` as symbolic expressions, each name taking its dtype from ``symbols`` (its declaring SDFG)."""
     with symbolic.serialization_symbol_dtypes(symbols, inherit=True):
         return {
@@ -129,8 +129,8 @@ def symbolic_replacements(repl: Dict[str, Any], symbols: Dict[str, "dace.dtypes.
 
 def replace_dict(
     subgraph: "StateSubgraphView",
-    repl: Dict[str, str],
-    symrepl: Optional[Dict[symbolic.SymbolicType, symbolic.SymbolicType]] = None,
+    repl: dict[str, str],
+    symrepl: dict[symbolic.SymbolicType, symbolic.SymbolicType] | None = None,
 ):
     """
     Finds and replaces all occurrences of a set of symbols/arrays in the given subgraph.
@@ -223,7 +223,7 @@ def replace(subgraph: "StateSubgraphView", name: str, new_name: str):
     replace_dict(subgraph, {name: new_name})
 
 
-def declared_ctype(name: str, sdfg: Optional["dace.SDFG"]) -> Optional[str]:
+def declared_ctype(name: str, sdfg: Optional["dace.SDFG"]) -> str | None:
     """C type ``name`` is declared with in ``sdfg``: a symbol's type, or a scalar's. ``None`` when
     ``name`` is neither, as a map parameter is."""
     if sdfg is None:
@@ -238,8 +238,8 @@ def declared_ctype(name: str, sdfg: Optional["dace.SDFG"]) -> Optional[str]:
 
 def replace_in_codeblock(
     codeblock: properties.CodeBlock,
-    repl: Dict[str, str],
-    node: Optional[Any] = None,
+    repl: dict[str, str],
+    node: Any | None = None,
     sdfg: Optional["dace.SDFG"] = None,
 ):
     code = codeblock.code
@@ -275,7 +275,7 @@ def replace_in_codeblock(
 
         else:
             warnings.warn(
-                "Replacement of %s with %s was not made for string tasklet code of language %s" % (name, new_name, lang)
+                f"Replacement of {name} with {new_name} was not made for string tasklet code of language {lang}"
             )
 
     elif codeblock.code is not None:
@@ -285,7 +285,7 @@ def replace_in_codeblock(
 
 
 def replace_list_property_item(
-    item: Any, element_type: type, repl: Dict[str, str], symrepl: Dict[symbolic.SymbolicType, symbolic.SymbolicType]
+    item: Any, element_type: type, repl: dict[str, str], symrepl: dict[symbolic.SymbolicType, symbolic.SymbolicType]
 ) -> Any:
     """
     Applies a replacement to a single element of a ``ListProperty``.
@@ -331,8 +331,8 @@ def replace_list_property_item(
 
 def replace_properties_dict(
     node: Any,
-    repl: Dict[str, str],
-    symrepl: Optional[Dict[symbolic.SymbolicType, symbolic.SymbolicType]] = None,
+    repl: dict[str, str],
+    symrepl: dict[symbolic.SymbolicType, symbolic.SymbolicType] | None = None,
     sdfg: Optional["dace.SDFG"] = None,
 ):
     symrepl = symrepl or symbolic_replacements(repl, sdfg.symbols if sdfg is not None else {})
@@ -384,12 +384,12 @@ def replace_properties_dict(
 
 
 def replace_properties(
-    node: Any, symrepl: Dict[symbolic.SymbolicType, symbolic.SymbolicType], name: str, new_name: str
+    node: Any, symrepl: dict[symbolic.SymbolicType, symbolic.SymbolicType], name: str, new_name: str
 ):
     replace_properties_dict(node, {name: new_name}, symrepl)
 
 
-def replace_datadesc_names(sdfg: "dace.SDFG", repl: Dict[str, str]):
+def replace_datadesc_names(sdfg: "dace.SDFG", repl: dict[str, str]):
     """Reduced form of replace which only replaces data descriptor names."""
     # Replace in descriptor repository
     for aname, aval in list(sdfg.arrays.items()):

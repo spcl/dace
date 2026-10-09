@@ -1,10 +1,11 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import numpy as np
+
 import dace
+import dace.sdfg.utils as sdutil
 from dace.codegen.control_flow import LoopRegion
 from dace.properties import CodeBlock
 from dace.sdfg.state import ConditionalBlock
-import dace.sdfg.utils as sdutil
 
 N = dace.symbolic.symbol("N")
 

@@ -1,10 +1,12 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests for half-precision syntax quirks."""
 
-import dace
 import math
+
 import numpy as np
 import pytest
+
+import dace
 from dace.transformation.dataflow import Vectorization
 from dace.transformation.optimizer import Optimizer
 

@@ -2,6 +2,7 @@
 """npbench corpus benchmark: ``scattering_self_energies`` (dense_linear_algebra) -- auto-ported from the npbench repo."""
 
 import numpy as np
+
 import dace as dc
 
 dc_float = dc.float64

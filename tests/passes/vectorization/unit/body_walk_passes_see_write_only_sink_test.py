@@ -19,9 +19,12 @@ import numpy as np
 import pytest
 
 import dace
-from dace.sdfg.dealias import convert_legacy_nested_sdfgs
 from dace import SDFGState, nodes
 from dace.libraries.standard.nodes import Reduce
+from dace.sdfg.dealias import convert_legacy_nested_sdfgs
+from dace.transformation.passes.vectorization import VectorizeCPUMultiDim
+from dace.transformation.passes.vectorization.config import VectorizeConfig
+from dace.transformation.passes.vectorization.enums import ISA
 from dace.transformation.passes.vectorization.lift_map_reduction import LiftMapReductionToReduce, _pure_wcr_map_ok
 from dace.transformation.passes.vectorization.nest_innermost_map_body import NestInnermostMapBodyIntoNSDFG
 from dace.transformation.passes.vectorization.reduction_scalar_local_prep import PrepareReductionForWidening
@@ -33,9 +36,6 @@ from dace.transformation.passes.vectorization.utils.map_predicates import (
 )
 from dace.transformation.passes.vectorization.utils.pass_invariants import assert_invariant, no_wcr_in_map_body
 from dace.transformation.passes.vectorization.utils.reductions import recognize_map_reduction
-from dace.transformation.passes.vectorization import VectorizeCPUMultiDim
-from dace.transformation.passes.vectorization.config import VectorizeConfig
-from dace.transformation.passes.vectorization.enums import ISA
 
 N = 16
 SINK = "zanew_0"

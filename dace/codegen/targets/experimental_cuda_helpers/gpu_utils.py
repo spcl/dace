@@ -1,17 +1,17 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Helpers of the experimental CUDA codegen."""
 
-from typing import Iterator, Tuple
+from collections.abc import Iterator
 
 from dace import Config
 from dace.codegen import common
 from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES
 from dace.sdfg import SDFG, nodes
-from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import get_gpu_stream_array_name
 from dace.sdfg.state import SDFGState
+from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import get_gpu_stream_array_name
 
 
-def host_read_device_copies(state: SDFGState, consumer: nodes.Node) -> Iterator[Tuple[nodes.AccessNode, nodes.Node]]:
+def host_read_device_copies(state: SDFGState, consumer: nodes.Node) -> Iterator[tuple[nodes.AccessNode, nodes.Node]]:
     """``(access node, producer)`` per host value ``consumer`` reads that a device-to-host copy wrote."""
     for edge in state.in_edges(consumer):
         if edge.data is None or edge.data.data is None:

@@ -1,9 +1,10 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 
-import dace
-from dace.transformation.dataflow import GPUTransformMap, InLocalStorage
 import numpy as np
 import pytest
+
+import dace
+from dace.transformation.dataflow import GPUTransformMap, InLocalStorage
 
 N = dace.symbol("N")
 

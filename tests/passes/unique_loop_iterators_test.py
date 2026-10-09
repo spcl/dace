@@ -1,12 +1,13 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Unit tests for the ``UniqueLoopIterators`` pass."""
 
-import dace
 import numpy as np
+
+import dace
 from dace.sdfg.state import LoopRegion
-from dace.transformation.passes.unique_loop_iterators import UniqueLoopIterators
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.equalize_symbol_dtypes import equalize
+from dace.transformation.passes.unique_loop_iterators import UniqueLoopIterators
 
 
 @dace.program
@@ -211,7 +212,7 @@ def test_loop_var_on_interstate_edge():
 
     found = False
     for e in body.edges():
-        for tgt, rhs in e.data.assignments.items():
+        for rhs in e.data.assignments.values():
             assert "i " not in str(rhs), f"Edge assignment still references 'i': {rhs}"
             if "_loop_it_0" in str(rhs):
                 found = True
@@ -267,8 +268,7 @@ def test_loop_bound_with_indirect_array():
     rhs_strings = []
     for s in recon:
         for e in s.parent_graph.in_edges(s):
-            for rhs in e.data.assignments.values():
-                rhs_strings.append(str(rhs))
+            rhs_strings.extend(str(rhs) for rhs in e.data.assignments.values())
 
     assert any("row_ptr[" in s for s in rhs_strings), (
         f"Reconstruction RHS must use Python subscript form: {rhs_strings}"

@@ -5,7 +5,7 @@ from dace.codegen import cppunparse
 def _test_py2cpp(func, expected_string):
     result = cppunparse.py2cpp(func)
     if result != expected_string:
-        print("ERROR in py2cpp, expected:\n%s\n\ngot:\n%s\n" % (expected_string, result))
+        print(f"ERROR in py2cpp, expected:\n{expected_string}\n\ngot:\n{result}\n")
         return False
     return True
 
@@ -13,7 +13,7 @@ def _test_py2cpp(func, expected_string):
 def _test_pyexpr2cpp(func, expected_string):
     result = cppunparse.pyexpr2cpp(func)
     if result != expected_string:
-        print("ERROR in pyexpr2cpp, expected:\n%s\n\ngot:\n%s\n" % (expected_string, result))
+        print(f"ERROR in pyexpr2cpp, expected:\n{expected_string}\n\ngot:\n{result}\n")
         return False
     return True
 

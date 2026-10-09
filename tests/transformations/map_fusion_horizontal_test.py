@@ -3,7 +3,7 @@ import ctypes
 import os
 import sys
 import tempfile
-from typing import Any, Dict, Tuple
+from typing import Any
 
 import numpy as np
 import pytest
@@ -12,7 +12,6 @@ import dace
 from dace.sdfg import nodes
 from dace.transformation import dataflow as dftrans
 from dace.transformation.dataflow import map_fusion_helper as mfhelper
-
 from tests.helpers.isolation import call_in_child, exit_code
 
 from .map_fusion_vertical_test import count_nodes, unique_name
@@ -59,7 +58,7 @@ def _make_horizontal_map_sdfg(common_ancestor: bool):
         map_ranges={"__i": "0:10"},
         inputs={"__in1": dace.Memlet("A[__i]"), "__in2": dace.Memlet("D[__i]")},
         code="__out = __in1 + __in2",
-        outputs={"__out": dace.Memlet(f"out[__i, 3]")},
+        outputs={"__out": dace.Memlet("out[__i, 3]")},
         input_nodes=input_nodes,
         output_nodes={out},
         external_edges=True,
@@ -105,7 +104,7 @@ def _make_vertical_map_sdfg() -> dace.SDFG:
     return sdfg
 
 
-def _make_simple_horizontal_map_sdfg() -> Tuple[dace.SDFG, dace.nodes.MapEntry, dace.nodes.MapEntry]:
+def _make_simple_horizontal_map_sdfg() -> tuple[dace.SDFG, dace.nodes.MapEntry, dace.nodes.MapEntry]:
     sdfg = dace.SDFG(unique_name("horizontal_simple"))
     state = sdfg.add_state(is_start_block=True)
 
@@ -353,7 +352,7 @@ def test_horizontal_fusion_preserves_distinct_ordering_in_edges():
 
 def _make_slicing_map(
     state: dace.SDFGState, name: str, source: nodes.AccessNode, target: str, slices: int
-) -> Tuple[nodes.MapEntry, nodes.MapExit]:
+) -> tuple[nodes.MapEntry, nodes.MapExit]:
     """A Map whose body writes ``slices`` disjoint columns of ``target`` from ``slices`` tasklets.
 
     All of those writes land on the SAME ``IN_1`` of the MapExit -- one connector carrying several
@@ -561,7 +560,7 @@ def test_horizontal_fusion_rejects_a_dynamic_map_range_bound_by_tasklets():
     assert count_nodes(state, nodes.MapEntry) == 2
 
 
-def _make_inner_transient_hazard_sdfg() -> Tuple[dace.SDFG, dace.SDFGState, nodes.MapEntry, nodes.MapEntry]:
+def _make_inner_transient_hazard_sdfg() -> tuple[dace.SDFG, dace.SDFGState, nodes.MapEntry, nodes.MapEntry]:
     """Two Maps whose only link is an ordering edge, over a transient neither one exports.
 
     ``tmp`` is written by an AccessNode inside the first body and read by an AccessNode inside the
@@ -637,7 +636,7 @@ def test_horizontal_fusion_refuses_an_inner_shared_transient():
     assert code == 0, f"the second Map did not read what the first one wrote (code {code})"
 
 
-def _make_side_effect_ordering_sdfg() -> Tuple[dace.SDFG, dace.SDFGState, nodes.MapEntry, nodes.MapEntry]:
+def _make_side_effect_ordering_sdfg() -> tuple[dace.SDFG, dace.SDFGState, nodes.MapEntry, nodes.MapEntry]:
     """Two Sequential Maps of side-effecting tasklets, ordered only by an empty Memlet.
 
     Each body prints; nothing else observes the ordering. Sequential is load-bearing -- a parallel
@@ -670,7 +669,7 @@ def _make_side_effect_ordering_sdfg() -> Tuple[dace.SDFG, dace.SDFGState, nodes.
     return sdfg, state, first_entry, second_entry
 
 
-def stdout_of_compiled_sdfg(sdfg: dace.SDFG, kwargs: Dict[str, Any]) -> str:
+def stdout_of_compiled_sdfg(sdfg: dace.SDFG, kwargs: dict[str, Any]) -> str:
     """Child body: compile and call ``sdfg``, handing back what its tasklets printed.
 
     A side effect is by definition in no Memlet, so the only oracle for its ordering is the effect

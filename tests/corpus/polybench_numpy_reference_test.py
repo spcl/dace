@@ -31,8 +31,6 @@ The dataset is the capped one ``make_inputs`` defaults to, the same shape the nu
 uses, so the whole corpus fits in a normal test run.
 """
 
-from typing import Dict, Set, Tuple
-
 import numpy as np
 import pytest
 
@@ -44,7 +42,7 @@ KERNELS = [k.name for k in PB.collect()]
 SDFG_REFERENCE_CASES = [pytest.param(k.name, marks=pytest.mark.lapack if k.lapack else ()) for k in PB.collect()]
 
 
-def worst_difference(ref: Dict[str, np.ndarray], got: Dict[str, np.ndarray]) -> Tuple[str, float, float]:
+def worst_difference(ref: dict[str, np.ndarray], got: dict[str, np.ndarray]) -> tuple[str, float, float]:
     """``(array name, max abs diff, max rel diff)`` over the compared arrays -- so a failure names
     WHICH output diverged and by how much, instead of only that something did."""
     name, worst_abs, worst_rel = "", 0.0, 0.0
@@ -61,7 +59,7 @@ def worst_difference(ref: Dict[str, np.ndarray], got: Dict[str, np.ndarray]) -> 
     return name, worst_abs, worst_rel
 
 
-def moved(before: Dict[str, np.ndarray], after: Dict[str, np.ndarray]) -> Set[str]:
+def moved(before: dict[str, np.ndarray], after: dict[str, np.ndarray]) -> set[str]:
     """Names of the arrays a reference actually wrote a different value into."""
     return {n for n in before if not np.array_equal(np.asarray(before[n]), np.asarray(after[n]))}
 

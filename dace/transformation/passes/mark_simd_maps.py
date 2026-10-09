@@ -2,7 +2,7 @@
 """Marks the maps whose innermost loop can carry an OpenMP ``simd`` clause."""
 
 from dataclasses import dataclass
-from typing import Any, Dict, Optional, Set, Tuple
+from typing import Any
 
 import networkx as nx
 
@@ -11,7 +11,8 @@ from dace.frontend import operations
 from dace.sdfg import nodes
 from dace.sdfg.infer_types import map_scope_carries_dependency
 from dace.sdfg.state import LoopRegion, SDFGState
-from dace.transformation import pass_pipeline as ppl, transformation
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation import transformation
 from dace.transformation.dataflow import MapExpansion
 
 OMP_DIRECTIVE = "#pragma omp"
@@ -26,7 +27,7 @@ def map_body_is_leaf(state: SDFGState, map_entry: nodes.MapEntry) -> bool:
     masks, so it does not disqualify. Anything undecidable reads as not a leaf.
     """
 
-    def loop_and_map_free(sdfg: SDFG, seen: Set[int]) -> bool:
+    def loop_and_map_free(sdfg: SDFG, seen: set[int]) -> bool:
         if id(sdfg) in seen:  # self-referential: refuse rather than recurse
             return False
         seen.add(id(sdfg))
@@ -39,7 +40,7 @@ def map_body_is_leaf(state: SDFGState, map_entry: nodes.MapEntry) -> bool:
                     return False
         return True
 
-    def node_is_loop_free(n: nodes.Node, seen: Set[int]) -> bool:
+    def node_is_loop_free(n: nodes.Node, seen: set[int]) -> bool:
         if isinstance(n, nodes.MapEntry):
             return False
         # A library node still to be expanded is undecidable here: its expansion routinely
@@ -124,7 +125,7 @@ class MarkSIMDMaps(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return modified & (ppl.Modifies.States | ppl.Modifies.Nodes | ppl.Modifies.Memlets)
 
-    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Set[Tuple[int, str]]]:
+    def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> set[tuple[int, str]] | None:
         """
         Marks every qualifying map in ``sdfg`` and its nested SDFGs.
 
@@ -132,7 +133,7 @@ class MarkSIMDMaps(ppl.Pass):
         :param _: Pipeline results, unused.
         :return: The marked maps as ``(state id, map label)``, or ``None`` if none qualified.
         """
-        marked: Set[Tuple[int, str]] = set()
+        marked: set[tuple[int, str]] = set()
         for nsdfg in sdfg.all_sdfgs_recursive():
             for state in nsdfg.states():
                 candidates = [

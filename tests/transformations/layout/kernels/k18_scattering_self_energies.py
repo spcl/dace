@@ -27,8 +27,8 @@ Transport Simulations," SC'19 (Gordon Bell finalist; arXiv:1912.10024); npbench 
 """
 
 import numpy
-import dace
 
+import dace
 from dace.transformation.layout.permute_dimensions import PermuteDimensions
 
 NA, NE = dace.symbol("NA"), dace.symbol("NE")

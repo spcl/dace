@@ -4,9 +4,10 @@
 import re
 from typing import Literal
 
-import dace
 import numpy as np
 import pytest
+
+import dace
 from dace.sdfg.state import ConditionalBlock, StateSubgraphView
 from dace.transformation import helpers
 from dace.transformation.passes.lower_nested_gpu_device_maps import NestedGPUDeviceMapLowering

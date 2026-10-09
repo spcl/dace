@@ -16,11 +16,12 @@ at ``[i,k]`` and ``[j,k]`` is a rank-k update, two cross-paired operands are a r
 computes only the referenced triangle, threaded. Any deviation is a clean no-op.
 """
 
-from typing import Any, Dict, List, NamedTuple, Optional
+from typing import Any, NamedTuple
 
 import sympy
 
-from dace import SDFG, memlet as mm
+from dace import SDFG
+from dace import memlet as mm
 from dace.sdfg.state import ControlFlowRegion, LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.canonicalize.rank_k_match import (
@@ -56,7 +57,7 @@ class TriangularNest(NamedTuple):
     k: object
 
 
-def triangular_nest(root: SDFG, loop: LoopRegion) -> Optional[TriangularNest]:
+def triangular_nest(root: SDFG, loop: LoopRegion) -> TriangularNest | None:
     """The beta-scale state, inner ``k`` loop and square output ``C`` of a candidate nest."""
     n = loop_extent(loop)
     if n is None:
@@ -80,7 +81,7 @@ def triangular_nest(root: SDFG, loop: LoopRegion) -> Optional[TriangularNest]:
     return TriangularNest(scale_state, inner, acc_state, sink.data, n, k)
 
 
-def symmetric_operands(roles: Dict[str, Any], c_array: str) -> Optional[List[str]]:
+def symmetric_operands(roles: dict[str, Any], c_array: str) -> list[str] | None:
     """``[A]`` (rank-k) or sorted ``[A, B]`` (rank-2k) when every operand is read at both ``[i,k]`` and ``[j,k]``."""
     rows, cols = roles["row"], roles["col"]
     if len(rows) not in (1, 2) or rows.keys() != cols.keys():
@@ -90,8 +91,8 @@ def symmetric_operands(roles: Dict[str, Any], c_array: str) -> Optional[List[str
 
 
 def update_operands(
-    root: SDFG, loop: LoopRegion, nest: TriangularNest, value: sympy.Basic, roles: Dict[str, Any], beta: str
-) -> Optional[List[str]]:
+    root: SDFG, loop: LoopRegion, nest: TriangularNest, value: sympy.Basic, roles: dict[str, Any], beta: str
+) -> list[str] | None:
     """The operands when ``value`` is ``C[i,j] + alpha * <symmetric pairing>`` over loop-invariant inputs."""
     operands = symmetric_operands(roles, nest.c)
     if operands is None:
@@ -120,7 +121,7 @@ class LoopToRankKUpdate(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return bool(modified & ppl.Modifies.CFG)
 
-    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> int | None:
         count = 0
         for parent, loop in outer_loop_candidates(sdfg):
             if loop not in parent.nodes():
@@ -132,7 +133,7 @@ class LoopToRankKUpdate(ppl.Pass):
             count += 1
         return count or None
 
-    def match(self, parent: ControlFlowRegion, loop: LoopRegion) -> Optional[RankKMatch]:
+    def match(self, parent: ControlFlowRegion, loop: LoopRegion) -> RankKMatch | None:
         root = root_sdfg_of(parent)
         nest = triangular_nest(root, loop)
         if nest is None:

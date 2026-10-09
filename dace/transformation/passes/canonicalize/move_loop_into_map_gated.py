@@ -68,16 +68,16 @@ boundary that the map-only and loop-only stride passes cannot cross.
 """
 
 import math
-from typing import Any, Dict, List, Optional, Type, Union
+from typing import Any
 
 from dace import SDFG, properties, symbolic
+from dace.sdfg.narrowing import as_basic, as_expr
 from dace.sdfg.state import LoopRegion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 from dace.transformation.interstate.move_loop_into_map import MoveLoopIntoMap, lane_maps
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.minimize_stride_permutation import _to_float, score_indexed_strides
-from dace.sdfg.narrowing import as_basic, as_expr
 
 
 def stride_costs(loop: LoopRegion, sdfg: SDFG) -> tuple[tuple[float, float], tuple[float, float]] | None:
@@ -189,10 +189,10 @@ class MoveLoopIntoMapGated(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+    def depends_on(self) -> list[type[ppl.Pass] | ppl.Pass]:
         return []
 
-    def apply_pass(self, sdfg: SDFG, _: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _: dict[str, Any]) -> int | None:
         """Interchange every approved loop<->map pair in ``sdfg``.
 
         :param sdfg: The SDFG to transform in place.

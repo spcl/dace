@@ -31,19 +31,18 @@ gracefully on nests it cannot fully reorder.
 """
 
 import functools
-from typing import Dict, List, Optional, Tuple
 
 import sympy
 
 from dace import SDFG, properties, symbolic
 from dace import data as dt
 from dace.sdfg import nodes
+from dace.sdfg.narrowing import as_basic, as_expr
 from dace.sdfg.state import SDFGState
 from dace.symbolic import pystr_to_symbolic
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 from dace.transformation.dataflow.map_interchange import MapInterchange
-from dace.sdfg.narrowing import as_basic, as_expr
 
 #: Sentinel score for a parameter that never indexes any axis with a unit
 #: coefficient (it has no contiguous "home" and is sorted outermost).
@@ -65,7 +64,7 @@ def _to_float(value: object) -> float:
         return float("inf")
 
 
-def score_indexed_strides(edges, sdfg, var_names) -> Dict[str, Tuple[object, object, object]]:
+def score_indexed_strides(edges, sdfg, var_names) -> dict[str, tuple[object, object, object]]:
     """Score how each name in ``var_names`` indexes arrays across ``edges``.
 
     For every array memlet on an edge, each axis the variable indexes is
@@ -87,9 +86,9 @@ def score_indexed_strides(edges, sdfg, var_names) -> Dict[str, Tuple[object, obj
               ``abs_offset_sum`` accumulates the absolute constant offsets.
     """
     var_set = set(var_names)
-    min_stride: Dict[str, object] = {v: _NO_HOME_SCORE for v in var_set}
-    total_stride: Dict[str, object] = {v: sympy.S.Zero for v in var_set}
-    offset_sum: Dict[str, object] = {v: sympy.S.Zero for v in var_set}
+    min_stride: dict[str, object] = dict.fromkeys(var_set, _NO_HOME_SCORE)
+    total_stride: dict[str, object] = dict.fromkeys(var_set, sympy.S.Zero)
+    offset_sum: dict[str, object] = dict.fromkeys(var_set, sympy.S.Zero)
     for edge in edges:
         memlet = edge.data
         if memlet is None or memlet.data is None:
@@ -176,14 +175,14 @@ class MinimizeStridePermutation(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return bool(modified & (ppl.Modifies.Scopes | ppl.Modifies.Memlets | ppl.Modifies.Nodes))
 
-    def apply_pass(self, sdfg: SDFG, _: Dict[str, object]) -> Optional[Dict[int, int]]:
+    def apply_pass(self, sdfg: SDFG, _: dict[str, object]) -> dict[int, int] | None:
         """Apply the pass to ``sdfg``.
 
         :param sdfg: The SDFG to canonicalize.
         :returns: A mapping ``{state id: number of interchanges applied}`` for
                  states that changed, or ``None`` if nothing was modified.
         """
-        result: Dict[int, int] = {}
+        result: dict[int, int] = {}
         for state in sdfg.states():
             applied = self._process_state(state, state.sdfg)
             if applied:
@@ -211,8 +210,8 @@ class MinimizeStridePermutation(ppl.Pass):
         return applied
 
     def _collect_perfect_nest(
-        self, state: SDFGState, outer: nodes.MapEntry, scope_children: Dict[Optional[nodes.Node], List[nodes.Node]]
-    ) -> List[nodes.MapEntry]:
+        self, state: SDFGState, outer: nodes.MapEntry, scope_children: dict[nodes.Node | None, list[nodes.Node]]
+    ) -> list[nodes.MapEntry]:
         """Collect the chain of perfectly-nested single-parameter map entries.
 
         A level is part of the perfect nest only if its scope contains exactly
@@ -225,8 +224,8 @@ class MinimizeStridePermutation(ppl.Pass):
         :param scope_children: Precomputed scope-children mapping for ``state``.
         :returns: The list of map entries from outermost to innermost.
         """
-        nest: List[nodes.MapEntry] = []
-        current: Optional[nodes.MapEntry] = outer
+        nest: list[nodes.MapEntry] = []
+        current: nodes.MapEntry | None = outer
         while current is not None:
             if len(current.map.params) != 1:
                 break
@@ -242,7 +241,7 @@ class MinimizeStridePermutation(ppl.Pass):
                 current = None
         return nest
 
-    def _reorder_nest(self, state: SDFGState, sdfg: SDFG, nest: List[nodes.MapEntry]) -> int:
+    def _reorder_nest(self, state: SDFGState, sdfg: SDFG, nest: list[nodes.MapEntry]) -> int:
         """Compute the canonical order for ``nest`` and realize it.
 
         :param state: The containing state.
@@ -292,7 +291,7 @@ class MinimizeStridePermutation(ppl.Pass):
                         applied += 1
         return applied
 
-    def _swap_adjacent(self, sdfg: SDFG, nest: List[nodes.MapEntry], depth: int) -> bool:
+    def _swap_adjacent(self, sdfg: SDFG, nest: list[nodes.MapEntry], depth: int) -> bool:
         """Interchange the maps at ``depth`` and ``depth + 1`` if legal.
 
         On success ``nest`` is updated in place to reflect the new ordering.
@@ -321,8 +320,8 @@ class MinimizeStridePermutation(ppl.Pass):
         return True
 
     def _score_parameters(
-        self, state: SDFGState, sdfg: SDFG, nest: List[nodes.MapEntry], params: List[str]
-    ) -> List[Tuple[object, object]]:
+        self, state: SDFGState, sdfg: SDFG, nest: list[nodes.MapEntry], params: list[str]
+    ) -> list[tuple[object, object]]:
         """Compute the ``(stride_score, offset_tiebreak)`` key for each param.
 
         :param state: The containing state.

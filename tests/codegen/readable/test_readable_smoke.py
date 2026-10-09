@@ -14,10 +14,11 @@ than any discrepancy a real codegen defect would produce.
 """
 
 import copy
+
 import numpy as np
+
 import dace
 from dace.config import Config
-
 from tests.codegen.readable.conftest import assert_outputs_equivalent
 
 N, M, K = (dace.symbol(s) for s in ("N", "M", "K"))

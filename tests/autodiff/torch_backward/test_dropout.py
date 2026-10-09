@@ -1,13 +1,15 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
-from typing import Literal, Union
+from typing import Literal
+
 import pytest
 
 pytest.importorskip("torch", reason="PyTorch not installed. Please install with: pip install dace[ml]")
 import torch
 from torch import nn
+
 from dace.ml import DaceModule
-from tests.utils import torch_tensors_close
 from tests.ml_gpu_utils import DEVICES, experimental_cuda, is_gpu, torch_device
+from tests.utils import torch_tensors_close
 
 
 @pytest.mark.torch
@@ -41,7 +43,7 @@ def test_dropout_fwd_training(device):
 @pytest.mark.autodiff
 @pytest.mark.parametrize("device", DEVICES)
 @pytest.mark.parametrize("p", [0, 0.99, 0.6, 0.5])
-def test_dropout_bwd(p: Union[float, Literal[0]], device):
+def test_dropout_bwd(p: float | Literal[0], device):
     dev = torch_device(device)
     module = nn.Dropout(p=p).train().to(dev)
     sdfg_name = f"test_dropout_{str(p).replace('.', '_')}_bwd_{device}"

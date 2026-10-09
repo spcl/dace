@@ -9,8 +9,8 @@ import numpy as np
 
 import dace
 from dace.codegen import cppunparse
-from dace.sdfg.state import LoopRegion
 from dace.sdfg import nodes
+from dace.sdfg.state import LoopRegion
 from dace.transformation.interstate.loop_to_map import LoopToMap
 from dace.transformation.passes import BreakAntiDependence
 from dace.transformation.passes.break_anti_dependence import reparsed_index
@@ -122,9 +122,9 @@ def test_break_anti_dependence_symbolic_positive_offset():
     # (CPP language, no connectors -- pure side effect on a free symbol).
     guards = []
     for st in sdfg.states():
-        for n in st.nodes():
-            if isinstance(n, nodes.Tasklet) and n.label.startswith("_break_antidep_guard"):
-                guards.append(n)
+        guards.extend(
+            n for n in st.nodes() if isinstance(n, nodes.Tasklet) and n.label.startswith("_break_antidep_guard")
+        )
     assert len(guards) == 1, [g.label for g in guards]
     g = guards[0]
     assert g.code.language == dace.dtypes.Language.Python

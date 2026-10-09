@@ -1,18 +1,19 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+import ast
+import copy
 import os
+import re
 import subprocess
 import sys
 import tempfile
 import textwrap
-import typing
-import dace
-import re
-import copy
+
 import numpy
 import pytest
-import ast
-from dace.transformation.passes.split_tasklets import SplitTasklets, to_ssa
+
+import dace
 from dace.transformation.passes.canonicalize import canonicalize
+from dace.transformation.passes.split_tasklets import SplitTasklets, to_ssa
 
 # Format: (expression, expected_num_statements_after_split)
 # One case per ASTSplitter branch / operator family: Compare, Constant- and Name-RHS assignment,
@@ -258,7 +259,7 @@ def _generate_single_tasklet_symbol_only_sdfg(expression_str: str) -> dace.SDFG:
 _double_tasklet_sdfg_counter = 0
 
 
-def _generate_double_tasklet_sdfg(expression_strs: typing.Tuple[str, str]) -> dace.SDFG:
+def _generate_double_tasklet_sdfg(expression_strs: tuple[str, str]) -> dace.SDFG:
     global _double_tasklet_sdfg_counter
     _double_tasklet_sdfg_counter += 1
 
@@ -279,8 +280,7 @@ def _generate_double_tasklet_sdfg(expression_strs: typing.Tuple[str, str]) -> da
             assert var != "tmp"
             sdfg.add_array(name=var + "_ARR", shape=(1,), dtype=dace.float64 if not gen_integer else dace.int64)
         if i == len(expression_strs) - 1:
-            for var in lhs_vars:
-                out_accesses.add(state.add_access(var + "_ARR"))
+            out_accesses.update(state.add_access(var + "_ARR") for var in lhs_vars)
 
         for var in rhs_vars:
             if var == "tmp":
@@ -341,12 +341,12 @@ def _generate_double_tasklet_sdfg(expression_strs: typing.Tuple[str, str]) -> da
                 map_entry.add_out_connector(f"OUT_{rhs_var}_ARR")
                 t.add_in_connector(rhs_var)
             for lhs_var in lhs_vars:
-                state.add_edge(t, lhs_var, tmp_access, None, dace.memlet.Memlet(expr=f"tmp_Scalar[0]"))
+                state.add_edge(t, lhs_var, tmp_access, None, dace.memlet.Memlet(expr="tmp_Scalar[0]"))
                 t.add_out_connector(lhs_var)
         elif i == 1:
             for rhs_var in rhs_vars:
                 if rhs_var == "tmp":
-                    state.add_edge(tmp_access, None, t, rhs_var, dace.memlet.Memlet(expr=f"tmp_Scalar[0]"))
+                    state.add_edge(tmp_access, None, t, rhs_var, dace.memlet.Memlet(expr="tmp_Scalar[0]"))
                     t.add_in_connector(rhs_var)
                 else:
                     state.add_edge(
@@ -394,8 +394,8 @@ def _run_compile_and_comparison_test(sdfg: dace.SDFG, expected_num_statements: i
 
     array_names = {array_name for array_name, arr in original_sdfg.arrays.items() if arr.transient is False}
     arr_dict = {arr_name: numpy.random.choice([3.0, 6.0], (1,)) for arr_name in array_names}
-    symbol_names = {symbol_name for symbol_name in original_sdfg.free_symbols}
-    symbol_dict = {symbol_name: 1.0 for symbol_name in symbol_names}
+    symbol_names = set(original_sdfg.free_symbols)
+    symbol_dict = dict.fromkeys(symbol_names, 1.0)
     cp_arr_dict = copy.deepcopy(arr_dict)
     cp_sym_dict = symbol_dict
 
@@ -475,7 +475,8 @@ def test_split_does_not_treat_ite_as_variable(body: str, inputs: set):
     connector named after the function (a ``double``) while its body
     still called ``ITE(...)`` -> gcc "cannot be used as a function" (TSVC
     s2710, a nested-if kernel whose inner cond stays inline)."""
-    from dace.transformation.passes.split_tasklets import _get_vars as prod_get_vars, to_ssa
+    from dace.transformation.passes.split_tasklets import _get_vars as prod_get_vars
+    from dace.transformation.passes.split_tasklets import to_ssa
 
     # Unit level: the function name is never an RHS variable, in the raw
     # form and in every SSA line the splitter would emit.
@@ -630,7 +631,7 @@ def test_to_ssa_multi_input_function_split(code: str, n_lines: int):
 
 
 @pytest.mark.parametrize("id,expression_strs,expected_num_statements", example_double_expressions)
-def test_double_tasklet_split(id: int, expression_strs: typing.Tuple[str, str], expected_num_statements: int):
+def test_double_tasklet_split(id: int, expression_strs: tuple[str, str], expected_num_statements: int):
     sdfg = _generate_double_tasklet_sdfg(expression_strs)
     sdfg.name = sdfg.name + f"_id{id}"
     sdfg.validate()

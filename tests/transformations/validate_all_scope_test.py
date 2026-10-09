@@ -12,7 +12,6 @@ still has to be caught, at the match that caused it.
 """
 
 import warnings
-from typing import Tuple
 
 import pytest
 
@@ -93,7 +92,7 @@ def test_validate_all_catches_a_transformation_that_breaks_its_own_state():
         sdfg.apply_transformations_repeated(BreakTheState, validate=False, validate_all=True)
 
 
-def loop_with_target_state_at_index_one() -> Tuple[SDFG, LoopRegion, dace.SDFGState, dace.SDFGState]:
+def loop_with_target_state_at_index_one() -> tuple[SDFG, LoopRegion, dace.SDFGState, dace.SDFGState]:
     """SDFG whose top-level block 1 is an unrelated state, with the mapped state at index 1 of a loop."""
     sdfg = SDFG("validate_scope_nested_region")
     sdfg.add_array("A", [M], dtypes.float64)

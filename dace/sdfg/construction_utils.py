@@ -1,14 +1,13 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
-from typing import Dict, Set, Union
 import copy
-from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion
-from dace.sdfg.propagation import propagate_memlets_state
-import copy
-from dace.properties import CodeBlock
-from dace.sdfg.state import ConditionalBlock, LoopRegion
+
 from sympy import Function
+
+import dace
 import dace.sdfg.utils as sdutil
+from dace.properties import CodeBlock
+from dace.sdfg.propagation import propagate_memlets_state
+from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion
 
 
 def assert_connector_role_matches_edges(state: dace.SDFGState):
@@ -49,8 +48,8 @@ def assert_connector_role_matches_edges(state: dace.SDFGState):
                     f"Tasklet {node.label!r} declares connector(s) {sorted(both)} as both input and output"
                 )
 
-        in_edges_per_conn = {n: 0 for n in in_names}
-        out_edges_per_conn = {n: 0 for n in out_names}
+        in_edges_per_conn = dict.fromkeys(in_names, 0)
+        out_edges_per_conn = dict.fromkeys(out_names, 0)
 
         for e in state.in_edges(node):
             if e.dst_conn is None:
@@ -84,7 +83,7 @@ def assert_connector_role_matches_edges(state: dace.SDFGState):
                 raise AssertionError(f"Node {node.label!r}: out-connector {conn!r} has no outgoing edge")
 
 
-def copy_state_contents(old_state: dace.SDFGState, new_state: dace.SDFGState) -> Dict[dace.nodes.Node, dace.nodes.Node]:
+def copy_state_contents(old_state: dace.SDFGState, new_state: dace.SDFGState) -> dict[dace.nodes.Node, dace.nodes.Node]:
     """
     Deep-copies all nodes and edges from one SDFG state into another.
 
@@ -124,7 +123,7 @@ def copy_state_contents(old_state: dace.SDFGState, new_state: dace.SDFGState) ->
 
 def copy_graph_contents(
     old_graph: ControlFlowRegion, new_graph: ControlFlowRegion
-) -> Dict[dace.nodes.Node, dace.nodes.Node]:
+) -> dict[dace.nodes.Node, dace.nodes.Node]:
     """
     Deep-copies all nodes and edges from one SDFG state into another.
 
@@ -332,14 +331,14 @@ def move_branch_cfg_up_discard_conditions(if_block: ConditionalBlock, body_to_ta
 
 
 def insert_non_transient_data_through_parent_scopes(
-    non_transient_data: Set[str],
+    non_transient_data: set[str],
     nsdfg_node: "dace.nodes.NestedSDFG",
     parent_graph: "dace.SDFGState",
     parent_sdfg: "dace.SDFG",
     add_to_output_too: bool = False,
     add_with_exact_subset: bool = False,
-    exact_subset: Union[None, dace.subsets.Range] = None,
-    nsdfg_connector_name: Union[str, None] = None,
+    exact_subset: None | dace.subsets.Range = None,
+    nsdfg_connector_name: str | None = None,
 ):
     """
     Inserts non-transient data containers into all relevant parent scopes (through all map scopes).
@@ -598,7 +597,7 @@ def generate_assignment_as_tasklet_in_state(state: dace.SDFGState, lhs: str, rhs
     out_connectors[free_sym] = f"_out_{free_sym}_{i}"
     i += 1
 
-    assert len({f for f in lhs_sym_expr.atoms(Function)}) == 0
+    assert len(set(lhs_sym_expr.atoms(Function))) == 0
 
     if in_connectors == {} and out_connectors == {}:
         raise Exception("Generated tasklets result in no or out connectors")
@@ -690,8 +689,8 @@ def get_num_parent_map_scopes(root_sdfg: dace.SDFG, node: dace.nodes.MapEntry, p
 
 def get_parent_map_and_loop_scopes_cfg(
     root_cfg: ControlFlowRegion,
-    node: Union[dace.nodes.MapEntry, ControlFlowRegion, dace.nodes.Tasklet, ConditionalBlock],
-    parent_state: Union[dace.SDFGState, None],
+    node: dace.nodes.MapEntry | ControlFlowRegion | dace.nodes.Tasklet | ConditionalBlock,
+    parent_state: dace.SDFGState | None,
 ):
     scope_dict = parent_state.scope_dict() if parent_state is not None else None
     num_parent_maps_and_loops = 0
@@ -765,7 +764,7 @@ def get_parent_maps(root_sdfg: dace.SDFG, node: dace.nodes.MapEntry, parent_stat
     return maps
 
 
-def _find_new_name(base: str, existing_names: Set[str]) -> str:
+def _find_new_name(base: str, existing_names: set[str]) -> str:
     i = 0
     candidate = f"{base}_d_{i}"
     while candidate in existing_names:
@@ -793,7 +792,7 @@ def duplicate_memlets_sharing_single_in_connector(
             applied = True
 
             # Get all parent maps (including this)
-            parent_maps: Set[dace.nodes.EntryNode] = {map_entry}
+            parent_maps: set[dace.nodes.EntryNode] = {map_entry}
             sdict = state.scope_dict()
             parent_map = sdict[map_entry]
             while parent_map is not None:
@@ -856,7 +855,7 @@ def duplicate_memlets_sharing_single_in_connector(
 
 
 def array_is_used_in_sdfg_states(
-    sdfg: dace.SDFG, states_to_skip: Set[dace.SDFGState], arr_name: str, read_only: bool = False
+    sdfg: dace.SDFG, states_to_skip: set[dace.SDFGState], arr_name: str, read_only: bool = False
 ):
     for st in sdfg.states():
         if st in states_to_skip:
@@ -883,19 +882,17 @@ connectors block ``InlineSDFG`` and balloon the ``symbol_mapping``; cleaning
 them up is a common prerequisite before inlining.
 """
 import re
-from typing import Set
 
 import dace
-from dace.properties import CodeBlock
-from dace.sdfg.state import ConditionalBlock, LoopRegion
-from dace.ordered import OrderedSet
 from dace.optionals import required
+from dace.ordered import OrderedSet
 from dace.sdfg.narrowing import as_basic
+from dace.sdfg.state import ConditionalBlock
 
 _TOKEN_SPLIT_RE = re.compile(r"[()\[\]\s,+\-*/%<>!=&|^~?:]+")
 
 
-def _tokens(expr: str) -> Set[str]:
+def _tokens(expr: str) -> set[str]:
     return {s.strip() for s in _TOKEN_SPLIT_RE.split(expr) if s.strip()}
 
 

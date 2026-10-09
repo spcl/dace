@@ -13,13 +13,13 @@ from collections.abc import Iterable
 import dace
 from dace.data import Data
 from dace.memlet import Memlet
+from dace.optionals import required
 from dace.sdfg.graph import MultiConnectorEdge
+from dace.sdfg.narrowing import as_basic, as_expr, as_map_entry, as_range
 from dace.sdfg.nodes import Node, Tasklet
 from dace.sdfg.sdfg import SDFG
 from dace.sdfg.state import SDFGState
 from dace.symbolic import SymbolicType
-from dace.optionals import required
-from dace.sdfg.narrowing import as_basic, as_expr, as_map_entry, as_range
 
 #: Suffix of the label of the map a tile-remainder split leaves fully in bounds. The vectorizer writes it and the proof
 #: below reads it: a tiled dim of such a map has an extent that is a whole number of tiles.

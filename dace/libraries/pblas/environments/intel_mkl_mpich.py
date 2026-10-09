@@ -1,9 +1,10 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
-import os
-from dace.config import Config
-import dace.library
 import ctypes.util
+import os
 import warnings
+
+import dace.library
+from dace.config import Config
 from dace.libraries.pblas.environments.thread_level import MPI_THREAD_LEVEL_GUARD
 
 
@@ -19,7 +20,6 @@ class IntelMKLScaLAPACKMPICH:
     cmake_packages = ["MPI"]
     cmake_variables = {}
     cmake_compile_flags = []
-    cmake_libraries = []
     cmake_files = []
 
     headers = ["mpi.h", "cstdio", "mkl.h", "mkl_scalapack.h", "mkl_blacs.h", "mkl_pblas.h", "../include/blacs_grid.h"]

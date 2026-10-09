@@ -33,22 +33,24 @@ be scatter / gather staging, so they stay untouched. Mirrors
 """
 
 import copy
-from typing import Any, List, Type, Union
+from typing import Any
 
 import dace
 from dace import subsets
-from dace.memlet import Memlet
-from dace.sdfg.graph import MultiConnectorEdge
-from dace.sdfg import SDFG
-from dace.sdfg.state import SDFGState
 from dace.libraries.standard.nodes.reduce import Reduce
-from dace.transformation import pass_pipeline as ppl, transformation
+from dace.memlet import Memlet
+from dace.sdfg import SDFG
+from dace.sdfg.graph import MultiConnectorEdge
+from dace.sdfg.narrowing import as_range
+from dace.sdfg.state import SDFGState
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation import transformation
 from dace.transformation.passes.vectorization.utils.pass_invariants import (
     assert_invariant,
     no_duplicate_connector_edges,
     no_memlet_dim_mismatch,
 )
-from dace.sdfg.narrowing import as_range
+
 # is_assign_tasklet was previously imported from emit_tile_ops (deleted in the walker-primary
 # migration). The matcher is inlined below.
 
@@ -114,7 +116,7 @@ class BypassTrivialAssignTasklets(ppl.Pass):
         """Single fixed-point sweep is enough."""
         return False
 
-    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+    def depends_on(self) -> list[type[ppl.Pass] | ppl.Pass]:
         """Standalone pass."""
         return []
 

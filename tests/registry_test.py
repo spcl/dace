@@ -1,11 +1,12 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import unittest
 from enum import auto
-from dace import registry, attr_enum
+
+from dace import attr_enum, registry
 
 
 @registry.make_registry
-class ExtensibleClass(object):
+class ExtensibleClass:
     pass
 
 
@@ -53,7 +54,7 @@ class RegistryTests(unittest.TestCase):
         with self.assertRaises(TypeError):
 
             @registry.autoregister
-            class Extension4(object):
+            class Extension4:
                 pass
 
     def test_enum_registry(self):

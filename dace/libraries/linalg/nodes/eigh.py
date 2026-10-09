@@ -8,7 +8,7 @@ Jacobi sweep for a build with no LAPACK at all.
 """
 
 import copy
-from typing import Any, List, NamedTuple
+from typing import Any, NamedTuple
 
 import numpy as np
 
@@ -23,9 +23,9 @@ from dace.libraries.linalg.nodes.cholesky import GPU_SOLVERS, SOLVER_BLAS, devic
 from dace.libraries.linalg.nodes.solve import restride
 from dace.libraries.linalg.nodes.transpose import Transpose
 from dace.libraries.standard.helper import host_accessible_info_storage
-from dace.transformation.transformation import ExpandTransformation
 from dace.optionals import required
 from dace.sdfg.narrowing import as_range, as_typeclass
+from dace.transformation.transformation import ExpandTransformation
 
 #: Jacobi sweeps before the pure expansion gives up; cyclic Jacobi converges quadratically, so a
 #: well-scaled matrix needs well under twenty.
@@ -218,7 +218,7 @@ class ExpandEighPure(ExpandTransformation):
     eigenvector columns permuted with them. A build with LAPACK or a GPU solver takes those instead.
     """
 
-    environments: List[type] = []
+    environments: list[type] = []
 
     @staticmethod
     def expansion(node: "Eigh", parent_state: SDFGState, parent_sdfg: SDFG, **kwargs: Any) -> SDFG:

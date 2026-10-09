@@ -39,7 +39,7 @@ Runs before :class:`AddThreadBlockMaps`, which adds a thread-block level to any 
 one: promoting first is what stops a tagged kernel from getting a second.
 """
 
-from typing import Any, Dict, Optional
+from typing import Any
 
 import dace
 from dace import SDFG, dtypes, properties
@@ -133,7 +133,7 @@ class PromoteWarpTiles(ppl.Pass):
     def should_reapply(self, _modified: ppl.Modifies) -> bool:
         return False
 
-    def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> int | None:
         """Promote the tagged maps.
 
         :param sdfg: the offloaded SDFG to specialize, in place.

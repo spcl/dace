@@ -15,8 +15,8 @@ import dace
 from dace import symbolic
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.canonicalize.materialize_loop_exit_symbols import (
-    MaterializeLoopExitSymbols,
     POST_PREFIX,
+    MaterializeLoopExitSymbols,
 )
 
 N = dace.symbol("N")

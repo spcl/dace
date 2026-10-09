@@ -40,20 +40,20 @@ import numpy as np
 import pytest
 
 import dace
-from dace.sdfg.dealias import convert_legacy_nested_sdfgs
-from dace.config import set_temporary
 from dace import nodes
+from dace.config import set_temporary
+from dace.sdfg.dealias import convert_legacy_nested_sdfgs
+from dace.transformation.passes.canonicalize.pipeline import canonicalize
 from dace.transformation.passes.normalize_wcr import NormalizeWCR
 from dace.transformation.passes.normalize_wcr_source import NormalizeWCRSource
 from dace.transformation.passes.privatize_scatter_reduction import (
     PrivatizeScatterReduction,
-    surface_scatter_reduction,
-    is_data_dependent_scatter_sink,
     data_dependent_scatter_wcr_edge,
-    scatter_reduction_wcr_edge,
+    is_data_dependent_scatter_sink,
     map_is_parallel,
+    scatter_reduction_wcr_edge,
+    surface_scatter_reduction,
 )
-from dace.transformation.passes.canonicalize.pipeline import canonicalize
 
 N, bins = (dace.symbol(s, dtype=dace.int64) for s in ("N", "bins"))
 

@@ -16,13 +16,13 @@ The kernel exercises a divisible 2-D map so the run finishes cleanly
 in both modes (no postamble interaction needed for this knob).
 """
 
-import dace
-from dace.transformation.passes.canonicalize import canonicalize
 import pytest
 
+import dace
 from dace.libraries.tileops import TileBinop, TileGather, TileMaskGen, TileReduce, TileScatter, TileUnop
+from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.vectorization.config import VectorizeConfig
-from dace.transformation.passes.vectorization.enums import BranchMode, ISA, RemainderStrategy
+from dace.transformation.passes.vectorization.enums import ISA, BranchMode, RemainderStrategy
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import (
     VectorizeCPUMultiDim,
 )

@@ -11,29 +11,28 @@ import ast
 import copy
 import itertools
 import re
-
 from collections.abc import Iterable
-from typing import Any, List, Optional, Tuple
+from typing import Any
 
 import sympy
 
 import dace
 from dace import properties, subsets, symbolic
 from dace.memlet import Memlet
-from dace.sdfg.graph import Edge, MultiConnectorEdge
-from dace.sdfg.sdfg import InterstateEdge
+from dace.optionals import required
+from dace.ordered import OrderedSet
 from dace.properties import CodeBlock
 from dace.sdfg.construction_utils import (
     assert_connector_role_matches_edges,
     copy_state_contents,
 )
+from dace.sdfg.graph import Edge, MultiConnectorEdge
+from dace.sdfg.narrowing import as_basic, as_expr
+from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
+from dace.symbolic_engine import to_sympy
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.helpers import get_parent_map_and_loop_scopes
-from dace.ordered import OrderedSet
-from dace.symbolic_engine import to_sympy
-from dace.optionals import required
-from dace.sdfg.narrowing import as_basic, as_expr
 
 
 def array_read_parts(node: sympy.Basic) -> tuple[str | None, tuple[sympy.Basic, ...] | None]:
@@ -350,8 +349,7 @@ def _rhs_is_predicate(rhs: str) -> bool:
 
 def _symbol_has_external_consumer(sdfg: dace.SDFG, sym_name: str, skip_cb: ConditionalBlock | None = None) -> bool:
     # Whether ``sym_name`` is consumed outside its own defining edge.
-    from dace.sdfg.state import LoopRegion
-    from dace.sdfg.state import ConditionalBlock
+    from dace.sdfg.state import ConditionalBlock, LoopRegion
 
     only = {sym_name}
     for cfg in sdfg.all_control_flow_regions(recursive=True):
@@ -402,7 +400,7 @@ def _symbol_has_external_consumer(sdfg: dace.SDFG, sym_name: str, skip_cb: Condi
                 elif isinstance(n, dace.nodes.NestedSDFG):
                     # A child nested SDFG consumes the symbol iff it binds an inner symbol to an
                     # expression over it (``symbol_mapping`` VALUES live in this SDFG's scope).
-                    for _k, v in n.symbol_mapping.items():
+                    for v in n.symbol_mapping.values():
                         if symbolic.symbols_in_code(str(v), potential_symbols=only):
                             return True
 
@@ -427,7 +425,7 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
 
     # Buffered ``(sdfg, sym, edges, skip_cb)`` deletions during a compound cond lift (``None`` outside
     # one), so a later refusal leaves no committed deletion behind: no partial lifts.
-    _deferred_drops: Optional[List[Tuple[Any, ...]]] = None
+    _deferred_drops: list[tuple[Any, ...]] | None = None
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.CFG | ppl.Modifies.States | ppl.Modifies.AccessNodes
@@ -548,10 +546,7 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
             w1 = self._collect_write_subsets(s1)
         except NotImplementedError:
             return {}
-        shared = {}
-        for k, v in w0.items():
-            if k in w1 and str(v) == str(w1[k]):
-                shared[k] = v
+        shared = {k: v for k, v in w0.items() if k in w1 and str(v) == str(w1[k])}
         return shared
 
     def _rewrite(self, sdfg: dace.SDFG, cb: ConditionalBlock) -> None:
@@ -682,14 +677,16 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
         # A predicated WCR write (``c[i] += s`` under ``if``) redirected to ``_then`` would accumulate onto
         # the identity and drop ``c[i]``; capture it here and rebuild as an explicit base-read accumulate.
         wcr_escapes: list = []  # (edge, base_name, base_subset)
-        for _old, new in node_map.items():
+        for new in node_map.values():
             if not isinstance(new, dace.nodes.AccessNode):
                 continue
             if new.data in rename and dst.in_degree(new) > 0:
                 base_name = new.data
-                for ie in dst.in_edges(new):
-                    if ie.data is not None and ie.data.wcr is not None:
-                        wcr_escapes.append((ie, base_name, copy.deepcopy(ie.data.subset)))
+                wcr_escapes.extend(
+                    (ie, base_name, copy.deepcopy(ie.data.subset))
+                    for ie in dst.in_edges(new)
+                    if ie.data is not None and ie.data.wcr is not None
+                )
                 new.data = rename[base_name]
                 redirected_nodes.add(new)
         for e in dst.edges():
@@ -703,7 +700,7 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
         # read-modify-write (``z = z * x``) still reads the value from before the clone.
         internal_renames: dict = {}
         renamed_nodes: list = []
-        for _old, new in node_map.items():
+        for new in node_map.values():
             if not isinstance(new, dace.nodes.AccessNode):
                 continue
             if new in redirected_nodes:

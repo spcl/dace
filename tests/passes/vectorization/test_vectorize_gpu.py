@@ -18,13 +18,13 @@ import pytest
 
 import dace
 from dace.dtypes import ScheduleType
+from dace.libraries.tileops import TileBinop, TileMaskGen
 from dace.transformation.interstate import LoopToMap
-from dace.libraries.tileops import TileMaskGen, TileBinop
+from dace.transformation.passes.canonicalize.finalize import offload_to_gpu
+from dace.transformation.passes.vectorization.config import VectorizeConfig
+from dace.transformation.passes.vectorization.enums import ISA, RemainderStrategy
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import TILE_NODE_TYPES
 from dace.transformation.passes.vectorization.vectorize_gpu import VectorizeGPU
-from dace.transformation.passes.vectorization.config import VectorizeConfig
-from dace.transformation.passes.canonicalize.finalize import offload_to_gpu
-from dace.transformation.passes.vectorization.enums import ISA, RemainderStrategy
 
 HAS_NVCC = shutil.which("nvcc") is not None
 N = dace.symbol("N")
@@ -309,8 +309,8 @@ def test_gpu_vectorize_width_gt2_numeric(width):
     half2 fast path as width 2 (two fp16 lanes per instruction, looping ``i += 2`` to emit
     ``width / 2`` consecutive half2 ops) -- still one strided ``0:N:width`` GPU_Device map
     (assume_even), numerically exact for a divisible extent."""
-    import numpy as np
     import cupy
+    import numpy as np
 
     sdfg = _prep(_add16)
     rng = np.random.default_rng(42)
@@ -362,8 +362,8 @@ def test_gpu_multidim_k2_runs():
     correctly on the device. K>=2 lowers each tile op to the portable ``pure`` per-lane body
     inside the ``GPU_Device`` kernel (the half2 SIMD intrinsic applies to the single innermost
     contiguous axis, K=1); still one strided map per axis (assume_even) and numerically exact."""
-    import numpy as np
     import cupy
+    import numpy as np
 
     rng = np.random.default_rng(42)
     sdfg = _prep(_add16)

@@ -265,9 +265,9 @@ def test_spmv_bypass_keeps_sdfg_valid():
     reduction lowered to a horizontal reduce (tracked separately)."""
     from dace.transformation.dataflow import WCRToAugAssign
     from dace.transformation.interstate import LoopToMap, RefineNestedAccess
-    from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import normalize_loop_nests
     from dace.transformation.passes.length_one_array_scalar_conversion import ConvertLengthOneArraysToScalars
     from dace.transformation.passes.normalize_wcr_source import NormalizeWCRSource
+    from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import normalize_loop_nests
 
     n = dace.symbol("n")
     m = dace.symbol("m")

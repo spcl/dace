@@ -15,11 +15,12 @@ every case here pins it -- otherwise the same source would assert different thin
 development box and on a 72-core node.
 """
 
-import dace
 import pytest
+
+import dace
 from dace import dtypes
 from dace.libraries.standard.nodes.reduce import Reduce
-from dace.libraries.standard.nodes.scan import Scan, ScanOp, INPUT_CONNECTOR_NAME, OUTPUT_CONNECTOR_NAME
+from dace.libraries.standard.nodes.scan import INPUT_CONNECTOR_NAME, OUTPUT_CONNECTOR_NAME, Scan, ScanOp
 from dace.transformation.auto.auto_optimize import apply_cpu_library_parallelism
 
 THRESHOLD = 256

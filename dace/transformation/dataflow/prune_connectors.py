@@ -1,12 +1,12 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-from typing import Set, Tuple
 import re
 
-from dace import dtypes, SDFG, SDFGState, symbolic, properties
-from dace.transformation import transformation as pm, helpers
+from dace import SDFG, SDFGState, dtypes, properties, symbolic
+from dace.ordered import OrderedSet
 from dace.sdfg import nodes, utils
 from dace.sdfg.analysis import cfg
-from dace.ordered import OrderedSet
+from dace.transformation import helpers
+from dace.transformation import transformation as pm
 
 
 def connectors_used_by_dataflow(nsdfg: nodes.NestedSDFG) -> bool:
@@ -61,7 +61,7 @@ class PruneConnectors(pm.SingleStateTransformation):
 
         return True
 
-    def _get_prune_sets(self, state: SDFGState) -> Tuple[Set[str], Set[str], Set[str]]:
+    def _get_prune_sets(self, state: SDFGState) -> tuple[set[str], set[str], set[str]]:
         """Computes the set of the input and output connectors that can be removed.
 
         Returns:
@@ -110,7 +110,7 @@ class PruneConnectors(pm.SingleStateTransformation):
         # symbol once ``apply`` removes the data, which is exactly the "Missing symbols on nested
         # SDFG" the validator then raises (nodes.py:809).
         if prune_in or prune_out:
-            symbolic_uses: Set[str] = set()
+            symbolic_uses: set[str] = set()
             for inner_state in nsdfg.sdfg.states():
                 for e in inner_state.edges():
                     if e.data is not None:
@@ -169,7 +169,7 @@ class PruneSymbols(pm.SingleStateTransformation):
         return [utils.node_path_graph(cls.nsdfg)]
 
     @staticmethod
-    def _candidates(nsdfg: nodes.NestedSDFG) -> Set[str]:
+    def _candidates(nsdfg: nodes.NestedSDFG) -> set[str]:
         candidates = set(nsdfg.symbol_mapping.keys())
         if len(candidates) == 0:
             return set()
@@ -185,7 +185,7 @@ class PruneSymbols(pm.SingleStateTransformation):
             for node in nstate.nodes():
                 if isinstance(node, nodes.Tasklet) and node.language is dtypes.Language.CPP:
                     for candidate in candidates:
-                        if re.findall(r"\b%s\b" % re.escape(candidate), node.code.as_string):
+                        if re.findall(rf"\b{re.escape(candidate)}\b", node.code.as_string):
                             state_syms.add(candidate)
 
             # Any symbol used in this state is considered used
@@ -212,7 +212,7 @@ class PruneSymbols(pm.SingleStateTransformation):
 
         return candidates
 
-    def _find_symbols_that_can_not_be_removed(self, sdfg: SDFG) -> Set[str]:
+    def _find_symbols_that_can_not_be_removed(self, sdfg: SDFG) -> set[str]:
         """Find the set of symbols that can not be removed."""
 
         # The implementation of this function is based upon `dace.transformation.helpers.is_symbol_unused()`.
@@ -220,7 +220,7 @@ class PruneSymbols(pm.SingleStateTransformation):
         #  once and then returns the collected set.
         # TODO: Investigate if this function can be replaced by a call to `used_symbols()`.
         #   See https://github.com/spcl/dace/pull/2080#discussion_r2226418881
-        unremovable_symbols: Set[str] = set()
+        unremovable_symbols: set[str] = set()
 
         for desc in sdfg.arrays.values():
             unremovable_symbols.update(map(str, desc.free_symbols))

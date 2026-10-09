@@ -19,15 +19,13 @@ The node is opaque on purpose: the tile vectorizer never looks inside a library 
 search neither perturbs nor is perturbed by the tiling of the Maps around it.
 """
 
-from typing import Dict, List, Optional, Tuple
-
 import dace
 from dace import library, properties, symbolic
 from dace.codegen.common import global_code_id
 from dace.libraries.standard.helper import schedule_dispatch
+from dace.optionals import required
 from dace.sdfg import nodes
 from dace.transformation.transformation import ExpandTransformation
-from dace.optionals import required
 
 #: The index the predicate expression is written against.
 INDEX_NAME = "__i"
@@ -53,12 +51,12 @@ def find_first_code(node: "FindFirst", parallel: bool) -> str:
     )
 
 
-def find_first_connectors(node: "FindFirst", state: dace.SDFGState, sdfg: dace.SDFG) -> Dict[str, object]:
+def find_first_connectors(node: "FindFirst", state: dace.SDFGState, sdfg: dace.SDFG) -> dict[str, object]:
     """In-connector types for the expanded tasklet: a pointer per array read, by value per scalar.
 
     An array is handed to the lambda whole and indexed inside it, so its connector must be a
     pointer; a loop-invariant scalar is read once and stays a value connector."""
-    conns: Dict[str, object] = {}
+    conns: dict[str, object] = {}
     for edge in state.in_edges(node):
         if edge.dst_conn is None:
             continue
@@ -107,7 +105,7 @@ class ExpandFindFirstCPU(ExpandTransformation):
     re-entered by an enclosing parallel scope or loop, runs the chunk loop on one thread: still
     blocked, ``simd``-scanned and cancelling between chunks."""
 
-    environments: List[type] = []
+    environments: list[type] = []
 
     @staticmethod
     def expansion(node: "FindFirst", state: dace.SDFGState, sdfg: dace.SDFG) -> nodes.Tasklet:
@@ -129,21 +127,21 @@ class ExpandFindFirstCPU(ExpandTransformation):
 class ExpandFindFirstAuto(ExpandTransformation):
     """Picks ``CPU`` or ``CUDA`` from the node's schedule (:func:`schedule_dispatch`)."""
 
-    environments: List[type] = []
+    environments: list[type] = []
 
     @staticmethod
     def expansion(node: "FindFirst", state: dace.SDFGState, sdfg: dace.SDFG):
         return schedule_dispatch(ExpandFindFirstAuto, node, state)
 
 
-def find_first_signature(node: "FindFirst", state: dace.SDFGState, sdfg: dace.SDFG) -> List[Tuple[str, str]]:
+def find_first_signature(node: "FindFirst", state: dace.SDFGState, sdfg: dace.SDFG) -> list[tuple[str, str]]:
     """``(connector, C++ declaration)`` per in-connector, sorted by connector name.
 
     An array read is a pointer the predicate subscripts; a loop-invariant scalar is passed by
     value. The one list drives the functor's members, the wrapper's parameters and the call site,
     so those three cannot drift apart, and sorting keeps the emitted text independent of edge
     insertion order."""
-    out: List[Tuple[str, str]] = []
+    out: list[tuple[str, str]] = []
     for edge in state.in_edges(node):
         if edge.dst_conn is None:
             continue
@@ -166,7 +164,7 @@ class ExpandFindFirstCUDA(ExpandTransformation):
     what puts the kernel launch in the ``.cu`` while the tasklet stays host code."""
 
     # Filled in on first expansion to dodge the sort<->standard import cycle.
-    environments: List[type] = []
+    environments: list[type] = []
 
     @staticmethod
     def expansion(node: "FindFirst", state: dace.SDFGState, sdfg: dace.SDFG) -> nodes.Tasklet:
@@ -256,7 +254,7 @@ class FindFirst(nodes.LibraryNode):
         predicate: str = "false",
         begin: symbolic.SymbolicType = 0,
         end: symbolic.SymbolicType = 0,
-        location: Optional[str] = None,
+        location: str | None = None,
     ):
         super().__init__(name, location=location, inputs={}, outputs={OUTPUT_CONNECTOR_NAME: None})
         self.predicate = predicate

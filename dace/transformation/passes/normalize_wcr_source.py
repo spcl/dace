@@ -59,7 +59,7 @@ after a single iteration.
 """
 
 import copy
-from typing import Any, Dict, List, Optional, Set, Tuple, Type, Union
+from typing import Any
 
 import numpy
 
@@ -68,7 +68,8 @@ from dace.frontend.operations import detect_reduction_type
 from dace.memlet import Memlet
 from dace.sdfg import nodes
 from dace.sdfg.state import ControlFlowRegion, LoopRegion
-from dace.transformation import pass_pipeline as ppl, transformation
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation import transformation
 from dace.transformation.passes.privatize_scatter_reduction import is_data_dependent_scatter_sink
 
 
@@ -86,12 +87,10 @@ class NormalizeWCRSource(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return bool(modified & (ppl.Modifies.Nodes | ppl.Modifies.Memlets))
 
-    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+    def depends_on(self) -> list[type[ppl.Pass] | ppl.Pass]:
         return []
 
-    def _output_descriptor(
-        self, src: nodes.CodeNode, src_conn: str, target_desc: Optional[data.Data]
-    ) -> Optional[data.Data]:
+    def _output_descriptor(self, src: nodes.CodeNode, src_conn: str, target_desc: data.Data | None) -> data.Data | None:
         """Return the data descriptor for the new private transient.
 
         For a :class:`NestedSDFG`, this is the inner array bound to the output connector
@@ -135,12 +134,12 @@ class NormalizeWCRSource(ppl.Pass):
             return "0"
         return ", ".join(f"0:{s}" for s in desc.shape)
 
-    def _enclosing_map_params(self, state: SDFGState, e, scope: Dict) -> Set[str]:
+    def _enclosing_map_params(self, state: SDFGState, e, scope: dict) -> set[str]:
         """Parameters of every Map enclosing edge ``e`` (its source's scope) plus, when the
         edge writes through a MapExit, that Map's parameters. ``scope`` is a precomputed
         ``state.scope_dict()`` (the write-once test only inspects the pre-rewrite topology, so
         the caller computes it once before mutating the state)."""
-        params: Set[str] = set()
+        params: set[str] = set()
         node = scope.get(e.src)
         while node is not None:
             if isinstance(node, nodes.MapEntry):
@@ -150,7 +149,7 @@ class NormalizeWCRSource(ppl.Pass):
             params.update(state.entry_node(e.dst).map.params)
         return params
 
-    def _is_write_once_wcr(self, state: SDFGState, e, scope: Dict) -> bool:
+    def _is_write_once_wcr(self, state: SDFGState, e, scope: dict) -> bool:
         """True if this WCR writes a slot that VARIES with an enclosing (or destination) Map
         parameter -- a per-element assignment, or a per-element reduction folding a nested axis
         into ``acc[i]`` -- as opposed to a fold into a single CONSTANT slot.
@@ -212,7 +211,7 @@ class NormalizeWCRSource(ppl.Pass):
         return self._accumulates_into(src.sdfg, {src_conn})
 
     @classmethod
-    def _accumulates_into(cls, sd: SDFG, targets: Set[str]) -> bool:
+    def _accumulates_into(cls, sd: SDFG, targets: set[str]) -> bool:
         """True if ``sd`` -- or a NestedSDFG below it, reached by following the connector
         binding -- folds into one of ``targets`` instead of plain-writing it: either a WCR
         edge accumulating onto the name, or any read of it (an in-place read-modify-write).
@@ -232,7 +231,7 @@ class NormalizeWCRSource(ppl.Pass):
             for node in ist.nodes():
                 if not isinstance(node, nodes.NestedSDFG):
                     continue
-                inner: Set[str] = set()
+                inner: set[str] = set()
                 for oe in ist.out_edges(node):
                     if (
                         oe.src_conn
@@ -255,7 +254,7 @@ class NormalizeWCRSource(ppl.Pass):
                     return True
         return False
 
-    def _rewrite_state(self, sdfg: SDFG, state: SDFGState) -> Tuple[int, List[Tuple[str, str, bool, SDFGState]]]:
+    def _rewrite_state(self, sdfg: SDFG, state: SDFGState) -> tuple[int, list[tuple[str, str, bool, SDFGState]]]:
         """Rewrite WCR edges whose source is a Tasklet or NestedSDFG.
 
         :returns: ``(count, seed_targets)`` where ``seed_targets`` is a list of
@@ -269,7 +268,7 @@ class NormalizeWCRSource(ppl.Pass):
                   it needs no seed.
         """
         rewritten = 0
-        seed_targets: List[Tuple[str, str, bool, SDFGState]] = []
+        seed_targets: list[tuple[str, str, bool, SDFGState]] = []
         # Snapshot first; we mutate the edge set inside the loop.
         targets = [
             e
@@ -347,14 +346,14 @@ class NormalizeWCRSource(ppl.Pass):
                 seed_targets.append((e.data.data, e.data.wcr, write_once[e], state))
         return rewritten, seed_targets
 
-    def _plain_written(self, sd: SDFG) -> Set[str]:
+    def _plain_written(self, sd: SDFG) -> set[str]:
         """Every data name in ``sd`` that has a plain (non-WCR) writer -- an edge into an
         AccessNode of that name with ``wcr is None``. Such a name is already initialized, so
         the reduction seeds off it and must not be re-seeded. Keyed on ``e.dst.data`` (NOT
         ``e.data.data``): a source-oriented copy ``read(B) -> write(acc)`` carries the memlet
         as ``B[...]`` (``e.data.data == 'B'``) yet still plain-initializes ``acc``. Computed
         once per SDFG (not per accumulator)."""
-        out: Set[str] = set()
+        out: set[str] = set()
         for st in sd.states():
             for e in st.edges():
                 if (
@@ -392,7 +391,7 @@ class NormalizeWCRSource(ppl.Pass):
             return False
         return all((cdesc := parent_sdfg.arrays.get(oe.data.data)) is not None and cdesc.transient for oe in bound)
 
-    def _seedable_accumulator(self, sd: SDFG, name: str, plain_written: Set[str]) -> bool:
+    def _seedable_accumulator(self, sd: SDFG, name: str, plain_written: set[str]) -> bool:
         """True if ``name`` is a fresh WCR accumulator safe to identity-seed: fresh storage
         (:meth:`_is_fresh_storage`), with no existing plain writer and no shape symbols undefined
         at this SDFG's scope (the fill map would otherwise leak a free symbol). :meth:`_placement`
@@ -407,9 +406,9 @@ class NormalizeWCRSource(ppl.Pass):
             return False
         return self._is_fresh_storage(sd, name, desc)
 
-    def _enclosing_loops(self, block) -> List[LoopRegion]:
+    def _enclosing_loops(self, block) -> list[LoopRegion]:
         """The LoopRegion ancestors of ``block``, innermost first."""
-        loops: List[LoopRegion] = []
+        loops: list[LoopRegion] = []
         cur = block.parent_graph
         while cur is not None:
             if isinstance(cur, LoopRegion):
@@ -417,7 +416,7 @@ class NormalizeWCRSource(ppl.Pass):
             cur = cur.parent_graph if isinstance(cur, ControlFlowRegion) else None
         return loops
 
-    def _placement(self, sd: SDFG, name: str, states: Set[SDFGState]):
+    def _placement(self, sd: SDFG, name: str, states: set[SDFGState]):
         """The block to prepend the seed before, so the reduction runs once per fresh instance:
         immediately before the innermost enclosing loop that is *summed over* (its variable does
         not index ``name``), else before the WCR-writing state itself (a parallel-map reduction,
@@ -427,7 +426,7 @@ class NormalizeWCRSource(ppl.Pass):
         if len(states) != 1:
             return None
         state = next(iter(states))
-        idx_syms: Set[str] = set()
+        idx_syms: set[str] = set()
         for e in state.edges():
             if (
                 e.data is not None
@@ -478,7 +477,7 @@ class NormalizeWCRSource(ppl.Pass):
             return whole
         return window
 
-    def _seed_accumulator(self, sd: SDFG, name: str, wcr: str, states: Set[SDFGState]) -> bool:
+    def _seed_accumulator(self, sd: SDFG, name: str, wcr: str, states: set[SDFGState]) -> bool:
         """Prepend an identity-seed state so the fresh accumulator starts defined before its
         reduction. The seed is an explicit identity-init *tasklet* (not ``setzero``): a
         bitwise-zero fill is wrong for ``*`` (identity 1) and ``min`` / ``max``. Returns True
@@ -520,7 +519,7 @@ class NormalizeWCRSource(ppl.Pass):
         # slot written by several normalized WCR edges is seeded once and only when *every* such
         # write is write-once (a lone same-slot fold disqualifies it). Collected across the whole
         # traversal, then seeded afterwards so inserting seed states does not perturb iteration.
-        seed_reqs: Dict[int, Tuple[SDFG, Dict[str, list]]] = {}
+        seed_reqs: dict[int, tuple[SDFG, dict[str, list]]] = {}
         for sd in sdfg.all_sdfgs_recursive():
             for state in list(sd.states()):
                 n, reqs = self._rewrite_state(sd, state)
@@ -538,7 +537,7 @@ class NormalizeWCRSource(ppl.Pass):
                     self._seed_accumulator(sd, name, wcr, states)
         return total
 
-    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Dict[str, Set[str]]]:
+    def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> dict[str, set[str]] | None:
         """Rewrite every WCR-bearing edge so its source is an :class:`AccessNode`.
 
         :param sdfg: The SDFG to normalize.

@@ -9,12 +9,13 @@ inverse must BREAK that equality (the negative test proves the rewrite genuinely
 """
 
 import copy
-import numpy
-import dace
 
-from dace.libraries.layout.shuffle import register_shuffle, emit_shuffle_globals, _symbol_params
+import numpy
+
+import dace
 from dace.libraries.layout.algebra import Shuffle
 from dace.libraries.layout.lowering import relayout_map
+from dace.libraries.layout.shuffle import _symbol_params, emit_shuffle_globals, register_shuffle
 from dace.transformation.layout.shuffle_elements import ShuffleElements
 
 N = dace.symbol("N")

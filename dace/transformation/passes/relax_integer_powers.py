@@ -12,20 +12,22 @@ symbolic integer proven ``>= 0`` by interval analysis over the enclosing iterato
 ranges (``K - i - 1`` with ``for i in range(K)``.
 """
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any, Dict, FrozenSet, Mapping, Optional, Tuple
+from typing import Any
 
 import numpy
-from dace.ordered import OrderedSet
 
 from dace import SDFG, data, subsets, symbolic, symbolic_engine
+from dace.ordered import OrderedSet
 from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
-from dace.transformation import pass_pipeline as ppl, transformation
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation import transformation
 from dace.transformation.passes.analysis import loop_analysis
 
 #: A live iteration range ``symbol name -> (low, high)`` (inclusive).
-Ranges = Dict[str, Tuple[symbolic.SymbolicType, symbolic.SymbolicType]]
+Ranges = dict[str, tuple[symbolic.SymbolicType, symbolic.SymbolicType]]
 
 #: The power head, in whichever backend built the expression.
 POW = symbolic_engine.Pow
@@ -41,13 +43,13 @@ class SignFacts:
     Kept by name, so that a same-named symbol that lost its assumptions in a reparse is still covered.
     """
 
-    by_name: Mapping[str, FrozenSet[str]] = field(default_factory=dict)
+    by_name: Mapping[str, frozenset[str]] = field(default_factory=dict)
 
     @staticmethod
     def of_sdfg(sdfg: SDFG) -> "SignFacts":
         """Integrality from each SDFG's declared symbol dtypes, sign off the symbol objects stored in array
         descriptors (recursively -- a size symbol may appear only in a nested SDFG's shapes)."""
-        facts: Dict[str, OrderedSet] = {}
+        facts: dict[str, OrderedSet] = {}
         for g in sdfg.all_sdfgs_recursive():
             for name, dtype in g.symbols.items():
                 # ``issubclass``, not ``numpy.issubdtype``: the latter converts through ``numpy.dtype``,
@@ -89,7 +91,7 @@ class SignFacts:
         outside would decline inside and emit a ``double`` ``pow`` in an integer bound. The inner name
         IS the mapped outer expression, so what holds of that expression holds of the name.
         """
-        inner: Dict[str, FrozenSet[str]] = {}
+        inner: dict[str, frozenset[str]] = {}
         for name, value in nsdfg.symbol_mapping.items():
             value = symbolic.pystr_to_symbolic(value) if isinstance(value, str) else value
             if not isinstance(value, symbolic.SymbolicBasic):
@@ -159,8 +161,8 @@ def affine_coeff(exp, sym):
 
 
 def ordered_range(
-    begin: symbolic.SymbolicType, end: symbolic.SymbolicType, step: Optional[symbolic.SymbolicType]
-) -> Optional[Tuple[symbolic.SymbolicType, symbolic.SymbolicType]]:
+    begin: symbolic.SymbolicType, end: symbolic.SymbolicType, step: symbolic.SymbolicType | None
+) -> tuple[symbolic.SymbolicType, symbolic.SymbolicType] | None:
     """Inclusive ``(low, high)`` for an iterator ``begin..end`` stepping by ``step``.
 
     Direction needs the *provable* sign of ``step``. Unknown sign (``0:K:s``) -> which end is
@@ -177,7 +179,7 @@ def ordered_range(
     return None
 
 
-def loop_range(loop: LoopRegion) -> Optional[Tuple[symbolic.SymbolicType, symbolic.SymbolicType]]:
+def loop_range(loop: LoopRegion) -> tuple[symbolic.SymbolicType, symbolic.SymbolicType] | None:
     """Loop iterator's inclusive ``(low, high)``, or ``None`` if bounds or stride sign unknown."""
     start = loop_analysis.get_init_assignment(loop)
     end = loop_analysis.get_loop_end(loop)
@@ -201,7 +203,7 @@ def proven_nonnegative(exp: symbolic.SymbolicType, ranges: Ranges, facts: SignFa
     return symbolic.ask("nonnegative", residual, facts.by_name) is True
 
 
-def relaxed_exponent(exp: symbolic.SymbolicType, ranges: Ranges, facts: SignFacts) -> Optional[symbolic.SymbolicType]:
+def relaxed_exponent(exp: symbolic.SymbolicType, ranges: Ranges, facts: SignFacts) -> symbolic.SymbolicType | None:
     """The integer exponent to feed ``ipow``, or ``None`` to keep ``pow``."""
     if exp.is_Number:
         if exp.is_integer:
@@ -219,7 +221,7 @@ def relaxed_exponent(exp: symbolic.SymbolicType, ranges: Ranges, facts: SignFact
     return exp if proven_nonnegative(exp, ranges, facts) else None
 
 
-def exponent_relaxes_to_ipow(exp: symbolic.SymbolicType, sdfg: SDFG, ranges: Optional[Ranges] = None) -> bool:
+def exponent_relaxes_to_ipow(exp: symbolic.SymbolicType, sdfg: SDFG, ranges: Ranges | None = None) -> bool:
     """Whether ``exp`` is a provable non-negative integer under ``sdfg``'s declared symbol
     assumptions -- the SAME proof :class:`RelaxIntegerPowers` uses to lower a ``Pow`` to
     ``ipow``. The tile-op emitter calls this to choose ``ipow`` vs ``pow`` for a ``**`` /
@@ -279,7 +281,7 @@ class PowerRelaxer:
         desc.offset = tuple(self.relax(item, ranges, facts) for item in desc.offset)
         desc.total_size = self.relax(desc.total_size, ranges, facts)
 
-    def relax_text(self, text: str, ranges: Ranges, facts: SignFacts) -> Optional[str]:
+    def relax_text(self, text: str, ranges: Ranges, facts: SignFacts) -> str | None:
         """Relax provable ``Pow`` in a Python-expression string; return the rewritten
         text, or ``None`` if unparseable or unchanged. Powers carry Python ``**``, so a
         string without ``**`` needs no work."""
@@ -308,7 +310,7 @@ class PowerRelaxer:
         if relaxed is not None:
             code.as_string = relaxed
 
-    def relax_assignments(self, assignments: Dict[str, str], ranges: Ranges, facts: SignFacts) -> None:
+    def relax_assignments(self, assignments: dict[str, str], ranges: Ranges, facts: SignFacts) -> None:
         """Relax the RHS of each interstate-edge assignment in place."""
         for var, value in list(assignments.items()):
             if isinstance(value, str):
@@ -326,7 +328,7 @@ class PowerRelaxer:
             if relaxed is not core:
                 nsdfg.symbol_mapping[name] = relaxed
 
-    def visit_sdfg(self, sdfg: SDFG, ranges: Ranges, inherited: Optional[SignFacts] = None) -> None:
+    def visit_sdfg(self, sdfg: SDFG, ranges: Ranges, inherited: SignFacts | None = None) -> None:
         # ``sdfg.free_symbols`` yields names; the sign / integrality assumptions
         # live on the symbol objects in the array descriptors, so collect those.
         facts = SignFacts.of_sdfg(sdfg)
@@ -424,7 +426,7 @@ class RelaxIntegerPowers(ppl.Pass):
     def depends_on(self):
         return set()
 
-    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> int | None:
         """:return: The number of powers relaxed, or None if none was."""
         relaxer = PowerRelaxer()
         relaxer.visit_sdfg(sdfg, {})

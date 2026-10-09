@@ -69,9 +69,9 @@ class RedundantArrayCopyingIn(pm.SingleStateTransformation):
         # any other access to either container -- another state's write above all -- loses its copy.
         for node in (in_array, med_array):
             occurrences = [n for n in sdfg.data_nodes() if n.data == node.data]
-            for isedge in sdfg.all_interstate_edges():
-                if node.data in isedge.data.free_symbols:
-                    occurrences.append(isedge)
+            occurrences.extend(
+                isedge for isedge in sdfg.all_interstate_edges() if node.data in isedge.data.free_symbols
+            )
             if len(occurrences) > 1:
                 return False
 

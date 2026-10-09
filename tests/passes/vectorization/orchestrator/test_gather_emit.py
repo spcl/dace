@@ -15,13 +15,12 @@ import numpy as np
 import pytest
 
 import dace
-from dace.transformation.passes.canonicalize import canonicalize
 from dace.libraries.tileops import TileGather
+from dace.transformation.interstate import LoopToMap
+from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.enums import ISA
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
-from dace.transformation.interstate import LoopToMap
-
 from tests.passes.vectorization.tile_assertions import assert_tiled
 
 N = dace.symbol("N")

@@ -25,15 +25,14 @@ import dace
 from dace.libraries.standard.nodes.reduce import Reduce
 from dace.transformation.dataflow import MapFusion
 from dace.transformation.interstate import LoopToMap
-
 from tests.codegen.readable.conftest import (
-    LEGACY,
     EXPERIMENTAL,
-    use_implementation,
-    generated_code,
-    run_isolated,
+    LEGACY,
     assert_outputs_equivalent,
     experimental_available,
+    generated_code,
+    run_isolated,
+    use_implementation,
 )
 
 N = dace.symbol("N")

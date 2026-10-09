@@ -2,12 +2,13 @@
 """Tests for the ``LiftTrivialIf`` simplification pass."""
 
 import copy
-import dace
-from dace import InterstateEdge
-from dace.sdfg.sdfg import CodeBlock, ConditionalBlock
-from dace import ControlFlowRegion
-from dace.transformation.passes.lift_trivial_if import LiftTrivialIf
+
 import pytest
+
+import dace
+from dace import ControlFlowRegion, InterstateEdge
+from dace.sdfg.sdfg import CodeBlock, ConditionalBlock
+from dace.transformation.passes.lift_trivial_if import LiftTrivialIf
 from tests.sdfg.cfg_list_in_place_test import assert_tree_consistent
 
 

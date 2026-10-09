@@ -25,20 +25,19 @@ import dace
 from dace import subsets
 from dace.dtypes import ReductionType
 from dace.frontend.operations import detect_reduction_type
-from dace.sdfg import SDFG, SDFGState
 from dace.memlet import Memlet
+from dace.sdfg import SDFG, SDFGState
 from dace.sdfg.graph import MultiConnectorEdge
+from dace.sdfg.narrowing import as_expr, as_map_entry, as_range
 from dace.sdfg.nodes import AccessNode, MapEntry, MapExit, NestedSDFG
 from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.transformation.dataflow.wcr_conversion import nested_connector_subset
 from dace.transformation.passes.vectorization.utils.map_predicates import map_body_nodes
-from typing import Tuple
-from dace.sdfg.narrowing import as_expr, as_map_entry, as_range
 
 #: Reduction ops a lifted array-slot boundary WCR may carry. The tile path folds the lanes with a
 #: horizontal ``TileReduce`` and the boundary then combines one partial per tile, so the op must be
 #: associative; a ``Custom`` (non-reassociable) WCR keeps the strict "no loose WCR" refusal.
-_ASSOCIATIVE_REDUCTIONS: Tuple[ReductionType, ...] = (
+_ASSOCIATIVE_REDUCTIONS: tuple[ReductionType, ...] = (
     ReductionType.Sum,
     ReductionType.Product,
     ReductionType.Min,

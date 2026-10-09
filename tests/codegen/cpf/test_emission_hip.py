@@ -31,7 +31,6 @@ from dace.codegen.cpf import Rendering
 from dace.libraries.blas.nodes.gemm import Gemm
 from dace.libraries.standard.nodes import FindFirst, Scan
 from dace.libraries.standard.nodes.scan import ScanOp
-
 from tests.codegen.cpf.conftest import assert_standalone_units, device_scan_sdfg, render_gpu, require_gpu_backend
 
 N = dace.symbol("N")
@@ -383,9 +382,9 @@ def test_a_nested_function_passes_the_state_to_its_launchers():
     function takes it too (gramschmidt's Dot: ``use of undeclared identifier '__state'``)."""
     rendering = render_gpu(gramschmidt, "cpf_hip_nested_state")
     assert_standalone_units(rendering, "cpf_hip_nested_state")
-    assert re.search(r"^static inline void \w+\(cpf_hip_nested_state_state_t \*__state", rendering.code, re.M), (
-        rendering.code
-    )
+    assert re.search(
+        r"^static inline void \w+\(cpf_hip_nested_state_state_t \*__state", rendering.code, re.MULTILINE
+    ), rendering.code
 
 
 @dace.program

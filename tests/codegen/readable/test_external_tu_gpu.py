@@ -24,7 +24,6 @@ import pytest
 
 import dace
 from dace.codegen import codegen
-
 from tests.codegen.readable.conftest import to_host
 
 #: Force the experimental ("new") cuda generator for every SDFG this file builds.

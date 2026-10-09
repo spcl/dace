@@ -7,8 +7,6 @@ arithmetic, ``free_symbols`` and ``is_number`` on them do not type-check; ``Meml
 probing at every call site.
 """
 
-from typing import Union
-
 import sympy
 
 from dace import dtypes, subsets, symbolic
@@ -18,7 +16,7 @@ from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion, LoopRegion, SDF
 
 #: Anything a subset bound, loop bound or parsed expression can be (``sympy.Basic`` also covers sympy's own stubs,
 #: which declare ``Basic`` where an ``Expr`` is returned).
-SymbolicLike = Union[sympy.Basic, symbolic.SymExpr, int, float, str]
+SymbolicLike = sympy.Basic | symbolic.SymExpr | int | float | str
 
 
 def as_expr(value: SymbolicLike) -> sympy.Expr:

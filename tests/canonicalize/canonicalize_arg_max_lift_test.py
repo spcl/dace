@@ -6,14 +6,15 @@ Covers TSVC s314 (max), s316 (min), and refusals on the v1 out-of-scope shapes
 """
 
 import copy
+
 import numpy as np
 import pytest
 
 import dace
-from dace.sdfg.state import LoopRegion, ConditionalBlock
 from dace.libraries.standard.nodes import Reduce
-from dace.transformation.passes.canonicalize.arg_max_lift import ArgMaxLift
 from dace.libraries.standard.nodes.scan import Scan
+from dace.sdfg.state import ConditionalBlock, LoopRegion
+from dace.transformation.passes.canonicalize.arg_max_lift import ArgMaxLift
 from dace.transformation.passes.lift_preprocess import LiftPreprocess
 from tests.sdfg.cfg_list_in_place_test import assert_tree_consistent
 
@@ -518,8 +519,8 @@ def _build_symbol_argmax_sdfg(
         true-branch. Use ``'a[i]'`` for the positive test (real argmax shape)
         and ``'i'`` for the look-alike (wrong RHS) refusal test.
     """
-    from dace.sdfg.state import ControlFlowRegion
     from dace.properties import CodeBlock
+    from dace.sdfg.state import ControlFlowRegion
 
     sdfg = dace.SDFG(label)
     sdfg.add_array("a", [N], dtype)
@@ -638,8 +639,8 @@ def _build_symbol_argmax_index_sdfg(label: str, op: str = ">", inline_cond: bool
     into ``result`` (value) and ``idx_result`` (index) so the lift can be
     verified end to end. ArgMaxLift must lift this to an ``ArgReduce`` libnode.
     """
-    from dace.sdfg.state import ControlFlowRegion
     from dace.properties import CodeBlock
+    from dace.sdfg.state import ControlFlowRegion
 
     sdfg = dace.SDFG(label)
     sdfg.add_array("a", [N], dace.float64)
@@ -774,8 +775,8 @@ def _build_strided_abs_argmax_index_sdfg(label: str, op: str = ">", gather_form:
         leaves, ``a[k + (i-1)*inc]`` (``base = k-inc`` with ``k`` bound pre-loop
         to ``inc``). Both decompose to ``coeff=inc``.
     """
-    from dace.sdfg.state import ControlFlowRegion
     from dace.properties import CodeBlock
+    from dace.sdfg.state import ControlFlowRegion
 
     sdfg = dace.SDFG(label)
     sdfg.add_array("a", [_AL], dace.float64)
@@ -981,8 +982,8 @@ def test_strided_refuses_value_only_no_transform_no_index():
     """A strided gather with NEITHER a transform NOR an index carrier (plain
     ``x := a[inc*i]``) is not handled by the combined path and is not unit
     stride, so it is refused (no value-only strided lift)."""
-    from dace.sdfg.state import ControlFlowRegion
     from dace.properties import CodeBlock
+    from dace.sdfg.state import ControlFlowRegion
 
     sdfg = dace.SDFG("s318_value_only_strided")
     sdfg.add_array("a", [_AL], dace.float64)

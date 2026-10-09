@@ -18,18 +18,18 @@ import numpy as np
 import pytest
 
 import dace
+from dace.codegen.common import get_gpu_backend
+from dace.libraries.tileops import TileBinop, TileFMA
 from dace.libraries.tileops.dispatch import detect_host_isa
 from dace.symbolic import fma, pystr_to_symbolic
 from dace.transformation.interstate import LoopToMap
+from dace.transformation.passes.canonicalize.finalize import offload_to_gpu
+from dace.transformation.passes.vectorization.config import VectorizeConfig
+from dace.transformation.passes.vectorization.enums import ISA
 from dace.transformation.passes.vectorization.fuse_multiply_add import FuseMultiplyAdd
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
 from dace.transformation.passes.vectorization.vectorize_gpu import VectorizeGPU
-from dace.transformation.passes.vectorization.config import VectorizeConfig
-from dace.transformation.passes.canonicalize.finalize import offload_to_gpu
-from dace.libraries.tileops import TileFMA, TileBinop
-from dace.codegen.common import get_gpu_backend
 from tests.gpu_device_compile import PACKED_HALF_FMA, device_compile
-from dace.transformation.passes.vectorization.enums import ISA
 
 N = dace.symbol("N")
 M = dace.symbol("M")

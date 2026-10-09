@@ -10,12 +10,12 @@ in order through the real Fortran runtime, then close.
 import dace.library
 import dace.properties
 from dace import dtypes
+from dace.libraries.fortran_io import environments
 from dace.sdfg import nodes
 from dace.transformation.transformation import ExpandTransformation
 
 from .node import FortranIONode, fio_type
 from .write import _c_string
-from .. import environments
 
 
 @dace.library.expansion

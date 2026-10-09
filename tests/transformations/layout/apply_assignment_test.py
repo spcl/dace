@@ -10,7 +10,6 @@ from dace.libraries.layout.algebra import Block, Permute
 from dace.transformation.layout.apply_assignment import IDENTITY_LAYOUT, Layout, apply_assignment, segments_of
 from dace.transformation.layout.line_graph import kernel_per_state, line_graph
 from dace.transformation.layout.prepare import prepare_for_layout
-
 from tests.transformations.layout import multinest_programs as fixtures
 from tests.transformations.layout.multinest_fixtures_test import run_and_check
 

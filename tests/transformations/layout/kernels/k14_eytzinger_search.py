@@ -40,8 +40,8 @@ layout decision).
 """
 
 import numpy
-import dace
 
+import dace
 from dace.libraries.layout.shuffle import register_shuffle
 from dace.transformation.layout.brute_force import shuffle_candidates
 

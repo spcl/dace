@@ -14,7 +14,8 @@ shapes it must not.
 import pytest
 
 import dace
-from dace import data as dt, subsets
+from dace import data as dt
+from dace import subsets
 from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.vectorization.utils.injectivity import (
     scatter_write_is_injective,

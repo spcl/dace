@@ -32,7 +32,6 @@ from dace.transformation.passes.canonicalize.move_loop_into_map_gated import (
 )
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
 from dace.transformation.passes.minimize_stride_permutation import _to_float, score_indexed_strides
-
 from tests.corpus.tsvc import tsvc
 from tests.corpus.tsvc.tsvc_numpy import REFERENCES
 

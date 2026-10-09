@@ -7,7 +7,7 @@ import pytest
 import dace
 from dace.libraries.standard.nodes.copy.common import INPUT_CONNECTOR_NAME, OUTPUT_CONNECTOR_NAME
 from dace.libraries.tileops import MaskedCopyLibraryNode, TileGather
-from dace.libraries.tileops.dispatch import detect_host_isa, ISA_TO_IMPL
+from dace.libraries.tileops.dispatch import ISA_TO_IMPL, detect_host_isa
 
 MASKS = {
     "all_active": [True] * 8,

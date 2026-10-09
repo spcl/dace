@@ -7,9 +7,8 @@ as well as functions for creating arrays from descriptors.
 """
 
 import ctypes
-
 from numbers import Number
-from typing import Any, Dict, Optional, Tuple
+from typing import Any
 
 import numpy as np
 from numpy.typing import ArrayLike
@@ -100,16 +99,15 @@ def create_datadescriptor(obj, no_custom_desc=False):
             # ml_dtypes bf16/fp8 present as opaque 'V2'/'V1' in __array_interface__; resolve from the
             # registered scalar type instead of the void heuristic below.
             dtype = dtypes.dtype_to_typeclass(obj.dtype.type)
-        else:
-            if np.dtype(interface["typestr"]).type is np.void:  # Struct from __array_interface__
-                if "descr" in interface:
-                    dtype = dtypes.struct(
-                        "unnamed", **{k: dtypes.typeclass(np.dtype(v).type) for k, v in interface["descr"]}
-                    )
-                else:
-                    raise TypeError(f'Cannot infer data type of array interface object "{interface}"')
+        elif np.dtype(interface["typestr"]).type is np.void:  # Struct from __array_interface__
+            if "descr" in interface:
+                dtype = dtypes.struct(
+                    "unnamed", **{k: dtypes.typeclass(np.dtype(v).type) for k, v in interface["descr"]}
+                )
             else:
-                dtype = dtypes.typeclass(np.dtype(interface["typestr"]).type)
+                raise TypeError(f'Cannot infer data type of array interface object "{interface}"')
+        else:
+            dtype = dtypes.typeclass(np.dtype(interface["typestr"]).type)
         # ml_dtypes fp8 reports an unparseable '<f1' typestr; trust the array's own itemsize.
         itemsize = obj.itemsize if hasattr(obj, "itemsize") else np.dtype(interface["typestr"]).itemsize
         if len(interface["shape"]) == 0:
@@ -162,7 +160,7 @@ def create_datadescriptor(obj, no_custom_desc=False):
 
 
 def make_array_from_descriptor(
-    descriptor: Array, original_array: Optional[ArrayLike] = None, symbols: Optional[Dict[str, Any]] = None
+    descriptor: Array, original_array: ArrayLike | None = None, symbols: dict[str, Any] | None = None
 ) -> ArrayLike:
     """
     Creates an array that matches the given data descriptor, and optionally copies another array to it.
@@ -186,7 +184,7 @@ def make_array_from_descriptor(
             raise NotImplementedError("GPU memory can only be allocated in Python if cupy is installed")
 
         def create_array(
-            shape: Tuple[int, ...], dtype: np.dtype, total_size: int, strides: Tuple[int, ...]
+            shape: tuple[int, ...], dtype: np.dtype, total_size: int, strides: tuple[int, ...]
         ) -> ArrayLike:
             buffer = cp.ndarray(shape=[total_size], dtype=dtype)
             view = cp.ndarray(
@@ -200,7 +198,7 @@ def make_array_from_descriptor(
     else:
 
         def create_array(
-            shape: Tuple[int, ...], dtype: np.dtype, total_size: int, strides: Tuple[int, ...]
+            shape: tuple[int, ...], dtype: np.dtype, total_size: int, strides: tuple[int, ...]
         ) -> ArrayLike:
             buffer = np.ndarray([total_size], dtype=dtype)
             view = np.ndarray(shape, dtype, buffer=buffer, strides=[s * dtype.itemsize for s in strides])
@@ -222,7 +220,7 @@ def make_array_from_descriptor(
 
 
 def make_reference_from_descriptor(
-    descriptor: Array, original_array: ctypes.c_void_p, symbols: Optional[Dict[str, Any]] = None
+    descriptor: Array, original_array: ctypes.c_void_p, symbols: dict[str, Any] | None = None
 ) -> ArrayLike:
     """
     Creates an array that matches the given data descriptor from the given pointer. Shares the memory
@@ -252,7 +250,7 @@ def make_reference_from_descriptor(
             raise NotImplementedError("GPU memory can only be referenced in Python if cupy is installed")
 
         def create_array(
-            shape: Tuple[int, ...], dtype: np.dtype, total_size: int, strides: Tuple[int, ...]
+            shape: tuple[int, ...], dtype: np.dtype, total_size: int, strides: tuple[int, ...]
         ) -> ArrayLike:
             buffer = dtypes.ptrtocupy(original_array, descriptor.dtype.as_ctypes(), (total_size,))
             view = cp.ndarray(
@@ -263,7 +261,7 @@ def make_reference_from_descriptor(
     else:
 
         def create_array(
-            shape: Tuple[int, ...], dtype: np.dtype, total_size: int, strides: Tuple[int, ...]
+            shape: tuple[int, ...], dtype: np.dtype, total_size: int, strides: tuple[int, ...]
         ) -> ArrayLike:
             buffer = dtypes.ptrtonumpy(original_array, descriptor.dtype.as_ctypes(), (total_size,))
             view = np.ndarray(shape, dtype, buffer=buffer, strides=[s * dtype.itemsize for s in strides])

@@ -60,7 +60,7 @@ def test_mapped_symbols_keep_dtype_and_assumptions_when_another_symbol_is_replac
 
     assert nsdfg.symbol_mapping["Q"] is untouched
     touched = {s.name: s for s in nsdfg.symbol_mapping["P"].free_symbols}
-    assert list(sorted(touched)) == ["K", "N"]
+    assert sorted(touched) == ["K", "N"]
     assert touched["N"].dtype == dace.int64
     assert touched["N"].is_nonnegative
 

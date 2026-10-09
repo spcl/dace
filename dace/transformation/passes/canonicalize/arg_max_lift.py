@@ -160,7 +160,7 @@ lift it correctly, so the refusal costs no parallelism ArgMaxLift could have del
 import ast
 import copy
 import re
-from typing import Any, Dict, List, NamedTuple, Optional, Tuple, Type, TypeVar, Union
+from typing import Any, NamedTuple, TypeVar
 
 import numpy as np
 
@@ -168,18 +168,18 @@ import dace
 from dace import SDFG, data, dtypes, properties, subsets, symbolic
 from dace import memlet as mm
 from dace.frontend.python import astutils
+from dace.libraries.standard.nodes.reduce import Reduce
+from dace.optionals import required
 from dace.sdfg import nodes
+from dace.sdfg.narrowing import as_expr, as_range, coeff_of, simplified
 from dace.sdfg.state import BreakBlock, ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.canonicalize.induction_variable_substitution import staged_iedge_rhs
-from dace.libraries.standard.nodes.reduce import Reduce
-from dace.optionals import required
-from dace.sdfg.narrowing import as_expr, as_range, coeff_of, simplified
 
 #: Map AST comparison op class -> DaCe reduction type.
-CMP_AST_TO_RTYPE: Dict[Type[ast.cmpop], dtypes.ReductionType] = {
+CMP_AST_TO_RTYPE: dict[type[ast.cmpop], dtypes.ReductionType] = {
     ast.Gt: dtypes.ReductionType.Max,
     ast.GtE: dtypes.ReductionType.Max,
     ast.Lt: dtypes.ReductionType.Min,
@@ -187,12 +187,12 @@ CMP_AST_TO_RTYPE: Dict[Type[ast.cmpop], dtypes.ReductionType] = {
 }
 
 #: ``(start, end, conditional block, guard, true branch)`` of a unit-stride, break-free guarded loop.
-LoopSkeleton = Tuple[
+LoopSkeleton = tuple[
     symbolic.SymbolicType, symbolic.SymbolicType, ConditionalBlock, properties.CodeBlock, ControlFlowRegion
 ]
 
 #: A comparison operator class, as ``ast`` parses ``gather OP carrier``.
-CompareOp = Type[ast.cmpop]
+CompareOp = type[ast.cmpop]
 
 BlockT = TypeVar("BlockT", bound=ControlFlowBlock)
 
@@ -209,12 +209,12 @@ class _Match(NamedTuple):
     parent: ControlFlowRegion
     carrier_name: str
     carrier_kind: str
-    carrier_subset: Optional[subsets.Range]
+    carrier_subset: subsets.Range | None
     input_array: str
     iter_start: Any
     iter_end: Any
-    idx_carrier_name: Optional[str] = None
-    transform: Optional[str] = None  # unary gather transform ('abs') or None
+    idx_carrier_name: str | None = None
+    transform: str | None = None  # unary gather transform ('abs') or None
     gather_base: Any = 0
     gather_coeff: Any = 1
     last_wins: bool = False
@@ -266,7 +266,7 @@ class MatchPredIndex(NamedTuple):
     idx_carrier: str
     seed: Any
     guard_code: str
-    guard_inputs: List[Tuple[str, mm.Memlet]]
+    guard_inputs: list[tuple[str, mm.Memlet]]
     iter_start: Any
     iter_end: Any
 
@@ -286,7 +286,7 @@ class GuardReadWiring(ast.NodeTransformer):
     def __init__(self, sdfg: SDFG, loop: LoopRegion) -> None:
         self.sdfg = sdfg
         self.loop = loop
-        self.reads: Dict[str, Tuple[str, mm.Memlet]] = {}
+        self.reads: dict[str, tuple[str, mm.Memlet]] = {}
         self.refused = False
 
     def connector(self, key: str, array: str, subset: subsets.Range) -> ast.Name:
@@ -321,7 +321,7 @@ class GuardReadWiring(ast.NodeTransformer):
             return node
         return ast.copy_location(self.connector(f"{array}[{pos}]", array, subsets.Range([(pos, pos, 1)])), node)
 
-    def position(self, idx_str: str) -> Optional[Any]:
+    def position(self, idx_str: str) -> Any | None:
         """The single array position a guard read touches -- affine in the loop
         variable, or wholly loop-invariant. ``None`` when it is neither, which is
         exactly the indirection / loop-carried-index case no memlet can express.
@@ -339,7 +339,7 @@ class GuardReadWiring(ast.NodeTransformer):
                 return None
             base, coeff = aff
             return symbolic.simplify(base + coeff * loop_var)
-        assigned: Dict[str, None] = {}
+        assigned: dict[str, None] = {}
         for e in self.loop.all_interstate_edges():
             assigned.update(dict.fromkeys((e.data.assignments or {}).keys()))
         if any(str(s) in assigned for s in idx.free_symbols):
@@ -357,9 +357,9 @@ class GuardReadWiring(ast.NodeTransformer):
 
 
 #: Right-hand operand values that make a binary op the identity on its left operand.
-IDENTITY_RHS: Tuple[Tuple[Type[ast.operator], int], ...] = ((ast.Add, 0), (ast.Sub, 0), (ast.Mult, 1), (ast.Div, 1))
+IDENTITY_RHS: tuple[tuple[type[ast.operator], int], ...] = ((ast.Add, 0), (ast.Sub, 0), (ast.Mult, 1), (ast.Div, 1))
 #: ... and the mirrored form, for the commutative ops only.
-IDENTITY_LHS: Tuple[Tuple[Type[ast.operator], int], ...] = ((ast.Add, 0), (ast.Mult, 1))
+IDENTITY_LHS: tuple[tuple[type[ast.operator], int], ...] = ((ast.Add, 0), (ast.Mult, 1))
 
 
 def strip_identity(expr: ast.AST) -> ast.AST:
@@ -472,10 +472,10 @@ class ArgMaxLift(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+    def depends_on(self) -> list[type[ppl.Pass] | ppl.Pass]:
         return []
 
-    def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> int | None:
         rewritten = 0
         for sd in sdfg.all_sdfgs_recursive():
             for region in list(sd.all_control_flow_regions()):
@@ -506,7 +506,7 @@ class ArgMaxLift(ppl.Pass):
                     rewritten += 1
         return rewritten or None
 
-    def guarded_loop_skeleton(self, loop: LoopRegion) -> Optional[LoopSkeleton]:
+    def guarded_loop_skeleton(self, loop: LoopRegion) -> LoopSkeleton | None:
         """The gate every payload analysis in this pass shares.
 
         Both the value-carrier argmax (:meth:`_match`, TSVC s314 / s315 / s318) and
@@ -572,7 +572,7 @@ class ArgMaxLift(ppl.Pass):
         guard, true_branch = non_else[0]
         return start, end, cond_block, guard, true_branch
 
-    def _match(self, loop: LoopRegion, sdfg: SDFG, skeleton: Optional[LoopSkeleton] = None) -> Optional[_Match]:
+    def _match(self, loop: LoopRegion, sdfg: SDFG, skeleton: LoopSkeleton | None = None) -> _Match | None:
         skeleton = skeleton if skeleton is not None else self.guarded_loop_skeleton(loop)
         if skeleton is None:
             return None
@@ -736,7 +736,7 @@ class ArgMaxLift(ppl.Pass):
 
     # 2-D contiguous nested argmax (TSVC s3110 / s13110).
 
-    def _single_child_region(self, region: ControlFlowRegion, want_type: Type[BlockT]) -> Optional[BlockT]:
+    def _single_child_region(self, region: ControlFlowRegion, want_type: type[BlockT]) -> BlockT | None:
         """Return the unique child block of ``region`` of type ``want_type``,
         requiring every other child to be an empty ``SDFGState``; else ``None``."""
         found = None
@@ -752,7 +752,7 @@ class ArgMaxLift(ppl.Pass):
                 return None
         return found
 
-    def _unit_loop_from_zero(self, loop: LoopRegion) -> Optional[Tuple[symbolic.SymbolicType, symbolic.SymbolicType]]:
+    def _unit_loop_from_zero(self, loop: LoopRegion) -> tuple[symbolic.SymbolicType, symbolic.SymbolicType] | None:
         """``(start, end)`` for a unit-stride loop starting at 0, else ``None``."""
         start = loop_analysis.get_init_assignment(loop)
         end = loop_analysis.get_loop_end(loop)
@@ -768,7 +768,7 @@ class ArgMaxLift(ppl.Pass):
             return None
         return start, end
 
-    def _match_2d(self, outer_loop: LoopRegion, sdfg: SDFG) -> Optional[_Match2D]:
+    def _match_2d(self, outer_loop: LoopRegion, sdfg: SDFG) -> _Match2D | None:
         """Match a nested ``for i: for j: if aa[i, j] OP maxv: maxv = aa[i, j];
         xindex = i; yindex = j`` over the full (contiguous) array. Matched on the
         OUTER loop; the inner loop and the ConditionalBlock are validated below.
@@ -858,7 +858,7 @@ class ArgMaxLift(ppl.Pass):
             last_wins=last_wins,
         )
 
-    def _parse_2d_gather(self, rhs_str: str, outer_var: str, inner_var: str) -> Optional[str]:
+    def _parse_2d_gather(self, rhs_str: str, outer_var: str, inner_var: str) -> str | None:
         """Return the array name iff ``rhs_str`` is exactly ``arr[outer_var,
         inner_var]`` (a 2-D point access, outer index in dim 0, inner in dim 1)."""
         try:
@@ -879,7 +879,7 @@ class ArgMaxLift(ppl.Pass):
 
     def _resolve_gather_2d(
         self, inner_loop: LoopRegion, gather_sym: str, outer_var: str, inner_var: str, sdfg: SDFG
-    ) -> Optional[str]:
+    ) -> str | None:
         """Find an iedge binding ``gather_sym := arr[outer_var, inner_var]`` in the
         inner loop and return ``arr`` (validated against ``sdfg.arrays``)."""
         for e in inner_loop.all_interstate_edges():
@@ -900,7 +900,7 @@ class ArgMaxLift(ppl.Pass):
         outer_var: str,
         inner_var: str,
         sdfg: SDFG,
-    ) -> Optional[Tuple[str, str]]:
+    ) -> tuple[str, str] | None:
         """Verify the true-branch binds exactly ``carrier := arr[i, j]`` (or
         ``:= gather_sym``), ``x := outer_var`` and ``y := inner_var`` via iedges,
         with empty states and no other writes. Returns ``(x_name, y_name)`` or
@@ -1047,9 +1047,7 @@ class ArgMaxLift(ppl.Pass):
                 return True
         return False
 
-    def _parse_compare_node(
-        self, tree: ast.expr
-    ) -> Tuple[Optional[CompareOp], Optional[str], Optional[str], Optional[str]]:
+    def _parse_compare_node(self, tree: ast.expr) -> tuple[CompareOp | None, str | None, str | None, str | None]:
         """Extract ``(op_cls, gather_name, carrier_name, transform)`` from a
         :class:`ast.Compare` node ``gather OP carrier`` (or ``f(gather) OP
         carrier``). The gather side may carry a recognised unary transform
@@ -1069,7 +1067,7 @@ class ArgMaxLift(ppl.Pass):
 
     def _parse_inline_subscript_comparison(
         self, expr_str: str, loop_var: str, loop: LoopRegion
-    ) -> Optional[Tuple[CompareOp, Tuple[str, symbolic.SymbolicType, symbolic.SymbolicType], str, Optional[str]]]:
+    ) -> tuple[CompareOp, tuple[str, symbolic.SymbolicType, symbolic.SymbolicType], str, str | None] | None:
         """Parse a comparison whose gather is an INLINE array subscript:
         ``[f](array[b + c*i]) OP carrier``.
 
@@ -1117,7 +1115,7 @@ class ArgMaxLift(ppl.Pass):
 
     def _resolve_tmp_iedge(
         self, loop: LoopRegion, cond_block: ConditionalBlock, tmp_sym: str
-    ) -> Tuple[Optional[CompareOp], Optional[str], Optional[str], Optional[str]]:
+    ) -> tuple[CompareOp | None, str | None, str | None, str | None]:
         """Walk in-edges of ``cond_block`` looking for one whose assignment binds
         ``tmp_sym`` to a comparison ``[f](g) OP c``. Returns ``(ast_op_cls,
         g_name, c_name, transform)`` or ``(None, None, None, None)``."""
@@ -1135,9 +1133,7 @@ class ArgMaxLift(ppl.Pass):
                 return res
         return None, None, None, None
 
-    def _parse_comparison(
-        self, expr_str: str
-    ) -> Tuple[Optional[CompareOp], Optional[str], Optional[str], Optional[str]]:
+    def _parse_comparison(self, expr_str: str) -> tuple[CompareOp | None, str | None, str | None, str | None]:
         """Parse a comparison ``[f](g) OP c`` inlined directly in the condition.
 
         Mirrors :meth:`_resolve_tmp_iedge` but on the condition string itself
@@ -1152,7 +1148,7 @@ class ArgMaxLift(ppl.Pass):
 
     def _resolve_gather_iedge(
         self, loop: LoopRegion, cond_block: ConditionalBlock, gather_sym: str, loop_var: str, sdfg: SDFG
-    ) -> Optional[Tuple[str, Any, Any]]:
+    ) -> tuple[str, Any, Any] | None:
         """Walk back two levels to find an iedge binding ``gather_sym = arr[idx]``
         where ``idx`` is an AFFINE function of the loop variable ``b + c*i``.
 
@@ -1199,7 +1195,7 @@ class ArgMaxLift(ppl.Pass):
     @staticmethod
     def _affine_index_in_loop_var(
         idx_str: str, loop_var: str, loop: LoopRegion
-    ) -> Optional[Tuple[symbolic.SymbolicType, symbolic.SymbolicType]]:
+    ) -> tuple[symbolic.SymbolicType, symbolic.SymbolicType] | None:
         """Decompose a gather index ``idx_str`` as ``base + coeff*loop_var``.
 
         Returns ``(base, coeff)`` (sympy exprs) iff ``idx_str`` is affine and
@@ -1232,7 +1228,7 @@ class ArgMaxLift(ppl.Pass):
             return None
         # Every symbol feeding base / coeff must be loop-invariant: not assigned
         # on any body interstate edge (a varying stride/base breaks the closed form).
-        body_assigned: Dict[str, None] = {}
+        body_assigned: dict[str, None] = {}
         for e in loop.all_interstate_edges():
             body_assigned.update(dict.fromkeys((e.data.assignments or {}).keys()))
         # membership-only scan (early-exit), iteration order does not affect the result
@@ -1241,7 +1237,7 @@ class ArgMaxLift(ppl.Pass):
                 return None
         return base, coeff
 
-    def _extract_name(self, node: ast.AST) -> Optional[str]:
+    def _extract_name(self, node: ast.AST) -> str | None:
         if isinstance(node, ast.Name):
             return node.id
         return None
@@ -1249,9 +1245,9 @@ class ArgMaxLift(ppl.Pass):
     #: Recognised unary gather transforms ``f(g)`` -> the Python builtin name.
     #: Adding one here is not enough for the transform+index shape: that rewrite hands the name to
     #: ``ArgReduce.transform``, whose own set is what decides how it is spelled in C++.
-    SUPPORTED_TRANSFORMS: Dict[str, None] = dict.fromkeys(["abs"])
+    SUPPORTED_TRANSFORMS: dict[str, None] = dict.fromkeys(["abs"])
 
-    def _extract_transform(self, node: ast.AST) -> Tuple[Optional[str], Optional[str]]:
+    def _extract_transform(self, node: ast.AST) -> tuple[str | None, str | None]:
         """Return ``(transform, name)`` for a possibly-transformed operand.
 
         A bare ``Name`` ``g`` -> ``(None, 'g')``; a recognised unary call
@@ -1271,7 +1267,7 @@ class ArgMaxLift(ppl.Pass):
                 return node.func.id, inner
         return None, None
 
-    def _extract_singleton_state(self, branch: ControlFlowBlock) -> Optional[SDFGState]:
+    def _extract_singleton_state(self, branch: ControlFlowBlock) -> SDFGState | None:
         if not isinstance(branch, ControlFlowRegion):
             return None
         content_states = [n for n in branch.nodes() if isinstance(n, SDFGState) and len(n.nodes()) > 0]
@@ -1330,7 +1326,7 @@ class ArgMaxLift(ppl.Pass):
                 return True
         return False
 
-    def _walk_back_to_source(self, state: SDFGState, carrier_an: nodes.AccessNode) -> Optional[nodes.AccessNode]:
+    def _walk_back_to_source(self, state: SDFGState, carrier_an: nodes.AccessNode) -> nodes.AccessNode | None:
         """Walk back from ``carrier_an`` through a chain of transients and
         identity Tasklets to the source AccessNode (the array we're reading
         from). Returns the source AN, or ``None`` if the chain doesn't form
@@ -1356,7 +1352,7 @@ class ArgMaxLift(ppl.Pass):
                 return upstream
             cur = upstream
 
-    def _classify_carrier(self, name: str, sdfg: SDFG) -> Tuple[Optional[str], Optional[subsets.Range]]:
+    def _classify_carrier(self, name: str, sdfg: SDFG) -> tuple[str | None, subsets.Range | None]:
         desc = sdfg.arrays.get(name)
         if desc is not None:
             if isinstance(desc, data.Scalar):
@@ -1372,13 +1368,13 @@ class ArgMaxLift(ppl.Pass):
     def _rhs_is_value_write(
         self,
         rhs_str: str,
-        gather_sym: Optional[str],
+        gather_sym: str | None,
         array: str,
         loop_var: str,
         loop: LoopRegion,
         gather_base: symbolic.SymbolicType,
         gather_coeff: symbolic.SymbolicType,
-        transform: Optional[str],
+        transform: str | None,
     ) -> bool:
         """True iff ``rhs_str`` is the value-carrier write under ``transform``:
         ``[f](gather_sym)`` or ``[f](array[idx])``, where ``f`` is the recognised
@@ -1432,11 +1428,11 @@ class ArgMaxLift(ppl.Pass):
         loop: LoopRegion,
         carrier: str,
         array: str,
-        gather_sym: Optional[str],
+        gather_sym: str | None,
         gather_base: symbolic.SymbolicType,
         gather_coeff: symbolic.SymbolicType,
-        transform: Optional[str] = None,
-    ) -> Tuple[bool, Optional[str]]:
+        transform: str | None = None,
+    ) -> tuple[bool, str | None]:
         """For the symbol-carrier case, verify the true-branch binds the value
         carrier (``carrier := [f](array[gather_base + gather_coeff*loop_var])``
         or ``carrier := [f](gather_sym)``, with the same gather transform ``f``
@@ -1479,7 +1475,7 @@ class ArgMaxLift(ppl.Pass):
                 return False, None  # nested control flow not supported in v1
         return carrier_write_seen, idx_carrier
 
-    def _collect_preloop_assignments(self, loop: LoopRegion, sdfg: SDFG) -> Dict[str, str]:
+    def _collect_preloop_assignments(self, loop: LoopRegion, sdfg: SDFG) -> dict[str, str]:
         """Walk back the linear pre-loop chain (each block reached by a single
         in-edge) and accumulate interstate-edge assignments. The binding closest
         to the loop wins for each name (it is the value live at loop entry).
@@ -1491,7 +1487,7 @@ class ArgMaxLift(ppl.Pass):
         seed-position check below sees a symbol value rather than an array name it
         must discard.
         """
-        preloop: Dict[str, str] = {}
+        preloop: dict[str, str] = {}
         parent = loop.parent_graph
         cur: ControlFlowBlock = loop
         seen: dict = {}
@@ -1511,7 +1507,7 @@ class ArgMaxLift(ppl.Pass):
         return preloop
 
     @staticmethod
-    def _seed_position_negative(position: Any) -> Optional[bool]:
+    def _seed_position_negative(position: Any) -> bool | None:
         """Is the seed's gathered array position negative? ``None`` when the sign is
         undecidable (a symbolic base such as ``a[K + i]``, where ``K == 0`` and
         ``K > 0`` want different slice lower bounds).
@@ -1529,12 +1525,12 @@ class ArgMaxLift(ppl.Pass):
         loop: LoopRegion,
         sdfg: SDFG,
         value_carrier: str,
-        idx_carrier: Optional[str],
+        idx_carrier: str | None,
         array: str,
         base: Any,
         coeff: Any,
         start: Any,
-        transform: Optional[str],
+        transform: str | None,
     ) -> bool:
         """Check the pre-loop seed is ``value_carrier := [f](array[base + coeff*(start-1)])`` and, with
         an index carrier, ``idx_carrier := start-1``.
@@ -1563,7 +1559,7 @@ class ArgMaxLift(ppl.Pass):
                 continue  # an array-read binding, not a scalar symbol value
             subs[symbolic.pystr_to_symbolic(lhs)] = expr
 
-        def _resolve(expr: object) -> Optional[symbolic.SymbolicType]:
+        def _resolve(expr: object) -> symbolic.SymbolicType | None:
             try:
                 return symbolic.simplify(symbolic.pystr_to_symbolic(str(expr)).subs(subs))
             except Exception:  # pragma: no cover -- defensive
@@ -1596,8 +1592,8 @@ class ArgMaxLift(ppl.Pass):
         return True
 
     def _seed_gather_position(
-        self, rhs_str: str, array: str, transform: Optional[str], preloop: Dict[str, str]
-    ) -> Optional[str]:
+        self, rhs_str: str, array: str, transform: str | None, preloop: dict[str, str]
+    ) -> str | None:
         """If ``rhs_str`` is ``[f](array[P])`` -- or ``[f](g)`` where ``g`` is a
         pre-loop symbol bound to ``array[P]`` -- return the index string ``P``;
         else ``None``."""
@@ -1654,7 +1650,7 @@ class ArgMaxLift(ppl.Pass):
             return symbolic.simplify(start)
         return iter_lo
 
-    def _gather_range(self, m: _Match, iter_lo: Any, iter_hi: Any) -> Tuple[Any, Any]:
+    def _gather_range(self, m: _Match, iter_lo: Any, iter_hi: Any) -> tuple[Any, Any]:
         """Inclusive ARRAY-POSITION bounds of the gather ``arr[gather_base +
         gather_coeff*i]`` over the iterations ``iter_lo .. iter_hi``."""
         return (
@@ -2024,8 +2020,8 @@ class ArgMaxLift(ppl.Pass):
     # predicate index (TSVC s331)
 
     def match_predicate_index(
-        self, loop: LoopRegion, sdfg: SDFG, skeleton: Optional[LoopSkeleton] = None
-    ) -> Optional[MatchPredIndex]:
+        self, loop: LoopRegion, sdfg: SDFG, skeleton: LoopSkeleton | None = None
+    ) -> MatchPredIndex | None:
         """Match ``for i: if pred(a[i]): j = i`` -- a position tracked with NO value
         carrier, i.e. ``j = max{i : pred}`` seeded from the pre-loop value of ``j``.
 
@@ -2046,7 +2042,7 @@ class ArgMaxLift(ppl.Pass):
 
         # The ConditionalBlock owns no edges of its own, so ``loop.edges()`` is
         # exactly the pre-guard binding chain (``a_index := a[i]``, ``t := a_index < 0``).
-        bindings: Dict[str, str] = {}
+        bindings: dict[str, str] = {}
         for e in loop.edges():
             if not e.data.is_unconditional():
                 return None
@@ -2074,7 +2070,7 @@ class ArgMaxLift(ppl.Pass):
             iter_end=end,
         )
 
-    def true_branch_writes_index_only(self, true_branch: ControlFlowBlock, loop_var: str) -> Optional[str]:
+    def true_branch_writes_index_only(self, true_branch: ControlFlowBlock, loop_var: str) -> str | None:
         """The one index carrier the true branch writes (``idx := loop_var``), or
         ``None`` if it writes anything else, writes twice, or holds any node work --
         the rewrite drops the branch wholesale, so a second effect would be lost.
@@ -2095,8 +2091,8 @@ class ArgMaxLift(ppl.Pass):
         return idx_carrier
 
     def wire_guard(
-        self, guard_str: str, bindings: Dict[str, str], idx_carrier: str, loop: LoopRegion, sdfg: SDFG
-    ) -> Optional[Tuple[str, List[Tuple[str, mm.Memlet]]]]:
+        self, guard_str: str, bindings: dict[str, str], idx_carrier: str, loop: LoopRegion, sdfg: SDFG
+    ) -> tuple[str, list[tuple[str, mm.Memlet]]] | None:
         """Turn the branch guard into mask-tasklet code plus the data inputs it reads.
 
         The pre-guard bindings are substituted to a fixed point, then
@@ -2139,7 +2135,7 @@ class ArgMaxLift(ppl.Pass):
             return None
         return code, list(wiring.reads.values())
 
-    def predicate_seed(self, loop: LoopRegion, idx_carrier: str, bindings: Dict[str, str], start: Any) -> Optional[Any]:
+    def predicate_seed(self, loop: LoopRegion, idx_carrier: str, bindings: dict[str, str], start: Any) -> Any | None:
         """``idx_carrier``'s pre-loop value, iff loop-invariant and provably ``<= start``.
 
         That inequality is the whole soundness argument of the lift: the mask folds
@@ -2154,8 +2150,8 @@ class ArgMaxLift(ppl.Pass):
         """
         parent = loop.parent_graph
         cur: ControlFlowBlock = loop
-        rhs: Optional[str] = None
-        walked: Dict[Any, None] = {}
+        rhs: str | None = None
+        walked: dict[Any, None] = {}
         while rhs is None:
             ins = parent.in_edges(cur)
             if len(ins) != 1:

@@ -16,9 +16,9 @@ import numpy
 import pytest
 
 import dace
+from dace.transformation.passes.vectorization.enums import BranchMode
 from dace.transformation.passes.vectorization.utils.tasklets import LANE_ID_MATERIALISER_PREFIX
 from tests.passes.vectorization.helpers.harness import S, X, Y, run_vectorization_test
-from dace.transformation.passes.vectorization.enums import BranchMode
 
 pytestmark = pytest.mark.tile_nodes
 

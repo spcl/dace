@@ -16,13 +16,12 @@ import tempfile
 
 import onnx
 import onnxsim
-
 import torch
-from transformers import BertTokenizer, BertModel
+from transformers import BertModel, BertTokenizer
 
 import dace.libraries.onnx as donnx
-from tests.utils import torch_tensors_close
 from tests.ml_gpu_utils import DEVICES, experimental_cuda, is_gpu, torch_device
+from tests.utils import torch_tensors_close
 
 BERT_TINY_MODEL = "google/bert_uncased_L-2_H-128_A-2"
 

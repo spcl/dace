@@ -24,8 +24,6 @@ in the ``tests/canonicalize/`` suite (see
 design doc pins).
 """
 
-from typing import List, Tuple
-
 import numpy as np
 import pytest
 
@@ -50,10 +48,10 @@ def _apply(sdfg: dace.SDFG) -> int:
     return CascadeInterstateEdgeAssignmentsUp().apply_pass(sdfg, {}) or 0
 
 
-def _all_iedge_assignments(sdfg: dace.SDFG) -> List[Tuple[str, str, str]]:
+def _all_iedge_assignments(sdfg: dace.SDFG) -> list[tuple[str, str, str]]:
     """``(containing-region-label, lhs, rhs)`` for every iedge assignment
     anywhere in ``sdfg``."""
-    out: List[Tuple[str, str, str]] = []
+    out: list[tuple[str, str, str]] = []
     for cfg in sdfg.all_control_flow_regions(recursive=True):
         for e in cfg.edges():
             for lhs, rhs in e.data.assignments.items():
@@ -61,10 +59,10 @@ def _all_iedge_assignments(sdfg: dace.SDFG) -> List[Tuple[str, str, str]]:
     return out
 
 
-def _assignments_inside_loops(sdfg: dace.SDFG) -> List[Tuple[str, str, str]]:
+def _assignments_inside_loops(sdfg: dace.SDFG) -> list[tuple[str, str, str]]:
     """Iedge assignments whose containing region is, or sits inside, a
     ``LoopRegion``."""
-    out: List[Tuple[str, str, str]] = []
+    out: list[tuple[str, str, str]] = []
     for cfg in sdfg.all_control_flow_regions(recursive=True):
         # is cfg a LoopRegion, or inside one?
         in_loop = False
@@ -559,8 +557,8 @@ def test_icon_pattern_frontend_value_preserving():
 
 
 def _nested_loops(
-    sdfg: dace.SDFG, depth: int, key: str, rhs: str, loop_vars: List[str]
-) -> Tuple[LoopRegion, LoopRegion]:
+    sdfg: dace.SDFG, depth: int, key: str, rhs: str, loop_vars: list[str]
+) -> tuple[LoopRegion, LoopRegion]:
     """Build ``for v0: for v1: ... for v_{depth-1}: { s_pre -[key=rhs]-> s_post }``
     directly under ``sdfg``. Returns ``(outermost_loop, innermost_loop)``.
     """

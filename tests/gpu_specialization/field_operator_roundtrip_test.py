@@ -11,9 +11,9 @@ import pytest
 
 import dace
 from dace import dtypes
-from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
 from dace.memlet import Memlet
 from dace.properties import CodeBlock
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
 
 N = dace.symbol("N")
 M = dace.symbol("M")

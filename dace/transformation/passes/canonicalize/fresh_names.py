@@ -1,13 +1,11 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Fresh ``<prefix><N>`` name suffixes shared by the canonicalization passes."""
 
-from typing import Dict, Tuple
-
 from dace import SDFG
 from dace.sdfg.state import LoopRegion
 
 
-def lowest_free_suffix(sdfg: SDFG, prefixes: Tuple[str, ...], with_free_symbols: bool = False) -> int:
+def lowest_free_suffix(sdfg: SDFG, prefixes: tuple[str, ...], with_free_symbols: bool = False) -> int:
     """Lowest ``N`` such that no ``<prefix><N>`` for any of ``prefixes`` is used in the SDFG tree.
 
     :param sdfg: The root SDFG; nested SDFGs are scanned too.
@@ -15,7 +13,7 @@ def lowest_free_suffix(sdfg: SDFG, prefixes: Tuple[str, ...], with_free_symbols:
     :param with_free_symbols: Also scan each SDFG's free symbols, not only its declared symbols.
     :return: The first unused suffix.
     """
-    used: Dict[int, None] = {}
+    used: dict[int, None] = {}
     for sd in sdfg.all_sdfgs_recursive():
         names = list(sd.symbols.keys())
         if with_free_symbols:

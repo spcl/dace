@@ -39,13 +39,13 @@ Runs after ``AddThreadBlockMaps``, which is what creates the ``(GPU_Device, GPU_
 the tiling matches, and which supplies the block extent this pass keeps rather than re-chooses.
 """
 
-from dace.transformation.passes.iteration_domain import loop_trip_count
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from dace import SDFG, dtypes, properties, symbolic
 from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
+from dace.transformation.passes.iteration_domain import loop_trip_count
 
 #: Blocks a grid-strided kernel keeps. MI300A holds 304 CUs x 8 blocks of 256 threads resident, so
 #: 2432 is one full device with no tail. MEASURED on ``tsvc_2_s311`` at XL, which is the shape this
@@ -97,14 +97,14 @@ def record(carrier: Any, hint: str) -> None:
     carrier.specialization_hint = f"{existing}\n{hint}" if existing else hint
 
 
-def enclosing_loops(sdfg: SDFG, state: SDFGState, entry: nodes.MapEntry) -> List[LoopRegion]:
+def enclosing_loops(sdfg: SDFG, state: SDFGState, entry: nodes.MapEntry) -> list[LoopRegion]:
     """The sequential loops that re-enter ``entry``, outermost last."""
     from dace.transformation.helpers import get_parent_map_and_loop_scopes
 
     return [s for s in get_parent_map_and_loop_scopes(sdfg, entry, state) if isinstance(s, LoopRegion)]
 
 
-def as_int(expr: Any) -> Optional[int]:
+def as_int(expr: Any) -> int | None:
     """``expr`` as a python int when it is a compile-time constant, else ``None``."""
     try:
         return int(symbolic.simplify(expr))
@@ -112,7 +112,7 @@ def as_int(expr: Any) -> Optional[int]:
         return None
 
 
-def thread_block_child(state: SDFGState, entry: nodes.MapEntry) -> Optional[nodes.MapEntry]:
+def thread_block_child(state: SDFGState, entry: nodes.MapEntry) -> nodes.MapEntry | None:
     """The single ``GPU_ThreadBlock`` map directly inside ``entry``, or ``None``.
 
     ``None`` for anything else on purpose: two inner scopes, or an inner scope that is not a thread
@@ -125,7 +125,7 @@ def thread_block_child(state: SDFGState, entry: nodes.MapEntry) -> Optional[node
     return inner[0]
 
 
-def strip_mined_pair(state: SDFGState, entry: nodes.MapEntry) -> Optional[nodes.MapEntry]:
+def strip_mined_pair(state: SDFGState, entry: nodes.MapEntry) -> nodes.MapEntry | None:
     """``entry``'s inner map iff the two are the 1-D pair ``AddThreadBlockMap`` strip-mines.
 
     That pair is recognised by the inner map STARTING at the outer parameter, which is what
@@ -141,7 +141,7 @@ def strip_mined_pair(state: SDFGState, entry: nodes.MapEntry) -> Optional[nodes.
     return inner if str(inner.map.range[0][0]) == entry.map.params[0] else None
 
 
-def block_threads(entry: nodes.MapEntry, inner: nodes.MapEntry) -> Optional[int]:
+def block_threads(entry: nodes.MapEntry, inner: nodes.MapEntry) -> int | None:
     """Threads per block of the strip-mined pair ``(entry, inner)``, or ``None`` when it is not one.
 
     The outer step counts index units, the inner step says how many of them one thread covers, so
@@ -189,7 +189,7 @@ class GridStrideKernels(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Tuple[int, int]]:
+    def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> tuple[int, int] | None:
         """Rewrite and annotate ``sdfg`` in place.
 
         :param sdfg: the offloaded, thread-block-tiled SDFG to specialize.
@@ -278,6 +278,6 @@ class GridStrideKernels(ppl.Pass):
         record(loops[0], hint)
         return 1
 
-    def report(self, pass_retval: Tuple[int, int]) -> str:
+    def report(self, pass_retval: tuple[int, int]) -> str:
         strided, hinted = pass_retval
         return f"Grid-strided {strided} kernel(s); hinted {hinted} launch-bound kernel(s)"

@@ -17,15 +17,16 @@ soundness gain -- the genuinely unmaskable ones are refused precisely by
 
 import copy
 
-import dace
 import pytest
+
+import dace
+import tests.corpus.measure_parallelization as mp
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.passes.vectorization.utils.map_predicates import (
     is_vectorizable_map,
     map_body_has_inner_loop,
     map_body_has_tiled_param_dependent_branch,
 )
-import tests.corpus.measure_parallelization as mp
 from tests.passes.vectorization.tile_assertions import TILE_NODE_TYPES
 
 N = 16

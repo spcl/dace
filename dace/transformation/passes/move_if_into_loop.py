@@ -38,19 +38,20 @@ assignment and emits a loud warning so the dropped opportunity is visible.
 
 import copy
 import warnings
-from typing import Any, Dict, List, Optional, Tuple, Type, Union
+from typing import Any
 
 import dace.symbolic
-from dace import Memlet, SDFG, subsets
+from dace import SDFG, Memlet, subsets
+from dace.optionals import required
 from dace.ordered import OrderedSet
 from dace.properties import CodeBlock
+from dace.sdfg import nodes, propagation
 from dace.sdfg.sdfg import InterstateEdge, memlets_in_ast
 from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState
-from dace.sdfg import nodes, propagation
-from dace.transformation import pass_pipeline as ppl, transformation
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation import transformation
 from dace.transformation.interstate.state_fusion import keep_start_block
 from dace.transformation.passes.analysis import loop_analysis
-from dace.optionals import required
 
 
 def _written(region: ControlFlowRegion) -> set:
@@ -65,7 +66,7 @@ def _written(region: ControlFlowRegion) -> set:
     return w
 
 
-def _linear_order(region: ControlFlowRegion) -> Optional[List]:
+def _linear_order(region: ControlFlowRegion) -> list | None:
     """Blocks of ``region`` in order iff it is a plain linear chain
     (unconditional edges; assignments are allowed -- they carry condition
     prep); else ``None``."""
@@ -91,7 +92,7 @@ def _free(expr: str) -> set:
         return set()
 
 
-def match_guard(cb: ConditionalBlock) -> Optional[Tuple[ConditionalBlock, CodeBlock, ControlFlowRegion]]:
+def match_guard(cb: ConditionalBlock) -> tuple[ConditionalBlock, CodeBlock, ControlFlowRegion] | None:
     """Match ``cb`` as a guard over (loop-invariant prep then) a loop.
 
     :param cb: The conditional block to match.
@@ -149,7 +150,7 @@ def match_guard(cb: ConditionalBlock) -> Optional[Tuple[ConditionalBlock, CodeBl
     return cb, cond, region
 
 
-def find_match(sdfg: SDFG) -> Optional[Tuple[ConditionalBlock, CodeBlock, ControlFlowRegion]]:
+def find_match(sdfg: SDFG) -> tuple[ConditionalBlock, CodeBlock, ControlFlowRegion] | None:
     """Find a ``ConditionalBlock`` guarding (loop-invariant prep then) a loop."""
     for cb in sdfg.all_control_flow_regions(recursive=True):
         if isinstance(cb, ConditionalBlock):
@@ -354,7 +355,7 @@ def splice_empty_prep_states(parent: ControlFlowRegion, block: ControlFlowBlock)
             return
 
 
-def _match_imperfect(sdfg: SDFG) -> Optional[Tuple[ConditionalBlock, CodeBlock, ControlFlowRegion]]:
+def _match_imperfect(sdfg: SDFG) -> tuple[ConditionalBlock, CodeBlock, ControlFlowRegion] | None:
     """Find a ``ConditionalBlock`` guarding a *heterogeneous* body: a linear
     chain of ``LoopRegion`` and bare ``SDFGState`` blocks with at least one of
     each (a frontend imperfect nest, e.g. ``if c: { for j: body1 ; s }``).
@@ -466,10 +467,10 @@ class MoveIfIntoLoop(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+    def depends_on(self) -> list[type[ppl.Pass] | ppl.Pass]:
         return []
 
-    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> int | None:
         """Repeatedly push guards into their loops until none remain.
 
         :param sdfg: The SDFG to transform in place.

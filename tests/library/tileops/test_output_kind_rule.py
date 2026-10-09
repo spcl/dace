@@ -15,9 +15,8 @@ import pytest
 
 import dace
 from dace.libraries.tileops import TileBinop, TileITE, TileUnop
-from dace.libraries.tileops.dispatch import select_tile_implementation
+from dace.libraries.tileops.dispatch import ISA, select_tile_implementation
 from dace.memlet import Memlet
-from dace.libraries.tileops.dispatch import ISA
 
 
 def _wire_binop(kind_a, kind_b, out_shape, src_dtype=dace.float64):

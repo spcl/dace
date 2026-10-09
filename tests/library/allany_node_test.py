@@ -31,7 +31,7 @@ def _build_allany_sdfg(
     inclusive-exclusive) restricts the input edge to a section."""
     sdfg = dace.SDFG(f"allany_{tag}")
     sdfg.add_array("mask", mask_shape, mask_dtype, transient=False)
-    out_shape_used = out_shape if out_shape else [1]
+    out_shape_used = out_shape or [1]
     sdfg.add_array("out", out_shape_used, dace.bool_, transient=False)  # ALL/ANY return bool
     state = sdfg.add_state("s")
 

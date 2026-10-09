@@ -21,10 +21,10 @@ Modes covered:
     to int32 before reducing.
 """
 
+import numpy as np
+
 import dace
 from dace.libraries.standard.nodes import CountLibraryNode
-
-import numpy as np
 
 
 def _build_count_sdfg(name_tag: str, mask_shape, mask_dtype, dim, out_shape, out_dtype):
@@ -32,7 +32,7 @@ def _build_count_sdfg(name_tag: str, mask_shape, mask_dtype, dim, out_shape, out
     access into an output access — full coverage (no section subset)."""
     sdfg = dace.SDFG(f"count_{name_tag}")
     sdfg.add_array("mask", mask_shape, mask_dtype, transient=False)
-    out_shape_used = out_shape if out_shape else [1]
+    out_shape_used = out_shape or [1]
     sdfg.add_array("out", out_shape_used, out_dtype, transient=False)
     state = sdfg.add_state("count_state")
 

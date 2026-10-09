@@ -8,7 +8,6 @@ import pytest
 
 from dace.sdfg import nodes
 from dace.transformation.layout.prepare import prepare_for_layout
-
 from tests.transformations.layout import multinest_programs as fixtures
 
 EXPECTED_NESTS = {"conflict2": 2, "conflict3": 3, "agree2": 2}

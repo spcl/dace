@@ -10,7 +10,7 @@ from __future__ import annotations
 import collections
 import inspect
 import re
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import sympy
 
@@ -18,6 +18,7 @@ from dace import data as dt
 from dace import dtypes, symbolic
 from dace.properties import CodeBlock
 from dace.sdfg import nodes as nd
+from dace.sdfg.narrowing import as_expr
 from dace.sdfg.sdfg import SDFG, InterstateEdge
 from dace.sdfg.state import (
     AbstractControlFlowRegion,
@@ -31,7 +32,6 @@ from dace.sdfg.state import (
     ReturnBlock,
     SDFGState,
 )
-from dace.sdfg.narrowing import as_expr
 
 
 def sdfg_to_python(sdfg: SDFG) -> str:
@@ -67,25 +67,24 @@ class PythonEmitter:
 
     def __init__(self, sdfg: SDFG):
         self.root = sdfg
-        self._nested_factories: List[List[str]] = []
-        self._state_populators: List[List[str]] = []
-        self._var_for: Dict[int, str] = {}
-        self._name_counter: Dict[str, int] = {}
+        self._nested_factories: list[list[str]] = []
+        self._state_populators: list[list[str]] = []
+        self._var_for: dict[int, str] = {}
+        self._name_counter: dict[str, int] = {}
         self._taken_names: set = set()
         self._populator_counter: int = 0
-        self._extra_imports: Dict[str, None] = {}
+        self._extra_imports: dict[str, None] = {}
         # Scan the SDFG up front and decide which compact helpers earn
         # their keep. See _scan_helper_eligibility.
         self._helpers_used: set = self._scan_helper_eligibility()
 
     def emit(self) -> str:
         body = self._emit_factory("build_sdfg", self.root)
-        lines: List[str] = []
+        lines: list[str] = []
         lines.append(self._module_docstring())
         lines.append("")
         lines.extend(self.HEADER_IMPORTS)
-        for extra in self._extra_imports:
-            lines.append(extra)
+        lines.extend(self._extra_imports)
         lines.append("")
         lines.append("")
         # Compact helper kit — emitted only for patterns that recur often
@@ -132,7 +131,7 @@ class PythonEmitter:
         appears. Helpers whose count clears ``HELPER_THRESHOLD`` are switched
         on for the emit pass; the rest stay as literal API calls.
         """
-        counts: Dict[str, int] = collections.Counter()
+        counts: dict[str, int] = collections.Counter()
         for sub_sdfg in self.root.all_sdfgs_recursive():
             for state in sub_sdfg.states():
                 for node in state.nodes():
@@ -161,8 +160,8 @@ class PythonEmitter:
             f'"""'
         )
 
-    def _emit_factory(self, fn_name: str, sdfg: SDFG) -> List[str]:
-        lines: List[str] = [f"def {fn_name}() -> SDFG:"]
+    def _emit_factory(self, fn_name: str, sdfg: SDFG) -> list[str]:
+        lines: list[str] = [f"def {fn_name}() -> SDFG:"]
         body = _IndentedBuffer(indent=1)
         sdfg_var = self._fresh("sdfg")
         self._emit_sdfg(sdfg, sdfg_var, body)
@@ -172,7 +171,7 @@ class PythonEmitter:
 
     # SDFG-level emission
 
-    def _emit_sdfg(self, sdfg: SDFG, var: str, buf: "_IndentedBuffer"):
+    def _emit_sdfg(self, sdfg: SDFG, var: str, buf: _IndentedBuffer):
         buf.line(f"# Top-level SDFG: {sdfg.name!r}")
         buf.line(f"{var} = SDFG({_pyrepr(sdfg.name)})")
 
@@ -222,7 +221,7 @@ class PythonEmitter:
     # one ``add_X`` line per item. This keeps a 200-symbol SDFG readable —
     # the table of names is data, the loop body is the "how to add" code.
 
-    def _emit_symbol_block(self, sdfg: SDFG, var: str, buf: "_IndentedBuffer"):
+    def _emit_symbol_block(self, sdfg: SDFG, var: str, buf: _IndentedBuffer):
         items = list(sdfg.symbols.items())
         if not items:
             return
@@ -232,7 +231,7 @@ class PythonEmitter:
             return
         # Group by dtype: an SDFG with 250 bool symbols collapses into a
         # single name list + one-line loop body, not 250 ``add_symbol`` lines.
-        by_dtype: Dict[str, List[str]] = collections.OrderedDict()
+        by_dtype: dict[str, list[str]] = collections.OrderedDict()
         for name, dtype in items:
             by_dtype.setdefault(_emit_dtype(dtype), []).append(name)
 
@@ -246,7 +245,7 @@ class PythonEmitter:
             buf.line("]:")
             buf.line(f"    {var}.add_symbol(_name, {dtype_str})")
 
-    def _emit_constant_block(self, sdfg: SDFG, var: str, buf: "_IndentedBuffer"):
+    def _emit_constant_block(self, sdfg: SDFG, var: str, buf: _IndentedBuffer):
         items = list(sdfg.constants_prop.items())
         if not items:
             return
@@ -262,12 +261,12 @@ class PythonEmitter:
         buf.line("]:")
         buf.line(f"    {var}.add_constant(_name, _value, _dtype)")
 
-    def _emit_descriptor_block(self, sdfg: SDFG, var: str, buf: "_IndentedBuffer"):
-        scalars: List = []
-        arrays: List = []
-        streams: List = []
-        views: List = []
-        refs: List = []
+    def _emit_descriptor_block(self, sdfg: SDFG, var: str, buf: _IndentedBuffer):
+        scalars: list = []
+        arrays: list = []
+        streams: list = []
+        views: list = []
+        refs: list = []
         for name, desc in sdfg.arrays.items():
             if isinstance(desc, dt.Scalar):
                 scalars.append((name, desc))
@@ -292,7 +291,7 @@ class PythonEmitter:
         self._emit_array_loop(refs, var, "add_reference", buf, _arrayview_kwargs)
         self._emit_descriptor_loop(streams, var, "add_stream", buf, _stream_kwargs)
 
-    def _emit_array_loop(self, items: List, var: str, method: str, buf: "_IndentedBuffer", kwargs_fn):
+    def _emit_array_loop(self, items: list, var: str, method: str, buf: _IndentedBuffer, kwargs_fn):
         """Emit grouped loops for ``var.add_X(name, shape, dtype, **kwargs)``.
 
         Arrays sharing the same (shape, dtype, kwargs) signature collapse into
@@ -324,7 +323,7 @@ class PythonEmitter:
             kw_args = "".join(f", {k}={v}" for k, v in kw.items())
             buf.line(f"    {var}.{method}(_name, {shape_str}, {dtype_str}{kw_args})")
 
-    def _emit_descriptor_loop(self, items: List, var: str, method: str, buf: "_IndentedBuffer", kwargs_fn):
+    def _emit_descriptor_loop(self, items: list, var: str, method: str, buf: _IndentedBuffer, kwargs_fn):
         """Emit grouped loops for ``var.add_X(name, dtype, **kwargs)`` (no shape)."""
         if not items:
             return
@@ -334,7 +333,7 @@ class PythonEmitter:
             buf.line(_call(f"{var}.{method}", [_pyrepr(name), _emit_dtype(desc.dtype)], kw))
             return
 
-        groups: Dict[Tuple[str, Tuple], List[str]] = collections.OrderedDict()
+        groups: dict[tuple[str, tuple], list[str]] = collections.OrderedDict()
         for name, desc in items:
             kw = kwargs_fn(desc)
             key = (_emit_dtype(desc.dtype), tuple(sorted(kw.items())))
@@ -354,9 +353,9 @@ class PythonEmitter:
             buf.line(f"    {var}.{method}(_name, {dtype_str}{kw_args})")
 
     @staticmethod
-    def _group_descriptors(items: List, kwargs_fn):
+    def _group_descriptors(items: list, kwargs_fn):
         """Group descriptors by their (shape, dtype, kwargs) signature."""
-        groups: Dict[Tuple[str, str, Tuple], List[str]] = collections.OrderedDict()
+        groups: dict[tuple[str, str, tuple], list[str]] = collections.OrderedDict()
         for name, desc in items:
             kw = kwargs_fn(desc)
             key = (_emit_shape(desc.shape), _emit_dtype(desc.dtype), tuple(sorted(kw.items())))
@@ -365,7 +364,7 @@ class PythonEmitter:
 
     # Control flow region body
 
-    def _emit_cfg_populator(self, cfg: AbstractControlFlowRegion, kind: str = "cfg") -> Optional[str]:
+    def _emit_cfg_populator(self, cfg: AbstractControlFlowRegion, kind: str = "cfg") -> str | None:
         """Emit a top-level ``_populate_<kind>_<N>(cfg, sdfg)`` function for
         this CFG region's body, and return the function name. Returns ``None``
         for empty regions so the caller can skip emitting a noop call.
@@ -420,11 +419,11 @@ class PythonEmitter:
         self._state_populators[idx] = lines
         return fn_name
 
-    def _emit_interstate_edges(self, cfg: AbstractControlFlowRegion, cfg_var: str, buf: "_IndentedBuffer"):
+    def _emit_interstate_edges(self, cfg: AbstractControlFlowRegion, cfg_var: str, buf: _IndentedBuffer):
         """Batch trivial ``InterstateEdge()`` edges into a single for-loop;
         emit conditioned/assigning edges imperatively (one line each)."""
-        trivial: List = []
-        rich: List = []
+        trivial: list = []
+        rich: list = []
         for edge in cfg.edges():
             src_var = self._var_for[id(edge.src)]
             dst_var = self._var_for[id(edge.dst)]
@@ -449,7 +448,7 @@ class PythonEmitter:
         for src_var, dst_var, edge_str in rich:
             buf.line(f"{cfg_var}.add_edge({src_var}, {dst_var}, {edge_str})")
 
-    def _emit_cfg_block(self, block, parent_var: str, buf: "_IndentedBuffer", is_start: bool):
+    def _emit_cfg_block(self, block, parent_var: str, buf: _IndentedBuffer, is_start: bool):
         if isinstance(block, SDFGState):
             var = self._fresh(f"s_{_sanitize(block.label)}")
             extra = ", is_start_block=True" if is_start else ""
@@ -462,7 +461,7 @@ class PythonEmitter:
 
         if isinstance(block, LoopRegion):
             var = self._fresh(f"loop_{_sanitize(block.label)}")
-            kwargs: Dict[str, str] = {}
+            kwargs: dict[str, str] = {}
             if block.loop_condition is not None and block.loop_condition.as_string:
                 kwargs["condition_expr"] = _pyrepr(block.loop_condition.as_string)
             if block.loop_variable:
@@ -486,7 +485,7 @@ class PythonEmitter:
             buf.line(f"    label={_pyrepr(block.label)},")
             for k, v in kwargs.items():
                 buf.line(f"    {k}={v},")
-            buf.line(f")")
+            buf.line(")")
             self._add_node(parent_var, var, is_start, buf)
             self._var_for[id(block)] = var
             populator = self._emit_cfg_populator(block, kind="loop")
@@ -569,13 +568,13 @@ class PythonEmitter:
         )
 
     @staticmethod
-    def _add_node(parent_var: str, var: str, is_start: bool, buf: "_IndentedBuffer"):
+    def _add_node(parent_var: str, var: str, is_start: bool, buf: _IndentedBuffer):
         extra = ", is_start_block=True" if is_start else ""
         buf.line(f"{parent_var}.add_node({var}{extra})")
 
     # State body
 
-    def _emit_state_populator(self, state: SDFGState) -> Optional[str]:
+    def _emit_state_populator(self, state: SDFGState) -> str | None:
         """Emit a top-level ``_populate_state_<N>(state)`` function for this
         state's contents. Returns the function name, or ``None`` if the
         state has no nodes (so the caller can skip emitting a noop call).
@@ -631,7 +630,7 @@ class PythonEmitter:
         self._state_populators[idx] = lines
         return fn_name
 
-    def _emit_state_node(self, node, state: SDFGState, state_var: str, buf: "_IndentedBuffer", skip: set):
+    def _emit_state_node(self, node, state: SDFGState, state_var: str, buf: _IndentedBuffer, skip: set):
         if isinstance(node, nd.AccessNode):
             var = self._fresh(f"acc_{_sanitize(node.data)}")
             buf.line(f"{var} = {state_var}.add_access({_pyrepr(node.data)})")
@@ -647,7 +646,7 @@ class PythonEmitter:
             for p, r in zip(map_obj.params, map_obj.range.ranges):
                 ndrange_parts.append(f"{_pyrepr(p)}: {_pyrepr(_subset_range_str([r]))}")
             ndrange = "{" + ", ".join(ndrange_parts) + "}"
-            kwargs: Dict[str, str] = {}
+            kwargs: dict[str, str] = {}
             if map_obj.schedule is not dtypes.ScheduleType.Default:
                 kwargs["schedule"] = _emit_schedule(map_obj.schedule)
             if map_obj.unroll:
@@ -677,7 +676,7 @@ class PythonEmitter:
                 _emit_symbolic_inline(consume.num_pes),
             )
             args = [_pyrepr(consume.label), f"({_pyrepr(elements[0])}, {elements[1]})"]
-            kwargs: Dict[str, str] = {}
+            kwargs: dict[str, str] = {}
             if consume.condition is not None and consume.condition.as_string:
                 kwargs["condition"] = _pyrepr(consume.condition.as_string)
             if consume.schedule is not dtypes.ScheduleType.Default:
@@ -703,7 +702,7 @@ class PythonEmitter:
                 _emit_connector_dict(node.in_connectors),
                 _emit_connector_dict(node.out_connectors),
             ]
-            kwargs: Dict[str, str] = {
+            kwargs: dict[str, str] = {
                 "name": _pyrepr(node.label),
             }
             if node.symbol_mapping:
@@ -742,7 +741,7 @@ class PythonEmitter:
                 _emit_connector_dict(node.out_connectors),
                 _pyrepr(node.code.as_string),
             ]
-            kwargs: Dict[str, str] = {}
+            kwargs: dict[str, str] = {}
             if node.code.language is not dtypes.Language.Python:
                 kwargs["language"] = _emit_language(node.code.language)
             if node.code_global and node.code_global.as_string:
@@ -792,7 +791,7 @@ class PythonEmitter:
 
     # LibraryNode
 
-    def _emit_library_node(self, node, state: SDFGState, state_var: str, buf: "_IndentedBuffer"):
+    def _emit_library_node(self, node, state: SDFGState, state_var: str, buf: _IndentedBuffer):
         cls = type(node)
         module = cls.__module__
         qualname = cls.__qualname__
@@ -820,8 +819,8 @@ class PythonEmitter:
             )
         ]
 
-        ctor_args: List[str] = []
-        ctor_kwargs: Dict[str, str] = {}
+        ctor_args: list[str] = []
+        ctor_kwargs: dict[str, str] = {}
         consumed_props: set = set()
 
         prop_defaults = (
@@ -905,7 +904,7 @@ _MISSING = object()
 class _IndentedBuffer:
     def __init__(self, indent: int = 0):
         self.indent = indent
-        self.lines: List[str] = []
+        self.lines: list[str] = []
 
     def line(self, text: str = ""):
         if text:
@@ -928,12 +927,12 @@ def _pyrepr(value: Any) -> str:
     return repr(value)
 
 
-def _call(fn: str, args: List[str], kwargs: Dict[str, str]) -> str:
+def _call(fn: str, args: list[str], kwargs: dict[str, str]) -> str:
     parts = list(args) + [f"{k}={v}" for k, v in kwargs.items()]
     return f"{fn}({', '.join(parts)})"
 
 
-def _emit_kwargs_dict(kwargs: Dict[str, str]) -> str:
+def _emit_kwargs_dict(kwargs: dict[str, str]) -> str:
     """Render a kwargs dict as a Python dict literal (keys are strings)."""
     if not kwargs:
         return "{}"
@@ -1070,7 +1069,7 @@ def _shape_matches(strides, shape) -> bool:
         expected.append(acc)
         d = dim if isinstance(dim, sympy.Basic) else symbolic.pystr_to_symbolic(str(dim))
         acc = acc * d
-    expected = list(reversed(expected))
+    expected.reverse()
     for s, e in zip(strides, expected):
         try:
             if symbolic.simplify(s - e) != 0:
@@ -1104,8 +1103,8 @@ def _total_size_matches(total_size, shape) -> bool:
         return str(total_size) == str(acc)
 
 
-def _array_kwargs(desc: dt.Array) -> Dict[str, str]:
-    kwargs: Dict[str, str] = {}
+def _array_kwargs(desc: dt.Array) -> dict[str, str]:
+    kwargs: dict[str, str] = {}
     if desc.transient:
         kwargs["transient"] = "True"
     if desc.storage is not dtypes.StorageType.Default:
@@ -1129,8 +1128,8 @@ def _array_kwargs(desc: dt.Array) -> Dict[str, str]:
     return kwargs
 
 
-def _arrayview_kwargs(desc) -> Dict[str, str]:
-    kwargs: Dict[str, str] = {}
+def _arrayview_kwargs(desc) -> dict[str, str]:
+    kwargs: dict[str, str] = {}
     if desc.storage is not dtypes.StorageType.Default:
         kwargs["storage"] = _emit_storage(desc.storage)
     if not _shape_matches(desc.strides, desc.shape):
@@ -1148,8 +1147,8 @@ def _arrayview_kwargs(desc) -> Dict[str, str]:
     return kwargs
 
 
-def _scalar_kwargs(desc: dt.Scalar) -> Dict[str, str]:
-    kwargs: Dict[str, str] = {}
+def _scalar_kwargs(desc: dt.Scalar) -> dict[str, str]:
+    kwargs: dict[str, str] = {}
     if desc.storage is not dtypes.StorageType.Default:
         kwargs["storage"] = _emit_storage(desc.storage)
     if desc.transient:
@@ -1159,8 +1158,8 @@ def _scalar_kwargs(desc: dt.Scalar) -> Dict[str, str]:
     return kwargs
 
 
-def _stream_kwargs(desc: dt.Stream) -> Dict[str, str]:
-    kwargs: Dict[str, str] = {}
+def _stream_kwargs(desc: dt.Stream) -> dict[str, str]:
+    kwargs: dict[str, str] = {}
     bs = desc.buffer_size
     try:
         if int(bs) != 1:
@@ -1181,7 +1180,7 @@ def _stream_kwargs(desc: dt.Stream) -> Dict[str, str]:
     return kwargs
 
 
-def _emit_extra_connectors(var: str, node, buf: "_IndentedBuffer"):
+def _emit_extra_connectors(var: str, node, buf: _IndentedBuffer):
     """Emit add_in_connector / add_out_connector calls for a node.
 
     Used for nodes whose constructor doesn't take connector dicts (e.g.
@@ -1217,7 +1216,7 @@ def _emit_connector_dict(conns) -> str:
 
 
 def _emit_interstate_edge(edge: InterstateEdge) -> str:
-    kwargs: Dict[str, str] = {}
+    kwargs: dict[str, str] = {}
     cond_str = edge.condition.as_string if edge.condition is not None else ""
     trivial = cond_str.strip() in {"", "1", "True", "true"}
     if not trivial:
@@ -1349,7 +1348,7 @@ def _is_scalar_memlet(memlet) -> bool:
 # (memlet shorthand first, then tasklet shortcuts).
 _HELPER_ORDER = ("scalar_memlet", "const_tasklet", "binop_tasklet")
 
-_HELPER_DEFS: Dict[str, List[str]] = {
+_HELPER_DEFS: dict[str, list[str]] = {
     "scalar_memlet": [
         "def _S(data):",
         '    """Scalar memlet: ``Memlet(data=data, subset=\'0\')``."""',
@@ -1374,7 +1373,7 @@ _HELPER_DEFS: Dict[str, List[str]] = {
 def _emit_memlet(memlet) -> str:
     if memlet is None or memlet.is_empty():
         return "Memlet()"
-    kwargs: Dict[str, str] = {}
+    kwargs: dict[str, str] = {}
     if memlet.data is not None:
         kwargs["data"] = _pyrepr(memlet.data)
     if memlet.subset is not None:

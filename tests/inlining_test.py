@@ -1,32 +1,31 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
-from dace import nodes as dace_nodes
-from dace.sdfg.state import FunctionCallRegion, NamedRegion
-from dace.transformation.interstate import InlineSDFG, StateFusion, InlineMultistateSDFG
-from dace.libraries import blas
-from dace.library import change_default
-from typing import Optional, Tuple, Type, Union, List
 import copy
-import numpy as np
 import uuid
 import warnings
+
+import numpy as np
 import pytest
+
+import dace
+from dace import nodes as dace_nodes
+from dace.libraries import blas
+from dace.library import change_default
+from dace.sdfg.state import FunctionCallRegion, NamedRegion
+from dace.transformation.interstate import InlineMultistateSDFG, InlineSDFG, StateFusion
 
 W = dace.symbol("W")
 H = dace.symbol("H")
 
 
 def count_nodes(
-    graph: Union[dace.SDFG, dace.SDFGState],
-    node_type: Union[Tuple[Type, ...], Type],
+    graph: dace.SDFG | dace.SDFGState,
+    node_type: tuple[type, ...] | type,
     return_nodes: bool = False,
-) -> Union[int, List[dace_nodes.Node]]:
+) -> int | list[dace_nodes.Node]:
     states = graph.states() if isinstance(graph, dace.SDFG) else [graph]
-    found_nodes: List[dace_nodes.Node] = []
+    found_nodes: list[dace_nodes.Node] = []
     for state_nodes in states:
-        for node in state_nodes.nodes():
-            if isinstance(node, node_type):
-                found_nodes.append(node)
+        found_nodes.extend(node for node in state_nodes.nodes() if isinstance(node, node_type))
     if return_nodes:
         return found_nodes
     return len(found_nodes)
@@ -72,7 +71,7 @@ def test():
     myprogram.compile(dace.float32[W, H], dace.float32[H, W], dace.int32)
 
 
-def _make_chain_reduction_sdfg() -> Tuple[dace.SDFG, dace.SDFGState, dace_nodes.NestedSDFG, dace_nodes.NestedSDFG]:
+def _make_chain_reduction_sdfg() -> tuple[dace.SDFG, dace.SDFGState, dace_nodes.NestedSDFG, dace_nodes.NestedSDFG]:
 
     def _make_nested_sdfg(name: str) -> dace.SDFG:
         sdfg = dace.SDFG(name)
@@ -106,9 +105,9 @@ def _make_chain_reduction_sdfg() -> Tuple[dace.SDFG, dace.SDFGState, dace_nodes.
     anames_s20 = ["T2"]
     anames_s30 = ["T3", "O"]
     sizes = dict()
-    sizes.update({name: 10 for name in anames_s10})
-    sizes.update({name: 20 for name in anames_s20})
-    sizes.update({name: 30 for name in anames_s30})
+    sizes.update(dict.fromkeys(anames_s10, 10))
+    sizes.update(dict.fromkeys(anames_s20, 20))
+    sizes.update(dict.fromkeys(anames_s30, 30))
 
     for name in anames_s10 + anames_s20 + anames_s30:
         outer_sdfg.add_array(
@@ -297,7 +296,7 @@ def test_empty_memlets():
     sdfg.simplify()
 
 
-def nested_maps_around_an_empty_body(outer_content: bool) -> Tuple[dace.SDFG, dace.SDFGState, dace_nodes.NestedSDFG]:
+def nested_maps_around_an_empty_body(outer_content: bool) -> tuple[dace.SDFG, dace.SDFGState, dace_nodes.NestedSDFG]:
     """``outer_map -> inner_map -> NestedSDFG`` with no connectors and a node-less state, joined by empty memlets.
 
     ``outer_content`` adds a tasklet in the outer map writing ``A[i] = 1``.
@@ -476,7 +475,7 @@ def test_multistate_inline_concurrent_subgraphs():
     dace.propagate_memlets_sdfg(sdfg)
     sdfg.apply_transformations_repeated((StateFusion, InlineSDFG))
     assert len(sdfg.nodes()) == 1
-    assert len([node for node in sdfg.start_state.data_nodes()]) == 3
+    assert len(list(sdfg.start_state.data_nodes())) == 3
 
     A = np.random.rand(10)
     B = np.random.rand(10)
@@ -724,7 +723,7 @@ def _make_sdfg_for_multistate_inlining_with_symbol_promotion(
     outside_uses_different_symbol: bool,
     separate_write_back_state: bool,
     map_outer_symbol: bool = False,
-) -> Tuple[dace.SDFG, dace.SDFG, dace.SDFGState, dace.nodes.NestedSDFG]:
+) -> tuple[dace.SDFG, dace.SDFG, dace.SDFGState, dace.nodes.NestedSDFG]:
     """
     Args:
         outside_uses_symbol: The outside SDFG also uses a symbol, if `outside_uses_different_symbol` is
@@ -898,7 +897,7 @@ def _make_sdfg_for_multistate_inlining_with_symbol_promotion(
 def _make_sdfg_for_multistate_inlining_with_symbol_mapping(
     outside_and_inner_symbol_have_same_meaning: bool,
     separate_write_back_state: bool,
-) -> Tuple[dace.SDFG, dace.SDFG, dace.SDFGState, dace.nodes.NestedSDFG]:
+) -> tuple[dace.SDFG, dace.SDFG, dace.SDFGState, dace.nodes.NestedSDFG]:
     """
     The SDFGs created by this function are rather similar to
     `_make_sdfg_for_multistate_inlining_with_symbol_promotion()`, but there are some differences.
@@ -1404,7 +1403,7 @@ def test_singlestate_inline_with_symbol_mapping(outside_and_inner_symbol_have_sa
 
 def _make_nested_if_region(sdfg: dace.SDFG, level: int) -> dace.sdfg.state.ConditionalBlock:
     if level <= 0:
-        raise ValueError(f"Expected positive level.")
+        raise ValueError("Expected positive level.")
     if_region = dace.sdfg.state.ConditionalBlock(f"if_{level}")
     then_body = dace.sdfg.state.ControlFlowRegion(f"then_body_{level}", sdfg=sdfg)
     if_region.add_branch(dace.sdfg.state.CodeBlock("__cond"), then_body)
@@ -1433,7 +1432,7 @@ def _make_nested_if_region(sdfg: dace.SDFG, level: int) -> dace.sdfg.state.Condi
 
 def _make_nested_control_flow_blocks_sdfg(level: int, size: int) -> dace.SDFG:
     if level <= 0:
-        raise ValueError(f"Expected positive level.")
+        raise ValueError("Expected positive level.")
     sdfg = dace.SDFG(unique_name("nested_control_flow_block_sdfg"))
     sdfg.add_symbol("__cond", dace.bool_)
     A, _ = sdfg.add_array("A", [size], dace.float64)
@@ -1666,8 +1665,8 @@ def test_inline_into_view_output():
 
 
 def make_shared_inout_sdfg(
-    kind: str, in_map: bool, outer_context: Optional[str] = None
-) -> Tuple[dace.SDFG, dace_nodes.NestedSDFG]:
+    kind: str, in_map: bool, outer_context: str | None = None
+) -> tuple[dace.SDFG, dace_nodes.NestedSDFG]:
     """
     Creates an SDFG with a nested SDFG whose connector ``A`` is both an input and an output bound to the same outer
     container, and whose (single) state reads and writes ``A`` through the same access node.
@@ -1873,7 +1872,7 @@ def test_inline_shared_inout_connector_rejected(outer_context: str, in_map: bool
         InlineSDFG.apply_to(sdfg, nested_sdfg=nested)
 
 
-def _constant_mapped_two_level_sdfg() -> Tuple[dace.SDFG, dace_nodes.NestedSDFG]:
+def _constant_mapped_two_level_sdfg() -> tuple[dace.SDFG, dace_nodes.NestedSDFG]:
     """
     Builds ``Y = 2 * X`` over ``X[20, 3]`` through a nested SDFG in ``M`` and ``K``, mapped to the constants ``20``
     and ``3``. It copies its input to an ``[M, K]`` transient, which another nested SDFG within reads. Integration
@@ -1918,7 +1917,7 @@ def _constant_mapped_two_level_sdfg() -> Tuple[dace.SDFG, dace_nodes.NestedSDFG]
 
 
 @pytest.mark.parametrize("inliner", [InlineSDFG, InlineMultistateSDFG])
-def test_inline_restates_nested_connectors(inliner: Type):
+def test_inline_restates_nested_connectors(inliner: type):
     """
     Tests that inlining a nested SDFG whose symbols are mapped to constants restates the connectors of the nested
     SDFGs within it, which are written in the symbols the inlining replaces.

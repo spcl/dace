@@ -3,18 +3,21 @@
 
 import copy as _copy
 
-import dace
 import numpy as np
 import pytest
+
+import dace
 from dace import nodes
+from dace.libraries.standard.nodes.copy import CopyLibraryNode
 from dace.memlet import Memlet
 from dace.sdfg import utils as sdutils
-from dace.libraries.standard.nodes.copy import CopyLibraryNode
 from dace.transformation.passes.insert_explicit_copies import InsertExplicitCopies
-
-from tests.corpus.polybench.datamining.correlation import correlation, init_array as _correlation_init_array
-from tests.corpus.polybench.datamining.covariance import covariance, init_array as _covariance_init_array
-from tests.corpus.polybench.stencils.fdtd_2d import fdtd2d, init_array as _fdtd2d_init_array
+from tests.corpus.polybench.datamining.correlation import correlation
+from tests.corpus.polybench.datamining.correlation import init_array as _correlation_init_array
+from tests.corpus.polybench.datamining.covariance import covariance
+from tests.corpus.polybench.datamining.covariance import init_array as _covariance_init_array
+from tests.corpus.polybench.stencils.fdtd_2d import fdtd2d
+from tests.corpus.polybench.stencils.fdtd_2d import init_array as _fdtd2d_init_array
 
 
 def _wcr_edges(sdfg):
@@ -1023,7 +1026,7 @@ def _run_and_compare(program, init_fn, check_arrays, sizes, name):
     sdfg_ref = program.to_sdfg(simplify=True)
     ref_exe = sdfg_ref.compile()
     ref_arrays = init_fn(**sizes)
-    ref_exe(**{k: v for k, v in ref_arrays.items()}, **sizes)
+    ref_exe(**dict(ref_arrays.items()), **sizes)
     ref_values = {k: ref_arrays[k].copy() for k in check_arrays}
 
     sdfg_pass = _copy.deepcopy(sdfg_ref)
@@ -1032,7 +1035,7 @@ def _run_and_compare(program, init_fn, check_arrays, sizes, name):
     sdfg_pass.expand_library_nodes()
     pass_exe = sdfg_pass.compile()
     pass_arrays = init_fn(**sizes)
-    pass_exe(**{k: v for k, v in pass_arrays.items()}, **sizes)
+    pass_exe(**dict(pass_arrays.items()), **sizes)
 
     for arr_name in check_arrays:
         np.testing.assert_allclose(

@@ -1,12 +1,13 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests code generation for array copy on GPU target."""
 
-import dace
-from dace.transformation.auto import auto_optimize
-from dace.sdfg import nodes as dace_nodes
+import re
 
 import pytest
-import re
+
+import dace
+from dace.sdfg import nodes as dace_nodes
+from dace.transformation.auto import auto_optimize
 
 
 def count_node(sdfg: dace.SDFG, node_type, ignore_gpustream_nodes=True):

@@ -1,15 +1,17 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 
+import copy
+import json
+
+import numpy as np
+
 import dace
+from dace.libraries.standard.nodes.fill.node import FillLibraryNode
 from dace.properties import CodeBlock
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
-from dace.libraries.standard.nodes.fill.node import FillLibraryNode
 from dace.transformation.interstate import MoveLoopIntoMap
 from dace.transformation.interstate.move_loop_into_map import analyze_lanes
 from dace.transformation.passes.canonicalize.move_loop_into_map_gated import MoveLoopIntoMapGated
-import copy
-import json
-import numpy as np
 from tests.sdfg.cfg_list_in_place_test import assert_tree_consistent
 
 

@@ -1,12 +1,11 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
-from dace import properties, SDFG, nodes
-from dace.sdfg.nodes import Dict
+
+from dace import SDFG, nodes, properties
 from dace.sdfg.state import ConditionalBlock
 from dace.transformation import pass_pipeline as ppl
-from dace.transformation.transformation import explicit_cf_compatible
-from typing import Set, Tuple, Union
 from dace.transformation.helpers import get_parent_map_and_loop_scopes
+from dace.transformation.transformation import explicit_cf_compatible
 
 
 @properties.make_properties
@@ -23,19 +22,18 @@ class EliminateBranches(ppl.Pass):
         return ppl.Modifies.CFG
 
     def _has_no_parent_loops_or_maps(
-        self, root: SDFG, sdfg: SDFG, parent_nsdfg_state: Union[SDFG, None], node: ConditionalBlock
+        self, root: SDFG, sdfg: SDFG, parent_nsdfg_state: SDFG | None, node: ConditionalBlock
     ) -> bool:
-        parent_loops_and_maps = {
-            m
-            for m in get_parent_map_and_loop_scopes(
+        parent_loops_and_maps = set(
+            get_parent_map_and_loop_scopes(
                 parent_nsdfg_state.sdfg if parent_nsdfg_state is not None else sdfg, node, None
             )
-        }
+        )
         return len(parent_loops_and_maps) == 0
 
     def _run_transformation(
-        self, root: SDFG, sdfg: SDFG, parent_nsdfg_state: Union[SDFG, None] = None
-    ) -> Tuple[int, Set[str]]:
+        self, root: SDFG, sdfg: SDFG, parent_nsdfg_state: SDFG | None = None
+    ) -> tuple[int, set[str]]:
         # Root SDFG is needed to collect all parent maps
         from dace.transformation.interstate import branch_elimination
 
@@ -66,7 +64,7 @@ class EliminateBranches(ppl.Pass):
                     added_scalar_names = added_scalar_names.union(newly_added_scalar_names)
         return num_applied, added_scalar_names
 
-    def _run_clean(self, root: SDFG, sdfg: SDFG, parent_nsdfg_state: Union[SDFG, None], lift_multi_state: bool):
+    def _run_clean(self, root: SDFG, sdfg: SDFG, parent_nsdfg_state: SDFG | None, lift_multi_state: bool):
         from dace.transformation.interstate import branch_elimination
 
         for node in sdfg.all_control_flow_regions():
@@ -117,8 +115,8 @@ class EliminateBranches(ppl.Pass):
                     self._run_clean(root, node.sdfg, state, lift_multi_state)
 
     def _apply_eliminate_branches(
-        self, root: SDFG, sdfg: SDFG, parent_nsdfg_state: Union[SDFG, None] = None
-    ) -> Tuple[int, Set[str]]:
+        self, root: SDFG, sdfg: SDFG, parent_nsdfg_state: SDFG | None = None
+    ) -> tuple[int, set[str]]:
         """Apply EliminateBranches transformation to all eligible conditionals."""
         # Pattern matching with conditional branches to not work (9.10.25), avoid it
         # Depending on the number of nestedness we need to apply that many times because
@@ -179,7 +177,7 @@ class EliminateBranches(ppl.Pass):
 
         return changed
 
-    def apply_pass(self, sdfg: SDFG, d: Dict) -> Tuple[int, Set[str]]:
+    def apply_pass(self, sdfg: SDFG, d: dict) -> tuple[int, set[str]]:
         if self.clean_only is True:
             self.try_clean = True
         cur_num_applied, cur_added_scalar_names = self._apply_eliminate_branches(sdfg, sdfg, None)

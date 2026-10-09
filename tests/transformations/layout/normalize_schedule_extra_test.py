@@ -11,8 +11,8 @@ import numpy
 
 import dace
 from dace.transformation import pass_pipeline as ppl
+from dace.transformation.layout.normalize_schedule import NormalizeScheduleForLayout, normalize_schedule_for_layout
 from dace.transformation.layout.split_dimensions import SplitDimensions
-from dace.transformation.layout.normalize_schedule import normalize_schedule_for_layout, NormalizeScheduleForLayout
 
 N = dace.symbol("N")
 

@@ -20,15 +20,15 @@ import pytest
 
 import dace
 from dace import nodes
-from dace.ordered import OrderedSet
 from dace.libraries.tileops.dispatch import detect_host_isa, select_tile_implementation
 from dace.libraries.tileops.nodes.tile_ite import TileITE
+from dace.ordered import OrderedSet
 from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.convert_tasklets_to_tile_ops import ConvertTaskletsToTileOps
+from dace.transformation.passes.vectorization.enums import ISA
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
 from tests.passes.vectorization.tile_assertions import assert_tiled
-from dace.transformation.passes.vectorization.enums import ISA
 
 N = 64
 WIDTHS = (8,)

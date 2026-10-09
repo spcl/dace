@@ -18,8 +18,8 @@ API requires):
   reduction must surface, not be silently mis-lowered.
 """
 
+from collections.abc import Callable
 from copy import deepcopy as dcpy
-from typing import Callable, Dict, List, Tuple
 
 import dace
 import dace.library
@@ -30,17 +30,17 @@ from dace.libraries.standard.nodes.reduce import (
     ExpandReducePure,
     Reduce,
 )
+from dace.optionals import required
 from dace.sdfg import SDFG, SDFGState
+from dace.sdfg.narrowing import as_range
 from dace.symbolic import symstr
 from dace.transformation import transformation as pm
-from dace.optionals import required
-from dace.sdfg.narrowing import as_range
 
 #: Reduction ops with an associative identity + matching ``horizontal_reduce_<op>``
 #: primitive; value = op-token suffix used by ``horizontal_reduce.h``. Sub /
 #: Div / Logical_* / *_Location / Exchange / Custom absent -- no associative-fold
 #: identity, must raise rather than mis-reduce.
-REDTYPE_TO_OP: Dict[dtypes.ReductionType, str] = {
+REDTYPE_TO_OP: dict[dtypes.ReductionType, str] = {
     dtypes.ReductionType.Sum: "add",
     dtypes.ReductionType.Product: "mul",
     dtypes.ReductionType.Max: "max",
@@ -50,14 +50,14 @@ REDTYPE_TO_OP: Dict[dtypes.ReductionType, str] = {
     dtypes.ReductionType.Bitwise_Xor: "bxor",
 }
 
-_VECTORIZED_SEQUENTIAL_SCHEDULES: Tuple[dtypes.ScheduleType, ...] = (
+_VECTORIZED_SEQUENTIAL_SCHEDULES: tuple[dtypes.ScheduleType, ...] = (
     dtypes.ScheduleType.Default,
     dtypes.ScheduleType.Sequential,
 )
 
 #: Per-op C++ binary fold ``OP(x, y)`` for the W-wide partials + scalar tail;
 #: paired with the identity element when ``Reduce`` carries no ``identity``.
-_OP_CXX: Dict[str, Callable[[str, str], str]] = {
+_OP_CXX: dict[str, Callable[[str, str], str]] = {
     "add": lambda x, y: f"(({x}) + ({y}))",
     "mul": lambda x, y: f"(({x}) * ({y}))",
     "max": lambda x, y: f"std::max(({x}), ({y}))",
@@ -66,7 +66,7 @@ _OP_CXX: Dict[str, Callable[[str, str], str]] = {
     "bor": lambda x, y: f"(({x}) | ({y}))",
     "bxor": lambda x, y: f"(({x}) ^ ({y}))",
 }
-_OP_IDENTITY_CXX: Dict[str, str] = {
+_OP_IDENTITY_CXX: dict[str, str] = {
     "add": "({T})0",
     "mul": "({T})1",
     "max": "(-INFINITY)",
@@ -168,7 +168,7 @@ __out = _s;
 class ExpandReduceVectorized(pm.ExpandTransformation):
     """Schedule-aware ``"vectorized"`` expansion of a ``Reduce`` node."""
 
-    environments: List[type] = []
+    environments: list[type] = []
 
     @staticmethod
     def expansion(node: Reduce, state: SDFGState, sdfg: SDFG) -> SDFG:

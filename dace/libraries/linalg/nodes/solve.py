@@ -1,20 +1,19 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
+
+import numpy as np
+
 import dace
 import dace.library
 import dace.properties
 import dace.sdfg.nodes
-import numpy as np
-
-from dace import Memlet, SDFG, SDFGState
-from dace import symbolic
-from dace.libraries.standard.helper import host_accessible_info_storage
-from dace.libraries.lapack import Getrf, Getrs
-from dace.libraries.linalg.nodes.transpose import Transpose
-from dace.transformation.transformation import ExpandTransformation
-from dace.libraries.lapack import environments
+from dace import SDFG, Memlet, SDFGState, symbolic
 from dace.libraries.blas import environments as blas_environments
+from dace.libraries.lapack import Getrf, Getrs, environments
+from dace.libraries.linalg.nodes.transpose import Transpose
+from dace.libraries.standard.helper import host_accessible_info_storage
 from dace.ordered import OrderedSet
+from dace.transformation.transformation import ExpandTransformation
 
 
 def gesv_core_program(dtype, n, rhs):
@@ -123,7 +122,7 @@ def _make_sdfg_getrs(node: "Solve", parent_state, parent_sdfg, implementation):
     # ``_binout`` and getrs reads nrhs == 1 off the rank.
     single_rhs = len(out_shape) == 1
 
-    sdfg = dace.SDFG("{l}_sdfg".format(l=node.label))
+    sdfg = dace.SDFG(f"{node.label}_sdfg")
 
     ain_arr = sdfg.add_array("_ain", ain_shape, dtype=ain_dtype, strides=ain_strides)
     ainout_arr = sdfg.add_array("_ainout", [n, n], dtype=ain_dtype, transient=True, storage=storage)
@@ -143,7 +142,7 @@ def _make_sdfg_getrs(node: "Solve", parent_state, parent_sdfg, implementation):
         "_info", [1], dtype=dace.int32, transient=True, storage=host_accessible_info_storage(storage)
     )
 
-    state = sdfg.add_state("{l}_state".format(l=node.label))
+    state = sdfg.add_state(f"{node.label}_state")
 
     getrf_node = Getrf("getrf")
     getrf_node.implementation = implementation

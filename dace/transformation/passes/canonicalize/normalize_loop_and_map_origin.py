@@ -33,7 +33,8 @@ The shifting mechanics (subset / tasklet / interstate substitution) are
 over the whole SDFG.
 """
 
-from typing import Any, Dict, Iterable, List, Optional, Type, Union
+from collections.abc import Iterable
+from typing import Any
 
 import dace
 from dace import SDFG, properties, subsets
@@ -53,7 +54,7 @@ from dace.transformation.passes.offset_loop_and_maps import (
 )
 
 
-def rebinds_params(node_list: Iterable[nodes.Node], params: Dict[str, None]) -> bool:
+def rebinds_params(node_list: Iterable[nodes.Node], params: dict[str, None]) -> bool:
     """Whether a NestedSDFG under ``node_list`` binds one of ``params`` to a differently named
     inner symbol.
 
@@ -82,7 +83,7 @@ def rebinds_params(node_list: Iterable[nodes.Node], params: Dict[str, None]) -> 
     return False
 
 
-def shift_map_ranges(node_list: Iterable[nodes.Node], repldict: Dict[str, str]) -> None:
+def shift_map_ranges(node_list: Iterable[nodes.Node], repldict: dict[str, str]) -> None:
     """Substitute ``repldict`` into the range of every Map under ``node_list``, nested SDFGs included.
 
     An inner range reads a shifted parameter as often as a memlet does (``for j in i:N``, a tiled
@@ -115,10 +116,10 @@ class NormalizeLoopAndMapOrigin(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+    def depends_on(self) -> list[type[ppl.Pass] | ppl.Pass]:
         return []
 
-    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> int | None:
         """Rebase every Map/LoopRegion begin to 0 (recursively), keeping stride.
 
         :param sdfg: The SDFG to rewrite in place.
@@ -178,9 +179,9 @@ class NormalizeLoopAndMapOrigin(ppl.Pass):
         # scope tree, but node membership (all this walk needs) cannot change under it.
         children = {scope: list(scope_nodes) for scope, scope_nodes in state.scope_children().items()}
         rebased = 0
-        level: List[Optional[nodes.Node]] = [None]
+        level: list[nodes.Node | None] = [None]
         while level:
-            deeper: List[nodes.Node] = []
+            deeper: list[nodes.Node] = []
             for scope in level:
                 for node in children[scope]:
                     if isinstance(node, nodes.MapEntry):
@@ -200,7 +201,7 @@ class NormalizeLoopAndMapOrigin(ppl.Pass):
         :returns: ``1`` if the map was rebased, ``0`` if it was already 0-based or was refused.
         """
         new_ranges = list(entry.map.range.ranges)
-        repldict: Dict[str, str] = {}
+        repldict: dict[str, str] = {}
         for i, (param, (begin, end, stride)) in enumerate(zip(entry.map.params, entry.map.range.ranges)):
             if begin == 0:
                 continue

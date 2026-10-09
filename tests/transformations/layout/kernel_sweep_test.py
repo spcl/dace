@@ -6,9 +6,9 @@ orientation is the layout decision), and the sweep compiles/runs/verifies every 
 the numpy oracle. The invariant asserted here is CORRECTNESS: every transparent candidate reproduces
 the oracle and ``best()`` returns a correct one. Timing is not asserted (noisy on a shared host)."""
 
-from dace.transformation.layout.brute_force import sweep, best
+from dace.transformation.layout.brute_force import best, sweep
 from dace.transformation.layout.timing import compute_region_timer
-from tests.transformations.layout.kernels import k04_mvt, k15_colstore, k11_thomas, k12_dlt_stencil
+from tests.transformations.layout.kernels import k04_mvt, k11_thomas, k12_dlt_stencil, k15_colstore
 
 
 def _sdfg_candidates(program, candidate_dict):

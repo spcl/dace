@@ -1,12 +1,14 @@
+import copy
+from dataclasses import dataclass
+from typing import Any
+
+from sympy import simplify
+
 import dace
-from typing import Dict, List, Any, Tuple
 from dace.sdfg.graph import Edge, EdgeT
+from dace.sdfg.narrowing import as_expr
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.layout.subscript_rewrite import rewrite_subscript_indices
-from dataclasses import dataclass
-import copy
-from sympy import simplify
-from dace.sdfg.narrowing import as_expr
 
 
 @dataclass
@@ -17,7 +19,7 @@ class SplitDimensions(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def __init__(self, split_map: Dict[str, Tuple[List[bool], List[int]]], verbose: bool = False):
+    def __init__(self, split_map: dict[str, tuple[list[bool], list[int]]], verbose: bool = False):
         self._split_map = split_map
         self._verbose = verbose
 
@@ -53,7 +55,7 @@ class SplitDimensions(ppl.Pass):
         s: dace.symbolic.SymExpr,
         factor: int,
         is_perfect_match: bool,
-        inner_block_replacement_map: Dict[str, str],
+        inner_block_replacement_map: dict[str, str],
     ):
         step_expr = s / factor
         try:
@@ -89,7 +91,7 @@ class SplitDimensions(ppl.Pass):
         s: dace.symbolic.SymExpr,
         factor: int,
         is_perfect_match: bool,
-        inner_block_replacement_map: Dict[str, str],
+        inner_block_replacement_map: dict[str, str],
     ):
         if is_perfect_match is True:
             symbolified_inner_block_replacement_map = {
@@ -148,7 +150,7 @@ class SplitDimensions(ppl.Pass):
         return ((e + 1) - b), s == 1
 
     def _is_perfect_block_match(
-        self, state: dace.SDFGState, edge: Edge[EdgeT], node: dace.nodes.Node, block_shape: Tuple[int]
+        self, state: dace.SDFGState, edge: Edge[EdgeT], node: dace.nodes.Node, block_shape: tuple[int]
     ):
         if self._verbose:
             print(f"[BlockMatch] Called for edge({edge}), node({node})")
@@ -229,8 +231,8 @@ class SplitDimensions(ppl.Pass):
         return True, inner_block_replacement_map
 
     def _split_dimensions(
-        self, arr: dace.data.Data, masks: List[int], factors: List[bool]
-    ) -> List[dace.symbolic.symbol | int | dace.symbolic.SymExpr]:
+        self, arr: dace.data.Data, masks: list[int], factors: list[bool]
+    ) -> list[dace.symbolic.symbol | int | dace.symbolic.SymExpr]:
         # unsplit dims (or block count) first, then split factors appended at the end
         new_shape = []
         for dim_len, mask, factor in zip(arr.shape, masks, factors):
@@ -247,8 +249,8 @@ class SplitDimensions(ppl.Pass):
     def _split_range_expressions(
         self,
         subset: dace.subsets.Range,
-        masks: List[int],
-        factors: List[bool],
+        masks: list[int],
+        factors: list[bool],
         edge: Edge[EdgeT],
         state: dace.SDFGState,
     ) -> dace.subsets.Range:
@@ -286,7 +288,7 @@ class SplitDimensions(ppl.Pass):
 
         return dace.subsets.Range(new_range_list)
 
-    def _replace_array(self, sdfg: dace.SDFG, arr_name: str, new_dimensions: List):
+    def _replace_array(self, sdfg: dace.SDFG, arr_name: str, new_dimensions: list):
         arr = sdfg.arrays[arr_name]
         datadesc = copy.deepcopy(arr)
         datadesc.shape = tuple(new_dimensions)
@@ -303,7 +305,7 @@ class SplitDimensions(ppl.Pass):
             find_new_name=False,
         )
 
-    def _replace_array_recursive(self, sdfg: dace.SDFG, arr_name: str, new_dimensions: List):
+    def _replace_array_recursive(self, sdfg: dace.SDFG, arr_name: str, new_dimensions: list):
         self._replace_array(sdfg, arr_name, new_dimensions)
         for state in sdfg.states():
             for node in state.nodes():
@@ -348,7 +350,7 @@ class SplitDimensions(ppl.Pass):
                 for inner in inner_names:
                     self._replace_memlets_recursive(node.sdfg, inner, masks, factors)
 
-    def split_array_accesses(self, expr_str: str, name: str, masks: List[bool], factors: List[int]) -> str:
+    def split_array_accesses(self, expr_str: str, name: str, masks: list[bool], factors: list[int]) -> str:
         """``expr_str`` with every ``name[...]`` access reindexed; the rest of the expression is kept."""
 
         def split_indices(indices):
@@ -386,7 +388,7 @@ class SplitDimensions(ppl.Pass):
                     if arr_name in out_map:
                         self._replace_interstate_edges_recursive(node.sdfg, out_map[arr_name], masks, factors)
 
-    def apply_pass(self, sdfg: dace.SDFG, pipeline_results: Dict[str, Any]) -> int:
+    def apply_pass(self, sdfg: dace.SDFG, pipeline_results: dict[str, Any]) -> int:
         # split each array's dims per its mask/factors, padding non-divisible sizes via int_ceil
         for array_name, (masks, factors) in self._split_map.items():
             arr = sdfg.arrays[array_name]

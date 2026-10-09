@@ -4,7 +4,7 @@ Contains implementations of SDFG inlining and state fusion passes.
 """
 
 from dataclasses import dataclass
-from typing import Any, Dict, Optional
+from typing import Any
 
 from dace import SDFG, properties
 from dace.sdfg import nodes
@@ -129,7 +129,7 @@ class FuseStates(ppl.Pass):
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.States
 
-    def apply_pass(self, sdfg: SDFG, _: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _: dict[str, Any]) -> int | None:
         """
         Fuses all possible states of an SDFG (and all sub-SDFGs).
 
@@ -174,7 +174,7 @@ class InlineSDFGs(ppl.Pass):
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.States | ppl.Modifies.NestedSDFGs
 
-    def apply_pass(self, sdfg: SDFG, _: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _: dict[str, Any]) -> int | None:
         """
         Inlines all possible nested SDFGs (and all sub-SDFGs).
 
@@ -229,7 +229,7 @@ class InlineControlFlowRegions(ppl.Pass):
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.States | ppl.Modifies.NestedSDFGs
 
-    def apply_pass(self, sdfg: SDFG, _: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _: dict[str, Any]) -> int | None:
         """
         Inlines all possible nested SDFGs (and all sub-SDFGs).
 
@@ -278,7 +278,7 @@ class FixNestedSDFGReferences(ppl.Pass):
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.NestedSDFGs
 
-    def apply_pass(self, sdfg: SDFG, _: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _: dict[str, Any]) -> int | None:
         modified = 0
         for node, state in sdfg.all_nodes_recursive():
             if not isinstance(node, nodes.NestedSDFG) or node.sdfg is None:

@@ -14,11 +14,11 @@ Source contracts:
 * Each kernel pairs with a numpy oracle in ``reference_python``.
 """
 
-from math import sqrt, exp
-from typing import Dict, Optional
+from math import exp, sqrt
+
+import numpy as np
 
 import dace
-import numpy as np
 
 LEN_1D = dace.symbol("LEN_1D")
 LEN_2D = dace.symbol("LEN_2D")
@@ -1304,7 +1304,7 @@ SIZES = {
 }
 
 
-def make_inputs(program, seed: int = 1234, sizes: Optional[Dict[str, int]] = None):
+def make_inputs(program, seed: int = 1234, sizes: dict[str, int] | None = None):
     """Allocate inputs for one kernel from its ``@dace.program`` annotations.
 
     Array extents are the kernel's declared shapes evaluated at ``sizes``;
@@ -1340,7 +1340,7 @@ def make_inputs(program, seed: int = 1234, sizes: Optional[Dict[str, int]] = Non
 #: ``s481``/``s482``/``s332`` need the same midpoint nudge so their sequential-reference-vs-
 #: canonicalize speedup ratio measures the find-first + clipped-body lowering instead of an early
 #: break the plain random draw already gave the sequential arm for free.
-def _place_break_at_middle(name: str, arrays: Dict[str, np.ndarray], sizes: Dict[str, int]) -> None:
+def _place_break_at_middle(name: str, arrays: dict[str, np.ndarray], sizes: dict[str, int]) -> None:
     """Rewrite the break-predicate array in place so the exit fires at ``LEN_1D // 2``."""
     mid = sizes["LEN_1D"] // 2
     if name == "ext_break_find_first":  # break on d[i] < 0.0

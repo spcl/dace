@@ -12,12 +12,12 @@ import numpy as np
 import pytest
 
 import dace
-from dace.library import change_default
 from dace.libraries import blas
 from dace.libraries.blas.blas_helpers import packed_unit_extent
 from dace.libraries.blas.nodes.batched_matmul import BatchedMatMul
 from dace.libraries.blas.nodes.gemm import Gemm
 from dace.libraries.blas.nodes.matmul import MatMul
+from dace.library import change_default
 from dace.transformation.auto.auto_optimize import auto_optimize
 
 NR, NQ, NP = (dace.symbol(s, dtype=dace.int64) for s in ("NR", "NQ", "NP"))

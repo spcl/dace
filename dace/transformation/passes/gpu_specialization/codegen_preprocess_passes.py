@@ -2,11 +2,12 @@
 """The steps of the experimental CUDA preprocessing as pipeline passes."""
 
 import warnings
-from typing import Any, Dict, Optional
+from typing import Any
 
 from dace import SDFG, Memlet, dtypes, nodes, properties
 from dace.codegen import common
-from dace.transformation import pass_pipeline as ppl, transformation
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation import transformation
 
 
 @properties.make_properties
@@ -20,7 +21,7 @@ class InferDefaultSchedulesAndStorages(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> None:
+    def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> None:
         from dace.sdfg import infer_types
 
         infer_types.set_default_schedule_and_storage_types(sdfg, None)
@@ -43,7 +44,7 @@ class ExpandLibraryNodes(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[bool]:
+    def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> bool | None:
         from dace.sdfg import infer_types
 
         sdfg.expand_library_nodes(recursive=True)
@@ -67,13 +68,13 @@ class AddThreadBlockMaps(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Dict[str, Any]:
+    def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> dict[str, Any]:
         from dace.transformation.dataflow.add_threadblock_map import AddThreadBlockMap
         from dace.transformation.passes.analysis.infer_gpu_grid_and_block_size import InferGPUGridAndBlockSize
 
-        old_nodes = set(node for node, _ in sdfg.all_nodes_recursive())
+        old_nodes = {node for node, _ in sdfg.all_nodes_recursive()}
         sdfg.apply_transformations_once_everywhere(AddThreadBlockMap)
-        new_nodes = set(node for node, _ in sdfg.all_nodes_recursive()) - old_nodes
+        new_nodes = {node for node, _ in sdfg.all_nodes_recursive()} - old_nodes
         tb_inserted_kernels = {
             n for n in new_nodes if isinstance(n, nodes.MapEntry) and n.schedule == dtypes.ScheduleType.GPU_Device
         }
@@ -101,9 +102,9 @@ class ReinferConnectorTypes(ppl.Pass):
         return False
 
     @staticmethod
-    def connector_types(sdfg: SDFG) -> Dict[Any, Any]:
+    def connector_types(sdfg: SDFG) -> dict[Any, Any]:
         """Every connector type, keyed by ``(node, direction, connector)``; inference does not report its changes."""
-        snapshot: Dict[Any, Any] = {}
+        snapshot: dict[Any, Any] = {}
         for node, _ in sdfg.all_nodes_recursive():
             if not isinstance(node, nodes.Node):
                 continue
@@ -113,7 +114,7 @@ class ReinferConnectorTypes(ppl.Pass):
                 snapshot[(node, "out", cname)] = ctype
         return snapshot
 
-    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> int | None:
         """Returns the number of connectors whose type changed, or ``None``."""
         from dace.sdfg import infer_types
         from dace.transformation.passes.scalar_promotion import invalidate_array_connectors
@@ -154,7 +155,7 @@ class SynchronizeStreamUnawareGPUCallbacks(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> int | None:
         from dace.codegen.targets.cuda import stream_unaware_gpu_callbacks  # Avoid import loop
 
         targets = [

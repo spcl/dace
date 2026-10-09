@@ -9,7 +9,7 @@ import functools
 import itertools
 import warnings
 from collections import deque
-from typing import TYPE_CHECKING, List, Optional, Set
+from typing import TYPE_CHECKING, Optional
 
 import sympy
 from sympy import Symbol, ceiling
@@ -28,7 +28,7 @@ if TYPE_CHECKING:
 
 
 @registry.make_registry
-class MemletPattern(object):
+class MemletPattern:
     """
     A pattern match on a memlet subset that can be used for propagation.
     """
@@ -41,7 +41,7 @@ class MemletPattern(object):
 
 
 @registry.make_registry
-class SeparableMemletPattern(object):
+class SeparableMemletPattern:
     """Memlet pattern that can be applied to each of the dimensions
     separately."""
 
@@ -315,8 +315,7 @@ class AffineSMemlet(SeparableMemletPattern):
             if rt == 1:
                 result_skip = (result_end - result_begin - re + rb) / (node_re - node_rb)
                 try:
-                    if result_skip < 1:
-                        result_skip = 1
+                    result_skip = max(result_skip, 1)
                 except:
                     pass
                 result_tile = result_end - result_begin + 1 - (node_rlen - 1) * result_skip
@@ -428,14 +427,13 @@ class ConstantSMemlet(SeparableMemletPattern):
                 if matches[cst].free_symbols:
                     return False
 
-        else:  # Single element case
-            # Try to match a constant expression
-            if not dtypes.isconstant(dexpr):
-                matches = dexpr.match(cst)
-                if matches is None or len(matches) != 1:
-                    return False
-                if matches[cst].free_symbols:
-                    return False
+        # Try to match a constant expression
+        elif not dtypes.isconstant(dexpr):
+            matches = dexpr.match(cst)
+            if matches is None or len(matches) != 1:
+                return False
+            if matches[cst].free_symbols:
+                return False
 
         return True
 
@@ -605,7 +603,7 @@ class ConstantRangeMemlet(MemletPattern):
     # TODO: An integer set library should shine here (unify indices)
     def propagate(self, array, expressions, node_range):
         rng = [(None, None, 1)] * len(array.shape)
-        node_range_gen = (range(rb, re, rs) for rb, re, rs in node_range)
+        node_range_gen = itertools.starmap(range, node_range)
         for ndind in itertools.product(*tuple(node_range_gen)):
             repldict = {p: ndind[i] for i, p in enumerate(self.params)}
             for expr in expressions:
@@ -872,26 +870,25 @@ def propagate_states(sdfg: "SDFG", concretize_dynamic_unbounded: bool = False) -
                 # number of executions.
                 if not (state.executions == 0 and state.dynamic_executions):
                     state.executions += proposed_executions
+            # If we have already visited this state, but it is NOT a loop
+            # guard, this means that we can reach this state via multiple
+            # different paths. If so, the number of executions for this
+            # state is given by the maximum number of executions among each
+            # of the paths reaching it. If the state additionally completely
+            # merges a previously branched out state tree, we know that the
+            # number of executions isn't dynamic anymore.
+            # The only exception to this rule: If the state is in an
+            # unannotated loop, i.e. should be annotated as dynamic
+            # unbounded instead, we do that.
+            elif (not concretize_dynamic_unbounded) and state in unannotated_cycle_states:
+                state.executions = 0
+                state.dynamic_executions = True
             else:
-                # If we have already visited this state, but it is NOT a loop
-                # guard, this means that we can reach this state via multiple
-                # different paths. If so, the number of executions for this
-                # state is given by the maximum number of executions among each
-                # of the paths reaching it. If the state additionally completely
-                # merges a previously branched out state tree, we know that the
-                # number of executions isn't dynamic anymore.
-                # The only exception to this rule: If the state is in an
-                # unannotated loop, i.e. should be annotated as dynamic
-                # unbounded instead, we do that.
-                if (not concretize_dynamic_unbounded) and state in unannotated_cycle_states:
-                    state.executions = 0
-                    state.dynamic_executions = True
+                state.executions = sympy.Max(state.executions, proposed_executions).doit()
+                if state in full_merge_states:
+                    state.dynamic_executions = False
                 else:
-                    state.executions = sympy.Max(state.executions, proposed_executions).doit()
-                    if state in full_merge_states:
-                        state.dynamic_executions = False
-                    else:
-                        state.dynamic_executions = state.dynamic_executions or proposed_dynamic
+                    state.dynamic_executions = state.dynamic_executions or proposed_dynamic
         elif proposed_dynamic and proposed_executions == 0:
             # We're propagating a dynamic unbounded number of executions, which
             # always gets propagated unconditionally. Propagate to all children.
@@ -1082,7 +1079,7 @@ def _collect_state_border_memlet_candidates(state: "SDFGState", border_memlets) 
                 border_memlets[direction][node.label].extend(_candidates_through_view(state, edge, direction))
 
 
-def _candidates_through_view(state: "SDFGState", edge, direction: str) -> List[Memlet]:
+def _candidates_through_view(state: "SDFGState", edge, direction: str) -> list[Memlet]:
     """
     Resolves a border candidate that reaches its container through a view.
 
@@ -1117,7 +1114,7 @@ def _candidates_through_view(state: "SDFGState", edge, direction: str) -> List[M
         return [edge.data]
 
     inner_edges = state.out_edges(view_node) if direction == "in" else state.in_edges(view_node)
-    result: List[Memlet] = []
+    result: list[Memlet] = []
     for inner in inner_edges:
         if inner.data.is_empty() or inner.data.data != view_node.data:
             return [edge.data]
@@ -1793,7 +1790,7 @@ def propagate_memlet(
     union_inner_edges: bool,
     arr=None,
     connector=None,
-    defined_variables: Optional[Set[str]] = None,
+    defined_variables: set[str] | None = None,
     symbols: Optional["SymbolResolver"] = None,
 ):
     """Tries to propagate a memlet through a scope (computes the image of
@@ -1832,7 +1829,7 @@ def propagate_memlet(
         raise TypeError("Trying to propagate through a non-scope node")
 
     sdfg = dfg_state.parent
-    scope_node_symbols = set(conn for conn in entry_node.in_connectors if not conn.startswith("IN_"))
+    scope_node_symbols = {conn for conn in entry_node.in_connectors if not conn.startswith("IN_")}
     if defined_variables is None:
         defined_variables = (
             symbols.defined_at(dfg_state, entry_node)
@@ -1852,7 +1849,7 @@ def propagate_memlet(
 
     if arr is None:
         if memlet.data not in sdfg.arrays:
-            raise KeyError('Data descriptor (Array, Stream) "%s" not defined in SDFG.' % memlet.data)
+            raise KeyError(f'Data descriptor (Array, Stream) "{memlet.data}" not defined in SDFG.')
 
         # FIXME: A memlet alone (without an edge) cannot figure out whether it is data<->data or data<->code
         #        so this test cannot be used
@@ -1881,18 +1878,18 @@ def propagate_memlet(
         new_memlet.dynamic = True
         return new_memlet
     else:
-        raise NotImplementedError("Unimplemented primitive: %s" % type(entry_node))
+        raise NotImplementedError(f"Unimplemented primitive: {type(entry_node)}")
 
 
 # External API
 def propagate_subset(
-    memlets: List[Memlet],
+    memlets: list[Memlet],
     arr: data.Data,
-    params: List[str],
+    params: list[str],
     rng: subsets.Subset,
     *,
-    defined_variables: Set[symbolic.SymbolicType] = None,
-    undefined_variables: Set[symbolic.SymbolicType] = None,
+    defined_variables: set[symbolic.SymbolicType] = None,
+    undefined_variables: set[symbolic.SymbolicType] = None,
     use_dst: bool = False,
 ) -> Memlet:
     """Tries to propagate a list of memlets through a range (computes the
@@ -1992,7 +1989,7 @@ def propagate_subset(
             old_subset = new_subset
             new_subset = subsets.union(new_subset, tmp_subset)
             if new_subset is None:
-                warnings.warn("Subset union failed between %s and %s " % (old_subset, tmp_subset))
+                warnings.warn(f"Subset union failed between {old_subset} and {tmp_subset} ")
                 break
 
     # Some unions failed
@@ -2020,7 +2017,7 @@ def propagate_subset(
     return new_memlet
 
 
-def _freesyms(expr) -> Set:
+def _freesyms(expr) -> set:
     """
     Helper function that either returns free symbols for sympy expressions
     or an empty set if constant.

@@ -7,15 +7,12 @@ SDFG of ``nproma``/``nlev`` maps -- Which maps those are is named by the caller,
 """
 
 import itertools
-from typing import Dict, List, Optional, Union
-
-from dace.ordered import OrderedSet
-
-from dace import symbolic
-from dace.sdfg import nodes, SDFG
-from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
 
 import dace.transformation.passes.offloading.offloading_helpers as helpers
+from dace import symbolic
+from dace.ordered import OrderedSet
+from dace.sdfg import SDFG, nodes
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
 from dace.transformation.passes.offloading.taskloop import is_computation, sdfg_only_launches
 
 #: What a caller may pass as ``host_maps``:
@@ -25,10 +22,10 @@ from dace.transformation.passes.offloading.taskloop import is_computation, sdfg_
 #:   the list and finds it empty.
 #: * ``True`` -- derive them with the built-in heuristics.
 #: * a list -- exactly these maps, each given as a map label or as the ``MapEntry`` itself.
-HostMapSpec = Optional[Union[bool, List[Union[str, nodes.MapEntry]]]]
+HostMapSpec = bool | list[str | nodes.MapEntry] | None
 
 
-def body_extents_depend_on_entry(entry: nodes.MapEntry, scope_children: Dict) -> bool:
+def body_extents_depend_on_entry(entry: nodes.MapEntry, scope_children: dict) -> bool:
     """An inner map whose extent mentions one of ``entry``'s own parameters.
 
     Keeping such a map on the host is not a trade-off, it is broken: the extent has to reach the
@@ -57,7 +54,7 @@ def body_extents_depend_on_entry(entry: nodes.MapEntry, scope_children: Dict) ->
     return False
 
 
-def only_launches(state: SDFGState, entry: nodes.MapEntry, scope_children: Dict) -> bool:
+def only_launches(state: SDFGState, entry: nodes.MapEntry, scope_children: dict) -> bool:
     """``entry``'s scope launches work rather than doing any itself."""
     launches = False
     for node in scope_children.get(entry, ()):
@@ -75,12 +72,12 @@ def only_launches(state: SDFGState, entry: nodes.MapEntry, scope_children: Dict)
 def is_host_map(
     state: SDFGState,
     entry: nodes.MapEntry,
-    scope_children: Dict,
+    scope_children: dict,
     auto: bool,
     pinned_labels: OrderedSet,
     pinned_entries: OrderedSet,
     sdfg: SDFG = None,
-    callback_names: Optional[OrderedSet] = None,
+    callback_names: OrderedSet | None = None,
 ) -> bool:
     """``entry`` belongs on the host, so the maps under it become the kernels.
 

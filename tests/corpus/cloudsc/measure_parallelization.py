@@ -17,7 +17,6 @@ different map counts or where canon leaves more loops sequential).
 import copy
 import time
 import traceback
-from typing import List, Tuple
 
 from dace.libraries.standard.nodes import Reduce
 from dace.libraries.standard.nodes.scan import Scan
@@ -25,7 +24,6 @@ from dace.sdfg import nodes as nd
 from dace.sdfg.state import LoopRegion
 from dace.transformation.interstate import LoopToMap
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
-
 from tests.corpus.tsvc import tsvc
 
 #: Match the corpus-test settings.
@@ -36,7 +34,7 @@ _BREAK_ANTI_DEP = True
 _FORCE_INSPECT = {"s1115_d_single", "s152_d_single", "s172_d_single"}
 
 
-def _count(sdfg) -> Tuple[int, int, int, int]:
+def _count(sdfg) -> tuple[int, int, int, int]:
     """:returns: ``(loops, maps, reduces, scans)``."""
     loops = sum(1 for cfr in sdfg.all_control_flow_regions() if isinstance(cfr, LoopRegion))
     maps = sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nd.MapEntry))
@@ -45,7 +43,7 @@ def _count(sdfg) -> Tuple[int, int, int, int]:
     return loops, maps, reduces, scans
 
 
-def _structure(sdfg) -> Tuple[List[str], List[str], List[str], List[str]]:
+def _structure(sdfg) -> tuple[list[str], list[str], list[str], list[str]]:
     """Per-kernel structural summary: list of loop / map / reduce / scan descriptions."""
     loops = [
         f"loop {cfr.label} var={cfr.loop_variable!s} cond={cfr.loop_condition.as_string!s}"

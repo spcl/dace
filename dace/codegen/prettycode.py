@@ -4,7 +4,7 @@ nodes."""
 
 import inspect
 from io import StringIO
-from typing import List, Optional, Union
+
 from dace.config import Config
 from dace.sdfg.graph import NodeNotFoundError
 from dace.sdfg.nodes import Node
@@ -16,7 +16,7 @@ class CodeIOStream(StringIO):
     nodes."""
 
     def __init__(self, base_indentation=0):
-        super(CodeIOStream, self).__init__()
+        super().__init__()
         self._indent = base_indentation
         self._spaces = int(Config.get("compiler", "indentation_spaces"))
         self._lineinfo = Config.get_bool("compiler", "codegen_lineinfo")
@@ -24,9 +24,9 @@ class CodeIOStream(StringIO):
     def write(
         self,
         contents,
-        cfg: Optional[ControlFlowRegion] = None,
-        state_id: Optional[int] = None,
-        node_id: Union[int, Node, List[Union[int, Node]], None] = None,
+        cfg: ControlFlowRegion | None = None,
+        state_id: int | None = None,
+        node_id: int | Node | list[int | Node] | None = None,
     ) -> None:
         # Delete single trailing newline, as this will be implicitly inserted
         # anyway
@@ -89,15 +89,13 @@ class CodeIOStream(StringIO):
             loc_spaces = max(80 - len(codeline), 2)
 
             if location_identifier != "":
-                super(CodeIOStream, self).write(codeline + loc_spaces * " " + location_identifier + "\n")
+                super().write(codeline + loc_spaces * " " + location_identifier + "\n")
             else:  # avoid ending spaces (useful for OpenCL and multiline macros)
-                super(CodeIOStream, self).write(codeline + "\n")
+                super().write(codeline + "\n")
             if brace_balance > 0:
                 self._indent += brace_balance
 
             # If indentation failed, warn user
             if self._indent < -1:
-                super(CodeIOStream, self).write(
-                    "///WARNING: Indentation failure! This probably " + "indicates an error in the SDFG.\n"
-                )
+                super().write("///WARNING: Indentation failure! This probably " + "indicates an error in the SDFG.\n")
                 self._indent = 0

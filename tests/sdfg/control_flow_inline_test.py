@@ -2,8 +2,8 @@
 import sympy
 
 import dace
-from dace.sdfg.state import ControlFlowRegion, LoopRegion
 from dace.sdfg import utils as sdutils
+from dace.sdfg.state import ControlFlowRegion, LoopRegion
 from dace.transformation.passes.fusion_inline import InlineControlFlowRegions
 from tests.cfg_tree import assert_tree_matches_a_reset, conditional, inner_sdfg, loop, spy_on_resets
 

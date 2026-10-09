@@ -1,37 +1,42 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Automatic optimization routines for SDFGs."""
 
-import os
-
 import itertools
-import dace
-import sympy
-from dace.sdfg import infer_types
-from dace.sdfg.state import SDFGState, ControlFlowRegion
-from dace.sdfg.graph import SubgraphView
-from dace.sdfg.scope import is_devicelevel_gpu_kernel
-from dace import config, data as dt, dtypes, Memlet, symbolic
-from dace.sdfg import SDFG, nodes, graph as gr
-from dace.ordered import OrderedSet
-from typing import Any, Callable, Dict, List, Set, Tuple, Union
+import os
+from collections.abc import Callable
+from typing import Any
 
-# Transformations
-from dace.transformation.passes import FuseMaps
-from dace.transformation.dataflow import MapCollapse, TrivialMapElimination, ReduceExpansion
-from dace.transformation.passes.parallelize_loops import ParallelizeLoops
-from dace.transformation.subgraph.composite import CompositeFusion
-from dace.transformation.subgraph import helpers as xfsh
-from dace.transformation import helpers as xfh, pass_pipeline as ppl
+import sympy
+
+import dace
+from dace import Memlet, config, dtypes, symbolic
+from dace import data as dt
 
 # Environments
-from dace.libraries.blas.environments import intel_mkl as mkl, openblas
+from dace.libraries.blas.environments import intel_mkl as mkl
+from dace.libraries.blas.environments import openblas
 from dace.libraries.fft.environments import fftw3
 from dace.libraries.linalg.environments import cutensor, hiptensor
+from dace.ordered import OrderedSet
+from dace.sdfg import SDFG, infer_types, nodes
+from dace.sdfg import graph as gr
+from dace.sdfg.graph import SubgraphView
+from dace.sdfg.scope import is_devicelevel_gpu_kernel
+from dace.sdfg.state import ControlFlowRegion, SDFGState
+from dace.transformation import helpers as xfh
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation.dataflow import MapCollapse, ReduceExpansion, TrivialMapElimination
 
 # Enumerator
 from dace.transformation.estimator.enumeration import GreedyEnumerator
 
-GraphViewType = Union[SDFG, SDFGState, gr.SubgraphView, ControlFlowRegion]
+# Transformations
+from dace.transformation.passes import FuseMaps
+from dace.transformation.passes.parallelize_loops import ParallelizeLoops
+from dace.transformation.subgraph import helpers as xfsh
+from dace.transformation.subgraph.composite import CompositeFusion
+
+GraphViewType = SDFG | SDFGState | gr.SubgraphView | ControlFlowRegion
 
 
 def greedy_fuse(
@@ -234,7 +239,8 @@ def tile_wcrs(graph_or_subgraph: GraphViewType, validate_all: bool, prefer_parti
     # Avoid import loops
     from dace.codegen.targets import cpp
     from dace.frontend import operations
-    from dace.transformation import dataflow, helpers as xfh
+    from dace.transformation import dataflow
+    from dace.transformation import helpers as xfh
 
     # Determine on which nodes to run the operation
     graph = graph_or_subgraph
@@ -255,7 +261,7 @@ def tile_wcrs(graph_or_subgraph: GraphViewType, validate_all: bool, prefer_parti
     # tracks allocation history. Two runs of the same program then transform in different orders --
     # and for a partially-conflicted 2-D reduction that is the difference between a right and a
     # wrong answer, not just different code.
-    edges_to_consider: OrderedSet[Tuple[gr.MultiConnectorEdge[Memlet], nodes.MapEntry]] = OrderedSet()
+    edges_to_consider: OrderedSet[tuple[gr.MultiConnectorEdge[Memlet], nodes.MapEntry]] = OrderedSet()
     for edge in graph_or_subgraph.edges():
         if edge.data.wcr is not None:
             if isinstance(edge.src, (nodes.MapExit, nodes.NestedSDFG)) or isinstance(edge.dst, nodes.MapEntry):
@@ -339,8 +345,8 @@ def tile_wcrs(graph_or_subgraph: GraphViewType, validate_all: bool, prefer_parti
         outer_mapexit = graph.exit_node(outer_mapentry)
 
         # Tuple of (transformation type, options, pattern)
-        to_apply: Tuple[
-            Union[dataflow.StreamTransient, dataflow.AccumulateTransient], Dict[str, Any], Dict[str, nodes.Node]
+        to_apply: tuple[
+            dataflow.StreamTransient | dataflow.AccumulateTransient, dict[str, Any], dict[str, nodes.Node]
         ] = None
         for e in graph.out_edges(mapexit):
             if isinstance(sdfg.arrays[e.data.data], dt.Stream):
@@ -392,7 +398,7 @@ def tile_wcrs(graph_or_subgraph: GraphViewType, validate_all: bool, prefer_parti
         print(f"Optimized {len(transformed)} write-conflicted maps")
 
 
-def find_fast_library(device: dtypes.DeviceType) -> List[str]:
+def find_fast_library(device: dtypes.DeviceType) -> list[str]:
     from dace.codegen.common import get_gpu_backend
 
     # Returns the optimized library node implementations for the given target
@@ -651,8 +657,8 @@ def apply_cpu_library_parallelism(node: nodes.LibraryNode, state: SDFGState, sdf
 def set_fast_implementations(
     sdfg: SDFG,
     device: dtypes.DeviceType,
-    blocklist: List[str] = None,
-    find_fast_library_fn: Callable[[dtypes.DeviceType], List[str]] = None,
+    blocklist: list[str] = None,
+    find_fast_library_fn: Callable[[dtypes.DeviceType], list[str]] = None,
 ) -> None:
     """
     Set fast library node implementations for the given device
@@ -774,7 +780,7 @@ def set_fast_implementations(
 
 def make_transients_persistent(
     sdfg: SDFG, device: dtypes.DeviceType, toplevel_only: bool = True
-) -> Dict[int, Set[str]]:
+) -> dict[int, set[str]]:
     """
     Helper function to change several storage and scheduling properties
 
@@ -790,10 +796,10 @@ def make_transients_persistent(
     :param toplevel_only: If True, only converts access nodes that do not appear in any scope.
     :return: A dictionary mapping SDFG IDs to a set of transient arrays that were made persistent.
     """
-    result: Dict[int, Set[str]] = {}
+    result: dict[int, set[str]] = {}
     # extent -> ``symbolic.equal(extent, 1) is True``: a few distinct extents recur across every
     # transient (cloudsc: 5516 queries, 6 distinct), and each query can reach sympy's SAT solver.
-    unit_extents: Dict[Any, bool] = {}
+    unit_extents: dict[Any, bool] = {}
 
     def is_unit(extent) -> bool:
         if extent not in unit_extents:
@@ -801,9 +807,9 @@ def make_transients_persistent(
         return unit_extents[extent]
 
     for nsdfg in sdfg.all_sdfgs_recursive():
-        fsyms: Set[str] = nsdfg.free_symbols
-        persistent: Set[str] = set()
-        not_persistent: Set[str] = set()
+        fsyms: set[str] = nsdfg.free_symbols
+        persistent: set[str] = set()
+        not_persistent: set[str] = set()
 
         for state in nsdfg.states():
             for dnode in state.data_nodes():
@@ -911,7 +917,7 @@ def apply_gpu_storage(sdfg: SDFG) -> None:
     Scalars stay on the host: they are passed by value, so there is no buffer to place, and a device
     map that writes one gets a GPU transient and a copy back from the offload pass.
     """
-    for name, desc in sdfg.arrays.items():
+    for desc in sdfg.arrays.values():
         if isinstance(desc, dt.Scalar):
             continue
         if not desc.transient and desc.storage == dtypes.StorageType.Default:
@@ -923,9 +929,9 @@ def auto_optimize(
     device: dtypes.DeviceType,
     validate: bool = True,
     validate_all: bool = False,
-    symbols: Dict[str, int] = None,
+    symbols: dict[str, int] = None,
     use_gpu_storage: bool = False,
-    find_fast_library_fn: Callable[[dtypes.DeviceType], List[str]] = None,
+    find_fast_library_fn: Callable[[dtypes.DeviceType], list[str]] = None,
     expand: bool = True,
 ) -> SDFG:
     """

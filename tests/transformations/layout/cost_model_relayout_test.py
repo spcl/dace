@@ -11,8 +11,8 @@ layout buys, times the number of nests that use it, exceeds that. Two model fact
   cannot serve both without a 4x error on GPU.
 """
 
-import sympy as sp
 import pytest
+import sympy as sp
 
 import dace
 from dace.transformation.layout.cost_model.loggp import LogGP, achievable_rate

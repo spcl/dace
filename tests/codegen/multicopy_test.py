@@ -3,8 +3,9 @@
 
 import re
 
-import dace
 import numpy as np
+
+import dace
 
 
 def test_multicopy():

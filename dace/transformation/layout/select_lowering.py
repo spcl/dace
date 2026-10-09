@@ -3,7 +3,6 @@
 
 import ctypes.util
 import os
-from typing import List, Set, Type
 
 import dace
 from dace import dtypes
@@ -14,10 +13,10 @@ CPU_TENSOR_IMPL = "TBLIS"
 GPU_IMPL = "cuTENSOR"
 
 
-def layout_node_types() -> Set[Type[nd.LibraryNode]]:
+def layout_node_types() -> set[type[nd.LibraryNode]]:
     """The library-node types the layout passes insert (imported lazily to avoid import loops)."""
-    from dace.libraries.linalg import TensorTranspose, TensorDot
     from dace.libraries.layout.layout_change import LayoutChange
+    from dace.libraries.linalg import TensorDot, TensorTranspose
 
     return {TensorTranspose, TensorDot, LayoutChange}
 
@@ -32,7 +31,7 @@ def tblis_is_linkable() -> bool:
     return "TBLIS_ROOT" in os.environ or ctypes.util.find_library("tblis") is not None
 
 
-def cpu_implementation(node: nd.LibraryNode, descs: List[dace.data.Data], tblis_ok: bool) -> str:
+def cpu_implementation(node: nd.LibraryNode, descs: list[dace.data.Data], tblis_ok: bool) -> str:
     """TBLIS for a ``TensorDot`` when TBLIS is linkable and every operand dtype is supported
     (float32/float64); otherwise the pure map. TBLIS only implements contraction, so a
     ``TensorTranspose``/``LayoutChange`` always gets ``pure``."""
@@ -49,17 +48,18 @@ def cpu_implementation(node: nd.LibraryNode, descs: List[dace.data.Data], tblis_
     return CPU_IMPL
 
 
-def operand_descriptors(node: nd.LibraryNode, state: dace.SDFGState) -> List[dace.data.Data]:
+def operand_descriptors(node: nd.LibraryNode, state: dace.SDFGState) -> list[dace.data.Data]:
     """The data descriptors on ``node``'s in/out edges (its relayout operands)."""
     sdfg = state.sdfg
-    descs: List[dace.data.Data] = []
-    for edge in list(state.in_edges(node)) + list(state.out_edges(node)):
-        if edge.data is not None and edge.data.data is not None and edge.data.data in sdfg.arrays:
-            descs.append(sdfg.arrays[edge.data.data])
+    descs: list[dace.data.Data] = [
+        sdfg.arrays[edge.data.data]
+        for edge in list(state.in_edges(node)) + list(state.out_edges(node))
+        if edge.data is not None and edge.data.data is not None and edge.data.data in sdfg.arrays
+    ]
     return descs
 
 
-def gpu_implementation(descs: List[dace.data.Data], cutensor_ok: bool) -> str:
+def gpu_implementation(descs: list[dace.data.Data], cutensor_ok: bool) -> str:
     """``cuTENSOR`` when it can build and run for these operands (right dtype, GPU-resident), else ``pure``."""
     if not cutensor_ok or not descs:
         return CPU_IMPL

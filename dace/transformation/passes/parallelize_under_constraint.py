@@ -36,17 +36,16 @@ Constraint types:
 """
 
 from dataclasses import dataclass
-from typing import Optional, Set
 
 from dace import SDFG, symbolic
+from dace.optionals import required
 from dace.sdfg import nodes
+from dace.sdfg.narrowing import as_expr
 from dace.sdfg.state import ControlFlowRegion, LoopRegion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.loop_specialization import specialize_loop_under_condition
 from dace.transformation.passes.symbol_propagation import consistent_bindings, resolve_bindings
 from dace.transformation.transformation import explicit_cf_compatible
-from dace.optionals import required
-from dace.sdfg.narrowing import as_expr
 
 
 @dataclass(slots=True)
@@ -93,7 +92,7 @@ class ParallelizeUnderConstraint(ppl.Pass):
     def depends_on(self):
         return set()
 
-    def apply_pass(self, sdfg: SDFG, _pipeline_results) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _pipeline_results) -> int | None:
         """Specialize every constraint-parallel loop into ``if cond: par else: seq``.
 
         :param sdfg: SDFG to mutate in place.
@@ -174,7 +173,7 @@ class ParallelizeUnderConstraint(ppl.Pass):
         # (array, subset-string) pairs read from / written to non-transient arrays.
         # Resolve descriptors against each state's OWN SDFG -- ``loop.states()``
         # may descend into nested SDFGs whose data names are absent from ``sdfg``.
-        reads: Set = set()
+        reads: set = set()
         writes: dict = {}
         for state in loop.states():
             arrays = state.sdfg.arrays
@@ -193,7 +192,7 @@ class ParallelizeUnderConstraint(ppl.Pass):
         # Symbols bound outside the loop -- a subset built only from these is genuinely
         # loop-invariant, and anything else is a relation the matcher failed to resolve.
         # Names, not symbol objects: ``SDFG.free_symbols`` is a set of strings. Built on first need.
-        coeffs: Set[str] = set()
+        coeffs: set[str] = set()
         for (arr, key), subset in writes.items():
             # Admit an injective write: either a same-subset read-modify-write
             # (``key`` is among the array's read subsets) or a plain store (the

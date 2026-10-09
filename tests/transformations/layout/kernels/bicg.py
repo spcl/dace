@@ -19,8 +19,8 @@ internally and would hide the read-orientation conflict.
 """
 
 import numpy
-import dace
 
+import dace
 from dace.transformation.layout.brute_force import permutation_candidates
 
 N, M = dace.symbol("N"), dace.symbol("M")

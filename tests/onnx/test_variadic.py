@@ -6,7 +6,6 @@ import numpy as np
 
 import dace
 import dace.libraries.onnx as donnx
-
 from tests.ml_gpu_utils import DEVICES, run_sdfg
 
 
@@ -31,7 +30,7 @@ def test_sum(device):
 
     state.add_node(op_node)
     for i in range(3):
-        op_node.add_in_connector("data_0__{}".format(i))
+        op_node.add_in_connector(f"data_0__{i}")
     state.add_edge(access_A, None, op_node, "data_0__0", sdfg.make_array_memlet("A_arr"))
     state.add_edge(access_B, None, op_node, "data_0__1", sdfg.make_array_memlet("B_arr"))
     state.add_edge(access_C, None, op_node, "data_0__2", sdfg.make_array_memlet("C_arr"))

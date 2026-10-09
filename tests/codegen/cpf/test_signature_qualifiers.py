@@ -26,7 +26,6 @@ import pytest
 
 import dace
 from dace.codegen.cpf import readonly_entry_arrays, render, written_containers
-
 from tests.codegen.cpf.conftest import assert_standalone, build_standalone, call_standalone, compile_diagnostics
 
 N = dace.symbol("N")
@@ -136,7 +135,7 @@ def test_a_view_is_const_exactly_when_its_entry_array_is_never_written(language,
     gcc warns), and a view that is written must keep a mutable pointer."""
     name = f"cpf_qual_view_{'w' if written else 'r'}_{'cpp' if language == 'c++' else 'c'}"
     result = render(entry_view_sdfg(name, written), language=language)
-    declaration = re.search(r"^\s*((?:const\s+)?)double\s*\*\s*v\s*;", result.code, re.M)
+    declaration = re.search(r"^\s*((?:const\s+)?)double\s*\*\s*v\s*;", result.code, re.MULTILINE)
     assert declaration is not None, result.code
     assert (declaration.group(1) == "") == written, declaration.group(0)
     assert compile_diagnostics(result.code, name, language=language) == ""

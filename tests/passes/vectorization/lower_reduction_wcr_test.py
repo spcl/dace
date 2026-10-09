@@ -93,8 +93,8 @@ def test_transient_sink_untouched():
 def test_nest_reduction_is_idempotent():
     """``NestInnermostMapBodyIntoNSDFG`` run twice on a reduction map is a no-op the second time
     and never re-buries the boundary WCR inside the body NSDFG."""
-    from dace.transformation.interstate import LoopToMap
     from dace.transformation.dataflow.wcr_conversion import AugAssignToWCR
+    from dace.transformation.interstate import LoopToMap
     from dace.transformation.passes.vectorization.nest_innermost_map_body import NestInnermostMapBodyIntoNSDFG
     from dace.transformation.passes.vectorization.utils.pass_invariants import no_wcr_inside_nested_sdfgs
 

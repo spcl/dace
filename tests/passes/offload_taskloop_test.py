@@ -21,8 +21,7 @@ import dace
 from dace import dtypes
 from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES
 from dace.properties import CodeBlock
-from dace.sdfg import dealias
-from dace.sdfg import infer_types, nodes
+from dace.sdfg import dealias, infer_types, nodes
 from dace.sdfg.scope import is_devicelevel_gpu
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.passes.offloading.offload_to_accelerator import OffloadToAccelerator

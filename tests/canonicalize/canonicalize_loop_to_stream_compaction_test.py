@@ -13,6 +13,7 @@ full pipeline: a refusal that only holds when the pass is run in isolation is no
 """
 
 import copy
+
 import numpy as np
 import pytest
 
@@ -22,14 +23,14 @@ from dace.sdfg import nodes as nd
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.analysis import scopes
 from dace.transformation.passes.canonicalize import canonicalize
-from dace.transformation.passes.cpu_specialization import cpu_specialize
 from dace.transformation.passes.canonicalize.loop_to_stream_compaction import (
-    LoopToStreamCompaction,
-    NestLevel,
     IDX_PREFIX,
     MASK_PREFIX,
     TOTAL_PREFIX,
+    LoopToStreamCompaction,
+    NestLevel,
 )
+from dace.transformation.passes.cpu_specialization import cpu_specialize
 from tests.sdfg.cfg_list_in_place_test import assert_tree_consistent
 
 

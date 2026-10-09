@@ -28,19 +28,19 @@ return when the predicate is false.
 """
 
 import ast
-
-from typing import Any, List, Type, Union
+from typing import Any
 
 import dace
-from dace.sdfg import SDFG, SDFGState, nodes as nd
-from dace.sdfg.nodes import CodeBlock
-from dace.transformation import pass_pipeline as ppl
-from dace.transformation.passes.vectorization.utils.tasklets import single_assignment
 
 # The name is owned by the unparser that gives it meaning, so the producer here and the C++
 # lowering can never drift apart.
 from dace.codegen.cppunparse import CONDITIONAL_WRITE_FUNC
 from dace.optionals import required
+from dace.sdfg import SDFG, SDFGState
+from dace.sdfg import nodes as nd
+from dace.sdfg.nodes import CodeBlock
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation.passes.vectorization.utils.tasklets import single_assignment
 
 
 class NormalizeMaskedWriteTasklets(ppl.Pass):
@@ -55,7 +55,7 @@ class NormalizeMaskedWriteTasklets(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+    def depends_on(self) -> list[type[ppl.Pass] | ppl.Pass]:
         return []
 
     def apply_pass(self, sdfg: SDFG, _: dict[str, Any]) -> int | None:
@@ -261,7 +261,7 @@ class NormalizeTernaryTasklets(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+    def depends_on(self) -> list[type[ppl.Pass] | ppl.Pass]:
         return []
 
     def apply_pass(self, sdfg: SDFG, _: dict[str, Any]) -> int | None:

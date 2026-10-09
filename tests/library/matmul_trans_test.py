@@ -19,9 +19,10 @@ same dot-products as numpy on the same floats; any drift would be a
 real bug.
 """
 
-import dace
 import numpy as np
 import pytest
+
+import dace
 from dace.libraries.blas import MatMul
 
 # Helpers
@@ -140,7 +141,7 @@ def test_matmul_trans_no_transient_in_sdfg():
     post_transient_count = sum(1 for d in sdfg.arrays.values() if d.transient)
     extra_kn_transient = any(d.transient and tuple(int(s) for s in d.shape) == (m, k) for d in sdfg.arrays.values())
     assert not extra_kn_transient, (
-        f"transA=True minted an unexpected (m,k) transient -- transpose should fuse into GEMM, not materialise a copy"
+        "transA=True minted an unexpected (m,k) transient -- transpose should fuse into GEMM, not materialise a copy"
     )
 
     # Sanity: the program still computes the right answer.

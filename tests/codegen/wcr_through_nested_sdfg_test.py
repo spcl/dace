@@ -170,9 +170,7 @@ def _wcr_edge_sources(sdfg: dace.SDFG):
     out = []
     for sd in sdfg.all_sdfgs_recursive():
         for st in sd.states():
-            for e in st.edges():
-                if e.data is not None and e.data.wcr is not None:
-                    out.append(type(e.src).__name__)
+            out.extend(type(e.src).__name__ for e in st.edges() if e.data is not None and e.data.wcr is not None)
     return out
 
 

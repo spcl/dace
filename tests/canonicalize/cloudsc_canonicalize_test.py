@@ -43,9 +43,7 @@ def test_the_loop_centric_stages_expose_parallelism_in_cloudsc():
     last_parallelize = max(i for i, (label, _) in enumerate(CANONICALIZE_STAGES) if label == "parallelize")
     applied = []
     for label, factory in CANONICALIZE_STAGES[: last_parallelize + 1]:
-        for unit in factory():
-            if unit.apply_pass(sdfg, {}) is not None:
-                applied.append((label, type(unit).__name__))
+        applied.extend((label, type(unit).__name__) for unit in factory() if unit.apply_pass(sdfg, {}) is not None)
         sdfg.validate()  # each stage boundary must preserve a valid SDFG
 
     assert applied, "not one stage through parallelize rewrote anything"

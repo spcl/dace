@@ -9,7 +9,6 @@ import dace
 from dace.sdfg.state import LoopRegion
 from dace.transformation.layout.line_graph import check_kernel_per_state, kernel_per_state, line_graph
 from dace.transformation.layout.prepare import prepare_for_layout
-
 from tests.transformations.layout import multinest_programs as fixtures
 from tests.transformations.layout.multinest_fixtures_test import run_and_check
 

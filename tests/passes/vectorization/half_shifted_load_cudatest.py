@@ -34,11 +34,11 @@ import sys
 import pytest
 
 import dace
+from dace.libraries.tileops.alignment import STRIDE_GUARD_PREFIX
 from dace.transformation.dataflow import MapFusion
 from dace.transformation.interstate import LoopToMap
 from dace.transformation.passes.canonicalize.finalize import offload_to_gpu
 from dace.transformation.passes.vectorization.config import VectorizeConfig
-from dace.libraries.tileops.alignment import STRIDE_GUARD_PREFIX
 from dace.transformation.passes.vectorization.vectorize_gpu import VectorizeGPU
 
 N = dace.symbol("N")
@@ -167,7 +167,7 @@ def _sass_ops(build_folder) -> collections.Counter:
     ops = collections.Counter()
     for lib in glob.glob(os.path.join(build_folder, "**", "*.so"), recursive=True):
         text = subprocess.run(["cuobjdump", "-sass", lib], capture_output=True, text=True).stdout
-        for op in re.findall(r"^\s*/\*[0-9a-f]+\*/\s+(?:@!?P\d+\s+)?([A-Z][A-Z0-9._]*)", text, re.M):
+        for op in re.findall(r"^\s*/\*[0-9a-f]+\*/\s+(?:@!?P\d+\s+)?([A-Z][A-Z0-9._]*)", text, re.MULTILINE):
             ops[op] += 1
     return ops
 
@@ -310,8 +310,8 @@ def _body_heat3d_sass():
 def _body_heat3d_bitexact():
     """Bit-exact vs the NumPy fp16 oracle over the WHOLE array, so the untouched boundary planes
     and the widened window's overshoot element are both checked."""
-    import numpy as np
     import cupy
+    import numpy as np
 
     steps = 3
     rng = np.random.default_rng(0)
@@ -328,8 +328,8 @@ def _body_heat3d_bitexact():
 def _body_symbolic_heat3d():
     """The shape heat3d is actually run in -- symbolic ``N`` under ``assume_even`` -- widens every
     load and stays bit-exact at several extents."""
-    import numpy as np
     import cupy
+    import numpy as np
 
     sdfg = _vectorized(_heat3d_symbolic, name="shifted_heat3d_sym", assume_even=True)
     loads = re.findall(r"tile_load<dace::float16, 2, false([^>]*)>", _device_code(sdfg))

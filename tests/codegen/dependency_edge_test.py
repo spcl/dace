@@ -8,9 +8,10 @@ cross-iteration dependence belongs in a sequential loop, and asserting one here 
 asserting that the generator declines to vectorize.
 """
 
-import pytest
-import dace
 import numpy as np
+import pytest
+
+import dace
 
 
 def _build(reverse: bool) -> dace.SDFG:

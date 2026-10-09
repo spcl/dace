@@ -10,24 +10,22 @@ automatic differentiation.
 """
 
 import copy
-import typing
 
 # DaCe core imports
 import dace
-import dace.dtypes as dtypes
+
+# Utility imports
+import dace.autodiff.utils as ad_utils
 import dace.libraries.standard.nodes
-from dace import SDFGState, SDFG, Memlet
-from dace.sdfg.nodes import Node
+from dace import SDFG, Memlet, SDFGState, dtypes
+
+# Autodiff imports
+from dace.autodiff.base_abc import AutoDiffException, BackwardContext, BackwardImplementation, BackwardResult
 
 # DaCe frontend imports
 from dace.frontend.operations import detect_reduction_type
 from dace.registry import autoregister_params
-
-# Autodiff imports
-from dace.autodiff.base_abc import BackwardImplementation, BackwardContext, BackwardResult, AutoDiffException
-
-# Utility imports
-import dace.autodiff.utils as ad_utils
+from dace.sdfg.nodes import Node
 from dace.sdfg.utils import in_desc_with_name, in_edge_with_name, out_desc_with_name, out_edge_with_name
 
 
@@ -60,8 +58,8 @@ class ReverseReduce(BackwardImplementation):
     def backward(
         forward_node: Node,
         context: BackwardContext,
-        given_gradients: list[typing.Optional[str]],
-        required_gradients: list[typing.Optional[str]],
+        given_gradients: list[str | None],
+        required_gradients: list[str | None],
     ) -> tuple[Node, BackwardResult]:
         """Generate the backward pass for a reduction node.
 
@@ -112,9 +110,7 @@ class ReverseReduce(BackwardImplementation):
         )
 
     @staticmethod
-    def _reduced_index(
-        in_subset: dace.subsets.Range, out_subset: dace.subsets.Range, kept_axes: typing.List[int]
-    ) -> str:
+    def _reduced_index(in_subset: dace.subsets.Range, out_subset: dace.subsets.Range, kept_axes: list[int]) -> str:
         """
         Indexes the forward output container from the parameters ``i<d>`` of a map over the forward input subset.
 

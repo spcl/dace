@@ -14,16 +14,16 @@ and emit at least one ``TileGather`` (gather) AND at least one ``TileScatter`` (
 """
 
 import pytest
-import dace
 
-from dace.transformation.passes.parallelize_loops import ParallelizeLoops
-from dace.transformation.passes.canonicalize import canonicalize
+import dace
 from dace.libraries.tileops import TileGather, TileScatter
+from dace.transformation.passes.canonicalize import canonicalize
+from dace.transformation.passes.parallelize_loops import ParallelizeLoops
 from dace.transformation.passes.vectorization.bypass_trivial_assign_tasklets import is_assign_tasklet
 from dace.transformation.passes.vectorization.config import VectorizeConfig
-from dace.transformation.passes.vectorization.enums import BranchMode, ISA, RemainderStrategy
-from tests.passes.vectorization.helpers.tile_probe import tasklet_reads_or_writes_tile
+from dace.transformation.passes.vectorization.enums import ISA, BranchMode, RemainderStrategy
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
+from tests.passes.vectorization.helpers.tile_probe import tasklet_reads_or_writes_tile
 
 NB = dace.symbol("NB")
 NLEV = dace.symbol("NLEV")

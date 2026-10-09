@@ -10,7 +10,6 @@ import numpy as np
 
 import dace
 import dace.libraries.onnx as donnx
-
 from tests.ml_gpu_utils import DEVICES, is_gpu, run_sdfg
 
 

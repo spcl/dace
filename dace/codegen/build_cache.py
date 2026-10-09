@@ -24,7 +24,7 @@ import hashlib
 import os
 import re
 import shutil
-from typing import Callable, List, Optional, Sequence
+from collections.abc import Callable, Sequence
 
 #: Name of the generated one-line header that pulls in the DaCe runtime umbrella.
 PREWARM_HEADER = "dace_prewarm.h"
@@ -174,8 +174,8 @@ def runtime_digest(directory: str) -> str:
 
 
 def ensure_dace_pch(
-    cxx: str, pch_flags: Sequence[str], runtime_inc: str, runtime_version: str, run: Callable[[List[str]], None]
-) -> Optional[List[str]]:
+    cxx: str, pch_flags: Sequence[str], runtime_inc: str, runtime_version: str, run: Callable[[list[str]], None]
+) -> list[str] | None:
     """Precompile ``<dace/dace.h>`` once per (compiler, flags) and cache it.
 
     Returns the extra ``-I``/``-include`` flags that make g++/clang++ pick up the cached PCH, or
@@ -221,7 +221,7 @@ _CACHE_FILE = "CMakeCache.txt"
 _CMAKEFILES = "CMakeFiles"
 
 
-def _version_dir(cmakefiles: str) -> Optional[str]:
+def _version_dir(cmakefiles: str) -> str | None:
     """The ``CMakeFiles/<cmake-version>/`` subdirectory holding the compiler detection results."""
     try:
         entries = [e for e in os.listdir(cmakefiles) if e[:1].isdigit() and os.path.isdir(os.path.join(cmakefiles, e))]

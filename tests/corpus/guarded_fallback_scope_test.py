@@ -8,12 +8,12 @@ still counted -- the kernel WAS parallelized, under a predicate, and the metric 
 not. Both SDFGs here are built in process; nothing goes through the frontend.
 """
 
-import dace
 import pytest
+
+import dace
 from dace.properties import CodeBlock
 from dace.sdfg import nodes as nd
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
-
 from tests.corpus.measure_parallelization import count, guarded_fallback_loop_set, guarded_fallback_loops
 
 N = dace.symbol("N")

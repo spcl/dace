@@ -5,16 +5,16 @@ pytest.importorskip("onnx", reason="ONNX not installed. Please install with: pip
 pytest.importorskip("torch", reason="PyTorch not installed. Please install with: pip install dace[ml]")
 
 import copy
+
 import numpy as np
 
 import dace
-from dace import transformation, data as dt
-from dace.libraries import blas
-import dace.library
-
 import dace.libraries.onnx as donnx
+import dace.library
+from dace import data as dt
+from dace import transformation
+from dace.libraries import blas
 from dace.transformation.onnx import expand_onnx_nodes
-
 from tests.ml_gpu_utils import DEVICES, run_sdfg
 
 
@@ -163,15 +163,15 @@ def test_cast_float_to_long(device):
 @pytest.mark.onnx
 @pytest.mark.parametrize("device", DEVICES)
 @pytest.mark.parametrize("reduce_type, keepdims, axes",
-                         [('Sum',  True,  [0]),
-                          ('Sum',  False, [-1]),
-                          ('Sum',  True,  [0, -1]),
-                          ('Max',  False, [0, -1]),
-                          ('Max',  True,  [0]),
-                          ('Max',  True,  [-1]),
-                          ('Mean', True,  [-1]),
-                          ('Mean', True,  [0, -1]),
-                          ('Mean', False, [0])])  # fmt: skip
+                         [("Sum",  True,  [0]),
+                          ("Sum",  False, [-1]),
+                          ("Sum",  True,  [0, -1]),
+                          ("Max",  False, [0, -1]),
+                          ("Max",  True,  [0]),
+                          ("Max",  True,  [-1]),
+                          ("Mean", True,  [-1]),
+                          ("Mean", True,  [0, -1]),
+                          ("Mean", False, [0])])  # fmt: skip
 def test_reduce(keepdims, reduce_type, axes, device):
 
     X = np.random.normal(scale=10, size=(2, 4, 10)).astype(np.float32)
@@ -567,6 +567,7 @@ def test_pure_expansion_reads_gpu_staged_constant():
     differentiable form. Runs on the host: offloading is a graph rewrite, no device needed.
     """
     from onnx import TensorProto, helper, numpy_helper
+
     from dace.frontend.ml.onnx import ONNXModel
     from dace.libraries.onnx.nodes.onnx_op import ONNXOp
     from dace.libraries.onnx.op_implementations.reduction_ops import PureReduceMean

@@ -6,11 +6,12 @@ the received buffer must be full of ``(r-1) mod size``. Marked ``mpi`` -- run un
 --with-mpi``.
 """
 
-import dace
-from dace.memlet import Memlet
-import dace.libraries.mpi as mpi
 import numpy as np
 import pytest
+
+import dace
+import dace.libraries.mpi as mpi
+from dace.memlet import Memlet
 
 
 def make_sdfg(dtype):

@@ -2,7 +2,7 @@
 """``DistributeTaskletIntoMap`` must only absorb a free Tasklet that is what blocks Map fusion."""
 
 import copy
-from typing import Any, Dict
+from typing import Any
 
 import numpy as np
 import pytest
@@ -87,7 +87,7 @@ def shape_of(sdfg: dace.SDFG):
     return [(state.label, state.number_of_nodes(), state.number_of_edges()) for state in sdfg.states()]
 
 
-def run_in_child(sdfg: dace.SDFG, extra: Dict[str, Any], wants_c: bool) -> np.ndarray:
+def run_in_child(sdfg: dace.SDFG, extra: dict[str, Any], wants_c: bool) -> np.ndarray:
     """Child body for :func:`run`: call ``sdfg`` on fresh buffers and return the outputs.
 
     Allocating here rather than shipping buffers in keeps every array owning its own memory -- DaCe

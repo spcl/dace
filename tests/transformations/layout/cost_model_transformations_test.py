@@ -6,15 +6,15 @@ run the analysis on the resulting compute map, and check the predicted cost move
 transform that fixes a strided access must lower the block-message count; one that only pads must
 leave a contiguous access essentially unchanged. Pure/symbolic -- no measurement."""
 
-import dace
-import sympy as sp
 import pytest
-from dace import nodes
+import sympy as sp
 
-from dace.transformation.layout.permute_dimensions import PermuteDimensions
-from dace.transformation.layout.pad_dimensions import PadDimensions
-from dace.transformation.layout.cost_model.logp_analysis import analyze_loop_nest
+import dace
+from dace import nodes
 from dace.transformation.layout.cost_model.loggp import LogGP, gap_from_bandwidth
+from dace.transformation.layout.cost_model.logp_analysis import analyze_loop_nest
+from dace.transformation.layout.pad_dimensions import PadDimensions
+from dace.transformation.layout.permute_dimensions import PermuteDimensions
 
 N = dace.symbol("N")
 P = LogGP(L=95e-9, o=0.0, g=4e-9, G=gap_from_bandwidth(100e9), line_bytes=64, bw_saturated=100e9, bw_core=40e9)

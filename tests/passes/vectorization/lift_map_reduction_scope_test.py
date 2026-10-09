@@ -15,10 +15,11 @@ these tests pin.
 
 import copy
 
-import dace
 import pytest
-from dace.transformation.passes.vectorization.lift_map_reduction import _trip_depends_on_enclosing_map
+
+import dace
 import tests.corpus.measure_parallelization as mp
+from dace.transformation.passes.vectorization.lift_map_reduction import _trip_depends_on_enclosing_map
 
 M = 32
 

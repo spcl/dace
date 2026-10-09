@@ -70,7 +70,6 @@ from tests.corpus.cloudsc.generate_data_for_cloudsc import (
     compare_outputs,
 )
 from tests.corpus.cloudsc.offload_cloudsc_to_gpu import offload_cloudsc_to_gpu
-from tests.corpus.cloudsc.reproduce import vectorize_gpu
 from tests.corpus.cloudsc.pipelines import (
     build_reference_outputs,
     generate_cuda_code,
@@ -81,6 +80,7 @@ from tests.corpus.cloudsc.pipelines import (
     run_candidate,
     strict_fp_device_build,
 )
+from tests.corpus.cloudsc.reproduce import vectorize_gpu
 
 #: CloudSC species PARAMETER constants (Fortran NCLV=5, NCLDQL=1..NCLDQV=5), baked in so the
 #: species / LU loops become constant-trip. Same set the sibling canonicalize test specializes with;

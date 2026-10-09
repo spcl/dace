@@ -2,13 +2,15 @@
 """Vectorization prep passes rewriting Python tasklet bodies: power expansion, cast removal,
 math-prefix stripping, modulo renaming."""
 
-import dace
-from typing import Any, Dict, List, Type, Union
-from collections.abc import Callable
 import ast
 import math
 import re
+from collections.abc import Callable
+from typing import Any
+
 import sympy
+
+import dace
 from dace import SDFG, properties, symbolic, transformation
 from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.transformation import pass_pipeline as ppl
@@ -142,7 +144,7 @@ class DaceCastRemover(ast.NodeTransformer):
 
 #: math-module numeric constants (attribute access, not a call, so the prefix-strip below can't
 #: reach them). Emitted as fp64 literals: matches numpy's float64 promotion for math.pi et al.
-_MATH_CONSTANTS: Dict[str, float] = {"pi": math.pi, "e": math.e, "tau": math.tau}
+_MATH_CONSTANTS: dict[str, float] = {"pi": math.pi, "e": math.e, "tau": math.tau}
 
 
 class RemoveMathPrefix(ast.NodeTransformer):
@@ -361,7 +363,7 @@ class _BodyRewritePass(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+    def depends_on(self) -> list[type[ppl.Pass] | ppl.Pass]:
         return []
 
     def _rewrite(self, src: str) -> str:
@@ -512,7 +514,7 @@ class RemoveMathCall(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+    def depends_on(self) -> list[type[ppl.Pass] | ppl.Pass]:
         return []
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> int | None:

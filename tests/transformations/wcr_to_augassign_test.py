@@ -1,11 +1,12 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests WCRToAugAssign."""
 
-import dace
 import numpy as np
+
+import dace
 from dace.sdfg import nodes
-from dace.sdfg.state import LoopRegion
 from dace.sdfg.propagation import propagate_memlets_sdfg
+from dace.sdfg.state import LoopRegion
 from dace.transformation.dataflow import AugAssignToWCR, WCRToAugAssign
 from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
 
@@ -521,6 +522,7 @@ def test_a_scan_seeded_in_the_same_state_keeps_its_accumulator_load():
     this shape, and its four cross-seeded fluxes are what first showed the wrong numbers.
     """
     import numpy as np
+
     from dace.transformation.passes.canonicalize import canonicalize
 
     KLEV, KLON = dace.symbol("KLEV"), dace.symbol("KLON")

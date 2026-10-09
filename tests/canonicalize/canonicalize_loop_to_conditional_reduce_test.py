@@ -7,12 +7,13 @@ unsupported ops, etc.).
 """
 
 import copy
+
 import numpy as np
 import pytest
 
 import dace
-from dace.sdfg.state import LoopRegion, ConditionalBlock
 from dace.sdfg import nodes as nd
+from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.transformation.interstate.loop_to_map import LoopToMap
 from dace.transformation.passes.canonicalize.loop_to_conditional_reduce import LoopToConditionalReduce
 from tests.sdfg.cfg_list_in_place_test import assert_tree_consistent

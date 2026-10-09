@@ -19,25 +19,25 @@ states tolerated), constant nonnegative inner offset, single 2-D array at
 transposed single-point subscripts, no other body effect.
 """
 
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import dace
 from dace import symbolic
+from dace.sdfg.narrowing import as_expr
 from dace.sdfg.state import ControlFlowRegion, LoopRegion, SDFGState
 from dace.subsets import Subset
 from dace.transformation import pass_pipeline as ppl
-from dace.transformation.transformation import explicit_cf_compatible
 from dace.transformation.passes.analysis import loop_analysis
-from dace.transformation.passes.canonicalize.rank_k_match import unit_stride
 from dace.transformation.passes.canonicalize.loop_to_transpose import (
     _single_body_state,
     _single_child_loop,
     match_copy_chain,
 )
-from dace.sdfg.narrowing import as_expr
+from dace.transformation.passes.canonicalize.rank_k_match import unit_stride
+from dace.transformation.transformation import explicit_cf_compatible
 
 
-def _const_nonneg_int(value: object) -> Optional[int]:
+def _const_nonneg_int(value: object) -> int | None:
     """``value`` as a nonnegative Python ``int`` if constant, else ``None``."""
     try:
         s = symbolic.pystr_to_symbolic(str(value))
@@ -46,7 +46,7 @@ def _const_nonneg_int(value: object) -> Optional[int]:
     return int(as_expr(s)) if s.is_Integer and int(as_expr(s)) >= 0 else None
 
 
-def _point_indices(subset: Optional[Subset], outer: str, inner: str) -> Optional[List[str]]:
+def _point_indices(subset: Subset | None, outer: str, inner: str) -> list[str] | None:
     """If ``subset`` is a 2-D single point over exactly ``{outer, inner}``,
     return the ordered list of which variable each axis is (``[outer, inner]``
     or ``[inner, outer]``); else ``None``."""
@@ -78,7 +78,7 @@ class LoopToSymmetrize(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def apply_pass(self, sdfg: dace.SDFG, _: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: dace.SDFG, _: dict[str, Any]) -> int | None:
         """Lift every matching symmetrization nest in ``sdfg`` and its nested SDFGs."""
         count = 0
         for sd in sdfg.all_sdfgs_recursive():
@@ -137,7 +137,7 @@ class LoopToSymmetrize(ppl.Pass):
 
     def _extract_symmetric_copy(
         self, state: SDFGState, outer_var: str, inner_var: str
-    ) -> Optional[Tuple[str, List[str], List[str]]]:
+    ) -> tuple[str, list[str], list[str]] | None:
         """Match an in-place transposed copy of one 2-D array in ``state``.
 
         The body must read one square array ``X`` at a single point, pass the

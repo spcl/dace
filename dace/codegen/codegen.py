@@ -1,26 +1,22 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import functools
-from typing import Iterator, List, Tuple
+from collections.abc import Iterator
 
 import dace
-from dace import dtypes
-from dace import data
-from dace import config
-from dace.sdfg import SDFG
-from dace.codegen.targets import framecode
-from dace.codegen.codeobject import CodeObject
+from dace import config, data, dtypes
 from dace.codegen import exceptions as exc
-from dace.config import Config
-from dace.sdfg import infer_types
-
+from dace.codegen.codeobject import CodeObject
 from dace.codegen.instrumentation import InstrumentationProvider
+from dace.codegen.targets import framecode
+from dace.config import Config
+from dace.sdfg import SDFG, infer_types
 from dace.sdfg.state import AbstractControlFlowRegion, SDFGState
 from dace.transformation.pass_pipeline import FixedPointPipeline
 from dace.transformation.passes.equalize_symbol_dtypes import equalize
 from dace.transformation.passes.mark_simd_maps import MarkSIMDMaps
 from dace.transformation.passes.region_boundary_states import RegionBoundaryStates
-from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising
 from dace.transformation.passes.relax_integer_powers import RelaxIntegerPowers
+from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising
 
 
 def generate_headers(sdfg: SDFG, frame: framecode.DaCeCodeGenerator) -> str:
@@ -180,9 +176,9 @@ def inline_host_nested_sdfgs(sdfg: SDFG, validate: bool = True) -> None:
     """
     from dace.sdfg.infer_types import mapped_symbol_types, same_scalar_kind
     from dace.sdfg.scope import is_devicelevel_gpu
-    from dace.transformation.passes.analysis.scopes import ScopedSymbolResolver
     from dace.transformation.interstate.multistate_inline import InlineMultistateSDFG
     from dace.transformation.interstate.sdfg_nesting import InlineSDFG
+    from dace.transformation.passes.analysis.scopes import ScopedSymbolResolver
 
     # Both inline transformations honour ``no_inline``, so pin the device-level nests for the sweep and
     # hand the SDFG back exactly as it came in. Inlining reuses node objects and never moves a node into
@@ -252,7 +248,7 @@ def apply_node_pattern_repeated(sdfg: SDFG, xform: "dace.transformation.transfor
 
 def node_pattern_candidates(
     sdfg: SDFG, node_type: type
-) -> Iterator[Tuple[AbstractControlFlowRegion, int, SDFGState, int]]:
+) -> Iterator[tuple[AbstractControlFlowRegion, int, SDFGState, int]]:
     """``(region, state index, state, node index)`` for every ``node_type`` node, in matcher order."""
     for region in sdfg.all_control_flow_regions(recursive=True):
         for state_id, state in enumerate(region.nodes()):
@@ -315,7 +311,7 @@ def unselected_cuda_target() -> str:
     return "experimental_cuda" if cuda_impl == "legacy" else "cuda"
 
 
-def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
+def generate_code(sdfg: SDFG, validate=True) -> list[CodeObject]:
     """
     Generates code as a list of code objects for a given SDFG.
 
@@ -330,9 +326,9 @@ def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
         return lower_and_generate_code(sdfg, validate)
 
 
-def lower_and_generate_code(sdfg: SDFG, validate: bool) -> List[CodeObject]:
-    from dace.codegen.target import TargetCodeGenerator  # Avoid import loop
+def lower_and_generate_code(sdfg: SDFG, validate: bool) -> list[CodeObject]:
     from dace.codegen.common import warn_if_cxx_miscompiles_inline_selects
+    from dace.codegen.target import TargetCodeGenerator  # Avoid import loop
 
     # Before anything is emitted: the compiler that will build it is a property of the machine, not
     # of this SDFG, and the failure it causes is a silent wrong number much later.
@@ -342,12 +338,13 @@ def lower_and_generate_code(sdfg: SDFG, validate: bool) -> List[CodeObject]:
         sdfg.validate()
 
     if Config.get_bool("testing", "serialization"):
-        from dace.sdfg import SDFG
         import difflib
         import filecmp
+        import os
         import shutil
         import tempfile
-        import os
+
+        from dace.sdfg import SDFG
 
         with (
             tempfile.NamedTemporaryFile(suffix="_.sdfg", delete=False) as tmp1,
@@ -363,7 +360,7 @@ def lower_and_generate_code(sdfg: SDFG, validate: bool) -> List[CodeObject]:
 
             print("Testing SDFG serialization...")
             if not filecmp.cmp(tmp1_path, tmp2_path):
-                with open(tmp1_path, "r") as f1, open(tmp2_path, "r") as f2:
+                with open(tmp1_path) as f1, open(tmp2_path) as f2:
                     diff = difflib.unified_diff(
                         f1.readlines(),
                         f2.readlines(),
@@ -442,10 +439,10 @@ def lower_and_generate_code(sdfg: SDFG, validate: bool) -> List[CodeObject]:
     # inline tasklet connectors. Runs after library expansion so post-expansion tasklets are seen too.
     if config.Config.get("compiler", "cpu", "implementation") == "experimental_readable":
         from dace.transformation.pass_pipeline import Pipeline
-        from dace.transformation.passes.promote_constant_transients import PromoteConstantTransients
-        from dace.transformation.passes.inline_tasklet_connectors import InlineTaskletConnectors
         from dace.transformation.passes.canonicalize_nested_index_names import CanonicalizeNestedIndexNames
         from dace.transformation.passes.gpu_shared_memory import PrivatizeKernelSharedMemory
+        from dace.transformation.passes.inline_tasklet_connectors import InlineTaskletConnectors
+        from dace.transformation.passes.promote_constant_transients import PromoteConstantTransients
 
         # Unvalidated sweeps: the ``validate`` closing this branch checks the inlined SDFG once.
         inline_host_nested_sdfgs(sdfg, validate=False)
@@ -455,10 +452,10 @@ def lower_and_generate_code(sdfg: SDFG, validate: bool) -> List[CodeObject]:
         # is untouched); must run before explicit_copy so copy lowering sees the final form. GPU
         # kernel outputs are widened back to length-1 arrays because a by-value Scalar cannot live
         # in device memory.
-        from dace.transformation.passes.length_one_array_scalar_conversion import ConvertLengthOneArraysToScalars
         from dace.transformation.passes.gpu_specialization.codegen_preprocess_passes import (
             InferDefaultSchedulesAndStorages,
         )
+        from dace.transformation.passes.length_one_array_scalar_conversion import ConvertLengthOneArraysToScalars
         from dace.transformation.passes.scalar_promotion import PromoteScalarOutputsToArrays
 
         ConvertLengthOneArraysToScalars(skip_gpu_outputs=True).apply_pass(sdfg, {})
@@ -515,8 +512,8 @@ def lower_and_generate_code(sdfg: SDFG, validate: bool) -> List[CodeObject]:
 
     if "?" in frame.arglist.keys():
         raise exc.CodegenError(
-            "SDFG '%s' has undefined symbols in its arguments. "
-            "Please ensure all symbols are defined before generating code." % sdfg.name
+            f"SDFG '{sdfg.name}' has undefined symbols in its arguments. "
+            "Please ensure all symbols are defined before generating code."
         )
 
     # Instantiate CPU first (as it is used by the other code generators)

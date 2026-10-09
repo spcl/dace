@@ -13,14 +13,14 @@ checked, so the tests below assert on the warnings too.
 raises and merely prints it, which would make a crash look like a refusal here.
 """
 
-from typing import Any, Dict, List, Tuple
+from typing import Any
 
 import pytest
 
 import dace
-from dace.sdfg.dealias import convert_legacy_nested_sdfgs
 from dace import subsets
 from dace.sdfg import SDFG, SDFGState, nodes
+from dace.sdfg.dealias import convert_legacy_nested_sdfgs
 from dace.transformation.dataflow import MapFusionHorizontal, MapFusionVertical
 from dace.transformation.dataflow import map_fusion_helper as mfhelper
 
@@ -36,7 +36,7 @@ def propagate_match_exceptions():
     dace.Config.set("optimizer", "match_exception", value=old)
 
 
-def apply_and_collect(sdfg: SDFG, xform: Any, recwarn: Any) -> Tuple[int, List[str]]:
+def apply_and_collect(sdfg: SDFG, xform: Any, recwarn: Any) -> tuple[int, list[str]]:
     """Run ``xform`` to fixpoint; return the application count and the swallowed refusals."""
     applied = sdfg.apply_transformations_repeated([xform], validate=False, validate_all=False)
     swallowed = [str(w.message) for w in recwarn.list if "refused a malformed match" in str(w.message)]
@@ -50,14 +50,14 @@ def assert_clean_refusal(sdfg: SDFG, xform: Any, recwarn: Any) -> None:
     assert not swallowed, f"{xform.__name__} refused through its safety net instead of a guard: {swallowed}"
 
 
-def serial_maps_sdfg(name: str, intermediate_shape: Tuple[int, ...] = (N,)) -> Tuple[SDFG, SDFGState, Dict[str, Any]]:
+def serial_maps_sdfg(name: str, intermediate_shape: tuple[int, ...] = (N,)) -> tuple[SDFG, SDFGState, dict[str, Any]]:
     """``A -> map1 -> T -> map2 -> B``, the shape ``MapFusionVertical`` matches."""
     sdfg = SDFG(name)
     for array in ("A", "B"):
         sdfg.add_array(array, (N,), dace.float64)
     sdfg.add_transient("T", intermediate_shape, dace.float64)
     state = sdfg.add_state(is_start_block=True)
-    nodes_by_name: Dict[str, Any] = {
+    nodes_by_name: dict[str, Any] = {
         "A": state.add_access("A"),
         "T": state.add_access("T"),
         "B": state.add_access("B"),
@@ -92,14 +92,14 @@ def serial_maps_sdfg(name: str, intermediate_shape: Tuple[int, ...] = (N,)) -> T
     return sdfg, state, nodes_by_name
 
 
-def parallel_maps_sdfg(name: str) -> Tuple[SDFG, SDFGState, Dict[str, Any]]:
+def parallel_maps_sdfg(name: str) -> tuple[SDFG, SDFGState, dict[str, Any]]:
     """``A -> map1 -> B`` beside ``A -> map2 -> C``, the shape ``MapFusionHorizontal`` matches."""
     sdfg = SDFG(name)
     for array in ("A", "B", "C"):
         sdfg.add_array(array, (N,), dace.float64)
     state = sdfg.add_state(is_start_block=True)
     source = state.add_access("A")
-    nodes_by_name: Dict[str, Any] = {"A": source}
+    nodes_by_name: dict[str, Any] = {"A": source}
     for index, (output, param) in enumerate((("B", "i"), ("C", "j"))):
         entry, exit_node = state.add_map(f"map{index}", {param: f"0:{N}"})
         tasklet = state.add_tasklet(f"t{index}", {"__in"}, {"__out"}, f"__out = __in + {index}.0")

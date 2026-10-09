@@ -1,18 +1,20 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 
-import pytest
+from copy import deepcopy
+
 import networkx as nx
 import numpy as np
+import pytest
+
 import dace
-from dace.transformation import pass_pipeline as ppl
 from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, LoopRegion, ReturnBlock
-from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising
+from dace.transformation import pass_pipeline as ppl
 from dace.transformation.dataflow import GPUTransformMap
 from dace.transformation.optimizer import Optimizer
 from dace.transformation.passes.offloading import offloading_helpers as helpers
 from dace.transformation.passes.offloading.offload_to_accelerator import OffloadToAccelerator as OtA
-from copy import deepcopy
+from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising
 
 # SDFGs for Tests
 

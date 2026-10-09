@@ -10,10 +10,10 @@ registered shuffle ``sigma``, composing ``sigma^-1`` onto the runtime index so
 the sweep only picks the physical layout of ``x``."""
 
 import numpy
-import dace
 
+import dace
 from dace.libraries.layout.shuffle import register_shuffle
-from dace.transformation.layout.brute_force import sweep, best, indirection_candidates
+from dace.transformation.layout.brute_force import best, indirection_candidates, sweep
 from dace.transformation.layout.indirect_access import IndirectAccess, indirect_accesses
 
 N = dace.symbol("N")

@@ -5,7 +5,8 @@ import numpy as np
 import pytest
 
 import dace
-from dace.sdfg import nodes, utils as sdutil
+from dace.sdfg import nodes
+from dace.sdfg import utils as sdutil
 from dace.transformation.interstate import SubgraphFission
 
 N = dace.symbol("N")

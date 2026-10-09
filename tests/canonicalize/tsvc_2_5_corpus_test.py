@@ -55,7 +55,7 @@ _CORPUS = tsvc_2_5.collect()
 def _oracle(program):
     """The numpy oracle for a kernel: ``ref_`` + name with any ``ext_`` dropped."""
     base = program.name.rsplit("tsvc_2_5_", 1)[-1]
-    return getattr(tsvc_2_5_numpy, "ref_" + (base[4:] if base.startswith("ext_") else base))
+    return getattr(tsvc_2_5_numpy, "ref_" + (base.removeprefix("ext_")))
 
 
 def _allclose(a, b) -> bool:

@@ -3,19 +3,18 @@
 
 import contextlib
 from collections import Counter
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any
 
 from dace import properties, subsets, symbolic
 from dace.ordered import OrderedSet
-from dace.sdfg import SDFG
+from dace.sdfg import SDFG, nodes
 from dace.sdfg.analysis import cfg as cfg_analysis
 from dace.sdfg.propagation import propagate_memlets_sdfg, propagate_memlets_state
-from dace.sdfg import nodes
 from dace.sdfg.state import ControlFlowRegion, LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
-from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.interstate.loop_to_map import (
     UNCOMPUTED,
     LiftContext,
@@ -26,9 +25,10 @@ from dace.transformation.interstate.loop_to_map import (
     build_lift_invariants,
     index_block_symbols,
 )
+from dace.transformation.passes.analysis import loop_analysis
 
 
-def candidate_loops(sdfg: SDFG) -> List[LoopRegion]:
+def candidate_loops(sdfg: SDFG) -> list[LoopRegion]:
     """Every loop in ``sdfg`` and its nested SDFGs that carries an iteration variable."""
     return [r for r in sdfg.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion) and r.loop_variable]
 
@@ -56,13 +56,13 @@ class LiftSite:
     region is the only one whose own blocks and edges change, and the loop's subtree moves as a whole."""
 
     #: the region's own blocks, in block order
-    level_order: List[Any]
+    level_order: list[Any]
     #: the loop's own entry plus every block of its subtree in the SDFG's block order
     subtree_size: int
     loop_states: OrderedSet
     region_edges: Counter
     loop_edges: Counter
-    inner_loops: List[LoopRegion]
+    inner_loops: list[LoopRegion]
 
     @staticmethod
     def capture(loop: LoopRegion) -> "LiftSite":
@@ -77,7 +77,7 @@ class LiftSite:
         )
 
 
-def last_iteration(loop: LoopRegion) -> Optional[symbolic.SymbolicType]:
+def last_iteration(loop: LoopRegion) -> symbolic.SymbolicType | None:
     """The iteration variable's value in the last iteration: the loop's inclusive end moved onto its stride."""
     end = loop_analysis.get_loop_end(loop)
     start, step = loop_analysis.get_init_assignment(loop), loop_analysis.get_loop_stride(loop)
@@ -86,7 +86,7 @@ def last_iteration(loop: LoopRegion) -> Optional[symbolic.SymbolicType]:
     return symbolic.simplify(start + symbolic.int_floor(end - start, step) * step)
 
 
-def lifted_blocks(site: LiftSite, loop: LoopRegion, region: ControlFlowRegion) -> Optional[List[SDFGState]]:
+def lifted_blocks(site: LiftSite, loop: LoopRegion, region: ControlFlowRegion) -> list[SDFGState] | None:
     """The blocks the lift put in ``loop``'s place, if the region's block order is the old one with the loop
     replaced by them -- the one case in which the SDFG's block order can be patched instead of rebuilt."""
     level_after = list(cfg_analysis.blockorder_topological_sort(region, recursive=False))
@@ -102,7 +102,7 @@ def lifted_blocks(site: LiftSite, loop: LoopRegion, region: ControlFlowRegion) -
 
 
 def patch_context(
-    ctx: LiftContext, sd: SDFG, loop: LoopRegion, region: ControlFlowRegion, site: LiftSite, added: List[SDFGState]
+    ctx: LiftContext, sd: SDFG, loop: LoopRegion, region: ControlFlowRegion, site: LiftSite, added: list[SDFGState]
 ) -> bool:
     """Bring ``sd``'s context up to date after ``loop`` was lifted, instead of rebuilding it from the whole SDFG.
 
@@ -139,8 +139,8 @@ def patch_context(
 
 
 def patch_candidates(
-    candidates: List[LoopRegion], loop: LoopRegion, region: ControlFlowRegion, site: LiftSite, added: List[SDFGState]
-) -> List[LoopRegion]:
+    candidates: list[LoopRegion], loop: LoopRegion, region: ControlFlowRegion, site: LiftSite, added: list[SDFGState]
+) -> list[LoopRegion]:
     """``candidate_loops`` after ``loop`` was lifted: its inner loops now sit in the new nested SDFG, which
     the walk reaches through the lifted state -- the region's last block, so after the rest of the region."""
     gone = {id(loop)} | {id(r) for r in site.inner_loops}
@@ -159,7 +159,7 @@ def patch_candidates(
     return rest[:insert] + moved + rest[insert:]
 
 
-def loop_order_key(loop: LoopRegion) -> Tuple[int, int]:
+def loop_order_key(loop: LoopRegion) -> tuple[int, int]:
     """Sort key placing OUTERMOST loops first: nested-SDFG level, then control-flow nesting depth."""
     sdfg_level = 0
     sd = loop.sdfg
@@ -230,7 +230,7 @@ class ParallelizeLoops(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> int | None:
         """Lift every liftable loop, outermost-first.
 
         :returns: The number of loops lifted, or ``None`` if none were.
@@ -240,11 +240,11 @@ class ParallelizeLoops(ppl.Pass):
         # StructureView flag, and every block's free symbols -- so they are built once per SDFG and
         # never rebuilt. The contexts hold what a lift does change (the access-node index, the block
         # order, the cfg ids) and are dropped after every lift.
-        invariants: Dict[SDFG, LiftInvariants] = {}
-        contexts: Dict[SDFG, LiftContext] = {}
+        invariants: dict[SDFG, LiftInvariants] = {}
+        contexts: dict[SDFG, LiftContext] = {}
         # loop -> the facts derived from its own body. Only a lift INSIDE a loop invalidates
         # them -- see the ancestor walk after each apply.
-        loop_facts: Dict[Any, LoopFacts] = {}
+        loop_facts: dict[Any, LoopFacts] = {}
 
         # Two fixpoints, outermost-first and then in graph order. Top-down wins on the big graphs
         # (CloudSC: 314 maps in 515.2s where graph order takes 927.7s for the same 314) but it is
@@ -287,9 +287,9 @@ class ParallelizeLoops(ppl.Pass):
         self,
         xform: LoopToMap,
         loop: LoopRegion,
-        pipeline_results: Dict[str, Any],
+        pipeline_results: dict[str, Any],
         proven: bool = False,
-        before_apply: Optional[Callable[[], None]] = None,
+        before_apply: Callable[[], None] | None = None,
     ) -> bool:
         """Probe ``loop`` against the CURRENT graph and lift it if ``LoopToMap`` accepts it.
 
@@ -344,11 +344,11 @@ class ParallelizeLoops(ppl.Pass):
     def lift_fixpoint(
         self,
         sdfg: SDFG,
-        pipeline_results: Dict[str, Any],
+        pipeline_results: dict[str, Any],
         order,
-        contexts: Dict[SDFG, LiftContext],
-        invariants: Dict[SDFG, LiftInvariants],
-        loop_facts: Dict[Any, LoopFacts],
+        contexts: dict[SDFG, LiftContext],
+        invariants: dict[SDFG, LiftInvariants],
+        loop_facts: dict[Any, LoopFacts],
     ) -> int:
         """Lift until no loop in ``sdfg`` is accepted any more, visiting loops in ``order``.
 
@@ -361,14 +361,14 @@ class ParallelizeLoops(ppl.Pass):
         applied = 0
         # SDFG -> its free symbols as of the end of the last lift IN it, handed over by ``apply``
         # rather than walked again by the next ``build_lift_context``. Same lifetime as a context.
-        fresh_free_symbols: Dict[SDFG, Any] = {}
+        fresh_free_symbols: dict[SDFG, Any] = {}
         # One instance, reused: ``setup_match`` overwrites every field a probe reads, and building a
         # ``make_properties`` object per candidate is pure overhead on a graph with hundreds of them.
         xform = LoopToMap()
         # Kept across sweeps and patched after each lift, like the contexts: rebuilding either walks the
         # whole SDFG, once per lift.
         candidates = candidate_loops(sdfg)
-        keys: Dict[LoopRegion, Any] = {}
+        keys: dict[LoopRegion, Any] = {}
         while True:
             lifted_one = False
             if order is not None:
@@ -389,7 +389,7 @@ class ParallelizeLoops(ppl.Pass):
                 # Read before ``lift``, which applies: a lift that edits this mapping moves the parent's free symbols.
                 pnode = sd.parent_nsdfg_node
                 mapping_keys = None if pnode is None else tuple(pnode.symbol_mapping.keys())
-                sites: List[LiftSite] = []
+                sites: list[LiftSite] = []
                 if not self.lift(
                     xform, loop, pipeline_results, before_apply=lambda: sites.append(LiftSite.capture(loop))
                 ):

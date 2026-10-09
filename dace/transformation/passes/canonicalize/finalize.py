@@ -21,19 +21,22 @@ to the backend. It mirrors ``auto_optimize``'s library-and-storage finalization
 """
 
 import os
-from typing import List
 
 from dace import SDFG, Memlet, dtypes, subsets, symbolic
 from dace.config import Config
-from dace.ordered import OrderedSet
-from dace.sdfg import infer_types, memlet_utils, nodes
-from dace.sdfg.state import ConditionalBlock, SDFGState
 from dace.libraries.blas.environments import openblas
-from dace.libraries.fft.environments import fftw3
 from dace.libraries.blas.nodes.dot import Dot
 from dace.libraries.blas.nodes.gemm import Gemm
-from dace.libraries.blas.nodes.matmul import MatMul
-from dace.libraries.blas.nodes.matmul import _get_matmul_operands, _matrix_operand
+from dace.libraries.blas.nodes.matmul import MatMul, _get_matmul_operands, _matrix_operand
+from dace.libraries.fft.environments import fftw3
+from dace.libraries.standard.block_reduce import gpu_block_implementation
+from dace.libraries.standard.nodes.scan import Scan
+from dace.libraries.standard.nodes.symmetrize import Symmetrize
+from dace.ordered import OrderedSet
+from dace.sdfg import infer_types, memlet_utils, nodes
+from dace.sdfg.narrowing import as_range
+from dace.sdfg.state import ConditionalBlock, SDFGState
+from dace.transformation import helpers as xfh
 from dace.transformation.auto.auto_optimize import (
     apply_cpu_library_parallelism,
     apply_gpu_storage,
@@ -43,26 +46,21 @@ from dace.transformation.auto.auto_optimize import (
     move_small_arrays_to_stack,
     set_fast_implementations,
 )
+from dace.transformation.dataflow import OTFMapFusion, RedundantArray, RedundantSecondArray
+from dace.transformation.interstate import InlineSDFG
 from dace.transformation.passes.canonicalize.hoist_loop_range_calls import HoistLoopRangeCalls
 from dace.transformation.passes.canonicalize.pipeline import run_structural_cleanup
 from dace.transformation.passes.canonicalize.shrink_map_local_transients import ShrinkMapLocalTransients
 from dace.transformation.passes.cpu_specialization.band_carried_loops import BandCarriedLoops
 from dace.transformation.passes.cpu_specialization.hoist_parallel_region import HoistParallelRegion
 from dace.transformation.passes.cpu_specialization.pipeline import cpu_specialize
-from dace.libraries.standard.block_reduce import gpu_block_implementation
+from dace.transformation.passes.equalize_symbol_dtypes import equalized
+from dace.transformation.passes.fuse_maps import FuseMaps
 from dace.transformation.passes.gpu_block_size_selection import select_gpu_device_block_size
-from dace.transformation.passes.offloading.batch_row_scans import BatchRowScans
 from dace.transformation.passes.gpu_specialization.gpu_specialization_pipeline import gpu_specialize_offloaded
 from dace.transformation.passes.gpu_specialization.promote_warp_tiles import PromoteWarpTiles
 from dace.transformation.passes.length_one_array_scalar_conversion import ConvertLengthOneArraysToScalars
-from dace.libraries.standard.nodes.scan import Scan
-from dace.libraries.standard.nodes.symmetrize import Symmetrize
-from dace.transformation.dataflow import OTFMapFusion, RedundantArray, RedundantSecondArray
-from dace.transformation.interstate import InlineSDFG
-from dace.transformation.passes.equalize_symbol_dtypes import equalized
-from dace.transformation.passes.fuse_maps import FuseMaps
-from dace.transformation import helpers as xfh
-from dace.sdfg.narrowing import as_range
+from dace.transformation.passes.offloading.batch_row_scans import BatchRowScans
 
 #: Map the canonicalize target string to the codegen device type.
 TARGET_DEVICE = {"cpu": dtypes.DeviceType.CPU, "gpu": dtypes.DeviceType.GPU}
@@ -111,7 +109,7 @@ def blas_addresses(node: nodes.LibraryNode, state: SDFGState) -> bool:
     return all(any(symbolic.equal_valued(1, s) for s in _matrix_operand(operand)[3]) for operand in operands)
 
 
-def canonicalize_fast_library_priority(device: dtypes.DeviceType) -> List[str]:
+def canonicalize_fast_library_priority(device: dtypes.DeviceType) -> list[str]:
     """Availability-aware fast-implementation priority for the canonicalize perf tail.
 
     Prefer OpenBLAS (BLAS + LAPACKE, i.e. LAPACK) over MKL -- MKL is blocklisted by the caller, per
@@ -143,7 +141,7 @@ def canonicalize_fast_library_priority(device: dtypes.DeviceType) -> List[str]:
         # ``pure`` is auto_optimize's terminal fallback rather than a forced pick, so it is dropped
         # here. A tensor library this host cannot build against is already absent from that list.
         return [impl for impl in find_fast_library(device) if impl != "pure"]
-    prio: List[str] = []
+    prio: list[str] = []
     if openblas.OpenBLAS.is_installed():
         prio.append("OpenBLAS")
     if fftw3.FFTW3.is_installed():

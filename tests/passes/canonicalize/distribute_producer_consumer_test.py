@@ -23,8 +23,8 @@ import pytest
 import dace
 from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
-from dace.transformation.passes.canonicalize.pipeline import _build_stages
 from dace.transformation.passes.canonicalize.distribute_producer_consumer import DistributeProducerConsumerLoop
+from dace.transformation.passes.canonicalize.pipeline import _build_stages
 from tests.cfg_tree import assert_tree_matches_a_reset, spy_on_resets
 
 M = dace.symbol("M")

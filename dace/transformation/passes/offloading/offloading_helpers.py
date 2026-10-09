@@ -1,19 +1,17 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 
-from typing import Dict, List, Optional, Tuple
 
-from dace.ordered import OrderedSet
-
-from dace import dtypes, data
-from dace.sdfg import nodes, SDFG, SDFGState
-from dace.sdfg.state import ControlFlowRegion, ReturnBlock
-from dace.transformation.passes.offloading.offloading_ir_node import OffloadingIRNode
+from dace import data, dtypes
 from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES
-from dace.sdfg.utils import get_last_view_node
 from dace.optionals import required
+from dace.ordered import OrderedSet
+from dace.sdfg import SDFG, SDFGState, nodes
+from dace.sdfg.state import ControlFlowRegion, ReturnBlock
+from dace.sdfg.utils import get_last_view_node
+from dace.transformation.passes.offloading.offloading_ir_node import OffloadingIRNode
 
 
-def remove_empty_return_entries(entries: List[Tuple[ControlFlowRegion, SDFGState]]) -> None:
+def remove_empty_return_entries(entries: list[tuple[ControlFlowRegion, SDFGState]]) -> None:
     """Remove each entry of ``separate_early_returns`` still empty, wiring its predecessors to its successor."""
     for region, entry in entries:
         successors = list(region.out_edges(entry))
@@ -29,12 +27,12 @@ def remove_empty_return_entries(entries: List[Tuple[ControlFlowRegion, SDFGState
         region.remove_node(entry)
 
 
-def separate_early_returns(sdfg: SDFG) -> List[Tuple[ControlFlowRegion, SDFGState]]:
+def separate_early_returns(sdfg: SDFG) -> list[tuple[ControlFlowRegion, SDFGState]]:
     """Put an empty state before each return on ``sdfg``'s own level, so its copies run on the return's path alone.
 
     :return: every region given such a state, with that state; ``remove_empty_return_entries`` takes them out again.
     """
-    entries: List[Tuple[ControlFlowRegion, SDFGState]] = []
+    entries: list[tuple[ControlFlowRegion, SDFGState]] = []
     for region in list(sdfg.all_control_flow_regions()):
         for block in [block for block in region.nodes() if isinstance(block, ReturnBlock)]:
             entry = region.add_state_before(block, "return_entry", is_start_block=block is region.start_block)
@@ -44,7 +42,7 @@ def separate_early_returns(sdfg: SDFG) -> List[Tuple[ControlFlowRegion, SDFGStat
 
 def link_early_returns(IR: OffloadingIRNode) -> None:
     """Tie each state leading into a return to the level's end, whose copy-backs the return must run first."""
-    entries: List[OffloadingIRNode] = []
+    entries: list[OffloadingIRNode] = []
 
     def collect(node: OffloadingIRNode) -> None:
         if (
@@ -80,7 +78,7 @@ def callback_symbol_names(sdfg: SDFG) -> OrderedSet:
     return names
 
 
-def is_callback_tasklet(node: nodes.Node, sdfg: SDFG, callback_names: Optional[OrderedSet] = None) -> bool:
+def is_callback_tasklet(node: nodes.Node, sdfg: SDFG, callback_names: OrderedSet | None = None) -> bool:
     """A tasklet that calls back into Python, so it can only run on the host.
 
     Neither kind of callback can be offloaded: a Python callback needs the interpreter, and a GPU
@@ -103,10 +101,10 @@ def is_callback_tasklet(node: nodes.Node, sdfg: SDFG, callback_names: Optional[O
 
 def scope_holds_callback(
     state: SDFGState,
-    entry: Optional[nodes.MapEntry],
-    scope_children: Dict[Optional[nodes.Node], List[nodes.Node]],
+    entry: nodes.MapEntry | None,
+    scope_children: dict[nodes.Node | None, list[nodes.Node]],
     sdfg: SDFG,
-    callback_names: Optional[OrderedSet] = None,
+    callback_names: OrderedSet | None = None,
 ) -> bool:
     """``entry``'s scope contains a callback, at any depth, so the scope is host code."""
     names = callback_symbol_names(sdfg) if callback_names is None else callback_names
@@ -129,7 +127,7 @@ def sdfg_holds_callback(sdfg: SDFG) -> bool:
     return False
 
 
-def view_origin(state: SDFGState, node: nodes.AccessNode) -> Optional[str]:
+def view_origin(state: SDFGState, node: nodes.AccessNode) -> str | None:
     """The container ``node`` ultimately aliases, following a chain of views, or None."""
     viewed = get_last_view_node(state, node)
     return viewed.data if viewed is not None else None
@@ -142,7 +140,7 @@ def view_origin(state: SDFGState, node: nodes.AccessNode) -> Optional[str]:
 # Map Creation Helper
 
 
-def enclosing_kernel(scopes: dict, node: nodes.Node) -> Optional[nodes.MapEntry]:
+def enclosing_kernel(scopes: dict, node: nodes.Node) -> nodes.MapEntry | None:
     """The nearest enclosing map with a GPU schedule, or None outside every kernel."""
     scope = scopes[node]
     while scope is not None:

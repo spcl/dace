@@ -21,7 +21,7 @@ lives inside that Map.
 """
 
 import copy
-from typing import Any, Union
+from typing import Any
 
 import dace
 from dace import dtypes, properties, transformation
@@ -43,9 +43,7 @@ class DistributeTaskletIntoMap(transformation.SingleStateTransformation):
     def expressions(cls) -> Any:
         return [sdutil.node_path_graph(cls.first_map_exit, cls.tasklet, cls.access, cls.second_map_entry)]
 
-    def can_be_applied(
-        self, graph: Union[SDFGState, SDFG], expr_index: int, sdfg: SDFG, permissive: bool = False
-    ) -> bool:
+    def can_be_applied(self, graph: SDFGState | SDFG, expr_index: int, sdfg: SDFG, permissive: bool = False) -> bool:
         tasklet, access, second_map_entry = self.tasklet, self.access, self.second_map_entry
 
         # Free Tasklet: nothing to read, one value to produce.
@@ -90,7 +88,7 @@ class DistributeTaskletIntoMap(transformation.SingleStateTransformation):
             return False
         return not any(access.data in edge.data.free_symbols for edge in sdfg.all_interstate_edges())
 
-    def apply(self, graph: Union[SDFGState, SDFG], sdfg: SDFG) -> None:
+    def apply(self, graph: SDFGState | SDFG, sdfg: SDFG) -> None:
         tasklet, access, second_map_entry = self.tasklet, self.access, self.second_map_entry
         consumer_edge = graph.out_edges(access)[0]
         in_conn = consumer_edge.dst_conn

@@ -7,15 +7,16 @@ infer() has a lenient implementation: if something it not inferred (for example 
 This module is inspired by astunparse: https://github.com/simonpercivall/astunparse
 """
 
-import numpy as np
 import ast
-from dace import data, dtypes
-from dace import symbolic
-from dace.symbolic import MODULO_FUNCTIONS, symbol, SymExpr, symstr
-from dace import symbolic_engine as sympy
 import sys
+from collections.abc import Callable
+
+import numpy as np
+
 import dace.frontend.python.astutils
-from typing import Callable, Optional, Union
+from dace import data, dtypes, symbolic
+from dace import symbolic_engine as sympy
+from dace.symbolic import MODULO_FUNCTIONS, SymExpr, symbol, symstr
 
 
 def magnitude_type(arg_types: list[dtypes.typeclass]) -> dtypes.typeclass:
@@ -150,7 +151,7 @@ def infer_expr_type(code, symbols=None):
     if hasattr(parsed_ast, "body") and isinstance(parsed_ast.body[0], ast.Expr):
         return _dispatch(parsed_ast.body[0], symbols, inferred_symbols)
     else:
-        raise TypeError("Expected expression, got: {}".format(type(code)))
+        raise TypeError(f"Expected expression, got: {type(code)}")
 
 
 def _range_bound_type(bound, symbols) -> dtypes.typeclass:
@@ -185,7 +186,7 @@ def _range_bound_type(bound, symbols) -> dtypes.typeclass:
     return infer_expr_type(bound, symbols)
 
 
-def _literal_type(value: int) -> Optional[dtypes.typeclass]:
+def _literal_type(value: int) -> dtypes.typeclass | None:
     """The narrowest of the default symbol type and ``int64`` that holds ``value``, or None if neither does."""
     for dtype in (symbolic.DEFAULT_SYMBOL_TYPE, dtypes.int64):
         info = np.iinfo(dtype.type)
@@ -283,10 +284,9 @@ def _AugAssign(t, symbols, inferred_symbols):
             _dispatch(t.target, symbols, inferred_symbols)
             inferred_type = _dispatch(t.value, symbols, inferred_symbols)
             inferred_symbols[t.target.id] = inferred_type
-    else:
-        if not t.target.id in symbols and not t.target.id in inferred_symbols:
-            inferred_type = _dispatch(t.value, symbols, inferred_symbols)
-            inferred_symbols[t.target.id] = inferred_type
+    elif not t.target.id in symbols and not t.target.id in inferred_symbols:
+        inferred_type = _dispatch(t.value, symbols, inferred_symbols)
+        inferred_symbols[t.target.id] = inferred_type
 
 
 def _AnnAssign(t, symbols, inferred_symbols):
@@ -420,7 +420,7 @@ def _Name(t, symbols, inferred_symbols):
         inferred_type = None
 
         # if this is a statement generated from a tasklet with a dynamic memlet, it could have a leading * (pointer)
-        t_id = t.id[1:] if t.id.startswith("*") else t.id
+        t_id = t.id.removeprefix("*")
         if t_id.strip("()") in _py2c_typeconversion:
             inferred_type = _py2c_typeconversion[t_id.strip("()")]
         elif t_id in symbols:
@@ -534,7 +534,7 @@ def _BoolOp(t, symbols, inferred_symbols):
     return dtypes.vector(dace.bool, vec_len) if vec_len is not None else dtypes.bool
 
 
-def _infer_dtype(t: Union[ast.Name, ast.Attribute]):
+def _infer_dtype(t: ast.Name | ast.Attribute):
     name = dace.frontend.python.astutils.rname(t)
     if "." in name:
         dtype_str = name[name.rfind(".") + 1 :]

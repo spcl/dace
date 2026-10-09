@@ -1,9 +1,10 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
 import numpy as np
 import pytest
-from dace.transformation.interstate.loop_unroll import LoopUnroll
+
+import dace
 from dace.transformation.interstate.loop_peeling import LoopPeeling
+from dace.transformation.interstate.loop_unroll import LoopUnroll
 from tests.sdfg.cfg_list_checks import assert_cfg_list_as_after_a_reset, loop_over_nested_sdfg, record_tree_resets
 
 

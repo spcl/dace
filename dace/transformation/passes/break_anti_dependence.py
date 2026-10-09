@@ -54,18 +54,18 @@ prefers the parallel version, and cost is the tuner's call, not this pass's.
 import copy
 import zlib
 from functools import lru_cache
-from typing import Any, Dict, Optional, Set
+from typing import Any
 
-from dace.ordered import OrderedSet
 import sympy
 
-from dace import data, properties, subsets, symbolic, Memlet
+from dace import Memlet, data, properties, subsets, symbolic
+from dace.ordered import OrderedSet
 from dace.sdfg import SDFG, nodes
 from dace.sdfg import tasklet_utils as tutil
 from dace.sdfg.analysis import cfg as cfg_analysis
+from dace.sdfg.narrowing import as_basic, as_expr
 from dace.sdfg.state import LoopRegion
 from dace.transformation import pass_pipeline as ppl
-from dace.sdfg.narrowing import as_basic, as_expr
 
 
 def _subset_key(subset):
@@ -193,13 +193,13 @@ def _provably_nonpositive_under_nonneg_symbols(expr) -> bool:
     return _provably_nonnegative_under_nonneg_symbols(-expr)
 
 
-def referenced_arrays(expr) -> Set[str]:
+def referenced_arrays(expr) -> set[str]:
     """Data containers an index expression reads once its interstate bindings are expanded.
 
     The solver models each container as an immutable array, so a container the loop WRITES
     cannot be modelled this way and the caller must refuse.
     """
-    names: Set[str] = set()
+    names: set[str] = set()
     for node in sympy.preorder_traversal(expr):
         if isinstance(node, symbolic.Subscript):
             names.add(str(node.args[0]))
@@ -208,7 +208,7 @@ def referenced_arrays(expr) -> Set[str]:
     return names
 
 
-def array_sourced_symbols(sdfg: SDFG) -> Set[str]:
+def array_sourced_symbols(sdfg: SDFG) -> set[str]:
     """Symbols an interstate edge binds from a data container, directly or through another such symbol.
 
     Their values come from runtime data, so the nonnegative assumption made for symbols does not hold.
@@ -218,7 +218,7 @@ def array_sourced_symbols(sdfg: SDFG) -> Set[str]:
         for e in sdfg.all_interstate_edges()
         for lhs, rhs in e.data.assignments.items()
     }
-    sourced: Set[str] = set()
+    sourced: set[str] = set()
     changed = True
     while changed:
         changed = False
@@ -232,9 +232,9 @@ def array_sourced_symbols(sdfg: SDFG) -> Set[str]:
     return sourced
 
 
-def written_data(loop: LoopRegion) -> Set[str]:
+def written_data(loop: LoopRegion) -> set[str]:
     """Every data container written anywhere in ``loop``'s body."""
-    written: Set[str] = set()
+    written: set[str] = set()
     for st in loop.states():
         for n in st.data_nodes():
             for e in st.in_edges(n):
@@ -492,8 +492,8 @@ class BreakAntiDependence(ppl.Pass):
         loop: LoopRegion,
         sdfg: SDFG,
         read_state,
-        internal_syms: Set[str],
-        written: Set[str],
+        internal_syms: set[str],
+        written: set[str],
         bindings=None,
         loop_bounds=None,
     ):
@@ -572,7 +572,7 @@ class BreakAntiDependence(ppl.Pass):
                     return e.data.assignments[sym_name]
         return None
 
-    def _collect_iedge_substitutions(self, loop: LoopRegion, isym=None, sdfg: Optional[SDFG] = None):
+    def _collect_iedge_substitutions(self, loop: LoopRegion, isym=None, sdfg: SDFG | None = None):
         """Build ``{sym: rhs_expr}`` for every iedge assignment in the loop
         body whose RHS is a *pure* symbolic expression (loop iterator +
         loop-invariant symbols, no array reads anywhere in the dependency
@@ -665,7 +665,7 @@ class BreakAntiDependence(ppl.Pass):
             subs[symbolic.pystr_to_symbolic(lhs)] = expr
         return subs
 
-    def _try_recognize_indirected(self, offset_expr, isym, loop: LoopRegion, sdfg: SDFG) -> Optional[str]:
+    def _try_recognize_indirected(self, offset_expr, isym, loop: LoopRegion, sdfg: SDFG) -> str | None:
         """Recognise ``offset_expr == arr[isym]`` after walking back through
         interstate-edge assignments and a single ``__out = isym + Y`` tasklet
         in the loop body.
@@ -769,7 +769,7 @@ class BreakAntiDependence(ppl.Pass):
         # 5. Walk back ``y_name`` to find ``arr[isym]``.
         return self._indirection_array(loop, y_name, isym_name, sdfg)
 
-    def _indirection_array(self, loop: LoopRegion, sym_name: str, isym_name: str, sdfg: SDFG) -> Optional[str]:
+    def _indirection_array(self, loop: LoopRegion, sym_name: str, isym_name: str, sdfg: SDFG) -> str | None:
         """The array ``arr`` if the loop binds ``sym_name := arr[isym]`` on an interstate edge, else ``None``."""
         import ast
 
@@ -794,14 +794,14 @@ class BreakAntiDependence(ppl.Pass):
         return arr_name
 
     @staticmethod
-    def _loop_internal_symbols(loop: LoopRegion) -> Set[str]:
+    def _loop_internal_symbols(loop: LoopRegion) -> set[str]:
         """Symbols defined *within* ``loop`` -- the loop variable plus every nested
         map parameter and every nested loop variable. A symbolic carried offset
         whose free symbols intersect this set is NOT loop-invariant and the
         rename would be unsound (the read position varies inside the loop body
         in a way that may overlap the write).
         """
-        internal: Set[str] = set()
+        internal: set[str] = set()
         if loop.loop_variable:
             internal.add(loop.loop_variable)
         for st in loop.states():
@@ -828,9 +828,9 @@ class BreakAntiDependence(ppl.Pass):
         # duplicates cannot change the outcome; it only avoids re-deriving the same
         # answer (an array touched from dozens of states otherwise blows the read x
         # write cross product up quadratically).
-        reads: Dict[str, Dict[Any, Any]] = {}
-        read_states: Dict[str, Dict[Any, Any]] = {}
-        writes: Dict[str, Dict[Any, Any]] = {}
+        reads: dict[str, dict[Any, Any]] = {}
+        read_states: dict[str, dict[Any, Any]] = {}
+        writes: dict[str, dict[Any, Any]] = {}
         for st in loop.states():
             for n in st.data_nodes():
                 if not isinstance(sdfg.arrays.get(n.data), data.Array):
@@ -966,7 +966,7 @@ class BreakAntiDependence(ppl.Pass):
             pre, f"_break_antidep_guard_{zlib.crc32(expr_str.encode()) & 0xFFFFFFF:x}", f"not (({expr_str}) >= 0)"
         )
 
-    def _snapshot_window(self, loop: LoopRegion, name: str, sdfg: SDFG, read_subsets) -> Optional[Memlet]:
+    def _snapshot_window(self, loop: LoopRegion, name: str, sdfg: SDFG, read_subsets) -> Memlet | None:
         """The copy memlet for ``name -> snap`` restricted to the elements the
         redirected reads actually touch, or ``None`` to fall back to a whole-array copy.
 
@@ -1045,7 +1045,7 @@ class BreakAntiDependence(ppl.Pass):
         # Collect every write subset of `name` in the loop body (same criterion
         # as :meth:`_renamable_arrays`) so each read edge can be classified and
         # only the strict read-ahead ones moved.
-        unique_writes: Dict[Any, Any] = {}
+        unique_writes: dict[Any, Any] = {}
         for st in loop.states():
             for n in st.data_nodes():
                 if n.data != name:
@@ -1073,7 +1073,7 @@ class BreakAntiDependence(ppl.Pass):
         to_move = []
         # Read subsets with the same ndrange classify identically, so the verdict is
         # cached per subset instead of re-derived for every edge that carries it.
-        is_ahead: Dict[Any, bool] = {}
+        is_ahead: dict[Any, bool] = {}
         for st in loop.states():
             for n in list(st.data_nodes()):
                 if n.data != name:
@@ -1270,7 +1270,7 @@ class BreakAntiDependence(ppl.Pass):
             applied += 1
         return applied
 
-    def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> int | None:
         """Snapshot-rename every loop with a read-ahead anti-dependence; returns the
         number of arrays renamed, or ``None``.
 
