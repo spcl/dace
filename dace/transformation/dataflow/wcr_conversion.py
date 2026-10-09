@@ -1145,6 +1145,19 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
         return newstate
 
 
+def read_back_access(state: SDFGState, sdfg: SDFG, written: nodes.AccessNode) -> nodes.AccessNode:
+    """A new access node reading ``written``'s data. A view is bound to what ``written`` views, or it views nothing.
+
+    shortcut: binds one level of view; a view of a view needs the whole chain copied.
+    """
+    read = state.add_access(written.data)
+    if isinstance(written.desc(sdfg), data.View):
+        binding = sdutil.get_view_edge(state, written)
+        if binding is not None and binding.src is written:
+            state.add_edge(state.add_access(binding.dst.data), None, read, "views", copy.deepcopy(binding.data))
+    return read
+
+
 class WCRToAugAssign(transformation.SingleStateTransformation):
     """
     Converts a tasklet with a write-conflict resolution to an augmented assignment subgraph (e.g., "a = a + b").
@@ -1491,7 +1504,7 @@ class WCRToAugAssign(transformation.SingleStateTransformation):
             edge = state.edges_between(self.tasklet, self.output)[0]
             code = _wcr_augassign_body(edge.data.wcr)
             edge.data.wcr = None
-            in_access = state.add_access(self.output.data)
+            in_access = read_back_access(state, sdfg, self.output)
             new_tasklet = state.add_tasklet("augassign", OrderedSet(("__in1", "__in2")), {"__out"}, f"__out = {code}")
             state.add_edge(in_access, None, new_tasklet, "__in1", copy.deepcopy(edge.data))
             connect_through_scalar(
@@ -1508,7 +1521,7 @@ class WCRToAugAssign(transformation.SingleStateTransformation):
             code = _wcr_augassign_body(edge.data.wcr)
             for e in state.memlet_path(edge):
                 e.data.wcr = None
-            in_access = state.add_access(self.output.data)
+            in_access = read_back_access(state, sdfg, self.output)
             new_tasklet = state.add_tasklet("augassign", OrderedSet(("__in1", "__in2")), {"__out"}, f"__out = {code}")
             state.add_memlet_path(in_access, *entries, new_tasklet, memlet=copy.deepcopy(edge.data), dst_conn="__in1")
             connect_through_scalar(
@@ -1530,7 +1543,7 @@ class WCRToAugAssign(transformation.SingleStateTransformation):
             out_subset = m.get_dst_subset(edge, state)
             in_subset = m.get_src_subset(edge, state)
             dims = _multi_element_dims(out_subset) if out_subset is not None else []
-            read_back = state.add_access(self.output.data)
+            read_back = read_back_access(state, sdfg, self.output)
             new_tasklet = state.add_tasklet("augassign", OrderedSet(("__in1", "__in2")), {"__out"}, f"__out = {code}")
 
             if not dims:
@@ -1616,7 +1629,7 @@ class WCRToAugAssign(transformation.SingleStateTransformation):
             code = _wcr_augassign_body(edge.data.wcr)
             for e in state.memlet_path(edge):
                 e.data.wcr = None
-            in_access = state.add_access(self.output.data)
+            in_access = read_back_access(state, sdfg, self.output)
             new_tasklet = state.add_tasklet("augassign", OrderedSet(("__in1", "__in2")), {"__out"}, f"__out = {code}")
             state.add_memlet_path(in_access, *entries, new_tasklet, memlet=copy.deepcopy(edge.data), dst_conn="__in1")
             state.add_edge(

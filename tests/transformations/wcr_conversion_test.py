@@ -1,7 +1,7 @@
 import numpy as np
 import dace
 
-from dace.transformation.dataflow import AugAssignToWCR
+from dace.transformation.dataflow import AugAssignToWCR, WCRToAugAssign
 
 
 def test_aug_assign_tasklet_lhs():
@@ -628,6 +628,9 @@ def test_isolating_an_accumulate_read_through_a_shared_view_keeps_the_views_sour
     sdfg.validate()
 
     assert sdfg.apply_transformations_repeated(AugAssignToWCR) == 1
+    sdfg.validate()
+    # Reverting the WCR (RevertNonReductionWCR) must find a write view, not a read view left behind.
+    assert sdfg.apply_transformations_repeated(WCRToAugAssign) == 1
     sdfg.validate()
     y = np.arange(1, 5, dtype=np.float64)
     sdfg(y=y)
