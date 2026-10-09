@@ -1553,10 +1553,13 @@ def get_parent_maps(state: SDFGState, node: nodes.Node) -> list[tuple[nodes.Entr
     :return: A list of (entry node, state) tuples, as get_parent_map returns them one at a time.
     """
     scopes = []
-    parent = get_parent_map(state, node)
-    while parent is not None:
-        scopes.append(parent)
-        parent = get_parent_map(parent[1], parent[0])
+    while state is not None:
+        entry = state.entry_node(node)
+        while entry is not None:
+            scopes.append((entry, state))
+            entry = state.entry_node(entry)
+        node = state.sdfg.parent_nsdfg_node
+        state = state.sdfg.parent
     return scopes
 
 
