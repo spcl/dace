@@ -1,5 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import functools
+import warnings
+
 import dace.library
 import dace.properties
 import dace.sdfg.nodes
@@ -7,7 +9,6 @@ from dace.codegen.common import sym2cpp
 from dace.libraries.blas import blas_helpers
 from dace.libraries.blas import environments as blas_environments
 from dace.transformation.transformation import ExpandTransformation
-import warnings
 
 
 def _get_transpose_input(node, state, sdfg):
@@ -131,9 +132,7 @@ class ExpandTransposeMKL(ExpandTransformation):
             return ExpandTransposePure.expansion(node, state, sdfg)
         lda, ldb = leading
         _, _, (m, n), _ = _get_transpose_input(node, state, sdfg)
-        code = ("mkl_{f}('R', 'T', {m}, {n}, {a}, {cast}_inp, {lda}, {cast}_out, {ldb});").format(
-            f=func, m=m, n=n, a=alpha, cast=cast, lda=lda, ldb=ldb
-        )
+        code = f"mkl_{func}('R', 'T', {m}, {n}, {alpha}, {cast}_inp, {lda}, {cast}_out, {ldb});"
         tasklet = dace.sdfg.nodes.Tasklet(
             node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
         )
@@ -183,9 +182,7 @@ class ExpandTransposeOpenBLAS(ExpandTransformation):
         # Adaptations for BLAS API
         order = "CblasRowMajor"
         trans = "CblasTrans"
-        code = ("cblas_{f}({o}, {t}, {m}, {n}, {cast}{a}, {cast}_inp, {lda}, {cast}_out, {ldb});").format(
-            f=func, o=order, t=trans, m=m, n=n, a=alpha, cast=cast, lda=lda, ldb=ldb
-        )
+        code = f"cblas_{func}({order}, {trans}, {m}, {n}, {cast}{alpha}, {cast}_inp, {lda}, {cast}_out, {ldb});"
         tasklet = dace.sdfg.nodes.Tasklet(
             node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
         )

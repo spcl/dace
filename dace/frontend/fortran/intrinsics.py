@@ -1,19 +1,19 @@
-from abc import abstractmethod
 import copy
 import math
+from abc import abstractmethod
 from collections import namedtuple
-from typing import Any, List, Optional, Set, Tuple, Type
+from typing import Any
 
 from dace.frontend.fortran import ast_internal_classes
-from dace.frontend.fortran.ast_utils import fortrantypes2dacetypes
 from dace.frontend.fortran.ast_transforms import (
-    NodeVisitor,
     NodeTransformer,
+    NodeVisitor,
     ParentScopeAssigner,
     ScopeVarsDeclarations,
-    par_Decl_Range_Finder,
     mywalk,
+    par_Decl_Range_Finder,
 )
+from dace.frontend.fortran.ast_utils import fortrantypes2dacetypes
 
 FASTNode = Any
 
@@ -90,7 +90,7 @@ class DirectReplacement(IntrinsicTransformation):
     def replace_size(var: ast_internal_classes.Call_Expr_Node, scope_vars: ScopeVarsDeclarations, line):
 
         if len(var.args) not in [1, 2]:
-            raise RuntimeError()
+            raise RuntimeError
 
         # get variable declaration for the first argument
         var_decl = scope_vars.get_var(var.parent, var.args[0].name)
@@ -113,14 +113,14 @@ class DirectReplacement(IntrinsicTransformation):
         rank = var.args[1]
         # we do not support symbolic argument to DIM - it must be a literal
         if not isinstance(rank, ast_internal_classes.Int_Literal_Node):
-            raise NotImplementedError()
+            raise NotImplementedError
         value = int(rank.value)
         return (var_decl.sizes[value - 1], "INTEGER")
 
     def replace_bit_size(var: ast_internal_classes.Call_Expr_Node, scope_vars: ScopeVarsDeclarations, line):
 
         if len(var.args) != 1:
-            raise RuntimeError()
+            raise RuntimeError
 
         # get variable declaration for the first argument
         var_decl = scope_vars.get_var(var.parent, var.args[0].name)
@@ -220,8 +220,8 @@ class LoopBasedReplacementVisitor(NodeVisitor):
 
     def __init__(self, func_name: str):
         self._func_name = func_name
-        self.nodes: List[ast_internal_classes.FNode] = []
-        self.calls: List[ast_internal_classes.FNode] = []
+        self.nodes: list[ast_internal_classes.FNode] = []
+        self.calls: list[ast_internal_classes.FNode] = []
 
     def visit_BinOp_Node(self, node: ast_internal_classes.BinOp_Node):
         if isinstance(node.rval, ast_internal_classes.Call_Expr_Node):
@@ -263,12 +263,12 @@ class LoopBasedReplacementTransformation(IntrinsicNodeTransformer):
         self,
         exec_node: ast_internal_classes.Execution_Part_Node,
         node: ast_internal_classes.FNode,
-        new_func_body: List[ast_internal_classes.FNode],
+        new_func_body: list[ast_internal_classes.FNode],
     ):
         pass
 
     @abstractmethod
-    def _initialize_result(self, node: ast_internal_classes.FNode) -> Optional[ast_internal_classes.BinOp_Node]:
+    def _initialize_result(self, node: ast_internal_classes.FNode) -> ast_internal_classes.BinOp_Node | None:
         pass
 
     @abstractmethod
@@ -315,9 +315,9 @@ class LoopBasedReplacementTransformation(IntrinsicNodeTransformer):
 
     def _parse_binary_op(
         self, node: ast_internal_classes.Call_Expr_Node, arg: ast_internal_classes.BinOp_Node
-    ) -> Tuple[
+    ) -> tuple[
         ast_internal_classes.Array_Subscript_Node,
-        Optional[ast_internal_classes.Array_Subscript_Node],
+        ast_internal_classes.Array_Subscript_Node | None,
         ast_internal_classes.BinOp_Node,
     ]:
         """
@@ -518,7 +518,7 @@ class SumProduct(LoopBasedReplacementTransformation):
         self,
         exec_node: ast_internal_classes.Execution_Part_Node,
         node: ast_internal_classes.FNode,
-        new_func_body: List[ast_internal_classes.FNode],
+        new_func_body: list[ast_internal_classes.FNode],
     ):
 
         if len(self.rvals) != 1:
@@ -636,7 +636,7 @@ class AnyAllCountTransformation(LoopBasedReplacementTransformation):
         self,
         exec_node: ast_internal_classes.Execution_Part_Node,
         node: ast_internal_classes.FNode,
-        new_func_body: List[ast_internal_classes.FNode],
+        new_func_body: list[ast_internal_classes.FNode],
     ):
 
         rangeslen_left = []
@@ -834,7 +834,7 @@ class MinMaxValTransformation(LoopBasedReplacementTransformation):
         self,
         exec_node: ast_internal_classes.Execution_Part_Node,
         node: ast_internal_classes.FNode,
-        new_func_body: List[ast_internal_classes.FNode],
+        new_func_body: list[ast_internal_classes.FNode],
     ):
 
         if len(self.rvals) != 1:
@@ -989,7 +989,7 @@ class Merge(LoopBasedReplacement):
             self,
             exec_node: ast_internal_classes.Execution_Part_Node,
             node: ast_internal_classes.FNode,
-            new_func_body: List[ast_internal_classes.FNode],
+            new_func_body: list[ast_internal_classes.FNode],
         ):
 
             self.destination_array = self._parse_array(exec_node, node.lval)
@@ -1022,7 +1022,7 @@ class Merge(LoopBasedReplacement):
                 )
                 self._adjust_array_ranges(node, self.mask_second_array, self.loop_ranges, loop_ranges)
 
-        def _initialize_result(self, node: ast_internal_classes.FNode) -> Optional[ast_internal_classes.BinOp_Node]:
+        def _initialize_result(self, node: ast_internal_classes.FNode) -> ast_internal_classes.BinOp_Node | None:
             """
             We don't use result variable in MERGE.
             """
@@ -1090,7 +1090,7 @@ class MathFunctions(IntrinsicTransformation):
         elif fname == "ANINT":
             arg.name = ast_internal_classes.Name_Node(name="round")
         else:
-            raise NotImplementedError()
+            raise NotImplementedError
 
         return arg
 
@@ -1174,7 +1174,7 @@ class MathFunctions(IntrinsicTransformation):
                         parent.args[idx] = new_call
                         break
             else:
-                raise NotImplementedError()
+                raise NotImplementedError
 
         def visit_BinOp_Node(self, binop_node: ast_internal_classes.BinOp_Node):
 
@@ -1282,11 +1282,11 @@ class FortranIntrinsics:
     def __init__(self):
         self._transformations_to_run = set()
 
-    def transformations(self) -> Set[Type[NodeTransformer]]:
+    def transformations(self) -> set[type[NodeTransformer]]:
         return self._transformations_to_run
 
     @staticmethod
-    def function_names() -> List[str]:
+    def function_names() -> list[str]:
         # list of all functions that are created by initial transformation, before doing full replacement
         # this prevents other parser components from replacing our function calls with array subscription nodes
         return [
@@ -1296,12 +1296,12 @@ class FortranIntrinsics:
         ]
 
     @staticmethod
-    def retained_function_names() -> List[str]:
+    def retained_function_names() -> list[str]:
         # list of all DaCe functions that we use after full parsing
         return MathFunctions.dace_functions()
 
     @staticmethod
-    def call_extraction_exemptions() -> List[str]:
+    def call_extraction_exemptions() -> list[str]:
         return [
             *[func.Transformation.func_name() for func in FortranIntrinsics.EXEMPTED_FROM_CALL_EXTRACTION]
             # *MathFunctions.temporary_functions()

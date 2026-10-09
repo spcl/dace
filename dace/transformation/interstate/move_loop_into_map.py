@@ -2,16 +2,19 @@
 """Moves a loop around a map into the map"""
 
 import copy
-from dace.sdfg.state import ControlFlowRegion, LoopRegion, SDFGState
-import dace.transformation.helpers as helpers
-import networkx as nx
-from dace.sdfg.scope import ScopeTree
-from dace import Memlet, nodes, sdfg as sd, subsets as sbs, symbolic, symbol
-from dace.sdfg import nodes, propagation, utils as sdutil
-from dace.transformation import transformation
-from sympy import diff
-from typing import List, Set, Tuple
 
+import networkx as nx
+from sympy import diff
+
+import dace.transformation.helpers as helpers
+from dace import Memlet, nodes, symbol, symbolic
+from dace import sdfg as sd
+from dace import subsets as sbs
+from dace.sdfg import nodes, propagation
+from dace.sdfg import utils as sdutil
+from dace.sdfg.scope import ScopeTree
+from dace.sdfg.state import ControlFlowRegion, LoopRegion, SDFGState
+from dace.transformation import transformation
 from dace.transformation.passes.analysis import loop_analysis
 
 
@@ -105,7 +108,7 @@ class MoveLoopIntoMap(transformation.MultiStateTransformation):
             if str(itervar) in n.free_symbols:
                 return False
 
-        def test_subset_dependency(subset: sbs.Subset, mparams: Set[int]) -> Tuple[bool, List[int]]:
+        def test_subset_dependency(subset: sbs.Subset, mparams: set[int]) -> tuple[bool, list[int]]:
             dims = []
             for i, r in enumerate(subset):
                 if not isinstance(r, (list, tuple)):

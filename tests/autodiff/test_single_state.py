@@ -8,11 +8,10 @@ pytest.importorskip("torch", reason="PyTorch not installed. Please install with:
 import torch
 
 import dace
-import dace.sdfg.nodes as nd
-from dace.transformation.interstate import StateFusion
-
 import dace.libraries.onnx as donnx
+import dace.sdfg.nodes as nd
 from dace.autodiff import add_backward_pass
+from dace.transformation.interstate import StateFusion
 from tests.utils import expand_library_nodes_for_autodiff
 
 

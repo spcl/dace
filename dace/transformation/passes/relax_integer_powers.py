@@ -10,8 +10,8 @@ enclosing iterator ranges (``K - i - 1`` with ``for i in range(K)``).
 """
 
 import ast
-from dataclasses import dataclass
 from collections.abc import Iterable
+from dataclasses import dataclass
 from typing import Any
 
 import sympy
@@ -22,7 +22,8 @@ from dace.properties import CodeBlock
 from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
 from dace.symbolic import equalize_symbol, ipow
-from dace.transformation import pass_pipeline as ppl, transformation
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation import transformation
 from dace.transformation.passes.analysis import loop_analysis
 
 #: Inclusive ``(low, high)`` of an iterator.

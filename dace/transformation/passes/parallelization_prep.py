@@ -14,7 +14,7 @@ module load would cycle (this package is imported by the transformations those
 imports pull in).
 """
 
-from typing import Any, Dict, Optional
+from typing import Any
 
 from dace import properties, symbolic
 from dace.sdfg import SDFG
@@ -30,7 +30,7 @@ def _loops(sdfg: SDFG):
     return [r for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion) and r.loop_variable]
 
 
-def _constant_trip_count(loop: LoopRegion, sdfg: SDFG) -> Optional[int]:
+def _constant_trip_count(loop: LoopRegion, sdfg: SDFG) -> int | None:
     """The exact iteration count of ``loop`` if it is constant, else ``None``.
 
     Ascending strides only: the ``stride_val <= 0`` bail deliberately declines DESCENDING loops, which
@@ -128,7 +128,7 @@ class ShortLoopUnroll(ppl.Pass):
     def depends_on(self):
         return set()
 
-    def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> int | None:
         """Unroll short constant-trip loops.
 
         Re-collects after each unroll since unrolling rewrites the control-flow

@@ -1,10 +1,13 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 
 import os
-import urllib.request, urllib.parse
 import pathlib
-import dace
+import urllib.parse
+import urllib.request
+
 import numpy as np
+
+import dace
 
 
 def expand_library_nodes_for_autodiff(sdfg):

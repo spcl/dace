@@ -1,10 +1,10 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Stack or heap placement of register arrays, chosen by ``StorageType.Register(dynamic=...)``."""
 
-import re
 import contextlib
 import json
 import os
+import re
 import sys
 import tempfile
 

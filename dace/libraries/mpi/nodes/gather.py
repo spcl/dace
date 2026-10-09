@@ -1,12 +1,13 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 from dace import data, dtypes, library
-from dace.utils import prod as _prod
 from dace.libraries.mpi import utils
+from dace.libraries.mpi.nodes.node import MPINode, expanded_input_connectors, input_descriptor_name, resolve_comm
 from dace.sdfg import nodes
 from dace.symbolic import symstr
 from dace.transformation.transformation import ExpandTransformation
+from dace.utils import prod as _prod
+
 from .. import environments
-from dace.libraries.mpi.nodes.node import MPINode, resolve_comm, expanded_input_connectors, input_descriptor_name
 
 
 @library.expansion

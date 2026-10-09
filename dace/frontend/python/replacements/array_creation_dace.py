@@ -4,22 +4,20 @@ Contains definitions of new data containers (arrays, locals, streams) as per DaC
 array creation functions for NumPy that reuse the same functionality.
 """
 
+from copy import deepcopy as dcpy
+from numbers import Integral
+from typing import Any
+
+import numpy as np
+import sympy
+
+from dace import SDFG, Memlet, SDFGState, data, dtypes, symbolic
 from dace.frontend.common import op_repository as oprepo
 from dace.frontend.python.common import DaceSyntaxError, StringLiteral
 from dace.frontend.python.replacements.utils import ProgramVisitor, Shape, Size
-from dace import data, dtypes, Memlet, SDFG, SDFGState
-
-from copy import deepcopy as dcpy
-from numbers import Integral
-from typing import Any, Optional, Tuple
-
-import sympy
-import numpy as np
-
-from dace import symbolic
 
 
-def promote_size_scalars_in_shape(pv: ProgramVisitor, sdfg: SDFG, shape: Shape) -> Tuple[Shape, bool]:
+def promote_size_scalars_in_shape(pv: ProgramVisitor, sdfg: SDFG, shape: Shape) -> tuple[Shape, bool]:
     """
     Rewrites a shape so that a size scalar used as an extent is read through a symbol.
 
@@ -54,7 +52,7 @@ def _define_local_ex(
     state: SDFGState,
     shape: Shape,
     dtype: dtypes.typeclass,
-    strides: Optional[Shape] = None,
+    strides: Shape | None = None,
     storage: dtypes.StorageType = dtypes.StorageType.Default,
     lifetime: dtypes.AllocationLifetime = dtypes.AllocationLifetime.Scope,
 ):
@@ -147,8 +145,8 @@ def _define_literal_ex(
     subok: bool = False,
     ndmin: int = 0,
     like: Any = None,
-    storage: Optional[dtypes.StorageType] = None,
-    lifetime: Optional[dtypes.AllocationLifetime] = None,
+    storage: dtypes.StorageType | None = None,
+    lifetime: dtypes.AllocationLifetime | None = None,
 ):
     """Defines a literal array in a DaCe program."""
     if like is not None:
@@ -213,7 +211,7 @@ def _numpy_empty_like(
     attributes of prototype.
     """
     if prototype not in sdfg.arrays.keys():
-        raise DaceSyntaxError(pv, None, "Prototype argument {a} is not SDFG data!".format(a=prototype))
+        raise DaceSyntaxError(pv, None, f"Prototype argument {prototype} is not SDFG data!")
     desc = sdfg.arrays[prototype]
     dtype = dtype or desc.dtype
     shape = shape or desc.shape

@@ -1,9 +1,10 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
 import os
-import pytest
 import tempfile
 
+import pytest
+
+import dace
 from dace.sdfg import sdfg as sdfg_module
 from dace.sdfg import utils as sdfg_utils
 

@@ -2,22 +2,24 @@
 import ast
 import collections
 import copy
-from dataclasses import dataclass
 import functools
 import inspect
 import numbers
-import numpy
 import re
-import sympy
 import warnings
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import Any
 
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
+import numpy
+import sympy
+
 import dace
 from dace import data, dtypes, symbolic
 from dace.config import Config
-from dace.sdfg import SDFG
 from dace.frontend.python import astutils
-from dace.frontend.python.common import DaceSyntaxError, SDFGConvertible, SDFGClosure, StringLiteral
+from dace.frontend.python.common import DaceSyntaxError, SDFGClosure, SDFGConvertible, StringLiteral
+from dace.sdfg import SDFG
 
 
 class DaceRecursionError(Exception):
@@ -45,7 +47,7 @@ class PreprocessedAST:
     src_line: int
     src: str
     preprocessed_ast: ast.AST
-    program_globals: Dict[str, Any]
+    program_globals: dict[str, Any]
 
 
 class StructTransformer(ast.NodeTransformer):
@@ -82,7 +84,7 @@ class StructTransformer(ast.NodeTransformer):
 
 # Replaces instances of modules Y imported with "import X as Y" by X
 class ModuleResolver(ast.NodeTransformer):
-    def __init__(self, modules: Dict[str, str], always_replace=False):
+    def __init__(self, modules: dict[str, str], always_replace=False):
         self.modules = modules
         self.should_replace = False
         self.always_replace = always_replace
@@ -115,7 +117,7 @@ class RewriteSympyEquality(ast.NodeTransformer):
     result in False, even in indeterminate cases.
     """
 
-    def __init__(self, globals: Dict[str, Any]) -> None:
+    def __init__(self, globals: dict[str, Any]) -> None:
         super().__init__()
         self.globals = globals
 
@@ -144,7 +146,7 @@ class ConditionalCodeResolver(ast.NodeTransformer):
     Replaces if conditions by their bodies if can be evaluated at compile time.
     """
 
-    def __init__(self, globals: Dict[str, Any]):
+    def __init__(self, globals: dict[str, Any]):
         super().__init__()
         self.globals_and_locals = copy.copy(globals)
 
@@ -253,7 +255,7 @@ class DeadCodeEliminator(ast.NodeTransformer):
         return node
 
 
-def has_replacement(callobj: Callable, parent_object: Optional[Any] = None, node: Optional[ast.AST] = None) -> bool:
+def has_replacement(callobj: Callable, parent_object: Any | None = None, node: ast.AST | None = None) -> bool:
     """
     Returns True if the function/operator replacement repository
     has a registered replacement for the called function described by
@@ -303,7 +305,7 @@ def has_replacement(callobj: Callable, parent_object: Optional[Any] = None, node
     return oprepo.Replacements.get(astutils.rname(node)) is not None
 
 
-def _create_unflatten_instruction(arg: ast.AST, global_vars: Dict[str, Any]) -> Tuple[Callable, int]:
+def _create_unflatten_instruction(arg: ast.AST, global_vars: dict[str, Any]) -> tuple[Callable, int]:
     """
     Creates a lambda function for recreating the original Python object and returns the number of
     arguments to increment.
@@ -343,7 +345,7 @@ def _create_unflatten_instruction(arg: ast.AST, global_vars: Dict[str, Any]) -> 
     return (None, 1, False)
 
 
-def flatten_callback(func: Callable, node: ast.Call, global_vars: Dict[str, Any]):
+def flatten_callback(func: Callable, node: ast.Call, global_vars: dict[str, Any]):
     """
     Creates a version of the function that has only marshallable arguments and no keyword arguments.
     Arguments in callback matches the number of arguments used exactly.
@@ -352,7 +354,7 @@ def flatten_callback(func: Callable, node: ast.Call, global_vars: Dict[str, Any]
     """
 
     # Find out if any Python arguments should be flattened
-    unflatten_instructions: List[Tuple[int, Callable, int, bool]] = []
+    unflatten_instructions: list[tuple[int, Callable, int, bool]] = []
     curarg = 0
     instructions_exist = False
 
@@ -431,7 +433,7 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
     """Resolves global constants and lambda expressions if not
     already defined in the given scope."""
 
-    def __init__(self, globals: Dict[str, Any], resolve_functions: bool = False, default_args: Set[str] = None):
+    def __init__(self, globals: dict[str, Any], resolve_functions: bool = False, default_args: set[str] = None):
         self._globals = globals
         self.resolve_functions = resolve_functions
         self.default_args = default_args or set()
@@ -691,7 +693,7 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
             node.arg = self.globals[node.arg].name
         return self.generic_visit(node)
 
-    def _visit_potential_constant(self, node: ast.AST, recurse_on_fail: bool) -> Optional[ast.AST]:
+    def _visit_potential_constant(self, node: ast.AST, recurse_on_fail: bool) -> ast.AST | None:
         # Try to evaluate the expression with only the globals
         try:
             global_val = astutils.evalnode(node, self.globals)
@@ -737,7 +739,7 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
                         return self._visit_potential_constant(v, True)
             elif isinstance(node.value, (ast.List, ast.Tuple)):  # List & Tuple
                 # Loop over the list if slicing makes it a list
-                if isinstance(node.value.elts[gslice], List):
+                if isinstance(node.value.elts[gslice], list):
                     visited_list = astutils.copy_tree(node.value)
                     visited_list.elts.clear()
                     for v in node.value.elts[gslice]:
@@ -892,14 +894,14 @@ class ContextManagerInliner(ast.NodeTransformer, astutils.ASTHelperMixin):
     a return statement, or top-level break/continue statements.
     """
 
-    def __init__(self, globals: Dict[str, Any], filename: str, closure_resolver: GlobalResolver) -> None:
+    def __init__(self, globals: dict[str, Any], filename: str, closure_resolver: GlobalResolver) -> None:
         super().__init__()
-        self.with_statements: List[ast.With] = []
-        self.context_managers: Dict[ast.With, List[Tuple[str, Any]]] = {}
-        self.globals: Dict[str, Any] = globals
+        self.with_statements: list[ast.With] = []
+        self.context_managers: dict[ast.With, list[tuple[str, Any]]] = {}
+        self.globals: dict[str, Any] = globals
         self.filename = filename
         self.resolver = closure_resolver
-        self.names: Set[str] = set()
+        self.names: set[str] = set()
 
     def _visit_node_with_body(self, node):
         node = self.generic_visit_filtered(node, {"body"})
@@ -920,7 +922,7 @@ class ContextManagerInliner(ast.NodeTransformer, astutils.ASTHelperMixin):
             return node
         return newnode
 
-    def _add_exits(self, until_loop_end: bool, only_one: bool = False) -> List[ast.AST]:
+    def _add_exits(self, until_loop_end: bool, only_one: bool = False) -> list[ast.AST]:
         result = []
         if len(self.with_statements) == 0:
             return result
@@ -940,7 +942,7 @@ class ContextManagerInliner(ast.NodeTransformer, astutils.ASTHelperMixin):
 
         return result
 
-    def _add_entries(self, node: ast.With) -> List[ast.AST]:
+    def _add_entries(self, node: ast.With) -> list[ast.AST]:
         result = []
         ctx_mgr_names = []
         for i, item in enumerate(node.items):
@@ -1065,7 +1067,7 @@ class LoopUnroller(ast.NodeTransformer):
         range,
     ]
 
-    def __init__(self, globals: Dict[str, Any], filename: str, closure_resolver: GlobalResolver):
+    def __init__(self, globals: dict[str, Any], filename: str, closure_resolver: GlobalResolver):
         super().__init__()
         self.globals = globals
         self.filename = filename
@@ -1252,7 +1254,7 @@ class ExpressionInliner(ast.NodeTransformer):
     compile-time evaluated.
     """
 
-    def __init__(self, globals: Dict[str, Any], filename: str, closure_resolver: GlobalResolver):
+    def __init__(self, globals: dict[str, Any], filename: str, closure_resolver: GlobalResolver):
         super().__init__()
         self.globals = globals
         self.filename = filename
@@ -1307,12 +1309,12 @@ class ExpressionInliner(ast.NodeTransformer):
 
 
 class CallTreeResolver(ast.NodeVisitor):
-    def __init__(self, closure: SDFGClosure, globals: Dict[str, Any]) -> None:
+    def __init__(self, closure: SDFGClosure, globals: dict[str, Any]) -> None:
         self.closure = closure
-        self.seen_calls: Set[str] = set()
+        self.seen_calls: set[str] = set()
         self.globals = globals
 
-    def _eval_args(self, node: ast.Call) -> Dict[str, Any]:
+    def _eval_args(self, node: ast.Call) -> dict[str, Any]:
         res = {}
 
         # Evaluate positional arguments
@@ -1335,7 +1337,7 @@ class CallTreeResolver(ast.NodeVisitor):
 
         return res
 
-    def _get_given_args(self, node: ast.Call, function: "DaceProgram") -> Set[str]:
+    def _get_given_args(self, node: ast.Call, function: "DaceProgram") -> set[str]:
         """Returns a set of names of the given arguments from the positional and keyword arguments"""
         from dace.frontend.python.parser import DaceProgram  # Avoid import loop
 
@@ -1453,7 +1455,7 @@ class CallTreeResolver(ast.NodeVisitor):
 class ArrayClosureResolver(ast.NodeVisitor):
     def __init__(self, closure: SDFGClosure):
         self.closure = closure
-        self.arrays: Set[str] = set()
+        self.arrays: set[str] = set()
 
     def visit_Name(self, node: ast.Name):
         if node.id in self.closure.closure_arrays:
@@ -1560,7 +1562,7 @@ def mpi4py_is_usable() -> bool:
 class MPIResolver(ast.NodeTransformer):
     """Resolves mpi4py-related constants, e.g., mpi4py.MPI.COMM_WORLD."""
 
-    def __init__(self, globals: Dict[str, Any]):
+    def __init__(self, globals: dict[str, Any]):
         from mpi4py import MPI
 
         self.globals = globals
@@ -1576,7 +1578,7 @@ class MPIResolver(ast.NodeTransformer):
             self.parent = self.parents[node]
         return node
 
-    def visit_Name(self, node: ast.Name) -> Union[ast.Name, ast.Attribute]:
+    def visit_Name(self, node: ast.Name) -> ast.Name | ast.Attribute:
         self.generic_visit(node)
         if node.id in self.globals:
             obj = self.globals[node.id]
@@ -1621,13 +1623,13 @@ class ModuloConverter(ast.NodeTransformer):
 
 def preprocess_dace_program(
     f: Callable[..., Any],
-    argtypes: Dict[str, data.Data],
-    global_vars: Dict[str, Any],
-    modules: Dict[str, Any],
+    argtypes: dict[str, data.Data],
+    global_vars: dict[str, Any],
+    modules: dict[str, Any],
     resolve_functions: bool = False,
-    parent_closure: Optional[SDFGClosure] = None,
-    default_args: Optional[Set[str]] = None,
-) -> Tuple[PreprocessedAST, SDFGClosure]:
+    parent_closure: SDFGClosure | None = None,
+    default_args: set[str] | None = None,
+) -> tuple[PreprocessedAST, SDFGClosure]:
     """
     Preprocesses a ``@dace.program`` and all its nested functions, returning
     a preprocessed AST object and the closure of the resulting SDFG.

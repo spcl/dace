@@ -3,31 +3,39 @@
 
 import collections
 import copy
+import time
 import traceback
 import warnings
+from collections.abc import Callable, Generator, Sequence
+from typing import Any, Optional
+
 import networkx as nx
-import time
 
 import dace.sdfg.nodes
-from dace.codegen import compiled_sdfg as csdfg, compiler as sdfg_compiler
+from dace import config, dtypes
+from dace import data as dt
+from dace import memlet as mm
+from dace import subsets as sbs
+from dace.cli.progress import optional_progressbar
+from dace.codegen import compiled_sdfg as csdfg
+from dace.codegen import compiler as sdfg_compiler
+from dace.properties import CodeBlock
+from dace.sdfg import graph as gr
+from dace.sdfg import nodes as nd
+from dace.sdfg import propagation
 from dace.sdfg.graph import MultiConnectorEdge
+from dace.sdfg.nodes import NestedSDFG, Node
+from dace.sdfg.scope import ScopeSubgraphView
 from dace.sdfg.sdfg import SDFG, InterstateEdge
-from dace.sdfg.nodes import Node, NestedSDFG
 from dace.sdfg.state import (
     AbstractControlFlowRegion,
     ConditionalBlock,
     ControlFlowBlock,
+    ControlFlowRegion,
+    LoopRegion,
     SDFGState,
     StateSubgraphView,
-    LoopRegion,
-    ControlFlowRegion,
 )
-from dace.sdfg.scope import ScopeSubgraphView
-from dace.sdfg import nodes as nd, graph as gr, propagation
-from dace import config, data as dt, dtypes, memlet as mm, subsets as sbs
-from dace.cli.progress import optional_progressbar
-from typing import Any, Callable, Dict, Generator, List, Optional, Set, Sequence, Tuple, Type, Union
-from dace.properties import CodeBlock
 
 
 def node_path_graph(*args) -> gr.OrderedDiGraph:
@@ -186,10 +194,10 @@ def _find_nodes_impl(
     node_to_start: Node,
     state: SDFGState,
     forward: bool,
-    seen: Optional[Set[Node]],
-) -> Set[Node]:
-    to_scan: List[Node] = [node_to_start]
-    scanned_nodes: Set[Node] = set() if seen is None else seen
+    seen: set[Node] | None,
+) -> set[Node]:
+    to_scan: list[Node] = [node_to_start]
+    scanned_nodes: set[Node] = set() if seen is None else seen
     if forward:
         get_edges = state.out_edges
         get_node = lambda e: e.dst
@@ -205,7 +213,7 @@ def _find_nodes_impl(
     return scanned_nodes
 
 
-def find_downstream_nodes(node_to_start: Node, state: SDFGState, seen: Optional[Set[Node]] = None) -> Set[Node]:
+def find_downstream_nodes(node_to_start: Node, state: SDFGState, seen: set[Node] | None = None) -> set[Node]:
     """Find all downstream nodes of `node_to_start`.
 
     The function will explore the state, similar to a BFS, just that the order in which the nodes of
@@ -222,7 +230,7 @@ def find_downstream_nodes(node_to_start: Node, state: SDFGState, seen: Optional[
     return _find_nodes_impl(node_to_start=node_to_start, state=state, seen=seen, forward=True)
 
 
-def find_upstream_nodes(node_to_start: Node, state: SDFGState, seen: Optional[Set[Node]] = None) -> Set[Node]:
+def find_upstream_nodes(node_to_start: Node, state: SDFGState, seen: set[Node] | None = None) -> set[Node]:
     """Find all upstream nodes of `node_to_start`.
 
     The function will explore the state, similar to a BFS, just that the order in which the nodes of
@@ -323,10 +331,10 @@ def dfs_conditional(G, sources=None, condition=None, reverse=False, yield_parent
 
 def scope_aware_topological_sort(
     G: SDFGState,
-    sources: Optional[Sequence[Node]] = None,
-    condition: Optional[Callable[[Node, Node], bool]] = None,
+    sources: Sequence[Node] | None = None,
+    condition: Callable[[Node, Node], bool] | None = None,
     reverse: bool = False,
-    visited: Optional[Set[Node]] = None,
+    visited: set[Node] | None = None,
 ):
     """
     Traverses an SDFG state in topological order, yielding one node at a time, with the requirement that every scope
@@ -405,7 +413,7 @@ def scope_aware_topological_sort(
     return visited
 
 
-def nodes_in_all_simple_paths(G, source, target, condition: Callable[[Any], bool] = None) -> Set[Any]:
+def nodes_in_all_simple_paths(G, source, target, condition: Callable[[Any], bool] = None) -> set[Any]:
     """
     Returns a set of nodes that appear in any of the paths from ``source``
     to ``targets``. Optionally, a condition can be given to control traversal.
@@ -461,8 +469,8 @@ def nodes_in_all_simple_paths(G, source, target, condition: Callable[[Any], bool
 
 def change_edge_dest(
     graph: gr.OrderedDiGraph,
-    node_a: Union[nd.Node, gr.OrderedMultiDiConnectorGraph],
-    node_b: Union[nd.Node, gr.OrderedMultiDiConnectorGraph],
+    node_a: nd.Node | gr.OrderedMultiDiConnectorGraph,
+    node_b: nd.Node | gr.OrderedMultiDiConnectorGraph,
 ):
     """Changes the destination of edges from node A to node B.
 
@@ -493,8 +501,8 @@ def change_edge_dest(
 
 def change_edge_src(
     graph: gr.OrderedDiGraph,
-    node_a: Union[nd.Node, gr.OrderedMultiDiConnectorGraph],
-    node_b: Union[nd.Node, gr.OrderedMultiDiConnectorGraph],
+    node_a: nd.Node | gr.OrderedMultiDiConnectorGraph,
+    node_b: nd.Node | gr.OrderedMultiDiConnectorGraph,
 ):
     """Changes the sources of edges from node A to node B.
 
@@ -523,8 +531,8 @@ def change_edge_src(
             graph.add_edge(node_b, e.dst, e.data)
 
 
-ParamsType = List["dace.symbolic.symbol"]
-RangesType = List[sbs.Subset]
+ParamsType = list["dace.symbolic.symbol"]
+RangesType = list[sbs.Subset]
 
 
 def merge_maps(
@@ -535,7 +543,7 @@ def merge_maps(
     inner_map_exit: nd.MapExit,
     param_merge: Callable[[ParamsType, ParamsType], ParamsType] = lambda p1, p2: p1 + p2,
     range_merge: Callable[[RangesType, RangesType], RangesType] = lambda r1, r2: type(r1)(r1.ranges + r2.ranges),
-) -> Tuple[nd.MapEntry, nd.MapExit]:
+) -> tuple[nd.MapEntry, nd.MapExit]:
     """Merges two maps (their entries and exits). It is assumed that the
     operation is valid."""
 
@@ -611,7 +619,7 @@ def merge_maps(
 
 def canonicalize_memlet_trees_of_scope_node(
     state: SDFGState,
-    scope_node: Union[nd.EntryNode, nd.ExitNode],
+    scope_node: nd.EntryNode | nd.ExitNode,
 ) -> int:
     """Canonicalize the Memlet trees of a single scope nodes.
 
@@ -705,7 +713,7 @@ def canonicalize_memlet_trees_of_scope_node(
 
 def canonicalize_memlet_trees_for_map(
     state: SDFGState,
-    map_node: Union[nd.EntryNode, nd.ExitNode],
+    map_node: nd.EntryNode | nd.ExitNode,
 ) -> int:
     """Canonicalize the Memlets of an entire Map scope.
 
@@ -771,7 +779,7 @@ def canonicalize_memlet_trees(
     return total_modified_memlets
 
 
-def consolidate_edges_scope(state: SDFGState, scope_node: Union[nd.EntryNode, nd.ExitNode]) -> int:
+def consolidate_edges_scope(state: SDFGState, scope_node: nd.EntryNode | nd.ExitNode) -> int:
     """
     Union scope-entering memlets relating to the same data node in a scope.
     This effectively reduces the number of connectors and allows more
@@ -1078,7 +1086,7 @@ def get_last_view_node(state: SDFGState, view: nd.AccessNode) -> nd.AccessNode:
     return node
 
 
-def get_all_view_nodes(state: SDFGState, view: nd.AccessNode) -> List[nd.AccessNode]:
+def get_all_view_nodes(state: SDFGState, view: nd.AccessNode) -> list[nd.AccessNode]:
     """
     Given a view access node, returns a list of viewed access nodes
     if existent, else None
@@ -1096,7 +1104,7 @@ def get_all_view_nodes(state: SDFGState, view: nd.AccessNode) -> List[nd.AccessN
     return result
 
 
-def get_all_view_edges(state: SDFGState, view: nd.AccessNode) -> List[gr.MultiConnectorEdge[mm.Memlet]]:
+def get_all_view_edges(state: SDFGState, view: nd.AccessNode) -> list[gr.MultiConnectorEdge[mm.Memlet]]:
     """
     Given a view access node, returns a list of viewed access nodes as edges
     if existent, else None
@@ -1280,7 +1288,7 @@ def _attach_view_edges(state: SDFGState, node: nd.AccessNode, viewed: str, subse
     state.add_edge(viewed_node, None, node, "views", mm.Memlet(data=viewed, subset=copy.deepcopy(subset)))
 
 
-def dynamic_map_inputs(state: SDFGState, map_entry: nd.MapEntry) -> List[gr.MultiConnectorEdge]:
+def dynamic_map_inputs(state: SDFGState, map_entry: nd.MapEntry) -> list[gr.MultiConnectorEdge]:
     """
     For a given map entry node, returns a list of dynamic-range input edges.
 
@@ -1303,7 +1311,7 @@ def has_dynamic_map_inputs(state: SDFGState, map_entry: nd.MapEntry) -> bool:
     return len(dynamic_map_inputs(state, map_entry)) > 0
 
 
-def is_parallel(state: SDFGState, node: Optional[nd.Node] = None) -> bool:
+def is_parallel(state: SDFGState, node: nd.Node | None = None) -> bool:
     """
     Returns True if a node or state are contained within a parallel
     section.
@@ -1376,7 +1384,7 @@ def concurrent_subgraphs(graph):
     from dace.sdfg.scope import ScopeSubgraphView
 
     if not isinstance(graph, (SDFGState, ScopeSubgraphView)):
-        raise TypeError("Expected SDFGState or ScopeSubgraphView, got: {}".format(type(graph).__name__))
+        raise TypeError(f"Expected SDFGState or ScopeSubgraphView, got: {type(graph).__name__}")
     candidates = graph.source_nodes()
     components = collections.OrderedDict()  # {start node: nodes in component}
     for cand in candidates:
@@ -1519,7 +1527,7 @@ def local_transients(sdfg, dfg, entry_node, include_nested=False):
 
 def trace_nested_access(
     node: nd.AccessNode, state: SDFGState, sdfg: SDFG
-) -> List[Tuple[nd.AccessNode, SDFGState, SDFG]]:
+) -> list[tuple[nd.AccessNode, SDFGState, SDFG]]:
     """
     Given an AccessNode in a nested SDFG, trace the accessed memory
     back to the outermost scope in which it is defined.
@@ -1604,7 +1612,7 @@ def fuse_states(sdfg: SDFG, permissive: bool = False, progress: bool = None) -> 
                      shows progress bar.
     :return: The total number of states fused.
     """
-    from dace.transformation.interstate import StateFusion, BlockFusion  # Avoid import loop
+    from dace.transformation.interstate import BlockFusion, StateFusion  # Avoid import loop
 
     if progress is None and not config.Config.get_bool("progress"):
         progress = False
@@ -1673,8 +1681,8 @@ def fuse_states(sdfg: SDFG, permissive: bool = False, progress: bool = None) -> 
 
 def inline_control_flow_regions(
     sdfg: SDFG,
-    types: Optional[List[Type[AbstractControlFlowRegion]]] = None,
-    ignore_region_types: Optional[List[Type[AbstractControlFlowRegion]]] = None,
+    types: list[type[AbstractControlFlowRegion]] | None = None,
+    ignore_region_types: list[type[AbstractControlFlowRegion]] | None = None,
     progress: bool = None,
     lower_returns: bool = False,
     eliminate_dead_states: bool = False,
@@ -1727,7 +1735,7 @@ def inline_sdfgs(sdfg: SDFG, permissive: bool = False, progress: bool = None, mu
     :return: The total number of SDFGs inlined.
     """
     # Avoid import loops
-    from dace.transformation.interstate import InlineSDFG, InlineMultistateSDFG
+    from dace.transformation.interstate import InlineMultistateSDFG, InlineSDFG
 
     counter = 0
     nsdfgs = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, NestedSDFG)]
@@ -1788,7 +1796,7 @@ def load_precompiled_sdfg(*args, **kwargs) -> csdfg.CompiledSDFG:
     return sdfg_compiler.load_precompiled_sdfg(*args, **kwargs)
 
 
-def distributed_compile(sdfg: Optional[SDFG], comm, *, validate: bool = True) -> csdfg.CompiledSDFG:
+def distributed_compile(sdfg: SDFG | None, comm, *, validate: bool = True) -> csdfg.CompiledSDFG:
     """
     Compiles an SDFG in rank 0 of MPI communicator ``comm``. Then, the compiled SDFG is loaded in all other ranks.
 
@@ -1838,7 +1846,7 @@ def distributed_compile(sdfg: Optional[SDFG], comm, *, validate: bool = True) ->
     return func
 
 
-def get_next_nonempty_states(sdfg: SDFG, state: SDFGState) -> Set[SDFGState]:
+def get_next_nonempty_states(sdfg: SDFG, state: SDFGState) -> set[SDFGState]:
     """
     From the given state, return the next set of states that are reachable
     in the SDFG, skipping empty states. Traversal stops at the non-empty
@@ -1851,7 +1859,7 @@ def get_next_nonempty_states(sdfg: SDFG, state: SDFGState) -> Set[SDFGState]:
     :param state: The state to start from.
     :return: A set of reachable non-empty states.
     """
-    result: Set[SDFGState] = set()
+    result: set[SDFGState] = set()
 
     # Traverse children until states are not empty
     for succ in state.parent_graph.successors(state):
@@ -1867,7 +1875,7 @@ def get_next_nonempty_states(sdfg: SDFG, state: SDFGState) -> Set[SDFGState]:
     return result
 
 
-def unique_node_repr(graph: Union[SDFGState, ScopeSubgraphView], node: Node) -> str:
+def unique_node_repr(graph: SDFGState | ScopeSubgraphView, node: Node) -> str:
     """
     Returns unique string representation of the given node,
     considering its placement into the SDFG graph.
@@ -1884,7 +1892,7 @@ def unique_node_repr(graph: Union[SDFGState, ScopeSubgraphView], node: Node) -> 
     return str(sdfg.cfg_id) + "_" + str(sdfg.node_id(state)) + "_" + str(state.node_id(node))
 
 
-def is_nonfree_sym_dependent(node: nd.AccessNode, desc: dt.Data, state: SDFGState, fsymbols: Set[str]) -> bool:
+def is_nonfree_sym_dependent(node: nd.AccessNode, desc: dt.Data, state: SDFGState, fsymbols: set[str]) -> bool:
     """
     Checks whether the Array or View descriptor is non-free symbol dependent.
     An Array is non-free symbol dependent when its attributes (e.g., shape)
@@ -1925,9 +1933,9 @@ def is_nonfree_sym_dependent(node: nd.AccessNode, desc: dt.Data, state: SDFGStat
 def _tswds_state(
     sdfg: SDFG,
     state: SDFGState,
-    symbols: Dict[str, dtypes.typeclass],
+    symbols: dict[str, dtypes.typeclass],
     recursive: bool,
-) -> Generator[Tuple[SDFGState, Node, Dict[str, dtypes.typeclass]], None, None]:
+) -> Generator[tuple[SDFGState, Node, dict[str, dtypes.typeclass]], None, None]:
     """
     Helper function for ``traverse_sdfg_with_defined_symbols``.
 
@@ -1936,7 +1944,7 @@ def _tswds_state(
     # Traverse state by scopes
     sdict = state.scope_children()
 
-    def _traverse(scope: Node, symbols: Dict[str, dtypes.typeclass]):
+    def _traverse(scope: Node, symbols: dict[str, dtypes.typeclass]):
         for node in sdict[scope]:
             yield state, node, symbols
             # Traverse inside scopes
@@ -1953,8 +1961,8 @@ def _tswds_state(
 
 
 def _tswds_cf_region(
-    sdfg: SDFG, cfg: AbstractControlFlowRegion, symbols: Dict[str, dtypes.typeclass], recursive: bool = False
-) -> Generator[Tuple[SDFGState, Node, Dict[str, dtypes.typeclass]], None, None]:
+    sdfg: SDFG, cfg: AbstractControlFlowRegion, symbols: dict[str, dtypes.typeclass], recursive: bool = False
+) -> Generator[tuple[SDFGState, Node, dict[str, dtypes.typeclass]], None, None]:
     sub_regions = cfg.sub_regions() or [cfg]
     for region in sub_regions:
         # Add symbols newly defined by this region, if present.
@@ -1998,7 +2006,7 @@ def _tswds_cf_region(
 
 def traverse_sdfg_with_defined_symbols(
     sdfg: SDFG, recursive: bool = False
-) -> Generator[Tuple[SDFGState, Node, Dict[str, dtypes.typeclass]], None, None]:
+) -> Generator[tuple[SDFGState, Node, dict[str, dtypes.typeclass]], None, None]:
     """
     Traverses the SDFG, its states and nodes, yielding the defined symbols and their types at each node.
 
@@ -2013,7 +2021,7 @@ def traverse_sdfg_with_defined_symbols(
     yield from _tswds_cf_region(sdfg, sdfg, symbols, recursive)
 
 
-CFBlockDictT = Dict[ControlFlowBlock, ControlFlowBlock]
+CFBlockDictT = dict[ControlFlowBlock, ControlFlowBlock]
 
 
 def immediate_dominators(graph: nx.DiGraph, start: ControlFlowBlock) -> CFBlockDictT:
@@ -2023,7 +2031,7 @@ def immediate_dominators(graph: nx.DiGraph, start: ControlFlowBlock) -> CFBlockD
 
 def postdominators(
     cfg: ControlFlowRegion, return_alldoms: bool = False
-) -> Optional[Union[CFBlockDictT, Tuple[CFBlockDictT, Dict[ControlFlowBlock, Set[ControlFlowBlock]]]]]:
+) -> CFBlockDictT | tuple[CFBlockDictT, dict[ControlFlowBlock, set[ControlFlowBlock]]] | None:
     """
     Return the immediate postdominators of a CFG. This may require creating new nodes and removing them, which
     happens in-place on the CFG.
@@ -2061,7 +2069,7 @@ def postdominators(
 
 def map_view_to_array(
     vdesc: dt.View, adesc: dt.Array, subset: sbs.Range
-) -> Optional[Tuple[Dict[int, int], List[int], List[int]]]:
+) -> tuple[dict[int, int], list[int], list[int]] | None:
     """
     Finds the matching dimensions mapping between a data descriptor and a view reinterpreting it, if and only
     if the view represents a slice (with potential new, "unsqueezed" axes).
@@ -2092,9 +2100,9 @@ def map_view_to_array(
 
     # Strides can be squeezed or expanded, but never reordered.
     # traverse both shapes and strides, ignoring shape-1 dimensions along the way
-    dimension_mapping: Dict[int, int] = {}
-    unsqueezed: List[int] = []
-    squeezed: List[int] = []
+    dimension_mapping: dict[int, int] = {}
+    unsqueezed: list[int] = []
+    squeezed: list[int] = []
 
     # First, remove shape=1 dimensions (unsqueezed or squeezed)
     non_squeeze_vdims = [i for i, s in enumerate(vdesc.shape) if s != 1]
@@ -2114,7 +2122,7 @@ def map_view_to_array(
     dims_iter = iter(sorted(dimension_mapping.items()))  # Sorted matched dimensions
     prev_dim = 0
     next_dim = next(dims_iter, (-1, -1))[1]  # First matched dimension in data container
-    new_dims: Dict[int, int] = {}
+    new_dims: dict[int, int] = {}
     for i, vstride in enumerate(vdesc.strides):
         if i not in dimension_mapping:
             try:
@@ -2147,7 +2155,7 @@ def map_view_to_array(
     return dimension_mapping, unsqueezed, squeezed
 
 
-def compose_view_subset(mapping: Dict[int, int], subset: sbs.Range, view_subset: sbs.Subset) -> sbs.Range:
+def compose_view_subset(mapping: dict[int, int], subset: sbs.Range, view_subset: sbs.Subset) -> sbs.Range:
     """
     Composes a subset in the coordinates of a view into the coordinates of the data container it views, affinely.
 
@@ -2163,7 +2171,7 @@ def compose_view_subset(mapping: Dict[int, int], subset: sbs.Range, view_subset:
     """
     if isinstance(view_subset, sbs.Indices):
         view_subset = sbs.Range.from_indices(view_subset)
-    new_subset: List[Tuple[Any, Any, Any]] = subset.ndrange()
+    new_subset: list[tuple[Any, Any, Any]] = subset.ndrange()
     for vdim, adim in mapping.items():
         rb, re, rs = new_subset[adim]
         vb, ve, vs = view_subset.ranges[vdim]
@@ -2195,6 +2203,7 @@ def normalize_offsets(sdfg: SDFG):
     """
 
     import ast
+
     from dace.frontend.python import astutils
 
     for sd in sdfg.all_sdfgs_recursive():
@@ -2294,7 +2303,7 @@ def make_dynamic_map_inputs_unique(sdfg: SDFG):
                         propagation.propagate_memlets_scope(sd, state, state.scope_tree()[node])
 
 
-def get_thread_local_data(sdfg: SDFG) -> List[str]:
+def get_thread_local_data(sdfg: SDFG) -> list[str]:
     """Returns a list of all data that are thread-local in the SDFG.
 
     This method DOES NOT apply recursively to nested SDFGs. It is also does not take into account outer Maps.
@@ -2304,7 +2313,7 @@ def get_thread_local_data(sdfg: SDFG) -> List[str]:
     """
     # NOTE: We could exclude non-transient data here, but it is interesting to see if we find any non-transient data
     # only inside a Map.
-    data_to_check = {name: None for name in sdfg.arrays.keys()}
+    data_to_check = dict.fromkeys(sdfg.arrays.keys())
     for state in sdfg.nodes():
         scope_dict = state.scope_dict()
         for node in state.nodes():
@@ -2381,10 +2390,10 @@ def get_global_memlet_path_dst(sdfg: SDFG, state: SDFGState, edge: MultiConnecto
 
 def get_control_flow_block_dominators(
     sdfg: SDFG,
-    idom: Optional[Dict[ControlFlowBlock, ControlFlowBlock]] = None,
-    all_dom: Optional[Dict[ControlFlowBlock, Set[ControlFlowBlock]]] = None,
-    ipostdom: Optional[Dict[ControlFlowBlock, ControlFlowBlock]] = None,
-    all_postdom: Optional[Dict[ControlFlowBlock, Set[ControlFlowBlock]]] = None,
+    idom: dict[ControlFlowBlock, ControlFlowBlock] | None = None,
+    all_dom: dict[ControlFlowBlock, set[ControlFlowBlock]] | None = None,
+    ipostdom: dict[ControlFlowBlock, ControlFlowBlock] | None = None,
+    all_postdom: dict[ControlFlowBlock, set[ControlFlowBlock]] | None = None,
 ):
     """
     Find the dominator and postdominator relationship between control flow blocks of an SDFG.
@@ -2400,7 +2409,7 @@ def get_control_flow_block_dominators(
     from dace.sdfg.analysis import cfg as cfg_analysis
 
     if idom is not None or all_dom is not None:
-        added_sinks: Dict[AbstractControlFlowRegion, SDFGState] = {}
+        added_sinks: dict[AbstractControlFlowRegion, SDFGState] = {}
         if idom is None:
             idom = {}
         for cfg in sdfg.all_control_flow_regions(parent_first=True):
@@ -2449,8 +2458,8 @@ def get_control_flow_block_dominators(
             all_dom.update(cfg_analysis.all_dominators(sdfg, idom))
 
     if ipostdom is not None or all_postdom is not None:
-        added_sinks: Dict[AbstractControlFlowRegion, SDFGState] = {}
-        sinks_per_cfg: Dict[AbstractControlFlowRegion, ControlFlowBlock] = {}
+        added_sinks: dict[AbstractControlFlowRegion, SDFGState] = {}
+        sinks_per_cfg: dict[AbstractControlFlowRegion, ControlFlowBlock] = {}
         if ipostdom is None:
             ipostdom = {}
 
@@ -2520,8 +2529,8 @@ def set_nested_sdfg_parent_references(sdfg: SDFG):
 
 
 def get_used_data(
-    scope: Union[ControlFlowRegion, SDFGState, nd.MapEntry, nd.NestedSDFG], parent_state: Union[SDFGState, None] = None
-) -> Set[str]:
+    scope: ControlFlowRegion | SDFGState | nd.MapEntry | nd.NestedSDFG, parent_state: SDFGState | None = None
+) -> set[str]:
     """
     Returns a set of all data names that are used in the given control flow region, state, map entry or nested SDFG node.
     Data is considered used if there is an access node within the scope to data or it appears in an interstate edge.
@@ -2564,12 +2573,12 @@ def get_used_data(
 
         return used_data
     else:
-        raise Exception("Unsupported scope type for get_constant_data: {}".format(type(scope)))
+        raise Exception(f"Unsupported scope type for get_constant_data: {type(scope)}")
 
 
 def get_constant_data(
-    scope: Union[ControlFlowRegion, SDFGState, nd.NestedSDFG, nd.MapEntry], parent_state: Union[SDFGState, None] = None
-) -> Set[str]:
+    scope: ControlFlowRegion | SDFGState | nd.NestedSDFG | nd.MapEntry, parent_state: SDFGState | None = None
+) -> set[str]:
     """
     Returns a set of all constant data in the given control flow region, state, or with the map scope.
     Data is considered constant if there is any incoming edge to an access node of the data.
@@ -2616,14 +2625,14 @@ def get_constant_data(
 
         return used_data - written_data
     else:
-        raise Exception("Unsupported scope type for get_constant_data: {}".format(type(scope)))
+        raise Exception(f"Unsupported scope type for get_constant_data: {type(scope)}")
 
 
 def get_used_symbols(
-    scope: Union[SDFG, ControlFlowRegion, SDFGState, nd.MapEntry, nd.NestedSDFG],
-    parent_state: Union[SDFGState, None] = None,
+    scope: SDFG | ControlFlowRegion | SDFGState | nd.MapEntry | nd.NestedSDFG,
+    parent_state: SDFGState | None = None,
     include_symbols_for_offset_calculations: bool = False,
-) -> Set[str]:
+) -> set[str]:
     """
     Returns a set of all used symbols, that have been defined by the scope or were already defined for the duration of the
     scope in the given control flow region, state, or with the map scope.
@@ -2641,10 +2650,10 @@ def get_used_symbols(
 
 
 def get_constant_symbols(
-    scope: Union[SDFG, ControlFlowRegion, SDFGState, nd.MapEntry, nd.NestedSDFG],
-    parent_state: Union[SDFGState, None] = None,
+    scope: SDFG | ControlFlowRegion | SDFGState | nd.MapEntry | nd.NestedSDFG,
+    parent_state: SDFGState | None = None,
     include_symbols_for_offset_calculations: bool = False,
-) -> Set[str]:
+) -> set[str]:
     """
     Returns a set of all constant symbols in the given control flow region, state, or with the map scope,
     which have been defined by the scope (e.g. map) or defined for the duration of the scope.
@@ -2663,11 +2672,11 @@ def get_constant_symbols(
 
 
 def _get_used_symbols_impl(
-    scope: Union[SDFG, ControlFlowRegion, SDFGState, nd.MapEntry, nd.NestedSDFG],
+    scope: SDFG | ControlFlowRegion | SDFGState | nd.MapEntry | nd.NestedSDFG,
     constant_syms_only: bool,
-    parent_state: Union[SDFGState, None],
+    parent_state: SDFGState | None,
     include_symbols_for_offset_calculations: bool,
-) -> Set[str]:
+) -> set[str]:
     """
     Returns a set of all constant symbols in the given control flow region, state, or with the map scope.
     A symbol is considered constant if no interstate edge writes to it.
@@ -2677,7 +2686,7 @@ def _get_used_symbols_impl(
     :return: A set of constant symbol names.
     """
 
-    def _get_assignments(cfg: Union[ControlFlowRegion, SDFG]) -> Set[str]:
+    def _get_assignments(cfg: ControlFlowRegion | SDFG) -> set[str]:
         written_symbols = set()
         for edge in cfg.all_interstate_edges():
             if edge.data is not None:
@@ -2718,10 +2727,10 @@ def _get_used_symbols_impl(
         used_symbols = scope.used_symbols_within_scope(parent_state=parent_state)
         return offset_symbols | used_symbols
     else:
-        raise Exception("Unsupported scope type for get_constant_data: {}".format(type(scope)))
+        raise Exception(f"Unsupported scope type for get_constant_data: {type(scope)}")
 
 
-def _specialize_scalar_impl(root: "dace.SDFG", sdfg: "dace.SDFG", scalars: Dict[str, Union[float, int, str]]):
+def _specialize_scalar_impl(root: "dace.SDFG", sdfg: "dace.SDFG", scalars: dict[str, float | int | str]):
     # This function replaces the scalars named by <scalars> with their constant values
     # A scalar can appear on:
     # 1. Interstate Edge
@@ -2731,9 +2740,11 @@ def _specialize_scalar_impl(root: "dace.SDFG", sdfg: "dace.SDFG", scalars: Dict[
     # 3. Access Node
     # -> If access node is used then e.g. [scalar] -> [tasklet]
     # -> then create a [tasklet] that uses the scalar_val as a constant value inside
-    import numpy
-    import re
     import ast
+    import re
+
+    import numpy
+
     from dace.frontend.python import astutils
 
     def _token_replace(code: str, src: str, dst: str) -> str:
@@ -2742,12 +2753,12 @@ def _specialize_scalar_impl(root: "dace.SDFG", sdfg: "dace.SDFG", scalars: Dict[
         # code still referenced it. The lookbehind also excludes '.', leaving `x._in` alone.
         return re.sub(r"(?<![A-Za-z0-9_.])" + re.escape(src) + r"(?![A-Za-z0-9_])", dst, code).strip()
 
-    def _token_replace_all(code: str, repl: Dict[str, str]) -> str:
+    def _token_replace_all(code: str, repl: dict[str, str]) -> str:
         for src, dst in repl.items():
             code = _token_replace(code, src, dst)
         return code
 
-    def _scalar_literal(value: Union[float, int, str], dtype) -> str:
+    def _scalar_literal(value: float | int | str, dtype) -> str:
         """Source-level literal for ``value``, substituted verbatim into tasklet code.
 
         An integer replacing a read of a floating-point scalar is written as a float literal: the
@@ -2766,7 +2777,7 @@ def _specialize_scalar_impl(root: "dace.SDFG", sdfg: "dace.SDFG", scalars: Dict[
             return repr(float(value))
         return str(value)
 
-    def repl_code_block_or_str(input: Union[CodeBlock, str], repl: Dict[str, str]):
+    def repl_code_block_or_str(input: CodeBlock | str, repl: dict[str, str]):
         if isinstance(input, CodeBlock):
             return CodeBlock(_token_replace_all(input.as_string, repl))
         for src, dst in repl.items():
@@ -2903,7 +2914,7 @@ def _specialize_scalar_impl(root: "dace.SDFG", sdfg: "dace.SDFG", scalars: Dict[
             _specialize_scalar_impl(root, nsdfg_node.sdfg, inner)
 
 
-def _interacting(values: Dict[str, Union[float, int, str]]) -> bool:
+def _interacting(values: dict[str, float | int | str]) -> bool:
     """Whether any value mentions another entry's name.
 
     Batching substitutes SIMULTANEOUSLY; the one-at-a-time loop substitutes SEQUENTIALLY, and the two
@@ -2920,13 +2931,13 @@ def _interacting(values: Dict[str, Union[float, int, str]]) -> bool:
     )
 
 
-def specialize_scalar(sdfg: "dace.SDFG", scalar_name: str, scalar_val: Union[float, int, str]):
+def specialize_scalar(sdfg: "dace.SDFG", scalar_name: str, scalar_val: float | int | str):
     """Bake a scalar data container to a constant. Single-entry case of :func:`specialize_scalars`."""
     assert isinstance(scalar_name, str), f"Expected scalar name to be str got {type(scalar_name)}"
     specialize_scalars(sdfg, {scalar_name: scalar_val})
 
 
-def specialize_scalars(sdfg: "dace.SDFG", values: Dict[str, Union[float, int, str]]):
+def specialize_scalars(sdfg: "dace.SDFG", values: dict[str, float | int | str]):
     """Bake scalar data containers to constant values, recursively through nested SDFGs.
 
     Folds each scalar's reads into the reading tasklets, drops its edges/connectors and rewrites loop
@@ -2969,7 +2980,7 @@ def specialize_scalars(sdfg: "dace.SDFG", values: Dict[str, Union[float, int, st
     _specialize_scalar_impl(sdfg, sdfg, scalars)
 
 
-def specialize_symbol(sdfg: "dace.SDFG", symbol_name: str, value: Union[float, int, str]):
+def specialize_symbol(sdfg: "dace.SDFG", symbol_name: str, value: float | int | str):
     """Bake a free symbol to a constant value, recursively through nested SDFGs.
 
     Substitutes ``symbol_name`` with ``value`` everywhere (subsets, memlets,
@@ -2986,7 +2997,7 @@ def specialize_symbol(sdfg: "dace.SDFG", symbol_name: str, value: Union[float, i
     specialize_symbols(sdfg, {symbol_name: value})
 
 
-def specialize_symbols(sdfg: "dace.SDFG", values: Dict[str, Union[float, int, str]]) -> None:
+def specialize_symbols(sdfg: "dace.SDFG", values: dict[str, float | int | str]) -> None:
     """Bake free symbols to constant values, recursively through nested SDFGs.
 
     Plural form of :func:`specialize_symbol`, and the one to call when baking several symbols: the
@@ -3040,7 +3051,7 @@ def in_edge_with_name(node: nd.Node, state: SDFGState, name: str) -> MultiConnec
     """
     cands = list(state.in_edges_by_connector(node, name))
     if len(cands) != 1:
-        raise ValueError("Expected to find exactly one edge with name '{}', found {}".format(name, len(cands)))
+        raise ValueError(f"Expected to find exactly one edge with name '{name}', found {len(cands)}")
     return cands[0]
 
 
@@ -3055,7 +3066,7 @@ def out_edge_with_name(node: nd.Node, state: SDFGState, name: str) -> MultiConne
     """
     cands = list(state.out_edges_by_connector(node, name))
     if len(cands) != 1:
-        raise ValueError("Expected to find exactly one edge with name '{}', found {}".format(name, len(cands)))
+        raise ValueError(f"Expected to find exactly one edge with name '{name}', found {len(cands)}")
     return cands[0]
 
 
@@ -3105,11 +3116,7 @@ def expand_nodes(sdfg: SDFG, predicate: Callable[[nd.Node], bool]):
                 if predicate(node):
                     impl_name = node.expand(state)
                     if config.Config.get_bool("debugprint"):
-                        print(
-                            'Automatically expanded library node "{}" with implementation "{}".'.format(
-                                str(node), impl_name
-                            )
-                        )
+                        print(f'Automatically expanded library node "{str(node)}" with implementation "{impl_name}".')
                     expanded_something = True
 
         if expanded_something:

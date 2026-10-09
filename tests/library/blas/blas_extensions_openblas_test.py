@@ -12,8 +12,8 @@ import numpy as np
 import pytest
 
 import dace
+from dace.libraries.blas.nodes import Ger, Scal, Symm, Symv, Syrk
 from dace.memlet import Memlet
-from dace.libraries.blas.nodes import Scal, Symv, Symm, Syrk, Ger
 
 # These force ``BLA_VENDOR=OpenBLAS``, so they need libopenblas -- run them in the OpenBLAS
 # ``lapack`` step, not the ``mkl`` step (the heterogeneous runner has MKL but not OpenBLAS).

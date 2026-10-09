@@ -1,7 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Promotion of transients whose allocation size is fixed for a whole program run to Persistent."""
 
-from typing import Any, Dict, Optional, Set
+from typing import Any
 
 from dace import data as dt
 from dace import dtypes, properties, symbolic
@@ -19,7 +19,7 @@ STRONGER_THAN_PERSISTENT = (
 )
 
 
-def persistent_size_symbols(sdfg: SDFG) -> Set[str]:
+def persistent_size_symbols(sdfg: SDFG) -> set[str]:
     """The symbol names an ``__dace_init``-time allocation may size itself by.
 
     A Persistent descriptor is allocated once, in the init function, from the top-level SDFG's
@@ -33,7 +33,7 @@ def persistent_size_symbols(sdfg: SDFG) -> Set[str]:
     :return: Names that hold one value for the whole run.
     """
     allowed = {str(s) for s in sdfg.free_symbols} | set(sdfg.constants_prop.keys())
-    reassigned: Set[str] = set()
+    reassigned: set[str] = set()
     # Tree-wide: a nested assignment to a root-owned name is indistinguishable from a rebinding.
     for nested in sdfg.all_sdfgs_recursive():
         for edge in nested.all_interstate_edges():
@@ -44,7 +44,7 @@ def persistent_size_symbols(sdfg: SDFG) -> Set[str]:
     return allowed - reassigned
 
 
-def size_symbols_at_root(nsdfg: SDFG, names: Set[str]) -> Optional[Set[str]]:
+def size_symbols_at_root(nsdfg: SDFG, names: set[str]) -> set[str] | None:
     """Rewrite ``names`` from ``nsdfg``'s symbol namespace into the root SDFG's.
 
     Each nested SDFG renames what it is handed through ``symbol_mapping``, so a nested descriptor's
@@ -61,7 +61,7 @@ def size_symbols_at_root(nsdfg: SDFG, names: Set[str]) -> Optional[Set[str]]:
         if current.parent_sdfg is None:
             return None
         mapping = current.parent_nsdfg_node.symbol_mapping
-        outer: Set[str] = set()
+        outer: set[str] = set()
         for name in resolved:
             if name in current.constants_prop:
                 continue
@@ -72,7 +72,7 @@ def size_symbols_at_root(nsdfg: SDFG, names: Set[str]) -> Optional[Set[str]]:
     return resolved
 
 
-def size_is_program_wide(nsdfg: SDFG, desc: dt.Data, allowed: Set[str]) -> bool:
+def size_is_program_wide(nsdfg: SDFG, desc: dt.Data, allowed: set[str]) -> bool:
     """Whether ``desc``'s allocation size holds one value for the whole program run.
 
     :param nsdfg: The SDFG owning ``desc``.
@@ -126,13 +126,13 @@ class MakeTransientsPersistent(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def apply_pass(self, sdfg: SDFG, _: Dict[str, Any]) -> Optional[Dict[int, Set[str]]]:
+    def apply_pass(self, sdfg: SDFG, _: dict[str, Any]) -> dict[int, set[str]] | None:
         """
         :param sdfg: The SDFG to modify in-place.
         :return: cfg_id -> names promoted in it, or None if nothing was promoted.
         """
         allowed = persistent_size_symbols(sdfg)
-        result: Dict[int, Set[str]] = {}
+        result: dict[int, set[str]] = {}
         for nsdfg in sdfg.all_sdfgs_recursive():
             promoted = self._promote_in(nsdfg, allowed)
             for name in promoted:
@@ -140,10 +140,10 @@ class MakeTransientsPersistent(ppl.Pass):
             result[nsdfg.cfg_id] = promoted
         return result if any(result.values()) else None
 
-    def _promote_in(self, nsdfg: SDFG, allowed: Set[str]) -> Set[str]:
+    def _promote_in(self, nsdfg: SDFG, allowed: set[str]) -> set[str]:
         """The names in ``nsdfg`` that every one of their access nodes allows promoting."""
-        persistent: Set[str] = set()
-        refused: Set[str] = set()
+        persistent: set[str] = set()
+        refused: set[str] = set()
         for state in nsdfg.states():
             for dnode in state.data_nodes():
                 if dnode.data in refused:

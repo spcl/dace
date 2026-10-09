@@ -3,21 +3,21 @@
 
 import builtins
 import ctypes
-import json
 import inspect
-import numpy
-import ml_dtypes
+import json
 import re
-from sympy import Float, Integer
 from collections import OrderedDict
 from dataclasses import dataclass
+from enum import Enum, auto
 from functools import wraps
-from typing import Any, Dict, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
-from dace.config import Config
+import ml_dtypes
+import numpy
+from sympy import Float, Integer
 
-from enum import auto, Enum
 from dace.attr_enum import ExtensibleAttributeEnum
+from dace.config import Config
 from dace.registry import undefined_safe_enum
 from dace.version import __version__
 
@@ -46,7 +46,7 @@ class StorageType(ExtensibleAttributeEnum):
 
         #: Whether a symbolically-sized array is a variable-length array on the stack (``True``). ``False`` and
         #: ``None`` are the same: the array is allocated on the heap. Constant sizes are unaffected.
-        dynamic: Optional[builtins.bool] = None
+        dynamic: builtins.bool | None = None
 
     CPU_Pinned = auto()  #: Host memory that can be DMA-accessed from accelerators
     CPU_Heap = auto()  #: Host memory allocated on heap
@@ -64,7 +64,7 @@ class StorageType(ExtensibleAttributeEnum):
 
         #: Whether the data is placed in dynamic shared memory (``True``), in static shared memory (``False``), or where
         #: the code generator decides (``None``), based on its size and the static shared memory the kernel uses.
-        dynamic: Optional[bool] = None
+        dynamic: bool | None = None
 
     SVE_Register = auto()  #: SVE register
     Snitch_TCDM = auto()  #: Cluster-private memory
@@ -72,7 +72,7 @@ class StorageType(ExtensibleAttributeEnum):
     Snitch_SSR = auto()  #: Memory accessed by SSR streamer
 
 
-def is_dynamic_shared(storage: StorageType) -> Optional[bool]:
+def is_dynamic_shared(storage: StorageType) -> bool | None:
     """
     Returns whether a ``GPU_Shared`` storage type is placed in dynamic shared memory.
 
@@ -87,7 +87,7 @@ def is_dynamic_shared(storage: StorageType) -> Optional[bool]:
     return storage.dynamic
 
 
-def is_dynamic_register(storage: StorageType) -> Optional[bool]:
+def is_dynamic_register(storage: StorageType) -> bool | None:
     """
     Returns whether a ``Register`` storage type places a symbolically-sized array on the stack.
 
@@ -361,7 +361,7 @@ _DEFAULT_DATA_TYPES = {
 }
 
 
-class typeclass(object):
+class typeclass:
     """An extension of types that enables their use in DaCe.
 
     These types are defined for three reasons:
@@ -379,14 +379,14 @@ class typeclass(object):
                 else:
                     wrapped_type = getattr(numpy, wrapped_type)
             except AttributeError:
-                raise ValueError("Unknown type: {}".format(wrapped_type))
+                raise ValueError(f"Unknown type: {wrapped_type}")
 
         # Only Python's scalar types consult the configuration; every other type paid the lookup.
         if wrapped_type is int or wrapped_type is float or wrapped_type is complex:
             config_data_types = Config.get("compiler", "default_data_types")
             widths = _DEFAULT_DATA_TYPES.get(config_data_types.lower())
             if widths is None:
-                raise NameError("Unknown configuration for default_data_types: {}".format(config_data_types))
+                raise NameError(f"Unknown configuration for default_data_types: {config_data_types}")
             wrapped_type = widths[wrapped_type]
         elif wrapped_type is builtins.bool:
             # This module rebinds ``bool`` to a typeclass below, so name the builtin explicitly.
@@ -755,7 +755,7 @@ class struct(typeclass):
     Example use: `dace.struct(a=dace.int32, b=dace.float64)`.
     """
 
-    STRUCT_CTYPES: Dict[str, ctypes.Structure] = {}
+    STRUCT_CTYPES: dict[str, ctypes.Structure] = {}
 
     def __init__(self, name, **fields_and_types):
         # self._data = fields_and_types
@@ -949,7 +949,7 @@ class callback(typeclass):
             elif isinstance(arg, str):
                 arg = json_to_typeclass(arg, {"version": __version__})
             else:
-                raise TypeError("Cannot resolve type from: {}".format(arg))
+                raise TypeError(f"Cannot resolve type from: {arg}")
             self.input_types.append(arg)
         self.bytes = int64.bytes
         self.type = self
@@ -1035,6 +1035,7 @@ class callback(typeclass):
 
     def get_trampoline(self, pyfunc, other_arguments, refs, argument_to_pyobject):
         from functools import partial
+
         from dace import data, symbolic
 
         def _string_converter(a: str, *args):
@@ -1573,7 +1574,7 @@ def json_to_typeclass(obj, context=None):
     elif isinstance(obj, dict) and "type" in obj:
         return get_serializer(obj["type"]).from_json(obj, context)
     else:
-        raise ValueError("Cannot resolve: {}".format(obj))
+        raise ValueError(f"Cannot resolve: {obj}")
 
 
 def paramdec(dec):

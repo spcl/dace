@@ -4,11 +4,13 @@ import copy
 import dace.library
 import dace.properties
 import dace.sdfg.nodes
-from dace.transformation.transformation import ExpandTransformation
-from dace.libraries.blas import blas_helpers
-from .. import environments
-from dace import memlet as mm, SDFG, SDFGState
+from dace import SDFG, SDFGState
+from dace import memlet as mm
 from dace.frontend.common import op_repository as oprepo
+from dace.libraries.blas import blas_helpers
+from dace.transformation.transformation import ExpandTransformation
+
+from .. import environments
 
 
 @dace.library.expansion

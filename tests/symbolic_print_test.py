@@ -1,6 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import sympy
-from dace.symbolic import sympy_numeric_fix, pystr_to_symbolic, symstr
+
+from dace.symbolic import pystr_to_symbolic, sympy_numeric_fix, symstr
 
 
 def test_float_zero_stays_float():

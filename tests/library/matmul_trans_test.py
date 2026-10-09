@@ -5,9 +5,10 @@
 materialising a transposed copy of the operand.
 """
 
-import dace
 import numpy as np
 import pytest
+
+import dace
 from dace.libraries.blas import MatMul
 
 

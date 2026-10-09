@@ -1,8 +1,9 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+import numpy as np
 import pytest
+
 import dace
 from dace import symbolic
-import numpy as np
 
 M = dace.symbol("M")
 N = dace.symbol("N")
@@ -165,8 +166,8 @@ def test_lift_einsum_mttkrp():
 
 
 def test_lift_einsum_reduce():
-    from dace.libraries.standard.nodes.reduce import Reduce
     from dace.libraries.blas.nodes.einsum import Einsum
+    from dace.libraries.standard.nodes.reduce import Reduce
     from dace.transformation.dataflow import LiftEinsum
 
     @dace.program
@@ -200,8 +201,8 @@ def test_lift_einsum_reduce():
 
 
 def test_lift_einsum_reduce_partial():
-    from dace.libraries.standard.nodes.reduce import Reduce
     from dace.libraries.blas.nodes.einsum import Einsum
+    from dace.libraries.standard.nodes.reduce import Reduce
     from dace.transformation.dataflow import LiftEinsum
 
     @dace.program

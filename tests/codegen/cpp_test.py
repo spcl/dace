@@ -1,14 +1,14 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 
+import warnings
 from functools import reduce
 from operator import mul
-import warnings
 
 from dace import SDFG, Memlet, dtypes, symbol
-from dace.config import Config
 from dace.codegen import codegen
 from dace.codegen.targets import cpp
 from dace.codegen.targets.cpu import _use_aligned_operator_new
+from dace.config import Config
 from dace.subsets import Range
 
 

@@ -14,8 +14,8 @@ sympy printer and cppunparse to identical code.
 import pytest
 
 import dace
-from dace.symbolic import pystr_to_symbolic
 from dace.codegen.targets.cpp import sym2cpp
+from dace.symbolic import pystr_to_symbolic
 
 
 @pytest.mark.parametrize(

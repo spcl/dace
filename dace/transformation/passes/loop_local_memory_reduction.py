@@ -1,22 +1,25 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 
-import sympy as sp
-from dace import sdfg as sd, symbolic, properties
-from dace import data as dt
-from dace.sdfg.state import LoopRegion
-from dace.data import Scalar
-from dace.transformation import transformation as xf
-from dace.transformation import pass_pipeline as ppl
-from dace.transformation.passes.analysis import (
-    loop_analysis,
-    StateReachability,
-    FindAccessStates,
-    ConditionUniqueWrites,
-)
-from dace.symbolic import pystr_to_symbolic, issymbolic
-from dace.subsets import Range
 import copy
-from typing import Union, Optional, Dict, Any
+from typing import Any
+
+import sympy as sp
+
+from dace import data as dt
+from dace import properties, symbolic
+from dace import sdfg as sd
+from dace.data import Scalar
+from dace.sdfg.state import LoopRegion
+from dace.subsets import Range
+from dace.symbolic import issymbolic, pystr_to_symbolic
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation import transformation as xf
+from dace.transformation.passes.analysis import (
+    ConditionUniqueWrites,
+    FindAccessStates,
+    StateReachability,
+    loop_analysis,
+)
 
 
 @properties.make_properties
@@ -137,7 +140,7 @@ class LoopLocalMemoryReduction(ppl.Pass):
     def depends_on(self):
         return [StateReachability, FindAccessStates, ConditionUniqueWrites]
 
-    def apply_pass(self, sdfg: sd.SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: sd.SDFG, pipeline_results: dict[str, Any]) -> int | None:
         """Shrink loop-local arrays to the circular buffer their access pattern needs.
 
         :param sdfg: The SDFG to transform in place.
@@ -187,7 +190,7 @@ class LoopLocalMemoryReduction(ppl.Pass):
 
         return self.num_applications or None
 
-    def _get_edge_indices(self, subset: Range, loop: LoopRegion) -> list[Union[tuple, None]]:
+    def _get_edge_indices(self, subset: Range, loop: LoopRegion) -> list[tuple | None]:
         # list of tuples of (a, b) for a*i + b, None if cannot be determined
         indices = list()
         itervar = loop.loop_variable
@@ -206,7 +209,7 @@ class LoopLocalMemoryReduction(ppl.Pass):
 
     def _get_read_write_indices(
         self, array_name: str, loop: LoopRegion
-    ) -> tuple[list[list[Union[tuple, None]]], list[list[Union[tuple, None]]], list[list[Union[tuple, None]]]]:
+    ) -> tuple[list[list[tuple | None]], list[list[tuple | None]], list[list[tuple | None]]]:
         # list of list of tuples of (a, b) for a*i + b
         read_indices = list()
         uncond_write_indices = list()
@@ -240,7 +243,7 @@ class LoopLocalMemoryReduction(ppl.Pass):
 
         return read_indices, uncond_write_indices, all_write_indices
 
-    def _has_constant_loop_expressions(self, sdfg: sd.SDFG, loop: LoopRegion) -> tuple[bool, Union[int, None]]:
+    def _has_constant_loop_expressions(self, sdfg: sd.SDFG, loop: LoopRegion) -> tuple[bool, int | None]:
         itervar = loop.loop_variable
         step = loop_analysis.get_loop_stride(loop)
         if step is None:
@@ -261,13 +264,13 @@ class LoopLocalMemoryReduction(ppl.Pass):
     def _get_K_values(
         self,
         array_name: str,
-        read_indices: list[list[Union[tuple, None]]],
-        uncond_write_indices: list[list[Union[tuple, None]]],
-        all_write_indices: list[list[Union[tuple, None]]],
+        read_indices: list[list[tuple | None]],
+        uncond_write_indices: list[list[tuple | None]],
+        all_write_indices: list[list[tuple | None]],
         step: int,
         sdfg: sd.SDFG,
         loop: LoopRegion,
-    ) -> list[Union[int, None]]:
+    ) -> list[int | None]:
         k_values = []
         max_indices = self._get_max_indices_before_loop(array_name, sdfg, loop)
 

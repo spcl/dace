@@ -8,14 +8,15 @@ emitted C uses the resolved connector, not a hardcoded ``MPI_COMM_WORLD``
 
 from unittest import mock
 
-import dace
 import numpy as np
 import pytest
-from dace.memlet import Memlet
+
+import dace
+import dace.frontend.python.replacements.mpi as comm_repl
 import dace.libraries.mpi as mpi
 from dace.libraries.mpi.nodes.comm_f2c import CommF2c
 from dace.libraries.mpi.nodes.redistribute import Redistribute
-import dace.frontend.python.replacements.mpi as comm_repl
+from dace.memlet import Memlet
 
 # Routed to the MPI-capable heterogeneous runner (``-m mpi`` under mpirun), like every other
 # tests/library/mpi test -- even though these are codegen-only checks with no MPI runtime.

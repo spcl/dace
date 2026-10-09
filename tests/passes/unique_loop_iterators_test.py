@@ -1,12 +1,13 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Unit tests for the ``UniqueLoopIterators`` pass."""
 
-import dace
 import numpy as np
 import pytest
+
+import dace
 from dace.sdfg.state import LoopRegion
-from dace.transformation.passes.unique_loop_iterators import UniqueLoopIterators
 from dace.transformation.passes.analysis import loop_analysis
+from dace.transformation.passes.unique_loop_iterators import UniqueLoopIterators
 
 
 @dace.program

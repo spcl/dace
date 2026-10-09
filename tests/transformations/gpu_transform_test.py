@@ -3,9 +3,10 @@
 
 import re
 
-import dace
 import numpy as np
 import pytest
+
+import dace
 from dace.transformation.dataflow import GPUTransformLocalStorage
 from dace.transformation.interstate import GPUTransformSDFG
 

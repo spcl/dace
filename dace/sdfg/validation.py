@@ -6,7 +6,7 @@ import functools
 import os
 import warnings
 from collections import defaultdict
-from typing import TYPE_CHECKING, Dict, List, Set
+from typing import TYPE_CHECKING
 
 import networkx as nx
 
@@ -38,14 +38,13 @@ def validate(graph: "dace.sdfg.graph.SubgraphView"):
 def validate_control_flow_region(
     sdfg: "SDFG",
     region: "ControlFlowRegion",
-    initialized_transients: Set[str],
+    initialized_transients: set[str],
     symbols: dict,
-    references: Set[int] = None,
+    references: set[int] = None,
     **context: bool,
 ):
-    from dace.sdfg.state import SDFGState, ControlFlowRegion, ConditionalBlock, LoopRegion
     from dace.sdfg.scope import is_in_scope
-    from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, SDFGState
+    from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
 
     if len(region.source_nodes()) > 1:
         try:
@@ -263,7 +262,7 @@ def validate_control_flow_region(
     _no_writes_to_scalars_or_arrays_on_interstate_edges(sdfg)
 
 
-def validate_sdfg(sdfg: "dace.sdfg.SDFG", references: Set[int] = None, **context: bool):
+def validate_sdfg(sdfg: "dace.sdfg.SDFG", references: set[int] = None, **context: bool):
     """Verifies the correctness of an SDFG by applying multiple tests.
 
     :param sdfg: The SDFG to verify.
@@ -306,7 +305,7 @@ def validate_sdfg(sdfg: "dace.sdfg.SDFG", references: Set[int] = None, **context
                 raise InvalidSDFGError("Found multiple blocks with the same name in " + cfg.name, sdfg, None)
 
         # Check the names of data descriptors and co.
-        seen_names: Set[str] = set()
+        seen_names: set[str] = set()
         for obj_names in [sdfg.arrays.keys(), sdfg.symbols.keys()]:
             if not seen_names.isdisjoint(obj_names):
                 raise InvalidSDFGError(
@@ -465,7 +464,7 @@ def validate_sdfg(sdfg: "dace.sdfg.SDFG", references: Set[int] = None, **context
         raise
 
 
-def _accessible(sdfg: "dace.sdfg.SDFG", container: str, context: Dict[str, bool]):
+def _accessible(sdfg: "dace.sdfg.SDFG", container: str, context: dict[str, bool]):
     """
     Helper function that returns False if a data container cannot be accessed in the current SDFG context.
     """
@@ -504,7 +503,7 @@ def _is_out_of_bounds_index(index, offset, size) -> bool:
     return ((index + offset) >= size) == True
 
 
-def _is_scalar(edge: "gr.MultiConnectorEdge[Memlet]", memlet_path: List["gr.MultiConnectorEdge[Memlet]"]):
+def _is_scalar(edge: "gr.MultiConnectorEdge[Memlet]", memlet_path: list["gr.MultiConnectorEdge[Memlet]"]):
     """
     Helper function that determines if a memlet is going to dereference a scalar value.
     Returns False in any case the memlet _may not_ be dereferenced (but could be).
@@ -540,9 +539,9 @@ def validate_state(
     state: "dace.sdfg.SDFGState",
     state_id: int = None,
     sdfg: "dace.sdfg.SDFG" = None,
-    symbols: Dict[str, dtypes.typeclass] = None,
-    initialized_transients: Set[str] = None,
-    references: Set[int] = None,
+    symbols: dict[str, dtypes.typeclass] = None,
+    initialized_transients: set[str] = None,
+    references: set[int] = None,
     **context: bool,
 ):
     """Verifies the correctness of an SDFG state by applying multiple

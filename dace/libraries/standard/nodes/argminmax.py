@@ -31,7 +31,8 @@ import dace.dtypes as dtypes
 import dace.library
 import dace.properties
 import dace.sdfg.nodes
-from dace import SDFG, SDFGState, memlet as mm
+from dace import SDFG, SDFGState
+from dace import memlet as mm
 from dace.frontend.common import op_repository as oprepo
 from dace.transformation.transformation import ExpandTransformation
 

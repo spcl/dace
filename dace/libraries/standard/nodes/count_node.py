@@ -9,6 +9,7 @@ specialisations (CPU sequential, OpenMP, CUDA, GPUAuto) are inherited for free.
 import dace
 from dace import library, nodes, properties
 from dace.transformation.transformation import ExpandTransformation
+
 from .reduce import Reduce
 
 _INPUT_CONNECTOR_NAME = "_cnt_in"

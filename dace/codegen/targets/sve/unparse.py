@@ -3,22 +3,24 @@
 AST to SVE: This module is responsible for converting an AST into SVE code.
 """
 
-import dace
 import ast
-from dace.codegen import cppunparse
-from dace.sdfg import nodes, SDFG
+import collections
+import copy
 from typing import IO
+
+import numpy as np
+
+import dace
+import dace.frontend.python.astutils as astutils
+from dace import data as data
 from dace import dtypes
+from dace.codegen import cppunparse
+from dace.codegen.targets.cpp import DefinedType, cpp_ptr_expr, is_write_conflicted, sym2cpp
 from dace.codegen.targets.sve import preprocess as preprocess
 from dace.codegen.targets.sve import util as util
-import dace.frontend.python.astutils as astutils
 from dace.codegen.targets.sve.type_compatibility import assert_type_compatibility
-import copy
-import collections
-import numpy as np
-from dace import data as data
 from dace.frontend.operations import detect_reduction_type
-from dace.codegen.targets.cpp import is_write_conflicted, cpp_ptr_expr, DefinedType, sym2cpp
+from dace.sdfg import SDFG, nodes
 
 
 class SVEUnparser(cppunparse.CPPUnparser):
@@ -281,10 +283,10 @@ class SVEUnparser(cppunparse.CPPUnparser):
             stream_type.ctype = "uint64_t"
 
         # Create a temporary array on the heap, where we will copy the SVE register contents to
-        self.fill("{} __tmp[{} / {}];".format(stream_type, util.REGISTER_BYTE_SIZE, stream_type.bytes))
+        self.fill(f"{stream_type} __tmp[{util.REGISTER_BYTE_SIZE} / {stream_type.bytes}];")
 
         # Count the number of "to push" elements based on the current predicate
-        self.fill("size_t __cnt = svcntp_b{}({}, {});".format(self.pred_bits, self.pred_name, self.pred_name))
+        self.fill(f"size_t __cnt = svcntp_b{self.pred_bits}({self.pred_name}, {self.pred_name});")
 
         # Store the contents of the SVE register in the temporary array
         self.fill(f"svst1(svwhilelt_b{self.pred_bits}(0, ({self.counter_type}) __cnt), __tmp, ")
@@ -348,10 +350,7 @@ class SVEUnparser(cppunparse.CPPUnparser):
             elif src_type.type == np.uint64:
                 ptr_cast = "(uint64_t*) "
 
-            store_args = "{}, {}".format(
-                self.pred_name,
-                ptr_cast + cpp_ptr_expr(self.sdfg, edge.data, DefinedType.Pointer, codegen=self.cpu_codegen),
-            )
+            store_args = f"{self.pred_name}, {ptr_cast + cpp_ptr_expr(self.sdfg, edge.data, DefinedType.Pointer, codegen=self.cpu_codegen)}"
 
             red_type = util.REDUCTION_TYPE_TO_SVE[reduction_type][:-1] + "_x"
             if stride == 1:
@@ -461,7 +460,7 @@ class SVEUnparser(cppunparse.CPPUnparser):
     def _Call(self, t):
         res_type = self.infer(t)[0]
         if not res_type:
-            raise util.NotSupportedError(f"Unsupported call")
+            raise util.NotSupportedError("Unsupported call")
 
         if not isinstance(res_type, dtypes.vector):
             # Call does not involve any vectors (to our knowledge)
@@ -503,7 +502,7 @@ class SVEUnparser(cppunparse.CPPUnparser):
                 raise NotImplementedError(f"Function {astutils.rname(t.func)} is not implemented")
 
         # Vectorized function
-        self.write("{}_x({}, ".format(name, self.pred_name))
+        self.write(f"{name}_x({self.pred_name}, ")
         comma = False
         for e in t.args:
             if comma:
@@ -527,7 +526,7 @@ class SVEUnparser(cppunparse.CPPUnparser):
         if t.op.__class__ not in util.UN_OP_TO_SVE:
             raise NotImplementedError(f"Unary operation {t.op.__class__.__name__} not implemented")
 
-        self.write("{}_x({}, ".format(util.UN_OP_TO_SVE[t.op.__class__], self.pred_name))
+        self.write(f"{util.UN_OP_TO_SVE[t.op.__class__]}_x({self.pred_name}, ")
         self.dispatch(t.operand)
         self.write(")")
 
@@ -547,7 +546,7 @@ class SVEUnparser(cppunparse.CPPUnparser):
 
         op_name = util.BIN_OP_TO_SVE[t.op.__class__]
 
-        self.write("{}_x({}, ".format(op_name, self.pred_name))
+        self.write(f"{op_name}_x({self.pred_name}, ")
         self.dispatch_expect(t.left, res_type)
         self.write(", ")
         self.dispatch_expect(t.right, res_type)
@@ -594,7 +593,7 @@ class SVEUnparser(cppunparse.CPPUnparser):
                 break
 
             # Binary nesting
-            self.write("{}_z({}, ".format(util.BOOL_OP_TO_SVE[t.op.__class__], self.pred_name))
+            self.write(f"{util.BOOL_OP_TO_SVE[t.op.__class__]}_z({self.pred_name}, ")
             self.dispatch(val)
             self.write(", ")
 
@@ -618,7 +617,7 @@ class SVEUnparser(cppunparse.CPPUnparser):
         if op.__class__ not in util.COMPARE_TO_SVE:
             raise NotImplementedError("Comparator not supported")
 
-        self.write("{}({}, ".format(util.COMPARE_TO_SVE[op.__class__], self.pred_name))
+        self.write(f"{util.COMPARE_TO_SVE[op.__class__]}({self.pred_name}, ")
 
         lhs_type, rhs_type = self.infer(lhs, rhs)
         res_type = dtypes.result_type_of(lhs_type, rhs_type)

@@ -1,12 +1,12 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 
-from typing import Any, Dict, Optional
+from typing import Any
 
 from dace import dtypes
 from dace.sdfg import nodes
 
 
-def input_descriptor_name(node: nodes.Node, state: Any, connector: str) -> Optional[str]:
+def input_descriptor_name(node: nodes.Node, state: Any, connector: str) -> str | None:
     edges = list(state.in_edges_by_connector(node, connector))
     if not edges:
         return None
@@ -21,7 +21,7 @@ def input_descriptor_name(node: nodes.Node, state: Any, connector: str) -> Optio
     return None
 
 
-def expanded_input_connectors(node: nodes.Node, state: Any) -> Dict[str, Any]:
+def expanded_input_connectors(node: nodes.Node, state: Any) -> dict[str, Any]:
     connectors = dict(node.in_connectors)
     for edge in state.in_edges(node):
         if edge.dst_conn is not None:

@@ -127,7 +127,7 @@ def run_loop_to_map(n, *args):
         raise ValueError("Validation failed.")
 
     numbers_written = []
-    with open(temp_path, "r") as f:
+    with open(temp_path) as f:
         for line in f:
             numbers_written.append(int(line.strip()))
     if not all(sorted(numbers_written) == np.arange(n)):
@@ -776,7 +776,7 @@ def test_nested_loops():
     sdfg0 = copy.deepcopy(sdfg)
     i_loop = find_loop(sdfg0, "i")
     LoopToMap.apply_to(sdfg0, loop=i_loop)
-    nsdfg = next((sd for sd in sdfg0.all_sdfgs_recursive() if sd.parent is not None))
+    nsdfg = next(sd for sd in sdfg0.all_sdfgs_recursive() if sd.parent is not None)
     j_loop = find_loop(nsdfg, "j")
     LoopToMap.apply_to(nsdfg, loop=j_loop)
 
@@ -988,8 +988,8 @@ def test_dynamic_write_slab_separated_by_iteration_var():
     """
     from dace import memlet as mm
     from dace.properties import CodeBlock
-    from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
     from dace.sdfg.propagation import propagate_memlets_sdfg
+    from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
 
     sdfg = dace.SDFG("for_it_35_repro")
     NLEV = dace.symbol("NLEV", dace.int32)

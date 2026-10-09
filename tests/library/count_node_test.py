@@ -23,10 +23,10 @@ Modes covered:
 
 import ctypes
 
+import numpy as np
+
 import dace
 from dace.libraries.standard.nodes import CountLibraryNode
-
-import numpy as np
 
 # DaCe-compiled SOs link against libgomp's ``omp_get_max_threads`` at
 # load time; preload it with RTLD_GLOBAL so ctypes.CDLL on the dacestub
@@ -42,7 +42,7 @@ def _build_count_sdfg(name_tag: str, mask_shape, mask_dtype, dim, out_shape, out
     access into an output access — full coverage (no section subset)."""
     sdfg = dace.SDFG(f"count_{name_tag}")
     sdfg.add_array("mask", mask_shape, mask_dtype, transient=False)
-    out_shape_used = out_shape if out_shape else [1]
+    out_shape_used = out_shape or [1]
     sdfg.add_array("out", out_shape_used, out_dtype, transient=False)
     state = sdfg.add_state("count_state")
 

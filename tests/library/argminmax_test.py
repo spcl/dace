@@ -12,7 +12,7 @@ Covers:
 import numpy as np
 
 import dace
-from dace.libraries.standard.nodes import ArgMin, ArgMax
+from dace.libraries.standard.nodes import ArgMax, ArgMin
 
 
 def _build_whole(node_cls, in_shape, dtype, *, one_based=True, back=False):

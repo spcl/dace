@@ -25,7 +25,8 @@ import copy
 import functools
 import itertools
 from numbers import Integral, Number
-from typing import Any, Dict, List, Sequence, Tuple, Union, Optional
+from typing import Any
+from collections.abc import Sequence
 import warnings
 
 import numpy as np
@@ -843,7 +844,7 @@ ufuncs = dict(
 )
 
 
-def _get_ufunc_impl(visitor: ProgramVisitor, ast_node: ast.Call, ufunc_name: str) -> Dict[str, Any]:
+def _get_ufunc_impl(visitor: ProgramVisitor, ast_node: ast.Call, ufunc_name: str) -> dict[str, Any]:
     """Retrieves the implementation details for a NumPy ufunc call.
 
     :param visitor: ProgramVisitor object handling the ufunc call
@@ -856,9 +857,7 @@ def _get_ufunc_impl(visitor: ProgramVisitor, ast_node: ast.Call, ufunc_name: str
     try:
         return ufuncs[ufunc_name]
     except KeyError:
-        raise mem_parser.DaceSyntaxError(
-            visitor, ast_node, "Missing implementation for NumPy ufunc {f}.".format(f=ufunc_name)
-        )
+        raise mem_parser.DaceSyntaxError(visitor, ast_node, f"Missing implementation for NumPy ufunc {ufunc_name}.")
 
 
 def _validate_ufunc_num_arguments(
@@ -880,9 +879,9 @@ def _validate_ufunc_num_arguments(
         raise mem_parser.DaceSyntaxError(
             visitor,
             ast_node,
-            "Invalid number of arguments in call to numpy.{f} "
-            "(expected a maximum of {i} input(s) and {o} output(s), "
-            "but a total of {a} arguments were given).".format(f=ufunc_name, i=num_inputs, o=num_outputs, a=num_args),
+            f"Invalid number of arguments in call to numpy.{ufunc_name} "
+            f"(expected a maximum of {num_inputs} input(s) and {num_outputs} output(s), "
+            f"but a total of {num_args} arguments were given).",
         )
 
 
@@ -894,7 +893,7 @@ def _validate_ufunc_inputs(
     num_inputs: int,
     num_args: int,
     args: Sequence[UfuncInput],
-) -> List[UfuncInput]:
+) -> list[UfuncInput]:
     """Validates the number of type of inputs in a NumPy ufunc call.
 
     :param visitor: ProgramVisitor object handling the ufunc call
@@ -917,9 +916,7 @@ def _validate_ufunc_inputs(
         raise mem_parser.DaceSyntaxError(
             visitor,
             ast_node,
-            "Invalid number of arguments in call to numpy.{f} (expected {e} inputs, but {a} were given).".format(
-                f=ufunc_name, e=num_inputs, a=num_args
-            ),
+            f"Invalid number of arguments in call to numpy.{ufunc_name} (expected {num_inputs} inputs, but {num_args} were given).",
         )
     else:
         inputs = args
@@ -938,8 +935,8 @@ def _validate_ufunc_inputs(
             raise mem_parser.DaceSyntaxError(
                 visitor,
                 ast_node,
-                "Input arguments in call to numpy.{f} must be of dace.data.Data "
-                "type or numerical/boolean constants (invalid argument {a})".format(f=ufunc_name, a=arg),
+                f"Input arguments in call to numpy.{ufunc_name} must be of dace.data.Data "
+                f"type or numerical/boolean constants (invalid argument {arg})",
             )
 
     return inputs
@@ -954,8 +951,8 @@ def _validate_ufunc_outputs(
     num_outputs: int,
     num_args: int,
     args: Sequence[UfuncInput],
-    kwargs: Dict[str, Any],
-) -> List[UfuncOutput]:
+    kwargs: dict[str, Any],
+) -> list[UfuncOutput]:
     """Validates the number of type of outputs in a NumPy ufunc call.
 
     :param visitor: ProgramVisitor object handling the ufunc call
@@ -1005,9 +1002,7 @@ def _validate_ufunc_outputs(
         raise mem_parser.DaceSyntaxError(
             visitor,
             ast_node,
-            "Invalid number of arguments in call to numpy.{f} (expected {e} outputs, but {a} were given).".format(
-                f=ufunc_name, e=num_outputs, a=len(outputs)
-            ),
+            f"Invalid number of arguments in call to numpy.{ufunc_name} (expected {num_outputs} outputs, but {len(outputs)} were given).",
         )
 
     # Validate outputs
@@ -1020,15 +1015,15 @@ def _validate_ufunc_outputs(
             raise mem_parser.DaceSyntaxError(
                 visitor,
                 ast_node,
-                "Return arguments in call to numpy.{f} must be of dace.data.Data type.".format(f=ufunc_name),
+                f"Return arguments in call to numpy.{ufunc_name} must be of dace.data.Data type.",
             )
 
     return outputs
 
 
 def _validate_where_kword(
-    visitor: ProgramVisitor, ast_node: ast.Call, sdfg: SDFG, ufunc_name: str, kwargs: Dict[str, Any]
-) -> Tuple[bool, Union[str, bool]]:
+    visitor: ProgramVisitor, ast_node: ast.Call, sdfg: SDFG, ufunc_name: str, kwargs: dict[str, Any]
+) -> tuple[bool, str | bool]:
     """Validates the 'where' keyword argument passed to a NumPy ufunc call.
 
     :param visitor: ProgramVisitor object handling the ufunc call
@@ -1057,7 +1052,7 @@ def _validate_where_kword(
                 ast_node,
                 "Values for the 'where' keyword that are a sequence of boolean "
                 " constants are unsupported. Please, pass these values to the "
-                " {n} call through a DaCe boolean array.".format(n=ufunc_name),
+                f" {ufunc_name} call through a DaCe boolean array.",
             )
         else:
             # NumPy defaults to "where=True" for invalid values for the keyword
@@ -1071,9 +1066,9 @@ def _validate_shapes(
     ast_node: ast.Call,
     sdfg: SDFG,
     ufunc_name: str,
-    inputs: List[UfuncInput],
-    outputs: List[UfuncOutput],
-) -> Tuple[Shape, Tuple[Tuple[str, str], ...], str, List[str]]:
+    inputs: list[UfuncInput],
+    outputs: list[UfuncOutput],
+) -> tuple[Shape, tuple[tuple[str, str], ...], str, list[str]]:
     """Validates the data shapes of inputs and outputs to a NumPy ufunc call.
 
     :param visitor: ProgramVisitor object handling the ufunc call
@@ -1101,14 +1096,12 @@ def _validate_shapes(
         raise mem_parser.DaceSyntaxError(
             visitor,
             ast_node,
-            "Shape validation in numpy.{f} call failed. The following error occured : {m}".format(
-                f=ufunc_name, m=str(e)
-            ),
+            f"Shape validation in numpy.{ufunc_name} call failed. The following error occured : {str(e)}",
         )
     return result
 
 
-def _broadcast(shapes: Sequence[Shape]) -> Tuple[Shape, Tuple[Tuple[str, str], ...], str, List[str]]:
+def _broadcast(shapes: Sequence[Shape]) -> tuple[Shape, tuple[tuple[str, str], ...], str, list[str]]:
     """Applies the NumPy ufunc brodacsting rules in a sequence of data shapes
     (see https://numpy.org/doc/stable/reference/ufuncs.html#broadcasting).
 
@@ -1192,14 +1185,14 @@ def _broadcast(shapes: Sequence[Shape]) -> Tuple[Shape, Tuple[Tuple[str, str], .
 
 def _create_output(
     sdfg: SDFG,
-    inputs: List[UfuncInput],
-    outputs: List[UfuncOutput],
+    inputs: list[UfuncInput],
+    outputs: list[UfuncOutput],
     output_shape: Shape,
-    output_dtype: Union[dtypes.typeclass, List[dtypes.typeclass]],
+    output_dtype: dtypes.typeclass | list[dtypes.typeclass],
     storage: dtypes.StorageType = None,
     force_scalar: bool = False,
-    name_hint: Optional[str] = None,
-) -> List[UfuncOutput]:
+    name_hint: str | None = None,
+) -> list[UfuncOutput]:
     """Creates output data for storing the result of a NumPy ufunc call.
 
     :param sdfg: SDFG object
@@ -1258,8 +1251,8 @@ def _create_output(
 
 
 def _set_tasklet_params(
-    ufunc_impl: Dict[str, Any], inputs: List[UfuncInput], casting: List[dtypes.typeclass] = None
-) -> Dict[str, Any]:
+    ufunc_impl: dict[str, Any], inputs: list[UfuncInput], casting: list[dtypes.typeclass] = None
+) -> dict[str, Any]:
     """Sets the tasklet parameters for a NumPy ufunc call.
 
     :param ufunc_impl: Information on how the ufunc must be implemented
@@ -1294,15 +1287,15 @@ def _create_subgraph(
     visitor: ProgramVisitor,
     sdfg: SDFG,
     state: SDFGState,
-    inputs: List[UfuncInput],
-    outputs: List[UfuncOutput],
-    map_indices: Tuple[str, str],
-    input_indices: List[str],
+    inputs: list[UfuncInput],
+    outputs: list[UfuncOutput],
+    map_indices: tuple[str, str],
+    input_indices: list[str],
     output_indices: str,
     output_shape: Shape,
-    tasklet_params: Dict[str, Any],
+    tasklet_params: dict[str, Any],
     has_where: bool = False,
-    where: Union[str, bool] = None,
+    where: str | bool = None,
 ):
     """Creates the subgraph that implements a NumPy ufunc call.
 
@@ -1336,12 +1329,12 @@ def _create_subgraph(
                     name, _ = sdfg.add_scalar(name, where_data.dtype, transient=True, find_new_name=True)
                     r = cond_state.add_read(where)
                     w = cond_state.add_write(name)
-                    cond_state.add_nedge(r, w, Memlet("{}[0]".format(r)))
+                    cond_state.add_nedge(r, w, Memlet(f"{r}[0]"))
                 true_state = sdfg.add_state(label=cond_state.label + "_true")
                 state = true_state
                 visitor.last_block = state
                 cond = name
-                cond_else = "not ({})".format(cond)
+                cond_else = f"not ({cond})"
                 sdfg.add_edge(cond_state, true_state, InterstateEdge(cond))
         tasklet = state.add_tasklet(**tasklet_params)
         inp_conn_idx = 0
@@ -1411,11 +1404,11 @@ def _create_subgraph(
                     nested_sdfg.add_scalar(name, where_data.dtype, transient=True)
                     r = cond_state.add_read(nested_sdfg_inputs[where][0])
                     w = cond_state.add_write(name)
-                    cond_state.add_nedge(r, w, Memlet("{}[0]".format(r)))
+                    cond_state.add_nedge(r, w, Memlet(f"{r}[0]"))
 
                 true_state = nested_sdfg.add_state(label=cond_state.label + "_where_true")
                 cond = name
-                cond_else = "not ({})".format(cond)
+                cond_else = f"not ({cond})"
                 nested_sdfg.add_edge(cond_state, true_state, InterstateEdge(cond))
 
                 tasklet = true_state.add_tasklet(**tasklet_params)
@@ -1457,11 +1450,11 @@ def _create_subgraph(
                         continue
                     n = state.add_read(arg)
                     conn, idx = nested_sdfg_inputs[arg]
-                    state.add_memlet_path(n, me, codenode, memlet=Memlet("{a}[{i}]".format(a=n, i=idx)), dst_conn=conn)
+                    state.add_memlet_path(n, me, codenode, memlet=Memlet(f"{n}[{idx}]"), dst_conn=conn)
                 for arg in outputs:
                     n = state.add_write(arg)
                     conn, idx = nested_sdfg_outputs[arg]
-                    state.add_memlet_path(codenode, mx, n, memlet=Memlet("{a}[{i}]".format(a=n, i=idx)), src_conn=conn)
+                    state.add_memlet_path(codenode, mx, n, memlet=Memlet(f"{n}[{idx}]"), src_conn=conn)
 
                 dealias.integrate_nested_sdfg(nested_sdfg)
                 return
@@ -1508,8 +1501,8 @@ def implement_ufunc(
     state: SDFGState,
     ufunc_name: str,
     args: Sequence[UfuncInput],
-    kwargs: Dict[str, Any],
-) -> List[UfuncOutput]:
+    kwargs: dict[str, Any],
+) -> list[UfuncOutput]:
     """Implements a NumPy ufunc.
 
     :param visitor: ProgramVisitor object handling the ufunc call
@@ -1589,7 +1582,7 @@ def implement_ufunc(
 
 
 def _validate_keepdims_kword(
-    visitor: ProgramVisitor, ast_node: ast.Call, ufunc_name: str, kwargs: Dict[str, Any]
+    visitor: ProgramVisitor, ast_node: ast.Call, ufunc_name: str, kwargs: dict[str, Any]
 ) -> bool:
     """Validates the 'keepdims' keyword argument of a NumPy ufunc call.
 
@@ -1611,7 +1604,7 @@ def _validate_keepdims_kword(
                 visitor,
                 ast_node,
                 "Integer or boolean value expected for keyword argument "
-                "'keepdims' in reduction operation {f} (got {v}).".format(f=ufunc_name, v=keepdims),
+                f"'keepdims' in reduction operation {ufunc_name} (got {keepdims}).",
             )
         if not isinstance(keepdims, (bool, np.bool_)):
             keepdims = bool(keepdims)
@@ -1623,10 +1616,10 @@ def _validate_axis_kword(
     visitor: ProgramVisitor,
     ast_node: ast.Call,
     sdfg: SDFG,
-    inputs: List[UfuncInput],
-    kwargs: Dict[str, Any],
+    inputs: list[UfuncInput],
+    kwargs: dict[str, Any],
     keepdims: bool,
-) -> Tuple[Tuple[int, ...], Union[Shape, None], Shape]:
+) -> tuple[tuple[int, ...], Shape | None, Shape]:
     """Validates the 'axis' keyword argument of a NumPy ufunc call.
 
     :param visitor: ProgramVisitor object handling the ufunc call
@@ -1661,12 +1654,12 @@ def _validate_axis_kword(
         axis = tuple(normalize_axes(axis, len(inp_shape)))
         if len(axis) > len(inp_shape):
             raise mem_parser.DaceSyntaxError(
-                visitor, ast_node, "Axis {a} is out of bounds for data of dimension {d}".format(a=axis, d=inp_shape)
+                visitor, ast_node, f"Axis {axis} is out of bounds for data of dimension {inp_shape}"
             )
         for a in axis:
             if a >= len(inp_shape):
                 raise mem_parser.DaceSyntaxError(
-                    visitor, ast_node, "Axis {a} is out of bounds for data of dimension {d}".format(a=a, d=inp_shape)
+                    visitor, ast_node, f"Axis {a} is out of bounds for data of dimension {inp_shape}"
                 )
         if keepdims:
             intermediate_shape = [d for i, d in enumerate(inp_shape) if i not in axis]
@@ -1695,8 +1688,8 @@ def implement_ufunc_reduce(
     state: SDFGState,
     ufunc_name: str,
     args: Sequence[UfuncInput],
-    kwargs: Dict[str, Any],
-) -> List[UfuncOutput]:
+    kwargs: dict[str, Any],
+) -> list[UfuncOutput]:
     """Implements the 'reduce' method of a NumPy ufunc.
 
     :param visitor: ProgramVisitor object handling the ufunc call
@@ -1755,27 +1748,23 @@ def implement_ufunc_reduce(
             raise mem_parser.DaceSyntaxError(
                 visitor,
                 ast_node,
-                "Output parameter for reduction operation {f} does not have "
-                "enough dimensions (output shape {o}, expected shape {e}).".format(
-                    f=ufunc_name, o=out_shape, e=expected_out_shape
-                ),
+                f"Output parameter for reduction operation {ufunc_name} does not have "
+                f"enough dimensions (output shape {out_shape}, expected shape {expected_out_shape}).",
             )
         if len(out_shape) > len(expected_out_shape):
             raise mem_parser.DaceSyntaxError(
                 visitor,
                 ast_node,
-                "Output parameter for reduction operation {f} has too many "
-                "dimensions (output shape {o}, expected shape {e}).".format(
-                    f=ufunc_name, o=out_shape, e=expected_out_shape
-                ),
+                f"Output parameter for reduction operation {ufunc_name} has too many "
+                f"dimensions (output shape {out_shape}, expected shape {expected_out_shape}).",
             )
         if list(out_shape) != list(expected_out_shape):
             raise mem_parser.DaceSyntaxError(
                 visitor,
                 ast_node,
-                "Output parameter for reduction operation {f} has non-reduction"
-                " dimension not equal to the input one (output shape {o}, "
-                "expected shape {e}).".format(f=ufunc_name, o=out_shape, e=expected_out_shape),
+                f"Output parameter for reduction operation {ufunc_name} has non-reduction"
+                f" dimension not equal to the input one (output shape {out_shape}, "
+                f"expected shape {expected_out_shape}).",
             )
     else:
         out_shape = expected_out_shape
@@ -1823,18 +1812,12 @@ def implement_ufunc_reduce(
                 if isinstance(inpdata, data.Array):
                     state.add_mapped_tasklet(
                         name=state.label + "_reduce_initial",
-                        map_ranges={
-                            "__i{i}".format(i=i): "0:{s}".format(s=s)
-                            for i, s in enumerate(inpdata.shape)
-                            if i not in axis
-                        },
+                        map_ranges={f"__i{i}": f"0:{s}" for i, s in enumerate(inpdata.shape) if i not in axis},
                         inputs={
                             "__inp": Memlet(
                                 "{a}[{i}]".format(
                                     a=inputs[0],
-                                    i=",".join(
-                                        ["0" if i in axis else "__i{i}".format(i=i) for i in range(len(inpdata.shape))]
-                                    ),
+                                    i=",".join(["0" if i in axis else f"__i{i}" for i in range(len(inpdata.shape))]),
                                 )
                             )
                         },
@@ -1842,9 +1825,7 @@ def implement_ufunc_reduce(
                             "__out": Memlet(
                                 "{a}[{i}]".format(
                                     a=intermediate_name,
-                                    i=",".join(
-                                        ["__i{i}".format(i=i) for i in range(len(inpdata.shape)) if i not in axis]
-                                    ),
+                                    i=",".join([f"__i{i}" for i in range(len(inpdata.shape)) if i not in axis]),
                                 )
                             )
                         },
@@ -1870,7 +1851,7 @@ def implement_ufunc_reduce(
     if isinstance(inputs[0], str) and inputs[0] in sdfg.arrays.keys():
         reduce(visitor, sdfg, state, ufunc_impl["reduce"], inputs[0], intermediate_name, axis=axis, identity=initial)
     else:
-        tasklet = state.add_tasklet(state.label + "_tasklet", {}, {"__out"}, "__out = {}".format(inputs[0]))
+        tasklet = state.add_tasklet(state.label + "_tasklet", {}, {"__out"}, f"__out = {inputs[0]}")
         out_node = state.add_write(intermediate_name)
         datadesc = sdfg.arrays[intermediate_name]
         state.add_edge(tasklet, "__out", out_node, None, Memlet.from_array(intermediate_name, datadesc))
@@ -1897,8 +1878,8 @@ def implement_ufunc_accumulate(
     state: SDFGState,
     ufunc_name: str,
     args: Sequence[UfuncInput],
-    kwargs: Dict[str, Any],
-) -> List[UfuncOutput]:
+    kwargs: dict[str, Any],
+) -> list[UfuncOutput]:
     """Implements the 'accumulate' method of a NumPy ufunc.
 
     :param visitor: ProgramVisitor object handling the ufunc call
@@ -1953,15 +1934,13 @@ def implement_ufunc_accumulate(
             raise mem_parser.DaceSyntaxError(
                 visitor,
                 ast_node,
-                "Value of keyword argument 'axis' in 'accumulate' method of {f} must be an integer (value {v}).".format(
-                    f=ufunc_name, v=axis
-                ),
+                f"Value of keyword argument 'axis' in 'accumulate' method of {ufunc_name} must be an integer (value {axis}).",
             )
         if axis >= len(out_shape):
             raise mem_parser.DaceSyntaxError(
                 visitor,
                 ast_node,
-                "Axis {a} is out of bounds for dace.data.Array of dimension {l}".format(a=axis, l=len(out_shape)),
+                f"Axis {axis} is out of bounds for dace.data.Array of dimension {len(out_shape)}",
             )
         # Normalize negative axis
         axis = normalize_axes([axis], len(out_shape))[0]
@@ -1971,9 +1950,9 @@ def implement_ufunc_accumulate(
 
     # Create subgraph
     shape = datadesc.shape
-    map_range = {"__i{}".format(i): "0:{}".format(s) for i, s in enumerate(shape) if i != axis}
-    input_idx = ",".join(["__i{}".format(i) if i != axis else "0:{}".format(shape[i]) for i in range(len(shape))])
-    output_idx = ",".join(["__i{}".format(i) if i != axis else "0:{}".format(shape[i]) for i in range(len(shape))])
+    map_range = {f"__i{i}": f"0:{s}" for i, s in enumerate(shape) if i != axis}
+    input_idx = ",".join([f"__i{i}" if i != axis else f"0:{shape[i]}" for i in range(len(shape))])
+    output_idx = ",".join([f"__i{i}" if i != axis else f"0:{shape[i]}" for i in range(len(shape))])
 
     nested_sdfg = SDFG(state.label + "_for_loop")
     inpconn = nested_sdfg._find_new_name(arg)
@@ -1999,25 +1978,23 @@ def implement_ufunc_accumulate(
         code=ufunc_impl["code"],
     )
 
-    loop_idx = "__i{}".format(axis)
-    loop_idx_m1 = "__i{} - 1".format(axis)
-    body_state.add_edge(r1, None, t, "__in1", Memlet("{a}[{i}]".format(a=inpconn, i=loop_idx)))
-    body_state.add_edge(r2, None, t, "__in2", Memlet("{a}[{i}]".format(a=outconn, i=loop_idx_m1)))
-    body_state.add_edge(t, "__out", w, None, Memlet("{a}[{i}]".format(a=outconn, i=loop_idx)))
+    loop_idx = f"__i{axis}"
+    loop_idx_m1 = f"__i{axis} - 1"
+    body_state.add_edge(r1, None, t, "__in1", Memlet(f"{inpconn}[{loop_idx}]"))
+    body_state.add_edge(r2, None, t, "__in2", Memlet(f"{outconn}[{loop_idx_m1}]"))
+    body_state.add_edge(t, "__out", w, None, Memlet(f"{outconn}[{loop_idx}]"))
 
     init_expr = str(1)
-    cond_expr = "__i{i} < {s}".format(i=axis, s=shape[0])
-    incr_expr = "__i{} + 1".format(axis)
+    cond_expr = f"__i{axis} < {shape[0]}"
+    incr_expr = f"__i{axis} + 1"
     nested_sdfg.add_loop(init_state, body_state, None, loop_idx, init_expr, cond_expr, incr_expr)
 
     r = state.add_read(inputs[0])
     w = state.add_write(outputs[0])
     codenode = state.add_nested_sdfg(nested_sdfg, {inpconn}, {outconn})
     me, mx = state.add_map(state.label + "_map", map_range)
-    state.add_memlet_path(r, me, codenode, memlet=Memlet("{a}[{i}]".format(a=inputs[0], i=input_idx)), dst_conn=inpconn)
-    state.add_memlet_path(
-        codenode, mx, w, memlet=Memlet("{a}[{i}]".format(a=outputs[0], i=output_idx)), src_conn=outconn
-    )
+    state.add_memlet_path(r, me, codenode, memlet=Memlet(f"{inputs[0]}[{input_idx}]"), dst_conn=inpconn)
+    state.add_memlet_path(codenode, mx, w, memlet=Memlet(f"{outputs[0]}[{output_idx}]"), src_conn=outconn)
 
     dealias.integrate_nested_sdfg(nested_sdfg)
     return outputs
@@ -2031,8 +2008,8 @@ def implement_ufunc_outer(
     state: SDFGState,
     ufunc_name: str,
     args: Sequence[UfuncInput],
-    kwargs: Dict[str, Any],
-) -> List[UfuncOutput]:
+    kwargs: dict[str, Any],
+) -> list[UfuncOutput]:
     """Implements the 'outer' method of a NumPy ufunc.
 
     :param visitor: ProgramVisitor object handling the ufunc call
@@ -2082,9 +2059,9 @@ def implement_ufunc_outer(
             elif isinstance(datadesc, data.Array):
                 shape = datadesc.shape
                 out_shape.extend(shape)
-                map_vars.extend(["__i{i}_{j}".format(i=i, j=j) for j in range(len(shape))])
-                map_range.update({"__i{i}_{j}".format(i=i, j=j): "0:{}".format(sz) for j, sz in enumerate(shape)})
-                input_idx = ",".join(["__i{i}_{j}".format(i=i, j=j) for j in range(len(shape))])
+                map_vars.extend([f"__i{i}_{j}" for j in range(len(shape))])
+                map_range.update({f"__i{i}_{j}": f"0:{sz}" for j, sz in enumerate(shape)})
+                input_idx = ",".join([f"__i{i}_{j}" for j in range(len(shape))])
                 if output_idx:
                     output_idx = ",".join([output_idx, input_idx])
                 else:
@@ -2093,9 +2070,7 @@ def implement_ufunc_outer(
                 raise mem_parser.DaceSyntaxError(
                     visitor,
                     ast_node,
-                    "Unsuported data type {t} in 'outer' method of NumPy ufunc {f}.".format(
-                        t=type(datadesc), f=ufunc_name
-                    ),
+                    f"Unsuported data type {type(datadesc)} in 'outer' method of NumPy ufunc {ufunc_name}.",
                 )
         elif isinstance(arg, (Number, sp.Basic)):
             input_idx = None
@@ -2109,21 +2084,19 @@ def implement_ufunc_outer(
             raise mem_parser.DaceSyntaxError(
                 visitor,
                 ast_node,
-                "'where' shape {w} could not be broadcast together with 'out' shape {o}.".format(
-                    w=where_shape, o=out_shape
-                ),
+                f"'where' shape {where_shape} could not be broadcast together with 'out' shape {out_shape}.",
             )
         if list(bcast_out_shape) != list(out_shape):
             raise mem_parser.DaceSyntaxError(
                 visitor,
                 ast_node,
-                "Broadcasting 'where' shape {w} together with expected 'out' "
-                "shape {o} resulted in a different output shape {no}. This is "
-                "currently unsupported.".format(w=where_shape, o=out_shape, no=bcast_out_shape),
+                f"Broadcasting 'where' shape {where_shape} together with expected 'out' "
+                f"shape {out_shape} resulted in a different output shape {bcast_out_shape}. This is "
+                "currently unsupported.",
             )
         where_idx = bcast_inp_indices[1]
         for i in range(len(out_shape)):
-            where_idx = where_idx.replace("__i{}".format(i), map_vars[i])
+            where_idx = where_idx.replace(f"__i{i}", map_vars[i])
         input_indices.append(where_idx)
     else:
         input_indices.append(None)
@@ -2166,7 +2139,7 @@ def implement_ufunc_outer(
 @oprepo.replaces_method("Array", "sum")
 @oprepo.replaces_method("Scalar", "sum")
 @oprepo.replaces_method("View", "sum")
-def _ndarray_sum(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, kwargs: Dict[str, Any] = None) -> str:
+def _ndarray_sum(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, kwargs: dict[str, Any] = None) -> str:
     kwargs = kwargs or dict(axis=None)
     return implement_ufunc_reduce(pv, None, sdfg, state, "add", [arr], kwargs)[0]
 
@@ -2174,7 +2147,7 @@ def _ndarray_sum(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, kwa
 @oprepo.replaces_method("Array", "mean")
 @oprepo.replaces_method("Scalar", "mean")
 @oprepo.replaces_method("View", "mean")
-def _ndarray_mean(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, kwargs: Dict[str, Any] = None) -> str:
+def _ndarray_mean(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, kwargs: dict[str, Any] = None) -> str:
     from dace.frontend.python.replacements.misc import elementwise  # Avoid import loop
 
     nest = NestedCall(pv, sdfg, state)
@@ -2182,13 +2155,13 @@ def _ndarray_mean(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, kw
     sumarr = implement_ufunc_reduce(pv, None, sdfg, nest.add_state(), "add", [arr], kwargs)[0]
     desc = sdfg.arrays[arr]
     sz = functools.reduce(lambda x, y: x * y, desc.shape)
-    return nest, elementwise(pv, sdfg, nest.add_state(), "lambda x: x / {}".format(sz), sumarr)
+    return nest, elementwise(pv, sdfg, nest.add_state(), f"lambda x: x / {sz}", sumarr)
 
 
 @oprepo.replaces_method("Array", "prod")
 @oprepo.replaces_method("Scalar", "prod")
 @oprepo.replaces_method("View", "prod")
-def _ndarray_prod(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, kwargs: Dict[str, Any] = None) -> str:
+def _ndarray_prod(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, kwargs: dict[str, Any] = None) -> str:
     kwargs = kwargs or dict(axis=None)
     return implement_ufunc_reduce(pv, None, sdfg, state, "multiply", [arr], kwargs)[0]
 
@@ -2196,7 +2169,7 @@ def _ndarray_prod(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, kw
 @oprepo.replaces_method("Array", "all")
 @oprepo.replaces_method("Scalar", "all")
 @oprepo.replaces_method("View", "all")
-def _ndarray_all(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, kwargs: Dict[str, Any] = None) -> str:
+def _ndarray_all(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, kwargs: dict[str, Any] = None) -> str:
     kwargs = kwargs or dict(axis=None)
     return implement_ufunc_reduce(pv, None, sdfg, state, "logical_and", [arr], kwargs)[0]
 
@@ -2204,7 +2177,7 @@ def _ndarray_all(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, kwa
 @oprepo.replaces_method("Array", "any")
 @oprepo.replaces_method("Scalar", "any")
 @oprepo.replaces_method("View", "any")
-def _ndarray_any(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, kwargs: Dict[str, Any] = None) -> str:
+def _ndarray_any(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, kwargs: dict[str, Any] = None) -> str:
     kwargs = kwargs or dict(axis=None)
     return implement_ufunc_reduce(pv, None, sdfg, state, "logical_or", [arr], kwargs)[0]
 

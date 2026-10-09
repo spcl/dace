@@ -2,11 +2,11 @@
 """State fusion transformation"""
 
 import warnings
-from typing import Dict, List, Optional
 
 import networkx as nx
 
-from dace import data as dt, properties, sdfg, subsets, memlet
+from dace import data as dt
+from dace import memlet, properties, sdfg, subsets
 from dace.config import Config
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
@@ -25,10 +25,10 @@ from dace.transformation.interstate.state_fusion import (
 class CCDesc:
     def __init__(
         self,
-        first_input_nodes: List[nodes.AccessNode],
-        first_output_nodes: List[nodes.AccessNode],
-        second_input_nodes: List[nodes.AccessNode],
-        second_output_nodes: List[nodes.AccessNode],
+        first_input_nodes: list[nodes.AccessNode],
+        first_output_nodes: list[nodes.AccessNode],
+        second_input_nodes: list[nodes.AccessNode],
+        second_output_nodes: list[nodes.AccessNode],
     ) -> None:
         self.first_inputs = {n.data for n in first_input_nodes}
         self.first_input_nodes = first_input_nodes
@@ -44,7 +44,7 @@ def top_level_nodes(state: SDFGState):
     return state.scope_children()[None]
 
 
-def in_state_order(state: SDFGState, node_iter) -> List[nodes.Node]:
+def in_state_order(state: SDFGState, node_iter) -> list[nodes.Node]:
     """Deterministic order for a collection of nodes of ``state``.
 
     SDFG nodes hash by ``id()``, so iterating a ``set`` of them yields a different order on
@@ -151,7 +151,7 @@ class StateFusionExtended(transformation.MultiStateTransformation):
         return self._connections_to_make
 
     @staticmethod
-    def find_fused_components(first_cc_input, first_cc_output, second_cc_input, second_cc_output) -> List[CCDesc]:
+    def find_fused_components(first_cc_input, first_cc_output, second_cc_input, second_cc_output) -> list[CCDesc]:
         # Make a bipartite graph out of the first and second components
         g = nx.DiGraph()
         g.add_nodes_from((0, i) for i in range(len(first_cc_output)))
@@ -169,7 +169,7 @@ class StateFusionExtended(transformation.MultiStateTransformation):
         #  tuples, so their natural iteration order is not reproducible, and it decides the
         #  order in which the happens-before edges below are recorded.
         result = []
-        for cc in sorted((sorted(cc) for cc in nx.weakly_connected_components(g))):
+        for cc in sorted(sorted(cc) for cc in nx.weakly_connected_components(g)):
             input1, output1, input2, output2 = [], [], [], []
             for gind, cind in cc:
                 if gind == 0:
@@ -185,10 +185,10 @@ class StateFusionExtended(transformation.MultiStateTransformation):
     @staticmethod
     def memlets_intersect(
         graph_a: SDFGState,
-        group_a: List[nodes.AccessNode],
+        group_a: list[nodes.AccessNode],
         inputs_a: bool,
         graph_b: SDFGState,
-        group_b: List[nodes.AccessNode],
+        group_b: list[nodes.AccessNode],
         inputs_b: bool,
     ) -> bool:
         """
@@ -238,7 +238,7 @@ class StateFusionExtended(transformation.MultiStateTransformation):
         self,
         first_state: SDFGState,
         second_state: SDFGState,
-        match_nodes: Dict[nodes.AccessNode, nodes.AccessNode],
+        match_nodes: dict[nodes.AccessNode, nodes.AccessNode],
         node_a: nodes.Node,
         node_b: nodes.Node,
     ) -> bool:
@@ -252,9 +252,9 @@ class StateFusionExtended(transformation.MultiStateTransformation):
         self,
         first_state: SDFGState,
         second_state: SDFGState,
-        match_nodes: Dict[nodes.AccessNode, nodes.AccessNode],
-        nodes_first: List[nodes.AccessNode],
-        nodes_second: List[nodes.AccessNode],
+        match_nodes: dict[nodes.AccessNode, nodes.AccessNode],
+        nodes_first: list[nodes.AccessNode],
+        nodes_second: list[nodes.AccessNode],
         first_read: bool,
         second_read: bool,
     ) -> bool:
@@ -274,9 +274,9 @@ class StateFusionExtended(transformation.MultiStateTransformation):
         self,
         first_state: SDFGState,
         second_state: SDFGState,
-        match_nodes: Dict[nodes.AccessNode, nodes.AccessNode],
-        nodes_first: List[nodes.AccessNode],
-        nodes_second: List[nodes.AccessNode],
+        match_nodes: dict[nodes.AccessNode, nodes.AccessNode],
+        nodes_first: list[nodes.AccessNode],
+        nodes_second: list[nodes.AccessNode],
         first_read: bool,
         second_read: bool,
     ) -> bool:
@@ -456,7 +456,7 @@ class StateFusionExtended(transformation.MultiStateTransformation):
             # accumulates several component writes across successive fusions and
             # the KE reduction ends up reading the wrong one.
             first_scope = first_state.scope_dict()
-            first_producers: Dict[str, int] = {}
+            first_producers: dict[str, int] = {}
             for n in first_state.data_nodes():
                 if first_scope[n] is None and first_state.in_degree(n) > 0:
                     first_producers[n.data] = first_producers.get(n.data, 0) + 1
@@ -521,7 +521,7 @@ class StateFusionExtended(transformation.MultiStateTransformation):
             # accumulate before the seed init, zeroing the result (covariance /
             # correlation ``mean[:] = 0.0; mean(+)= data[...]``). The states must stay
             # ordered, so refuse the fusion (the seed read is a genuine RAW dependency).
-            first_written: Dict[str, List] = {}
+            first_written: dict[str, list] = {}
             for n in first_output:
                 for e in first_state.in_edges(n):
                     if e.data is not None and not e.data.is_empty():
@@ -558,8 +558,8 @@ class StateFusionExtended(transformation.MultiStateTransformation):
             first_out_data = {n.data for n in first_output if _has_data_write(n)}
             # Top-level first-state readers of each array (node + read subset). Used to
             # order first-state reads BEFORE a second-state overwrite (WAR anti-dep).
-            first_read_subsets: Dict[str, List] = {}
-            first_readers: Dict[str, List[nodes.AccessNode]] = {}
+            first_read_subsets: dict[str, list] = {}
+            first_readers: dict[str, list[nodes.AccessNode]] = {}
             first_scope = first_state.scope_dict()
             for rn in first_state.data_nodes():
                 if first_scope[rn] is not None:
@@ -595,7 +595,7 @@ class StateFusionExtended(transformation.MultiStateTransformation):
             # itself re-writes -- both silent WAR miscompiles. ``first_out_data`` counts only
             # REAL data writers; an empty-memlet happens-before sink from a prior fusion is
             # not a producer (peeled-pattern regression).
-            def ordering_endpoints(readers) -> Optional[List[nodes.Node]]:
+            def ordering_endpoints(readers) -> list[nodes.Node] | None:
                 """Where each reader's READ actually completes, deduplicated.
 
                 The read happens at the consumer, not at the access node, and a scope entry
@@ -621,7 +621,7 @@ class StateFusionExtended(transformation.MultiStateTransformation):
                             # node's outputs complete no earlier than the node, which makes them
                             # equivalent ordering endpoints and needs no library change at all.
                             succs = [se.dst for se in first_state.out_edges(cons)]
-                            endpoints.extend(succs if succs else [cons])
+                            endpoints.extend(succs or [cons])
                             continue
                         endpoints.append(cons)
                 return list(dict.fromkeys(endpoints))
@@ -708,7 +708,7 @@ class StateFusionExtended(transformation.MultiStateTransformation):
 
             # Recreate fused connected component correspondences, and then
             # check for hazards
-            resulting_ccs: List[CCDesc] = StateFusionExtended.find_fused_components(
+            resulting_ccs: list[CCDesc] = StateFusionExtended.find_fused_components(
                 first_cc_input, first_cc_output, second_cc_input, second_cc_output
             )
 
@@ -737,7 +737,7 @@ class StateFusionExtended(transformation.MultiStateTransformation):
                 #  the second-state candidates are ordered: this is a first-match-wins bind
                 #  and `_check_paths()` stops at the first match that has a path, so an
                 #  arbitrary order makes the verdict differ between runs.
-                match_nodes: Dict[nodes.AccessNode, nodes.AccessNode] = {
+                match_nodes: dict[nodes.AccessNode, nodes.AccessNode] = {
                     next(n for n in order if n.data == match): next(
                         n for n in in_state_order(second_state, fused_cc.second_input_nodes) if n.data == match
                     )
