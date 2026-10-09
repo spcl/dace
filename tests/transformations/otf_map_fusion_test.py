@@ -985,6 +985,57 @@ def test_a_producer_another_state_reads_is_kept():
     assert np.allclose(b, 2.0 * (a + 1.0)) and np.allclose(c, a + 1.0)
 
 
+def producer_reading_its_own_output() -> dace.SDFG:
+    """A nested-SDFG producer updates ``T[i] = max(T[i], A[i])`` through one in/out connector, feeding ``B = 2 T``."""
+    inner = dace.SDFG("otf_inout_producer_body")
+    inner.add_symbol("i", dace.int64)
+    inner.add_array("t", [16], dace.float64)
+    inner.add_array("a", [16], dace.float64)
+    body = inner.add_state()
+    update = body.add_tasklet("update", {"x", "y"}, {"o"}, "o = max(x, y)")
+    body.add_edge(body.add_read("t"), None, update, "x", dace.Memlet("t[i]"))
+    body.add_edge(body.add_read("a"), None, update, "y", dace.Memlet("a[i]"))
+    body.add_edge(update, "o", body.add_write("t"), None, dace.Memlet("t[i]"))
+
+    sdfg = dace.SDFG("otf_producer_reading_its_own_output")
+    for name in ("A", "B"):
+        sdfg.add_array(name, [16], dace.float64)
+    sdfg.add_transient("T", [16], dace.float64)
+    init = sdfg.add_state("init")
+    init.add_mapped_tasklet("seed", dict(k="0:16"), {}, "o = 0.5", {"o": dace.Memlet("T[k]")}, external_edges=True)
+    fused = sdfg.add_state_after(init, "fused")
+    me, mx = fused.add_map("produce", dict(i="0:16"))
+    node = fused.add_nested_sdfg(inner, {"t": None, "a": None}, {"t": None}, {"i": "i"})
+    fused.add_memlet_path(fused.add_read("T"), me, node, dst_conn="t", memlet=dace.Memlet("T[i]"))
+    fused.add_memlet_path(fused.add_read("A"), me, node, dst_conn="a", memlet=dace.Memlet("A[i]"))
+    t = fused.add_access("T")
+    fused.add_memlet_path(node, mx, t, src_conn="t", memlet=dace.Memlet("T[i]"))
+    fused.add_mapped_tasklet(
+        "consume",
+        dict(j="0:16"),
+        {"x": dace.Memlet("T[j]")},
+        "y = 2.0 * x",
+        {"y": dace.Memlet("B[j]")},
+        external_edges=True,
+        input_nodes={"T": t},
+        output_nodes={"B": fused.add_write("B")},
+    )
+    sdfg.validate()
+    return sdfg
+
+
+def test_a_producer_reading_the_intermediate_is_not_fused():
+    """velocity_tendencies' running maximum ``__rdo0``: the copied producer would write the per-iteration
+    buffer through the connector it still reads ``T`` through, leaving one connector naming two containers."""
+    sdfg = producer_reading_its_own_output()
+    assert sdfg.apply_transformations_repeated(OTFMapFusion) == 0
+    sdfg.validate()
+    a = np.random.default_rng(20261009).random(16)
+    b = np.zeros(16)
+    sdfg(A=a, B=b)
+    assert np.allclose(b, 2.0 * np.maximum(0.5, a))
+
+
 if __name__ == "__main__":
     # Solver
     test_solve()
@@ -1022,6 +1073,9 @@ if __name__ == "__main__":
 
     # Data hazards
     test_read_ahead_write_is_not_fused()
+    test_seidel_2d_like_war_refuses_fusion()
     test_second_writer_of_the_intermediate_is_not_fused()
+    test_a_producer_another_state_reads_is_kept()
     # Symbol replacement
     test_advanced_replace_nested_sdfg_symbol_mapping()
+    test_a_producer_reading_the_intermediate_is_not_fused()
