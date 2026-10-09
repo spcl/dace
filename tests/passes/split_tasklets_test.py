@@ -77,7 +77,7 @@ def _generate_single_tasklet_sdfg(expression_str: str) -> dace.SDFG:
 _double_tasklet_sdfg_counter = 0
 
 
-def _generate_double_tasklet_sdfg(expression_strs: typing.Tuple[str, str]) -> dace.SDFG:
+def _generate_double_tasklet_sdfg(expression_strs: tuple[str, str]) -> dace.SDFG:
     global _double_tasklet_sdfg_counter
     _double_tasklet_sdfg_counter += 1
 
@@ -154,12 +154,12 @@ def _generate_double_tasklet_sdfg(expression_strs: typing.Tuple[str, str]) -> da
                 map_entry.add_out_connector(f"OUT_{rhs_var}_ARR")
                 t.add_in_connector(rhs_var)
             for lhs_var in lhs_vars:
-                state.add_edge(t, lhs_var, tmp_access, None, dace.memlet.Memlet(expr=f"tmp_Scalar[0]"))
+                state.add_edge(t, lhs_var, tmp_access, None, dace.memlet.Memlet(expr="tmp_Scalar[0]"))
                 t.add_out_connector(lhs_var)
         elif i == 1:
             for rhs_var in rhs_vars:
                 if rhs_var == "tmp":
-                    state.add_edge(tmp_access, None, t, rhs_var, dace.memlet.Memlet(expr=f"tmp_Scalar[0]"))
+                    state.add_edge(tmp_access, None, t, rhs_var, dace.memlet.Memlet(expr="tmp_Scalar[0]"))
                     t.add_in_connector(rhs_var)
                 else:
                     state.add_edge(
@@ -240,7 +240,7 @@ def test_single_tasklet_split(expression_str: str):
 
 
 @pytest.mark.parametrize("expression_strs", example_double_expressions)
-def test_double_tasklet_split(expression_strs: typing.Tuple[str, str]):
+def test_double_tasklet_split(expression_strs: tuple[str, str]):
     sdfg = _generate_double_tasklet_sdfg(expression_strs)
     _run_compile_and_comparison_test(sdfg)
 
