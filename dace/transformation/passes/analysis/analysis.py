@@ -27,7 +27,11 @@ WriteScopeDict = dict[
     str,
     dict[
         tuple[SDFGState, nd.AccessNode] | None,
-        set[tuple[SDFGState, nd.AccessNode] | tuple[ControlFlowBlock, InterstateEdge]],
+        set[
+            tuple[SDFGState, nd.AccessNode]
+            | tuple[ControlFlowBlock, InterstateEdge]
+            | tuple[ConditionalBlock, ConditionalBlock]
+        ],
     ],
 ]
 SymbolScopeDict = dict[str, dict[Edge[InterstateEdge], set[Edge[InterstateEdge] | ControlFlowBlock]]]
@@ -843,7 +847,7 @@ class ScalarWriteShadowScopes(ppl.Pass):
         self,
         desc: str,
         block: ControlFlowBlock,
-        read: nd.AccessNode | InterstateEdge,
+        read: nd.AccessNode | InterstateEdge | ConditionalBlock,
         access_nodes: dict[SDFGState, tuple[OrderedSet[nd.AccessNode], OrderedSet[nd.AccessNode]]],
         idom_dict: dict[ControlFlowRegion, dict[ControlFlowBlock, ControlFlowBlock]],
         access_sets: dict[ControlFlowBlock, tuple[OrderedSet[str], OrderedSet[str]]],
@@ -979,6 +983,12 @@ class ScalarWriteShadowScopes(ppl.Pass):
                                     desc, block, oedge.data, access_nodes, idom_dict, access_sets
                                 )
                                 result[desc][write].add((block, oedge.data))
+                    # A branch condition reads on entry to its conditional, before any branch runs.
+                    if isinstance(block, ConditionalBlock) and any(
+                        desc in c.get_free_symbols() for c in block.get_meta_codeblocks()
+                    ):
+                        write = self._find_dominating_write(desc, block, block, access_nodes, idom_dict, access_sets)
+                        result[desc][write].add((block, block))
                 # Take care of any write nodes that have not been assigned to a scope yet, i.e., writes that are not
                 # dominating any reads and are thus not part of the results yet.
                 for state in desc_states_with_nodes:

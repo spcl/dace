@@ -420,6 +420,50 @@ def test_scalar_written_in_every_branch_is_private_to_each_loop():
     assert np.array_equal(C, np.where(A > 0.25, 3.0, A))
 
 
+def test_scalar_read_by_a_branch_condition_is_private_to_each_loop():
+    """Two loops each set the guard ``c = A[i] > 0.5`` and branch on it, as CloudSC's demoted ``if_cond`` scalars do.
+
+    The condition reads ``c`` on entry to the conditional, after that iteration's write: each loop gets its own version,
+    and both loops map. Without the condition counted as a read, the writes shadowed nothing and ``c`` stayed one
+    container shared by the loops.
+    """
+    sdfg = dace.SDFG("scalar_read_by_a_branch_condition")
+    sdfg.add_symbol("N", dace.int64)
+    for name in ("A", "B", "C"):
+        sdfg.add_array(name, ["N"], dace.float64)
+    sdfg.add_scalar("c", dace.bool, transient=True)
+    previous = None
+    for out, value in (("B", "1.0"), ("C", "2.0")):
+        loop = LoopRegion(f"loop_{out}", "i < N", "i", "i = 0", "i = i + 1")
+        sdfg.add_node(loop, is_start_block=previous is None)
+        if previous is not None:
+            sdfg.add_edge(previous, loop, dace.InterstateEdge())
+        guard = loop.add_state(f"guard_{out}", is_start_block=True)
+        test = guard.add_tasklet("test", {"a"}, {"o"}, "o = a > 0.5")
+        guard.add_edge(guard.add_read("A"), None, test, "a", dace.Memlet("A[i]"))
+        guard.add_edge(test, "o", guard.add_write("c"), None, dace.Memlet("c[0]"))
+        cond = ConditionalBlock(f"if_{out}")
+        branch = ControlFlowRegion(f"then_{out}")
+        body = branch.add_state(f"set_{out}", is_start_block=True)
+        store = body.add_tasklet("store", {}, {"o"}, f"o = {value}")
+        body.add_edge(store, "o", body.add_write(out), None, dace.Memlet(f"{out}[i]"))
+        cond.add_branch(dace.properties.CodeBlock("c"), branch)
+        loop.add_node(cond)
+        loop.add_edge(guard, cond, dace.InterstateEdge())
+        previous = loop
+    sdfg.validate()
+
+    assert Pipeline([ScalarFission()]).apply_pass(sdfg, {})["ScalarFission"]["c"] == {"c_0", "c_1"}
+    sdfg.validate()
+    assert sdfg.apply_transformations_repeated(LoopToMap) == 2, "each loop owns its version of c and maps"
+
+    A = np.arange(16, dtype=np.float64) / 15.0
+    B, C = np.zeros_like(A), np.zeros_like(A)
+    sdfg(A=A, B=B, C=C, N=A.size)
+    assert np.array_equal(B, np.where(A > 0.5, 1.0, 0.0))
+    assert np.array_equal(C, np.where(A > 0.5, 2.0, 0.0))
+
+
 if __name__ == "__main__":
     test_scalar_fission(False)
     test_branch_subscopes_nofission(False)
@@ -429,3 +473,4 @@ if __name__ == "__main__":
     test_branch_subscopes_fission(True)
     test_ordering_edge_does_not_start_a_version()
     test_scalar_written_in_every_branch_is_private_to_each_loop()
+    test_scalar_read_by_a_branch_condition_is_private_to_each_loop()
