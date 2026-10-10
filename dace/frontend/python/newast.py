@@ -4037,8 +4037,6 @@ class ProgramVisitor(ExtNodeVisitor):
             self, defined_arrays, true_node, self._parse_subscript_slice(arg.slice) if subscripted else None
         )
         subset = expr.subset
-        if isinstance(subset, subsets.Indices):
-            subset = subsets.Range.from_indices(subset)
         if expr.arrdims:
             raise DaceSyntaxError(self, arg, "A window passed to a call cannot be indexed by an array")
         access = self._add_write_access if written else self._add_read_access
