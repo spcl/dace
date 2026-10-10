@@ -189,6 +189,29 @@ def test_a_masked_copy_outside_a_map():
     np.testing.assert_array_equal(c, expected)
 
 
+@dace.program
+def elementwise_calls(
+    A: dace.float64[N], B: dace.float64[N], C: dace.float64[N], M: dace.bool_[N], D: dace.float64[N], S: dace.float64[N]
+):
+    for i in dace.map[0:N:8]:
+        fused = dace.tile.fma(A[i : i + 8], B[i : i + 8], dace.tile.exp(C[i : i + 8]))
+        larger = dace.tile.maximum(A[i : i + 8], dace.tile.sub(B[i : i + 8], C[i : i + 8]))
+        chosen = dace.tile.where(M[i : i + 8], fused, larger)
+        dace.tile.store(D[i : i + 8], chosen)
+        S[i : i + 1] = dace.tile.sum(chosen)
+
+
+def test_elementwise_calls_where_and_sum():
+    rng = np.random.default_rng(30)
+    a, b, c = rng.random(16), rng.random(16), rng.random(16)
+    mask = random_mask(16, 31)
+    d, s = np.zeros(16), np.zeros(16)
+    elementwise_calls(A=a, B=b, C=c, M=mask, D=d, S=s)
+    expected = np.where(mask, a * b + np.exp(c), np.maximum(a, b - c))
+    np.testing.assert_allclose(d, expected, rtol=1e-12)
+    np.testing.assert_allclose(s[::8], expected.reshape(2, 8).sum(axis=1), rtol=1e-12)
+
+
 @pytest.mark.parametrize(
     "program,message",
     [
@@ -215,6 +238,7 @@ if __name__ == "__main__":
     test_a_mask_may_be_a_register_tile()
     test_a_masked_copy_takes_the_sum_of_two_windows()
     test_a_masked_copy_outside_a_map()
+    test_elementwise_calls_where_and_sum()
     test_a_call_that_does_not_fit_the_tiles_is_refused(lanes_differ, "different lanes")
     test_a_call_that_does_not_fit_the_tiles_is_refused(types_differ, "different types")
     test_a_call_that_does_not_fit_the_tiles_is_refused(mask_is_no_bool, "must be of type bool")

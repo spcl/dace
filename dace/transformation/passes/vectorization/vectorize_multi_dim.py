@@ -32,7 +32,7 @@ import dace
 from dace import properties, symbolic
 from dace.config import Config
 from dace.dtypes import DeviceType
-from dace.libraries.tileops.dispatch import select_tile_implementation
+from dace.libraries.tileops.dispatch import TileGroup, select_tile_implementation
 from dace.libraries.tileops.nodes import (
     MaskedCopyLibraryNode,
     TileBinop,
@@ -51,6 +51,7 @@ from dace.ordered import OrderedSet
 from dace.sdfg.narrowing import as_map_entry
 from dace.sdfg.nodes import LibraryNode
 from dace.sdfg.state import ControlFlowRegion
+from dace.transformation import helpers
 from dace.transformation import pass_pipeline as ppl
 
 # Walker-primary pipeline. The walker (InsertTileLoadStore + PreparePerLaneIndices) stages tile
@@ -130,6 +131,7 @@ from dace.transformation.passes.vectorization.utils.map_predicates import (
     innermost_enclosing_map_label,
     mark_maps_no_vectorize,
 )
+from dace.transformation.passes.vectorization.utils.mask_scaffold import thread_symbols_into_nsdfg
 from dace.transformation.passes.vectorization.utils.pass_invariants import (
     lane_varying_interstate_guard,
     no_lane_collapsing_nested_sdfgs,
@@ -840,7 +842,7 @@ class VectorizeMultiDim(ppl.Pipeline):
 
     CATEGORY: str = "Vectorization"
 
-    def __init__(self, config: VectorizeConfig) -> None:
+    def __init__(self, config: VectorizeConfig, even_widths: tuple[int, ...] = ()) -> None:
         """Build the orchestrator from a :class:`VectorizeConfig`.
 
         :param config: Every vectorizer knob bundled into one dataclass -- tile ``widths``,
@@ -849,6 +851,8 @@ class VectorizeMultiDim(ppl.Pipeline):
             (``scalar_remainder_emit``, ``expand_tile_nodes``,
             ``validate``, ``validate_all``, ``assume_even``). See
             :class:`VectorizeConfig` for the per-field documentation.
+        :param even_widths: The widths the extent is a multiple of under ``assume_even``; empty: ``widths``. A block
+            tile is wider than the lanes of one thread.
         :raises NotImplementedError: On any disallowed knob combination (a K=1-only knob at
             K>=2, or fp_factor with a masked remainder).
         """
@@ -937,7 +941,7 @@ class VectorizeMultiDim(ppl.Pipeline):
         # (no peel) -- the single ``0:N:W`` map covers the range, and the ``__tile_main`` marker
         # makes GenerateTileIterationMask skip its mask (no mismatched GPU thread-block sizes).
         if assume_even:
-            passes.append(SplitMapForTileRemainder(widths=widths_t, assume_even=True))
+            passes.append(SplitMapForTileRemainder(widths=widths_t, assume_even=True, even_widths=even_widths))
         elif remainder_strategy in _BRANCHED_REMAINDER:
             # GPU-only branched remainder: split into a ``__tile_main`` interior plus a masked or scalar tail, then
             # a post pass fuses both into one kernel with an if/else body. Refused on CPU.
@@ -999,7 +1003,12 @@ class VectorizeMultiDim(ppl.Pipeline):
         passes += [
             # GPU: tile only innermost maps inside a kernel so half2 intrinsics never reach host code.
             # ``assume_even`` must match the remainder split, or a strided map wraps a scalar body.
-            MarkTileDims(widths=widths_t, require_gpu_resident=is_gpu_device, assume_even=assume_even),
+            MarkTileDims(
+                widths=widths_t,
+                require_gpu_resident=is_gpu_device,
+                assume_even=assume_even,
+                even_widths=even_widths,
+            ),
             StrideMapByTileWidths(widths=widths_t),
         ]
         # Walker-primary tiling: stage every non-transient AccessNode in tile bodies through TileGather /
@@ -1040,6 +1049,10 @@ class VectorizeMultiDim(ppl.Pipeline):
         # ``target_isa=ISA.CUDA`` (GPU tile backend) implies device=GPU; an explicit
         # ``device=GPU`` also selects it. Everything else is CPU.
         self._device = DeviceType.GPU if (device == DeviceType.GPU or target_isa is ISA.CUDA) else DeviceType.CPU
+        # The GPU entry point sets the group of its tiles; a CPU tile is one thread's (one core's) register tile
+        self._tile_group = TileGroup.THREAD
+        self._lanes_per_thread = 1
+        self._num_warps = 4
         self._remainder_strategy = remainder_strategy
         self._branch_mode = branch_mode
         self._expand_tile_nodes = expand_tile_nodes
@@ -1280,12 +1293,22 @@ class VectorizeMultiDim(ppl.Pipeline):
         from dace.sdfg.scope import is_devicelevel_gpu
 
         host_isa = self._target_isa in CPU_SIMD_ISAS | {ISA.SCALAR}
+        resolver = scopes.ScopedSymbolResolver()
         for node, parent in sdfg.all_nodes_recursive():
             if isinstance(node, TILE_NODE_TYPES):
                 node.target_isa = self._target_isa
                 # A host ISA's header backend is host functions, which device code cannot call; the
                 # pure expansion is the loop the kernel runs per thread (CloudSC fp64 x 2 on the GPU).
-                if host_isa and is_devicelevel_gpu(parent.sdfg, parent, node):
+                on_gpu = is_devicelevel_gpu(parent.sdfg, parent, node)
+                if on_gpu and self._tile_group is not TileGroup.THREAD:
+                    node.group, node.num_warps = self._tile_group, self._num_warps
+                    node.lanes_per_thread = self._lanes_per_thread
+                    for entry, entry_state in helpers.get_parent_maps(parent, node):
+                        if entry.map.schedule == dace.ScheduleType.GPU_Device:
+                            # The thread-block maps of its tiles size the block, not the size the offload chose
+                            entry.map.gpu_block_size = None
+                            node.lane_bounds = _block_tile_lane_bounds(node, parent, entry, entry_state, resolver)
+                if host_isa and on_gpu and node.group is TileGroup.THREAD:
                     node.implementation = "pure"
                 else:
                     node.implementation = select_tile_implementation(node, parent)
@@ -1327,6 +1350,35 @@ def tile_alignment_bytes(desc: dace.data.Data) -> int:
     if nbytes <= 0:
         return desc.dtype.bytes
     return min(16, 1 << (nbytes.bit_length() - 1))
+
+
+def _block_tile_lane_bounds(
+    node: LibraryNode,
+    state: dace.SDFGState,
+    kernel: dace.nodes.MapEntry,
+    kernel_state: dace.SDFGState,
+    resolver: scopes.ScopedSymbolResolver,
+) -> list[str]:
+    """The ``lane_bounds`` of a block tile ``node`` in the ``kernel`` map its widths stride: the iterations each tiled
+    dim has left from the tile start. A block tile is wider than the lanes the even extent is a multiple of, so the
+    last tile of a dim may end past the map. The symbols of the bounds are threaded into the nested SDFGs around
+    ``node``; no bounds for a map its widths do not stride."""
+    K = len(node.widths)
+    params, ranges = kernel.map.params[-K:], kernel.map.range.ranges[-K:]
+    if len(ranges) != K or any(step != width for (_, _, step), width in zip(ranges, node.widths, strict=True)):
+        return []
+    bounds = [end + 1 - symbolic.symbol(param) for param, (_, end, _) in zip(params, ranges, strict=True)]
+    names = sorted({str(sym) for bound in bounds for sym in bound.free_symbols})
+    nested: list[dace.SDFG] = []
+    sd = state.sdfg
+    while sd is not kernel_state.sdfg:
+        nested.append(sd)
+        sd = required(sd.parent_sdfg)
+    for inner in reversed(nested):
+        nsdfg = required(inner.parent_nsdfg_node)
+        thread_symbols_into_nsdfg(inner, nsdfg, names, required(inner.parent_sdfg), required(inner.parent), resolver)
+        resolver.invalidate_sdfg(inner)
+    return [symbolic.symstr(bound, cpp_mode=True) for bound in bounds]
 
 
 def _has_gpu_device_map(sdfg: dace.SDFG) -> bool:
@@ -1419,6 +1471,34 @@ class VectorizeGPUMultiDim(VectorizeMultiDim):
         # ``assume_even`` (which would instead RAISE on the provably-non-divisible case). Every
         # other strategy keeps the even-extent fast path (single strided map, no remainder).
         branched = resolved.remainder_strategy in _BRANCHED_REMAINDER
+        # A block tile: each thread takes the given innermost lanes, and the tile spans the block's threads
+        lanes_per_thread = resolved.widths[-1]
+        if resolved.tile_group is TileGroup.BLOCK:
+            threads = 32 * resolved.num_warps
+            resolved = dataclasses.replace(resolved, widths=(*resolved.widths[:-1], lanes_per_thread * threads))
         super().__init__(
-            dataclasses.replace(resolved, device=DeviceType.GPU, target_isa=ISA.CUDA, assume_even=not branched)
+            dataclasses.replace(resolved, device=DeviceType.GPU, target_isa=ISA.CUDA, assume_even=not branched),
+            even_widths=(*resolved.widths[:-1], lanes_per_thread),
         )
+        self._tile_group = resolved.tile_group
+        self._lanes_per_thread = lanes_per_thread
+        self._num_warps = resolved.num_warps
+        self._requested = config
+
+    def apply_pass(self, sdfg: dace.SDFG, pipeline_results: dict[str, Any]) -> dict[str, Any] | None:
+        # The iteration of a block tile's map is a whole thread block, every thread of which would reduce into the
+        # map's output: an SDFG with such a reduction keeps one thread's register tiles
+        if self._tile_group is TileGroup.BLOCK and _has_kernel_reduction(sdfg):
+            thread_tiles = type(self)(dataclasses.replace(self._requested, tile_group=TileGroup.THREAD))
+            return thread_tiles.apply_pass(sdfg, pipeline_results)
+        return super().apply_pass(sdfg, pipeline_results)
+
+
+def _has_kernel_reduction(sdfg: dace.SDFG) -> bool:
+    """Whether a ``GPU_Device`` map of ``sdfg`` (recursively) writes its output through a write-conflict resolution."""
+    return any(
+        isinstance(node, dace.nodes.MapExit)
+        and node.map.schedule == dace.dtypes.ScheduleType.GPU_Device
+        and any(edge.data.wcr is not None for edge in state.in_edges(node))
+        for node, state in sdfg.all_nodes_recursive()
+    )

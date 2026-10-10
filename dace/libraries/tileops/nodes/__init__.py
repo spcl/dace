@@ -1,6 +1,9 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """The tile library nodes."""
 
+from dace import library
+from dace.libraries.tileops.expansions import ExpandTileBlock
+
 from dace.libraries.tileops.nodes.tile_mask_gen import TileMaskGen
 from dace.libraries.tileops.nodes.tile_gather import TileGather
 from dace.libraries.tileops.nodes.tile_scatter import TileScatter
@@ -18,3 +21,6 @@ TILE_TRANSFER_NODES = (MaskedCopyLibraryNode, TileGather, TileScatter)
 
 #: Every tile library node.
 TILE_NODES = (*TILE_TRANSFER_NODES, TileBinop, TileFMA, TileIota, TileITE, TileMaskGen, TileMMA, TileReduce, TileUnop)
+
+for _node in TILE_NODES:
+    library.register_expansion(_node, "block")(type(f"Expand{_node.__name__}Block", (ExpandTileBlock,), {}))

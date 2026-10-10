@@ -201,6 +201,7 @@ class TileGather(TileOp):
     INPUT_CONNECTOR_NAME = "_src"
     OUTPUT_CONNECTOR_NAME = "_dst"
 
+    lanes_independent = True
     implementations = {
         "pure": ExpandTileGatherPure,
         "scalar": ExpandTileGatherScalar,
@@ -418,6 +419,10 @@ class TileGather(TileOp):
                 raise ValueError(
                     f"{self.label}: '_idx_{d}' dtype {desc.dtype} not in {GATHER_INDEX_DTYPES} (design section 10.4)"
                 )
+
+    def reads_lane_wise(self, connector: str) -> bool:
+        # A lane reads the element of ``_src`` its index names
+        return connector != "_src"
 
     def pure_tasklet(self, state: dace.SDFGState, sdfg: dace.SDFG) -> nodes.Tasklet:
         from dace.symbolic import symstr
