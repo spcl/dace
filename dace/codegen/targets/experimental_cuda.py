@@ -1133,13 +1133,9 @@ class KernelSpec:
 
         kernel_const_data = kernel_read_only_data(kernel_map_entry, kernel_parent_state)
         kernel_const_symbols = sdutil.get_constant_symbols(kernel_map_entry, kernel_parent_state)
-        # A pointer (Array/View) arg may be ``const`` ONLY when it is read-only in this kernel, i.e. in
-        # ``kernel_const_data`` (read-set minus write-set). ``get_constant_symbols`` can surface a WRITTEN
-        # data container's name as a "constant symbol" -- its MapEntry branch returns
-        # ``used_symbols_within_scope`` (which includes data names used in subset/offset expressions) and,
-        # unlike the CFG branches, never subtracts writes. Letting such a name into ``kernel_constants``
-        # const-qualifies a written output pointer -> ``expression must be a modifiable lvalue``. Drop any
-        # pointer arg that is not genuinely read-only; scalar-symbol args are unaffected.
+        # get_constant_symbols on a MapEntry also returns data names used in subset expressions, written
+        # ones included. A pointer argument is const only when it is read-only (in kernel_const_data);
+        # otherwise a written output pointer is declared const and the kernel does not compile.
         written_pointers = {
             name
             for name, data in self.arglist.items()
