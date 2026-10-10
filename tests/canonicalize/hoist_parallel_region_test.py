@@ -32,6 +32,8 @@ from dace.sdfg.dealias import convert_legacy_nested_sdfgs
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.canonicalize.finalize import finalize_for_target
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
+from dace.transformation.passes.canonicalize.supply_num_threads import SupplyNumThreads
+from dace.transformation.passes.cpu_specialization.band_carried_loops import BandCarriedLoops
 from dace.transformation.passes.cpu_specialization.hoist_parallel_region import HoistParallelRegion
 from tests.cfg_tree import assert_tree_matches_a_reset, spy_on_resets
 from tests.corpus.tsvc import tsvc
@@ -283,8 +285,18 @@ def test_nested_sdfg_inside_the_map_keeps_its_parent_pointers(monkeypatch):
     sdfg.validate()
 
 
-def test_top_level_sequential_map_in_the_loop_is_refused():
-    """A ``Sequential`` map beside the parallel one is not worksharing: the team would run it P times."""
+def worksharing_maps(sdfg):
+    """Labels of every ``CPU_Multicore`` map in ``sdfg``, nested SDFGs included."""
+    return sorted(
+        n.map.label
+        for n, _ in sdfg.all_nodes_recursive()
+        if isinstance(n, nd.MapEntry) and n.map.schedule == dtypes.ScheduleType.CPU_Multicore
+    )
+
+
+def test_top_level_sequential_map_in_the_loop_is_shared_out():
+    """A ``Sequential`` map beside the parallel one would run P times in the team, so it becomes an ``omp for``
+    too: the cost model sequentialized it to save a fork, and inside the team it costs a barrier instead."""
     sdfg = dace.SDFG("sequential_neighbour")
     sdfg.add_array("a", [N], dace.float64)
     sdfg.add_array("b", [N], dace.float64)
@@ -293,11 +305,37 @@ def test_top_level_sequential_map_in_the_loop_is_refused():
     mapped_state(outer, "seq", "b", "2.0", ["0:N"], schedule=dtypes.ScheduleType.Sequential)
     outer.add_edge(outer.nodes()[0], outer.nodes()[1], dace.InterstateEdge())
     sdfg.validate()
-    assert_declined(sdfg, "a Sequential map at the top level breaks replication-freedom (H)")
+    assert HoistParallelRegion().apply_pass(sdfg, {}) == 1
+    assert worksharing_maps(sdfg) == ["par_map", "seq_map"]
+    a, b = np.zeros(5), np.zeros(5)
+    sdfg(a=a, b=b, N=5)
+    assert np.allclose(a, 1.0) and np.allclose(b, 2.0)
 
 
-def test_top_level_library_node_in_the_loop_is_refused():
-    """A library node expands to whatever it likes, including its own parallel region. Refuse."""
+def test_sequential_map_around_a_parallel_map_is_refused():
+    """A ``Sequential`` map with a parallel map inside is a loop nest of its own, not a statement to share
+    out: the team would run its inner region P times over."""
+    sdfg = dace.SDFG("sequential_around_parallel")
+    sdfg.add_array("a", [N], dace.float64)
+    sdfg.add_array("b", [N, N], dace.float64)
+    outer = loop_region(sdfg, "outer", "N")
+    mapped_state(outer, "par", "a", "1.0", ["0:N"])
+    nest = outer.add_state("nest")
+    seq_entry, seq_exit = nest.add_map("seq", {"j": "0:N"}, schedule=dtypes.ScheduleType.Sequential)
+    par_entry, par_exit = nest.add_map("inner", {"k": "0:N"}, schedule=dtypes.ScheduleType.CPU_Multicore)
+    tasklet = nest.add_tasklet("set", {}, {"out"}, "out = 2.0")
+    nest.add_nedge(seq_entry, par_entry, dace.Memlet())
+    nest.add_nedge(par_entry, tasklet, dace.Memlet())
+    nest.add_memlet_path(
+        tasklet, par_exit, seq_exit, nest.add_access("b"), src_conn="out", memlet=dace.Memlet("b[j, k]")
+    )
+    outer.add_edge(outer.nodes()[0], nest, dace.InterstateEdge())
+    sdfg.validate()
+    assert_declined(sdfg, "a Sequential map with a parallel map inside breaks replication-freedom (H)")
+
+
+def test_top_level_fill_in_the_loop_is_expanded_and_shared_out():
+    """A fill expands to one map over the elements it writes, so it is shared out like any other map."""
     from dace.libraries.standard.nodes.fill import FillLibraryNode
 
     sdfg = dace.SDFG("library_neighbour")
@@ -306,21 +344,67 @@ def test_top_level_library_node_in_the_loop_is_refused():
     outer = loop_region(sdfg, "outer", "N")
     mapped_state(outer, "par", "a", "1.0", ["0:N"])
     fill_state = outer.add_state("fill")
-    node = FillLibraryNode("fill_b", value=0.0)
+    node = FillLibraryNode("fill_b", value=3.0)
     fill_state.add_node(node)
     fill_state.add_edge(
         node, FillLibraryNode.OUTPUT_CONNECTOR_NAME, fill_state.add_access("b"), None, dace.Memlet("b[0:N]")
     )
     outer.add_edge(outer.nodes()[0], fill_state, dace.InterstateEdge())
     sdfg.validate()
-    assert_declined(sdfg, "a top-level library node breaks replication-freedom (H)")
+    assert HoistParallelRegion().apply_pass(sdfg, {}) == 1
+    assert not any(isinstance(n, nd.LibraryNode) for n, _ in sdfg.all_nodes_recursive())
+    assert len(worksharing_maps(sdfg)) == 2
+    a, b = np.zeros(5), np.zeros(5)
+    sdfg(a=a, b=b, N=5)
+    assert np.allclose(a, 1.0) and np.allclose(b, 3.0)
 
 
-def test_loop_local_transient_crossing_two_map_scopes_is_refused():
-    """A scope-lifetime transient moves INTO the outlined nest, i.e. one copy per thread.
+def test_top_level_nested_sdfg_in_the_loop_is_refused():
+    """A nested SDFG beside the maps is a statement nothing can share out. Refuse."""
+    sdfg = dace.SDFG("nested_neighbour")
+    sdfg.add_array("a", [N], dace.float64)
+    sdfg.add_array("b", [1], dace.float64)
+    outer = loop_region(sdfg, "outer", "N")
+    mapped_state(outer, "par", "a", "1.0", ["0:N"])
+    inner = dace.SDFG("nested_neighbour_body")
+    inner.add_array("o", [1], dace.float64)
+    inner_state = inner.add_state("set", is_start_block=True)
+    tasklet = inner_state.add_tasklet("set", {}, {"out"}, "out = 1.0")
+    inner_state.add_edge(tasklet, "out", inner_state.add_access("o"), None, dace.Memlet("o[0]"))
+    nest_state = outer.add_state("nest")
+    nsdfg = nest_state.add_nested_sdfg(inner, {}, {"o"})
+    nest_state.add_edge(nsdfg, "o", nest_state.add_access("b"), None, dace.Memlet("b[0]"))
+    outer.add_edge(outer.nodes()[0], nest_state, dace.InterstateEdge())
+    sdfg.validate()
+    assert_declined(sdfg, "a top-level nested SDFG breaks replication-freedom (H)")
 
-    Here the first map fills ``t`` and the second reads it, so a private copy would hand the second
-    ``omp for`` whatever its own thread happened to write -- condition (T).
+
+def test_scalar_recurrence_in_an_inner_loop_is_not_worth_a_team():
+    """``seidel_2d``'s shape: a worksharing map per outer trip, and an inner loop of scalar statements. In a
+    team each statement becomes a one-iteration ``omp for`` -- a barrier per element of the inner loop
+    against one fork saved per outer trip -- so the loop is left alone, copies and all."""
+    sdfg = dace.SDFG("inner_scalar_recurrence")
+    sdfg.add_array("a", [N], dace.float64)
+    sdfg.add_array("b", [N], dace.float64)
+    outer = loop_region(sdfg, "outer", "N")
+    par = mapped_state(outer, "par", "a", "1.0", ["0:N"])
+    par.add_nedge(par.add_access("a"), par.add_access("b"), dace.Memlet("a[0:N] -> [0:N]"))
+    inner = loop_region(outer, "inner", "N", var="jt")
+    body = inner.add_state("body", is_start_block=True)
+    tasklet = body.add_tasklet("step", {"x"}, {"y"}, "y = x + 1.0")
+    body.add_edge(body.add_read("b"), None, tasklet, "x", dace.Memlet("b[jt]"))
+    body.add_edge(tasklet, "y", body.add_write("b"), None, dace.Memlet("b[jt]"))
+    outer.add_edge(par, inner, dace.InterstateEdge())
+    sdfg.validate()
+    assert_declined(sdfg, "a repair inside an inner loop with no worksharing map costs a barrier per trip")
+
+
+def test_loop_local_transient_crossing_two_map_scopes_stays_outside_the_nest():
+    """A scope-lifetime transient would move INTO the outlined nest, one copy per thread -- condition (T).
+
+    The first map fills ``t`` and the second reads it, so a private copy would hand the second ``omp for``
+    whatever its own thread happened to write. ``t`` stays in the enclosing SDFG instead, allocated
+    before the region opens and shared by the team.
     """
     sdfg = dace.SDFG("privatized_transient")
     sdfg.add_array("a", [N], dace.float64)
@@ -331,24 +415,55 @@ def test_loop_local_transient_crossing_two_map_scopes_is_refused():
     outer.add_edge(producer, consumer, dace.InterstateEdge())
     sdfg.arrays["t"].lifetime = dtypes.AllocationLifetime.Scope
     sdfg.validate()
-    assert_declined(sdfg, "a scope-lifetime transient crossing two map scopes breaks (T)")
+    assert HoistParallelRegion().apply_pass(sdfg, {}) == 1
+    assert "t" in sdfg.arrays, "the hand-off transient must stay in the enclosing SDFG"
+    (nest,) = [n for n in sdfg.all_nodes_recursive() if isinstance(n[0], nd.NestedSDFG)]
+    assert "t" not in nest[0].sdfg.arrays or not nest[0].sdfg.arrays["t"].transient
+    a = np.zeros(6)
+    sdfg(a=a, N=6)
+    assert np.allclose(a, 2.0)
 
 
-def test_bulk_copy_between_access_nodes_in_the_loop_is_refused():
-    """``jacobi_2d``'s ``A[1:N-1, 1:N-1] = B[1:N-1, 1:N-1]``: two access nodes and a memlet.
-
-    It carries no code node, so it reads like a node that emits nothing -- and it emits a full
-    array copy. Replicated across the team it is both a data race and, worse, unsynchronized: no
-    barrier stands between it and the next trip's ``omp for`` reading what it wrote.
-    """
-    sdfg = dace.SDFG("bulk_copy_neighbour")
+def bulk_copy_in_loop_sdfg(name, copy):
+    """``for it { map i: b[i] = 1.0; a = b }`` with the copy given as a memlet string."""
+    sdfg = dace.SDFG(name)
     sdfg.add_array("a", [N], dace.float64)
     sdfg.add_array("b", [N], dace.float64)
     outer = loop_region(sdfg, "outer", "N")
     body = mapped_state(outer, "par", "b", "1.0", ["0:N"])
-    body.add_nedge(body.add_access("b"), body.add_access("a"), dace.Memlet("b[0:N] -> [0:N]"))
+    body.add_nedge(body.add_access("b"), body.add_access("a"), dace.Memlet(copy))
     sdfg.validate()
-    assert_declined(sdfg, "an access-node-to-access-node copy at the top level breaks (H)")
+    return sdfg
+
+
+def test_bulk_copy_between_access_nodes_in_the_loop_is_shared_out_as_a_worksharing_map():
+    """``jacobi_2d``'s ``A[1:N-1, 1:N-1] = B[1:N-1, 1:N-1]``: two access nodes and a memlet.
+
+    Replicated across the team it would be a data race with no barrier before the next trip reads it, so
+    the copy becomes an ``omp for`` over the copied elements, with the barrier of any other map.
+    """
+    sdfg = bulk_copy_in_loop_sdfg("bulk_copy_neighbour", "b[0:N] -> [0:N]")
+    assert HoistParallelRegion().apply_pass(sdfg, {}) == 1
+    sdfg.validate()
+    assert not any(
+        isinstance(e.src, nd.AccessNode) and isinstance(e.dst, nd.AccessNode) and not e.data.is_empty()
+        for e, _ in sdfg.all_edges_recursive()
+    ), "the copy must leave as a worksharing map, not as a copy every thread replicates"
+    a, b = np.zeros(7), np.zeros(7)
+    sdfg(a=a, b=b, N=7)
+    assert np.allclose(a, 1.0) and np.allclose(b, 1.0)
+
+
+def test_relinearizing_bulk_copy_in_the_loop_is_refused():
+    """A copy that reshapes has no element-for-element map, so nothing shares it out."""
+    sdfg = dace.SDFG("bulk_copy_reshape")
+    sdfg.add_array("a", [N, 2], dace.float64)
+    sdfg.add_array("b", [2 * N], dace.float64)
+    outer = loop_region(sdfg, "outer", "N")
+    body = mapped_state(outer, "par", "b", "1.0", ["0:2*N"])
+    body.add_nedge(body.add_access("b"), body.add_access("a"), dace.Memlet("b[0:2*N] -> [0:N, 0:2]"))
+    sdfg.validate()
+    assert_declined(sdfg, "a copy without an element-for-element map breaks (H)")
 
 
 def test_loop_without_a_parallel_map_is_refused():
@@ -376,6 +491,158 @@ def test_break_in_the_loop_is_refused():
     assert_declined(sdfg, "a BreakBlock inside the loop is refused")
 
 
+def banded(sdfg):
+    """Run the band pass the way ``finalize_for_target`` does, with the thread-count symbol declared."""
+    SupplyNumThreads().apply_pass(sdfg, {})
+    return BandCarriedLoops().apply_pass(sdfg, {})
+
+
+def sweep_state(container, label, target, code, ranges, inputs):
+    """A state with one ``CPU_Multicore`` mapped tasklet; ``target``/``inputs`` are memlet strings."""
+    state = container.add_state(label, is_start_block=len(container.nodes()) == 0)
+    state.add_mapped_tasklet(
+        label,
+        ranges,
+        {f"in{k}": dace.Memlet(m) for k, m in enumerate(inputs)},
+        code,
+        {"out": dace.Memlet(target)},
+        schedule=dtypes.ScheduleType.CPU_Multicore,
+        external_edges=True,
+    )
+    return state
+
+
+def chain(container, *states):
+    """Connect ``states`` in order inside ``container``."""
+    for first, second in zip(states, states[1:]):
+        container.add_edge(first, second, dace.InterstateEdge())
+
+
+def sweep_reference(a, step):
+    """``a[it + 1, cols] = step(a[it, cols])`` for every ``it``, on a copy."""
+    ref = a.copy()
+    for it in range(a.shape[0] - 1):
+        ref[it + 1] = step(ref[it], ref[it + 1])
+    return ref
+
+
+def test_band_reads_two_maps_by_their_offsets():
+    """``t[i]`` over ``0:N-1`` and ``t[j - 1]`` over ``1:N`` are one position of one band: the band cuts each
+    map's offsets from its begin, so the test compares offsets, not the parameters as spelled."""
+    sdfg = dace.SDFG("band_offsets")
+    sdfg.add_array("a", [N, N], dace.float64)
+    sdfg.add_transient("t", [N - 1], dace.float64)
+    outer = loop_region(sdfg, "outer", "N - 1")
+    first = sweep_state(outer, "first", "t[i]", "out = 2.0 * in0", {"i": "0:N-1"}, ["a[it, i + 1]"])
+    second = sweep_state(outer, "second", "a[it + 1, j]", "out = in0 + 1.0", {"j": "1:N"}, ["t[j - 1]"])
+    chain(outer, first, second)
+    sdfg.validate()
+    assert banded(sdfg) == 1
+    a = np.random.default_rng(7).random((9, 9))
+    ref = sweep_reference(a, lambda prev, cur: np.concatenate([cur[:1], 2.0 * prev[1:] + 1.0]))
+    sdfg(a=a, N=9)
+    assert np.allclose(a, ref)
+
+
+def test_band_runs_a_scalar_statement_in_every_band():
+    """A tasklet beside the maps writing a loop-local scalar is run by every band on its own copy."""
+    sdfg = dace.SDFG("band_scalar_statement")
+    sdfg.add_array("a", [N, N], dace.float64)
+    sdfg.add_array("c", [1], dace.float64)
+    sdfg.add_transient("s", [1], dace.float64)
+    outer = loop_region(sdfg, "outer", "N - 1")
+    prologue = outer.add_state("prologue", is_start_block=True)
+    tasklet = prologue.add_tasklet("double", {"x"}, {"y"}, "y = 2.0 * x")
+    prologue.add_edge(prologue.add_read("c"), None, tasklet, "x", dace.Memlet("c[0]"))
+    prologue.add_edge(tasklet, "y", prologue.add_write("s"), None, dace.Memlet("s[0]"))
+    sweep = sweep_state(outer, "sweep", "a[it + 1, i]", "out = in0 + in1", {"i": "0:N"}, ["a[it, i]", "s[0]"])
+    chain(outer, prologue, sweep)
+    sdfg.validate()
+    assert banded(sdfg) == 1
+    a, c = np.random.default_rng(8).random((7, 7)), np.array([0.25])
+    ref = sweep_reference(a, lambda prev, cur: prev + 0.5)
+    sdfg(a=a, c=c, N=7)
+    assert np.allclose(a, ref)
+
+
+def test_band_refuses_a_scalar_statement_reading_what_another_band_writes():
+    """``s = a[it, 0]`` reads the column band 0 wrote on the previous trip -- ``s115``'s shape. The band
+    refuses, and the team hoist, which keeps the barrier, takes the loop."""
+    sdfg = dace.SDFG("band_cross_scalar")
+    sdfg.add_array("a", [N, N], dace.float64)
+    sdfg.add_transient("s", [1], dace.float64)
+    outer = loop_region(sdfg, "outer", "N - 1")
+    prologue = outer.add_state("prologue", is_start_block=True)
+    tasklet = prologue.add_tasklet("pick", {"x"}, {"y"}, "y = x")
+    prologue.add_edge(prologue.add_read("a"), None, tasklet, "x", dace.Memlet("a[it, 0]"))
+    prologue.add_edge(tasklet, "y", prologue.add_write("s"), None, dace.Memlet("s[0]"))
+    sweep = sweep_state(outer, "sweep", "a[it + 1, i]", "out = in0 + in1", {"i": "0:N"}, ["a[it, i]", "s[0]"])
+    chain(outer, prologue, sweep)
+    sdfg.validate()
+    assert banded(sdfg) is None
+    assert HoistParallelRegion().apply_pass(sdfg, {}) == 1
+    a = np.random.default_rng(9).random((7, 7))
+    ref = sweep_reference(a, lambda prev, cur: prev + prev[0])
+    sdfg(a=a, N=7)
+    assert np.allclose(a, ref)
+
+
+def test_band_narrows_a_whole_fill_to_what_is_read():
+    """``t[:] = 0`` beside maps over ``1:N`` has a different extent, so the band could not cut it the same
+    way; nothing reads ``t[0]``, so the fill shrinks to ``t[1:N]`` and the loop bands."""
+    from dace.libraries.standard.nodes.fill import FillLibraryNode
+
+    sdfg = dace.SDFG("band_fill_hull")
+    sdfg.add_array("a", [N, N], dace.float64)
+    sdfg.add_transient("t", [N], dace.float64)
+    outer = loop_region(sdfg, "outer", "N - 1")
+    clear = outer.add_state("clear", is_start_block=True)
+    fill = FillLibraryNode("clear_t", value=0.0)
+    clear.add_node(fill)
+    clear.add_edge(fill, FillLibraryNode.OUTPUT_CONNECTOR_NAME, clear.add_write("t"), None, dace.Memlet("t[0:N]"))
+    gather = sweep_state(outer, "gather", "t[i]", "out = in0 + in1", {"i": "1:N"}, ["t[i]", "a[it, i]"])
+    store = sweep_state(outer, "store", "a[it + 1, i]", "out = in0", {"i": "1:N"}, ["t[i]"])
+    chain(outer, clear, gather, store)
+    sdfg.validate()
+    assert banded(sdfg) == 1
+    a = np.random.default_rng(10).random((6, 6))
+    ref = sweep_reference(a, lambda prev, cur: np.concatenate([cur[:1], prev[1:]]))
+    sdfg(a=a, N=6)
+    assert np.allclose(a, ref)
+
+
+def test_band_takes_a_row_fill_loop_as_one_map():
+    """``SpecializeCpuTransfers``' shape: a sequential row loop around a row fill. It is rebuilt as one map
+    over rows and columns, so its column axis is cut like every other map's."""
+    from dace.libraries.standard.nodes.fill import FillLibraryNode
+
+    sdfg = dace.SDFG("band_row_fill")
+    sdfg.add_array("a", [N, N], dace.float64)
+    sdfg.add_transient("z", [3, N], dace.float64)
+    outer = loop_region(sdfg, "outer", "N - 1")
+    clear = outer.add_state("clear", is_start_block=True)
+    entry, exit_node = clear.add_map("rows", {"r": "0:3"}, schedule=dtypes.ScheduleType.Sequential)
+    fill = FillLibraryNode("clear_row", value=1.5)
+    clear.add_node(fill)
+    clear.add_nedge(entry, fill, dace.Memlet())
+    clear.add_memlet_path(
+        fill,
+        exit_node,
+        clear.add_write("z"),
+        src_conn=FillLibraryNode.OUTPUT_CONNECTOR_NAME,
+        memlet=dace.Memlet("z[r, 0:N]"),
+    )
+    sweep = sweep_state(outer, "sweep", "a[it + 1, i]", "out = in0 + in1", {"i": "0:N"}, ["a[it, i]", "z[1, i]"])
+    chain(outer, clear, sweep)
+    sdfg.validate()
+    assert banded(sdfg) == 1
+    assert not any(isinstance(n, nd.LibraryNode) for n, _ in sdfg.all_nodes_recursive())
+    a = np.random.default_rng(11).random((6, 6))
+    ref = sweep_reference(a, lambda prev, cur: prev + 1.5)
+    sdfg(a=a, N=6)
+    assert np.allclose(a, ref)
+
+
 @pytest.mark.parametrize("name", TSVC_KERNELS)
 def test_the_canonical_form_keeps_every_barrier(name):
     """No ``omp for`` may carry ``nowait``, and this is policy rather than an unfinished feature.
@@ -396,26 +663,6 @@ def test_the_canonical_form_keeps_every_barrier(name):
     )
 
 
-if __name__ == "__main__":
-    for kernel_name in HOISTED_KERNELS:
-        test_one_team_replaces_the_per_trip_region(kernel_name)
-    for kernel_name in TSVC_KERNELS:
-        test_finalized_kernel_matches_the_numpy_reference(kernel_name)
-    test_s115_keeps_every_store_inside_a_worksharing_map()
-    test_wavefront_reaching_into_the_neighbouring_band_is_still_correct()
-    test_minimal_loop_over_map_hoists()
-    test_second_run_adds_no_second_team()
-    test_nested_sdfg_inside_the_map_keeps_its_parent_pointers()
-    test_top_level_sequential_map_in_the_loop_is_refused()
-    test_top_level_library_node_in_the_loop_is_refused()
-    test_loop_local_transient_crossing_two_map_scopes_is_refused()
-    test_bulk_copy_between_access_nodes_in_the_loop_is_refused()
-    test_loop_without_a_parallel_map_is_refused()
-    test_break_in_the_loop_is_refused()
-    for kernel_name in TSVC_KERNELS:
-        test_the_canonical_form_keeps_every_barrier(kernel_name)
-
-
 def test_a_loop_nested_inside_another_region_is_hoisted_in_its_own_graph():
     """The team is outlined from the graph that holds the loop, not from the SDFG (warpx_boris_push's shape)."""
     sdfg = dace.SDFG("nested_hoistable")
@@ -423,9 +670,15 @@ def test_a_loop_nested_inside_another_region_is_hoisted_in_its_own_graph():
     sdfg.add_array("b", [N], dace.float64)
     outer = loop_region(sdfg, "outer", "N")
 
-    # An AccessNode -> AccessNode copy in the outer body: hoistable refuses the outer loop here.
+    # A top-level nested SDFG in the outer body: the outer loop is refused here.
     prologue = outer.add_state("prologue", is_start_block=True)
-    prologue.add_edge(prologue.add_read("b"), None, prologue.add_write("a"), None, dace.Memlet("a[0:N]"))
+    stamp = dace.SDFG("nested_hoistable_prologue")
+    stamp.add_array("o", [N], dace.float64)
+    stamp_state = stamp.add_state("set", is_start_block=True)
+    tasklet = stamp_state.add_tasklet("set", {}, {"out"}, "out = 2.0")
+    stamp_state.add_edge(tasklet, "out", stamp_state.add_access("o"), None, dace.Memlet("o[0]"))
+    stamp_node = prologue.add_nested_sdfg(stamp, {}, {"o"})
+    prologue.add_edge(stamp_node, "o", prologue.add_access("b"), None, dace.Memlet("b[0:N]"))
 
     inner = LoopRegion(
         "inner", initialize_expr="jt = 0", condition_expr="jt < N", update_expr="jt = jt + 1", loop_var="jt"
@@ -441,3 +694,33 @@ def test_a_loop_nested_inside_another_region_is_hoisted_in_its_own_graph():
     assert not any(isinstance(b, LoopRegion) and b.label == "inner" for b in sdfg.nodes()), (
         "the inner loop must stay inside the outer region, not be lifted to the SDFG"
     )
+
+
+if __name__ == "__main__":
+    for kernel_name in HOISTED_KERNELS:
+        test_one_team_replaces_the_per_trip_region(kernel_name)
+    for kernel_name in TSVC_KERNELS:
+        test_finalized_kernel_matches_the_numpy_reference(kernel_name)
+    test_s115_keeps_every_store_inside_a_worksharing_map()
+    test_wavefront_reaching_into_the_neighbouring_band_is_still_correct()
+    test_minimal_loop_over_map_hoists()
+    test_second_run_adds_no_second_team()
+    test_nested_sdfg_inside_the_map_keeps_its_parent_pointers(pytest.MonkeyPatch())
+    test_top_level_sequential_map_in_the_loop_is_shared_out()
+    test_sequential_map_around_a_parallel_map_is_refused()
+    test_top_level_fill_in_the_loop_is_expanded_and_shared_out()
+    test_top_level_nested_sdfg_in_the_loop_is_refused()
+    test_scalar_recurrence_in_an_inner_loop_is_not_worth_a_team()
+    test_loop_local_transient_crossing_two_map_scopes_stays_outside_the_nest()
+    test_bulk_copy_between_access_nodes_in_the_loop_is_shared_out_as_a_worksharing_map()
+    test_relinearizing_bulk_copy_in_the_loop_is_refused()
+    test_loop_without_a_parallel_map_is_refused()
+    test_break_in_the_loop_is_refused()
+    test_band_reads_two_maps_by_their_offsets()
+    test_band_runs_a_scalar_statement_in_every_band()
+    test_band_refuses_a_scalar_statement_reading_what_another_band_writes()
+    test_band_narrows_a_whole_fill_to_what_is_read()
+    test_band_takes_a_row_fill_loop_as_one_map()
+    for kernel_name in TSVC_KERNELS:
+        test_the_canonical_form_keeps_every_barrier(kernel_name)
+    test_a_loop_nested_inside_another_region_is_hoisted_in_its_own_graph()
