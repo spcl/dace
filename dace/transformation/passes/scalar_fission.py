@@ -4,6 +4,7 @@ from typing import Any
 
 from dace import SDFG, InterstateEdge
 from dace.sdfg import nodes as nd
+from dace.sdfg.state import ConditionalBlock
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 from dace.transformation.passes import analysis as ap
@@ -87,6 +88,8 @@ class ScalarFission(ppl.Pass):
                                     oeade.data.data = newname
                         elif isinstance(read[1], InterstateEdge):
                             read[1].replace_dict({name: newname})
+                        elif isinstance(read[1], ConditionalBlock):
+                            read[1].replace_meta_accesses({name: newname})
 
                     results[name].add(newname)
         return results
