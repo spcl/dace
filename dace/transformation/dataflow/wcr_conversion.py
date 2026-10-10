@@ -4,10 +4,12 @@
 import ast
 import copy
 import re
+from collections.abc import Sequence
 
 from dace import SDFG, Memlet, SDFGState, data, dtypes, nodes
 from dace.frontend.python import astutils
 from dace.sdfg import utils as sdutil
+from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.propagation import propagate_memlets_state
 from dace.transformation import transformation
 
@@ -28,6 +30,52 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
     _FUNCTIONS = ["min", "max"]
     _EXPR_MAP = {"-": ("+", "-({expr})"), "/": ("*", "((decltype({expr}))1)/({expr})")}
     _PYOP_MAP = {ast.Add: "+", ast.Sub: "-", ast.Mult: "*", ast.BitXor: "^", ast.Mod: "%", ast.Div: "/"}
+    _PYBOOLOP_MAP = {ast.Or: "or", ast.And: "and"}
+
+    @staticmethod
+    def python_updates(tasklet: nodes.Tasklet, inconns: Sequence[str]) -> list[tuple[str, str, ast.expr]]:
+        """Every ``(op, inconn, other)`` the Python tasklet reads as ``out = inconn <op> other``, with ``op`` a binary
+        or boolean operator, or as ``out = max(inconn, other)`` / ``min``, in either operand order."""
+        if len(tasklet.code.code) != 1 or not isinstance(tasklet.code.code[0], ast.Assign):
+            return []
+        assign: ast.Assign = tasklet.code.code[0]
+        if len(assign.targets) != 1 or not isinstance(assign.targets[0], ast.Name):
+            return []
+        rhs = assign.value
+        if isinstance(rhs, ast.BinOp) and type(rhs.op) in AugAssignToWCR._PYOP_MAP:
+            op, operands = AugAssignToWCR._PYOP_MAP[type(rhs.op)], (rhs.left, rhs.right)
+        elif isinstance(rhs, ast.BoolOp) and type(rhs.op) in AugAssignToWCR._PYBOOLOP_MAP and len(rhs.values) == 2:
+            op, operands = AugAssignToWCR._PYBOOLOP_MAP[type(rhs.op)], tuple(rhs.values)
+        elif (
+            isinstance(rhs, ast.Call)
+            and isinstance(rhs.func, ast.Name)
+            and rhs.func.id in AugAssignToWCR._FUNCTIONS
+            and len(rhs.args) == 2
+            and not rhs.keywords
+        ):
+            op, operands = rhs.func.id, tuple(rhs.args)
+        else:
+            return []
+        return [
+            (op, mine.id, other)
+            for mine, other in (operands, operands[::-1])
+            if isinstance(mine, ast.Name) and mine.id in inconns
+        ]
+
+    @staticmethod
+    def python_update(
+        tasklet: nodes.Tasklet, inedges: Sequence[MultiConnectorEdge], outedge: MultiConnectorEdge
+    ) -> tuple[str, MultiConnectorEdge, ast.expr] | None:
+        """``(op, inedge, other)`` of the update ``out = in <op> other``, where ``in`` reads the element ``out``
+        writes; ``None`` if the Python tasklet is no such update."""
+        target = tasklet.code.code[0].targets[0].id if tasklet.code.code else None
+        if target != outedge.src_conn:
+            return None
+        by_conn = {edge.dst_conn: edge for edge in inedges}
+        for op, inconn, other in AugAssignToWCR.python_updates(tasklet, list(by_conn)):
+            if by_conn[inconn].data.subset == outedge.data.subset:
+                return op, by_conn[inconn], other
+        return None
 
     @classmethod
     def expressions(cls):
@@ -90,28 +138,7 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
         funcs = "|".join(re.escape(o) for o in AugAssignToWCR._FUNCTIONS)
 
         if tasklet.language is dtypes.Language.Python:
-            # Match a single assignment with a binary operation as RHS
-            if len(tasklet.code.code) > 1:
-                return False
-            if not isinstance(tasklet.code.code[0], ast.Assign):
-                return False
-            ast_node: ast.Assign = tasklet.code.code[0]
-            if len(ast_node.targets) > 1:
-                return False
-            if not isinstance(ast_node.targets[0], ast.Name):
-                return False
-            lhs: ast.Name = ast_node.targets[0]
-            if lhs.id != outconn:
-                return False
-            if not isinstance(ast_node.value, ast.BinOp):
-                return False
-            rhs: ast.BinOp = ast_node.value
-            if not isinstance(rhs.op, tuple(AugAssignToWCR._PYOP_MAP.keys())):
-                return False
-            inconns = tuple(edge.dst_conn for edge in inedges)
-            for n in (rhs.left, rhs.right):
-                if isinstance(n, ast.Name) and n.id in inconns:
-                    return True
+            return AugAssignToWCR.python_update(tasklet, inedges, outedge) is not None
         elif tasklet.language is dtypes.Language.CPP:
             cstr = tasklet.code.as_string.strip()
             for edge in inedges:
@@ -173,20 +200,9 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
 
         # Change tasklet code
         if tasklet.language is dtypes.Language.Python:
-            # Match a single assignment with a binary operation as RHS
             ast_node: ast.Assign = tasklet.code.code[0]
-            lhs: ast.Name = ast_node.targets[0]
-            rhs: ast.BinOp = ast_node.value
-            op = AugAssignToWCR._PYOP_MAP[type(rhs.op)]
-            inconns = [edge.dst_conn for edge in inedges]
-            if isinstance(rhs.left, ast.Name) and rhs.left.id in inconns:
-                inedge = inedges[inconns.index(rhs.left.id)]
-                new_rhs = rhs.right
-            else:
-                inedge = inedges[inconns.index(rhs.right.id)]
-                new_rhs = rhs.left
-
-            new_node = ast.copy_location(ast.Assign(targets=[lhs], value=new_rhs), ast_node)
+            op, inedge, new_rhs = AugAssignToWCR.python_update(tasklet, inedges, outedge)
+            new_node = ast.copy_location(ast.Assign(targets=ast_node.targets, value=new_rhs), ast_node)
             tasklet.code.code = [new_node]
 
         elif tasklet.language is dtypes.Language.CPP:
