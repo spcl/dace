@@ -632,34 +632,9 @@ class CPUCodeGen(TargetCodeGenerator):
 
             return
         elif nodedesc.storage == dtypes.StorageType.Register:
-            ctypedef = dtypes.pointer(nodedesc.dtype).ctype
-            if nodedesc.start_offset != 0:
-                raise NotImplementedError("Start offset unsupported for registers")
-            # A VLA is neither alignable nor brace-initializable, so it zeroes by assignment. Its bound
-            # must be positive, while a symbolic extent may evaluate to zero.
-            variable_length_array = symbolic.issymbolic(arrsize, sdfg.constants)
-            bound = cpp.sym2cpp(symbolic.sympy.Max(1, arrsize) if variable_length_array else arrsize)
-            alignment = "" if variable_length_array else "  DACE_ALIGN(64)"
-            if node.setzero and not variable_length_array:
-                declaration_stream.write(
-                    f"{nodedesc.dtype.ctype} {name}[{bound}]{alignment} = {{0}};\n",
-                    cfg,
-                    state_id,
-                    node,
-                )
-                define_var(name, DefinedType.Pointer, ctypedef)
-                return
-            declaration_stream.write(
-                f"{nodedesc.dtype.ctype} {name}[{bound}]{alignment};\n",
-                cfg,
-                state_id,
-                node,
+            allocate_register_array(
+                name, nodedesc, arrsize, node, cfg, state_id, declaration_stream, allocation_stream, define_var
             )
-            if node.setzero:
-                allocation_stream.write(
-                    "memset(%s, 0, sizeof(%s)*(%s));\n" % (name, nodedesc.dtype.ctype, bound), cfg, state_id, node
-                )
-            define_var(name, DefinedType.Pointer, ctypedef)
             return
         elif nodedesc.storage is dtypes.StorageType.CPU_ThreadLocal:
             # Define pointer once
@@ -727,7 +702,7 @@ class CPUCodeGen(TargetCodeGenerator):
             )
             self._dispatcher.declared_arrays.remove(alloc_name, is_global=is_global)
 
-        if isinstance(nodedesc, (data.Scalar, data.View, data.Stream, data.Reference)):
+        if released_without_free(nodedesc, alloc_name, callsite_stream):
             return
         elif nodedesc.storage == dtypes.StorageType.CPU_Heap or (
             nodedesc.storage == dtypes.StorageType.Register
@@ -1171,10 +1146,8 @@ class CPUCodeGen(TargetCodeGenerator):
             dst_edge = dfg.memlet_path(edge)[-1]
             dst_node = dst_edge.dst
 
-            # Target is neither a data nor a tasklet node
-            if isinstance(node, nodes.AccessNode) and (
-                not isinstance(dst_node, nodes.AccessNode) and not isinstance(dst_node, nodes.CodeNode)
-            ):
+            # Target is neither a data nor a tasklet node, or a GPU stream handle, which moves no data
+            if moves_no_data_to(node, dst_node, state):
                 continue
 
             # Skip array->code (will be handled as a tasklet input)
@@ -1420,6 +1393,18 @@ class CPUCodeGen(TargetCodeGenerator):
         if not types:
             types = self._dispatcher.defined_vars.get(ptr, is_global=True)
         var_type, ctypedef = types
+        # declared_arrays holds the HOST declaration, which carries no ``const``, while a kernel
+        # argument the launch declares ``const`` is registered that way in defined_vars. Taking the
+        # host spelling for a symbol-shaped array then aliased a ``const int*`` parameter as
+        # ``int*``, which does not compile: xsbench's indirection into index_grid on the canon GPU
+        # column. Keep the qualifier the parameter actually has.
+        if types and not ctypedef.startswith("const "):
+            try:
+                _, defined_ctype = self._dispatcher.defined_vars.get(ptr, is_global=True)
+            except KeyError:
+                defined_ctype = ctypedef
+            if defined_ctype.startswith("const "):
+                ctypedef = defined_ctype
 
         result = ""
         expr = (
@@ -1491,6 +1476,8 @@ class CPUCodeGen(TargetCodeGenerator):
                 defined = DefinedType.Stream
         else:
             raise TypeError(f"Unknown variable type: {var_type}")
+
+        defined, allow_shadowing = stream_handle_definition(desc, defined, allow_shadowing)
 
         if defined is not None:
             self._dispatcher.defined_vars.add(local_name, defined, memlet_type, allow_shadowing=allow_shadowing)
@@ -1683,7 +1670,7 @@ class CPUCodeGen(TargetCodeGenerator):
         callsite_stream.write(after_memlets_stream.getvalue())
 
         # Instrumentation: Pre-tasklet
-        instr = self._dispatcher.instrumentation[node.instrument]
+        instr = self._dispatcher.instrumentation.get(tasklet_instrumentation(node, state_dfg))
         if instr is not None:
             instr.on_node_begin(sdfg, cfg, state_dfg, node, outer_stream_begin, inner_stream, function_stream)
 
@@ -1758,7 +1745,7 @@ class CPUCodeGen(TargetCodeGenerator):
         callsite_stream: CodeIOStream,
     ) -> None:
         cdtype = src_node.out_connectors[edge.src_conn]
-        if isinstance(sdfg.arrays[edge.data.data], data.Stream):
+        if writes_no_data(sdfg, edge, dst_node, state_dfg):
             pass
         elif isinstance(cdtype, dtypes.pointer):  # If pointer, also point to output
             desc = sdfg.arrays[edge.data.data]
@@ -2657,3 +2644,96 @@ class CPUCodeGen(TargetCodeGenerator):
         isvar = data.Scalar(dtype)
         callsite_stream.write(f"{isvar.as_arg(with_types=True, name=name)};\n", sdfg)
         self._frame.dispatcher.defined_vars.add(name, DefinedType.Scalar, dtype.ctype)
+
+
+def is_gpu_stream_access(node: nodes.Node, state: SDFGState) -> bool:
+    """An access node of a ``gpuStream_t`` array: it assigns streams to kernels and moves no data."""
+    return isinstance(node, nodes.AccessNode) and node.desc(state).dtype == dtypes.gpuStream_t
+
+
+def writes_no_data(sdfg: SDFG, edge: MultiConnectorEdge[mmlt.Memlet], dst_node: nodes.Node, state: SDFGState) -> bool:
+    return isinstance(sdfg.arrays[edge.data.data], data.Stream) or is_gpu_stream_access(dst_node, state)
+
+
+def moves_no_data_to(node: nodes.Node, dst_node: nodes.Node, state: SDFGState) -> bool:
+    """An out memlet of ``node`` ending at ``dst_node`` that writes nothing: an access node feeding a node that
+    is neither data nor code, or a GPU stream handle."""
+    if is_gpu_stream_access(dst_node, state):
+        return True
+    return isinstance(node, nodes.AccessNode) and (
+        not isinstance(dst_node, nodes.AccessNode) and not isinstance(dst_node, nodes.CodeNode)
+    )
+
+
+def stream_handle_definition(desc: data.Data, defined, allow_shadowing: bool):
+    """A GPU stream handle is rebound per kernel launch, so its connector shadows by design."""
+    if desc.dtype == dtypes.gpuStream_t:
+        return DefinedType.GPUStream, True
+    return defined, allow_shadowing
+
+
+def released_without_free(nodedesc: data.Data, alloc_name: str, callsite_stream: CodeIOStream) -> bool:
+    """Data whose deallocation frees nothing; a ``gpuStream_t`` alias of the context's streams is reset."""
+    if isinstance(nodedesc, (data.Scalar, data.View, data.Stream, data.Reference)):
+        return True
+    if nodedesc.dtype == dtypes.gpuStream_t:
+        callsite_stream.write(f"{alloc_name} = nullptr;")
+        return True
+    return False
+
+
+def tasklet_instrumentation(node: nodes.Tasklet, state: SDFGState) -> dtypes.InstrumentationType:
+    """The node's instrumentation, else its state's: library expansions (a copy's ``cudaMemcpyAsync``
+    tasklet) carry no instrumentation of their own."""
+    if node.instrument == dtypes.InstrumentationType.No_Instrumentation:
+        return state.instrument
+    return node.instrument
+
+
+def allocate_register_array(
+    name: str,
+    nodedesc: data.Array,
+    arrsize,
+    node: nodes.AccessNode,
+    cfg: ControlFlowRegion,
+    state_id: int,
+    declaration_stream: CodeIOStream,
+    allocation_stream: CodeIOStream,
+    define_var,
+) -> None:
+    """Declare a register (stack) array; a ``gpuStream_t`` array instead aliases the context's streams."""
+    if nodedesc.dtype == dtypes.gpuStream_t:
+        ctype = dtypes.gpuStream_t.ctype
+        allocation_stream.write(f"{ctype}* {name} = __state->gpu_context->streams;")
+        # Registered as a pointer, so nested-SDFG signatures take ``gpuStream_t*``.
+        define_var(name, DefinedType.Pointer, dtypes.pointer(dtypes.gpuStream_t).ctype)
+        return
+
+    ctypedef = dtypes.pointer(nodedesc.dtype).ctype
+    if nodedesc.start_offset != 0:
+        raise NotImplementedError("Start offset unsupported for registers")
+    # A VLA is neither alignable nor brace-initializable, so it zeroes by assignment. Its bound
+    # must be positive, while a symbolic extent may evaluate to zero.
+    variable_length_array = symbolic.issymbolic(arrsize, cfg.sdfg.constants)
+    bound = cpp.sym2cpp(symbolic.sympy.Max(1, arrsize) if variable_length_array else arrsize)
+    alignment = "" if variable_length_array else "  DACE_ALIGN(64)"
+    if node.setzero and not variable_length_array:
+        declaration_stream.write(
+            f"{nodedesc.dtype.ctype} {name}[{bound}]{alignment} = {{0}};\n",
+            cfg,
+            state_id,
+            node,
+        )
+        define_var(name, DefinedType.Pointer, ctypedef)
+        return
+    declaration_stream.write(
+        f"{nodedesc.dtype.ctype} {name}[{bound}]{alignment};\n",
+        cfg,
+        state_id,
+        node,
+    )
+    if node.setzero:
+        allocation_stream.write(
+            "memset(%s, 0, sizeof(%s)*(%s));\n" % (name, nodedesc.dtype.ctype, bound), cfg, state_id, node
+        )
+    define_var(name, DefinedType.Pointer, ctypedef)

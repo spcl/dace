@@ -28,3 +28,15 @@ def pytest_generate_tests(metafunc):
                 pytest.param(False, id="no_use_cpp_dispatcher"),
             ],
         )
+
+
+def pytest_collection_modifyitems(config, items):
+    """Skip tests marked for one CUDA implementation when ``compiler.cuda.implementation`` selects the other."""
+    from dace.config import Config  # Imported late: collection must not depend on importing dace.
+
+    impl = Config.get("compiler", "cuda", "implementation")
+    for item in items:
+        if "old_gpu_codegen_only" in item.keywords and impl != "legacy":
+            item.add_marker(pytest.mark.skip(reason="Requires the legacy CUDA codegen"))
+        if "new_gpu_codegen_only" in item.keywords and impl != "experimental":
+            item.add_marker(pytest.mark.skip(reason="Requires the experimental CUDA codegen"))
