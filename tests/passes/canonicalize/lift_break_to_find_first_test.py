@@ -47,10 +47,10 @@ def test_reads_what_the_body_writes(a: dace.float64[N], b: dace.float64[N]):
             break
 
 
-def lifted(program, name: str) -> tuple[dace.SDFG, int | None]:
+def lifted(program, name: str, chunk: int = 64) -> tuple[dace.SDFG, int | None]:
     sdfg = program.to_sdfg(simplify=True)
     sdfg.name = name
-    result = LiftBreakToFindFirst().apply_pass(sdfg, {})
+    result = LiftBreakToFindFirst(chunk=chunk).apply_pass(sdfg, {})
     sdfg.validate()
     return sdfg, result
 
@@ -77,10 +77,12 @@ def test_capture_finds_the_first_hit_and_runs_the_effect_once(hit):
     assert out_value[0] == (-1.0 if hit is None else 0.95)
 
 
+@pytest.mark.parametrize("chunk", [64, 0])
 @pytest.mark.parametrize("program, hit", [(break_then_body, 211), (break_then_body, None), (body_then_break, 211)])
-def test_the_body_runs_exactly_below_the_hit(program, hit):
-    sdfg, result = lifted(program, f"lift_ff_{program.name}_{hit}")
-    assert result == 1 and not has_break(sdfg)
+def test_the_body_runs_exactly_below_the_hit(program, hit, chunk):
+    """Chunked, the break survives on the chunk loop only; unchunked, no break is left."""
+    sdfg, result = lifted(program, f"lift_ff_{program.name}_{hit}_{chunk}", chunk)
+    assert result == 1 and has_break(sdfg) == (chunk > 0) and len(find_firsts(sdfg)) == 1
     rng = np.random.default_rng(1)
     a, b, c = rng.random(500), rng.random(500) + 2.0, rng.random(500)
     d = rng.random(500)
@@ -109,7 +111,8 @@ if __name__ == "__main__":
     test_capture_finds_the_first_hit_and_runs_the_effect_once(17)
     test_capture_finds_the_first_hit_and_runs_the_effect_once(0)
     test_capture_finds_the_first_hit_and_runs_the_effect_once(None)
-    test_the_body_runs_exactly_below_the_hit(break_then_body, 211)
-    test_the_body_runs_exactly_below_the_hit(break_then_body, None)
-    test_the_body_runs_exactly_below_the_hit(body_then_break, 211)
+    for size in (64, 0):
+        test_the_body_runs_exactly_below_the_hit(break_then_body, 211, size)
+        test_the_body_runs_exactly_below_the_hit(break_then_body, None, size)
+        test_the_body_runs_exactly_below_the_hit(body_then_break, 211, size)
     test_a_test_that_reads_what_the_body_writes_is_refused()

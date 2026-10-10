@@ -10,13 +10,19 @@ Pattern (TSVC ``s332`` / ``s481`` / ``s482``, llr40 ``ext_break_capture``)::
             break
         post(i)
 
-becomes::
+becomes, when ``pre`` or ``post`` does work, a sequential loop over chunks of the range::
 
-    first = FindFirst(p, b, e)     # parallel, cancelling: smallest i with p(i), or e
-    for i in range(b, first):      # an ordinary loop; LoopToMap makes it a map when it is one
-        pre(i); post(i)
-    if first < e:
-        pre(first); effect(first)
+    for c in range(b, e, C):
+        first = FindFirst(p, c, min(c + C, e))   # parallel, cancelling: smallest hit in the chunk
+        for i in range(c, first):               # an ordinary loop; LoopToMap makes it a map when it is one
+            pre(i); post(i)
+        if first < min(c + C, e):
+            pre(first); effect(first)
+            break
+
+and, when the loop body is the test alone, one ``FindFirst`` over the whole range and the effect after it.
+Chunking is what makes the body's second read of the predicate's arrays a cache hit and bounds the
+search past the hit to one chunk; :data:`FIND_FIRST_HINT` records the alternatives on the node.
 
 Sound when ``p`` reads nothing the loop writes: then every test sees the values the sequential loop
 saw, all tests can run before any body, and the iterations below the hit run exactly ``pre; post``.
@@ -32,7 +38,7 @@ import ast
 import copy
 from typing import Any
 
-from dace import SDFG, InterstateEdge, data, dtypes, properties, symbolic
+from dace import SDFG, InterstateEdge, data, dtypes, properties, subsets, symbolic
 from dace.codegen.cppunparse import pyexpr2cpp
 from dace.codegen.targets.cpp import sym2cpp
 from dace.libraries.standard.nodes.find_first import INDEX_NAME, OUTPUT_CONNECTOR_NAME, FindFirst
@@ -83,6 +89,8 @@ class Match:
         _, self.effect = test.branches[0]
         self.predicate = ""
         self.inputs: dict[str, str] = {}
+        #: Per array the test subscripts: each read's per-dimension index, written over ``INDEX_NAME``.
+        self.reads: dict[str, list[list[str]]] = {}
         self.symbols: set[str] = set()
 
 
@@ -97,6 +105,11 @@ def linear_chain(region: ControlFlowRegion) -> list[ControlFlowBlock] | None:
             return None
         blocks.append(out[0].dst)
     return blocks if len(blocks) == region.number_of_nodes() else None
+
+
+def does_work(block: ControlFlowBlock) -> bool:
+    """Whether running ``block`` does anything beyond its edges' symbol assignments."""
+    return not isinstance(block, SDFGState) or block.number_of_nodes() > 0
 
 
 def holds_jump(block: ControlFlowBlock) -> bool:
@@ -126,6 +139,43 @@ def written_data(blocks: list[ControlFlowBlock]) -> set[str]:
                 if state.in_degree(node) > 0:
                     written.add(node.data)
     return written
+
+
+def searched(
+    sdfg: SDFG, name: str, reads: list[list[str]] | None, lo: symbolic.SymbolicType, hi: symbolic.SymbolicType
+) -> Memlet:
+    """The memlet of a search over ``[lo, hi)`` on ``name``, its volume the span of the affine indices it reads.
+
+    A dimension indexed by anything that is not affine in the index with a constant slope, and a
+    container read whole (a scalar), keeps its full extent.
+    """
+    desc = sdfg.arrays[name]
+    if not reads or isinstance(desc, data.Scalar):
+        return Memlet.from_array(name, desc)
+    ranges = []
+    for dim, extent in enumerate(desc.shape):
+        bounds: list[tuple[Any, Any]] | None = []
+        for read in reads:
+            expr = symbolic.pystr_to_symbolic(read[dim])
+            # By name: the parsed index symbol need not carry the dtype a fresh one would.
+            index = next((s for s in expr.free_symbols if str(s) == INDEX_NAME), None)
+            slope = expr.diff(index) if index is not None else 0
+            if bounds is None or not getattr(slope, "is_number", True):
+                bounds = None
+                continue
+            first, last = (expr.subs(index, lo), expr.subs(index, hi - 1)) if index is not None else (expr, expr)
+            bounds.append((first, last) if slope >= 0 else (last, first))
+        if bounds is None:
+            ranges.append((0, extent - 1, 1))
+        else:
+            low = symbolic.simplify(symbolic.sympy.Min(*(b for b, _ in bounds)))
+            high = symbolic.simplify(symbolic.sympy.Max(*(e for _, e in bounds)))
+            ranges.append((low, high, 1))
+    # The subset stays the whole container: the predicate subscripts its connector with the absolute index,
+    # so the pointer must be the array's base. What one search actually streams is the memlet's volume.
+    memlet = Memlet.from_array(name, desc)
+    memlet.volume = subsets.Range(ranges).num_elements()
+    return memlet
 
 
 class PredicateBuilder(ast.NodeTransformer):
@@ -164,9 +214,9 @@ class PredicateBuilder(ast.NodeTransformer):
             raise ValueError(f"the test reads {node.value.id} with a subscript that is not one element")
         for stride in desc.strides:
             self.match.symbols.update(str(s) for s in symbolic.pystr_to_symbolic(str(stride)).free_symbols)
-        flat = " + ".join(
-            f"({ast.unparse(self.visit(dim))}) * ({sym2cpp(stride)})" for dim, stride in zip(index, desc.strides)
-        )
+        dims = [ast.unparse(self.visit(dim)) for dim in index]
+        self.match.reads.setdefault(node.value.id, []).append(dims)
+        flat = " + ".join(f"({dim}) * ({sym2cpp(stride)})" for dim, stride in zip(dims, desc.strides))
         return ast.parse(f"{self.connector(node.value.id)}[{flat}]", mode="eval").body
 
 
@@ -176,6 +226,16 @@ class LiftBreakToFindFirst(ppl.Pass):
     """Lift every early-exit loop it can prove to :class:`FindFirst`, a loop below the hit and the effect."""
 
     CATEGORY: str = "Canonicalization"
+
+    chunk = properties.Property(
+        dtype=int,
+        default=1 << 20,
+        desc="Indices per chunk when a body runs below the hit; 0 searches the whole range in one go.",
+    )
+
+    def __init__(self, chunk: int = 1 << 20) -> None:
+        super().__init__()
+        self.chunk = chunk
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.CFG | ppl.Modifies.States | ppl.Modifies.Nodes | ppl.Modifies.Descriptors
@@ -259,42 +319,86 @@ class LiftBreakToFindFirst(ppl.Pass):
         return not any(symbol_used_outside(n, inside, use_sites, descriptor_symbols) for n in names)
 
     def lift(self, sdfg: SDFG, match: Match) -> None:
-        """Rewrite the matched loop in place."""
+        """Rewrite the matched loop in place, chunked when there is a body to clip."""
         loop = match.loop
         parent = loop.parent_graph
-        counter = loop.loop_variable
         begin = get_init_assignment(loop)
         end = get_loop_end(loop) + 1
+        chunked = any(does_work(b) for b in match.pre + match.post) and self.chunk > 0
+        if chunked:
+            # Chunks in order: search a chunk, run the body below its hit while the chunk is still in cache.
+            chunk = sdfg.find_new_symbol(f"{loop.label}_chunk")
+            container = LoopRegion(
+                f"{loop.label}_chunks",
+                condition_expr=f"{chunk} < {symbolic.symstr(end)}",
+                loop_var=chunk,
+                initialize_expr=f"{chunk} = {symbolic.symstr(begin)}",
+                update_expr=f"{chunk} = {chunk} + {self.chunk}",
+                sdfg=sdfg,
+            )
+            parent.add_node(container, is_start_block=parent.start_block is loop)
+            for edge in list(parent.in_edges(loop)):
+                parent.add_edge(edge.src, container, edge.data)
+            for edge in list(parent.out_edges(loop)):
+                parent.add_edge(container, edge.dst, edge.data)
+            parent.remove_node(loop)
+            lo = symbolic.pystr_to_symbolic(chunk)
+            hi = symbolic.pystr_to_symbolic(f"min({chunk} + {self.chunk}, {symbolic.symstr(end)})")
+            self.build(sdfg, match, container, lo, hi, chunked=True)
+        else:
+            self.build(sdfg, match, parent, begin, end, chunked=False)
+
+    def build(
+        self,
+        sdfg: SDFG,
+        match: Match,
+        container: ControlFlowRegion,
+        lo: symbolic.SymbolicType,
+        hi: symbolic.SymbolicType,
+        chunked: bool,
+    ) -> None:
+        """Search ``[lo, hi)``, run the body below the hit, then the effect at it, inside ``container``.
+
+        Chunked, ``container`` is the new chunk loop and the effect ends in the original ``break``;
+        otherwise the search replaces the loop in ``container`` and the effect simply ends.
+        """
+        loop = match.loop
+        counter = loop.loop_variable
         first_data, _ = sdfg.add_scalar(f"{loop.label}_first", dtypes.int64, transient=True, find_new_name=True)
         first_sym = sdfg.find_new_symbol(f"{loop.label}_hit")
+        has_body = any(does_work(b) for b in match.pre + match.post)
 
-        # The search, where the loop was.
-        search = parent.add_state(f"{loop.label}_find_first", is_start_block=parent.start_block is loop)
-        node = FindFirst(f"{loop.label}_find_first", predicate=match.predicate, begin=begin, end=end)
+        search = container.add_state(
+            f"{loop.label}_find_first", is_start_block=chunked or container.start_block is loop
+        )
+        node = FindFirst(f"{loop.label}_find_first", predicate=match.predicate, begin=lo, end=hi)
         node.symbols = sorted(match.symbols)
         node.specialization_hint = FIND_FIRST_HINT
         search.add_node(node)
         for name, conn in sorted(match.inputs.items()):
             node.add_in_connector(conn)
-            search.add_edge(search.add_read(name), None, node, conn, Memlet.from_array(name, sdfg.arrays[name]))
+            search.add_edge(
+                search.add_read(name), None, node, conn, searched(sdfg, name, match.reads.get(name), lo, hi)
+            )
         search.add_edge(node, OUTPUT_CONNECTOR_NAME, search.add_write(first_data), None, Memlet(f"{first_data}[0]"))
-        for edge in list(parent.in_edges(loop)):
-            parent.add_edge(edge.src, search, edge.data)
-            parent.remove_edge(edge)
 
-        # The effect, once, at the hit.
-        hit = ConditionalBlock(f"{loop.label}_hit_effect", sdfg=sdfg, parent=parent)
+        hit = ConditionalBlock(f"{loop.label}_hit_effect", sdfg=sdfg, parent=container)
         branch = ControlFlowRegion(f"{loop.label}_hit_branch", sdfg=sdfg, parent=hit)
-        hit.add_branch(properties.CodeBlock(f"{first_sym} < ({sym2cpp(end)})"), branch)
-        self.copy_pre_and_effect(sdfg, match, branch, counter, first_sym)
-        parent.add_node(hit)
-        for edge in list(parent.out_edges(loop)):
-            parent.add_edge(hit, edge.dst, edge.data)
-            parent.remove_edge(edge)
+        hit.add_branch(properties.CodeBlock(f"{first_sym} < {symbolic.symstr(hi)}"), branch)
+        self.copy_pre_and_effect(sdfg, match, branch, counter, first_sym, keep_break=chunked)
+        container.add_node(hit)
+        if not chunked:
+            for edge in list(container.in_edges(loop)):
+                container.add_edge(edge.src, search, edge.data)
+                container.remove_edge(edge)
+            for edge in list(container.out_edges(loop)):
+                container.add_edge(hit, edge.dst, edge.data)
+                container.remove_edge(edge)
 
         bind = InterstateEdge(assignments={first_sym: first_data})
-        if match.pre or match.post:
+        if has_body:
             # The iterations below the hit: the original loop without its test.
+            loop.init_statement = properties.CodeBlock(f"{counter} = {symbolic.symstr(lo)}")
             loop.loop_condition = properties.CodeBlock(f"{counter} < {first_sym}")
             stand_in = loop.add_state(f"{match.test.label}_lifted", is_start_block=loop.start_block is match.test)
             for edge in list(loop.in_edges(match.test)):
@@ -302,16 +406,18 @@ class LiftBreakToFindFirst(ppl.Pass):
             for edge in list(loop.out_edges(match.test)):
                 loop.add_edge(stand_in, edge.dst, edge.data)
             loop.remove_node(match.test)
-            parent.add_edge(search, loop, bind)
-            parent.add_edge(loop, hit, InterstateEdge())
+            if chunked:
+                container.add_node(loop)
+            container.add_edge(search, loop, bind)
+            container.add_edge(loop, hit, InterstateEdge())
         else:
-            parent.remove_node(loop)
-            parent.add_edge(search, hit, bind)
+            container.remove_node(loop)
+            container.add_edge(search, hit, bind)
 
     def copy_pre_and_effect(
-        self, sdfg: SDFG, match: Match, branch: ControlFlowRegion, counter: str, first_sym: str
+        self, sdfg: SDFG, match: Match, branch: ControlFlowRegion, counter: str, first_sym: str, keep_break: bool
     ) -> None:
-        """Fill ``branch`` with ``pre(first); effect(first)``, the counter renamed to the hit."""
+        """Fill ``branch`` with ``pre(first); effect(first)`` (and its ``break`` when kept), the counter renamed."""
         loop = match.loop
         previous = branch.add_state(f"{loop.label}_bind_hit", is_start_block=True)
         pending = InterstateEdge()
@@ -323,14 +429,14 @@ class LiftBreakToFindFirst(ppl.Pass):
             previous = twin
         effect = match.effect
         effect_chain = linear_chain(effect)
-        for block in effect_chain[:-1]:
+        for block in effect_chain if keep_break else effect_chain[:-1]:
             twin = copy.deepcopy(block)
             branch.add_node(twin)
             branch.add_edge(previous, twin, pending)
             out = effect.out_edges(block)
             pending = copy.deepcopy(out[0].data) if out else InterstateEdge()
             previous = twin
-        if pending.assignments:
+        if pending.assignments and not keep_break:
             closing = branch.add_state(f"{loop.label}_hit_done")
             branch.add_edge(previous, closing, pending)
         branch.replace_dict({counter: first_sym})

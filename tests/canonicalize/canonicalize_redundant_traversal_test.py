@@ -27,19 +27,13 @@ part that survives being measured somewhere else.
 
 What each kernel pays, and what one of them stopped paying:
 
-* ``ext_break_post_body`` (TSVC ``s482``) and ``ext_break_find_first`` (``s481``) -- both stay
-  SEQUENTIAL, so neither buys any traversal at all. The lowering that used to lift them put a
-  whole ``FindFirst`` pass over the predicate arrays in front of a map that read them again, and
-  it matched on the break's shape alone: on ``s482``, whose predicate ``c[i] > b[i]`` names the
-  same arrays as the body ``a[i] += b[i] * c[i]``, that was three extra streams for a form
-  measuring 0.70x, while ``s481``'s predicate over ``d`` -- an array its body never reads --
-  added none and measured 1.03x. The overlap, not the lowering, was the cost, and nothing in the
-  rewrite ever priced it, so the rewrite was withdrawn rather than gated. The case against
-  withdrawing it is worth keeping: the re-stream is a CPU cost paid in a device-neutral stage,
-  and on a GPU the break is divergent control flow whose removal is the whole point -- which is
-  why ``FindFirst`` keeps its CUDA expansion over ``dace::find_first_index_device``. A lift that
-  returns on that argument needs somewhere to hand the parallelism back, and the
-  ``cpu_specialize`` band that would do it only re-schedules Maps today.
+* ``ext_break_post_body`` (TSVC ``s482``) and ``ext_break_find_first`` (``s481``) -- lifted to a
+  CHUNKED find-first (:class:`~dace.transformation.passes.canonicalize.lift_break_to_find_first.LiftBreakToFindFirst`).
+  An earlier lowering put one whole-array ``FindFirst`` in front of the body map, and on ``s482``,
+  whose predicate ``c[i] > b[i]`` names the same arrays as the body ``a[i] += b[i] * c[i]``, that
+  was three extra streams for a form measuring 0.70x; it was withdrawn. The chunked form searches
+  one chunk, runs the body below that chunk's hit while the chunk is still in cache, and stops at
+  the first chunk with a hit, so no array is streamed whole by both a search and the body.
 * ``s1244_d_single`` -- FIXED, and pinned here so it stays fixed. The ``d[i] = a[i] + a[i + 1]``
   anti dependence used to be broken with a FULL-LENGTH snapshot of ``a``: one extra read of ``a``
   and one extra write plus read of the snapshot.
@@ -199,16 +193,12 @@ def anti_dependence_buffers(sdfg: dace.SDFG) -> dict[str, int]:
 
 
 def test_s482_break_loop_buys_no_traversal():
-    """``s482`` stays one sequential loop, so it streams each array exactly as the source does.
+    """``s482``'s chunked find-first streams no array whole: search and body share each chunk.
 
-    It used to make six whole-array reads and writes where the sequential loop made four -- the
-    +50% traffic behind 1.90x the sequential time on ONE thread, where no threading effect can be
-    blamed for it. The predicate was not what made the search long: under the corpus fill it fires
-    at 94% of the range, so the search and the sequential loop visited the same elements, and the
-    surcharge was the second pass over ``b`` and ``c``, not the first.
-
-    The list is also asserted to hold no name twice: the property the withdrawn lowering never
-    reached is that no array is read by both a search and the body it clips.
+    The whole-array lowering made six whole-array reads and writes where the sequential loop made
+    four -- the +50% traffic behind 1.90x the sequential time on ONE thread. The surcharge was the
+    second pass over ``b`` and ``c``; chunking keeps that pass inside the chunk the search just read.
+    The one loop left carrying the ``break`` is the sequential chunk loop.
     """
     sdfg = canonical_sdfg("ext_break_post_body")
     reads = full_length_reads(sdfg)
@@ -218,13 +208,10 @@ def test_s482_break_loop_buys_no_traversal():
 
 
 def test_s481_break_loop_buys_no_traversal():
-    """``s481`` stays sequential too, and for the same reason: nothing rewrites a break.
+    """``s481``'s predicate reads ``d``, an array its body never touches, and its chunked form streams nothing whole.
 
-    Pinned alongside ``s482`` because the two kernels are what separated a sound rewrite from a
-    profitable one. ``s481``'s predicate reads ``d``, an array its body never touches, so the
-    withdrawn lowering added no stream here and measured 1.03x where ``s482`` measured 0.70x. A
-    break lowering that returns may well be right for this shape and wrong for the other, which is
-    the distinction it has to make rather than inherit.
+    Pinned alongside ``s482`` because the two kernels separated a sound rewrite from a profitable one:
+    the whole-array lowering added no stream here (1.03x) and three on ``s482`` (0.70x).
     """
     sdfg = canonical_sdfg("ext_break_find_first")
     reads = full_length_reads(sdfg)
@@ -271,22 +258,10 @@ def test_s319_accumulates_in_the_map_that_writes():
 
 
 def test_s482_search_should_not_restream_the_body_arrays():
-    """``s482`` reads each array once: no array is streamed by both a search and the body.
+    """``s482`` reads each array at most once whole: no array is streamed by both a search and the body.
 
-    Holds because the break stays sequential. The withdrawn lowering matched on the break's shape
-    alone and put a ``FindFirst`` pass over ``b`` and ``c`` in front of a map reading ``b`` and
-    ``c`` again; the overlap condition that would have refused it is exact, since the predicate
-    reads ``b`` and ``c`` while the body reads ``a``, ``b`` and ``c``, and ``s481``'s predicate
-    reads only ``d``. A read-set refusal was still the wrong fix: the re-stream is a CPU cost paid
-    in a DEVICE-NEUTRAL stage, canonicalization takes the maximally parallel form wherever the
-    choice is open, and on a GPU the break is divergent control flow whose removal is the whole
-    point -- which is why ``FindFirst`` keeps its CUDA expansion over
-    ``dace::find_first_index_device``. Handing the parallelism back belongs in the
-    ``cpu_specialize`` band, and no pass there reverts a ``FindFirst`` lift to the sequential break
-    loop; that band only re-schedules Maps.
-
-    Pinned rather than retired: a break lowering that returns without a cost model re-reads these
-    arrays and fails here first.
+    The predicate reads ``b`` and ``c`` and the body reads ``a``, ``b`` and ``c``; a whole-range search in
+    front of the body map re-reads both. The chunked lift searches and clips one chunk at a time.
     """
     sdfg = canonical_sdfg("ext_break_post_body")
     reads = full_length_reads(sdfg)

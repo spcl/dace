@@ -339,20 +339,22 @@ EXPECTED: dict[str, Form] = {
     "ext_break_find_first": Form(
         1,
         0,
-        0,
+        1,
         ("FindFirst=CPU",),
         "parallel",
-        "TSVC s481 -- the break bound is data-dependent on d, so a FindFirst computes it and the body "
-        "then runs as a map clipped to that bound",
+        "TSVC s481 -- the break bound is data-dependent on d, so a FindFirst computes it chunk by chunk and "
+        "the body runs as a map clipped to the chunk's hit; the one loop left is the sequential chunk loop, "
+        "which stops at the first chunk with a hit while that chunk is still in cache",
     ),
     "ext_break_post_body": Form(
         1,
         0,
-        0,
+        1,
         ("FindFirst=CPU",),
         "parallel",
-        "TSVC s482 -- the breaking iteration's write is retained, so the same FindFirst bound clips the "
-        "body map INCLUSIVELY rather than exclusively",
+        "TSVC s482 -- the breaking iteration's write is retained, so the body map below the hit runs and the "
+        "hit iteration's body runs once before the break; the chunk loop keeps the body's second read of b "
+        "and c inside the chunk the search just streamed",
     ),
     "ext_war_unit": Form(
         2,
@@ -455,17 +457,6 @@ XFAIL: dict[str, str] = {
         "Canonicalization leaves one sequential LoopRegion and no parallel work anywhere."
     ),
 }
-
-#: The three break kernels share one reason, so it is written once.
-BREAK_WITHDRAWN = (
-    "no pass lifts an early exit any more. The lift that did matched on the break's SHAPE and "
-    "never costed the rewrite: it put a whole FindFirst pass over the predicate arrays in front "
-    "of the body map whether or not the body read them again, which on s482 is three extra "
-    "streams for a form measuring 0.70x of the sequential loop. Canonicalization leaves one "
-    "sequential LoopRegion; a lift that returns owes a cost model, and correcting this table is "
-    "how it announces itself."
-)
-XFAIL.update(dict.fromkeys(("ext_break_capture", "ext_break_find_first", "ext_break_post_body"), BREAK_WITHDRAWN))
 
 
 def ext_program(name: str) -> DaceProgram:

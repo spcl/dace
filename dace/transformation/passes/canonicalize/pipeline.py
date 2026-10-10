@@ -631,6 +631,11 @@ def _resolve_target_default(target: str, knob: str, explicit: Any | None, fallba
     return TARGET_DEFAULTS.get(target, {}).get(knob, fallback)
 
 
+#: Indices one find-first chunk searches before the body below its hit runs (``LiftBreakToFindFirst``): on CPU a
+#: chunk whose arrays stay in the last-level cache for the body's second read, on GPU about four times a full grid.
+FIND_FIRST_CHUNK: dict[str, int] = {"cpu": 1 << 20, "gpu": 1 << 21}
+
+
 def _build_stages(
     unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     peel_limit: int = 4,
@@ -720,7 +725,7 @@ def _build_stages(
         ("clean", NormalizeNegativeStride()),
         ("clean", unique_loop_iterators),
         ("clean", ContinueToCondition()),
-        ("clean", LiftBreakToFindFirst()),
+        ("clean", LiftBreakToFindFirst(chunk=FIND_FIRST_CHUNK[target])),
         ("clean", SimplifyPass()),
     ]
 
