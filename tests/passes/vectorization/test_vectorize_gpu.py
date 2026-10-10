@@ -361,6 +361,25 @@ def test_gpu_multidim_k2_runs():
     assert np.allclose(dC.get().astype(np.float32), (A + B).astype(np.float32), rtol=1e-2, atol=1e-2)
 
 
+@pytest.mark.gpu
+@pytest.mark.parametrize("group", [TileGroup.BLOCK, TileGroup.THREAD])
+def test_gpu_vectorize_sum_numeric(group: TileGroup):
+    """A vectorized fp16 sum adds each partial into the result once. A reduction keeps one thread's register tiles
+    even when block tiles are asked for. The values are small integers, so every partial sum is exact in fp16."""
+    import cupy
+
+    sdfg = _prep(_vsum16)
+    sdfg.name = f"vsum16_{group.name.lower()}"
+    VectorizeGPU(VectorizeConfig(widths=(2,), assume_even=True, tile_group=group)).apply_pass(sdfg, {})
+    tiles = [node for node, _ in sdfg.all_nodes_recursive() if isinstance(node, TILE_NODE_TYPES)]
+    assert tiles and all(node.group is TileGroup.THREAD for node in tiles)
+    n = 1000
+    A = np.random.default_rng(42).integers(0, 2, n).astype(np.float16)
+    out = cupy.zeros(1, cupy.float16)
+    sdfg(A=cupy.asarray(A), out=out, N=n)
+    assert float(out.get()[0]) == float(A.astype(np.float32).sum())
+
+
 if __name__ == "__main__":
     import tempfile
 
@@ -380,3 +399,5 @@ if __name__ == "__main__":
     test_gpu_half2_wide_emits_width_over_2_f16x2(Path(tempfile.mkdtemp()), 4)
     test_gpu_half2_wide_emits_width_over_2_f16x2(Path(tempfile.mkdtemp()), 8)
     test_gpu_multidim_k2_runs()
+    test_gpu_vectorize_sum_numeric(TileGroup.BLOCK)
+    test_gpu_vectorize_sum_numeric(TileGroup.THREAD)

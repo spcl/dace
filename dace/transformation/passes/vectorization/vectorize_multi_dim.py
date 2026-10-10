@@ -1483,3 +1483,22 @@ class VectorizeGPUMultiDim(VectorizeMultiDim):
         self._tile_group = resolved.tile_group
         self._lanes_per_thread = lanes_per_thread
         self._num_warps = resolved.num_warps
+        self._requested = config
+
+    def apply_pass(self, sdfg: dace.SDFG, pipeline_results: dict[str, Any]) -> dict[str, Any] | None:
+        # The iteration of a block tile's map is a whole thread block, every thread of which would reduce into the
+        # map's output: an SDFG with such a reduction keeps one thread's register tiles
+        if self._tile_group is TileGroup.BLOCK and _has_kernel_reduction(sdfg):
+            thread_tiles = type(self)(dataclasses.replace(self._requested, tile_group=TileGroup.THREAD))
+            return thread_tiles.apply_pass(sdfg, pipeline_results)
+        return super().apply_pass(sdfg, pipeline_results)
+
+
+def _has_kernel_reduction(sdfg: dace.SDFG) -> bool:
+    """Whether a ``GPU_Device`` map of ``sdfg`` (recursively) writes its output through a write-conflict resolution."""
+    return any(
+        isinstance(node, dace.nodes.MapExit)
+        and node.map.schedule == dace.dtypes.ScheduleType.GPU_Device
+        and any(edge.data.wcr is not None for edge in state.in_edges(node))
+        for node, state in sdfg.all_nodes_recursive()
+    )
