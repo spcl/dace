@@ -80,16 +80,14 @@ class ScalarFission(ppl.Pass):
 
         shadow_scope_dict: ap.WriteScopeDict = pipeline_results[self.shadow_analysis().__name__][sdfg.cfg_id]
 
-        # A control-flow condition (branch condition, loop bound/condition) is a
-        # code block that READS every data container it names -- its value must
-        # outlive the condition. Such a scalar is not a privatizable per-iteration
-        # temporary but a pending ``ScalarToSymbolPromotion`` target. Fission would
-        # rename its writer without rewriting the condition (region meta-code is not
-        # a dataflow edge, so it is invisible to the write-shadow analysis and to
-        # the rename below), orphaning the reference into an undefined symbol. Treat
-        # condition-referenced scalars as used and leave them untouched.
+        # A loop header (init, condition, update) READS every data container it names, at points
+        # the write-shadow analysis does not model, so fission would rename the writer and orphan
+        # the header's reference. Leave such scalars untouched. A branch condition is modelled: it
+        # reads on entry to its conditional and is renamed with its scope.
         cond_referenced: set[str] = set()
         for region in sdfg.all_control_flow_regions():
+            if isinstance(region, ConditionalBlock):
+                continue
             for cb in region.get_meta_codeblocks():
                 cond_referenced |= cb.get_free_symbols()
         cond_referenced &= set(sdfg.arrays.keys())
@@ -108,8 +106,7 @@ class ScalarFission(ppl.Pass):
             if not self.accepts(desc):
                 continue
 
-            # A scalar read by a control-flow condition is used, not a privatizable
-            # temporary -- leave it for symbol promotion (see ``cond_referenced``).
+            # A scalar read by a loop header is left whole (see ``cond_referenced``).
             if name in cond_referenced:
                 continue
 
@@ -173,6 +170,8 @@ class ScalarFission(ppl.Pass):
                                 affected_states.add(read[0])
                         elif isinstance(read[1], InterstateEdge):
                             read[1].replace_dict({name: newname})
+                        elif isinstance(read[1], ConditionalBlock):
+                            read[1].replace_meta_accesses({name: newname})
 
                     # Propagate the rename across every NestedSDFG boundary
                     # touched by the renamed accesses: connector names, inner
