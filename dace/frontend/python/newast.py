@@ -1100,6 +1100,8 @@ class ProgramVisitor(ExtNodeVisitor):
         self.numbers = dict()  # Dict[str, str]
         self.variables = dict()  # Dict[str, str]
         self.accesses = dict()
+        # Number of each state in the order it first names an outer-data access; keeps those names unique
+        self.state_numbers: dict[SDFGState, int] = {}
         self.views: dict[str, tuple[str, Memlet]] = {}  # Keeps track of views
         self.nested_closure_arrays: dict[str, tuple[Any, data.Data]] = {}
         self.annotated_types: dict[str, data.Data] = annotated_types or {}
@@ -2242,7 +2244,7 @@ class ProgramVisitor(ExtNodeVisitor):
                         name = memlet.data
                         vname = "{c}_in_from_{s}{n}".format(
                             c=conn,
-                            s=self._state_index(state),
+                            s=self.state_numbers.setdefault(state, len(self.state_numbers)),
                             n=(f"_{state.node_id(entry_node)}" if entry_node else ""),
                         )
                         self.accesses[(name, scope_memlet.subset, "r")] = (vname, orng)
@@ -2331,7 +2333,7 @@ class ProgramVisitor(ExtNodeVisitor):
                         name = memlet.data
                         vname = "{c}_out_of_{s}{n}".format(
                             c=conn,
-                            s=self._state_index(state),
+                            s=self.state_numbers.setdefault(state, len(self.state_numbers)),
                             n=(f"_{state.node_id(exit_node)}" if exit_node else ""),
                         )
                         self.accesses[(name, scope_memlet.subset, "w")] = (vname, orng)
@@ -5522,10 +5524,6 @@ class ProgramVisitor(ExtNodeVisitor):
                 ),
             )
         return tmp
-
-    def _state_index(self, state: SDFGState) -> int:
-        """The position of ``state`` among the states of the SDFG, counted without building their list."""
-        return next(index for index, other in enumerate(self.sdfg.states()) if other is state)
 
     def _parse_subscript_slice(self, s: ast.AST, multidim: bool = False) -> Any | tuple[Any | str | symbolic.symbol]:
         """Parses the slice attribute of an ast.Subscript node.
