@@ -768,21 +768,23 @@ def conditional_block_fixture(name: str, exhaustive: bool):
     return sdfg, writes, (end, end_read)
 
 
-@pytest.mark.parametrize("exhaustive", (False, True))
-def test_conditional_block_is_refused(exhaustive):
-    """Refusal: a ``ConditionalBlock`` is never a dominating write, exhaustive or not.
-
-    Without an ``else`` the premise itself fails -- no branch is guaranteed to run. WITH an
-    ``else`` in which every branch writes, the must-def premise holds but the result dict keys a
-    scope on exactly ONE ``(state, node)`` pair; naming one branch's write would let a consumer
-    version it while leaving its sibling behind, so the block is refused on shape as well.
-    """
-    sdfg, writes, end_access = conditional_block_fixture(f"conditional_{exhaustive}", exhaustive)
+def test_conditional_block_without_else_is_refused():
+    """``if c: A = 1`` has no dominating write: the branch may not run, so the read stays unscoped."""
+    sdfg, _, end_access = conditional_block_fixture("conditional_no_else", exhaustive=False)
     res = write_scopes(sdfg)
 
     assert end_access in res["A"][None]
-    for write in writes:
-        assert write not in res["A"] or res["A"][write] == {write}
+
+
+def test_conditional_block_writing_every_branch_is_one_scope():
+    """``if c: A = 1 else: A = 2``: every branch writes, so the block dominates the read. Both branch
+    writes share ONE scope (rooted at the first), so a consumer versions them together."""
+    sdfg, (first, second), end_access = conditional_block_fixture("conditional_else", exhaustive=True)
+    res = write_scopes(sdfg)
+
+    assert set(res["A"][first]) == {second, end_access}
+    assert second not in res["A"]
+    assert not res["A"][None]
 
 
 def test_loop_carried_read_is_not_split_from_the_body_write():
