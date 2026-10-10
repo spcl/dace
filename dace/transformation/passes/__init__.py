@@ -8,6 +8,7 @@ from .full_map_fusion import FullMapFusion
 from .fusion_inline import FuseStates, InlineSDFGs
 from .loop_local_memory_reduction import LoopLocalMemoryReduction
 from .optional_arrays import OptionalArrayInference
+from .persistent_transients import MakeTransientsPersistent
 from .pattern_matching import PatternMatchAndApply, PatternMatchAndApplyRepeated, PatternApplyOnceEverywhere
 from .prune_symbols import RemoveUnusedSymbols
 from .scalar_to_symbol import ScalarToSymbolPromotion

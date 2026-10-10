@@ -1441,10 +1441,13 @@ def integrate_nested_sdfg(sdfg: SDFG, symbols: SymbolResolver | None = None):
             if edge.src_conn in parent_mapping:
                 edge.src_conn = parent_mapping[edge.src_conn]
 
-    # Add remaining symbols to symbol mapping using the symbols defined at the node, which integration did not change
+    # Add remaining symbols to symbol mapping using the symbols defined at the node, which integration did not change.
+    # Only the ones the nested SDFG reads: a mapping entry is a read, so mapping a symbol the parent assigns further
+    # down would make it free in the parent.
+    needed = {str(s) for s in sdfg.free_symbols}
     for sym_name, sym_type in symbol_types.items():
         # Skip parent symbols that are shadowed by unrelated internal data containers or constants
-        if sym_name in sdfg.arrays or sym_name in sdfg.constants_prop:
+        if sym_name not in needed or sym_name in sdfg.arrays or sym_name in sdfg.constants_prop:
             continue
         if sym_name not in sdfg.symbols:
             # Add the symbol to the SDFG and the parent node's symbol mapping

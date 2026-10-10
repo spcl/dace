@@ -283,9 +283,13 @@ class CPUCodeGen(TargetCodeGenerator):
         # Allocate the viewed data before the view, if necessary
         mpath = dfg.memlet_path(edge)
         viewed_dnode: nodes.AccessNode = mpath[-1].dst if is_write else mpath[0].src
-        self._dispatcher.dispatch_allocate(
-            sdfg, cfg, dfg, state_id, viewed_dnode, viewed_dnode.desc(sdfg), global_stream, allocation_stream
-        )
+        viewed_desc = viewed_dnode.desc(sdfg)
+        # A declared array is allocated by the state the frame generator chose; a view in a later state must not
+        # allocate it again, or it reads a fresh buffer instead of what the earlier state wrote.
+        if not self._dispatcher.declared_arrays.has(self.ptr(viewed_dnode.data, viewed_desc, sdfg)):
+            self._dispatcher.dispatch_allocate(
+                sdfg, cfg, dfg, state_id, viewed_dnode, viewed_desc, global_stream, allocation_stream
+            )
 
         # Memlet points to view, construct mirror memlet
         memlet = edge.data
@@ -1373,6 +1377,20 @@ class CPUCodeGen(TargetCodeGenerator):
             ", ".join(memlet_params),
         )
 
+    def defined_type(self, sdfg: SDFG, ptr: str, desc: data.Data, is_global: bool) -> tuple[DefinedType, str]:
+        """The defined type and C type of the container ``ptr`` names. An array sized by a symbol that is not free
+        is declared at SDFG scope but allocated where its size is known -- in a state that dominates its
+        accesses, whose scope ends before the accesses' states are generated -- so its declaration holds the
+        type. A View is looked up the same way: its view edge is not at hand here."""
+        dependent_shape = (
+            isinstance(desc, data.Array)
+            and not isinstance(desc, data.View)
+            and any(str(s) not in self._frame.symbols_and_constants(sdfg) for s in self._frame.free_symbols(desc))
+        )
+        if (dependent_shape or isinstance(desc, data.View)) and self._dispatcher.declared_arrays.has(ptr):
+            return self._dispatcher.declared_arrays.get(ptr)
+        return self._dispatcher.defined_vars.get(ptr, is_global=is_global)
+
     def memlet_definition(
         self,
         sdfg: SDFG,
@@ -1403,23 +1421,7 @@ class CPUCodeGen(TargetCodeGenerator):
         memlet_type = conntype.dtype.ctype
 
         ptr = codegen.ptr(memlet.data, desc, sdfg)
-        types = None
-        # Non-free symbol dependent Arrays due to their shape
-        dependent_shape = (
-            isinstance(desc, data.Array)
-            and not isinstance(desc, data.View)
-            and any(str(s) not in self._frame.symbols_and_constants(sdfg) for s in self._frame.free_symbols(desc))
-        )
-        try:
-            # NOTE: It is hard to get access to the view-edge here, so always
-            # check the declared-arrays dictionary for Views.
-            if dependent_shape or isinstance(desc, data.View):
-                types = self._dispatcher.declared_arrays.get(ptr)
-        except KeyError:
-            pass
-        if not types:
-            types = self._dispatcher.defined_vars.get(ptr, is_global=True)
-        var_type, ctypedef = types
+        var_type, ctypedef = self.defined_type(sdfg, ptr, desc, is_global=True)
 
         result = ""
         expr = (
@@ -1773,7 +1775,7 @@ class CPUCodeGen(TargetCodeGenerator):
                     dtypes.AllocationLifetime.Persistent,
                     dtypes.AllocationLifetime.External,
                 )
-                defined_type, _ = self._dispatcher.defined_vars.get(ptrname, is_global=is_global)
+                defined_type, _ = self.defined_type(sdfg, ptrname, desc, is_global)
                 base_ptr = cpp.cpp_ptr_expr(sdfg, edge.data, defined_type, codegen=self)
                 callsite_stream.write(f"{cdtype.ctype} {edge.src_conn} = {base_ptr};", cfg, state_id, src_node)
             else:

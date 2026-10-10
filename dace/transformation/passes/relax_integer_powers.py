@@ -9,6 +9,7 @@ constant, an integer-valued float literal, or a symbolic integer proven ``>= 0``
 enclosing iterator ranges (``K - i - 1`` with ``for i in range(K)``).
 """
 
+import ast
 from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
@@ -16,6 +17,7 @@ from typing import Any
 import sympy
 
 from dace import SDFG, data, dtypes, subsets, symbolic
+from dace.frontend.python import astutils
 from dace.properties import CodeBlock
 from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
@@ -158,20 +160,20 @@ class PowerRelaxer:
         desc.total_size = self.relax(desc.total_size, ranges, facts)
 
     def relax_text(self, text: str, ranges: Ranges, facts: SignFacts) -> str | None:
-        """The rewritten Python expression, or None if it is unparseable or unchanged."""
+        """The Python expression with each provable ``**`` rewritten to ``ipow``, or None if none was.
+
+        Rewrites the ``**`` nodes of the AST in place: a round trip through SymPy would reorder the floating-point
+        arithmetic around them and print array accesses as ``Subscript(...)`` calls.
+        """
         if not text or "**" not in text:
             return None
         try:
-            expr = symbolic.pystr_to_symbolic(text)
-        except Exception:  # pylint: disable=broad-exception-caught  # a non-symbolic statement is left as-is
+            tree = ast.parse(text)
+        except SyntaxError:
             return None
-        if not isinstance(expr, sympy.Basic) or not expr.has(sympy.Pow):
-            return None
-        relaxed = self.relax(expr, ranges, facts)
-        if relaxed is expr:
-            return None
-        out = str(relaxed)
-        return out if out != text else None
+        before = self.relaxed
+        tree = _PowToIpow(self, ranges, facts).visit(tree)
+        return astutils.unparse(tree) if self.relaxed > before else None
 
     def relax_code(self, code: CodeBlock | None, ranges: Ranges, facts: SignFacts) -> None:
         # Loop bounds and conditions codegen through the interstate-edge unparser, where an unrelaxed ``R**e``
@@ -274,6 +276,33 @@ class PowerRelaxer:
             for sub in (edge.data.subset, edge.data.other_subset):
                 if sub is not None:
                     self.relax_subset(sub, live, facts)
+
+
+class _PowToIpow(ast.NodeTransformer):
+    """Rewrites ``base ** exp`` to ``ipow(base, exp)`` where :func:`relaxed_exponent` proves ``exp`` a non-negative
+    integer, leaving every other node as written."""
+
+    def __init__(self, relaxer: PowerRelaxer, ranges: Ranges, facts: SignFacts):
+        self.relaxer, self.ranges, self.facts = relaxer, ranges, facts
+
+    def visit_BinOp(self, node: ast.BinOp) -> ast.AST:
+        self.generic_visit(node)
+        if not isinstance(node.op, ast.Pow):
+            return node
+        try:
+            exp = symbolic.pystr_to_symbolic(astutils.unparse(node.right))
+        except Exception:  # pylint: disable=broad-exception-caught  # a non-symbolic exponent stays ``pow``
+            return node
+        if not isinstance(exp, sympy.Expr):
+            return node
+        result = relaxed_exponent(exp, self.ranges, self.facts)
+        if result is None:
+            return node
+        self.relaxer.relaxed += 1
+        power = node.right if result.free_symbols else ast.Constant(int(result))
+        return ast.copy_location(
+            ast.Call(func=ast.Name(id="ipow", ctx=ast.Load()), args=[node.left, power], keywords=[]), node
+        )
 
 
 def nested_ranges(nsdfg: nodes.NestedSDFG, ranges: Ranges) -> Ranges:

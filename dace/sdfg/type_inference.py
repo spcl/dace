@@ -16,7 +16,7 @@ import sympy
 
 import dace.frontend.python.astutils
 from dace import data, dtypes, symbolic
-from dace.symbolic import SymExpr, symbol, symstr
+from dace.symbolic import MODULO_FUNCTIONS, SymExpr, symbol, symstr
 
 # Additional function names that can be used to infer types
 KNOWN_FUNCTIONS: dict[str, Callable[[list[dtypes.typeclass]], dtypes.typeclass]] = {
@@ -25,6 +25,7 @@ KNOWN_FUNCTIONS: dict[str, Callable[[list[dtypes.typeclass]], dtypes.typeclass]]
     "min": lambda arg_types: dtypes.result_type_of(arg_types[0], *arg_types),
     "max": lambda arg_types: dtypes.result_type_of(arg_types[0], *arg_types),
     "round": lambda arg_types: dtypes.typeclass(int),
+    **{name: lambda arg_types: dtypes.result_type_of(arg_types[0], *arg_types) for name in MODULO_FUNCTIONS},
     # Symbolic functions (as they appear in subsets and range bounds), typed like their C++ runtime counterparts
     "Abs": lambda arg_types: arg_types[0],
     "Min": lambda arg_types: dtypes.result_type_of(arg_types[0], *arg_types),

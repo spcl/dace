@@ -1,11 +1,11 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import functools
 import warnings
-from copy import deepcopy as dc
 
 import dace.library
 import dace.properties
 import dace.sdfg.nodes
+from dace.codegen.common import sym2cpp
 from dace.libraries.blas import blas_helpers
 from dace.libraries.blas import environments as blas_environments
 from dace.transformation.transformation import ExpandTransformation
@@ -15,9 +15,7 @@ def _get_transpose_input(node, state, sdfg):
     """Returns the transpose input edge, array, and shape."""
     for edge in state.in_edges(node):
         if edge.dst_conn == "_inp":
-            subset = dc(edge.data.subset)
-            idx = subset.squeeze()
-            size = subset.size()
+            size, idx = blas_helpers.matrix_view(edge.data.subset)
             outer_array = sdfg.data(dace.sdfg.find_input_arraynode(state, edge).data)
             return edge, outer_array, (size[0], size[1]), (outer_array.strides[idx[0]], outer_array.strides[idx[1]])
     raise ValueError('Transpose input connector "_inp" not found.')
@@ -27,12 +25,20 @@ def _get_transpose_output(node, state, sdfg):
     """Returns the transpose output edge, array, and shape."""
     for edge in state.out_edges(node):
         if edge.src_conn == "_out":
-            subset = dc(edge.data.subset)
-            idx = subset.squeeze()
-            size = subset.size()
+            size, idx = blas_helpers.matrix_view(edge.data.subset)
             outer_array = sdfg.data(dace.sdfg.find_output_arraynode(state, edge).data)
             return edge, outer_array, (size[0], size[1]), (outer_array.strides[idx[0]], outer_array.strides[idx[1]])
     raise ValueError('Transpose output connector "_out" not found.')
+
+
+def _leading_dimensions(node, state, sdfg):
+    """The row strides of the row-major input and output, which BLAS takes as their leading dimensions, or ``None``
+    if a row is not contiguous (a vendor transpose cannot read it; the pure expansion can)."""
+    _, _, _, (in_row, in_col) = _get_transpose_input(node, state, sdfg)
+    _, _, _, (out_row, out_col) = _get_transpose_output(node, state, sdfg)
+    if in_col != 1 or out_col != 1:
+        return None
+    return sym2cpp(in_row), sym2cpp(out_row)
 
 
 @dace.library.expansion
@@ -121,9 +127,12 @@ class ExpandTransposeMKL(ExpandTransformation):
             warnings.warn("Unsupported type for MKL omatcopy extension: " + str(dtype) + ", falling back to pure")
             return ExpandTransposePure.expansion(node, state, sdfg)
 
-        # TODO: Add stride support
+        leading = _leading_dimensions(node, state, sdfg)
+        if leading is None:
+            return ExpandTransposePure.expansion(node, state, sdfg)
+        lda, ldb = leading
         _, _, (m, n), _ = _get_transpose_input(node, state, sdfg)
-        code = f"mkl_{func}('R', 'T', {m}, {n}, {alpha}, {cast}_inp, {n}, {cast}_out, {m});"
+        code = f"mkl_{func}('R', 'T', {m}, {n}, {alpha}, {cast}_inp, {lda}, {cast}_out, {ldb});"
         tasklet = dace.sdfg.nodes.Tasklet(
             node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
         )
@@ -165,12 +174,15 @@ class ExpandTransposeOpenBLAS(ExpandTransformation):
             cast = "(double*)"
         else:
             raise ValueError("Unsupported type for OpenBLAS omatcopy extension: " + str(dtype))
-        # TODO: Add stride support
+        leading = _leading_dimensions(node, state, sdfg)
+        if leading is None:
+            return ExpandTransposePure.expansion(node, state, sdfg)
+        lda, ldb = leading
         _, _, (m, n), _ = _get_transpose_input(node, state, sdfg)
         # Adaptations for BLAS API
         order = "CblasRowMajor"
         trans = "CblasTrans"
-        code = f"cblas_{func}({order}, {trans}, {m}, {n}, {cast}{alpha}, {cast}_inp, {n}, {cast}_out, {m});"
+        code = f"cblas_{func}({order}, {trans}, {m}, {n}, {cast}{alpha}, {cast}_inp, {lda}, {cast}_out, {ldb});"
         tasklet = dace.sdfg.nodes.Tasklet(
             node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
         )
@@ -203,14 +215,17 @@ class ExpandTransposeCuBLAS(ExpandTransformation):
 
         alpha = f"__state->cublas_handle.Constants().{factort}Pone()"
         beta = f"__state->cublas_handle.Constants().{factort}Zero()"
-        _, _, (m, n), (istride, _) = _get_transpose_input(node, state, sdfg)
-        _, _, _, (ostride, _) = _get_transpose_output(node, state, sdfg)
+        leading = _leading_dimensions(node, state, sdfg)
+        if leading is None:
+            return ExpandTransposePure.expansion(node, state, sdfg)
+        lda, ldc = leading
+        _, _, (m, n), _ = _get_transpose_input(node, state, sdfg)
 
         code = (
             blas_environments.cublas.cuBLAS.handle_setup_code(node)
             + f"""dace::blas::CheckCublasError(cublas{func}(
                     __dace_cublas_handle, CUBLAS_OP_T, CUBLAS_OP_N,
-                    {m}, {n}, {alpha}, ({cdtype}*)_inp, {n}, {beta}, ({cdtype}*)_inp, {m}, ({cdtype}*)_out, {m}));
+                    {m}, {n}, {alpha}, ({cdtype}*)_inp, {lda}, {beta}, ({cdtype}*)_inp, {m}, ({cdtype}*)_out, {ldc}));
                 """
         )
 
@@ -244,18 +259,14 @@ class Transpose(dace.sdfg.nodes.LibraryNode):
             raise ValueError("Expected exactly one input to transpose operation")
         for _, _, _, dst_conn, memlet in state.in_edges(self):
             if dst_conn == "_inp":
-                subset = dc(memlet.subset)
-                subset.squeeze()
-                in_size = subset.size()
+                in_size, _ = blas_helpers.matrix_view(memlet.subset)
         out_edges = state.out_edges(self)
         if len(out_edges) != 1:
             raise ValueError("Expected exactly one output from transpose operation")
         out_memlet = out_edges[0].data
         if len(in_size) != 2:
             raise ValueError("Transpose operation only supported on matrices")
-        out_subset = dc(out_memlet.subset)
-        out_subset.squeeze()
-        out_size = out_subset.size()
+        out_size, _ = blas_helpers.matrix_view(out_memlet.subset)
         if len(out_size) != 2:
             raise ValueError("Transpose operation only supported on matrices")
         if list(out_size) != [in_size[1], in_size[0]]:
