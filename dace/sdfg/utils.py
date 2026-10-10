@@ -3179,15 +3179,31 @@ def structural_symbols(sdfg: "dace.SDFG") -> set[str]:
     for desc in sdfg.arrays.values():
         structural.update(str(s) for s in desc.free_symbols)
     for cfr in sdfg.all_control_flow_regions():
-        if isinstance(cfr, LoopRegion) and cfr.loop_variable:
-            structural.add(str(cfr.loop_variable))
+        if isinstance(cfr, LoopRegion):
+            structural.update(loop_domain_symbols(cfr))
     for state in sdfg.states():
         for node in state.nodes():
             if isinstance(node, nd.MapEntry):
                 structural.update(str(s) for s in node.map.range.free_symbols)
+            elif isinstance(node, nd.NestedSDFG):
+                structural.update(nested_mapping_symbols(node))
         for edge in state.edges():
             structural.update(str(s) for s in edge.data.free_symbols)
     return structural
+
+
+def loop_domain_symbols(loop: LoopRegion) -> set[str]:
+    """The symbols ``loop``'s iteration domain is written in: its variable and its init, condition and update."""
+    names = {str(loop.loop_variable)} if loop.loop_variable else set()
+    for code in (loop.init_statement, loop.loop_condition, loop.update_statement):
+        if code is not None:
+            names.update(str(s) for s in code.get_free_symbols())
+    return names
+
+
+def nested_mapping_symbols(node: nd.NestedSDFG) -> set[str]:
+    """The symbols ``node`` passes into its nested SDFG, which reads them as symbols."""
+    return {str(s) for value in node.symbol_mapping.values() for s in dace.symbolic.pystr_to_symbolic(value).free_symbols}
 
 
 def symbol_carries_graph_structure(sdfg: "dace.SDFG", symbol_str: str, structural: set[str] | None = None) -> bool:
@@ -3195,7 +3211,8 @@ def symbol_carries_graph_structure(sdfg: "dace.SDFG", symbol_str: str, structura
 
     A demoted symbol becomes a scalar container of the demotion dtype, so any use that
     the graph itself evaluates symbolically -- a descriptor shape or stride, a memlet
-    subset, a map range, a loop iteration variable -- stops being expressible. Those uses
+    subset, a map range, a loop's iteration domain, a nested SDFG's symbol mapping -- stops
+    being expressible. Those uses
     make the symbol undemotable; a symbol read only by tasklet code (typically bound by an
     interstate-edge assignment) is free to become a scalar.
 
@@ -3214,11 +3231,13 @@ def symbol_carries_graph_structure(sdfg: "dace.SDFG", symbol_str: str, structura
         if symbol_str in (str(s) for s in desc.free_symbols):
             return True
     for cfr in sdfg.all_control_flow_regions():
-        if isinstance(cfr, LoopRegion) and cfr.loop_variable == symbol_str:
+        if isinstance(cfr, LoopRegion) and symbol_str in loop_domain_symbols(cfr):
             return True
     for state in sdfg.states():
         for node in state.nodes():
             if isinstance(node, nd.MapEntry) and symbol_str in (str(s) for s in node.map.range.free_symbols):
+                return True
+            if isinstance(node, nd.NestedSDFG) and symbol_str in nested_mapping_symbols(node):
                 return True
         for edge in state.edges():
             if symbol_str in (str(s) for s in edge.data.free_symbols):

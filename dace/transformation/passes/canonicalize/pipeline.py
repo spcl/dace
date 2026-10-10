@@ -94,6 +94,7 @@ from dace.transformation.passes.clean_tasklet_to_scalar_slice_to_access_node_pat
 from dace.transformation.passes.constant_propagation import ConstantPropagation
 from dace.transformation.passes.dead_dataflow_elimination import DeadDataflowElimination
 from dace.transformation.passes.dead_state_elimination import DeadStateElimination
+from dace.transformation.passes.demote_non_structural_symbols import DemoteNonStructuralSymbols
 from dace.transformation.passes.empty_loop_elimination import EmptyLoopElimination
 from dace.transformation.passes.equalize_symbol_dtypes import EqualizeSymbolDtypes, equalize
 from dace.transformation.passes.fuse_maps import FuseMaps
@@ -814,6 +815,9 @@ def _build_stages(
     s += [("reduce", IvSubstitutionFissionFixpoint(max_rounds=iv_split_rounds))]
     # MaterializeLoopExitSymbols after the rounds: it wants the settled set of surviving counters.
     s += [("reduce", MaterializeLoopExitSymbols()), ("reduce", LoopInvariantCodeMotion()), ("reduce", SimplifyPass())]
+    # After the last SimplifyPass, whose scalar-to-symbol promotion would undo it: only iteration domains and data
+    # accesses keep their symbols, so a loop that merely updates a counter or a guard stops carrying a symbol.
+    s += [("reduce", DemoteNonStructuralSymbols())]
 
     # index_subsets: the frontend hides computed indices (``i * inc``) behind interstate symbols that
     # SymbolPropagation does not substitute back, so every affine matcher sees the loop variable as
