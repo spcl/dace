@@ -1012,11 +1012,19 @@ class KernelSpec:
         self.kernel_map: nodes.Map = kernel_map_entry.map
         self.kernel_name: str = f"{kernel_map_entry.map.label}_{cfg.cfg_id}_{kernel_parent_state.block_id}_{kernel_parent_state.node_id(kernel_map_entry)}"
 
+        self.arglist: dict[str, dt.Data] = cudaCodeGen._kernel_arglists[kernel_map_entry]
+
         kernel_const_data = sdutil.get_constant_data(kernel_map_entry, kernel_parent_state)
         kernel_const_symbols = sdutil.get_constant_symbols(kernel_map_entry, kernel_parent_state)
-        self.kernel_constants: set[str] = kernel_const_data | kernel_const_symbols
-
-        self.arglist: dict[str, dt.Data] = cudaCodeGen._kernel_arglists[kernel_map_entry]
+        # get_constant_symbols on a MapEntry also returns data names used in subset expressions, written
+        # ones included. A pointer argument is const only when it is read-only (in kernel_const_data);
+        # otherwise a written output pointer is declared const and the kernel does not compile.
+        written_pointers = {
+            name
+            for name, data in self.arglist.items()
+            if isinstance(data, (dt.Array, dt.View)) and name not in kernel_const_data
+        }
+        self.kernel_constants: set[str] = (kernel_const_data | kernel_const_symbols) - written_pointers
 
         restore_in_device_code = cudaCodeGen._in_device_code
 
