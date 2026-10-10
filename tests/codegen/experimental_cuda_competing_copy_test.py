@@ -13,8 +13,8 @@ Codegen-only: no GPU and no nvcc required.
 import pytest
 
 import dace
-from dace.codegen import common
 from dace import dtypes
+from dace.codegen import common
 from dace.codegen.exceptions import CodegenError
 from dace.transformation.passes import insert_explicit_copies
 

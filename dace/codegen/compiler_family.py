@@ -8,12 +8,11 @@ match CMake's ``CMAKE_<LANG>_COMPILER_ID``, lowercased.
 import functools
 import os
 import subprocess
-from typing import Tuple
 
 from dace.config import Config
 
 #: Predefined macro -> family, most specific first: clang and nvc++ also define ``__GNUC__``.
-FAMILY_MACROS: Tuple[Tuple[str, str], ...] = (
+FAMILY_MACROS: tuple[tuple[str, str], ...] = (
     ("__NVCOMPILER", "nvhpc"),
     ("__INTEL_LLVM_COMPILER", "intelllvm"),
     ("__clang__", "clang"),

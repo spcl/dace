@@ -1,7 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 
 import sympy as sp
-from typing import Dict
 
 from dace.symbolic import symbol
 
@@ -71,7 +70,7 @@ class Assumptions:
     def add_equal(self, e):
         for x in self.equal:
             if not (isinstance(x, sp.Symbol) or isinstance(e, sp.Symbol)) and x != e:
-                raise ContradictingAssumptions()
+                raise ContradictingAssumptions
         self.equal.append(e)
         self.check_consistency()
 
@@ -81,16 +80,16 @@ class Assumptions:
             for e in self.equal:
                 for g in self.greater:
                     if (e <= g) == True:
-                        raise ContradictingAssumptions()
+                        raise ContradictingAssumptions
                 for l in self.lesser:
                     if (e >= l) == True:
-                        raise ContradictingAssumptions()
+                        raise ContradictingAssumptions
         else:
             # check if any greater > any lesser
             for g in self.greater:
                 for l in self.lesser:
                     if (g > l) == True:
-                        raise ContradictingAssumptions()
+                        raise ContradictingAssumptions
         return True
 
     def num_assumptions(self):
@@ -170,13 +169,13 @@ def propagate_assumptions_equal_symbols(condensed_assumptions):
             if isinstance(g, sp.Symbol):
                 for e in condensed_assumptions[g.name].equal:
                     if not isinstance(e, sp.Symbol):
-                        condensed_assumptions[sym].add_greater(e)
+                        assum.add_greater(e)
                         assum.greater.remove(g)
         for l in assum.lesser:
             if isinstance(l, sp.Symbol):
                 for e in condensed_assumptions[l.name].equal:
                     if not isinstance(e, sp.Symbol):
-                        condensed_assumptions[sym].add_lesser(e)
+                        assum.add_lesser(e)
                         assum.lesser.remove(l)
     return equality_subs1, equality_subs2
 
@@ -222,7 +221,7 @@ def parse_assumptions(assumptions, array_symbols):
         return {}, [({}, {})]
 
     # Gather assumptions, keeping only the strongest ones for each symbol.
-    condensed_assumptions: Dict[str, Assumptions] = {}
+    condensed_assumptions: dict[str, Assumptions] = {}
     for a in assumptions:
         if "==" in a:
             lhs, rhs = a.split("==")
@@ -262,13 +261,10 @@ def parse_assumptions(assumptions, array_symbols):
 
     # How many assumptions does symbol with most assumptions have?
     curr_max = -1
-    for _, assum in condensed_assumptions.items():
-        if assum.num_assumptions() > curr_max:
-            curr_max = assum.num_assumptions()
+    for assum in condensed_assumptions.values():
+        curr_max = max(curr_max, assum.num_assumptions())
 
-    all_subs = []
-    for i in range(curr_max):
-        all_subs.append(({}, {}))
+    all_subs = [({}, {}) for _ in range(curr_max)]
 
     # Construct all the substitution dicts. In each substitution round we take at most one assumption for each
     # symbol. Each round has two dicts: First one swaps in the assumption and second one restores the initial

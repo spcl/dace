@@ -1,9 +1,9 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
 import numpy as np
-
-import dace.frontend.python.replacements.ufunc as repl
 from common import compare_numpy_output
+
+import dace
+import dace.frontend.python.replacements.ufunc as repl
 
 N = dace.symbol("N", dtype=dace.int32)
 

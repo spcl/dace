@@ -13,18 +13,18 @@ from dace.transformation.passes.optional_arrays import OptionalArrayInference
 
 
 def test_type_hint():
-    assert Optional[dace.float64[20, 20]] == Union[dace.float64[20, 20], None]
+    assert Optional[dace.float64[20, 20]] == Union[dace.float64[20, 20], None]  # noqa: UP007, UP045
     assert dace.float64[20, 20] != dace.float32[20, 20]
     assert (
-        Union[None, dace.float64[20, 20], dace.float64[20, 21], dace.float64[20, 20], None]
-        == Optional[Union[dace.float64[20, 20], dace.float64[20, 21]]]
+        Union[None, dace.float64[20, 20], dace.float64[20, 21], dace.float64[20, 20], None]  # noqa: UP007
+        == Optional[dace.float64[20, 20] | dace.float64[20, 21]]  # noqa: UP045
     )
 
 
 def test_optional_arg_hint():
 
     @dace.program
-    def tester(a: Optional[dace.float64[1]], b: dace.float64[1]):
+    def tester(a: dace.float64[1] | None, b: dace.float64[1]):
         transient = b + 1
 
     sdfg = tester.to_sdfg()
@@ -56,7 +56,7 @@ def test_optional_dead_state(isnone):
     if isnone:
 
         @dace.program
-        def tester(a: Optional[dace.float64[20]], b: desc):
+        def tester(a: dace.float64[20] | None, b: desc):
             if a is None:
                 return 1
             elif b is None:
@@ -66,7 +66,7 @@ def test_optional_dead_state(isnone):
     else:
 
         @dace.program
-        def tester(a: Optional[dace.float64[20]], b: desc):
+        def tester(a: dace.float64[20] | None, b: desc):
             if a is None:
                 return 1
             elif b is not None:
@@ -93,7 +93,7 @@ def test_optional_array_inference():
 
     @dace.program
     def outer(
-        yes: Optional[dace.float64[20]],
+        yes: dace.float64[20] | None,
         no: NotOptional,
         maybe: dace.float64[20],
         always_read: dace.float64[20],

@@ -3,33 +3,20 @@
 and transient nodes."""
 
 import copy
-from dace.symbolic import symstr
 import warnings
 
-from dace import data, symbolic, subsets
-from dace.properties import SymbolicProperty, make_properties, Property
-from dace.sdfg import nodes
-from dace.sdfg import SDFG
-from dace.sdfg import utils as sdutil
-from dace.transformation import transformation
 import dace
-from dace.transformation.helpers import nest_state_subgraph
-from dace.sdfg.graph import SubgraphView
-from dace.sdfg.state import SDFGState
-from dace.sdfg.nodes import NestedSDFG
+from dace import data, subsets, symbolic
 from dace.data import Array
-
-
-def calc_set_image_index(map_idx, map_set, array_idx):
-    image = []
-    for a_idx in array_idx.indices:
-        new_range = [a_idx, a_idx, 1]
-        for m_idx, m_range in zip(map_idx, map_set):
-            symbol = symbolic.pystr_to_symbolic(m_idx)
-            new_range[0] = new_range[0].subs(symbol, m_range[0])
-            new_range[1] = new_range[1].subs(symbol, m_range[1])
-        image.append(new_range)
-    return subsets.Range(image)
+from dace.properties import Property, SymbolicProperty, make_properties
+from dace.sdfg import SDFG, nodes
+from dace.sdfg import utils as sdutil
+from dace.sdfg.graph import SubgraphView
+from dace.sdfg.nodes import NestedSDFG
+from dace.sdfg.state import SDFGState
+from dace.symbolic import symstr
+from dace.transformation import transformation
+from dace.transformation.helpers import nest_state_subgraph
 
 
 def calc_set_image_range(map_idx, map_set, array_range):
@@ -46,8 +33,6 @@ def calc_set_image_range(map_idx, map_set, array_range):
 def calc_set_image(map_idx, map_set, array_set):
     if isinstance(array_set, subsets.Range):
         return calc_set_image_range(map_idx, map_set, array_set)
-    if isinstance(array_set, subsets.Indices):
-        return calc_set_image_index(map_idx, map_set, array_set)
 
 
 @make_properties
@@ -207,9 +192,9 @@ class AccumulateTransient(transformation.SingleStateTransformation):
 
         init_state.add_mapped_tasklet(
             name="acctrans_init",
-            map_ranges={"_o%d" % i: "0:%s" % symstr(d) for i, d in enumerate(temp_array.shape)},
+            map_ranges={"_o%d" % i: f"0:{symstr(d)}" for i, d in enumerate(temp_array.shape)},
             inputs={},
-            code="out = %s" % self.identity,
+            code=f"out = {self.identity}",
             outputs={
                 "out": dace.Memlet.simple(
                     data=data_node.data, subset_str=",".join(["_o%d" % i for i, _ in enumerate(temp_array.shape)])

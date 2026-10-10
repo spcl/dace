@@ -32,14 +32,14 @@ def _signature(inner: dace.SDFG, in_conns, out_conns, wirings) -> str:
     nsdfg.integrate_into_parent()
 
     code = "\n".join(o.code for o in sdfg.generate_code())
-    match = re.search(r"void %s\w*\(([^)]*)\)" % re.escape(inner.name), code)
+    match = re.search(rf"void {re.escape(inner.name)}\w*\(([^)]*)\)", code)
     assert match is not None, f"no function emitted for {inner.name}"
     return match.group(1)
 
 
 def _param(signature: str, connector: str) -> str:
     for part in signature.split(","):
-        if re.search(r"\b%s\b" % re.escape(connector), part):
+        if re.search(rf"\b{re.escape(connector)}\b", part):
             return part.strip()
     raise AssertionError(f"connector {connector!r} not in signature: {signature!r}")
 

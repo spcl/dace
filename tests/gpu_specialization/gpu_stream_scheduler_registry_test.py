@@ -6,8 +6,6 @@ The strategy is chosen via the pipeline constructor argument
 selection contract.
 """
 
-from typing import Dict
-
 import pytest
 
 import dace
@@ -44,7 +42,7 @@ def test_pipeline_accepts_user_defined_strategy():
     """A user-defined strategy that subclasses the base class is accepted."""
 
     class DummyScheduler(GPUStreamSchedulingStrategy):
-        def assign_streams(self, sdfg) -> Dict[nodes.Node, int]:
+        def assign_streams(self, sdfg) -> dict[nodes.Node, int]:
             return {}
 
         def insert_sync_tasklets(self, sdfg, assignments):

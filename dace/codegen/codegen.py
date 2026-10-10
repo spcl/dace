@@ -1,24 +1,19 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import functools
 import json
-from typing import List
 
 import dace
-from dace import dtypes
-from dace import data
-from dace import config
-from dace.sdfg import SDFG
-from dace.codegen.targets import framecode
-from dace.codegen.codeobject import CodeObject
+from dace import config, data, dtypes
 from dace.codegen import exceptions as exc
-from dace.config import Config
-from dace.sdfg import infer_types
-
+from dace.codegen.codeobject import CodeObject
 from dace.codegen.instrumentation import InstrumentationProvider
+from dace.codegen.targets import framecode
+from dace.config import Config
+from dace.sdfg import SDFG, infer_types
 from dace.sdfg.state import SDFGState
 from dace.transformation.pass_pipeline import FixedPointPipeline
-from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising
 from dace.transformation.passes.relax_integer_powers import RelaxIntegerPowers
+from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising
 
 
 def generate_headers(sdfg: SDFG, frame: framecode.DaCeCodeGenerator) -> str:
@@ -31,10 +26,10 @@ def generate_headers(sdfg: SDFG, frame: framecode.DaCeCodeGenerator) -> str:
         call_params = ", " + call_params
     params = (sdfg.name, sdfg.name, call_params)
     exit_params = (sdfg.name, sdfg.name)
-    proto += "typedef void * %sHandle_t;\n" % sdfg.name
-    proto += 'extern "C" %sHandle_t __dace_init_%s(%s);\n' % init_params
-    proto += 'extern "C" int __dace_exit_%s(%sHandle_t handle);\n' % exit_params
-    proto += 'extern "C" void __program_%s(%sHandle_t handle%s);\n' % params
+    proto += f"typedef void * {sdfg.name}Handle_t;\n"
+    proto += 'extern "C" {}Handle_t __dace_init_{}({});\n'.format(*init_params)
+    proto += 'extern "C" int __dace_exit_{}({}Handle_t handle);\n'.format(*exit_params)
+    proto += 'extern "C" void __program_{}({}Handle_t handle{});\n'.format(*params)
     return proto
 
 
@@ -185,7 +180,7 @@ def unselected_cuda_target() -> str:
     return "experimental_cuda" if cuda_impl == "legacy" else "cuda"
 
 
-def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
+def generate_code(sdfg: SDFG, validate=True) -> list[CodeObject]:
     """
     Generates code as a list of code objects for a given SDFG.
 
@@ -200,11 +195,12 @@ def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
         sdfg.validate()
 
     if Config.get_bool("testing", "serialization"):
-        from dace.sdfg import SDFG
         import difflib
         import filecmp
         import shutil
         import tempfile
+
+        from dace.sdfg import SDFG
 
         with tempfile.TemporaryDirectory() as tmp_dir:
             sdfg.save(f"{tmp_dir}/test.sdfg", hash=False)
@@ -212,8 +208,8 @@ def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
             sdfg2.save(f"{tmp_dir}/test2.sdfg", hash=False)
 
             if not filecmp.cmp(f"{tmp_dir}/test.sdfg", f"{tmp_dir}/test2.sdfg"):
-                with open(f"{tmp_dir}/test.sdfg", "r") as f1:
-                    with open(f"{tmp_dir}/test2.sdfg", "r") as f2:
+                with open(f"{tmp_dir}/test.sdfg") as f1:
+                    with open(f"{tmp_dir}/test2.sdfg") as f2:
                         data1 = json.dumps(json.load(f1), indent=2).splitlines(keepends=True)
                         data2 = json.dumps(json.load(f2), indent=2).splitlines(keepends=True)
                         diff = difflib.unified_diff(
@@ -263,8 +259,8 @@ def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
     # Test for undefined symbols in SDFG arguments
     if "?" in frame.arglist.keys():
         raise exc.CodegenError(
-            "SDFG '%s' has undefined symbols in its arguments. "
-            "Please ensure all symbols are defined before generating code." % sdfg.name
+            f"SDFG '{sdfg.name}' has undefined symbols in its arguments. "
+            "Please ensure all symbols are defined before generating code."
         )
 
     # Instantiate CPU first (as it is used by the other code generators)

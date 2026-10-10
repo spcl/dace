@@ -7,8 +7,9 @@ streams and eight syncs). The kernels sit in a host ``nblocks`` map, the CLOUDSC
 
 import re
 
-import dace
 import pytest
+
+import dace
 from dace import dtypes
 
 KLEV = dace.symbol("klev")

@@ -2,10 +2,10 @@
 """Asserts the monolithic mode of ``AutoGPUStreamScheduler`` places every kernel on one stream with syncs only at
 host-transfer boundaries, and rejects CPU-only programs."""
 
-import dace
 import numpy as np
 import pytest
 
+import dace
 from dace.transformation.auto.auto_optimize import auto_optimize
 from dace.transformation.passes.gpu_specialization.gpu_specialization_pipeline import GPUStreamPipeline
 from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import AutoGPUStreamScheduler

@@ -1,17 +1,17 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Contains the access deduplication transformation."""
 
-from collections import defaultdict
 import copy
-from typing import List
-
-from dace import sdfg as sd, subsets
-from dace.memlet import Memlet
-from dace.sdfg import dealias, nodes, graph as gr
-from dace.transformation import transformation as xf
-import dace.transformation.helpers as helpers
-
 import warnings
+from collections import defaultdict
+
+from dace import sdfg as sd
+from dace import subsets
+from dace.memlet import Memlet
+from dace.sdfg import dealias, nodes
+from dace.sdfg import graph as gr
+from dace.transformation import helpers
+from dace.transformation import transformation as xf
 
 
 class DeduplicateAccess(xf.SingleStateTransformation):
@@ -44,8 +44,8 @@ class DeduplicateAccess(xf.SingleStateTransformation):
             return False
 
         # Two nodes must belong to same connector
-        edges1 = set(e.src_conn for e in graph.edges_between(map_entry, node1))
-        edges2 = set(e.src_conn for e in graph.edges_between(map_entry, node2))
+        edges1 = {e.src_conn for e in graph.edges_between(map_entry, node1)}
+        edges2 = {e.src_conn for e in graph.edges_between(map_entry, node2)}
         if len(edges1 & edges2) == 0:
             return False
 
@@ -60,7 +60,7 @@ class DeduplicateAccess(xf.SingleStateTransformation):
 
             # Matching condition: Bounding box union of subsets is smaller than
             # adding the subset sizes
-            memlets: List[Memlet] = [e.data for e in graph.out_edges(map_entry) if e.src_conn == conn]
+            memlets: list[Memlet] = [e.data for e in graph.out_edges(map_entry) if e.src_conn == conn]
             union_subset = memlets[0].subset
             for memlet in memlets[1:]:
                 union_subset = subsets.bounding_box_union(union_subset, memlet.subset)
@@ -90,8 +90,8 @@ class DeduplicateAccess(xf.SingleStateTransformation):
         # 3. Create transients for subsets
         # 4. Redirect edges through new transients
 
-        edges1 = set(e.src_conn for e in graph.edges_between(map_entry, node1))
-        edges2 = set(e.src_conn for e in graph.edges_between(map_entry, node2))
+        edges1 = {e.src_conn for e in graph.edges_between(map_entry, node1)}
+        edges2 = {e.src_conn for e in graph.edges_between(map_entry, node2)}
 
         # Only apply to first connector (determinism)
         conn = sorted(edges1 & edges2)[0]
@@ -103,7 +103,7 @@ class DeduplicateAccess(xf.SingleStateTransformation):
         desc = sdfg.arrays[edges[0].data.data]
 
         # Get unique subsets
-        unique_subsets = set(e.data.subset for e in edges)
+        unique_subsets = {e.data.subset for e in edges}
 
         # Find largest contiguous subsets
         try:
@@ -124,7 +124,7 @@ class DeduplicateAccess(xf.SingleStateTransformation):
                     edge_mapping[ind].append(e)
                     break
             else:
-                raise ValueError("Failed to find contiguous subset for edge %s" % e.data)
+                raise ValueError(f"Failed to find contiguous subset for edge {e.data}")
 
         # Create transients for subsets and redirect edges
         for ind, subset in enumerate(contiguous_subsets):

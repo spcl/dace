@@ -1,5 +1,4 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-from typing import Tuple
 
 import pytest
 
@@ -51,7 +50,7 @@ def _make_horizontal_map_sdfg(common_ancestor: bool):
         map_ranges={"__i": "0:10"},
         inputs={"__in1": dace.Memlet("A[__i]"), "__in2": dace.Memlet("D[__i]")},
         code="__out = __in1 + __in2",
-        outputs={"__out": dace.Memlet(f"out[__i, 3]")},
+        outputs={"__out": dace.Memlet("out[__i, 3]")},
         input_nodes=input_nodes,
         output_nodes={out},
         external_edges=True,
@@ -97,7 +96,7 @@ def _make_vertical_map_sdfg() -> dace.SDFG:
     return sdfg
 
 
-def _make_simple_horizontal_map_sdfg() -> Tuple[dace.SDFG, dace.nodes.MapEntry, dace.nodes.MapEntry]:
+def _make_simple_horizontal_map_sdfg() -> tuple[dace.SDFG, dace.nodes.MapEntry, dace.nodes.MapEntry]:
     sdfg = dace.SDFG(unique_name("horizontal_simple"))
     state = sdfg.add_state(is_start_block=True)
 

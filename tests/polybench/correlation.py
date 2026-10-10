@@ -1,7 +1,9 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import math
-import dace
+
 import polybench
+
+import dace
 
 M = dace.symbol("M")
 N = dace.symbol("N")

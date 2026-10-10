@@ -1,27 +1,27 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
 import copy
-from typing import Any, Dict, List, Optional, Tuple, Union
 from dataclasses import dataclass
+from typing import Any
 
 from dace import data, dtypes, subsets
 from dace.frontend.python import astutils
 from dace.frontend.python.astutils import rname
-from dace.memlet import Memlet
-from dace.symbolic import pystr_to_symbolic, SymbolicType
 from dace.frontend.python.common import DaceSyntaxError
+from dace.memlet import Memlet
+from dace.symbolic import SymbolicType, pystr_to_symbolic
 
-MemletType = Union[ast.Call, ast.Attribute, ast.Subscript, ast.Name]
+MemletType = ast.Call | ast.Attribute | ast.Subscript | ast.Name
 
 
 @dataclass
 class MemletExpr:
     name: str
     accesses: SymbolicType
-    wcr: Optional[ast.AST]
+    wcr: ast.AST | None
     subset: subsets.Range
-    new_axes: List[int]
-    arrdims: Dict[int, str]
+    new_axes: list[int]
+    arrdims: dict[int, str]
 
 
 def inner_eval_ast(defined, node, additional_syms=None):
@@ -46,7 +46,7 @@ def inner_eval_ast(defined, node, additional_syms=None):
         return pystr_to_symbolic(code)
 
 
-def pyexpr_to_symbolic(defined_arrays_and_symbols: Dict[str, Any], expr_ast: ast.AST):
+def pyexpr_to_symbolic(defined_arrays_and_symbols: dict[str, Any], expr_ast: ast.AST):
     """Converts a Python AST expression to a DaCe symbolic expression
     with error checks (raises `SyntaxError` on failure).
 
@@ -85,7 +85,7 @@ def _fill_missing_slices(das, ast_ndslice, array, indices):
     ndslice = [None] * len(array.shape)
     offsets = []
     new_axes = []
-    arrdims: Dict[int, str] = {}
+    arrdims: dict[int, str] = {}
     idx = 0
     new_idx = 0
     has_ellipsis = False
@@ -214,8 +214,8 @@ def _fill_missing_slices(das, ast_ndslice, array, indices):
 
 
 def parse_memlet_subset(
-    array: data.Data, node: Union[ast.Name, ast.Subscript], das: Dict[str, Any], parsed_slice: Any = None
-) -> Tuple[subsets.Range, List[int], List[int]]:
+    array: data.Data, node: ast.Name | ast.Subscript, das: dict[str, Any], parsed_slice: Any = None
+) -> tuple[subsets.Range, list[int], list[int]]:
     """
     Parses an AST subset and returns access range, as well as new dimensions to
     add.
@@ -229,7 +229,7 @@ def parse_memlet_subset(
     # Get memlet range
     ndslice = [(0, s - 1, 1) for s in array.shape]
     extra_dims = []
-    arrdims: Dict[int, str] = {}
+    arrdims: dict[int, str] = {}
     if isinstance(node, ast.Subscript):
         # Parse and evaluate ND slice(s) (possibly nested)
         if parsed_slice:
@@ -271,15 +271,15 @@ def parse_memlet_subset(
 # Parses a memlet statement
 def ParseMemlet(
     visitor,
-    defined_arrays_and_symbols: Dict[str, Any],
+    defined_arrays_and_symbols: dict[str, Any],
     node: MemletType,
     parsed_slice: Any = None,
-    arrname: Optional[str] = None,
+    arrname: str | None = None,
 ) -> MemletExpr:
     das = defined_arrays_and_symbols
     arrname = arrname or rname(node)
     if arrname not in das:
-        raise DaceSyntaxError(visitor, node, 'Use of undefined data "%s" in memlet' % arrname)
+        raise DaceSyntaxError(visitor, node, f'Use of undefined data "{arrname}" in memlet')
     array = das[arrname]
 
     # Determine number of accesses to the memlet (default is the slice size)
@@ -320,7 +320,7 @@ def ParseMemlet(
     return MemletExpr(arrname, num_accesses, write_conflict_resolution, subset, new_axes, arrdims)
 
 
-def parse_memlet(visitor, src: MemletType, dst: MemletType, defined_arrays_and_symbols: Dict[str, data.Data]):
+def parse_memlet(visitor, src: MemletType, dst: MemletType, defined_arrays_and_symbols: dict[str, data.Data]):
     srcexpr, dstexpr, localvar = None, None, None
     if isinstance(src, ast.Name) and rname(src) not in defined_arrays_and_symbols:
         localvar = rname(src)

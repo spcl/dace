@@ -1,7 +1,8 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 
-import dace
 import numpy as np
+
+import dace
 
 
 def test_key_replacement_same_name():
@@ -37,6 +38,7 @@ def test_boolean_literal_comparison_roundtrip():
     serialization. SymPy folds ``Ne(A[i], True)`` to ``True`` ("only Booleans can equal Booleans"),
     silently dropping the guard on round-trip; the parser rewrites it to boolean logic instead."""
     import sympy
+
     from dace import symbolic
 
     # Parser level: comparisons against a boolean literal must not collapse to a constant.

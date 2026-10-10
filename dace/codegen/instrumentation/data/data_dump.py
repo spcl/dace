@@ -1,16 +1,17 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-from dace import data as dt, dtypes, registry, SDFG
-from dace.sdfg import nodes
-from dace.codegen.prettycode import CodeIOStream
-from dace.codegen.instrumentation.provider import InstrumentationProvider
-from dace.sdfg.state import ControlFlowRegion, SDFGState
-from dace.codegen import common
-from dace.codegen import cppunparse
-from dace.codegen.targets import cpp
-from dace.properties import CodeBlock
 import os
 import warnings
-from typing import Tuple, TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
+
+from dace import SDFG, dtypes, registry
+from dace import data as dt
+from dace.codegen import common, cppunparse
+from dace.codegen.instrumentation.provider import InstrumentationProvider
+from dace.codegen.prettycode import CodeIOStream
+from dace.codegen.targets import cpp
+from dace.properties import CodeBlock
+from dace.sdfg import nodes
+from dace.sdfg.state import ControlFlowRegion, SDFGState
 
 if TYPE_CHECKING:
     from dace.codegen.targets.framecode import DaCeCodeGenerator
@@ -27,12 +28,12 @@ class DataInstrumentationProviderMixin:
         elif self.backend == "hip":
             header_name = "hip/hip_runtime.h"
         else:
-            raise NameError('GPU backend "%s" not recognized' % self.backend)
+            raise NameError(f'GPU backend "{self.backend}" not recognized')
 
-        global_stream.write("#include <%s>" % header_name)
+        global_stream.write(f"#include <{header_name}>")
 
         # For other file headers
-        sdfg.append_global_code("\n#include <%s>" % header_name, None)
+        sdfg.append_global_code(f"\n#include <{header_name}>", None)
 
     def _generate_device_sync(self, sdfg: SDFG, global_stream: CodeIOStream) -> str:
         """Waits for every stream, or returns an empty string if the SDFG has no device data.
@@ -46,7 +47,7 @@ class DataInstrumentationProviderMixin:
         self._setup_gpu_runtime(sdfg, global_stream)
         return f"{self.backend}DeviceSynchronize();\n"
 
-    def _generate_copy_to_host(self, node: nodes.AccessNode, desc: dt.Array, ptr: str) -> Tuple[str, str, str]:
+    def _generate_copy_to_host(self, node: nodes.AccessNode, desc: dt.Array, ptr: str) -> tuple[str, str, str]:
         """Copies to host and returns (preamble, postamble, name of new host pointer)."""
         new_ptr = f"__dinstr_{node.data}"
         new_desc = dt.Array(desc.dtype, [desc.total_size - desc.start_offset])
@@ -66,7 +67,7 @@ class DataInstrumentationProviderMixin:
 
         return preamble, postamble, new_ptr
 
-    def _generate_copy_to_device(self, node: nodes.AccessNode, desc: dt.Array, ptr: str) -> Tuple[str, str, str]:
+    def _generate_copy_to_device(self, node: nodes.AccessNode, desc: dt.Array, ptr: str) -> tuple[str, str, str]:
         """Copies restored data to device and returns (preamble, postamble, name of new host pointer)."""
         new_ptr = f"__dinstr_{node.data}"
         new_desc = dt.Array(desc.dtype, [desc.total_size - desc.start_offset])
@@ -95,7 +96,7 @@ class SaveProvider(InstrumentationProvider, DataInstrumentationProviderMixin):
         super().__init__()
         self.gpu_runtime_init = False
         self.uses_gpu = False
-        self.framecode: "DaCeCodeGenerator" = None
+        self.framecode: DaCeCodeGenerator = None
 
     def writes_to_report(self) -> bool:
         # Data instrumentation dumps arrays to a separate directory and never touches
@@ -130,7 +131,7 @@ class SaveProvider(InstrumentationProvider, DataInstrumentationProviderMixin):
             return
 
         condition_preamble, condition_postamble = "", ""
-        condition: Optional[CodeBlock] = state.symbol_instrument_condition
+        condition: CodeBlock | None = state.symbol_instrument_condition
         if condition is not None and not condition.as_string == "1":
             cond_string = None
             if condition.language == dtypes.Language.CPP:
@@ -138,7 +139,7 @@ class SaveProvider(InstrumentationProvider, DataInstrumentationProviderMixin):
             elif condition.language == dtypes.Language.Python:
                 cond_string = cppunparse.py2cpp(condition.code[0], expr_semicolon=False)
             else:
-                warnings.warn("Unrecognized language %s in codeblock" % condition.language)
+                warnings.warn(f"Unrecognized language {condition.language} in codeblock")
                 cond_string = condition.as_string
             condition_preamble = f"if ({cond_string})" + " {"
             condition_postamble = "}"
@@ -146,7 +147,7 @@ class SaveProvider(InstrumentationProvider, DataInstrumentationProviderMixin):
         state_id = cfg.node_id(state)
         local_stream.write(condition_preamble, cfg, state_id)
         defined_symbols = state.defined_symbols()
-        for sym, _ in defined_symbols.items():
+        for sym in defined_symbols.keys():
             local_stream.write(
                 f'__state->serializer->save_symbol("{sym}", "{state_id}", {cpp.sym2cpp(sym)});\n', cfg, state_id
             )
@@ -165,7 +166,7 @@ class SaveProvider(InstrumentationProvider, DataInstrumentationProviderMixin):
         from dace.codegen.dispatcher import DefinedType  # Avoid import loop
 
         condition_preamble, condition_postamble = "", ""
-        condition: Optional[CodeBlock] = node.instrument_condition
+        condition: CodeBlock | None = node.instrument_condition
         if condition is not None and not condition.as_string == "1":
             cond_string = None
             if condition.language == dtypes.Language.CPP:
@@ -173,7 +174,7 @@ class SaveProvider(InstrumentationProvider, DataInstrumentationProviderMixin):
             elif condition.language == dtypes.Language.Python:
                 cond_string = cppunparse.py2cpp(condition.code[0], expr_semicolon=False)
             else:
-                warnings.warn("Unrecognized language %s in codeblock" % condition.language)
+                warnings.warn(f"Unrecognized language {condition.language} in codeblock")
                 cond_string = condition.as_string
             condition_preamble = f"if ({cond_string})" + " {"
             condition_postamble = "}"
@@ -224,7 +225,7 @@ class RestoreProvider(InstrumentationProvider, DataInstrumentationProviderMixin)
         super().__init__()
         self.gpu_runtime_init = False
         self.uses_gpu = False
-        self.framecode: "DaCeCodeGenerator" = None
+        self.framecode: DaCeCodeGenerator = None
 
     def writes_to_report(self) -> bool:
         # Data instrumentation dumps arrays to a separate directory and never touches
@@ -246,7 +247,7 @@ class RestoreProvider(InstrumentationProvider, DataInstrumentationProviderMixin)
             self.framecode = codegen
             self.uses_gpu = any(d.storage == dtypes.StorageType.GPU_Global for _, _, d in sdfg.arrays_recursive())
             codegen.statestruct.append("dace::DataSerializer *serializer;")
-            sdfg.append_init_code(f'__state->serializer = new dace::DataSerializer("");\n')
+            sdfg.append_init_code('__state->serializer = new dace::DataSerializer("");\n')
 
             # Add method that controls serializer input
             global_stream.write(self._generate_report_setter(sdfg))
@@ -268,7 +269,7 @@ class RestoreProvider(InstrumentationProvider, DataInstrumentationProviderMixin)
             return
 
         condition_preamble, condition_postamble = "", ""
-        condition: Optional[CodeBlock] = state.symbol_instrument_condition
+        condition: CodeBlock | None = state.symbol_instrument_condition
         if condition is not None and not condition.as_string == "1":
             cond_string = None
             if condition.language == dtypes.Language.CPP:
@@ -276,7 +277,7 @@ class RestoreProvider(InstrumentationProvider, DataInstrumentationProviderMixin)
             elif condition.language == dtypes.Language.Python:
                 cond_string = cppunparse.py2cpp(condition.code[0], expr_semicolon=False)
             else:
-                warnings.warn("Unrecognized language %s in codeblock" % condition.language)
+                warnings.warn(f"Unrecognized language {condition.language} in codeblock")
                 cond_string = condition.as_string
             condition_preamble = f"if ({cond_string})" + " {"
             condition_postamble = "}"
@@ -305,7 +306,7 @@ class RestoreProvider(InstrumentationProvider, DataInstrumentationProviderMixin)
         from dace.codegen.dispatcher import DefinedType  # Avoid import loop
 
         condition_preamble, condition_postamble = "", ""
-        condition: Optional[CodeBlock] = node.instrument_condition
+        condition: CodeBlock | None = node.instrument_condition
         if condition is not None and not condition.as_string == "1":
             cond_string = None
             if condition.language == dtypes.Language.CPP:
@@ -313,7 +314,7 @@ class RestoreProvider(InstrumentationProvider, DataInstrumentationProviderMixin)
             elif condition.language == dtypes.Language.Python:
                 cond_string = cppunparse.py2cpp(condition.code[0], expr_semicolon=False)
             else:
-                warnings.warn("Unrecognized language %s in codeblock" % condition.language)
+                warnings.warn(f"Unrecognized language {condition.language} in codeblock")
                 cond_string = condition.as_string
             condition_preamble = f"if ({cond_string})" + " {"
             condition_postamble = "}"

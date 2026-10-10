@@ -1,11 +1,11 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 
 import dace
+from dace.memlet import Memlet
+from dace.sdfg import InterstateEdge
+from dace.sdfg.nodes import Tasklet
 from dace.sdfg.state import ConditionalBlock
 from dace.transformation.interstate import MoveAssignmentOutsideIf
-from dace.sdfg import InterstateEdge
-from dace.memlet import Memlet
-from dace.sdfg.nodes import Tasklet
 
 
 def one_variable_simple_test(const_value: int = 0):

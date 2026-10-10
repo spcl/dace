@@ -1,15 +1,13 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Shared utilities of the GPU-specialization passes."""
 
-from typing import Dict, List, Optional
-
 from ordered_set import OrderedSet
 
 from dace import dtypes
+from dace.libraries.standard.helper import CURRENT_STREAM_NAME
 from dace.sdfg import SDFG, SDFGState, nodes
 from dace.sdfg.scope import is_in_scope
 from dace.transformation.helpers import get_parent_maps
-from dace.libraries.standard.helper import CURRENT_STREAM_NAME
 
 # The legacy ambient-stream symbol, so expanded code is valid under either codegen.
 STREAM_CONNECTOR = CURRENT_STREAM_NAME
@@ -24,7 +22,7 @@ def is_stream_wiring_applied(sdfg: SDFG) -> bool:
     return get_gpu_stream_array_name() in sdfg.arrays
 
 
-def enclosing_map_chain(state: SDFGState, node: nodes.Node, schedule: dtypes.ScheduleType) -> List[nodes.MapEntry]:
+def enclosing_map_chain(state: SDFGState, node: nodes.Node, schedule: dtypes.ScheduleType) -> list[nodes.MapEntry]:
     """Outermost-first chain of the schedule maps enclosing node in state; earlier passes may leave the
     scope cache stale."""
     state._clear_scopedict_cache()
@@ -35,9 +33,7 @@ def enclosing_map_chain(state: SDFGState, node: nodes.Node, schedule: dtypes.Sch
     ]
 
 
-def innermost_enclosing_map(
-    state: SDFGState, node: nodes.Node, schedule: dtypes.ScheduleType
-) -> Optional[nodes.MapEntry]:
+def innermost_enclosing_map(state: SDFGState, node: nodes.Node, schedule: dtypes.ScheduleType) -> nodes.MapEntry | None:
     """Innermost ``MapEntry`` with ``schedule`` enclosing ``node``, or None."""
     chain = enclosing_map_chain(state, node, schedule)
     return chain[-1] if chain else None
@@ -57,7 +53,7 @@ def in_scope_of(state: SDFGState, node: nodes.Node, schedules) -> bool:
     return is_in_scope(state.sdfg, state, node, schedules)
 
 
-def weakly_connected_node_sets(graph) -> List[OrderedSet]:
+def weakly_connected_node_sets(graph) -> list[OrderedSet]:
     """Weakly connected components of ``graph``, in node order (networkx yields hash order, which varies per run)."""
     import networkx as nx
 
@@ -148,7 +144,7 @@ def find_inner_gpu_consumers(sdfg: SDFG):
                     yield node, nsdfg, state
 
 
-def persisted_stream_assignments(sdfg: SDFG) -> Dict[nodes.Node, int]:
+def persisted_stream_assignments(sdfg: SDFG) -> dict[nodes.Node, int]:
     """Every ``Node.gpu_stream_id`` set across the hierarchy; the per-node property is the durable record."""
     return {
         n: n.gpu_stream_id

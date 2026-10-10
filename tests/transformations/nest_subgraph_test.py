@@ -1,12 +1,13 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+import numpy as np
 import pytest
 
 import dace
-from dace.sdfg.analysis.schedule_tree import sdfg_to_tree, treenodes as tn
-from dace.transformation.helpers import nest_state_subgraph, nest_sdfg_subgraph, nest_sdfg_control_flow
+from dace.sdfg.analysis.schedule_tree import sdfg_to_tree
+from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.sdfg.graph import SubgraphView
 from dace.sdfg.state import LoopRegion, StateSubgraphView
-import numpy as np
+from dace.transformation.helpers import nest_sdfg_control_flow, nest_sdfg_subgraph, nest_state_subgraph
 
 
 @dace.program

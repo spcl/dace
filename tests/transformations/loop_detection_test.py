@@ -1,9 +1,9 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
 import pytest
 
-from dace.transformation.interstate.loop_detection import DetectLoop
+import dace
 from dace.transformation import transformation as xf
+from dace.transformation.interstate.loop_detection import DetectLoop
 
 
 class CountLoops(DetectLoop, xf.MultiStateTransformation):

@@ -3,9 +3,11 @@
 One-dimensional Discrete Fourier Transform (DFT) native implementations.
 """
 
-import dace
-import numpy as np
 import math
+
+import numpy as np
+
+import dace
 
 
 # Native, naive version of the Discrete Fourier Transform

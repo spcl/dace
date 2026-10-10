@@ -3,7 +3,7 @@
 Parse the authors file and print for CITATION.cff
 """
 
-with open("AUTHORS", "r") as f:
+with open("AUTHORS") as f:
     content = f.readlines()
 
 for i, l in enumerate(content[4:]):
@@ -11,7 +11,7 @@ for i, l in enumerate(content[4:]):
         end_idx = i + 4
         break
 else:
-    raise ValueError()
+    raise ValueError
 
 for author in content[4:end_idx]:
     names = author.strip().split()

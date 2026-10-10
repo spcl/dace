@@ -1,8 +1,10 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 
 import warnings
-import dace
+
 import pytest
+
+import dace
 
 
 def test_memlet_range_not_overlap_ranges():

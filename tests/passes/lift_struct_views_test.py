@@ -2,6 +2,7 @@
 """Tests the LiftStructViews pass."""
 
 import numpy as np
+
 import dace
 from dace.sdfg.state import LoopRegion
 from dace.transformation.pass_pipeline import FixedPointPipeline

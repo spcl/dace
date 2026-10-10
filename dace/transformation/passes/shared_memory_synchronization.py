@@ -2,15 +2,16 @@
 """Pass that inserts ``__syncthreads()`` barriers around GPU shared-memory accesses."""
 
 import warnings
-from typing import Dict, Tuple
+
+from ordered_set import OrderedSet
 
 import dace
 from dace import SDFG, SDFGState, dtypes, properties
 from dace.sdfg.nodes import AccessNode, MapEntry, MapExit, NestedSDFG, Node
 from dace.sdfg.scope import is_in_scope
 from dace.sdfg.state import LoopRegion
-from dace.transformation import helpers, pass_pipeline as ppl, transformation
-from ordered_set import OrderedSet
+from dace.transformation import helpers, transformation
+from dace.transformation import pass_pipeline as ppl
 
 
 def is_shared_memory_write(node: Node, state: SDFGState) -> bool:
@@ -33,8 +34,8 @@ class DefaultSharedMemorySync(ppl.Pass):
     """
 
     def apply_pass(self, sdfg: SDFG, _):
-        tb_map_exits: Dict[MapExit, SDFGState] = {}
-        collaborative_smem_copies: Dict[AccessNode, SDFGState] = {}
+        tb_map_exits: dict[MapExit, SDFGState] = {}
+        collaborative_smem_copies: dict[AccessNode, SDFGState] = {}
         for node, parent_state in sdfg.all_nodes_recursive():
             if isinstance(node, MapExit) and node.schedule == dtypes.ScheduleType.GPU_ThreadBlock:
                 tb_map_exits[node] = parent_state
@@ -59,9 +60,9 @@ class DefaultSharedMemorySync(ppl.Pass):
             state.sdfg, state, node, [dtypes.ScheduleType.GPU_ThreadBlock]
         )
 
-    def identify_synchronization_tb_exits(self, tb_map_exits: Dict[MapExit, SDFGState]) -> Dict[MapExit, SDFGState]:
+    def identify_synchronization_tb_exits(self, tb_map_exits: dict[MapExit, SDFGState]) -> dict[MapExit, SDFGState]:
         """The thread-block exits that write shared memory and need a barrier after them."""
-        sync_requiring_exits: Dict[MapExit, SDFGState] = {}
+        sync_requiring_exits: dict[MapExit, SDFGState] = {}
         for map_exit, state in tb_map_exits.items():
             map_entry = state.entry_node(map_exit)
             writes_to_smem, race_cond_danger, has_tb_parent = self.tb_exits_analysis(map_entry, map_exit, state)
@@ -77,7 +78,7 @@ class DefaultSharedMemorySync(ppl.Pass):
             sync_requiring_exits[map_exit] = state
         return sync_requiring_exits
 
-    def tb_exits_analysis(self, map_entry: MapEntry, map_exit: MapExit, state: SDFGState) -> Tuple[bool, bool, bool]:
+    def tb_exits_analysis(self, map_entry: MapEntry, map_exit: MapExit, state: SDFGState) -> tuple[bool, bool, bool]:
         """``(writes shared memory, race danger, nested in another thread-block map)`` of a thread-block map.
 
         The race danger is a shared write inside a sequential map or loop, even a single-iteration one.
@@ -123,7 +124,7 @@ class DefaultSharedMemorySync(ppl.Pass):
             for node in state.all_nodes_between(map_entry, map_exit)
         )
 
-    def insert_synchronization_after_nodes(self, nodes: Dict[Node, SDFGState]):
+    def insert_synchronization_after_nodes(self, nodes: dict[Node, SDFGState]):
         """Insert a ``__syncthreads()`` tasklet after each given node."""
         for node, state in nodes.items():
             sync_tasklet = state.add_tasklet(

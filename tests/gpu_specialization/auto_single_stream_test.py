@@ -14,10 +14,10 @@ through the pipeline so we can inspect the *real* shape the strategy sees in pro
 
 import warnings
 
-import dace
 import numpy as np
 import pytest
 
+import dace
 from dace.codegen import common
 from dace.transformation.auto.auto_optimize import auto_optimize
 from dace.transformation.passes.gpu_specialization.gpu_specialization_pipeline import GPUStreamPipeline
@@ -39,12 +39,7 @@ def _sync_tasklets(state):
 
 
 def _all_sync_states(sdfg):
-    out = []
-    for nsdfg in sdfg.all_sdfgs_recursive():
-        for state in nsdfg.states():
-            if _sync_tasklets(state):
-                out.append((nsdfg, state))
-    return out
+    return [(nsdfg, state) for nsdfg in sdfg.all_sdfgs_recursive() for state in nsdfg.states() if _sync_tasklets(state)]
 
 
 def _build_gpu_sdfg(program, *, strategy=None):

@@ -1,10 +1,11 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 from collections import defaultdict
-from typing import Any, Dict, Optional, Set
+from typing import Any
 
 from dace import SDFG, InterstateEdge
 from dace.sdfg import nodes as nd
-from dace.transformation import pass_pipeline as ppl, transformation
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation import transformation
 from dace.transformation.passes import analysis as ap
 
 
@@ -25,7 +26,7 @@ class ScalarFission(ppl.Pass):
     def depends_on(self):
         return [ap.ScalarWriteShadowScopes]
 
-    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Dict[str, Set[str]]]:
+    def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> dict[str, set[str]] | None:
         """
         Rename scalars and arrays of size 1 based on dominated scopes.
 
@@ -35,7 +36,7 @@ class ScalarFission(ppl.Pass):
                                  pipeline, an empty dictionary is expected.
         :return: A dictionary mapping the original name to a set of all new names created for each data container.
         """
-        results: Dict[str, Set[str]] = defaultdict(lambda: set())
+        results: dict[str, set[str]] = defaultdict(lambda: set())
 
         shadow_scope_dict: ap.WriteScopeDict = pipeline_results[ap.ScalarWriteShadowScopes.__name__][sdfg.cfg_id]
 
@@ -90,5 +91,5 @@ class ScalarFission(ppl.Pass):
                     results[name].add(newname)
         return results
 
-    def report(self, pass_retval: Any) -> Optional[str]:
+    def report(self, pass_retval: Any) -> str | None:
         return f"Renamed {len(pass_retval)} scalars: {pass_retval}."

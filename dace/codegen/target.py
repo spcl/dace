@@ -1,14 +1,17 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import os
 import shutil  # which
-from typing import List, Optional, TYPE_CHECKING
 import warnings
+from typing import TYPE_CHECKING, Optional
 
-from dace import memlet as mm, data as dt, dtypes
-from dace.sdfg import nodes, SDFG, SDFGState, ScopeSubgraphView, graph as gr
-from dace.registry import make_registry
-from dace.codegen.prettycode import CodeIOStream
+from dace import data as dt
+from dace import dtypes
+from dace import memlet as mm
 from dace.codegen.codeobject import CodeObject
+from dace.codegen.prettycode import CodeIOStream
+from dace.registry import make_registry
+from dace.sdfg import SDFG, ScopeSubgraphView, SDFGState, nodes
+from dace.sdfg import graph as gr
 from dace.sdfg.state import ControlFlowRegion
 
 if TYPE_CHECKING:
@@ -16,7 +19,7 @@ if TYPE_CHECKING:
 
 
 @make_registry
-class TargetCodeGenerator(object):
+class TargetCodeGenerator:
     """
     Interface dictating functions that generate code for:
 
@@ -28,7 +31,7 @@ class TargetCodeGenerator(object):
     #: Targets set it in their constructor; use ``get_framecode_generator`` to access it.
     _frame: Optional["DaCeCodeGenerator"] = None
 
-    def get_generated_codeobjects(self) -> List[CodeObject]:
+    def get_generated_codeobjects(self) -> list[CodeObject]:
         """
         Returns a list of generated ``CodeObject`` classes corresponding
         to files with generated code. If an empty list is returned
@@ -39,7 +42,7 @@ class TargetCodeGenerator(object):
         return []
 
     @staticmethod
-    def cmake_options() -> List[str]:
+    def cmake_options() -> list[str]:
         """
         Returns a list of CMake options that this target needs
         to be passed into the ``cmake`` command during configuration.
@@ -47,7 +50,7 @@ class TargetCodeGenerator(object):
         return []
 
     @staticmethod
-    def cmake_files() -> List[str]:
+    def cmake_files() -> list[str]:
         """
         Returns a list of CMake file paths that should be included
         during the CMake configuration step.
@@ -331,5 +334,5 @@ def make_absolute(path: str) -> str:
         executable = shutil.which(path)
         if not executable:
             executable = path
-            warnings.warn('Could not find executable "{}"'.format(path))
+            warnings.warn(f'Could not find executable "{path}"')
         return executable.replace("\\", "/")

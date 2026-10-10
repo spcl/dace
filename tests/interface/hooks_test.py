@@ -3,9 +3,11 @@
 Tests hooks that can be used to extend DaCe functionality.
 """
 
-import dace
-import numpy as np
 from contextlib import contextmanager
+
+import numpy as np
+
+import dace
 
 
 def test_hooks():

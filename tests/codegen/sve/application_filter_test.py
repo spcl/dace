@@ -1,8 +1,9 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
 import numpy as np
-import tests.codegen.sve.common as common
 import pytest
+
+import dace
+from tests.codegen.sve import common
 
 N = dace.symbol("N", positive=True)
 

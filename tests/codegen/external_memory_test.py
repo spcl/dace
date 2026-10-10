@@ -3,9 +3,10 @@
 Tests external memory allocation.
 """
 
-import dace
 import numpy as np
 import pytest
+
+import dace
 
 
 @pytest.mark.parametrize("symbolic", (False, True))
