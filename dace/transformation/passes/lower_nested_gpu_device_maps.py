@@ -5,13 +5,16 @@ import copy
 from collections.abc import Iterator
 from typing import TypeGuard
 
+from ordered_set import OrderedSet
+
 import dace
 from dace import SDFG, dtypes, properties, subsets, symbolic
-from dace.sdfg import nodes, utils as sdutil
+from dace.sdfg import nodes
+from dace.sdfg import utils as sdutil
 from dace.sdfg.nodes import CodeBlock
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, SDFGState, StateSubgraphView
-from dace.transformation import helpers, pass_pipeline as ppl, transformation
-from ordered_set import OrderedSet
+from dace.transformation import helpers, transformation
+from dace.transformation import pass_pipeline as ppl
 
 InnerMap = tuple[SDFGState, nodes.MapEntry]
 
