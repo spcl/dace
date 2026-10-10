@@ -5,6 +5,8 @@ import numpy as np
 import pytest
 
 import dace
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
+from dace.transformation.interstate import LoopToMap
 from dace.transformation.pass_pipeline import Pipeline
 from dace.transformation.passes.scalar_fission import ScalarFission
 from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising
@@ -299,15 +301,6 @@ def test_branch_subscopes_fission(with_raising):
     assert set(sdfg.arrays.keys()) == {"A", "B", "C", "B_0", "B_1"}
 
 
-if __name__ == "__main__":
-    test_scalar_fission(False)
-    test_branch_subscopes_nofission(False)
-    test_branch_subscopes_fission(False)
-    test_scalar_fission(True)
-    test_branch_subscopes_nofission(True)
-    test_branch_subscopes_fission(True)
-
-
 def ordering_edge_between_writes_sdfg() -> dace.SDFG:
     """One real write to ``s``, then a second ``s`` node reached only by ordering edges.
 
@@ -375,3 +368,64 @@ def test_ordering_edge_does_not_start_a_version():
     out = np.zeros(1, dtype=np.float64)
     sdfg(A=A, out=out)
     assert out[0] == 6.0, f"got {out[0]}"
+
+
+def _branchy_loop(sdfg: dace.SDFG, name: str, threshold: float, then_value: str, out: str, scale: float) -> LoopRegion:
+    """``for i: if A[i] > threshold: t = then_value else: t = A[i]; out[i] = scale * t``."""
+    loop = LoopRegion(name, "i < N", "i", "i = 0", "i = i + 1")
+    cond = ConditionalBlock(f"{name}_if")
+    for condition, value in ((f"A[i] > {threshold}", then_value), (None, "a")):
+        branch = ControlFlowRegion(f"{name}_branch_{len(cond.branches)}")
+        state = branch.add_state(is_start_block=True)
+        write = state.add_tasklet("set_t", {"a"} if value == "a" else set(), {"o"}, f"o = {value}")
+        if value == "a":
+            state.add_edge(state.add_read("A"), None, write, "a", dace.Memlet("A[i]"))
+        state.add_edge(write, "o", state.add_write("t"), None, dace.Memlet("t[0]"))
+        cond.add_branch(None if condition is None else dace.properties.CodeBlock(condition), branch)
+    loop.add_node(cond, is_start_block=True)
+    use = loop.add_state(f"{name}_use")
+    loop.add_edge(cond, use, dace.InterstateEdge())
+    consume = use.add_tasklet("use_t", {"x"}, {"o"}, f"o = {scale} * x")
+    use.add_edge(use.add_read("t"), None, consume, "x", dace.Memlet("t[0]"))
+    use.add_edge(consume, "o", use.add_write(out), None, dace.Memlet(f"{out}[i]"))
+    return loop
+
+
+def test_scalar_written_in_every_branch_is_private_to_each_loop():
+    """Two loops each set the scalar ``t`` in both arms of an if/else and then read it, as CloudSC's ``ZFAC`` is.
+
+    Every path through each conditional writes ``t``, so its reads see that iteration's write: each loop gets its own
+    version, and both loops map. Treated as live-in, ``t`` stayed one container shared by the loops and neither mapped.
+    """
+    sdfg = dace.SDFG("scalar_written_in_every_branch")
+    sdfg.add_symbol("N", dace.int64)
+    for name in ("A", "B", "C"):
+        sdfg.add_array(name, ["N"], dace.float64)
+    sdfg.add_scalar("t", dace.float64, transient=True)
+    first = _branchy_loop(sdfg, "first", 0.5, "1.0", "B", 2.0)
+    second = _branchy_loop(sdfg, "second", 0.25, "3.0", "C", 1.0)
+    sdfg.add_node(first, is_start_block=True)
+    sdfg.add_node(second)
+    sdfg.add_edge(first, second, dace.InterstateEdge())
+    sdfg.validate()
+
+    Pipeline([ScalarFission()]).apply_pass(sdfg, {})
+    sdfg.validate()
+    assert sdfg.apply_transformations_repeated(LoopToMap) == 2, "each loop owns its version of t and maps"
+
+    A = np.arange(16, dtype=np.float64) / 15.0
+    B, C = np.zeros_like(A), np.zeros_like(A)
+    sdfg(A=A, B=B, C=C, N=A.size)
+    assert np.array_equal(B, 2.0 * np.where(A > 0.5, 1.0, A))
+    assert np.array_equal(C, np.where(A > 0.25, 3.0, A))
+
+
+if __name__ == "__main__":
+    test_scalar_fission(False)
+    test_branch_subscopes_nofission(False)
+    test_branch_subscopes_fission(False)
+    test_scalar_fission(True)
+    test_branch_subscopes_nofission(True)
+    test_branch_subscopes_fission(True)
+    test_ordering_edge_does_not_start_a_version()
+    test_scalar_written_in_every_branch_is_private_to_each_loop()
