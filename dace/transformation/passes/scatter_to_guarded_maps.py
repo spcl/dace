@@ -53,6 +53,7 @@ from dace.frontend.python import astutils
 from dace.optionals import required
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
+from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.narrowing import as_expr
 from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion
 from dace.transformation import pass_pipeline as ppl
@@ -719,7 +720,8 @@ def key_map_can_read(expr: str, sdfg: SDFG, loop_var: str, varying: set[str]) ->
     for node in ast.walk(tree):
         if not isinstance(node, ast.Name) or node.id in subscripted or node.id == loop_var:
             continue
-        if node.id in varying:
+        # A bare container is not wired into the key map: only subscripts become its connectors.
+        if node.id in varying or node.id in sdfg.arrays:
             return False
     return True
 
@@ -1026,6 +1028,13 @@ def _collect_indirect_bindings(region: LoopRegion, sdfg: SDFG) -> dict[str, tupl
                 resolved = resolve_staged_scalar_source(str(rhs), region, sdfg)
             if resolved is not None:
                 bindings[lhs] = resolved
+    # A scalar the body fills from ``arr[f(loop_var)]`` binds like the symbol it was demoted from.
+    for state in region.states():
+        for node in state.data_nodes():
+            if node.data not in bindings and state.in_degree(node) > 0:
+                resolved = resolve_staged_scalar_source(node.data, region, sdfg)
+                if resolved is not None:
+                    bindings[node.data] = resolved
     return bindings
 
 
@@ -1052,6 +1061,7 @@ def resolve_staged_scalar_source(rhs: str, region: LoopRegion, sdfg: SDFG) -> tu
             if node.data != tree.id:
                 continue
             for e in state.in_edges(node):
+                e = _through_copy_tasklet(state, e)
                 if e.data is None or e.data.is_empty() or not isinstance(e.src, nodes.AccessNode):
                     continue
                 src_subset = e.data.src_subset if e.data.src_subset is not None else e.data.subset
@@ -1062,6 +1072,27 @@ def resolve_staged_scalar_source(rhs: str, region: LoopRegion, sdfg: SDFG) -> tu
                     continue
                 return e.src.data, [ast.parse(d, mode="eval").body for d in dims]
     return None
+
+
+def _through_copy_tasklet(state: SDFGState, edge: MultiConnectorEdge[mm.Memlet]) -> MultiConnectorEdge[mm.Memlet]:
+    """The edge feeding ``edge``'s tasklet when that tasklet only copies its one input (``out = in``, as a demoted
+    symbol's assignment ``s = arr[i]`` is staged), else ``edge`` itself."""
+    src = edge.src
+    if not isinstance(src, nodes.Tasklet) or src.language is not dtypes.Language.Python or state.in_degree(src) != 1:
+        return edge
+    (inner,) = state.in_edges(src)
+    code = src.code.code
+    stmt = code[0] if isinstance(code, list) and len(code) == 1 else None
+    if (
+        isinstance(stmt, ast.Assign)
+        and len(stmt.targets) == 1
+        and isinstance(stmt.targets[0], ast.Name)
+        and stmt.targets[0].id == edge.src_conn
+        and isinstance(stmt.value, ast.Name)
+        and stmt.value.id == inner.dst_conn
+    ):
+        return inner
+    return edge
 
 
 def _owning_sdfg(root: SDFG, loop: LoopRegion) -> SDFG:
