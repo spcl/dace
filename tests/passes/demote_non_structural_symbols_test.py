@@ -79,6 +79,30 @@ def test_a_demoted_value_keeps_its_arithmetic_as_written():
     assert R[0] == 0.3 + (1.0 - 0.3) * ((S[0] - 0.8) / 0.2) ** 2
 
 
+def test_a_tasklet_reading_a_demoted_symbol_keeps_its_expression():
+    """The read of a demoted symbol becomes a connector without reordering the tasklet: ``x - z + y`` stays in that
+    order (sympy writes ``x + y - z``, which rounds differently)."""
+    sdfg = dace.SDFG("tasklet_keeps_expression")
+    sdfg.add_symbol("z", dace.float64)
+    for name in ("S", "X", "Y", "R"):
+        sdfg.add_array(name, [1], dace.float64)
+    start = sdfg.add_state("start", is_start_block=True)
+    use = sdfg.add_state_after(start, "use", assignments={"z": "S[0]"})
+    tasklet = use.add_tasklet("combine", {"x", "y"}, {"o"}, "o = x - z + y")
+    use.add_edge(use.add_read("X"), None, tasklet, "x", dace.Memlet("X[0]"))
+    use.add_edge(use.add_read("Y"), None, tasklet, "y", dace.Memlet("Y[0]"))
+    use.add_edge(tasklet, "o", use.add_write("R"), None, dace.Memlet("R[0]"))
+    sdfg.validate()
+    assert DemoteNonStructuralSymbols().apply_pass(sdfg, {}) == 1
+    sdfg.validate()
+    assert "(x - _in_z) + y" in tasklet.code.as_string, tasklet.code.as_string
+
+    S, X, Y, R = np.array([1e16]), np.array([1.0]), np.array([-1e16]), np.zeros(1)
+    sdfg(S=S, X=X, Y=Y, R=R)
+    assert R[0] == X[0] - S[0] + Y[0]
+
+
 if __name__ == "__main__":
     test_a_counter_becomes_a_scalar_and_its_loop_maps()
     test_a_demoted_value_keeps_its_arithmetic_as_written()
+    test_a_tasklet_reading_a_demoted_symbol_keeps_its_expression()
