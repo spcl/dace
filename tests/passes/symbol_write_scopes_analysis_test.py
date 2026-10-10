@@ -3,7 +3,7 @@
 
 import dace
 from dace.transformation.pass_pipeline import Pipeline
-from dace.transformation.passes.analysis import SymbolWriteScopes, SymbolScopeDict
+from dace.transformation.passes.analysis import SymbolScopeDict, SymbolWriteScopes
 
 
 def test_loop_iter_symbol_reused_split():

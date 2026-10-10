@@ -1,9 +1,11 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 
-import dace
 import re
+
 import numpy as np
 import pytest
+
+import dace
 
 
 def test_state_transitions():

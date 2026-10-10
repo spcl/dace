@@ -1,8 +1,10 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
-import dace
-import pytest
+
 import numpy
+import pytest
+
+import dace
 from dace.transformation.dataflow.add_threadblock_map import AddThreadBlockMap
 
 N = dace.symbol("N")

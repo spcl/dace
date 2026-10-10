@@ -1,7 +1,6 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
 from collections import defaultdict
-from typing import Tuple
 
 Index = type(None)
 ExtSlice = type(None)
@@ -28,7 +27,7 @@ class SubscriptConverter(ast.NodeTransformer):
     }
     """
 
-    def __init__(self, offset: Tuple[int] = None, dtype=None):
+    def __init__(self, offset: tuple[int] = None, dtype=None):
         """
         :param offset: Apply the given offset tuple to every index found.
         :param dtype: Data type of constants found to enforce that the right

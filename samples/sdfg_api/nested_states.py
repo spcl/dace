@@ -1,8 +1,9 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 """SDFG API sample that showcases nested SDFG creation."""
 
-import dace
 import numpy as np
+
+import dace
 
 # Create outer SDFG
 sdfg = dace.SDFG("nested_main")

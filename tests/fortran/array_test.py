@@ -6,7 +6,6 @@ from dace import dtypes, symbolic
 from dace.frontend.fortran import fortran_parser
 from dace.sdfg import utils as sdutil
 from dace.sdfg.nodes import AccessNode
-
 from dace.sdfg.state import LoopRegion
 
 

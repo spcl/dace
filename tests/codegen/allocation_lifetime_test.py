@@ -3,13 +3,13 @@
 
 import re
 
+import numpy as np
 import pytest
 
 import dace
 from dace.codegen.targets import framecode
 from dace.codegen.targets.cpu import _use_aligned_operator_new
 from dace.sdfg import infer_types
-import numpy as np
 
 
 def _count_heap_allocs(code: str, ctype: str) -> int:

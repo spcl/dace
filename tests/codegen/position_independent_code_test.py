@@ -48,8 +48,8 @@ def test_pic_survives_clearing_the_configured_compiler_arguments(tmp_path):
 
 
 if __name__ == "__main__":
-    import tempfile
     import pathlib
+    import tempfile
 
     with tempfile.TemporaryDirectory() as folder:
         test_pic_survives_clearing_the_configured_compiler_arguments(pathlib.Path(folder))

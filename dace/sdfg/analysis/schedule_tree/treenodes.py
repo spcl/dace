@@ -1,17 +1,17 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-from collections.abc import Mapping
+from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any, Literal, Optional
+
 import sympy
 
-from dace import nodes, data, subsets, dtypes, symbolic
+from dace import data, dtypes, nodes, subsets, symbolic
+from dace.memlet import Memlet
 from dace.properties import CodeBlock
-from dace.sdfg import InterstateEdge
 from dace.sdfg.memlet_utils import MemletSet
 from dace.sdfg.propagation import propagate_subset
-from dace.sdfg.sdfg import InterstateEdge, SDFG, memlets_in_ast
+from dace.sdfg.sdfg import SDFG, InterstateEdge, memlets_in_ast
 from dace.sdfg.state import LoopRegion, SDFGState
-from dace.memlet import Memlet
-from typing import TYPE_CHECKING, Any, Iterable, Iterator, Literal, Optional
 
 if TYPE_CHECKING:
     from dace import SDFG
@@ -726,9 +726,7 @@ class MapScope(DataflowScope):
         disallow_propagation: set[str] | None = None,
         **kwargs,
     ) -> MemletSet:
-        return super().input_memlets(
-            root, propagate={k: v for k, v in zip(self.node.map.params, self.node.map.range)}, **kwargs
-        )
+        return super().input_memlets(root, propagate=dict(zip(self.node.map.params, self.node.map.range)), **kwargs)
 
     def output_memlets(
         self,
@@ -738,9 +736,7 @@ class MapScope(DataflowScope):
         disallow_propagation: set[str] | None = None,
         **kwargs,
     ) -> MemletSet:
-        return super().output_memlets(
-            root, propagate={k: v for k, v in zip(self.node.map.params, self.node.map.range)}, **kwargs
-        )
+        return super().output_memlets(root, propagate=dict(zip(self.node.map.params, self.node.map.range)), **kwargs)
 
 
 @dataclass
@@ -1017,7 +1013,7 @@ def validate_children_and_parents_align(stree: ScheduleTreeScope, *, root: bool 
 
 def loop_variant(
     loop: LoopRegion,
-) -> Literal["for"] | Literal["while"] | Literal["do-while"] | Literal["do-for-uncond-increment"] | Literal["do-for"]:
+) -> Literal["for", "while", "do-while", "do-for-uncond-increment", "do-for"]:
     if loop.update_statement and loop.init_statement and loop.loop_variable:
         if loop.inverted:
             if loop.update_before_condition:

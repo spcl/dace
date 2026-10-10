@@ -3,8 +3,9 @@
 and its dependencies to a given device."""
 
 from copy import deepcopy as dcpy
-from dace import data, properties, subsets, symbolic, dtypes
-from dace.sdfg import dealias, nodes, SDFG
+
+from dace import data, dtypes, properties, subsets, symbolic
+from dace.sdfg import SDFG, dealias, nodes
 from dace.sdfg import utils as sdutil
 from dace.transformation import transformation
 

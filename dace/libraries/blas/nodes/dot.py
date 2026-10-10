@@ -1,14 +1,15 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
 import warnings
+
 import dace.library
 import dace.properties
 import dace.sdfg.nodes
-from dace.transformation.transformation import ExpandTransformation
-from dace.libraries.blas import blas_helpers
-from .. import environments
-from dace import dtypes, memlet as mm, SDFG, SDFGState
+from dace import SDFG, SDFGState, dtypes
+from dace import memlet as mm
 from dace.frontend.common import op_repository as oprepo
+from dace.libraries.blas import blas_helpers, environments
+from dace.transformation.transformation import ExpandTransformation
 
 
 @dace.library.expansion
@@ -54,7 +55,7 @@ class ExpandDotPure(ExpandTransformation):
             {"__i": f"0:{n}"},
             {"__x": dace.Memlet("_x[__i]"), "__y": dace.Memlet("_y[__i]")},
             mul_program,
-            {"__out": dace.Memlet(f"_result[0]", wcr="lambda x, y: x + y")},
+            {"__out": dace.Memlet("_result[0]", wcr="lambda x, y: x + y")},
             external_edges=True,
             output_nodes=None,
         )

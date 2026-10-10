@@ -1,15 +1,14 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
-from dace.transformation.subgraph import SubgraphFusion
-import dace.sdfg.utils as utils
-import dace.subsets as subsets
-import numpy as np
-
 import itertools
 
-from dace.sdfg.graph import SubgraphView
-
+import numpy as np
 from util import fusion
+
+import dace
+from dace import subsets
+from dace.sdfg import utils
+from dace.sdfg.graph import SubgraphView
+from dace.transformation.subgraph import SubgraphFusion
 
 N, M, O = [dace.symbol(s) for s in ["N", "M", "O"]]
 
@@ -68,9 +67,7 @@ def fix_sdfg(sdfg, graph):
     inner_sdfg = helper_sdfg.to_sdfg()
     nnode = graph.add_nested_sdfg(inner_sdfg, {"AA", "BB", "CC"}, {"CC"})
     # redirect edges
-    connectors = []
-    for e in graph.in_edges(nested_original):
-        connectors.append(e.dst_conn)
+    connectors = [e.dst_conn for e in graph.in_edges(nested_original)]
     connectors.sort()
 
     for e in graph.in_edges(nested_original):

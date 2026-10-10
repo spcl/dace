@@ -1,10 +1,9 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
-import dace.libraries.lapack as lapack
-import dace.libraries.linalg as linalg
 import numpy as np
 import pytest
 
+import dace
+from dace.libraries import lapack, linalg
 from dace.memlet import Memlet
 
 ###############################################################################
@@ -25,7 +24,7 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default):
     suffix = "_device" if storage != dace.StorageType.Default else ""
     transient = storage != dace.StorageType.Default
 
-    sdfg = dace.SDFG("matrix_choleskyfact_potrf_{}_{}".format(implementation, str(dtype)))
+    sdfg = dace.SDFG(f"matrix_choleskyfact_potrf_{implementation}_{str(dtype)}")
     state = sdfg.add_state("dataflow")
 
     xhost_arr = sdfg.add_array("x", [n, n], dtype, storage=dace.StorageType.Default)

@@ -3,10 +3,10 @@
 Tests conversion of schedule trees to SDFGs.
 """
 
-import dace
 import numpy as np
 import pytest
 
+import dace
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.transformation.pass_pipeline import FixedPointPipeline

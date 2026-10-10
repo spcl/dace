@@ -2,13 +2,13 @@
 """TensorDot library node and its pure / TTGT / cuTENSOR expansions."""
 
 import collections
-import dace
 
-from dace.libraries.linalg import environments
+import dace
 from dace import library, nodes, properties
-from dace.utils import prod as _prod
+from dace.libraries.linalg import environments
 from dace.symbolic import symstr
 from dace.transformation.transformation import ExpandTransformation
+from dace.utils import prod as _prod
 
 
 @library.expansion
@@ -49,11 +49,11 @@ class ExpandPure(ExpandTransformation):
         state = sdfg.add_state(f"{node.label}_state")
         sdfg.add_edge(init_state, state, dace.InterstateEdge())
 
-        outer_map_shape = list([s for i, s in enumerate(left_tensor.shape) if i not in node.left_axes])
+        outer_map_shape = [s for i, s in enumerate(left_tensor.shape) if i not in node.left_axes]
         outer_map_shape.extend([s for i, s in enumerate(right_tensor.shape) if i not in node.right_axes])
         outer_map_params = [f"__oi{i}" for i in range(len(outer_map_shape))]
         outer_map_rng = {i: f"0:{symstr(s)}" for i, s in zip(outer_map_params, outer_map_shape)}
-        inner_map_shape = list([left_tensor.shape[i] for i in node.left_axes])
+        inner_map_shape = [left_tensor.shape[i] for i in node.left_axes]
         inner_map_params = [f"__ii{i}" for i in range(len(inner_map_shape))]
         inner_map_rng = {i: f"0:{symstr(s)}" for i, s in zip(inner_map_params, inner_map_shape)}
 
@@ -76,7 +76,7 @@ class ExpandPure(ExpandTransformation):
         out_mem = dace.Memlet(expr=f"_out_tensor[{','.join(out_idx)}]", wcr="lambda x, y: x + y")
         inputs = {"_left": left_mem, "_right": right_mem}
         outputs = {"_out": out_mem}
-        code = f"_out = _left * _right"
+        code = "_out = _left * _right"
         state.add_mapped_tasklet(
             f"{node.label}_tasklet", {**outer_map_rng, **inner_map_rng}, inputs, code, outputs, external_edges=True
         )
@@ -289,7 +289,7 @@ class ExpandCuTensor(ExpandTransformation):
             if i in node.right_axes:
                 continue
             extents += f"extent[{i}] = {s};\n"
-        extents += f"""
+        extents += """
             std::vector<int64_t> extentA;
             for (auto mode : modeA) extentA.push_back(extent[mode]);
             std::vector<int64_t> extentB;

@@ -3,10 +3,11 @@
 Tests variants of the numpy split array manipulation.
 """
 
-import dace
 import numpy as np
-from common import compare_numpy_output
 import pytest
+from common import compare_numpy_output
+
+import dace
 
 M = 9
 N = 20

@@ -1,7 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Shared helpers for the standard library node expansions."""
 
-from typing import Callable, Dict, List, Optional, Sequence, Tuple
+from collections.abc import Callable, Sequence
 
 import dace
 from dace import dtypes
@@ -28,8 +28,8 @@ CPU_RESIDENT_STORAGES = frozenset(
 
 
 def collapse_shape_and_strides(
-    subset: dace.subsets.Range, strides: List[dace.symbolic.SymExpr]
-) -> Tuple[List[dace.symbolic.SymExpr], List[dace.symbolic.SymExpr]]:
+    subset: dace.subsets.Range, strides: list[dace.symbolic.SymExpr]
+) -> tuple[list[dace.symbolic.SymExpr], list[dace.symbolic.SymExpr]]:
     """Drop length-1 dims from a (subset, strides) pair; surviving strides scale by the subset step.
 
     A tiled dimension (``b:e:step:tile``) addresses ``tile`` contiguous elements per step, which no
@@ -108,7 +108,7 @@ def auto_dispatch(
     return library_cls.implementations[impl_name].expansion(node, parent_state, parent_state.sdfg)
 
 
-def broadcast_indices(shape: Sequence, result: Sequence, axis: Optional[int] = None) -> List[str]:
+def broadcast_indices(shape: Sequence, result: Sequence, axis: int | None = None) -> list[str]:
     """The subscripts, one per axis of an operand of ``shape``, that read it for the result iterators
     ``__i0, __i1, ...`` by the NumPy broadcasting rule: an axis of extent 1 is read at ``0``.
 
@@ -138,8 +138,8 @@ def broadcast_indices(shape: Sequence, result: Sequence, axis: Optional[int] = N
 def broadcast_map_expansion(
     label: str,
     parent_sdfg: dace.SDFG,
-    inputs: Dict[str, Tuple[dace.Memlet, Optional[int]]],
-    output: Tuple[str, dace.Memlet],
+    inputs: dict[str, tuple[dace.Memlet, int | None]],
+    output: tuple[str, dace.Memlet],
     code: str,
 ) -> dace.SDFG:
     """Expand an element-wise library node into one map over its output.
@@ -157,7 +157,7 @@ def broadcast_map_expansion(
     params = [f"__i{d}" for d in range(len(result))]
     sdfg = dace.SDFG(f"{label}_sdfg")
 
-    def operand(conn: str, memlet: dace.Memlet, indices: List[str]) -> dace.Memlet:
+    def operand(conn: str, memlet: dace.Memlet, indices: list[str]) -> dace.Memlet:
         desc = parent_sdfg.arrays[memlet.data]
         strides = [stride * step for stride, (_, _, step) in zip(desc.strides, memlet.subset)]
         sdfg.add_array(conn, memlet.subset.size(), desc.dtype, desc.storage, strides=strides)
