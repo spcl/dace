@@ -36,7 +36,7 @@ def _make_sdfg(name: str, nested: bool = False) -> dace.SDFG:
 
 def test_state_symbols_give_the_same_result():
     sdfg = _make_sdfg("same_result")
-    state = sdfg.states()[0]
+    state = next(iter(sdfg.states()))
     state_symbols = state.symbols_defined_at_state()
 
     for node in state.nodes():
@@ -68,7 +68,7 @@ def test_propagation_resolves_the_state_symbols_once_per_state():
 
 def test_propagation_is_unchanged():
     sdfg = _make_sdfg("unchanged")
-    state = sdfg.states()[0]
+    state = next(iter(sdfg.states()))
     map_entry = next(n for n in state.nodes() if isinstance(n, nodes.MapEntry))
     for edge in state.in_edges(map_entry):
         edge.data = dace.Memlet("a[0, 0]")
@@ -198,9 +198,9 @@ def test_forgetting_an_sdfg_resolves_it_again():
     A resolver holds on to what it resolved until it is told that the SDFG changed, and then only drops that SDFG.
     """
     sdfg = _make_sdfg("forget", nested=True)
-    outer_state = sdfg.states()[0]
+    outer_state = next(iter(sdfg.states()))
     nsdfg_node = next(n for s in sdfg.states() for n in s.nodes() if isinstance(n, nodes.NestedSDFG))
-    inner_state = nsdfg_node.sdfg.states()[0]
+    inner_state = next(iter(nsdfg_node.sdfg.states()))
     tasklet = next(n for n in inner_state.nodes() if isinstance(n, nodes.Tasklet))
 
     resolver = SymbolResolver()

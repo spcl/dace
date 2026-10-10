@@ -315,7 +315,7 @@ def test_loop_in_map_multiplied_indices():
     results = pipeline.apply_pass(sdfg, {})[UnderapproximateWrites.__name__]
 
     nsdfg = sdfg.cfg_list[1].parent_nsdfg_node
-    map_state = sdfg.states()[0]
+    map_state = next(iter(sdfg.states()))
     result = results[sdfg.cfg_id].approximation
     edge = map_state.out_edges(nsdfg)[0]
     assert len(result[edge].subset.subset_list) == 0
@@ -341,7 +341,7 @@ def test_loop_in_map():
     pipeline = Pipeline([UnderapproximateWrites()])
     results = pipeline.apply_pass(sdfg, {})[UnderapproximateWrites.__name__]
 
-    map_state = sdfg.states()[0]
+    map_state = next(iter(sdfg.states()))
     edge = map_state.in_edges(map_state.data_nodes()[0])[0]
     result = results[sdfg.cfg_id].approximation
     expected_subset = Range.from_string("0:N, 0:M")
@@ -478,7 +478,7 @@ def test_nested_sdfg_in_map_nest():
     # find write set
     accessnode = None
     write_set = None
-    for state in sdfg.all_states():
+    for state in sdfg.states():
         for node in state.data_nodes():
             if node.data == "A":
                 accessnode = node
@@ -517,7 +517,7 @@ def test_loop_in_nested_sdfg_in_map_partial_write():
     # find write set
     accessnode = None
     write_set = None
-    for state in sdfg.all_states():
+    for state in sdfg.states():
         for node in state.data_nodes():
             if node.data == "A":
                 accessnode = node
@@ -869,7 +869,7 @@ def test_loop_in_nested_sdfg_in_map_multiplied_indices():
     write_approx = result[sdfg.cfg_id].approximation
     write_set = None
     accessnode = None
-    for state in sdfg.all_states():
+    for state in sdfg.states():
         for node in state.data_nodes():
             if node.data == "A":
                 accessnode = node
@@ -903,7 +903,7 @@ def test_loop_in_nested_sdfg_simple():
     write_approx = result[sdfg.cfg_id].approximation
     accessnode = None
     write_set = None
-    for state in sdfg.all_states():
+    for state in sdfg.states():
         for node in state.data_nodes():
             if node.data == "A":
                 accessnode = node

@@ -478,7 +478,7 @@ class AccessSets(ppl.Pass):
                         if block.out_degree(anode) > 0:
                             readset.add(anode.data)
                 elif isinstance(block, AbstractControlFlowRegion):
-                    for state in block.all_states():
+                    for state in block.states():
                         for anode in state.data_nodes():
                             if state.in_degree(anode) > 0:
                                 writeset.add(anode.data)
@@ -1330,7 +1330,7 @@ class ConditionUniqueWrites(ppl.Pass):
             # Build a mapping of access_node -> written subset -> set of branches it appears in
             access_write_branch = {}
             for _, br in cfb.branches:
-                for st in br.all_states():
+                for st in br.states():
                     for an in st.data_nodes():
                         array_name = an.data
                         write_subsets = OrderedSet(e.data.dst_subset for e in st.in_edges(an))

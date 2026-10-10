@@ -1245,7 +1245,7 @@ def convert_to_view(sdfg: SDFG, name: str, viewed: str, subset: sbs.Subset) -> d
     view = dt.View.view(sdfg.arrays[name])
     sdfg.arrays[name] = view
 
-    for state in sdfg.all_states():
+    for state in sdfg.states():
         for node in [n for n in state.data_nodes() if n.data == name]:
             _attach_view_edges(state, node, viewed, subset)
 
@@ -2499,7 +2499,7 @@ def set_nested_sdfg_parent_references(sdfg: SDFG):
     Sets the parent_sdfg attribute for all NestedSDFGs recursively.
     """
     sdfg.reset_cfg_list()
-    for state in sdfg.all_states():
+    for state in sdfg.states():
         for node in state.nodes():
             if isinstance(node, NestedSDFG):
                 node.sdfg.parent_sdfg = sdfg
@@ -2736,7 +2736,7 @@ def _specialize_scalar_impl(root: "dace.SDFG", sdfg: "dace.SDFG", scalar_name: s
 
     nsdfgs = set()
     c = 0
-    for state in sdfg.all_states():
+    for state in sdfg.states():
         # Check dynamic inputs
         for e in state.edges():
             if e not in state.edges():

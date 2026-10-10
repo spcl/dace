@@ -648,7 +648,7 @@ class MapFission(transformation.SingleStateTransformation):
                                     e.data.other_subset = subsets.Range(map_ranges + e.data.other_subset.ranges)
 
         # A connector selecting one element of an augmented container becomes a view of it
-        for state in parent.all_states():
+        for state in parent.states():
             for node in state.nodes():
                 if isinstance(node, nodes.NestedSDFG) and any(
                     e.data.data in modified_arrays for e in state.all_edges(node)

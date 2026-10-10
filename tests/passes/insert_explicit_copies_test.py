@@ -39,7 +39,7 @@ _fdtd2d_init_array = _fdtd2d_module.init_array
 
 def _wcr_edges(sdfg):
     """``(state, edge)`` for every edge still carrying a WCR."""
-    return [(st, e) for st in sdfg.all_states() for e in st.edges() if e.data.wcr is not None]
+    return [(st, e) for st in sdfg.states() for e in st.edges() if e.data.wcr is not None]
 
 
 def _count_copy_nodes(sdfg):
@@ -1187,7 +1187,7 @@ def test_iec_keeps_the_ordering_edge_on_the_node_that_writes():
     InsertExplicitCopies().apply_pass(sdfg, {})
     sdfg.validate()
 
-    state = sdfg.states()[0]
+    state = next(iter(sdfg.states()))
     writers = [e.src for e in state.in_edges(tmp_a) if isinstance(e.src, CopyLibraryNode)]
     assert len(writers) == 1, "the stage-in copy of tmp_A was not lifted"
     ordered_after = [e.src for e in state.in_edges(writers[0]) if e.data.is_empty()]
@@ -1267,7 +1267,7 @@ def concat_where_sdfg(copies: int) -> dace.SDFG:
 def copy_edges_remaining(sdfg: dace.SDFG) -> list:
     """Edges that still move data as a plain memlet: between two access nodes, or staging through a scope."""
     remaining = []
-    for state in sdfg.all_states():
+    for state in sdfg.states():
         for edge in state.edges():
             if edge.data.is_empty() or edge.data.wcr is not None:
                 continue

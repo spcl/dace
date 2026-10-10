@@ -2027,7 +2027,7 @@ def test_symbolic_extent_expansions_keep_their_ranges_symbolic():
                 assert {str(s) for s in symbolic.pystr_to_symbolic(str(end)).free_symbols} == {"R", "K"}, (
                     f"{expanded.name}: extent lost its symbols: {end}"
                 )
-        for st in expanded.all_states():
+        for st in expanded.states():
             for e in st.edges():
                 if e.data is not None and not e.data.is_empty() and e.data.subset is not None:
                     assert "::" not in str(e.data.subset), (

@@ -849,7 +849,7 @@ def _find_map_entry(sdfg, param, nested):
     :param nested: Whether the map must be inside another scope.
     :returns: A ``(state, map_entry)`` pair, or ``(None, None)``.
     """
-    for st in sdfg.all_states():
+    for st in sdfg.states():
         for n in st.nodes():
             if isinstance(n, nodes.MapEntry) and n.map.params == [param]:
                 if (st.entry_node(n) is not None) == nested:
@@ -865,7 +865,7 @@ def _fission_maps(sdfg):
     """
     return [
         (st, n)
-        for st in sdfg.all_states()
+        for st in sdfg.states()
         for n in st.nodes()
         if isinstance(n, nodes.MapEntry) and st.entry_node(n) is None
     ]
@@ -971,7 +971,7 @@ def test_mapfission_refuses_conditional_component_stays_valid():
     x0, y0 = np.zeros((n, m)), np.zeros((n, m))
     copy.deepcopy(sdfg)(x=x0, y=y0, N=n, M=m)
 
-    for st in sdfg.all_states():
+    for st in sdfg.states():
         for me in st.nodes():
             if not isinstance(me, nodes.MapEntry):
                 continue

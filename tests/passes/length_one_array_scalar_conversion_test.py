@@ -130,7 +130,7 @@ def test_stage_keeps_signature_arrays_and_adds_scalars():
     # A fresh transient scalar was staged for each.
     assert isinstance(sdfg.arrays["scal_alpha"], dd.Scalar) and sdfg.arrays["scal_alpha"].transient
     assert isinstance(sdfg.arrays["scal_beta"], dd.Scalar)
-    labels = {s.label for s in sdfg.all_states()}
+    labels = {s.label for s in sdfg.states()}
     assert "stage_copyin" in labels and "stage_copyout" in labels
     sdfg.validate()
 
@@ -167,7 +167,7 @@ def test_preserve_abi_stages_a_signature_scalar_into_a_length_one_array():
     assert isinstance(sdfg.arrays["alpha"], dd.Scalar) and not sdfg.arrays["alpha"].transient
     staged = sdfg.arrays["arr_alpha"]
     assert isinstance(staged, dd.Array) and staged.transient and tuple(staged.shape) == (1,)
-    labels = {s.label for s in sdfg.all_states()}
+    labels = {s.label for s in sdfg.states()}
     assert "stage_copyin" in labels, "a read signature scalar needs a copy-in"
     assert "stage_copyout" not in labels, "alpha is never written -- no copy-out"
     sdfg.validate()
@@ -196,7 +196,7 @@ def test_stage_read_only_input_gets_copyin_not_copyout():
     st.add_memlet_path(ri, me, t, dst_conn="a", memlet=dace.Memlet("inp[0]"))
     st.add_memlet_path(t, mx, wo, src_conn="o", memlet=dace.Memlet("out[i]"))
     ConvertLengthOneArraysToScalars(preserve_abi=True).apply_pass(sdfg, {})
-    labels = {s.label for s in sdfg.all_states()}
+    labels = {s.label for s in sdfg.states()}
     assert "stage_copyin" in labels  # inp is read
     assert "stage_copyout" not in labels  # inp is never written -> no copy-out
     sdfg.validate()
@@ -439,7 +439,7 @@ def test_other_subset_of_untouched_side_survives(inverse):
         ConvertScalarsToLengthOneArrays().apply_pass(sdfg, {})
     else:
         ConvertLengthOneArraysToScalars().apply_pass(sdfg, {})
-    st = sdfg.states()[0]
+    st = next(iter(sdfg.states()))
     copy = next(e for e in st.edges() if e.data.data == "tmp" and e.data.other_subset is not None)
     assert str(copy.data.other_subset) != "0"
     sdfg.validate()

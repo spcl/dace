@@ -101,7 +101,7 @@ class LiftTrivialIf(ppl.Pass):
         elif isinstance(block, (ReturnBlock, ContinueBlock, BreakBlock)):
             states = []
         else:
-            states = block.all_states()
+            states = block.states()
         for state in states:
             for node in state.nodes():
                 if isinstance(node, dace.nodes.NestedSDFG) and node.sdfg is not None:
@@ -390,7 +390,7 @@ class LiftTrivialIf(ppl.Pass):
             rmed_count += local_rmed_count
 
         # Recurse in to nSDFGs
-        for state in graph.all_states():
+        for state in graph.states():
             for node in state.nodes():
                 if isinstance(node, dace.nodes.NestedSDFG):
                     rmed_count += self._detect_trivial_ifs_and_rm_cfg(node.sdfg)

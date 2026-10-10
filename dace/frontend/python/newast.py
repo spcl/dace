@@ -1100,6 +1100,8 @@ class ProgramVisitor(ExtNodeVisitor):
         self.numbers = dict()  # Dict[str, str]
         self.variables = dict()  # Dict[str, str]
         self.accesses = dict()
+        # Number of each state in the order it first names an outer-data access; keeps those names unique
+        self.state_numbers: dict[SDFGState, int] = {}
         self.views: dict[str, tuple[str, Memlet]] = {}  # Keeps track of views
         self.nested_closure_arrays: dict[str, tuple[Any, data.Data]] = {}
         self.annotated_types: dict[str, data.Data] = annotated_types or {}
@@ -1274,7 +1276,7 @@ class ProgramVisitor(ExtNodeVisitor):
             return new_nodes
 
         # Map view access nodes to their respective data
-        for state in self.sdfg.all_states():
+        for state in self.sdfg.states():
             # NOTE: We need to support views of views
             nodes = list(state.data_nodes())
             while nodes:
@@ -1580,7 +1582,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 root = name.split(".")[0]
                 return root if root in cached_defined else None
 
-            for s in nested_sdfg.all_states():
+            for s in nested_sdfg.states():
                 for n in s.data_nodes():
                     root = _container_root(n.data)
                     if root is None:
@@ -2242,7 +2244,7 @@ class ProgramVisitor(ExtNodeVisitor):
                         name = memlet.data
                         vname = "{c}_in_from_{s}{n}".format(
                             c=conn,
-                            s=self.sdfg.states().index(state),
+                            s=self.state_numbers.setdefault(state, len(self.state_numbers)),
                             n=(f"_{state.node_id(entry_node)}" if entry_node else ""),
                         )
                         self.accesses[(name, scope_memlet.subset, "r")] = (vname, orng)
@@ -2331,7 +2333,7 @@ class ProgramVisitor(ExtNodeVisitor):
                         name = memlet.data
                         vname = "{c}_out_of_{s}{n}".format(
                             c=conn,
-                            s=self.sdfg.states().index(state),
+                            s=self.state_numbers.setdefault(state, len(self.state_numbers)),
                             n=(f"_{state.node_id(exit_node)}" if exit_node else ""),
                         )
                         self.accesses[(name, scope_memlet.subset, "w")] = (vname, orng)

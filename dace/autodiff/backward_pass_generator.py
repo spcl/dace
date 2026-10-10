@@ -934,7 +934,7 @@ class BackwardPassGenerator:
 
         :note: This function operates in-place on the backward SDFG.
         """
-        for state in self.backward_sdfg.all_states():
+        for state in self.backward_sdfg.states():
             for node in list(state.nodes()):
                 if isinstance(node, nodes.NestedSDFG):
                     dealias.integrate_nested_sdfg(node.sdfg)
