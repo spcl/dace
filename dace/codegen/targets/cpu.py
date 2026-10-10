@@ -1398,12 +1398,12 @@ class CPUCodeGen(TargetCodeGenerator):
         # host spelling for a symbol-shaped array then aliased a ``const int*`` parameter as
         # ``int*``, which does not compile: xsbench's indirection into index_grid on the canon GPU
         # column. Keep the qualifier the parameter actually has.
-        if types and not ctypedef.startswith('const '):
+        if types and not ctypedef.startswith("const "):
             try:
                 _, defined_ctype = self._dispatcher.defined_vars.get(ptr, is_global=True)
             except KeyError:
                 defined_ctype = ctypedef
-            if defined_ctype.startswith('const '):
+            if defined_ctype.startswith("const "):
                 ctypedef = defined_ctype
 
         result = ""
