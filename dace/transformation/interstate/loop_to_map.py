@@ -816,8 +816,11 @@ class LoopToMap(xf.MultiStateTransformation):
 
         # Find NestedSDFG's / Loop's unique data
         rw_set = read_set | write_set
+        # A constant array is declared in every nested SDFG it inherits ``constants_prop`` into: copied
+        # in, never a connector, never moved out of the parent (other blocks may still read it).
+        constant_set = {name for name in rw_set if name in sdfg.constants_prop}
         unique_set = set()
-        for name in rw_set:
+        for name in rw_set - constant_set:
             if not sdfg.arrays[name].transient:
                 continue
             found = False
@@ -842,8 +845,8 @@ class LoopToMap(xf.MultiStateTransformation):
 
         # Do not route views through the NestedSDFG
         view_set = set(view_to_data.keys())
-        read_set -= view_set
-        write_set -= view_set
+        read_set -= view_set | constant_set
+        write_set -= view_set | constant_set
 
         # Create NestedSDFG and add the loop contents to it. Gather symbols defined in it.
         fsymbols = set(sdfg.free_symbols)
@@ -866,7 +869,7 @@ class LoopToMap(xf.MultiStateTransformation):
                 name = root_data_name
             nsdfg.arrays[name] = copy.deepcopy(sdfg.arrays[name])
             nsdfg.arrays[name].transient = False
-        for name in unique_set | view_set:
+        for name in unique_set | view_set | constant_set:
             if "." in name:
                 root_data_name = name.split(".")[0]
                 name = root_data_name

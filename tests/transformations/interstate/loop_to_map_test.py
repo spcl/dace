@@ -1268,7 +1268,77 @@ def test_transposed_read_and_write_alias_only_in_one_iteration():
     assert np.allclose(aa, ref)
 
 
+def test_transient_read_only_on_interstate_edges_of_two_loops():
+    """``k = C[i % 2]`` on an interstate edge is the only read of the constant ``C`` in each of two loops, as
+    graupel's unrolled species index ``iqx = Cqp_ind[...]``. Neither loop owns ``C``: mapping the first must not
+    move it into its body, or the second loop reads a container its SDFG no longer has."""
+    sdfg = dace.SDFG("transient_read_on_edges_of_two_loops")
+    sdfg.add_symbol("N", dace.int64)
+    sdfg.add_symbol("k", dace.int64)
+    sdfg.add_array("C", [2], dace.int64, transient=True)
+    sdfg.add_constant("C", np.array([3, 5], dtype=np.int64), sdfg.arrays["C"])
+    sdfg.add_array("A", ["N"], dace.int64)
+    sdfg.add_array("B", ["N"], dace.int64)
+    previous = sdfg.add_state("init", is_start_block=True)
+    for out in ("A", "B"):
+        loop = LoopRegion(f"loop_{out}", "i < N", "i", "i = 0", "i = i + 1")
+        sdfg.add_node(loop)
+        sdfg.add_edge(previous, loop, dace.InterstateEdge())
+        first = loop.add_state(f"first_{out}", is_start_block=True)
+        use = loop.add_state_after(first, f"use_{out}", assignments={"k": "C[i % 2]"})
+        write = use.add_tasklet(f"write_{out}", {}, {"o"}, "o = k")
+        use.add_edge(write, "o", use.add_write(out), None, dace.Memlet(f"{out}[i]"))
+        previous = loop
+    sdfg.validate()
+
+    assert sdfg.apply_transformations_repeated(LoopToMap) == 2
+    assert "C" in sdfg.arrays
+
+    A, B = np.zeros(16, dtype=np.int64), np.zeros(16, dtype=np.int64)
+    sdfg(A=A, B=B, N=16)
+    expected = np.where(np.arange(16) % 2 == 0, 3, 5)
+    assert np.array_equal(A, expected) and np.array_equal(B, expected)
+
+
+def branchy_symbol_loop() -> dace.SDFG:
+    """A loop whose body is a two-armed conditional, each arm assigning ``s`` on its own
+    interstate edge and writing ``A[i]`` from it."""
+    sdfg = dace.SDFG("l2m_branchy_symbol")
+    sdfg.add_array("A", [20], dace.float64)
+    sdfg.add_symbol("s", dace.int64)
+    loop = LoopRegion("loop", "i < 20", "i", "i = 0", "i = i + 1", sdfg=sdfg)
+    sdfg.add_node(loop, is_start_block=True)
+
+    cond = ConditionalBlock("choose", sdfg=sdfg, parent=loop)
+    loop.add_node(cond, is_start_block=True)
+    for label, expr, condition in (("then", "i + 1", "i % 2 == 0"), ("else", "i + 2", None)):
+        region = ControlFlowRegion(f"{label}_body", sdfg=sdfg)
+        first = region.add_state(f"{label}_first", is_start_block=True)
+        second = region.add_state(f"{label}_second")
+        region.add_edge(first, second, dace.InterstateEdge(assignments={"s": expr}))
+        t = second.add_tasklet(f"{label}_write", {}, {"o"}, "o = s")
+        second.add_edge(t, "o", second.add_write("A"), None, dace.Memlet("A[i]"))
+        cond.add_branch(dace.properties.CodeBlock(condition) if condition else None, region)
+
+    sdfg.validate()
+    return sdfg
+
+
+def test_conditional_body_does_not_crash_the_match():
+    """Every arm assigns ``s`` before reading it, so the loop is a Map. The branch-intersection
+    bookkeeping must not raise: a raised exception is swallowed as 'does not apply', which
+    silently disables LoopToMap for every loop shaped like this."""
+    sdfg = branchy_symbol_loop()
+    assert sdfg.apply_transformations(LoopToMap) == 1
+
+    A = np.zeros(20)
+    sdfg(A=A)
+    expected = np.array([(i + 1) if i % 2 == 0 else (i + 2) for i in range(20)], dtype=np.float64)
+    assert np.allclose(A, expected)
+
+
 if __name__ == "__main__":
+    test_transient_read_only_on_interstate_edges_of_two_loops()
     test_symbol_assigned_in_every_branch_before_its_read()
     parser = argparse.ArgumentParser()
     parser.add_argument("--N", default=16, type=int)
