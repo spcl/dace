@@ -797,6 +797,57 @@ class ScalarWriteShadowScopes(ppl.Pass):
     def depends_on(self):
         return [AccessSets, FindAccessNodes, ControlFlowBlockReachability]
 
+    @staticmethod
+    def _last_write(desc: str, state: SDFGState, access_nodes) -> tuple[SDFGState, nd.AccessNode] | None:
+        """The write to ``desc`` in ``state`` that every other write there reaches, i.e. the one whose value leaves."""
+        closest_candidate = None
+        for cand in access_nodes[desc][state][1]:
+            if state.out_degree(cand) == 0:
+                return (state, cand)
+            if closest_candidate is None or nxsp.has_path(state._nx, closest_candidate, cand):
+                closest_candidate = cand
+        return None if closest_candidate is None else (state, closest_candidate)
+
+    def _branch_final_writes(
+        self,
+        desc: str,
+        cond: ConditionalBlock,
+        access_nodes: dict[str, dict[SDFGState, tuple[OrderedSet[nd.AccessNode], OrderedSet[nd.AccessNode]]]],
+        idom_dict: dict[ControlFlowRegion, dict[ControlFlowBlock, ControlFlowBlock]],
+        access_sets: dict[ControlFlowBlock, tuple[OrderedSet[str], OrderedSet[str]]],
+    ) -> list[tuple[SDFGState, nd.AccessNode]] | None:
+        """The write whose value leaves each branch of ``cond``, when every path through ``cond`` writes ``desc``.
+
+        Every path does when ``cond`` has an ``else`` branch and, in each branch, the states writing ``desc`` lie on
+        every path through it (they dominate its sinks) and no nested region writes it. ``None`` otherwise.
+        """
+        key = (cond, desc)
+        if key in self._conditional_writes:
+            return self._conditional_writes[key]
+        finals: list[tuple[SDFGState, nd.AccessNode]] | None = []
+        if not any(condition is None for condition, _ in cond.branches):
+            finals = None
+        for _, branch in cond.branches if finals is not None else ():
+            writers = [b for b in branch.nodes() if desc in access_sets.get(b, ((), ()))[1]]
+            if not writers or any(not isinstance(b, SDFGState) for b in writers):
+                finals = None
+                break
+            doms = cfg_analysis.all_dominators(branch, idom_dict[branch])
+            sinks = [b for b in branch.nodes() if branch.out_degree(b) == 0]
+            # ``all_dominators`` leaves a block out of its own dominators
+            if any(w is not sink and w not in doms.get(sink, ()) for w in writers for sink in sinks):
+                finals = None
+                break
+            # The writers all lie on one chain; the last one is dominated by every other.
+            last = max(writers, key=lambda w: len(doms[w]))
+            write = self._last_write(desc, last, access_nodes)
+            if write is None:
+                finals = None
+                break
+            finals.append(write)
+        self._conditional_writes[key] = finals
+        return finals
+
     def _find_dominating_write(
         self,
         desc: str,
@@ -824,6 +875,11 @@ class ScalarWriteShadowScopes(ppl.Pass):
                         closest_candidate = cand
             if closest_candidate is not None:
                 return (state, closest_candidate)
+        elif isinstance(read, InterstateEdge) and isinstance(block, ConditionalBlock):
+            # An edge leaving a conditional that writes on every path reads what its branches wrote.
+            finals = self._branch_final_writes(desc, block, access_nodes, idom_dict, access_sets)
+            if finals:
+                return finals[0]
         elif isinstance(read, InterstateEdge) and isinstance(block, SDFGState):
             # Attempt to find a shadowing write in the current state.
             # TODO: Can this be done more efficiently?
@@ -844,6 +900,12 @@ class ScalarWriteShadowScopes(ppl.Pass):
             while nblock is not None and write_state is None:
                 if isinstance(nblock, SDFGState) and desc in access_sets[nblock][1]:
                     write_state = nblock
+                elif isinstance(nblock, ConditionalBlock) and desc in access_sets[nblock][1]:
+                    # Writing on every path, the conditional shadows what came before it; its branch writes share
+                    # one scope (merged in ``apply_pass``), represented by the first.
+                    finals = self._branch_final_writes(desc, nblock, access_nodes, idom_dict, access_sets)
+                    if finals:
+                        return finals[0]
                 nblock = idom_dict[region][nblock] if idom_dict[region][nblock] != nblock else None
             # No dominating write found in the current control flow graph, check one further up.
             if write_state is None:
@@ -875,6 +937,7 @@ class ScalarWriteShadowScopes(ppl.Pass):
         access_sets: dict[ControlFlowBlock, tuple[OrderedSet[str], OrderedSet[str]]] = pipeline_results[
             AccessSets.__name__
         ]
+        self._conditional_writes: dict[tuple[ConditionalBlock, str], list[tuple[SDFGState, nd.AccessNode]] | None] = {}
 
         for sdfg in top_sdfg.all_sdfgs_recursive():
             result: WriteScopeDict = defaultdict(lambda: defaultdict(lambda: OrderedSet()))
@@ -943,6 +1006,18 @@ class ScalarWriteShadowScopes(ppl.Pass):
                                 desc, state, write_node, access_nodes, idom_dict, access_sets, no_self_shadowing=True
                             )
                             result[desc][write].add((state, write_node))
+
+                # A read after a conditional that writes on every path sees the write of whichever branch ran, so the
+                # final write of every branch, and what it shadows within its branch, joins the first branch's scope.
+                for (_, cdesc), finals in self._conditional_writes.items():
+                    if cdesc != desc or not finals or finals[0] not in result[desc]:
+                        continue
+                    scope = result[desc][finals[0]]
+                    for other in finals[1:]:
+                        for accesses in result[desc].values():
+                            accesses.discard(other)
+                        scope.update(result[desc].pop(other, OrderedSet()))
+                        scope.add(other)
 
                 # If any write A is dominated by another write B and any reads in B's scope are also reachable by A,
                 # then merge A and its scope into B's scope.
