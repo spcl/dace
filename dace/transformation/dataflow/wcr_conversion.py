@@ -409,7 +409,9 @@ class WCRToAugAssign(transformation.SingleStateTransformation):
             scal_name, scal_desc = sdfg.add_scalar(
                 "tmp", sdfg.arrays[self.output.data].dtype, transient=True, find_new_name=True
             )
-            state.add_edge(self.tasklet, edge.src_conn, new_tasklet, "__in1", Memlet.from_array(scal_name, scal_desc))
+            scal_access = state.add_access(scal_name)
+            state.add_edge(self.tasklet, edge.src_conn, scal_access, None, Memlet.from_array(scal_name, scal_desc))
+            state.add_edge(scal_access, None, new_tasklet, "__in1", Memlet.from_array(scal_name, scal_desc))
             state.add_edge(in_access, None, new_tasklet, "__in2", copy.deepcopy(edge.data))
             state.add_edge(new_tasklet, "__out", self.output, edge.dst_conn, edge.data)
             state.remove_edge(edge)
@@ -430,7 +432,9 @@ class WCRToAugAssign(transformation.SingleStateTransformation):
             scal_name, scal_desc = sdfg.add_scalar(
                 "tmp", sdfg.arrays[self.output.data].dtype, transient=True, find_new_name=True
             )
-            state.add_edge(self.tasklet, edge.src_conn, new_tasklet, "__in1", Memlet.from_array(scal_name, scal_desc))
+            scal_access = state.add_access(scal_name)
+            state.add_edge(self.tasklet, edge.src_conn, scal_access, None, Memlet.from_array(scal_name, scal_desc))
+            state.add_edge(scal_access, None, new_tasklet, "__in1", Memlet.from_array(scal_name, scal_desc))
             state.add_memlet_path(in_access, map_entry, new_tasklet, memlet=copy.deepcopy(edge.data), dst_conn="__in2")
             state.add_edge(new_tasklet, "__out", self.map_exit, edge.dst_conn, edge.data)
             state.remove_edge(edge)

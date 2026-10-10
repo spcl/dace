@@ -893,15 +893,23 @@ def validate_state(
         src_node = path[0].src
         dst_node = path[-1].dst
 
-        # NestedSDFGs must connect to AccessNodes
+        # Data moves through AccessNodes: the root of a memlet tree, the end of its path outside every scope it passes,
+        # is one. A path into scopes is rooted at its source, one out of scopes at its destination, and an edge through
+        # no scope at either end.
         if not e.data.is_empty():
-            if isinstance(src_node, nd.NestedSDFG) and not isinstance(dst_node, nd.AccessNode):
+            if isinstance(path[0].dst, nd.EntryNode):
+                ends = [src_node]
+            elif isinstance(path[-1].src, nd.ExitNode):
+                ends = [dst_node]
+            else:
+                ends = [src_node, dst_node]
+            if not any(isinstance(end, nd.AccessNode) for end in ends):
                 raise InvalidSDFGEdgeError(
-                    "Nested SDFG source nodes must be AccessNodes", state.parent_graph, state_id, eid
-                )
-            if isinstance(dst_node, nd.NestedSDFG) and not isinstance(src_node, nd.AccessNode):
-                raise InvalidSDFGEdgeError(
-                    "Nested SDFG destination nodes must be AccessNodes", state.parent_graph, state_id, eid
+                    f'The memlet tree of "{e.data.data}" from "{src_node}" to "{dst_node}" must be rooted at an '
+                    f"AccessNode; route the data through an AccessNode",
+                    state.parent_graph,
+                    state_id,
+                    eid,
                 )
 
         # Set up memlet-specific SDFG context
