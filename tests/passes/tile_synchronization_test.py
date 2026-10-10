@@ -28,6 +28,13 @@ def elementwise_chain(A: dace.float64[N], B: dace.float64[N], C: dace.float64[N]
         C[i : i + 256] = dace.tile.exp(dace.tile.add(A[i : i + 256], B[i : i + 256]))
 
 
+@dace.program
+def tile_sum(A: dace.float64[N], B: dace.float64[N], C: dace.float64[N]):
+    for i in dace.map[0:N:256]:
+        total = dace.tile.add(A[i : i + 256], B[i : i + 256])
+        dace.tile.store(C[i : i + 256], total)
+
+
 def barriers(sdfg: dace.SDFG) -> dict[str, list[str]]:
     """The nodes each barrier comes right before, by label."""
     return {
@@ -51,6 +58,22 @@ def test_an_elementwise_chain_keeps_every_element_on_its_thread():
     sdfg = elementwise_chain.to_sdfg()
     sdfg.apply_gpu_transformations()
     assert InsertTileSync().apply_pass(sdfg, {}) is None
+
+
+def test_a_copy_waits_for_the_tile_it_reads():
+    """A copy runs on any thread of the block, so it waits for the lanes the other threads wrote."""
+    sdfg = tile_sum.to_sdfg()
+    sdfg.apply_gpu_transformations()
+    total, state = next((node, state) for node, state in sdfg.all_nodes_recursive() if node.label == "total")
+    # The sum reaches its store through a copy into another register tile
+    name, _ = state.sdfg.add_transient("staged", [256], dace.float64, storage=dace.StorageType.Register)
+    staged = state.add_access(name)
+    for edge in state.out_edges(total):
+        state.remove_edge(edge)
+        state.add_edge(staged, None, edge.dst, edge.dst_conn, dace.Memlet(f"{name}[0:256]"))
+    state.add_nedge(total, staged, dace.Memlet("total[0:256] -> [0:256]"))
+    assert InsertTileSync().apply_pass(sdfg, {}) == 1
+    assert list(barriers(sdfg).values()) == [["copy_C", "staged"]]
 
 
 def test_expanding_the_tiles_places_their_barriers_once():
@@ -77,5 +100,6 @@ def test_the_slots_of_a_circular_buffer_carry_their_own_tokens():
 if __name__ == "__main__":
     test_a_gemm_waits_for_its_loads_and_for_the_last_iteration_reads()
     test_an_elementwise_chain_keeps_every_element_on_its_thread()
+    test_a_copy_waits_for_the_tile_it_reads()
     test_expanding_the_tiles_places_their_barriers_once()
     test_the_slots_of_a_circular_buffer_carry_their_own_tokens()

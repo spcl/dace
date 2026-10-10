@@ -5,7 +5,7 @@ A ``WARP`` or ``BLOCK`` tile node spreads its tiles over the threads of a block 
 node writes is read by other threads in the next one unless both give each thread the same elements. Every write of a
 tile leaves a token for the subset it wrote and the layout that wrote it, so the slots of a circular buffer each carry
 their own; an access waits only for the tokens whose subsets it may overlap. Walking a kernel in program order, the first node that reads the
-tile with another layout -- an ``mma`` reading its operands, a ``sum``, any other code -- is the latest point the token
+tile with another layout -- an ``mma`` reading its operands, a ``sum``, a copy, any other code -- is the latest point the token
 can be waited for, and a barrier goes right before it. One barrier settles every pending token. Reads leave tokens too:
 a node that overwrites a tile other threads still read waits for them. A loop body is walked a second time from the
 tokens its end leaves, the loop variable moved back by one step in their subsets, which places the barrier its next
@@ -203,9 +203,12 @@ class Walk:
             # A barrier already placed settles every token, so walking again places none twice
             self.order.setdefault(state, {})[kernel_level(state, node)] = None
             return Tokens()
-        if not isinstance(node, nodes.CodeNode):
+        if isinstance(node, nodes.CodeNode):
+            reads, writes = accesses(state, node)
+        elif isinstance(node, nodes.AccessNode):
+            reads, writes = copies(state, node)
+        else:
             return tokens
-        reads, writes = accesses(state, node)
         if not (reads or writes or isinstance(node, nodes.NestedSDFG)):
             return tokens
         level = kernel_level(state, node)
@@ -252,6 +255,18 @@ def accesses(state: SDFGState, node: nodes.CodeNode) -> tuple[list[Token], list[
         return found
 
     return of(state.in_edges(node), lambda edge: edge.dst_conn), of(state.out_edges(node), lambda edge: edge.src_conn)
+
+
+def copies(state: SDFGState, node: nodes.AccessNode) -> tuple[list[Token], list[Token]]:
+    """The tile subsets the copies into ``node`` read, which any thread of the block may access. What they write
+    needs no token: the barrier code generation puts after a copy into shared memory waits for it
+    (:class:`~dace.transformation.passes.shared_memory_synchronization.DefaultSharedMemorySync`)."""
+    reads = [
+        Token(edge.src.data, edge.data.get_src_subset(edge, state), None)
+        for edge in state.in_edges(node)
+        if isinstance(edge.src, nodes.AccessNode) and not edge.data.is_empty() and is_tile(edge.src.desc(state.sdfg))
+    ]
+    return reads, []
 
 
 def kernel_level(state: SDFGState, node: nodes.Node) -> nodes.Node:
