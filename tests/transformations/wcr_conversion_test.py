@@ -328,7 +328,27 @@ def test_aug_assign_python_reads_another_element():
     assert sdfg.apply_transformations_repeated(AugAssignToWCR) == 0
 
 
+def test_aug_assign_python_after_a_write_fissions_the_state():
+    """The accumulator is written earlier in the same state, so the update moves to a state of its own first."""
+    sdfg = dace.SDFG("aug_assign_python_isolate")
+    sdfg.add_array("A", [1], dace.float64)
+    sdfg.add_array("B", [1], dace.float64)
+    state = sdfg.add_state()
+    init = state.add_tasklet("init", {}, {"o"}, "o = 1.0")
+    acc = state.add_access("A")
+    state.add_edge(init, "o", acc, None, dace.Memlet("A[0]"))
+    update = state.add_tasklet("update", {"a", "k"}, {"b"}, "b = max(a, k)")
+    state.add_edge(acc, None, update, "a", dace.Memlet("A[0]"))
+    state.add_edge(state.add_read("B"), None, update, "k", dace.Memlet("B[0]"))
+    state.add_edge(update, "b", state.add_write("A"), None, dace.Memlet("A[0]"))
+    assert sdfg.apply_transformations_repeated(AugAssignToWCR) == 1
+    A, B = np.zeros(1), np.array([3.0])
+    sdfg(A=A, B=B)
+    assert A[0] == 3.0
+
+
 if __name__ == "__main__":
+    test_aug_assign_python_after_a_write_fissions_the_state()
     test_aug_assign_tasklet_lhs()
     test_aug_assign_tasklet_lhs_brackets()
     test_aug_assign_tasklet_rhs()
