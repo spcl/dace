@@ -468,6 +468,7 @@ def rebase_descendants(sdfg: SDFG, name: str, old_desc: data.Data, new_desc: dat
     for view_name, old_view, new_view in _rebase_views(sdfg, name, old_desc, new_desc):
         rebase_descendants(sdfg, view_name, old_view, new_view)
 
+    symbols = SymbolResolver()
     for state in sdfg.all_states():
         for node in state.nodes():
             if not isinstance(node, nd.NestedSDFG):
@@ -494,6 +495,18 @@ def rebase_descendants(sdfg: SDFG, name: str, old_desc: data.Data, new_desc: dat
                 if isinstance(inner_desc, data.Array) and isinstance(replacement, data.Array):
                     replacement.offset = copy.deepcopy(inner_desc.offset)
                 node.sdfg.arrays[connector] = replacement
+
+                # Add any symbol the replacement uses that the nested SDFG does not have, binding
+                # it to the parent's of the same name.
+                defined_here = symbols.defined_at(state, node)
+                for sym in replacement.free_symbols:
+                    sym_name = str(sym)
+                    if sym_name not in node.sdfg.symbols:
+                        sym_type = defined_here.get(sym_name) or dtypes.typeclass(int)
+                        node.sdfg.add_symbol(sym_name, sym_type)
+                        if sym_name not in node.symbol_mapping:
+                            node.symbol_mapping[sym_name] = symbolic.pystr_to_symbolic(sym_name)
+
                 rebase_descendants(node.sdfg, connector, inner_desc, replacement)
 
 
