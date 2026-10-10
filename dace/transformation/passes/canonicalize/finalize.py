@@ -23,6 +23,7 @@ to the backend. It mirrors ``auto_optimize``'s library-and-storage finalization
 import os
 
 from dace import SDFG, Memlet, dtypes, subsets, symbolic
+from dace import data as dt
 from dace.config import Config
 from dace.libraries.blas.environments import openblas
 from dace.libraries.blas.nodes.dot import Dot
@@ -349,6 +350,8 @@ def finalize_transient_storage(sdfg: SDFG, device: dtypes.DeviceType) -> None:
        ``malloc``/``free``. ``toplevel_only`` + ``get_parent_map``'s walk up across every
        nested-SDFG boundary excludes any per-thread buffer inside a parallel map body, so it is
        never collapsed to one shared copy; on GPU it also resets non-atomic WCR edges.
+    4. **Map-scoped transients -> forced registers on CPU** (:func:`force_map_scoped_registers`): an
+       array allocated per map iteration is pinned to the stack, a symbolically sized one as a VLA.
 
     A persistent size-1 WCR accumulator would land as ``__state->x`` -- not a valid OpenMP
     ``reduction(op:var)`` lvalue, so the parallel reduction fails to compile. Revert each promoted
@@ -404,6 +407,53 @@ def finalize_transient_storage(sdfg: SDFG, device: dtypes.DeviceType) -> None:
                 for dim in desc.shape
             ):
                 desc.lifetime = dtypes.AllocationLifetime.State
+    if device == dtypes.DeviceType.CPU:
+        force_map_scoped_registers(sdfg)
+
+
+def outermost_map(state: SDFGState, node: nodes.Node) -> nodes.EntryNode | None:
+    """The outermost scope entry around ``node`` in ``state``, or ``None`` at the state's top level."""
+    scopes = state.scope_dict()
+    outer = scopes[node]
+    while outer is not None and scopes[outer] is not None:
+        outer = scopes[outer]
+    return outer
+
+
+def force_map_scoped_registers(sdfg: SDFG, in_map: bool = False) -> int:
+    """Pin every transient array allocated inside a map body to ``StorageType.Register(force=True)``.
+
+    Such an array lives for one iteration, so it belongs on the stack whatever its size: without
+    ``force`` codegen moves a symbolically sized register array to the heap (a ``new``/``delete``
+    per iteration) and a later pass may still re-infer its storage. An SDFG nested in a map counts
+    as inside it; otherwise every access node must sit in one state under one outermost map.
+
+    :returns: the number of arrays pinned, nested SDFGs included.
+    """
+    homes: dict[str, set[tuple[SDFGState, nodes.EntryNode | None]]] = {}
+    pinned = 0
+    for state in sdfg.states():
+        for node in state.nodes():
+            if isinstance(node, nodes.AccessNode):
+                homes.setdefault(node.data, set()).add((state, outermost_map(state, node)))
+            elif isinstance(node, nodes.NestedSDFG):
+                pinned += force_map_scoped_registers(node.sdfg, in_map or outermost_map(state, node) is not None)
+    for name, desc in sdfg.arrays.items():
+        if not (
+            type(desc) is dt.Array
+            and desc.transient
+            and desc.lifetime == dtypes.AllocationLifetime.Scope
+            and (
+                desc.storage == dtypes.StorageType.Default
+                or (desc.storage == dtypes.StorageType.Register and not desc.storage.force)
+            )
+        ):
+            continue
+        scopes = homes.get(name, set())
+        if in_map or (len(scopes) == 1 and next(iter(scopes))[1] is not None):
+            desc.storage = dtypes.StorageType.Register(force=True)
+            pinned += 1
+    return pinned
 
 
 def fed_by_producer_map(state: SDFGState, node: nodes.LibraryNode) -> bool:
