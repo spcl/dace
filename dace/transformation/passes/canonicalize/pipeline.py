@@ -815,9 +815,6 @@ def _build_stages(
     s += [("reduce", IvSubstitutionFissionFixpoint(max_rounds=iv_split_rounds))]
     # MaterializeLoopExitSymbols after the rounds: it wants the settled set of surviving counters.
     s += [("reduce", MaterializeLoopExitSymbols()), ("reduce", LoopInvariantCodeMotion()), ("reduce", SimplifyPass())]
-    # After the last SimplifyPass, whose scalar-to-symbol promotion would undo it: only iteration domains and data
-    # accesses keep their symbols, so a loop that merely updates a counter or a guard stops carrying a symbol.
-    s += [("reduce", DemoteNonStructuralSymbols())]
 
     # index_subsets: the frontend hides computed indices (``i * inc``) behind interstate symbols that
     # SymbolPropagation does not substitute back, so every affine matcher sees the loop variable as
@@ -978,6 +975,10 @@ def _build_stages(
     # A store a LATER iteration overwrites unread is the only carrier some loops have (TSVC
     # ``s244``); dropping it, and peeling the tail iterations whose store does survive, hands
     # LoopToMap a DOALL loop. Must precede it -- afterwards there is no LoopRegion to peel.
+    # Only iteration domains and data accesses keep their symbols, so a loop that merely updates a counter or a guard
+    # stops carrying one. After the lifting band, whose matchers read those symbols (ArgMaxLift's index, an IV), and
+    # past the last scalar-to-symbol promotion; ScalarFission then gives each loop its own copy of a demoted name.
+    s += [("parallelize", DemoteNonStructuralSymbols()), ("parallelize", ppl.Pipeline([ScalarFission()]))]
     s += [("parallelize", DeadCarriedStoreElimination())]
     s += [("parallelize", PropagateMemlets())]
     s += [("parallelize", ParallelizeLoops(propagate=False))]
