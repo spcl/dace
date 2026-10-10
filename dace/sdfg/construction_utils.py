@@ -1,7 +1,6 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+import ast
 import copy
-
-from sympy import Function
 
 import dace
 import dace.sdfg.utils as sdutil
@@ -562,125 +561,51 @@ def insert_non_transient_data_through_parent_scopes(
             nsdfg_node.symbol_mapping[str(sym)] = str(sym)
 
 
-def generate_assignment_as_tasklet_in_state(state: dace.SDFGState, lhs: str, rhs: str):
-    import sympy
+def generate_assignment_as_tasklet_in_state(state: dace.SDFGState, lhs: str, rhs: str) -> dace.nodes.Tasklet:
+    """Write ``lhs = rhs`` (an interstate-edge assignment) as a Python tasklet into ``state``.
 
-    rhs = rhs.strip()
-    rhs_sym_expr = dace.symbolic.SymExpr(rhs)
-    lhs = lhs.strip()
-    lhs_sym_expr = dace.symbolic.SymExpr(lhs)
+    Every read of a container in ``rhs`` -- ``A[i, j]`` or a bare scalar ``s`` -- becomes an input connector fed by a
+    memlet of that access; ``lhs`` names the scalar written through the one output connector. The expression is kept
+    as written (Python AST, never a sympy round-trip): sympy distributes numeric factors (``(x - 0.8) / 0.2`` into
+    ``5.0 * x - 4.0``), which changes the rounding of the value the interstate edge used to compute.
+    """
+    arrays = state.sdfg.arrays
+    out_name = lhs.strip()
+    if out_name not in arrays:
+        raise ValueError(f"Assignment target {out_name!r} is not a container of {state.sdfg.label}")
+    reads: dict[str, str] = {}  # memlet expression -> input connector
 
-    in_connectors = dict()
-    out_connectors = dict()
+    def connector(data: str, expr: str) -> ast.Name:
+        conn = reads.setdefault(expr, f"_in_{data}_{len(reads)}")
+        return ast.Name(id=conn, ctx=ast.Load())
 
-    # Get functions for indirect accesses and free symbols
-    i = 0
-    for free_sym in rhs_sym_expr.free_symbols:
-        if str(free_sym) in state.sdfg.arrays:
-            in_connectors[free_sym] = f"_in_{free_sym}_{i}"
-            i += 1
+    class _ReadsToConnectors(ast.NodeTransformer):
+        def visit_Subscript(self, node: ast.Subscript) -> ast.AST:
+            if isinstance(node.value, ast.Name) and node.value.id in arrays:
+                return connector(node.value.id, ast.unparse(node))
+            return self.generic_visit(node)
 
-    for sub in rhs_sym_expr.atoms(dace.symbolic.Subscript):
-        # An array access ``arr[idx]`` is a ``Subscript``: ``args[0]`` is the
-        # array head and ``args[1:]`` the indices. ``str(f.func)`` would yield
-        # ``"Subscript"`` rather than the array name, so detect via the head.
-        if str(sub.args[0]) in state.sdfg.arrays:
-            # Array access can come from different arrays:
-            if sub not in in_connectors:
-                in_connectors[sub] = f"_in_{sub.args[0]}_{i}"
-                i += 1
+        def visit_Name(self, node: ast.Name) -> ast.AST:
+            if node.id in arrays:
+                return connector(node.id, f"{node.id}[0]")
+            return node
 
-    assert len(lhs_sym_expr.free_symbols) == 1
-    free_sym = next(iter(lhs_sym_expr.free_symbols))
-    assert str(free_sym) in state.sdfg.arrays
-    out_access_expr = free_sym
-    out_connectors[free_sym] = f"_out_{free_sym}_{i}"
-    i += 1
-
-    assert len(set(lhs_sym_expr.atoms(Function))) == 0
-
-    if in_connectors == {} and out_connectors == {}:
-        raise Exception("Generated tasklets result in no or out connectors")
-
-    # Process interstate edge, extract brackets for access patterns
-    # Collect array accesses
-    in_access_exprs: dict[sympy.Basic, list[list[sympy.Basic]]] = {
-        sub.args[0]: [] for sub in rhs_sym_expr.atoms(dace.symbolic.Subscript) if str(sub.args[0]) in state.sdfg.arrays
-    }
-    for sub in rhs_sym_expr.atoms(dace.symbolic.Subscript):
-        if str(sub.args[0]) not in state.sdfg.arrays:
-            continue
-        in_access_exprs[sub.args[0]].append(list(sub.args[1:]))
-
-    # Get scalar and arrays that are free symbols currently
-    name_mapping: dict[sympy.Basic, str] = {
-        sub: in_connectors[sub]
-        for sub in rhs_sym_expr.atoms(dace.symbolic.Subscript)
-        if str(sub.args[0]) in state.sdfg.arrays
-    }
-    name_mapping.update({s: in_connectors[s] for s in rhs_sym_expr.free_symbols if str(s) in state.sdfg.arrays})
-
-    printer = dace.symbolic.DaceSympyPrinter(arrays=state.sdfg.arrays)
-    # Replace each array-access ``Subscript`` (and bare array symbol) with its
-    # connector symbol. Use ``xreplace`` for exact-node replacement: ``subs``
-    # does not reliably rewrite a whole ``Subscript`` node (its custom ``_subs``
-    # recurses into the indices instead of swapping the node out).
-    #
-    # The two sides are rewritten with DIFFERENT maps. A read-modify-write names the same
-    # array on both (``c = c >> 1``), and under one shared map the LHS entry overwrites the
-    # RHS one -- the body then reads the OUT connector, which nothing feeds, while the in
-    # connector and its edge sit unused. That name survives as a free symbol of the tasklet
-    # and reaches ``arglist`` as a symbol the SDFG has no entry for.
-    rhs_repl = {k: sympy.Symbol(v) if isinstance(v, str) else v for k, v in name_mapping.items()}
-    lhs_repl = {out_access_expr: sympy.Symbol(out_connectors[out_access_expr])}
-    rhs = printer.doprint(rhs_sym_expr.xreplace(rhs_repl))
-    lhs = printer.doprint(lhs_sym_expr.xreplace(lhs_repl))
-
-    # Ass tasklets
-    t = state.add_tasklet(
-        name=f"assign_{lhs}",
-        inputs=OrderedSet(in_connectors.values()),
-        outputs=OrderedSet(out_connectors.values()),
-        code=f"{lhs} = {rhs}",
+    body = _ReadsToConnectors().visit(ast.parse(rhs.strip(), mode="eval")).body
+    out_conn = f"_out_{out_name}"
+    tasklet = state.add_tasklet(
+        name=f"assign_{out_name}",
+        inputs=set(reads.values()),
+        outputs={out_conn},
+        code=f"{out_conn} = {ast.unparse(body)}",
     )
-
-    # Add connectors and accesses, do not duplicate array access nodes
-    # As we might have array accesses to different subsets
-    in_access_dict = dict()
-    out_access_dict = dict()
-    accesses = dict()
-    for k, v in in_connectors.items():
-        if isinstance(k, dace.symbolic.Subscript):
-            head = str(k.args[0])
-            if head not in accesses:
-                accesses[head] = state.add_access(head)
-            in_access_dict[k] = accesses[head]
-        else:
-            if str(k) not in accesses:
-                accesses[str(k)] = state.add_access(str(k))
-            in_access_dict[k] = accesses[str(k)]
-    assert len(out_connectors.items()) == 1
-    for k, v in out_connectors.items():
-        if isinstance(k, sympy.Function):
-            out_access_dict[k] = state.add_access(str(k.func))
-        else:
-            out_access_dict[k] = state.add_access(str(k))
-
-    # Add in and out connections
-    for k, v in in_connectors.items():
-        if isinstance(k, dace.symbolic.Subscript):
-            access_node = in_access_dict[k]
-            complete_access_str = printer.doprint(k)
-            state.add_edge(access_node, None, t, in_connectors[k], dace.memlet.Memlet(expr=complete_access_str))
-        else:
-            access_node = in_access_dict[k]
-            data_name = str(k)
-            state.add_edge(access_node, None, t, in_connectors[k], dace.memlet.Memlet(expr=f"{data_name}[0]"))
-    assert len(out_access_dict.items()) == 1
-    for k, v in out_access_dict.items():
-        out_data_name = v.data
-        access_str = "0"
-        state.add_edge(t, out_connectors[k], v, None, dace.memlet.Memlet(expr=f"{out_data_name}[{access_str}]"))
+    accesses: dict[str, dace.nodes.AccessNode] = {}
+    for expr, conn in reads.items():
+        memlet = dace.Memlet(expr)
+        if memlet.data not in accesses:
+            accesses[memlet.data] = state.add_access(memlet.data)
+        state.add_edge(accesses[memlet.data], None, tasklet, conn, memlet)
+    state.add_edge(tasklet, out_conn, state.add_access(out_name), None, dace.Memlet(f"{out_name}[0]"))
+    return tasklet
 
 
 def get_num_parent_map_scopes(root_sdfg: dace.SDFG, node: dace.nodes.MapEntry, parent_state: dace.SDFGState):
@@ -885,7 +810,6 @@ import re
 
 import dace
 from dace.optionals import required
-from dace.ordered import OrderedSet
 from dace.sdfg.narrowing import as_basic
 from dace.sdfg.state import ConditionalBlock
 
