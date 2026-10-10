@@ -29,9 +29,10 @@ import pytest
 
 import dace
 from dace import dtypes
+from dace.properties import CodeBlock
 from dace.sdfg import nodes as nd
 from dace.sdfg.dealias import convert_legacy_nested_sdfgs
-from dace.sdfg.state import LoopRegion
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.passes.canonicalize.finalize import finalize_for_target
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
 from dace.transformation.passes.canonicalize.supply_num_threads import SupplyNumThreads
@@ -658,6 +659,78 @@ def test_band_takes_a_row_fill_loop_as_one_map():
     matches_at_every_team_size(sdfg, {"a": ref}, a=a, N=37)
 
 
+def test_band_refuses_a_neighbour_read_between_two_maps():
+    """``t[i]`` written by one map and ``t[i + 1]`` read by the next: the read crosses a band edge within
+    one trip, which only the barrier between the two ``omp for`` orders. The team hoist takes it."""
+    sdfg = dace.SDFG("band_neighbour_read")
+    sdfg.add_array("a", [N, N], dace.float64)
+    sdfg.add_transient("t", [N], dace.float64)
+    outer = loop_region(sdfg, "outer", "N - 1")
+    first = sweep_state(outer, "first", "t[i]", "out = in0", {"i": "0:N"}, ["a[it, i]"])
+    second = sweep_state(outer, "second", "a[it + 1, i]", "out = in0", {"i": "0:N-1"}, ["t[i + 1]"])
+    chain(outer, first, second)
+    sdfg.validate()
+    assert banded(sdfg) is None
+    assert HoistParallelRegion().apply_pass(sdfg, {}) == 1
+    a = np.random.default_rng(12).random((37, 37))
+    ref = sweep_reference(a, lambda prev, cur: np.concatenate([prev[1:], cur[-1:]]))
+    matches_at_every_team_size(sdfg, {"a": ref}, a=a, N=37)
+
+
+def test_band_refuses_maps_of_different_extents():
+    """A map over ``0:N`` and one over ``0:N-1`` are cut at different offsets, so the same position lands in
+    different bands even where both index it alike."""
+    sdfg = dace.SDFG("band_extents")
+    sdfg.add_array("a", [N, N], dace.float64)
+    sdfg.add_transient("t", [N], dace.float64)
+    outer = loop_region(sdfg, "outer", "N - 1")
+    first = sweep_state(outer, "first", "t[i]", "out = in0 + 1.0", {"i": "0:N"}, ["a[it, i]"])
+    second = sweep_state(outer, "second", "a[it + 1, i]", "out = in0", {"i": "0:N-1"}, ["t[i]"])
+    chain(outer, first, second)
+    sdfg.validate()
+    assert banded(sdfg) is None
+
+
+def test_band_refuses_an_accumulation_into_one_location():
+    """``s += a[it, i]`` over the map writes one location from every band. Refused."""
+    sdfg = dace.SDFG("band_accumulation")
+    sdfg.add_array("a", [N, N], dace.float64)
+    sdfg.add_array("s", [1], dace.float64)
+    outer = loop_region(sdfg, "outer", "N")
+    body = outer.add_state("body", is_start_block=True)
+    body.add_mapped_tasklet(
+        "acc",
+        {"i": "0:N"},
+        {"v": dace.Memlet("a[it, i]")},
+        "w = v",
+        {"w": dace.Memlet("s[0]", wcr="lambda x, y: x + y")},
+        schedule=dtypes.ScheduleType.CPU_Multicore,
+        external_edges=True,
+    )
+    sdfg.validate()
+    assert banded(sdfg) is None
+
+
+def test_band_takes_a_map_inside_a_conditional():
+    """A trip that runs its map only on even ``it`` still keeps every column in its band."""
+    sdfg = dace.SDFG("band_conditional")
+    sdfg.add_array("a", [N, N], dace.float64)
+    outer = loop_region(sdfg, "outer", "N - 1")
+    branch = ConditionalBlock("even")
+    outer.add_node(branch, is_start_block=True)
+    region = ControlFlowRegion("even_body")
+    branch.add_branch(CodeBlock("it % 2 == 0"), region)
+    sweep_state(region, "sweep", "a[it + 1, i]", "out = in0 * 2.0", {"i": "0:N"}, ["a[it, i]"])
+    sdfg.validate()
+    assert banded(sdfg) == 1
+    a = np.random.default_rng(13).random((37, 37))
+    ref = a.copy()
+    for it in range(36):
+        if it % 2 == 0:
+            ref[it + 1] = 2.0 * ref[it]
+    matches_at_every_team_size(sdfg, {"a": ref}, a=a, N=37)
+
+
 @pytest.mark.parametrize("name", TSVC_KERNELS)
 def test_the_canonical_form_keeps_every_barrier(name):
     """No ``omp for`` may carry ``nowait``, and this is policy rather than an unfinished feature.
@@ -736,6 +809,10 @@ if __name__ == "__main__":
     test_band_refuses_a_scalar_statement_reading_what_another_band_writes()
     test_band_narrows_a_whole_fill_to_what_is_read()
     test_band_takes_a_row_fill_loop_as_one_map()
+    test_band_refuses_a_neighbour_read_between_two_maps()
+    test_band_refuses_maps_of_different_extents()
+    test_band_refuses_an_accumulation_into_one_location()
+    test_band_takes_a_map_inside_a_conditional()
     for kernel_name in TSVC_KERNELS:
         test_the_canonical_form_keeps_every_barrier(kernel_name)
     test_a_loop_nested_inside_another_region_is_hoisted_in_its_own_graph()

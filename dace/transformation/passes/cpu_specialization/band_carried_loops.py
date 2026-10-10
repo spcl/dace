@@ -225,6 +225,8 @@ def collect_accesses(
             for edge in state.out_edges(node):
                 if edge.data is not None and edge.data.data in allowed and edge.data.subset is not None:
                     writes.setdefault(edge.data.data, []).append(index_expressions(edge.data.subset))
+                    if edge.data.wcr is not None:  # an accumulation reads what it updates
+                        reads.setdefault(edge.data.data, []).append(index_expressions(edge.data.subset))
         elif isinstance(node, nodes.NestedSDFG):
             if node.sdfg is None or not descend_into_nested(state, node, allowed, reads, writes):
                 return False
@@ -276,6 +278,8 @@ def descend_into_nested(
             for edge in inner_state.in_edges(inner_node):
                 if edge.data is not None and edge.data.subset is not None:
                     writes.setdefault(name, []).append(substituted(edge.data.subset, substitution))
+                    if edge.data.wcr is not None:  # an accumulation reads what it updates
+                        reads.setdefault(name, []).append(substituted(edge.data.subset, substitution))
             for edge in inner_state.out_edges(inner_node):
                 if edge.data is not None and edge.data.subset is not None:
                     reads.setdefault(name, []).append(substituted(edge.data.subset, substitution))
@@ -354,6 +358,8 @@ def boundary_accesses(
             indices = index_expressions(edge.data.subset)
             if any(names_a_param(index, params) for index in indices):
                 target.setdefault(edge.data.data, []).append(indices)
+                if written and edge.data.wcr is not None:  # an accumulation reads what it updates
+                    reads.setdefault(edge.data.data, []).append(indices)
             elif written:
                 union_writes.append(edge.data.data)
     # Read AFTER the loop, so an array carrying both a union edge and a per-iteration one is
