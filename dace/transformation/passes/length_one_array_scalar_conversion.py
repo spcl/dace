@@ -515,7 +515,7 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
                 continue
             prefixes = [f"offset_{a}_d" for a in rename] + [f"{a}_d" for a in rename]
             if any(nm.startswith(p) for p in prefixes):
-                sdfg.symbols.pop(nm, None)
+                sdfg.symbol_repo.remove(nm)
 
         if self.recursive:
             for state in sdfg.all_states():

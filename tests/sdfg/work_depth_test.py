@@ -7,8 +7,9 @@ import sympy as sp
 from pytest import raises
 
 import dace
+from dace import symbolic
 from dace.frontend.python.parser import DaceProgram
-from dace.sdfg.performance_evaluation.assumptions import ContradictingAssumptions
+from dace.sdfg.performance_evaluation.assumptions import assumption_relations
 from dace.sdfg.performance_evaluation.helpers import get_uuid
 from dace.sdfg.performance_evaluation.work_depth import (
     analyze_sdfg,
@@ -16,7 +17,6 @@ from dace.sdfg.performance_evaluation.work_depth import (
     count_depth_code,
     get_tasklet_avg_par,
     get_tasklet_work_depth,
-    parse_assumptions,
 )
 from dace.sdfg.utils import inline_control_flow_regions
 from dace.symbolic import SymbolicType, pystr_to_symbolic, simplify
@@ -229,22 +229,12 @@ work_depth_test_cases: dict[str, tuple[DaceProgram, tuple[SymbolicType, Symbolic
     ),
     "sequential_ifs": (sequntial_ifs, (sp.Max(N + 1, M) + sp.Max(N + 1, M + 1), sp.Max(1, M) + 1)),
     "reduction_library_node": (reduction_library_node, (456, sp.log(456) / sp.log(2))),
-    "reduction_library_node_symbolic": (reduction_library_node_symbolic, (N, sp.log(sp.Max(1, N)) / sp.log(2))),
+    "reduction_library_node_symbolic": (reduction_library_node_symbolic, (N, sp.log(N) / sp.log(2))),
     "gemm_library_node": (gemm_library_node, (2 * 456 * 200 * 111, sp.log(200) / sp.log(2))),
-    "gemm_library_node_symbolic": (
-        gemm_library_node_symbolic,
-        (2 * M * K * N, sp.Max(1, sp.log(sp.Max(1, K)) / sp.log(2))),
-    ),
+    "gemm_library_node_symbolic": (gemm_library_node_symbolic, (2 * M * K * N, sp.Max(1, sp.log(K) / sp.log(2)))),
     "loop_var_dependent_work": (
         loop_var_dependent_work,
-        (
-            N**2,
-            N
-            + sp.Sum(
-                sp.log(dace.symbol("_p_i", nonnegative=True) + 1), (dace.symbol("_p_i", nonnegative=True), 0, N - 1)
-            )
-            / sp.log(2),
-        ),
+        (N**2, N + sp.Sum(sp.log(dace.symbol("i") + 1), (dace.symbol("i"), 0, N - 1)) / sp.log(2)),
     ),
 }
 
@@ -254,7 +244,7 @@ def assert_symbolically_equal(res: sp.Expr, correct: sp.Expr) -> None:
     # sympy.simplify is not idempotent on logs of composite integers (log(456)/log(2) and
     # 3 + log(57)/log(2) map to each other), so the shape of a result depends on how many times the
     # traversal simplified it, which in turn depends on the SDFG's state count. Compare values.
-    assert res.expand() == correct.expand() or simplify(res - correct) == 0
+    assert res.expand() == correct.expand() or simplify(res - correct, symbolic.Facts.none()) == 0
 
 
 @pytest.mark.parametrize("test_name", list(work_depth_test_cases.keys()))
@@ -291,12 +281,9 @@ tests_cases_avg_par = {
     "unbounded_while_do": (unbounded_while_do, N),
     "unbounded_nonnegify": (unbounded_nonnegify, N),
     "reduction_library_node": (reduction_library_node, 456 / (sp.log(456) / sp.log(2))),
-    "reduction_library_node_symbolic": (reduction_library_node_symbolic, N * sp.log(2) / sp.log(sp.Max(1, N))),
+    "reduction_library_node_symbolic": (reduction_library_node_symbolic, N * sp.log(2) / sp.log(N)),
     "gemm_library_node": (gemm_library_node, 2 * 456 * 200 * 111 / (sp.log(200) / sp.log(2))),
-    "gemm_library_node_symbolic": (
-        gemm_library_node_symbolic,
-        2 * K * M * N / sp.Max(1, sp.log(sp.Max(1, K)) / sp.log(2)),
-    ),
+    "gemm_library_node_symbolic": (gemm_library_node_symbolic, 2 * K * M * N / sp.Max(1, sp.log(K) / sp.log(2))),
 }
 
 
@@ -361,12 +348,11 @@ assumptions_tests = [
     (sp.Max(x, 11) + sp.Max(a, 5), ["a==b", "b==c", "c==x", "b==7"], 18),
     (sp.Max(x, y), ["y>x", "y==1000"], 1000),
     (sp.Max(x, y), ["y<x", "y==1000"], x),
-    # This test is not working yet and is here as an example of what can still be improved in the assumption system.
-    # Further details in the TODO in the parse_assumptions method.
-    # (sp.Max(M, N), ['N>0', 'N<5', 'M>5'], M)
+    # Needs the deduced M > N
+    (sp.Max(M, N), ["N>0", "N<5", "M>5"], M),
 ]
 
-# These assumptions should trigger the ContradictingAssumptions exception.
+# These assumptions contradict each other.
 tests_for_exception = [
     ["x>10", "x<9"],
     ["x==y", "x>10", "y<9"],
@@ -377,20 +363,17 @@ tests_for_exception = [
 
 @pytest.mark.parametrize("expr,assums,res", assumptions_tests)
 def test_assumption_system(expr: sp.Expr, assums: list[str], res: sp.Expr):
-    equality_subs, all_subs = parse_assumptions(assums, set())
-    expr = expr.subs(equality_subs[0])
-    expr = expr.subs(equality_subs[1])
-    for subs1, subs2 in all_subs:
-        expr = expr.subs(subs1)
-        expr = expr.subs(subs2)
-    assert expr == res
+    facts = symbolic.Facts(assumption_relations(assums), frozenset())
+    simplified, res = simplify(expr, facts), sp.sympify(res)
+    # Equal under the assumptions, whichever of equal symbols the result is written in
+    assert not (simplified.atoms(sp.Max) | simplified.atoms(sp.Min)) - (res.atoms(sp.Max) | res.atoms(sp.Min))
+    assert symbolic.ask(symbolic.Relation(symbolic.RelationKind.EQ, simplified, res), facts) is symbolic.Truth.TRUE
 
 
 @pytest.mark.parametrize("assumptions", tests_for_exception)
 def test_assumption_system_contradictions(assumptions):
-    # check that the Exception gets raised.
-    with raises(ContradictingAssumptions):
-        parse_assumptions(assumptions, set())
+    with raises(symbolic.InconsistentAssumptionsError):
+        symbolic.Facts(assumption_relations(assumptions), frozenset())
 
 
 def test_depth_counter_vs_work_counter():

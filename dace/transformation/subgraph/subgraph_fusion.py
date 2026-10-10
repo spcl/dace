@@ -15,7 +15,7 @@ from dace.properties import EnumProperty, ListProperty, Property, make_propertie
 from dace.sdfg import SDFG, dealias, nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.propagation import _propagate_node, propagate_subset
-from dace.sdfg.state import SDFGState, StateSubgraphView
+from dace.sdfg.state import SDFGState, StateSubgraphView, SymbolResolver
 from dace.sdfg.utils import consolidate_edges_scope
 from dace.transformation import transformation
 from dace.transformation.helpers import find_contiguous_subsets
@@ -148,6 +148,8 @@ class SubgraphFusion(transformation.SubgraphTransformation):
             return False
 
         # 2.3 memlet feasibility
+        # The maps share their parameters and ranges, so what holds inside the first holds inside each
+        facts = SymbolResolver().facts_at(graph, map_exits[0])
         # For each intermediate node, look at whether inner adjacent
         # memlets of the exiting map cover inner adjacent memlets
         # of the next entering map.
@@ -208,7 +210,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
             # We assume that upper_subsets are contiguous
             # Check for this.
             try:
-                contiguous_upper = find_contiguous_subsets(upper_subsets)
+                contiguous_upper = find_contiguous_subsets(upper_subsets, facts)
                 if len(contiguous_upper) > 1:
                     return False
             except TypeError:
@@ -221,7 +223,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
             upper_iter = iter(upper_subsets)
             union_upper = next(upper_iter)
             for subs in upper_iter:
-                union_upper = subsets.union(union_upper, subs)
+                union_upper = subsets.union(union_upper, subs, facts)
                 if not union_upper:
                     # something went wrong using union -- we'd rather abort
                     return False
@@ -229,7 +231,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
             # finally check coverage
             # every lower subset must be completely covered by union_upper
             for lower_subset in lower_subsets:
-                if not union_upper.covers(lower_subset):
+                if not union_upper.covers(lower_subset, facts):
                     return False
 
         # 2.4 Check for WCRs in out nodes: If there is one, the corresponding
@@ -334,7 +336,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                                             current_subset = dcpy(oe.data.subset)
                                             current_subset.pop(invariant_dimensions[node_data])
 
-                                            access_set = subsets.union(access_set, current_subset)
+                                            access_set = subsets.union(access_set, current_subset, facts)
                                             if access_set is None:
                                                 warnings.warn("SubgraphFusion::Disjoint Access found")
                                                 return False
@@ -346,7 +348,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                                             current_subset = dcpy(ie.data.subset)
                                             current_subset.pop(invariant_dimensions[node_data])
 
-                                            access_set = subsets.union(access_set, current_subset)
+                                            access_set = subsets.union(access_set, current_subset, facts)
                                             if access_set is None:
                                                 warnings.warn("SubgraphFusion::Disjoint Access found")
                                                 return False
@@ -365,11 +367,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                         for rng, orng in zip(subset_plus, subset_minus):
                             rng_1dim = subsets.Range((rng,))
                             orng_1dim = subsets.Range((orng,))
-                            try:
-                                intersection = rng_1dim.intersects(orng_1dim)
-                            except TypeError:
-                                return False
-                            if intersection is None or intersection == True:
+                            if rng_1dim.intersects(orng_1dim, facts) is not symbolic.Truth.FALSE:
                                 warnings.warn("SubgraphFusion::Disjoint Accesses found!")
                                 return False
 
@@ -894,7 +892,11 @@ class SubgraphFusion(transformation.SubgraphTransformation):
             print("SubgraphFusion::Out_nodes", out_nodes)
             print("SubgraphFusion::Intermediate_nodes", intermediate_nodes)
 
-        # all maps are assumed to have the same params and range in order
+        # all maps are assumed to have the same params and range in order, so what holds inside the first holds
+        # inside each; a map's range holds only inside it
+        resolver = SymbolResolver()
+        facts = resolver.facts_at(graph, map_exits[0])
+        outer_facts = resolver.facts_at(graph, map_entries[0])
         global_map = nodes.Map(label="outer_fused", params=maps[0].params, ndrange=maps[0].range)
         global_map_entry = nodes.MapEntry(global_map)
         global_map_exit = nodes.MapExit(global_map)
@@ -1000,7 +1002,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                         # dimensions
                         union = None
                         for oe in graph.out_edges(transients_created[dst]):
-                            union = subsets.union(union, oe.data.subset)
+                            union = subsets.union(union, oe.data.subset, facts)
                         inner_memlet = dcpy(edge.data)
                         for i, s in enumerate(edge.data.subset):
                             if i in invariant_dimensions[dst.label]:
@@ -1085,7 +1087,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                         in_edge = next(in_edges_iter)
                         target_subset_curr = dcpy(in_edge.data.subset)
                         target_subset_curr.pop(invariant_dimensions[data_name])
-                        target_subset = subsets.union(target_subset, target_subset_curr)
+                        target_subset = subsets.union(target_subset, target_subset_curr, facts)
                     except StopIteration:
                         break
 
@@ -1285,7 +1287,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                 for acc in accesses:
                     for ie in graph.in_edges(acc):
                         if in_subset:
-                            in_subset = subsets.union(in_subset, ie.data.dst_subset)
+                            in_subset = subsets.union(in_subset, ie.data.dst_subset, facts)
                         else:
                             in_subset = ie.data.dst_subset
                             first_subset = ie.data.dst_subset
@@ -1314,7 +1316,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
 
                     # Reconnect outgoing edges through the transient data.
                     for oe in graph.out_edges(acc):
-                        if in_subset.covers(oe.data.src_subset):
+                        if in_subset.covers(oe.data.src_subset, facts):
                             mem = Memlet(
                                 data=new_name,
                                 subset=oe.data.src_subset.offset_new(in_subset, True),
@@ -1329,10 +1331,10 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                                     e.data.src_subset.offset(in_subset, True)
                         else:
                             # NOTE: For debugging purposes
-                            intersect = subsets.intersects(in_subset, oe.data.src_subset)
-                            if intersect is None:
+                            intersect = subsets.intersects(in_subset, oe.data.src_subset, facts)
+                            if intersect is symbolic.Truth.UNKNOWN:
                                 warnings.warn(f"{dname}[{in_subset}] may intersect with {dname}[{oe.data.src_subset}]")
-                            elif intersect:
+                            elif intersect is symbolic.Truth.TRUE:
                                 raise ValueError(f"{dname}[{in_subset}] intersects with {dname}[{oe.data.src_subset}]")
                             # If the outgoing subset is not covered by the transient data, connect to the outer input node.
                             if not inode:
@@ -1349,13 +1351,15 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                             sdfg.arrays[dname],
                             global_map_exit.map.params,
                             global_map_exit.map.range,
+                            outer_facts,
                         ).subset
                         downstream = sdutil.find_downstream_nodes(acc, graph)
                         superseded = any(
                             ie.src in downstream
                             and not ie.data.is_empty()
                             and ie.data.get_dst_subset(ie, graph) is not None
-                            and subsets.intersects(ie.data.get_dst_subset(ie, graph), outer_subset) is not False
+                            and subsets.intersects(ie.data.get_dst_subset(ie, graph), outer_subset, outer_facts)
+                            is not symbolic.Truth.FALSE
                             for ds in graph.data_nodes()
                             if ds.data == dname and graph.out_degree(ds) == 0
                             for ie in graph.in_edges(ds)

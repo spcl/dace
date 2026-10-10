@@ -14,7 +14,7 @@ from dace.sdfg import dealias
 from dace.sdfg import nodes as nds
 from dace.sdfg import utils as sdutil
 from dace.sdfg.sdfg import SDFG
-from dace.sdfg.state import SDFGState, StateSubgraphView
+from dace.sdfg.state import SDFGState, StateSubgraphView, SymbolResolver
 from dace.transformation import transformation
 from dace.transformation.dataflow.local_storage import InLocalStorage, OutLocalStorage
 from dace.transformation.dataflow.stream_transient import AccumulateTransient
@@ -60,10 +60,11 @@ class OTFMapFusion(transformation.SingleStateTransformation):
         # Condition: Consumed is covered by produced data
         produce_edge = next(graph.edges_between(self.first_map_exit, self.array).__iter__())
         consume_edges = graph.edges_between(self.array, self.second_map_entry)
+        facts = SymbolResolver().facts_at(graph, self.array)
         for edge in consume_edges:
             read_memlet = edge.data
             write_memlet = produce_edge.data
-            if not write_memlet.subset.covers_precise(read_memlet.subset):
+            if not write_memlet.subset.covers_precise(read_memlet.subset, facts):
                 return False
 
         # First memlets

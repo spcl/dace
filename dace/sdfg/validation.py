@@ -263,6 +263,7 @@ def validate_sdfg(sdfg: "dace.sdfg.SDFG", references: set[int] = None, **context
     # Avoid import loop
     from dace import data as dt
     from dace.sdfg.scope import is_devicelevel_gpu
+    from dace.sdfg.sdfg import scope_bound_names
     from dace.sdfg.state import ConditionalBlock
 
     references = references or set()
@@ -300,6 +301,20 @@ def validate_sdfg(sdfg: "dace.sdfg.SDFG", references: set[int] = None, **context
                     None,
                 )
             seen_names.update(obj_names)
+
+        sdfg.symbol_repo.validate(sdfg)
+        scoped = sorted(scope_bound_names(sdfg) & sdfg.symbols.keys())
+        if scoped:
+            raise InvalidSDFGError(
+                f"Symbols {scoped} are bound by a loop or map scope, so they cannot also be SDFG symbols", sdfg, None
+            )
+        # What the SDFG needs from outside must be declared as its parameters; ``__dace`` names are the code
+        # generator's own (e.g. the element count of a consume chunk). A nested SDFG's mapping of a symbol it does not
+        # use is only warned about (see ``NestedSDFG.validate``), so the used symbols are checked, not the free ones.
+        used = sdfg.used_symbols(all_symbols=False)
+        undeclared = sorted(name for name in used - sdfg.symbols.keys() if not name.startswith("__dace"))
+        if undeclared:
+            raise InvalidSDFGError(f"Free symbols {undeclared} are not declared as SDFG symbols", sdfg, None)
 
         # Ensure that there is a mentioning of constants in either the array or symbol.
         for const_name, (const_type, _) in sdfg.constants_prop.items():
@@ -429,12 +444,9 @@ def validate_sdfg(sdfg: "dace.sdfg.SDFG", references: set[int] = None, **context
 
         initialized_transients = {"__pystate"}
         initialized_transients.update(sdfg.constants_prop.keys())
-        symbols = copy.deepcopy(sdfg.symbols)
+        symbols = dict(sdfg.symbols)
         symbols.update(sdfg.arrays)
         symbols.update({k: v for k, (v, _) in sdfg.constants_prop.items()})
-        for desc in sdfg.arrays.values():
-            for sym in desc.free_symbols:
-                symbols[str(sym)] = sym.dtype
 
         if len(sdfg.nodes()) == 0:
             raise InvalidSDFGError("SDFGs are required to contain at least one state.", sdfg, None)
@@ -1161,6 +1173,9 @@ def validate_state(
                 raise error
 
     if Config.get_bool("experimental.check_race_conditions"):
+        from dace.sdfg.state import SymbolResolver
+
+        facts = SymbolResolver().facts_at(state)
         node_labels = []
         write_accesses = defaultdict(list)
         read_accesses = defaultdict(list)
@@ -1184,14 +1199,14 @@ def validate_state(
                     )
                     no_wcr = writes[i]["wcr"] is None and writes[j]["wcr"] is None
                     if same_or_unreachable_nodes and no_wcr:
-                        subsets_intersect = subsets.intersects(writes[i]["subset"], writes[j]["subset"])
-                        if subsets_intersect:
+                        if subsets.intersects(writes[i]["subset"], writes[j]["subset"], facts) is symbolic.Truth.TRUE:
                             warnings.warn(f'Memlet range overlap while writing to "{node}" in state "{state.label}"')
             # Check read-write data races.
             for write in writes:
                 for read in reads:
-                    if not nx.has_path(state.nx, read["node"], write["node"]) and subsets.intersects(
-                        write["subset"], read["subset"]
+                    if (
+                        not nx.has_path(state.nx, read["node"], write["node"])
+                        and subsets.intersects(write["subset"], read["subset"], facts) is symbolic.Truth.TRUE
                     ):
                         warnings.warn(f'Memlet range overlap while writing to "{node}" in state "{state.label}"')
 
@@ -1205,7 +1220,7 @@ def validate_state(
 class InvalidSDFGError(Exception):
     """A class of exceptions thrown when SDFG validation fails."""
 
-    def __init__(self, message: str, sdfg: "SDFG", state_id: int):
+    def __init__(self, message: str, sdfg: "SDFG", state_id: int | None):
         self.message = message
         self.sdfg = sdfg
         self.state_id = state_id

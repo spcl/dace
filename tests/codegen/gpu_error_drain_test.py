@@ -9,6 +9,7 @@ import numpy as np
 import pytest
 
 import dace
+from dace.codegen import common
 from dace.transformation.interstate import GPUTransformSDFG
 
 
@@ -31,7 +32,7 @@ def _gpu_sdfg(name: str = "drain_probe") -> dace.SDFG:
 
 def _sources(sdfg: dace.SDFG):
     objs = sdfg.generate_code()
-    cu = next(o.clean_code for o in objs if o.language == "cu")
+    cu = next(o.clean_code for o in objs if o.name == f"{sdfg.name}_cuda")
     frame = next(o.clean_code for o in objs if o.language == "cpp" and o.name == sdfg.name)
     return cu, frame
 
@@ -112,12 +113,13 @@ def test_gpu_mempool_setup_is_checked_and_follows_context_creation():
     if "MemPool_t" not in cu:
         pytest.skip("this SDFG did not request pooled allocation")
 
-    assert "DACE_GPU_CHECK(cudaDeviceGetDefaultMemPool" in cu
-    assert "DACE_GPU_CHECK(cudaMemPoolSetAttribute" in cu
+    api = common.get_gpu_backend()
+    assert f"DACE_GPU_CHECK({api}DeviceGetDefaultMemPool" in cu
+    assert f"DACE_GPU_CHECK({api}MemPoolSetAttribute" in cu
     assert cu.index("__state->gpu_context = new") < cu.index("MemPool_t")
 
     # A literal 0 never fails loudly, it just configures a pool the allocations never touch.
-    assert "DACE_GPU_CHECK(cudaDeviceGetDefaultMemPool(&mempool, __dace_device))" in cu
+    assert f"DACE_GPU_CHECK({api}DeviceGetDefaultMemPool(&mempool, __dace_device))" in cu
 
 
 def _load_cudart():
@@ -189,7 +191,7 @@ def test_init_selects_device_zero_once():
     cu, _ = _sources(_gpu_sdfg("one_device_probe"))
 
     assert "const int __dace_device = 0;" in cu
-    assert cu.count("cudaSetDevice(") == 1, "selecting it anywhere else would make it mutable"
+    assert cu.count(f"{common.get_gpu_backend()}SetDevice(") == 1, "selecting it anywhere else would make it mutable"
 
 
 def test_the_device_ordinal_is_not_configurable():

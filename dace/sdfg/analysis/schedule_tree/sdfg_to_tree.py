@@ -21,7 +21,7 @@ from dace.sdfg.analysis.schedule_tree import passes as stpasses
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.sdfg.memlet_utils import MemletReplacer
 from dace.sdfg.propagation import align_memlet
-from dace.sdfg.sdfg import SDFG, InterstateEdge
+from dace.sdfg.sdfg import SDFG, InterstateEdge, scope_bound_names
 from dace.sdfg.state import (
     ConditionalBlock,
     ControlFlowBlock,
@@ -692,14 +692,15 @@ def _create_unified_descriptor_repository(sdfg: SDFG, stree: tn.ScheduleTreeRoot
     :param stree: The tree root in which to make the unified descriptor repository.
     """
     stree.containers = sdfg.arrays
-    stree.symbols = sdfg.symbols
+    stree.symbols = dict(sdfg.symbols)
     stree.constants = sdfg.constants_prop
 
     # Since the SDFG is assumed to be de-aliased and contain unique names, we union the contents of
-    # the nested SDFGs' descriptor repositories
+    # the nested SDFGs' descriptor repositories. A name a loop or map scope binds is defined by that scope.
+    bound = set().union(*(scope_bound_names(nsdfg) for nsdfg in sdfg.all_sdfgs_recursive()))
     for nsdfg in sdfg.all_sdfgs_recursive():
         transients = {k: v for k, v in nsdfg.arrays.items() if v.transient}
-        symbols = {k: v for k, v in nsdfg.symbols.items() if k not in stree.symbols}
+        symbols = {k: v for k, v in nsdfg.symbols.items() if k not in stree.symbols and k not in bound}
         constants = {k: v for k, v in nsdfg.constants_prop.items() if k not in stree.constants}
         stree.containers.update(transients)
         stree.symbols.update(symbols)
@@ -729,7 +730,7 @@ def as_schedule_tree(sdfg: SDFG, *, in_place: bool = False, toplevel: bool = Tru
     _prepare_sdfg_for_conversion(sdfg, toplevel=toplevel)
 
     if toplevel:
-        result = tn.ScheduleTreeRoot(name=sdfg.name, children=[])
+        result = tn.ScheduleTreeRoot(name=sdfg.name, children=[], facts=sdfg.facts())
         _create_unified_descriptor_repository(sdfg, result)
         result.add_children(_block_schedule_tree(sdfg))
     else:

@@ -504,7 +504,7 @@ def test_indirection_with_reindex(language):
     sdfg.add_array("index_1", shape=[1], dtype=dace.int32, transient=True)
     sdfg.add_array("index_2", shape=[1], dtype=dace.int32, transient=True)
     sdfg.add_array("out", shape=[N], dtype=dace.float32, transient=False)
-    sdfg.add_symbol("S", S.dtype)
+    sdfg.add_symbol("S", S.declaration.dtype)
 
     state_init1 = sdfg.add_state()
     state_init2 = sdfg.add_state()

@@ -31,7 +31,7 @@ from dace.properties import LambdaProperty
 from dace.sdfg import SDFG, SDFGState, is_devicelevel_gpu, nodes, propagation
 from dace.sdfg import graph as gr
 from dace.sdfg import utils as sdutil
-from dace.sdfg.state import ControlFlowRegion, StateSubgraphView
+from dace.sdfg.state import ControlFlowRegion, StateSubgraphView, SymbolResolver
 
 if TYPE_CHECKING:
     from dace.codegen.dispatcher import TargetDispatcher
@@ -424,7 +424,7 @@ def reshape_strides(subset, strides, original_strides, copy_shape):
     reduced_tile_sizes += [1] * (dims - len(reduced_tile_sizes))  # Pad the remainder with 1s to maintain dimensions.
 
     reshaped_copy = copy_shape + [ts for ts in subset.tile_sizes if ts != 1]
-    reshaped_copy[: len(copy_shape)] = [s // ts for s, ts in zip(copy_shape, reduced_tile_sizes)]
+    reshaped_copy[: len(copy_shape)] = [symbolic.int_floor(s, ts) for s, ts in zip(copy_shape, reduced_tile_sizes)]
 
     new_strides = [0] * len(reshaped_copy)
     elements_remaining = functools.reduce(sp.Mul, copy_shape, 1)
@@ -697,6 +697,8 @@ def _check_neighbor_conflicts(dfg, edge):
     Returns True if there are no conflicts, False if there may be.
     """
     outer = propagation.propagate_memlet(dfg, edge.data, edge.dst, False)
+    # The propagated subsets are outside the map
+    facts = SymbolResolver().facts_at(dfg, dfg.entry_node(edge.dst))
     siblings = dfg.in_edges(edge.dst)
     for sibling in siblings:
         if sibling is edge:
@@ -705,7 +707,7 @@ def _check_neighbor_conflicts(dfg, edge):
             continue
         # Check if there is definitely no overlap in the propagated memlet
         sibling_outer = propagation.propagate_memlet(dfg, sibling.data, edge.dst, False)
-        if subsets.intersects(outer.subset, sibling_outer.subset) == False:
+        if subsets.intersects(outer.subset, sibling_outer.subset, facts) is symbolic.Truth.FALSE:
             # In that case, continue
             continue
 
@@ -798,9 +800,10 @@ def is_write_conflicted_with_reason(dfg, edge, datanode=None, sdfg_schedule=None
         dst = sdutil.get_last_view_node(dfg, dst) or dst
 
         if dfg.in_degree(dst) > 0:
+            facts = SymbolResolver().facts_at(dfg, dst)
             for x, y in itertools.combinations(dfg.in_edges(dst), 2):
                 x, y = x.data.subset, y.data.subset
-                if subsets.intersects(x, y):
+                if subsets.intersects(x, y, facts) is symbolic.Truth.TRUE:
                     return dst
 
         # If this is a nested SDFG and the access leads outside

@@ -1331,10 +1331,14 @@ class NestSDFG(transformation.MultiStateTransformation):
         defined_syms |= set(nested_sdfg.constants.keys())
 
         for s in defined_syms:
-            type = outer_sdfg.symbols.pop(s, None)
+            type = outer_sdfg.symbols.get(s)
             if type is not None:
+                outer_sdfg.symbol_repo.remove(s)
                 # update or add the symbol in the nested sdfg
-                nested_sdfg.symbols[s] = type
+                if s in nested_sdfg.symbols:
+                    nested_sdfg.symbol_repo.set_type(s, type)
+                else:
+                    nested_sdfg.symbol_repo.add(s, type)
 
         # Add the nested SDFG to the parent state and connect it
         nested_node = outer_state.add_nested_sdfg(nested_sdfg, set(inputs.values()), set(outputs.values()))

@@ -118,15 +118,16 @@ class InstrumentedDataReport:
                 nparr, view = self._read_array_file(file, npdtype)
                 self.loaded_values[item, i] = nparr
                 results.append(view)
-        elif item in self.sdfg.symbols:
-            dtype: dtypes.typeclass = self.sdfg.symbols[item]
-            npdtype = dtype.as_numpy_dtype()
+        else:
+            # The dump saves the symbols each state defines, which include loop variables and map parameters
+            types = {name: dtype for state in self.sdfg.all_states() for name, dtype in state.defined_symbols().items()}
+            if item not in types:
+                raise KeyError(f"Item {item} not found in report")
+            npdtype = types[item].as_numpy_dtype()
             for i, file in enumerate(filenames):
                 val = self._read_symbol_file(file, npdtype)
                 self.loaded_values[item, i] = val
                 results.append(val)
-        else:
-            raise KeyError(f"Item {item} not found in report")
 
         if len(results) == 1:
             return results[0]

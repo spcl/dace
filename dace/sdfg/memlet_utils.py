@@ -95,16 +95,24 @@ class MemletSet(set[Memlet]):
     Set updates and unions also perform unions on the contained memlet subsets.
     """
 
-    def __init__(self, iterable: Iterable[Memlet] | None = None, *, intersection_is_contained: bool = True) -> None:
+    def __init__(
+        self,
+        iterable: Iterable[Memlet] | None = None,
+        *,
+        facts: symbolic.Facts,
+        intersection_is_contained: bool = True,
+    ) -> None:
         """
         Initializes a memlet set.
 
         :param iterable: An optional iterable of memlets to initialize the set with.
+        :param facts: The facts that hold where the memlets are accessed, under which subsets are compared.
         :param intersection_is_contained: Whether the check ``m in memlet_set`` should return True if the memlet
                                           only intersects with the contents of the set. If False, only completely
                                           covered subsets would return True.
         """
         self.internal_set: dict[str, set[Memlet]] = {}
+        self.facts = facts
         self.intersection_is_contained = intersection_is_contained
         if iterable is not None:
             self.update(iterable)
@@ -142,19 +150,16 @@ class MemletSet(set[Memlet]):
         # Memlet is in set, either perform a union (if possible) or add to internal set
         # TODO(later): Consider other_subset as well
         for existing_memlet in self.internal_set[elem.data]:
-            try:
-                if subsets.intersects(existing_memlet.subset, elem.subset) == True:  # Definitely intersects
-                    if existing_memlet.subset.covers(elem.subset):
-                        break  # Nothing to do
+            if subsets.intersects(existing_memlet.subset, elem.subset, self.facts) is symbolic.Truth.TRUE:
+                if existing_memlet.subset.covers(elem.subset, self.facts):
+                    break  # Nothing to do
 
-                    # Create a new union memlet
-                    self.internal_set[elem.data].remove(existing_memlet)
-                    new_memlet = copy.deepcopy(existing_memlet)
-                    new_memlet.subset = subsets.union(existing_memlet.subset, elem.subset)
-                    self.internal_set[elem.data].add(new_memlet)
-                    break
-            except TypeError:  # Indeterminate
-                pass
+                # Create a new union memlet
+                self.internal_set[elem.data].remove(existing_memlet)
+                new_memlet = copy.deepcopy(existing_memlet)
+                new_memlet.subset = subsets.union(existing_memlet.subset, elem.subset, self.facts)
+                self.internal_set[elem.data].add(new_memlet)
+                break
         else:  # all intersections were False or indeterminate (may or does not intersect with existing memlets)
             self.internal_set[elem.data].add(elem)
 
@@ -165,16 +170,14 @@ class MemletSet(set[Memlet]):
         if elem.data not in self.internal_set:
             return False
         for existing_memlet in self.internal_set[elem.data]:
-            if existing_memlet.subset.covers(elem.subset):
+            if existing_memlet.subset.covers(elem.subset, self.facts):
                 return True
-            if self.intersection_is_contained:
-                try:
-                    if subsets.intersects(existing_memlet.subset, elem.subset) == False:
-                        continue
-                    else:  # May intersect or indeterminate
-                        return True
-                except TypeError:
-                    return True
+            # May intersect or indeterminate
+            if (
+                self.intersection_is_contained
+                and subsets.intersects(existing_memlet.subset, elem.subset, self.facts) is not symbolic.Truth.FALSE
+            ):
+                return True
 
         return False
 
@@ -184,7 +187,7 @@ class MemletSet(set[Memlet]):
 
         :return: New memlet set containing the union of this set and the inputs.
         """
-        newset = MemletSet(self)
+        newset = MemletSet(self, facts=self.facts)
         newset.update(s)
         return newset
 
@@ -198,7 +201,11 @@ class MemletDict(dict[Memlet, T]):
     or are covered by its other memlets.
     """
 
-    def __init__(self, **kwargs) -> None:
+    def __init__(self, *, facts: symbolic.Facts, **kwargs) -> None:
+        """
+        :param facts: The facts that hold where the memlets are accessed, under which subsets are compared.
+        """
+        self.facts = facts
         self.internal_dict: dict[str, dict[Memlet, T]] = defaultdict(dict)
         self.covers_cache: dict[tuple, bool] = defaultdict()
 
@@ -220,16 +227,13 @@ class MemletDict(dict[Memlet, T]):
             key = (existing_memlet.subset, elem.subset)
             is_covered = self.covers_cache.get(key, None)
             if is_covered is None:
-                is_covered = existing_memlet.subset.covers(elem.subset)
+                is_covered = existing_memlet.subset.covers(elem.subset, self.facts)
                 self.covers_cache[key] = is_covered
             if is_covered:
                 return existing_memlet
 
-            try:
-                if subsets.intersects(existing_memlet.subset, elem.subset) == False:  # Definitely does not intersect
-                    continue
-            except TypeError:
-                pass
+            if subsets.intersects(existing_memlet.subset, elem.subset, self.facts) is symbolic.Truth.FALSE:
+                continue
 
             # May or will intersect
             return existing_memlet

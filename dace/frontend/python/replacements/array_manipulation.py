@@ -790,7 +790,7 @@ def _split_core(
 
         # Sequence is not given, compute sections
         # Mimic behavior of array_split in numpy: Sections are [s+1 x N%s], s, ..., s
-        size = desc.shape[axis] // indices_or_sections
+        size = symbolic.int_floor(desc.shape[axis], indices_or_sections)
         remainder = desc.shape[axis] % indices_or_sections
         sections = []
         offset = 0

@@ -59,7 +59,7 @@ def _numpy_full(
     if isinstance(fill_value, (Number, np.bool_)):
         vtype = dtypes.dtype_to_typeclass(type(fill_value))
     elif isinstance(fill_value, sp.Expr):
-        vtype = sym_type(fill_value)
+        vtype = sym_type(fill_value, pv.symbol_types())
     else:
         is_data = True
         vtype = sdfg.arrays[fill_value].dtype
@@ -269,7 +269,7 @@ def _arange(
 
     # Infer dtype from input arguments
     if dtype is None:
-        dtype, _ = result_type(args)
+        dtype, _ = result_type(args, symbols=pv.symbol_types())
 
     # TODO: Unclear what 'like' does
     # if 'like' is not None:
@@ -358,7 +358,7 @@ def _linspace(
         start_type = sdfg.arrays[start] if (isinstance(start, str) and start in sdfg.arrays) else start
         stop_type = sdfg.arrays[stop] if (isinstance(stop, str) and stop in sdfg.arrays) else stop
 
-        dtype, _ = result_type((start_type, stop_type), "Add")
+        dtype, _ = result_type((start_type, stop_type), "Add", symbols=pv.symbol_types())
 
         # From the NumPy documentation: The inferred dtype will never be an integer; float is chosen even if the
         # arguments would produce an array of integers.

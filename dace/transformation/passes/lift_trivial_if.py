@@ -12,7 +12,7 @@ import dace
 from dace import SDFG, ControlFlowRegion, symbolic
 from dace.properties import CodeBlock
 from dace.sdfg.sdfg import ConditionalBlock
-from dace.sdfg.state import BreakBlock, ContinueBlock, ReturnBlock
+from dace.sdfg.state import BreakBlock, ContinueBlock, ReturnBlock, SymbolResolver
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 from dace.transformation.helpers import move_branch_cfg_up_discard_conditions
@@ -123,12 +123,31 @@ class LiftTrivialIf(ppl.Pass):
     def _trivially_true(self, code: CodeBlock, cfb: ConditionalBlock | None = None) -> bool:
         if self._trivial_cond_check(code, True):
             return True
-        return cfb is not None and self._range_verdict(code, cfb) == "true"
+        return cfb is not None and (
+            self._range_verdict(code, cfb) == "true" or self._facts_verdict(code, cfb) is symbolic.Truth.TRUE
+        )
 
     def _trivially_false(self, code: CodeBlock, cfb: ConditionalBlock | None = None) -> bool:
         if self._trivial_cond_check(code, False):
             return True
-        return cfb is not None and self._range_verdict(code, cfb) == "false"
+        return cfb is not None and (
+            self._range_verdict(code, cfb) == "false" or self._facts_verdict(code, cfb) is symbolic.Truth.FALSE
+        )
+
+    @classmethod
+    def _facts_verdict(cls, code: CodeBlock, cfb: ConditionalBlock) -> symbolic.Truth:
+        """Whether a comparison guard (or its negation) holds under the facts at ``cfb``."""
+        if code is None or code.language != dace.dtypes.Language.Python:
+            return symbolic.Truth.UNKNOWN
+        condition = symbolic.pystr_to_symbolic(code.as_string)
+        negated = isinstance(condition, sympy.Not)
+        relation = symbolic.comparison_relation(condition.args[0] if negated else condition)
+        if relation is None:
+            return symbolic.Truth.UNKNOWN
+        truth = symbolic.ask(relation, SymbolResolver().facts_at(cfb))
+        if negated and truth is not symbolic.Truth.UNKNOWN:
+            return symbolic.Truth.FALSE if truth is symbolic.Truth.TRUE else symbolic.Truth.TRUE
+        return truth
 
     def _loop_iter_ranges(self, cfb: ConditionalBlock):
         """The ``(loop_variable, start, end)`` iteration range of every
@@ -151,14 +170,14 @@ class LiftTrivialIf(ppl.Pass):
         return ranges
 
     @staticmethod
-    def _cmp_verdict(opname: str, c, start, end) -> str:
+    def _cmp_verdict(opname: str, c, start, end, facts: symbolic.Facts) -> str:
         """Whether ``i <opname> c`` is ``'true'`` / ``'false'`` for every ``i`` in
         ``[start, end]``, or ``'unknown'`` when the bounds are too symbolic to
         decide. ``c``, ``start`` and ``end`` are symbolic; a verdict is only
         returned when the deciding difference reduces to a concrete number."""
 
         def num(x):
-            s = symbolic.simplify(x)
+            s = symbolic.simplify(x, facts)
             return s if s.is_number else None
 
         def pos(x):  # provably x > 0
@@ -248,7 +267,7 @@ class LiftTrivialIf(ppl.Pass):
         if symbolic.pystr_to_symbolic(ivar) in c.free_symbols:
             return "unknown"  # C must be loop-invariant
         start, end = ivar_to_range[ivar]
-        verdict = self._cmp_verdict(opname, c, start, end)
+        verdict = self._cmp_verdict(opname, c, start, end, cfb.sdfg.facts())
         if negate and verdict != "unknown":
             verdict = "false" if verdict == "true" else "true"
         return verdict

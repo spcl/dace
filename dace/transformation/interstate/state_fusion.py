@@ -8,7 +8,8 @@ from dace import sdfg, subsets
 from dace.config import Config
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
-from dace.sdfg.state import SDFGState
+from dace.sdfg.state import SDFGState, SymbolResolver
+from dace.symbolic import Truth
 from dace.transformation import transformation
 
 
@@ -122,11 +123,11 @@ class StateFusion(transformation.MultiStateTransformation):
             edges_b = [e for n in group_b for e in graph_b.in_edges(n)]
             subset_b = dst_subset
 
-        # Simple all-pairs check
+        # Simple all-pairs check. The states are consecutive, so what holds in the first holds in the second.
+        facts = SymbolResolver().facts_at(graph_a)
         for ea in edges_a:
             for eb in edges_b:
-                result = subsets.intersects(subset_a(ea), subset_b(eb))
-                if result is True or result is None:
+                if subsets.intersects(subset_a(ea), subset_b(eb), facts) is not Truth.FALSE:
                     return True
         return False
 

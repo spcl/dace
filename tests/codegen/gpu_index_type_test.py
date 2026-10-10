@@ -174,6 +174,7 @@ def test_threadblock_map_keeps_its_own_type():
 
 def test_nested_device_map():
     sdfg = dace.SDFG("nested_device_index_type")
+    sdfg.add_symbol("N", dace.int64)
     sdfg.add_array("A", [N, N], dace.float64, storage=dace.StorageType.GPU_Global)
     state = sdfg.add_state()
     outer_entry, outer_exit = state.add_map("outer", {"i": "0:N"}, schedule=dace.ScheduleType.GPU_Device)

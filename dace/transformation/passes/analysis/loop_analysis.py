@@ -97,26 +97,9 @@ def get_loop_stride(loop: LoopRegion) -> symbolic.SymbolicType | None:
     return None
 
 
-def _provably_le(a: symbolic.SymbolicType, b: symbolic.SymbolicType) -> bool:
-    """Prove ``a <= b`` SOUNDLY, returning ``False`` when it cannot be decided (never a guess).
-
-    Beyond a concrete numeric verdict and sympy's own non-positivity engine (which respects the
-    codebase's non-negative symbols), this proves the ``Min`` / ``Max`` clamp shape a range split
-    leaves behind: ``Min(..., t) <= t`` for any of its own args ``t``, ``t <= Max(..., t)``, and the
-    combined ``Min(..., t) <= t <= Max(..., t)`` sharing a term ``t``.
-    """
-    diff = symbolic.simplify(a - b)
-    if diff.is_number:
-        return bool(diff <= 0)
-    if diff.is_nonpositive:  # sympy assumption engine; None (undecided) is falsy -> not proven
-        return True
-    a_min = a.args if isinstance(a, sympy.Min) else ()
-    b_max = b.args if isinstance(b, sympy.Max) else ()
-    if b in a_min:  # a = Min(..., b, ...) <= b
-        return True
-    if a in b_max:  # a <= Max(..., a, ...) = b
-        return True
-    return bool(a_min and b_max and (set(a_min) & set(b_max)))  # a <= shared t <= b
+def _provably_le(a: symbolic.SymbolicType, b: symbolic.SymbolicType, facts: symbolic.Facts) -> bool:
+    """Prove ``a <= b`` under ``facts`` soundly, returning ``False`` when it cannot be decided (never a guess)."""
+    return symbolic.provably_le(sympy.sympify(a), sympy.sympify(b), facts)
 
 
 def loop_provably_at_most_one_iteration(loop: LoopRegion) -> bool:
@@ -130,6 +113,7 @@ def loop_provably_at_most_one_iteration(loop: LoopRegion) -> bool:
     start = get_init_assignment(loop)
     end = get_loop_end(loop)  # inclusive
     step = get_loop_stride(loop)
-    if start is None or end is None or step is None or symbolic.simplify(step) != 1:
+    facts = loop.sdfg.facts()
+    if start is None or end is None or step is None or symbolic.simplify(step, facts) != 1:
         return False
-    return _provably_le(symbolic.simplify(end), symbolic.simplify(start))
+    return _provably_le(symbolic.simplify(end, facts), symbolic.simplify(start, facts), facts)

@@ -11,6 +11,7 @@ import pytest
 
 import dace
 from dace import symbolic
+from dace.codegen import common
 from dace.libraries.standard.helper import collapse_shape_and_strides
 from dace.libraries.standard.nodes.copy import CopyLibraryNode, select_copy_implementation
 from dace.libraries.standard.nodes.copy.common import _make_expansion_sdfg, cuda2d_pitch_params
@@ -1631,12 +1632,11 @@ def test_register_location_detection():
         f"Single-element in-kernel copy should expand to a direct Memcpy (cross-boundary), "
         f"not a NestedSDFG; got {nsdfg_count} NestedSDFG(s)."
     )
+    memcpy = f"{common.get_gpu_backend()}Memcpy"
     assignments = [
-        n
-        for n, _ in sdfg.all_nodes_recursive()
-        if isinstance(n, dace.nodes.Tasklet) and "cudaMemcpy" in n.code.as_string
+        n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.Tasklet) and memcpy in n.code.as_string
     ]
-    assert assignments, "Expected at least one ``cudaMemcpy`` Tasklet from the expansion."
+    assert assignments, f"Expected at least one ``{memcpy}`` Tasklet from the expansion."
 
 
 def test_cuda2d_pitch_params_branches():
@@ -1909,7 +1909,7 @@ def test_in_kernel_copy_does_not_emit_a_grid_barrier():
     transform.kernel_prefix = "stuff"
     transform.apply(sdfg)
 
-    cuda = next(obj.clean_code for obj in sdfg.generate_code() if obj.language == "cu")
+    cuda = next(obj.clean_code for obj in sdfg.generate_code() if obj.name == f"{sdfg.name}_cuda")
     marker = "DACE_DFI void copy_"
     assert marker in cuda, cuda
     start = cuda.index(marker)
@@ -1949,7 +1949,7 @@ def test_a_multi_state_nested_sdfg_below_the_kernel_keeps_its_barriers():
     )
     sdfg.validate()
 
-    cuda = next(obj.clean_code for obj in sdfg.generate_code() if obj.language == "cu")
+    cuda = next(obj.clean_code for obj in sdfg.generate_code() if obj.name == f"{sdfg.name}_cuda")
     # One barrier per inner state: the transition between them is a sync point.
     assert cuda.count("__gbar.Sync();") >= 2, cuda
 
