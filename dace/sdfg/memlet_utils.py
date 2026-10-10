@@ -4,6 +4,7 @@ import copy
 import itertools
 from collections import defaultdict
 from collections.abc import Callable, Generator, Iterable
+from collections.abc import Set as AbstractSet
 from typing import Any, TypeVar
 
 from dace import Memlet, data, dtypes, subsets, symbolic
@@ -24,7 +25,7 @@ class MemletReplacer(ast.NodeTransformer):
         self,
         arrays: dict[str, data.Data],
         process: Callable[[Memlet], Memlet | None],
-        array_filter: set[str] | None = None,
+        array_filter: AbstractSet[str] | None = None,
     ) -> None:
         """
         Create a new memlet replacer.
@@ -54,7 +55,7 @@ class MemletReplacer(ast.NodeTransformer):
 
         # Parse memlet subset
         array = self.arrays[data]
-        subset, newaxes, _ = memlet_parser.parse_memlet_subset(array, node, self.arrays)
+        subset, newaxes, _, _ = memlet_parser.parse_memlet_subset(array, node, self.arrays)
         if newaxes:
             raise NotImplementedError("Adding new axes to memlets is not supported")
 

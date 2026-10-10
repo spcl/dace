@@ -2,11 +2,10 @@
 import collections
 import copy
 
-from ordered_set import OrderedSet
-
 import dace
 from dace import dtypes, symbolic
 from dace.config import Config
+from dace.ordered import OrderedSet
 from dace.sdfg import nodes as nd
 from dace.sdfg.state import StateSubgraphView
 

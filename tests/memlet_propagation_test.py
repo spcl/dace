@@ -1,8 +1,10 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+
 import numpy as np
 
 import dace
-from dace.sdfg.propagation import propagate_memlets_sdfg, propagate_subset
+from dace.sdfg.propagation import propagate_memlet, propagate_memlets_sdfg, propagate_memlets_state, propagate_subset
+from dace.symbolic import same_value
 
 
 def test_conditional():
@@ -65,6 +67,31 @@ def test_runtime_conditional():
     assert np.allclose(outp, expected)
 
 
+S = dace.symbol("S")
+S1 = dace.symbol("S1")
+S2 = dace.symbol("S2")
+
+
+@dace.program
+def tasklet_in_nested_sdfg(
+    a: dace.float64[S, S],
+    b: dace.float64[S, S],
+    offset1: dace.int64,
+    offset2: dace.int64,
+):
+    for i, j in dace.map[S1:S2:1, S1:S2:1] @ dace.dtypes.ScheduleType.Sequential:
+        a[i + offset1, j + offset2] = ((1.5 * b[i + offset1, j + offset2]) + (2.0 * a[i + offset1, j + offset2])) / 3.5
+
+
+def test_nsdfg_memlet_propagation():
+    sdfg = tasklet_in_nested_sdfg.to_sdfg(simplify=False)
+    propagate_memlets_sdfg(sdfg)
+
+    for n, g in sdfg.all_nodes_recursive():
+        if isinstance(n, dace.SDFGState):
+            propagate_memlets_state(n.sdfg, n)
+
+
 def test_nsdfg_memlet_propagation_with_one_sparse_dimension():
     N = dace.symbol("N")
     M = dace.symbol("M")
@@ -85,13 +112,15 @@ def test_nsdfg_memlet_propagation_with_one_sparse_dimension():
     outer_in = map_state.edges()[0].data
     if outer_in.volume != M * N:
         raise RuntimeError("Expected a volume of M*N on the outer input memlet")
-    if outer_in.subset[0] != (0, M - 1, 1) or outer_in.subset[1] != (0, N - 1, 1):
+    if not same_value(outer_in.subset[0], (0, M - 1, 1)) or not same_value(outer_in.subset[1], (0, N - 1, 1)):
         raise RuntimeError("Expected subset of outer in memlet to be [0:M, 0:N], found " + str(outer_in.subset))
 
+    # Symbols minted here carry the default dtype, which is part of a symbol's identity; the SDFG's
+    # map parameters carry the inferred one. Only the values they stand for are being compared.
     inner_in = map_state.edges()[1].data
     if inner_in.volume != 1:
         raise RuntimeError("Expected a volume of 1 on the inner input memlet")
-    if inner_in.subset[0] != (i, i, 1) or inner_in.subset[1] != (j, j, 1):
+    if not same_value(inner_in.subset[0], (i, i, 1)) or not same_value(inner_in.subset[1], (j, j, 1)):
         raise RuntimeError("Expected subset of inner in memlet to be [i, j], found " + str(inner_in.subset))
 
     inner_out = map_state.edges()[2].data
@@ -103,7 +132,7 @@ def test_nsdfg_memlet_propagation_with_one_sparse_dimension():
     outer_out = map_state.edges()[3].data
     if outer_out.volume != M * N:
         raise RuntimeError("Expected a volume of M*N on the outer output memlet")
-    if outer_out.subset[0] != (0, M - 1, 1) or outer_out.subset[1] != (0, N - 1, 1):
+    if not same_value(outer_out.subset[0], (0, M - 1, 1)) or not same_value(outer_out.subset[1], (0, N - 1, 1)):
         raise RuntimeError("Expected subset of outer out memlet to be [0:M, 0:N], found " + str(outer_out.subset))
 
 
@@ -188,6 +217,59 @@ def test_strided_write_keeps_the_multiplier():
     assert out.subset.num_elements() == N, out.subset.num_elements()
     # The written elements must be inside the propagated set; the bug put 2*N-2 outside it.
     assert out.subset.covers(dace.subsets.Range([(2 * N - 2, 2 * N - 2, 1)]))
+
+
+def test_a_supplied_symbol_table_propagates_what_the_derived_one_does():
+    """``propagate_memlet`` derives the scope's symbols itself, which walks every descriptor in the
+    SDFG. Callers propagating several memlets through ONE scope node hand it the table instead, so
+    the two paths have to agree -- a table that differed would silently widen or narrow the outer
+    subset of every edge such a caller builds.
+    """
+    N = dace.symbol("N")
+
+    @dace.program
+    def scaled(a: dace.float64[N], out: dace.float64[N]):
+        for i in dace.map[0:N]:
+            out[i] = a[i] * 2.0
+
+    sdfg = scaled.to_sdfg(simplify=False)
+    state = next(s for s in sdfg.states() if any(isinstance(n, dace.nodes.MapEntry) for n in s.nodes()))
+    entry = next(n for n in state.nodes() if isinstance(n, dace.nodes.MapEntry))
+    edge = next(e for e in state.out_edges(entry) if not e.data.is_empty())
+
+    derived = propagate_memlet(state, edge.data, entry, True)
+    supplied = propagate_memlet(
+        state, edge.data, entry, True, defined_variables=state.symbols_defined_at(entry).keys() | sdfg.constants.keys()
+    )
+    assert derived.subset == supplied.subset, (derived, supplied)
+    assert derived.volume == supplied.volume, (derived, supplied)
+
+
+def test_a_strided_range_keeps_the_dtype_of_its_bound_symbols():
+    """The last index of a strided map range is built from the bound symbols, never re-parsed from text:
+    a re-parse mints them at the default dtype, and ``S: uint32`` beside ``S: int32`` never cancels."""
+    S = dace.symbol("S", dace.uint32)
+    E = dace.symbol("E", dace.uint32)
+    sdfg = dace.SDFG("strided_uint_bounds")
+    sdfg.add_symbol("S", dace.uint32)
+    sdfg.add_symbol("E", dace.uint32)
+    sdfg.add_array("A", [E * E], dace.float64)
+    sdfg.add_array("B", [E], dace.float64)
+    state = sdfg.add_state()
+    square = dace.symbol("i", dace.uint32) ** 2
+    state.add_mapped_tasklet(
+        "gather",
+        {"i": dace.subsets.Range([(S, E - 1, 4)])},
+        {"a": dace.Memlet(data="A", subset=dace.subsets.Range([(square, square, 1)]))},
+        "b = a",
+        {"b": dace.Memlet("B[i]")},
+        external_edges=True,
+    )
+    propagate_memlets_sdfg(sdfg)
+    outer = next(e.data for e in state.edges() if isinstance(e.dst, dace.sdfg.nodes.MapEntry))
+    dtypes_seen = {(s.name, s.dtype) for dim in outer.subset.ranges for x in dim for s in x.free_symbols}
+    assert dtypes_seen and all(dtype == dace.uint32 for name, dtype in dtypes_seen if name in ("S", "E")), dtypes_seen
+    sdfg.validate()
 
 
 def test_typed_parameter_symbol():
@@ -275,6 +357,8 @@ if __name__ == "__main__":
     test_nsdfg_memlet_propagation_with_one_sparse_dimension()
     test_nested_conditional_in_loop_in_map()
     test_strided_write_keeps_the_multiplier()
+    test_a_supplied_symbol_table_propagates_what_the_derived_one_does()
+    test_a_strided_range_keeps_the_dtype_of_its_bound_symbols()
     test_typed_parameter_symbol()
     test_nested_sdfg_connector_in_mapped_symbols()
     test_nested_sdfg_connector_offset()

@@ -2,8 +2,6 @@
 
 import collections
 
-import sympy as sp
-
 from dace import SDFG, InterstateEdge, SDFGState, properties, symbolic
 from dace.properties import CodeBlock
 from dace.sdfg.graph import Edge
@@ -177,15 +175,17 @@ class DeadStateElimination(ppl.Pass):
         # Dead states are states that are not live (i.e., visited)
         return set(cfg.nodes()) - visited, dead_edges, edges_annotated
 
-    def _find_dead_branches(self, block: ConditionalBlock) -> list[tuple[CodeBlock, ControlFlowRegion]]:
-        dead_branches = []
+    def _find_dead_branches(self, block: ConditionalBlock) -> list[tuple[CodeBlock | None, ControlFlowRegion]]:
+        # The ``else`` arm has no guard, and is an ordinary dead branch once an earlier arm is taken.
+        dead_branches: list[tuple[CodeBlock | None, ControlFlowRegion]] = []
         unconditional = None
         for i, (cond, branch) in enumerate(block.branches):
             if cond is None:
                 if not i == len(block.branches) - 1:
                     raise InvalidSDFGNodeError(
                         "Conditional block detected, where else branch is not the last branch.",
-                        sdfg=block.sdfg,
+                        # ``block_id`` indexes the parent region, not the SDFG.
+                        sdfg=block.parent_graph,
                         state_id=block.block_id,
                         node_id=None,
                     )
@@ -198,14 +198,14 @@ class DeadStateElimination(ppl.Pass):
             # Remove other (now never taken) branches
             for cond, branch in block.branches:
                 if branch is not unconditional:
-                    dead_branches.append([cond, branch])
+                    dead_branches.append((cond, branch))
         else:
             # Check if any branches are certainly never taken.
             for cond, branch in block.branches:
                 if cond is not None and self._is_definitely_false(
                     symbolic.pystr_to_symbolic(cond.as_string), block.sdfg
                 ):
-                    dead_branches.append([cond, branch])
+                    dead_branches.append((cond, branch))
 
         return dead_branches
 
@@ -224,8 +224,9 @@ class DeadStateElimination(ppl.Pass):
         # Evaluate condition
         return self._is_definitely_true(edge.condition_sympy(), sdfg)
 
-    def _is_definitely_true(self, cond: sp.Basic, sdfg: SDFG) -> bool:
-        if cond == True or cond == sp.Not(sp.logic.boolalg.BooleanFalse(), evaluate=False):
+    def _is_definitely_true(self, cond: symbolic.sympy.Basic, sdfg: SDFG) -> bool:
+        cond = symbolic.refold_booleans(cond)
+        if cond == True or cond == symbolic.sympy.Not(symbolic.sympy.logic.boolalg.BooleanFalse(), evaluate=False):
             return True
 
         # Evaluate non-optional arrays
@@ -244,8 +245,12 @@ class DeadStateElimination(ppl.Pass):
         # Evaluate condition
         return self._is_definitely_false(edge.condition_sympy(), sdfg)
 
-    def _is_definitely_false(self, cond: sp.Basic, sdfg: SDFG) -> bool:
-        if cond == False or cond == sp.Not(sp.logic.boolalg.BooleanTrue(), evaluate=False):
+    def _is_definitely_false(self, cond: symbolic.sympy.Basic, sdfg: SDFG) -> bool:
+        # The parser hands back NON-EVALUATING AND/OR nodes; fold literal arms first, else a
+        # condition such as AND(False, x) never reads as constant (cloudsc's spliced boundary
+        # segment kept a dead branch with statically out-of-bounds memlets that way).
+        cond = symbolic.refold_booleans(cond)
+        if cond == False or cond == symbolic.sympy.Not(symbolic.sympy.logic.boolalg.BooleanTrue(), evaluate=False):
             return True
 
         # Evaluate non-optional arrays

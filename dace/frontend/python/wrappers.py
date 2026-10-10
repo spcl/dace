@@ -45,22 +45,22 @@ class stream_array(Generic[T]):
         return self.queue_array.__getslice__(*args)
 
 
-def scalar(dtype=dtypes.float32):
+def scalar(dtype: dtypes.typeclass | type = dtypes.float32):
     """Convenience function that defines a scalar (array of size 1)."""
     return ndarray([1], dtype)
 
 
-def define_local(dimensions, dtype=dtypes.float32):
+def define_local(dimensions, dtype: dtypes.typeclass | type = dtypes.float32):
     """Defines a transient array in a DaCe program."""
     return ndarray(dimensions, dtype=dtype)
 
 
-def define_local_scalar(dtype=dtypes.float32):
+def define_local_scalar(dtype: dtypes.typeclass | type = dtypes.float32):
     """Defines a transient scalar (array of size 1) in a DaCe program."""
     return ndarray([1], dtype=dtype)
 
 
-def define_stream(dtype=dtypes.float32, buffer_size=1):
+def define_stream(dtype: dtypes.typeclass | type = dtypes.float32, buffer_size=1):
     """Defines a local stream in a DaCe program."""
     return define_streamarray([1], dtype=dtype, buffer_size=buffer_size)
 

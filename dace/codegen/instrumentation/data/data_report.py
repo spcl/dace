@@ -1,5 +1,6 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 import os
+import re
 import struct
 from dataclasses import dataclass
 from numbers import Number
@@ -48,6 +49,27 @@ class InstrumentedDataReport:
     files: dict[str, list[str]]
     loaded_values: dict[tuple[str, int], ArrayLike | Number]
 
+    def _is_internal_copy(self, aname: str) -> bool:
+        """Return True for arrays created automatically as GPU/CPU staging copies."""
+        if aname not in self.sdfg.arrays:
+            return False
+        desc = self.sdfg.arrays[aname]
+        if not getattr(desc, "transient", False):
+            return False
+        # Offloading's staging names: gpu_A, gpu___return, ...
+        if aname.startswith("gpu_"):
+            return aname[4:] in self.sdfg.arrays
+        # OffloadToAccelerator return-value buffer: buffer__return_gpu, buffer__returnfoo_gpu, ...
+        m = re.fullmatch(r"buffer__return(.*)_gpu", aname)
+        if m:
+            return f"__return{m.group(1)}" in self.sdfg.arrays
+        # OffloadToAccelerator device/host copy naming: A_gpu, __return_gpu, A_host, ...
+        if aname.endswith("_gpu"):
+            return aname[:-4] in self.sdfg.arrays
+        if aname.endswith("_host"):
+            return aname[:-5] in self.sdfg.arrays
+        return False
+
     def __init__(self, sdfg: SDFG, folder: str) -> None:
         """
         Loads a data instrumentation report of an SDFG from the specified folder.
@@ -63,6 +85,11 @@ class InstrumentedDataReport:
         # Prepare file mapping
         array_names = os.listdir(folder)
         for aname in array_names:
+            # Skip internal GPU/CPU staging buffers; the report is meant to show
+            # user-visible arrays (and symbols).
+            if self._is_internal_copy(aname):
+                continue
+
             # Sort files numerically
             filenames = os.listdir(os.path.join(folder, aname))
             filenames = sorted([(*(int(s) for s in f.split(".")[0].split("_")), f) for f in filenames])

@@ -9,13 +9,14 @@ from collections import deque
 from numbers import Number
 from typing import Any, Union
 
-import networkx as nx
 import sympy as sp
-from networkx.algorithms.flow import edmondskarp
 from numpy.typing import ArrayLike
 
 from dace import DataInstrumentationType, data
+from dace import graphlib as nx
+from dace.graphlib.algorithms.flow import edmondskarp
 from dace.memlet import Memlet
+from dace.ordered import OrderedSet
 from dace.sdfg import SDFG, InterstateEdge, SDFGState
 from dace.sdfg import nodes as nd
 from dace.sdfg import utils as sdutil
@@ -224,8 +225,13 @@ class SDFGCutout(SDFG):
         if reduce_input_config:
             nodes = _reduce_in_configuration(state, nodes, use_alibi_nodes, symbols_map)
 
+        # Shared across all clone_f calls below: a MapEntry/MapExit pair references one Map object, and
+        # cloning them via separate deepcopy calls (each with its own memo) would hand them two - keeping
+        # one memo for the whole cutout preserves that shared identity.
+        clone_memo: dict[int, Any] = {}
+
         def clone_f(x: Memlet | InterstateEdge | nd.Node | ControlFlowBlock):
-            ret = copy.deepcopy(x)
+            ret = copy.deepcopy(x, clone_memo)
             if preserve_guids:
                 ret.guid = x.guid
             return ret
@@ -560,7 +566,7 @@ def _transformation_determine_affected_nodes(
         preventing a transformation from affecting nodes that are not part of the pattern or subgraph they match to.
     """
     target_sdfg = sdfg
-    affected_nodes = set()
+    affected_nodes = OrderedSet()
 
     if isinstance(transformation, PatternTransformation):
         if transformation.cfg_id >= 0 and target_sdfg.cfg_list:
@@ -723,7 +729,7 @@ def _reduce_in_configuration(
     else:
         scope_nodes = set(scope_children[source])
         scope_nodes.add(source)
-    expand_with = set()
+    expand_with = OrderedSet()
     for n in scope_nodes:
         if isinstance(n, nd.EntryNode):
             exit = state.exit_node(n)
@@ -735,6 +741,9 @@ def _reduce_in_configuration(
     proxy_graph.add_node(source)
     sink = nd.Node()
     proxy_graph.add_node(sink)
+
+    # One BFS per source node, not per edge: `state.nx` does not change in this loop.
+    descendants: dict[nd.Node, set[nd.Node]] = dict()
 
     # Build up the proxy graph.
     for edge in scope_subgraph.edges():
@@ -764,7 +773,9 @@ def _reduce_in_configuration(
             # Edge starts in subgraph, ends outside.
             # If there's no path back inside, it's source is the proxy sink. Otherwise, it's source is set to the proxy
             # source and the volume is made 0, since the value will already be part of the cutout.
-            if any(n in nx.descendants(state.nx, proxy_edge_src) for n in subgraph_nodes):
+            if proxy_edge_src not in descendants:
+                descendants[proxy_edge_src] = nx.descendants(state.nx, proxy_edge_src)
+            if not subgraph_nodes.isdisjoint(descendants[proxy_edge_src]):
                 proxy_edge_src = source
                 vol = 0
                 remain_free = True
@@ -895,6 +906,8 @@ def _extend_subgraph_with_access_nodes(
     """Expands a subgraph view to include necessary input/output access nodes, using memlet paths."""
     sdfg = state.parent
     result: list[nd.Node] = copy.copy(subgraph.nodes())
+    # `seen` mirrors `result` for membership; the list stays because it feeds `StateSubgraphView`.
+    seen: set[nd.Node] = set(result)
     queue: deque[nd.Node] = deque(subgraph.nodes())
 
     # Add all nodes in memlet paths
@@ -904,6 +917,7 @@ def _extend_subgraph_with_access_nodes(
             if isinstance(node.desc(sdfg), data.View):
                 vnode = sdutil.get_view_node(state, node)
                 result.append(vnode)
+                seen.add(vnode)
                 queue.append(vnode)
             continue
         for e in state.in_edges(node):
@@ -914,12 +928,14 @@ def _extend_subgraph_with_access_nodes(
             # We don't want to extend access nodes over scope entry nodes, but rather we want to introduce alibi data
             # containers for the correct subset instead. Handled separately in _create_alibi_access_node_for_edge.
             if use_alibi_nodes:
-                if isinstance(e.src, nd.EntryNode) and e.src not in result and state.exit_node(e.src) not in result:
+                if isinstance(e.src, nd.EntryNode) and e.src not in seen and state.exit_node(e.src) not in seen:
                     continue
 
             mpath = state.memlet_path(e)
-            new_nodes = [mpe.src for mpe in mpath if mpe.src not in result]
+            new_nodes = [mpe.src for mpe in mpath if mpe.src not in seen]
             result.extend(new_nodes)
+            # Updated after the comprehension, so a node repeated within one path is still appended twice.
+            seen.update(new_nodes)
             # Memlet path may end in a code node, continue traversing and expanding graph
             queue.extend(new_nodes)
 
@@ -931,21 +947,22 @@ def _extend_subgraph_with_access_nodes(
             # We don't want to extend access nodes over scope exit nodes, but rather we want to introduce alibi data
             # containers for the correct subset instead. Handled separately in _create_alibi_access_node_for_edge.
             if use_alibi_nodes:
-                if isinstance(e.dst, nd.ExitNode) and e.dst not in result and state.entry_node(e.dst) not in result:
+                if isinstance(e.dst, nd.ExitNode) and e.dst not in seen and state.entry_node(e.dst) not in seen:
                     continue
 
             mpath = state.memlet_path(e)
-            new_nodes = [mpe.dst for mpe in mpath if mpe.dst not in result]
+            new_nodes = [mpe.dst for mpe in mpath if mpe.dst not in seen]
             result.extend(new_nodes)
+            seen.update(new_nodes)
             # Memlet path may end in a code node, continue traversing and expanding graph
             queue.extend(new_nodes)
 
     # Check for mismatch in scopes
     for node in result:
         enode = None
-        if isinstance(node, nd.EntryNode) and state.exit_node(node) not in result:
+        if isinstance(node, nd.EntryNode) and state.exit_node(node) not in seen:
             enode = state.exit_node(node)
-        if isinstance(node, nd.ExitNode) and state.entry_node(node) not in result:
+        if isinstance(node, nd.ExitNode) and state.entry_node(node) not in seen:
             enode = state.entry_node(node)
         if enode is not None:
             raise ValueError(
@@ -983,12 +1000,14 @@ def _determine_cutout_reachability(
     inverse_cutout_reach: set[SDFGState] = set()
     cutout_reach: set[SDFGState] = set()
     cutout_states = set(ct.states())
+    # One scan of `state_reach` for all cutout states instead of one per state.
+    originals = {out_translation[state] for state in cutout_states}
+    originals.discard(None)
+    for k, v in state_reach.items():
+        if (k not in in_translation or in_translation[k] not in cutout_states) and not originals.isdisjoint(v):
+            inverse_cutout_reach.add(k)
     for state in cutout_states:
         original_state = out_translation[state]
-        for k, v in state_reach.items():
-            if k not in in_translation or in_translation[k] not in cutout_states:
-                if original_state is not None and original_state in v:
-                    inverse_cutout_reach.add(k)
         for rstate in state_reach[original_state]:
             if rstate not in in_translation or in_translation[rstate] not in cutout_states:
                 cutout_reach.add(rstate)

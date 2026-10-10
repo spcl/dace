@@ -6,6 +6,7 @@ import dace.properties
 import dace.sdfg.nodes
 from dace.libraries.blas import blas_helpers
 from dace.libraries.blas import environments as blas_environments
+from dace.ordered import OrderedSet
 from dace.transformation.transformation import ExpandTransformation
 
 
@@ -85,7 +86,9 @@ class Getri(dace.sdfg.nodes.LibraryNode):
     n = dace.properties.SymbolicProperty(allow_none=True, default=None, category="Semantics")
 
     def __init__(self, name, n=None, *args, **kwargs):
-        super().__init__(name, *args, inputs={"_xin", "_ipiv"}, outputs={"_xout", "_res"}, **kwargs)
+        super().__init__(
+            name, *args, inputs=OrderedSet(("_xin", "_ipiv")), outputs=OrderedSet(("_xout", "_res")), **kwargs
+        )
 
     def validate(self, sdfg, state):
         """

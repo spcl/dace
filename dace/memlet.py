@@ -48,15 +48,30 @@ class Memlet:
         category="Semantics",
         desc="Is the number of elements moved determined at runtime (e.g., data dependent)",
     )
-    subset = SubsetProperty(
-        allow_none=True, category="Semantics", desc="Subset of elements to move from the data attached to this edge."
-    )
-    other_subset = SubsetProperty(
-        allow_none=True,
-        category="Semantics",
-        desc="Subset of elements after reindexing to the data not attached "
-        "to this edge (e.g., for offsets and reshaping).",
-    )
+    if TYPE_CHECKING:
+        # Type-only view of the SubsetProperty descriptors below: reads are Optional[Subset], writes also take strings.
+        # fmt: off
+        @property
+        def subset(self) -> subsets.Subset | None: ...
+        @subset.setter
+        def subset(self, value: str | subsets.Subset | None) -> None: ...
+        @property
+        def other_subset(self) -> subsets.Subset | None: ...
+        @other_subset.setter
+        def other_subset(self, value: str | subsets.Subset | None) -> None: ...
+        # fmt: on
+    else:
+        subset = SubsetProperty(
+            allow_none=True,
+            category="Semantics",
+            desc="Subset of elements to move from the data attached to this edge.",
+        )
+        other_subset = SubsetProperty(
+            allow_none=True,
+            category="Semantics",
+            desc="Subset of elements after reindexing to the data not attached "
+            "to this edge (e.g., for offsets and reshaping).",
+        )
     data = DataProperty(category="General", desc="Data descriptor attached to this memlet")
     wcr = LambdaProperty(
         allow_none=True,
@@ -662,7 +677,9 @@ class Memlet:
         if self.data is None:
             return symbolic.pystr_to_symbolic("0")
 
-        param = symbolic.symbol(map.params[dim])
+        # Must be the very instance the subset carries: symbol identity includes the dtype, and one minted
+        # from the bare name would not cancel out in the difference below.
+        param = symbolic.resolve_symbol(map.params[dim], symbolic.symbols_in([self.subset]))
         array = sdfg.arrays[self.data]
 
         # Flatten the subset to a 1D-offset (using the array strides) at some iteration

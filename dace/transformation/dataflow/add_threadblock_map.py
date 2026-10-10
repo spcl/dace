@@ -11,7 +11,7 @@ import warnings
 import sympy
 
 from dace import Config, dtypes
-from dace.properties import make_properties
+from dace.properties import Property, make_properties
 from dace.sdfg import SDFG, SDFGState, nodes
 from dace.sdfg import utils as sdutil
 from dace.transformation import helpers, transformation
@@ -109,6 +109,9 @@ class AddThreadBlockMap(transformation.SingleStateTransformation):
     """
 
     map_entry = transformation.PatternNode(nodes.MapEntry)
+    divides_evenly = Property(
+        dtype=bool, default=False, allow_none=False, desc="If the tblock-map devides the maps evenly"
+    )
 
     @classmethod
     def expressions(cls):
@@ -185,7 +188,13 @@ class AddThreadBlockMap(transformation.SingleStateTransformation):
         # Apply map tiling transformation
         MapTiling.apply_to(
             sdfg=sdfg,
-            options={"prefix": "b", "tile_sizes": tile_sizes, "tile_trivial": True, "skew": False},
+            options={
+                "prefix": "b",
+                "tile_sizes": tile_sizes,
+                "tile_trivial": True,
+                "skew": False,
+                "divides_evenly": self.divides_evenly,
+            },
             map_entry=kernel_map_entry,
         )
 

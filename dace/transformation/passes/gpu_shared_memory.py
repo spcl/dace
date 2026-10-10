@@ -37,7 +37,7 @@ DYNAMIC_SHARED_MEMORY_BUFFER = "__dace_dynsmem"
 
 def _nested_sdfg_nodes(sdfg: SDFG) -> list[nodes.NestedSDFG]:
     """Returns the nested SDFG nodes directly in ``sdfg``, in a deterministic order."""
-    return [n for state in sdfg.all_states() for n in state.nodes() if isinstance(n, nodes.NestedSDFG)]
+    return [n for state in sdfg.states() for n in state.nodes() if isinstance(n, nodes.NestedSDFG)]
 
 
 def is_shared_container(desc: dt.Data) -> bool:
@@ -176,7 +176,7 @@ class LowerDynamicMapState(ppl.Pass):
             if isinstance(node, nodes.MapEntry) and node.map.schedule == dtypes.ScheduleType.GPU_ThreadBlock_Dynamic:
                 result.append((sdfg, state, node))
             elif isinstance(node, nodes.NestedSDFG):
-                for nstate in node.sdfg.all_states():
+                for nstate in node.sdfg.states():
                     result.extend(LowerDynamicMapState._dynamic_maps(node.sdfg, nstate, nstate))
         return result
 
@@ -217,7 +217,7 @@ class PlanSharedMemory(ppl.Pass):
     each container. In dynamic shared memory, the containers of each SDFG are laid out contiguously, followed by those
     of its nested SDFGs; a nested SDFG receives the offset of its part as the symbol ``__dace_dynsmem_base`` unless the
     offset is a constant. The number of bytes to launch each kernel with is stored in the
-    ``_cuda_dynamic_shared_memory`` attribute of the kernel map entry.
+    ``_cuda_dynamic_shared_memory`` attribute of the kernel map entry, its static bytes in ``_cuda_static_shared_memory``.
     """
 
     CATEGORY: str = "GPU"
@@ -236,6 +236,7 @@ class PlanSharedMemory(ppl.Pass):
         for kernel_sdfg, kernel_state, kernel_entry in gpu_helpers.gpu_kernels(sdfg):
             plan = self._plan_kernel(kernel_sdfg, kernel_state, kernel_entry)
             kernel_entry._cuda_dynamic_shared_memory = plan.dynamic_bytes
+            kernel_entry._cuda_static_shared_memory = plan.static_bytes
             if plan.levels or plan.static_bytes:
                 result[kernel_entry] = plan
         return result or None

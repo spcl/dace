@@ -2,44 +2,27 @@
 """Tests for the ``InsertExplicitCopies`` pass."""
 
 import copy as _copy
-import importlib.util
-import os
-import sys
 
 import numpy as np
 import pytest
 
 import dace
-import tests.polybench
 from dace import nodes
 from dace.libraries.standard.nodes.copy import CopyLibraryNode
 from dace.memlet import Memlet
 from dace.sdfg import utils as sdutils
 from dace.transformation.passes.insert_explicit_copies import InsertExplicitCopies
-
-# The polybench programs import their ``polybench`` harness as a top-level module, which only
-# resolves when run as scripts (own directory on sys.path); importing them as a package needs it too.
-sys.path.append(os.path.dirname(tests.polybench.__file__))
-
-from tests.polybench.correlation import correlation
-from tests.polybench.correlation import init_array as _correlation_init_array
-from tests.polybench.covariance import covariance
-from tests.polybench.covariance import init_array as _covariance_init_array
-
-# fdtd-2d.py's hyphenated filename is not a valid module identifier. Load it from
-# its path under a clean module name so the SDFG name (derived from the module
-# path) is valid -- without importing or mutating the canonical hyphenated module.
-_fdtd2d_path = os.path.join(os.path.dirname(tests.polybench.__file__), "fdtd-2d.py")
-_fdtd2d_spec = importlib.util.spec_from_file_location("polybench_fdtd_2d", _fdtd2d_path)
-_fdtd2d_module = importlib.util.module_from_spec(_fdtd2d_spec)
-_fdtd2d_spec.loader.exec_module(_fdtd2d_module)
-fdtd2d = _fdtd2d_module.fdtd2d
-_fdtd2d_init_array = _fdtd2d_module.init_array
+from tests.corpus.polybench.datamining.correlation import correlation
+from tests.corpus.polybench.datamining.correlation import init_array as _correlation_init_array
+from tests.corpus.polybench.datamining.covariance import covariance
+from tests.corpus.polybench.datamining.covariance import init_array as _covariance_init_array
+from tests.corpus.polybench.stencils.fdtd_2d import fdtd2d
+from tests.corpus.polybench.stencils.fdtd_2d import init_array as _fdtd2d_init_array
 
 
 def _wcr_edges(sdfg):
     """``(state, edge)`` for every edge still carrying a WCR."""
-    return [(st, e) for st in sdfg.all_states() for e in st.edges() if e.data.wcr is not None]
+    return [(st, e) for st in sdfg.states() for e in st.edges() if e.data.wcr is not None]
 
 
 def _count_copy_nodes(sdfg):
@@ -413,6 +396,41 @@ def test_insert_view_dst_round_trip_numerical():
     sdfg(A=A, other=other)
     np.testing.assert_array_equal(A[1], other)
     assert np.all(A[0] == 0) and np.all(A[2:] == 0)
+
+
+def test_insert_self_copy_subset_is_src_side():
+    """Self-copy ``p -> p``: ``subset`` maps to ``_in`` (src), ``other_subset`` to ``_out`` (dst).
+
+    Which side ``subset`` names is carried by the memlet's own ``_is_data_src`` flag, never derivable
+    from the endpoint names -- and for a self-copy both endpoints match ``memlet.data``, so
+    ``try_initialize`` defaults the flag to src-relative. Reading the pair positionally instead
+    reverses the copy, which is why the run below is part of the test: it pins the direction against
+    the generator rather than against the pass's own bookkeeping."""
+    sdfg = dace.SDFG("self_copy_subset_src")
+    sdfg.add_array("p", [4, 5], dace.float64)
+
+    st = sdfg.add_state("s")
+    a = st.add_access("p")
+    b = st.add_access("p")
+    st.add_edge(a, None, b, None, Memlet(data="p", subset="0:4, 4", other_subset="0:4, 3"))
+
+    InsertExplicitCopies().apply_pass(sdfg, {})
+    sdfg.validate()
+
+    copies = [n for n in st.nodes() if isinstance(n, CopyLibraryNode)]
+    assert len(copies) == 1
+    cn = copies[0]
+    in_e = [e for e in st.in_edges(cn) if e.dst_conn == CopyLibraryNode.INPUT_CONNECTOR_NAME][0]
+    out_e = [e for e in st.out_edges(cn) if e.src_conn == CopyLibraryNode.OUTPUT_CONNECTOR_NAME][0]
+
+    assert str(in_e.data.subset) == "0:4, 4", f"src side should read column 4 (subset); got {in_e.data.subset}"
+    assert str(out_e.data.subset) == "0:4, 3", f"dst side should write column 3 (other_subset); got {out_e.data.subset}"
+
+    p = np.arange(20, dtype=np.float64).reshape(4, 5).copy()
+    expected = p.copy()
+    expected[:, 3] = expected[:, 4]
+    _compile_and_run(sdfg, dict(p=p))
+    np.testing.assert_array_equal(p, expected)
 
 
 @pytest.mark.parametrize(
@@ -795,6 +813,78 @@ def test_lift_stage_out_copy():
     _run_and_check(sdfg, lambda A: A + 1.0)
 
 
+def test_a_container_passing_through_a_map_exit_is_not_a_copy():
+    """The array a kernel writes slice by slice is the one its exit hands on; a copy of it onto itself would cover
+    the whole array from one thread's slice."""
+    sdfg = dace.SDFG("same_container_through_exit")
+    sdfg.add_array("A", [_N_STAGE], dace.float64, storage=_CPU)
+    sdfg.add_array("B", [_N_STAGE], dace.float64, storage=_CPU)
+    state = sdfg.add_state("s")
+    me, mx = state.add_map("tile", {"bi": f"0:{_N_STAGE}:{_TILE}"})
+    ime, imx = state.add_map("inner", {"ti": f"0:{_TILE}"})
+    t = state.add_tasklet("incr", {"_in"}, {"_out"}, "_out = _in + 1.0")
+    written = state.add_access("B")
+    state.add_memlet_path(state.add_access("A"), me, ime, t, dst_conn="_in", memlet=Memlet("A[bi+ti]"))
+    state.add_memlet_path(t, imx, written, src_conn="_out", memlet=Memlet("B[bi+ti]"))
+    state.add_memlet_path(written, mx, state.add_access("B"), memlet=Memlet(f"B[bi:bi+{_TILE}]"))
+    sdfg.validate()
+
+    InsertExplicitCopies().apply_pass(sdfg, {})
+
+    assert not [n for n in state.nodes() if isinstance(n, CopyLibraryNode)]
+    assert not [e for e in state.edges() if isinstance(e.src, nodes.AccessNode) and isinstance(e.dst, nodes.MapExit)], (
+        "the renaming access node is dropped, not left as an implicit copy edge for codegen to read the far side of"
+    )
+    sdfg.validate()
+    _run_and_check(sdfg, lambda A: A + 1.0)
+
+
+def build_pass_through_with_second_reader_sdfg(name: str) -> dace.SDFG:
+    """``B`` is written slice by slice and handed to the exit as the same container, but a tasklet also reads the
+    slice, so the access node carrying it cannot be dropped."""
+    sdfg = dace.SDFG(name)
+    sdfg.add_array("A", [_N_STAGE], dace.float64, storage=_CPU)
+    sdfg.add_array("B", [_N_STAGE], dace.float64, storage=_CPU)
+    sdfg.add_array("C", [_N_STAGE], dace.float64, storage=_CPU)
+    state = sdfg.add_state("s")
+    me, mx = state.add_map("tile", {"bi": f"0:{_N_STAGE}:{_TILE}"})
+    ime, imx = state.add_map("inner", {"ti": f"0:{_TILE}"})
+    incr = state.add_tasklet("incr", {"_in"}, {"_out"}, "_out = _in + 1.0")
+    twice = state.add_tasklet("twice", {"_in"}, {"_out"}, "_out = 2.0 * _in")
+    written = state.add_access("B")
+    state.add_memlet_path(state.add_access("A"), me, ime, incr, dst_conn="_in", memlet=Memlet("A[bi+ti]"))
+    state.add_memlet_path(incr, imx, written, src_conn="_out", memlet=Memlet("B[bi+ti]"))
+    state.add_memlet_path(written, twice, dst_conn="_in", memlet=Memlet("B[bi]"))
+    state.add_memlet_path(twice, mx, state.add_access("C"), src_conn="_out", memlet=Memlet("C[bi]"))
+    state.add_memlet_path(written, mx, state.add_access("B"), memlet=Memlet(f"B[bi:bi+{_TILE}]"))
+    sdfg.validate()
+    return sdfg
+
+
+def test_a_pass_through_that_is_read_again_is_an_identity_copy_of_its_own_slice():
+    """When the access node carrying the pass-through cannot be dropped, the copy that stays covers the slice the
+    iteration owns on both sides: deriving its far side from the array would write the slice over the array's start."""
+    sdfg = build_pass_through_with_second_reader_sdfg("same_container_through_exit_read_again")
+    InsertExplicitCopies().apply_pass(sdfg, {})
+    sdfg.validate()
+
+    state = sdfg.start_state
+    copies = [n for n in state.nodes() if isinstance(n, CopyLibraryNode)]
+    assert len(copies) == 1
+    (src_edge,) = state.in_edges(copies[0])
+    (dst_edge,) = state.out_edges(copies[0])
+    assert src_edge.data.subset == dst_edge.data.subset == dace.subsets.Range.from_string(f"bi:bi+{_TILE}")
+
+    A = np.arange(_N_STAGE, dtype=np.float64)
+    B = np.zeros(_N_STAGE)
+    C = np.zeros(_N_STAGE)
+    sdfg(A=A, B=B, C=C)
+    np.testing.assert_array_equal(B, A + 1.0)
+    expected_c = np.zeros(_N_STAGE)
+    expected_c[::_TILE] = 2.0 * (A[::_TILE] + 1.0)
+    np.testing.assert_array_equal(C, expected_c)
+
+
 def _view_an_names(sdfg, state):
     return [
         n.data
@@ -998,10 +1088,13 @@ def test_polybench_covariance():
     _run_and_compare(covariance, _init_covariance, ["cov"], {"N": 32, "M": 28}, "covariance")
 
 
-def test_iec_skips_dtype_converting_copy():
-    """A direct copy between different dtypes is a cast, not a byte move: the pass must leave it
-    for tasklet lowering rather than insert a ``CopyLibraryNode`` (memcpy), which cannot convert.
-    Regression: the direct-copy path lacked the dtype guard its staging path already has."""
+def test_iec_lifts_a_dtype_converting_copy():
+    """A direct copy between different dtypes is a cast, and it is lifted like any other copy.
+
+    It used to be skipped, on the grounds that a memcpy cannot convert -- but nothing downstream
+    picked it up: the classic generator lowered the surviving edge to a CopyND template
+    instantiated on one element type and handed it a pointer of the other, which does not compile.
+    The copy node carries the cast now, so the pass hands it over instead of leaving it behind."""
     cpu = dace.StorageType.CPU_Heap
     sdfg = dace.SDFG("iec_dtype_convert")
     sdfg.add_array("A", [64], dace.float32, cpu)
@@ -1013,8 +1106,8 @@ def test_iec_skips_dtype_converting_copy():
 
     InsertExplicitCopies().apply_pass(sdfg, {})
 
-    assert _count_copy_nodes(sdfg) == 0, "a dtype-converting copy must not be lowered to CopyLibraryNode"
-    assert _count_direct_copy_edges(sdfg) == 1, "the dtype-converting edge must be left in place"
+    assert _count_copy_nodes(sdfg) == 1, "the dtype-converting copy must reach a CopyLibraryNode"
+    assert _count_direct_copy_edges(sdfg) == 0, "the dtype-converting edge must not be left behind"
 
 
 def test_iec_skips_reference_set_edge():
@@ -1096,10 +1189,11 @@ def test_iec_staging_keeps_memlet_named_inner_subset():
 
 def test_iec_symbolic_reshape_targets_the_whole_destination():
     """``A[1:N-1, 0:M]`` into a transient shaped ``[N-2, M]`` moves the whole destination, so the
-    derived side must be the destination's full range. The element counts are equal but can come
-    from two symbol instances of the same name, so a cancel-based comparison may answer None;
-    equalizing first keeps the comparison conclusive instead of relying on the ``is not False``
-    gate to paper over an unresolved symbol identity."""
+    derived side must be the destination's full range. The element counts are equal but come from
+    two symbol instances of the same name, so a cancel-based comparison answers None; taking
+    ``src_subset`` then wrote one row past the end of the transient. Equalizing first keeps the
+    comparison conclusive, so this passes on the strict ``is True`` gate rather than depending on
+    a loose gate to paper over an unresolved symbol identity."""
     N = dace.symbol("N", dtype=dace.int64)
     M = dace.symbol("M", dtype=dace.int64)
     sdfg = dace.SDFG("iec_symbolic_reshape")
@@ -1116,11 +1210,45 @@ def test_iec_symbolic_reshape_targets_the_whole_destination():
     assert str(out_edges[0].data.subset) == "0:N - 2, 0:M"
 
 
-def test_iec_skips_wcr_staging_edge():
-    """A WCR edge is a reduction, not a copy. ``CopyLibraryNode``'s expansions emit an unconditional
-    store, so lifting the tile-merge edge AccumulateTransient produces turns ``out[i] += tile[i]``
-    into ``out[i] = tile[i]`` -- silently, with a valid SDFG and a wrong answer."""
+def test_iec_skips_multi_element_wcr_staging_edge():
+    """A multi-element WCR edge is a reduction, not a copy. ``Auto`` picks a memcpy expansion for a
+    contiguous multi-element copy, and a memcpy stores unconditionally, so lifting the tile-merge
+    edge AccumulateTransient produces turns ``out[j] += tile[j]`` into ``out[j] = tile[j]`` --
+    silently, with a valid SDFG and a wrong answer."""
     sdfg = dace.SDFG("iec_wcr_staging")
+    sdfg.add_array("A", [8, 4], dace.float64)
+    sdfg.add_array("out", [4], dace.float64)
+    sdfg.add_transient("tile", [4], dace.float64)
+    state = sdfg.add_state("s")
+
+    me, mx = state.add_map("m", {"i": "0:8"}, schedule=dace.dtypes.ScheduleType.Sequential)
+    ime, imx = state.add_map("inner", {"j": "0:4"}, schedule=dace.dtypes.ScheduleType.Sequential)
+    t = state.add_tasklet("copy", {"inp"}, {"o"}, "o = inp")
+    tile = state.add_access("tile")
+    state.add_memlet_path(state.add_read("A"), me, ime, t, dst_conn="inp", memlet=Memlet("A[i, j]"))
+    state.add_memlet_path(t, imx, tile, src_conn="o", memlet=Memlet("tile[j]"))
+    # The merge back out of the map scope accumulates -- this is the edge that must not be lifted.
+    state.add_memlet_path(tile, mx, state.add_write("out"), memlet=Memlet("out[0:4]", wcr="lambda a, b: a + b"))
+
+    InsertExplicitCopies().apply_pass(sdfg, {})
+
+    assert _count_copy_nodes(sdfg) == 0, "a multi-element WCR edge must not be lowered to CopyLibraryNode"
+    wcr_edges = [e for _, e in _wcr_edges(sdfg)]
+    assert wcr_edges, "the accumulate must survive the pass"
+    sdfg.validate()
+
+    A = np.arange(32, dtype=np.float64).reshape(8, 4)
+    out = np.zeros(4, dtype=np.float64)
+    sdfg(A=A, out=out)
+    np.testing.assert_array_equal(out, A.sum(axis=0))
+
+
+def test_iec_lifts_single_element_wcr_staging_edge():
+    """The one WCR shape that IS lifted. ``Auto`` can only pick ``Tasklet`` for a single-element
+    host copy, and a tasklet keeps the WCR on its output edge, so the accumulate is still an
+    accumulate. Left implicit the readable generator has no explicit form for it and falls back to
+    ``dace::CopyND::Accumulate``, which a self-contained rendering cannot contain."""
+    sdfg = dace.SDFG("iec_wcr_staging_scalar")
     sdfg.add_array("A", [8], dace.float64)
     sdfg.add_array("out", [1], dace.float64)
     sdfg.add_transient("tile", [1], dace.float64)
@@ -1131,14 +1259,15 @@ def test_iec_skips_wcr_staging_edge():
     tile = state.add_access("tile")
     state.add_memlet_path(state.add_read("A"), me, t, dst_conn="inp", memlet=Memlet("A[i]"))
     state.add_edge(t, "o", tile, None, Memlet("tile[0]"))
-    # The merge back out of the map scope accumulates -- this is the edge that must not be lifted.
     state.add_memlet_path(tile, mx, state.add_write("out"), memlet=Memlet("out[0]", wcr="lambda a, b: a + b"))
 
     InsertExplicitCopies().apply_pass(sdfg, {})
 
-    assert _count_copy_nodes(sdfg) == 0, "a WCR edge must not be lowered to CopyLibraryNode"
-    wcr_edges = [e for _, e in _wcr_edges(sdfg)]
-    assert wcr_edges, "the accumulate must survive the pass"
+    assert _count_copy_nodes(sdfg) == 1, "a single-element WCR stage-out must become a CopyLibraryNode"
+    cn, _ = _find_libnode_and_scope(state)
+    assert cn.implementation in (None, "Auto"), "the copy node must be left for the selector to resolve"
+    out_edges = [e for e in state.out_edges(cn) if e.src_conn == CopyLibraryNode.OUTPUT_CONNECTOR_NAME]
+    assert out_edges[0].data.wcr is not None, "the accumulate must move onto the copy node's output"
     sdfg.validate()
 
     A = np.arange(8, dtype=np.float64)
@@ -1148,40 +1277,45 @@ def test_iec_skips_wcr_staging_edge():
 
 
 def test_iec_keeps_the_ordering_edge_on_the_node_that_writes():
-    """An empty memlet is a happens-before edge, and lifting a copy moves the write it constrained.
+    """An empty memlet is a happens-before edge, and lifting a copy moves the read it constrained.
 
-    The map reads ``A[i]`` into ``tmp_A`` and writes ``A[(i+1)%2]`` from ``tmp_B``, with an ordering
-    edge saying the read happens after that write. Left on the access node, the constraint no longer
-    reaches the node that performs the read, and the copy is free to be scheduled ahead of it -- a
-    silently wrong answer, not an error.
+    A VALID data-parallel map (every access at ``[i]``, all arrays distinct): each iteration writes
+    ``C[i]`` from ``tmp_B`` and reads ``A[i]`` into ``tmp_A``, with an ordering edge saying the read
+    happens after that write. Left on the access node, the constraint no longer reaches the node
+    that performs the read once the copy is lifted -- it must move onto the ``CopyLibraryNode``.
     """
     sdfg = dace.SDFG("iec_ordering_edge")
     sdfg.add_array("A", [2], dace.int32)
     sdfg.add_array("B", [2], dace.int32)
+    sdfg.add_array("C", [2], dace.int32)
+    sdfg.add_array("D", [2], dace.int32)
     sdfg.add_transient("tmp_A", [1], dace.int32)
     sdfg.add_transient("tmp_B", [1], dace.int32)
     state = sdfg.add_state("s")
 
-    me, mx = state.add_map("m", {"i": "0:2"}, schedule=dace.dtypes.ScheduleType.Sequential)
+    me, mx = state.add_map("m", {"i": "0:2"})
     for conn in ("IN_A", "IN_B"):
         me.add_in_connector(conn)
     for conn in ("OUT_A", "OUT_B"):
         me.add_out_connector(conn)
-    mx.add_in_connector("IN_A")
-    mx.add_out_connector("OUT_A")
+    for conn in ("IN_C", "IN_D"):
+        mx.add_in_connector(conn)
+    for conn in ("OUT_C", "OUT_D"):
+        mx.add_out_connector(conn)
 
-    a_write, a_ordered = state.add_write("A"), state.add_write("A")
+    c_write, d_write = state.add_write("C"), state.add_write("D")
     tmp_a, tmp_b = state.add_write("tmp_A"), state.add_write("tmp_B")
     state.add_edge(state.add_read("A"), None, me, "IN_A", Memlet("A[0:2]"))
     state.add_edge(state.add_read("B"), None, me, "IN_B", Memlet("B[0:2]"))
     state.add_edge(me, "OUT_A", tmp_a, None, Memlet("A[i]"))
     state.add_edge(me, "OUT_B", tmp_b, None, Memlet("B[i]"))
-    state.add_edge(tmp_a, None, a_write, None, Memlet("tmp_A[0] -> [((i+1)%2)]"))
-    state.add_edge(a_write, None, mx, "IN_A", Memlet("A[0:2]"))
-    state.add_edge(tmp_b, None, a_ordered, None, Memlet("tmp_B[0] -> [((i+1)%2)]"))
-    state.add_edge(a_ordered, None, tmp_a, None, Memlet())  # the ordering edge
-    state.add_edge(a_ordered, None, mx, "IN_A", Memlet("A[0:2]"))
-    state.add_edge(mx, "OUT_A", state.add_write("A"), None, Memlet("A[0:2]"))
+    state.add_edge(tmp_b, None, c_write, None, Memlet("tmp_B[0] -> [i]"))
+    state.add_edge(c_write, None, mx, "IN_C", Memlet("C[0:2]"))
+    state.add_edge(c_write, None, tmp_a, None, Memlet())  # the ordering edge
+    state.add_edge(tmp_a, None, d_write, None, Memlet("tmp_A[0] -> [i]"))
+    state.add_edge(d_write, None, mx, "IN_D", Memlet("D[0:2]"))
+    state.add_edge(mx, "OUT_C", state.add_write("C"), None, Memlet("C[0:2]"))
+    state.add_edge(mx, "OUT_D", state.add_write("D"), None, Memlet("D[0:2]"))
     sdfg.validate()
 
     InsertExplicitCopies().apply_pass(sdfg, {})
@@ -1191,11 +1325,7 @@ def test_iec_keeps_the_ordering_edge_on_the_node_that_writes():
     writers = [e.src for e in state.in_edges(tmp_a) if isinstance(e.src, CopyLibraryNode)]
     assert len(writers) == 1, "the stage-in copy of tmp_A was not lifted"
     ordered_after = [e.src for e in state.in_edges(writers[0]) if e.data.is_empty()]
-    assert a_ordered in ordered_after, "the copy that now writes tmp_A is not ordered after the write it followed"
-
-    a = np.array([7, 3], dtype=np.int32)
-    sdfg(A=a, B=np.array([11, 13], dtype=np.int32))
-    assert a[0] == a[1], f"the ordering edge was not honoured: got {a}"
+    assert c_write in ordered_after, "the copy that now writes tmp_A is not ordered after the write it followed"
 
 
 def competing_direct_copy_sdfg() -> dace.SDFG:
@@ -1267,7 +1397,7 @@ def concat_where_sdfg(copies: int) -> dace.SDFG:
 def copy_edges_remaining(sdfg: dace.SDFG) -> list:
     """Edges that still move data as a plain memlet: between two access nodes, or staging through a scope."""
     remaining = []
-    for state in sdfg.all_states():
+    for state in sdfg.states():
         for edge in state.edges():
             if edge.data.is_empty() or edge.data.wcr is not None:
                 continue
@@ -1410,7 +1540,97 @@ def test_lifted_copy_inherits_the_state_instrumentation():
     assert expanded[0].instrument == dace.InstrumentationType.GPU_TX_MARKERS
 
 
+def test_a_stage_in_of_a_container_into_itself_is_not_a_copy():
+    """``s -> MapEntry -> s`` names ONE container on both sides of the scope: nothing moves. Lifting it
+    anyway emitted ``s = s;`` inside the kernel, which fails to compile once ``s`` is a ``const`` kernel
+    argument (CloudSC's hoisted ``nested_sdfg_neg_zrg_r_*`` under VectorizeGPU)."""
+    sdfg = dace.SDFG("stage_in_same_container")
+    sdfg.add_array("B", [_N_STAGE], dace.float64, storage=_CPU)
+    sdfg.add_scalar("s", dace.float64, transient=True)
+    state = sdfg.add_state("s")
+    init = state.add_tasklet("init", {}, {"_out"}, "_out = 3.0")
+    outer = state.add_access("s")
+    state.add_edge(init, "_out", outer, None, Memlet("s[0]"))
+    me, mx = state.add_map("m", {"i": f"0:{_N_STAGE}"})
+    inner = state.add_access("s")
+    state.add_memlet_path(outer, me, inner, memlet=Memlet("s[0]"))
+    t = state.add_tasklet("use", {"_in"}, {"_out"}, "_out = _in + i")
+    state.add_edge(inner, None, t, "_in", Memlet("s[0]"))
+    state.add_memlet_path(t, mx, state.add_write("B"), src_conn="_out", memlet=Memlet("B[i]"))
+    sdfg.validate()
+
+    InsertExplicitCopies().apply_pass(sdfg, {})
+
+    assert _count_copy_nodes(sdfg) == 0, [
+        n.label for n, _ in sdfg.all_nodes_recursive() if isinstance(n, CopyLibraryNode)
+    ]
+    _assert_no_copynd(sdfg)
+    B = np.zeros(_N_STAGE)
+    sdfg(B=B)
+    np.testing.assert_array_equal(B, 3.0 + np.arange(_N_STAGE))
+
+
+def test_a_copy_lifted_beside_a_view_named_like_its_connector_validates():
+    """An expanded and inlined copy leaves its wrapper views behind under the copy connector names; a copy
+    lifted next to them must not share a name with them."""
+    sdfg = dace.SDFG("copy_beside_cpy_named_data")
+    sdfg.add_array("a", [8], dace.float64)
+    sdfg.add_array("b", [8], dace.float64)
+    sdfg.add_array(CopyLibraryNode.INPUT_CONNECTOR_NAME, [8], dace.float64, transient=True)
+    state = sdfg.add_state()
+    state.add_nedge(state.add_read("a"), state.add_access(CopyLibraryNode.INPUT_CONNECTOR_NAME), Memlet("a[0:8]"))
+    state.add_nedge(
+        state.add_access(CopyLibraryNode.INPUT_CONNECTOR_NAME),
+        state.add_write("b"),
+        Memlet(f"{CopyLibraryNode.INPUT_CONNECTOR_NAME}[0:8]"),
+    )
+
+    InsertExplicitCopies().apply_pass(sdfg, {})
+
+    assert CopyLibraryNode.INPUT_CONNECTOR_NAME not in sdfg.arrays
+    assert _count_copy_nodes(sdfg) == 2
+    sdfg.validate()
+    a = np.arange(8, dtype=np.float64)
+    b = np.zeros(8)
+    sdfg(a=a, b=b)
+    assert np.array_equal(a, b)
+
+
+def test_freeing_a_copy_connector_name_renames_the_nested_connector_too():
+    """A nested SDFG's NON-transient ``_cpy_in`` is also its node's connector: renaming the data alone left the
+    parent wiring a connector the nest no longer declared (fuse_physics_into_scan on the GPU)."""
+    name = CopyLibraryNode.INPUT_CONNECTOR_NAME
+    inner = dace.SDFG("inner")
+    inner.add_array(name, [4], dace.float64)
+    inner.add_array("y", [4], dace.float64)
+    inner.add_state("s").add_mapped_tasklet(
+        "twice",
+        dict(i="0:4"),
+        {"a": dace.Memlet(f"{name}[i]")},
+        "b = 2 * a",
+        {"b": dace.Memlet("y[i]")},
+        external_edges=True,
+    )
+    sdfg = dace.SDFG("free_a_connector_named_copy_input")
+    sdfg.add_array("A", [4], dace.float64)
+    sdfg.add_array("B", [4], dace.float64)
+    state = sdfg.add_state()
+    node = state.add_nested_sdfg(inner, {name}, {"y"})
+    state.add_edge(state.add_read("A"), None, node, name, dace.Memlet("A[0:4]"))
+    state.add_edge(node, "y", state.add_write("B"), None, dace.Memlet("B[0:4]"))
+    sdfg.validate()
+
+    InsertExplicitCopies.free_copy_connector_names(inner)
+    sdfg.validate()
+    assert name not in inner.arrays and name not in node.in_connectors
+
+    a, b = np.arange(4.0), np.zeros(4)
+    sdfg(A=a, B=b)
+    assert np.allclose(b, 2 * a)
+
+
 if __name__ == "__main__":
+    test_a_copy_lifted_beside_a_view_named_like_its_connector_validates()
     test_insert_cpu_to_cpu_1d()
     test_insert_cpu_to_cpu_2d_slice()
     for sdfg_name, memlet in [
@@ -1463,6 +1683,8 @@ if __name__ == "__main__":
     test_iec_reinterpret_does_not_lift_view()
     test_lift_stage_in_copy()
     test_lift_stage_out_copy()
+    test_a_container_passing_through_a_map_exit_is_not_a_copy()
+    test_a_pass_through_that_is_read_again_is_an_identity_copy_of_its_own_slice()
     test_lift_stage_in_copy_through_view()
     test_lift_stage_out_copy_through_view()
     test_lift_stage_in_copy_chained_map_entries()
@@ -1502,3 +1724,4 @@ if __name__ == "__main__":
         ("insert_gpu_gpu", "A", dace.StorageType.GPU_Global, "B", dace.StorageType.GPU_Global, 128),
     ]:
         test_insert_cross_storage_transfer(sdfg_name, src_name, src_storage, dst_name, dst_storage, size)
+    test_freeing_a_copy_connector_name_renames_the_nested_connector_too()

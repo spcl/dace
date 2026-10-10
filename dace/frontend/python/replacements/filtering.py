@@ -4,9 +4,27 @@ Contains replacements for filtering functions. This module includes functions fr
 NumPy's Indexing Routines and Sorting, Searching, and Counting Functions.
 """
 
-from dace import SDFG, Memlet, SDFGState, data, dtypes, nodes, subsets
+from dace import SDFG, Memlet, SDFGState, data, dtypes, nodes, subsets, symbolic
 from dace.frontend.common import op_repository as oprepo
 from dace.frontend.python.replacements.utils import ProgramVisitor, broadcast_together
+
+
+def branch_type(operand, arr: data.Data | None) -> dtypes.typeclass:
+    """dtype of one ``numpy.where`` branch: the array's own, else the scalar's.
+
+    A symbolic scalar (``2 * N``) reaches here as a sympy expression, whose Python ``type()`` --
+    ``sympy.Mul`` and friends -- is in no dtype map.
+    """
+    if arr is not None:
+        return arr.dtype
+    if symbolic.issymbolic(operand):
+        return symbolic.symtype(operand)
+    return dtypes.dtype_to_typeclass(type(operand))
+
+
+def branch_code(operand) -> str:
+    """The branch spelled for the tasklet: sympy prints ``**`` and ``/``, C++ needs neither."""
+    return symbolic.symstr(operand) if symbolic.issymbolic(operand) else operand
 
 
 def merge_node_expresses_where(arrays: dict, cond: str, left: str, right: str, out: str) -> bool:
@@ -73,12 +91,16 @@ def _array_array_where(
     except KeyError:
         right_arr = None
 
-    left_type = left_arr.dtype if left_arr else dtypes.dtype_to_typeclass(type(left_operand))
-    right_type = right_arr.dtype if right_arr else dtypes.dtype_to_typeclass(type(right_operand))
+    left_type = branch_type(left_operand, left_arr)
+    right_type = branch_type(right_operand, right_arr)
 
     # Implicit Python coversion implemented as casting
     arguments = [cond_arr, left_arr or left_type, right_arr or right_type]
-    tasklet_args = ["__incond", "__in1" if left_arr else left_operand, "__in2" if right_arr else right_operand]
+    tasklet_args = [
+        "__incond",
+        "__in1" if left_arr else branch_code(left_operand),
+        "__in2" if right_arr else branch_code(right_operand),
+    ]
     result_type, casting = result_type(arguments[1:])
     left_cast = casting[0]
     right_cast = casting[1]
@@ -107,18 +129,31 @@ def _array_array_where(
         cond_idx = subsets.Range([(0, 0, 1)])
 
     if left_arr is None and right_arr is None:
-        raise ValueError("Both x and y cannot be scalars in numpy.where")
-    storage = left_arr.storage if left_arr else right_arr.storage
+        # Both x and y are constants: the result -- and the iteration space -- is shaped like `cond`.
+        if cond_arr is None or isinstance(cond_arr, data.Scalar):
+            raise ValueError(
+                "numpy.where with scalar x, y and a scalar condition returns a 0-dimensional array, "
+                "which DaCe cannot represent"
+            )
+        storage = cond_arr.storage
+    else:
+        storage = left_arr.storage if left_arr else right_arr.storage
 
     out_operand, out_arr = sdfg.add_transient(
         visitor.get_target_name(), out_shape, result_type, storage, find_new_name=True
     )
 
     if list(out_shape) == [1]:
+        # Constant operands are inlined in the tasklet code, so they get no connector
+        in_connectors = {"__incond": None}
+        if left_arr:
+            in_connectors["__in1"] = None
+        if right_arr:
+            in_connectors["__in2"] = None
         tasklet = state.add_tasklet(
             "_where_",
-            {"__incond", "__in1", "__in2"},
-            {"__out"},
+            in_connectors,
+            {"__out": None},
             f"__out = {tasklet_args[1]} if __incond else {tasklet_args[2]}",
         )
         n0 = state.add_read(cond_operand)

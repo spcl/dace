@@ -7,7 +7,7 @@ import itertools
 import os
 import warnings
 from collections import defaultdict
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import networkx as nx
 
@@ -243,8 +243,9 @@ def validate_control_flow_region(
                         eid,
                     )
 
-    # Check for interstate edges that write to scalars or arrays
-    _no_writes_to_scalars_or_arrays_on_interstate_edges(sdfg)
+    # Check for interstate edges that write to scalars or arrays. Per region: this runs once per region, so
+    # passing the SDFG re-checked its edges every time and never checked a nested region's own
+    _no_writes_to_scalars_or_arrays_on_interstate_edges(region)
 
 
 def validate_sdfg(sdfg: "dace.sdfg.SDFG", references: set[int] = None, **context: bool):
@@ -318,9 +319,12 @@ def validate_sdfg(sdfg: "dace.sdfg.SDFG", references: set[int] = None, **context
                         f'expected to find "{const_type}" but found "{sdfg.symbols[const_name]}".'
                     )
 
-        # Test the return value.
+        # Test the return value. Only the top-level SDFG returns: a nested SDFG's ``__return*`` containers are
+        # connectors named after the caller's containers, which may be any subset of its return values.
         tuple_return_args = {n for n in sdfg._arrays if n.startswith("__return_")}
-        if "__return" in sdfg._arrays and tuple_return_args:
+        if sdfg.parent is not None:
+            tuple_return_args = set()
+        elif "__return" in sdfg._arrays and tuple_return_args:
             raise InvalidSDFGError(
                 "Ambiguous return values: an SDFG cannot have both a `__return` (single value) "
                 "and `__return_<i>` (tuple) data descriptor.",
@@ -500,7 +504,7 @@ def _is_scalar(edge: "gr.MultiConnectorEdge[Memlet]", memlet_path: list["gr.Mult
     else:
         src_conntype = None
     dst_conn = memlet_path[-1].dst_conn
-    if dst_conn and dst_conn in memlet_path[0].dst.in_connectors:
+    if dst_conn and dst_conn in memlet_path[-1].dst.in_connectors:
         dst_conntype = memlet_path[-1].dst.in_connectors[dst_conn]
     else:
         dst_conntype = None
@@ -518,6 +522,39 @@ def _is_scalar(edge: "gr.MultiConnectorEdge[Memlet]", memlet_path: list["gr.Mult
 
     # Otherwise, we can assume this is a scalar
     return True
+
+
+def state_has_reachable_cycle(state: "dace.sdfg.SDFGState") -> bool:
+    """``state.has_cycles()`` without the networkx dispatch: a cycle reachable from the state's source nodes, or
+    anywhere when it has none, found by one colored depth-first walk over the out-edge index."""
+    out_edges = state._nodes
+    sources = [node for node, (in_index, _) in out_edges.items() if not in_index]
+    starts = sources or list(out_edges)
+    on_path = 1
+    finished = 2
+    color: dict[Any, int] = {}
+    for start in starts:
+        if start in color:
+            continue
+        color[start] = on_path
+        stack = [(start, iter(out_edges[start][1]))]
+        while stack:
+            node, successors = stack[-1]
+            advanced = False
+            for edge in successors:
+                target = edge.dst
+                state_of_target = color.get(target)
+                if state_of_target == on_path:
+                    return True
+                if state_of_target is None:
+                    color[target] = on_path
+                    stack.append((target, iter(out_edges[target][1])))
+                    advanced = True
+                    break
+            if not advanced:
+                color[node] = finished
+                stack.pop()
+    return False
 
 
 def validate_state(
@@ -576,7 +613,7 @@ def validate_state(
     if sdfg.number_of_nodes() > 1 and sdfg.in_degree(state) == 0 and sdfg.out_degree(state) == 0:
         raise InvalidSDFGError("Unreachable state", state.parent_graph, state_id)
 
-    if state.has_cycles():
+    if state_has_reachable_cycle(state):
         raise InvalidSDFGError("State should be acyclic but contains cycles", state.parent_graph, state_id)
 
     scope = state.scope_dict()
@@ -617,10 +654,27 @@ def validate_state(
         ########################################
         if isinstance(node, nd.EntryNode):
             try:
-                state.exit_node(node)
+                exit_node = state.exit_node(node)
             except StopIteration:
                 raise InvalidSDFGNodeError(
                     "Entry node does not have matching exit node",
+                    state.parent_graph,
+                    state_id,
+                    nid,
+                )
+
+            # A scope's entry and exit are two views of one Map/Consume object, and code that pairs them relies on
+            # that identity (CPU codegen keys the map's brace on it). Nodes cloned against separate deepcopy memos
+            # each get their own object, which otherwise first surfaces as unbalanced C++.
+            if isinstance(node, nd.MapEntry):
+                shared_scope = node.map is exit_node.map
+            elif isinstance(node, nd.ConsumeEntry):
+                shared_scope = node.consume is exit_node.consume
+            else:
+                shared_scope = True
+            if not shared_scope:
+                raise InvalidSDFGNodeError(
+                    "Entry and exit nodes do not share the same scope object (copied separately?)",
                     state.parent_graph,
                     state_id,
                     nid,
@@ -893,16 +947,19 @@ def validate_state(
         src_node = path[0].src
         dst_node = path[-1].dst
 
-        # NestedSDFGs must connect to AccessNodes
-        if not e.data.is_empty():
-            if isinstance(src_node, nd.NestedSDFG) and not isinstance(dst_node, nd.AccessNode):
-                raise InvalidSDFGEdgeError(
-                    "Nested SDFG source nodes must be AccessNodes", state.parent_graph, state_id, eid
-                )
-            if isinstance(dst_node, nd.NestedSDFG) and not isinstance(src_node, nd.AccessNode):
-                raise InvalidSDFGEdgeError(
-                    "Nested SDFG destination nodes must be AccessNodes", state.parent_graph, state_id, eid
-                )
+        # Data moves through AccessNodes: a memlet path starts or ends at one, never connects two code nodes directly
+        if (
+            not e.data.is_empty()
+            and not isinstance(src_node, nd.AccessNode)
+            and not isinstance(dst_node, nd.AccessNode)
+        ):
+            raise InvalidSDFGEdgeError(
+                f'Memlet path from "{src_node}" to "{dst_node}" must start or end at an AccessNode; '
+                f'route "{e.data.data}" through an AccessNode',
+                state.parent_graph,
+                state_id,
+                eid,
+            )
 
         # Set up memlet-specific SDFG context
         memlet_context = copy.copy(context)

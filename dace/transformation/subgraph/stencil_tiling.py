@@ -11,7 +11,7 @@ import dace
 from dace import dtypes, subsets, symbolic
 from dace.properties import Property, ShapeProperty, make_properties
 from dace.sdfg import nodes
-from dace.sdfg.propagation import _propagate_node
+from dace.sdfg.propagation import propagate_node
 from dace.sdfg.state import SDFGState
 from dace.transformation import transformation
 from dace.transformation.dataflow.map_collapse import MapCollapse
@@ -507,7 +507,7 @@ class StencilTiling(transformation.SubgraphTransformation):
                 )
                 map.range[dim_idx] = range_tuple
                 stripmine = StripMining()
-                stripmine.setup_match(sdfg, cfg_id, self.state_id, stripmine_subgraph, 0)
+                stripmine.setup_match(sdfg, cfg_id, graph.block_id, stripmine_subgraph, 0)
 
                 stripmine.tiling_type = dtypes.TilingType.CeilRange
                 stripmine.dim_idx = dim_idx
@@ -541,8 +541,8 @@ class StencilTiling(transformation.SubgraphTransformation):
                     )
 
                 # We have to propagate here for correct outer volume and subset sizes
-                _propagate_node(graph, map_entry)
-                _propagate_node(graph, graph.exit_node(map_entry))
+                propagate_node(graph, map_entry)
+                propagate_node(graph, graph.exit_node(map_entry))
 
                 # usual tiling pipeline
                 if last_map_entry:
@@ -552,7 +552,7 @@ class StencilTiling(transformation.SubgraphTransformation):
                         MapCollapse.inner_map_entry: graph.node_id(new_map_entry),
                     }
                     mapcollapse = MapCollapse()
-                    mapcollapse.setup_match(sdfg, cfg_id, self.state_id, mapcollapse_subgraph, 0)
+                    mapcollapse.setup_match(sdfg, cfg_id, graph.block_id, mapcollapse_subgraph, 0)
                     mapcollapse.apply(graph, sdfg)
                 last_map_entry = graph.in_edges(map_entry)[0].src
             # add last instance of map entries to _outer_entries
@@ -587,16 +587,21 @@ class StencilTiling(transformation.SubgraphTransformation):
                     trafo_for_loop = MapToForLoop()
                     trafo_for_loop.setup_match(sdfg, graph.parent_graph.cfg_id, graph.block_id, subgraph, 0)
                     trafo_for_loop.apply(graph, sdfg)
-                    nsdfg = trafo_for_loop.nsdfg
+                    # Inlining the wrapping NestedSDFG moves the dataflow that stayed outside the
+                    # loop to a fresh state; the maps still to process live there now.
+                    graph = trafo_for_loop.target_state
 
                     # LoopUnroll
                     # Prevent circular import
                     from dace.transformation.interstate.loop_unroll import LoopUnroll
 
+                    # The loop region sits in the wrapping NestedSDFG, or in the parent region once
+                    # that wrapper is inlined away.
+                    region = trafo_for_loop.loop_region.parent_graph
                     subgraph = {LoopUnroll.loop: trafo_for_loop.loop_region.block_id}
                     transformation = LoopUnroll()
-                    transformation.setup_match(nsdfg, nsdfg.cfg_id, -1, subgraph, 0)
-                    transformation.apply(nsdfg, nsdfg)
+                    transformation.setup_match(region.sdfg, region.cfg_id, -1, subgraph, 0)
+                    transformation.apply(region, region.sdfg)
 
             elif self.unroll_loops:
                 warnings.warn(

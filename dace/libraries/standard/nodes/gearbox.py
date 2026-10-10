@@ -185,8 +185,8 @@ class ExpandGearbox(dace.transformation.ExpandTransformation):
 
             tasklet = state.add_tasklet(
                 node.name,
-                {"val_in", "buffer_in"},
-                {"val_out", "buffer_out"},
+                {"val_in": None, "buffer_in": None},
+                {"val_out": None, "buffer_out": None},
                 f"""\
 wide = buffer_in
 wide[_{node.name}_w] = val_in

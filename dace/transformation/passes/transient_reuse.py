@@ -1,8 +1,8 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 
-import networkx as nx
-
 from dace import SDFG, properties
+from dace import graphlib as nx
+from dace.ordered import OrderedSet
 from dace.sdfg import nodes
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.transformation import explicit_cf_compatible
@@ -47,7 +47,7 @@ class TransientReuse(ppl.Pass):
             for a in state.all_transients():
                 arrays[a] += 1
 
-        transients = set()
+        transients = OrderedSet()
         for a in arrays:
             if arrays[a] == 1:
                 transients.add(a)

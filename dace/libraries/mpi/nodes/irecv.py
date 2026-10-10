@@ -3,12 +3,8 @@ import dace.library
 import dace.sdfg.nodes
 from dace import dtypes
 from dace.libraries.mpi import environments
-from dace.libraries.mpi.nodes.node import (
-    MPINode,
-    expanded_input_connectors,
-    input_descriptor_name,
-    validate_integer_descriptor,
-)
+from dace.libraries.mpi.nodes.node import MPINode, expanded_input_connectors, resolve_comm, validate_integer_descriptor
+from dace.ordered import OrderedSet
 from dace.transformation.transformation import ExpandTransformation
 
 
@@ -24,10 +20,7 @@ class ExpandIrecvMPI(ExpandTransformation):
         if buffer.dtype.veclen > 1:
             raise NotImplementedError
 
-        comm = "MPI_COMM_WORLD"
-        grid = input_descriptor_name(node, parent_state, "_grid")
-        if grid:
-            comm = "_grid"
+        comm = resolve_comm(node, parent_state)
 
         code = ""
         if ddt is not None:
@@ -69,7 +62,9 @@ class Irecv(MPINode):
     default_implementation = "MPI"
 
     def __init__(self, name, *args, **kwargs):
-        super().__init__(name, *args, inputs={"_src", "_tag"}, outputs={"_buffer", "_request"}, **kwargs)
+        super().__init__(
+            name, *args, inputs=OrderedSet(("_src", "_tag")), outputs=OrderedSet(("_buffer", "_request")), **kwargs
+        )
 
     def validate(self, sdfg, state):
         """

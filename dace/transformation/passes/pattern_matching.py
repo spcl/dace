@@ -6,23 +6,22 @@ import time
 import warnings
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, ClassVar, Optional
 
-import networkx as nx
-from networkx.algorithms import isomorphism as iso
-
-from dace import properties
+from dace import graphlib as nx
+from dace import properties, symbolic
 from dace.config import Config
+from dace.graphlib import isomorphism as iso
 from dace.sdfg import SDFG, SDFGState
 from dace.sdfg import graph as gr
 from dace.sdfg import nodes as nd
-from dace.sdfg.state import ControlFlowRegion
-from dace.sdfg.validation import InvalidSDFGError
+from dace.sdfg.state import AbstractControlFlowRegion, ControlFlowRegion
+from dace.sdfg.validation import InvalidSDFGError, validate_state
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 
 
-@dataclass
+@dataclass(init=False)
 @properties.make_properties
 class PatternMatchAndApply(ppl.Pass):
     """
@@ -30,7 +29,7 @@ class PatternMatchAndApply(ppl.Pass):
     pattern in the SDFG and applies it.
     """
 
-    CATEGORY: str = "Helper"
+    CATEGORY: ClassVar[str] = "Helper"
 
     transformations = properties.ListProperty(
         element_type=xf.PatternTransformation,
@@ -117,6 +116,30 @@ class PatternMatchAndApply(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return any(p.should_reapply(modified) for p in self.transformations)
 
+    def validate_after_match(self, match: xf.PatternTransformation, graph: SDFG | SDFGState, sdfg: SDFG) -> None:
+        """Check what the transformation that just applied could actually have broken.
+
+        A full ``sdfg.validate()`` after EVERY match is O(whole SDFG) per application, which
+        makes ``validate_all`` cost more than the transformations it is watching. A
+        `SingleStateTransformation` rewrites one state, so that state is checked on its own;
+        anything that can move interstate edges, symbols or descriptors around still gets the
+        full check. The end-of-pass ``validate`` (on by default) stays the whole-SDFG net, so
+        a cross-state break is still caught, just at the end of the pass rather than at the
+        match that caused it.
+        """
+        if not isinstance(match, xf.SingleStateTransformation) or match.state_id < 0:
+            sdfg.validate()
+            return
+        # The match may live in a nested SDFG, and validate_state rejects a state whose .sdfg is
+        #  not the one passed in, so the owning SDFG is the one to check against -- not the root.
+        owner = graph.sdfg
+        # A single state has no cross-state context: a transient another state initialized
+        #  looks uninitialized here, which warns -- and raises outright for a Reference. Seed
+        #  every descriptor as initialized so only the state-local invariants are checked
+        #  (connectors, memlets, scopes, views, subsets), which is what a dataflow
+        #  transformation can break.
+        validate_state(graph, graph.parent_graph.node_id(graph), owner, initialized_transients=set(owner.arrays.keys()))
+
     def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> dict[str, list[Any]]:
         applied_transformations = collections.defaultdict(list)
 
@@ -141,7 +164,12 @@ class PatternMatchAndApply(ppl.Pass):
 
             # Find only the first match. No metadata: the cached one covers all transformations and would
             #  override `[xform]`.
-            match = next(match_patterns(sdfg, [xform], permissive=self.permissive, states=self.states), None)
+            match = next(
+                match_patterns(
+                    sdfg, [xform], permissive=self.permissive, states=self.states, pipeline_results=pipeline_results
+                ),
+                None,
+            )
             if match is None:
                 continue
 
@@ -152,10 +180,12 @@ class PatternMatchAndApply(ppl.Pass):
             match._pipeline_results = pipeline_results
             match.permissive = self.permissive
 
-            result = match.apply(graph, tcfg.sdfg)
+            # A transformation builds expressions from strings; parse its SDFG's symbols at their declared dtypes.
+            with symbolic.serialization_symbol_dtypes(tcfg.sdfg.symbols, inherit=True):
+                result = match.apply(graph, tcfg.sdfg)
             applied_transformations[type(match).__name__].append(result)
             if self.validate_all:
-                sdfg.validate()
+                self.validate_after_match(match, graph, sdfg)
 
         # Nothing changed the SDFG when nothing applied, so there is nothing new to validate: the
         # pass assumes its input was already valid.
@@ -171,7 +201,7 @@ class PatternMatchAndApply(ppl.Pass):
         return applied_transformations
 
 
-@dataclass
+@dataclass(init=False)
 @properties.make_properties
 class PatternMatchAndApplyRepeated(PatternMatchAndApply):
     """
@@ -180,10 +210,20 @@ class PatternMatchAndApplyRepeated(PatternMatchAndApply):
     ``order_by_transformation``).
     """
 
-    CATEGORY: str = "Helper"
+    CATEGORY: ClassVar[str] = "Helper"
 
     order_by_transformation = properties.Property(
         dtype=bool, default=False, category="Parameters", desc="Whether or not to order by transformation."
+    )
+
+    state_local = properties.Property(
+        dtype=bool,
+        default=False,
+        desc="The transformations are single-state and STATE-LOCAL: a match is decided by its own state "
+        "alone, and applying it rewrites only that state and adds blocks to its region. Then, after an "
+        "application, every state the walk passed is unchanged and still refused, so the walk resumes in "
+        "the region of the match instead of the root, skipping the states it already refused -- the same "
+        "matches, applied in the same order, without re-walking the SDFG per application.",
     )
 
     def __init__(
@@ -196,9 +236,11 @@ class PatternMatchAndApplyRepeated(PatternMatchAndApply):
         print_report: bool | None = None,
         progress: bool | None = None,
         order_by_transformation: bool = False,
+        state_local: bool = False,
     ) -> None:
         super().__init__(transformations, permissive, validate, validate_all, states, print_report, progress)
         self.order_by_transformation = order_by_transformation
+        self.state_local = state_local
 
     # Helper function for applying and validating a transformation
     def _apply_and_validate(
@@ -219,7 +261,9 @@ class PatternMatchAndApplyRepeated(PatternMatchAndApply):
         if self.validate_all:
             match_name = match.print_match(tcfg)
 
-        applied_transformations[type(match).__name__].append(match.apply(graph, tcfg.sdfg))
+        # A transformation builds expressions from strings; parse its SDFG's symbols at their declared dtypes.
+        with symbolic.serialization_symbol_dtypes(tcfg.sdfg.symbols, inherit=True):
+            applied_transformations[type(match).__name__].append(match.apply(graph, tcfg.sdfg))
         if self.progress or (self.progress is None and (time.time() - start) > 5):
             print(
                 "Applied {}.\r".format(", ".join(["%d %s" % (len(v), k) for k, v in applied_transformations.items()])),
@@ -227,10 +271,11 @@ class PatternMatchAndApplyRepeated(PatternMatchAndApply):
             )
         if self.validate_all:
             try:
-                sdfg.validate()
+                self.validate_after_match(match, graph, sdfg)
             except InvalidSDFGError as err:
+                # ``match.state_id`` indexes ``tcfg``, not the SDFG.
                 raise InvalidSDFGError(
-                    f"Validation failed after applying {match_name}. {type(err).__name__}: {err}", sdfg, match.state_id
+                    f"Validation failed after applying {match_name}. {type(err).__name__}: {err}", tcfg, match.state_id
                 ) from err
 
     def _apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any], apply_once: bool) -> dict[str, list[Any]]:
@@ -279,7 +324,12 @@ class PatternMatchAndApplyRepeated(PatternMatchAndApply):
                             # We pass 'metadata=None' here to ensure that the pattern matching does not rely on
                             #  the cached order of transformations.
                             match_patterns(
-                                sdfg, permissive=self.permissive, patterns=[xform], states=self.states, metadata=None
+                                sdfg,
+                                permissive=self.permissive,
+                                patterns=[xform],
+                                states=self.states,
+                                metadata=None,
+                                pipeline_results=pipeline_results,
                             ),
                             None,
                         )
@@ -294,12 +344,19 @@ class PatternMatchAndApplyRepeated(PatternMatchAndApply):
                 if apply_once:
                     break
         else:
-            applied = True
+            applied = not self.state_local
+            if self.state_local:
+                self.apply_state_local(sdfg, start, pipeline_results, applied_transformations)
             while applied:
                 applied = False
                 matched_pattern = next(
                     match_patterns(
-                        sdfg, permissive=self.permissive, patterns=xforms, states=self.states, metadata=self._metadata
+                        sdfg,
+                        permissive=self.permissive,
+                        patterns=xforms,
+                        states=self.states,
+                        metadata=self._metadata,
+                        pipeline_results=pipeline_results,
                     ),
                     None,
                 )
@@ -317,21 +374,95 @@ class PatternMatchAndApplyRepeated(PatternMatchAndApply):
             try:
                 sdfg.validate()
             except InvalidSDFGError as err:
+                if match is None:
+                    raise
                 # `match` is the last applied transformation. `print_match()` needs the control flow region
                 #  it belongs to, not this pass.
-                assert match is not None
                 tcfg = sdfg.cfg_list[match.cfg_id]
                 raise InvalidSDFGError(
-                    f"Validation failed after applying {match.print_match(tcfg)}.", sdfg, match.state_id
+                    f"Validation failed after applying {match.print_match(tcfg)}.", tcfg, match.state_id
                 ) from err
 
         return applied_transformations
+
+    def apply_state_local(
+        self, sdfg: SDFG, start: float, pipeline_results: dict[str, Any], applied_transformations: dict[str, Any]
+    ) -> None:
+        """The ``state_local`` fixpoint: ``match_patterns``' walk, resumed after each application.
+
+        The walk is ``all_control_flow_regions(recursive=True)`` order -- a region's own states, then
+        the regions below it -- kept as a stack so it can resume at the region of the last match.
+        """
+        interstate, singlestate = self._metadata
+        if interstate or not all(isinstance(x, xf.SingleStateTransformation) for x in self.transformations):
+            raise ValueError("state_local matching takes single-state transformations only")
+        refused: dict[SDFGState, None] = {}
+        # Each frame is ``[region, child regions or None while its own states are walked, next child]``.
+        stack: list[list] = [[sdfg, None, 0]]
+        while stack:
+            frame = stack[-1]
+            region, children, index = frame
+            if children is None:
+                match = self.first_state_match(sdfg, region, singlestate, refused, pipeline_results)
+                if match is not None:
+                    self._apply_and_validate(match, sdfg, start, pipeline_results, applied_transformations)
+                else:
+                    frame[1] = child_regions(region)
+                continue
+            if index == len(children):
+                stack.pop()
+                continue
+            frame[2] = index + 1
+            stack.append([children[index], None, 0])
+
+    def first_state_match(
+        self,
+        sdfg: SDFG,
+        region: ControlFlowRegion,
+        singlestate: "TransformationData",
+        refused: dict[SDFGState, None],
+        pipeline_results: dict[str, Any],
+    ) -> xf.PatternTransformation | None:
+        """The first match among ``region``'s own states, marking every state that has none as refused."""
+        cfg_ids = CfgIds(sdfg)
+        for state_id, state in enumerate(region.nodes()):
+            if (
+                not isinstance(state, SDFGState)
+                or state in refused
+                or (self.states is not None and state not in self.states)
+            ):
+                continue
+            match = next(
+                state_matches(
+                    state, state_id, region, singlestate, type_match, None, self.permissive, pipeline_results, cfg_ids
+                ),
+                None,
+            )
+            if match is not None:
+                return match
+            refused[state] = None
+        return None
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> dict[str, list[Any]]:
         return self._apply_pass(sdfg, pipeline_results, apply_once=False)
 
 
-@dataclass
+def child_regions(region: ControlFlowRegion) -> list[ControlFlowRegion]:
+    """The regions ``all_control_flow_regions(recursive=True)`` descends into below ``region``, in order.
+
+    :param region: The region whose children to list.
+    :returns: Nested SDFGs held by the region's states and its sub-regions, in block order.
+    """
+    children = []
+    for block in region.nodes():
+        if isinstance(block, SDFGState):
+            children.extend(node.sdfg for node in block.nodes() if isinstance(node, nd.NestedSDFG) and node.sdfg)
+        elif isinstance(block, AbstractControlFlowRegion):
+            children.append(block)
+    return children
+
+
+@dataclass(init=False)
 @properties.make_properties
 class PatternApplyOnceEverywhere(PatternMatchAndApplyRepeated):
     """
@@ -340,7 +471,7 @@ class PatternApplyOnceEverywhere(PatternMatchAndApplyRepeated):
     applied on that location.
     """
 
-    CATEGORY: str = "Helper"
+    CATEGORY: ClassVar[str] = "Helper"
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> dict[str, list[Any]]:
         return self._apply_pass(sdfg, pipeline_results, apply_once=True)
@@ -400,6 +531,21 @@ def type_match(graph_node, pattern_node):
     return isinstance(graph_node["node"], type(pattern_node["node"]))
 
 
+def pattern_types_present(nxpattern: nx.DiGraph, present: set) -> bool:
+    """Whether every node of ``nxpattern`` has a node of a matching type (per :func:`type_match`) among
+    the node types ``present`` in a graph -- the precondition for ``nxpattern`` to match there.
+
+    :param nxpattern: A collapsed pattern graph, as :func:`get_transformation_metadata` builds it.
+    :param present: The set of ``type(node)`` over the graph's nodes.
+    """
+    for pnid in nxpattern:
+        pnode = nxpattern.nodes[pnid]["node"]
+        required = pnode.node if isinstance(pnode, xf.PatternNode) else type(pnode)
+        if not any(issubclass(t, required) for t in present):
+            return False
+    return True
+
+
 def type_or_class_match(node_a, node_b):
     """
     Checks whether `node_a` is an instance of the same type as `node_b`, or
@@ -428,6 +574,33 @@ def type_or_class_match(node_a, node_b):
     return isinstance(node_a["node"], type(node_b["node"]))
 
 
+class CfgIds:
+    """``cfg_id`` of every region of one CFG tree, from one pass over its ``cfg_list``.
+
+    ``ControlFlowRegion.cfg_id`` is ``cfg_list.index(self)``, a linear scan; asked per candidate it
+    made a matcher sweep quadratic in the region count (warpx_field_gather: 13000 regions, 3960
+    ``ConditionFusion`` candidates per sweep). A region holding another list resolves as before.
+    """
+
+    __slots__ = ("cfg_list", "index")
+
+    def __init__(self, sdfg: SDFG) -> None:
+        self.cfg_list = sdfg.cfg_list
+        #: Built on the first lookup: a sweep that matches its first candidate needs one scan at most.
+        self.index: dict[ControlFlowRegion, int] | None = None
+
+    def cfg_id(self, region: ControlFlowRegion) -> int:
+        """``region.cfg_id``, without the scan when ``region`` shares the indexed list."""
+        if region.cfg_list is not self.cfg_list:
+            return region.cfg_id
+        if self.index is None:
+            self.index = {}
+            for i, cfg in enumerate(self.cfg_list):
+                self.index.setdefault(cfg, i)
+        found = self.index.get(region)
+        return region.cfg_id if found is None else found
+
+
 def _try_to_match_transformation(
     graph: ControlFlowRegion | SDFGState,
     collapsed_graph: nx.DiGraph,
@@ -439,10 +612,19 @@ def _try_to_match_transformation(
     state_id: int,
     permissive: bool,
     options: dict[str, Any],
+    pipeline_results: dict[str, Any] | None = None,
+    cfg_ids: Optional["CfgIds"] = None,
 ) -> xf.PatternTransformation | None:
     """
     Helper function that tries to instantiate a pattern match into a
     transformation object.
+
+    :param pipeline_results: Results of the passes this one declared through ``depends_on()``,
+                             installed on the match BEFORE ``can_be_applied`` so a predicate can
+                             read a cached analysis instead of recomputing it per candidate. This
+                             is what issue#1911 is about; ``setup_match`` resets the member, so it
+                             has to be set after that call.
+    :param cfg_ids: The CFG list indexed once by the caller, to resolve the region's ``cfg_id``.
     """
     # `collapse_multigraph_to_nx` numbers the nodes in the order of `graph.nodes()`, so the index of
     # a node in the collapsed graph is its node ID; `graph.node_id` would find it by a linear scan.
@@ -479,9 +661,14 @@ def _try_to_match_transformation(
                 )
                 return None
 
-        cfg_id = graph.parent_graph.cfg_id if isinstance(graph, SDFGState) else graph.cfg_id
+        region = graph.parent_graph if isinstance(graph, SDFGState) else graph
+        cfg_id = region.cfg_id if cfg_ids is None else cfg_ids.cfg_id(region)
         match.setup_match(sdfg, cfg_id, state_id, subgraph, expr_idx, options=options)
-        match_found = match.can_be_applied(graph, expr_idx, sdfg, permissive=permissive)
+        # After setup_match, which resets it to None.
+        match._pipeline_results = pipeline_results
+        # The predicate parses names from text just as the application does, so it decides under the same dtypes.
+        with symbolic.serialization_symbol_dtypes(sdfg.symbols, inherit=True):
+            match_found = match.can_be_applied(graph, expr_idx, sdfg, permissive=permissive)
     except Exception as e:
         if Config.get_bool("optimizer", "match_exception"):
             raise
@@ -533,6 +720,8 @@ def get_transformation_metadata(
                 matcher = _edge_matcher
             elif len(nxpattern.nodes) == 2 and len(nxpattern.edges) == 0:
                 matcher = _unconnected_pair_matcher
+            elif chain_order(nxpattern) is not None:
+                matcher = _chain_matcher
             else:
                 matcher = _subgraph_isomorphism_matcher
 
@@ -555,6 +744,57 @@ def _subgraph_isomorphism_matcher(digraph, nxpattern, node_pred, edge_pred):
         return
     graph_matcher = iso.DiGraphMatcher(digraph, nxpattern, node_match=node_pred, edge_match=edge_pred)
     yield from graph_matcher.subgraph_isomorphisms_iter()
+
+
+def chain_order(nxpattern) -> list[Any] | None:
+    """The pattern's nodes from source to sink if the pattern is one directed path, else ``None``."""
+    if len(nxpattern.edges) != len(nxpattern.nodes) - 1:
+        return None
+    sources = [n for n in nxpattern if nxpattern.in_degree(n) == 0]
+    if len(sources) != 1:
+        return None
+    order = [sources[0]]
+    while nxpattern.out_degree(order[-1]) == 1:
+        order.append(next(iter(nxpattern.successors(order[-1]))))
+    return order if len(order) == len(nxpattern.nodes) else None
+
+
+def _chain_matcher(digraph, nxpattern, node_pred, edge_pred):
+    """Match a pattern that is one directed path (``MapExit -> AccessNode -> MapEntry``).
+
+    Yields the same matches as ``_subgraph_isomorphism_matcher`` -- induced: distinct nodes, the
+    path's edges and no other edge among them, no self-edge -- but in graph order, walking each
+    start node's successors in insertion order. VF2's order is the networkx version's, so a
+    repeated application (map fusion) picked different matches, and fused differently, per version.
+    """
+    order = chain_order(nxpattern)
+    pattern_nodes = [nxpattern.nodes[p] for p in order]
+
+    def admissible(nid: Any, index: int) -> bool:
+        return node_pred(digraph.nodes[nid], pattern_nodes[index]) and not digraph.has_edge(nid, nid)
+
+    def extend(path: list[Any]):
+        if len(path) == len(order):
+            # Induced: the path's own edges are the only ones among the matched nodes
+            for i, u in enumerate(path):
+                for j, v in enumerate(path):
+                    if i != j and j != i + 1 and digraph.has_edge(u, v):
+                        return
+            yield dict(zip(path, order))
+            return
+        tail = path[-1]
+        for nxt in digraph.successors(tail):
+            if nxt in path or not admissible(nxt, len(path)):
+                continue
+            if edge_pred is not None and not edge_pred(
+                digraph.edges[tail, nxt], nxpattern.edges[order[len(path) - 1], order[len(path)]]
+            ):
+                continue
+            yield from extend(path + [nxt])
+
+    for start in digraph:
+        if admissible(start, 0):
+            yield from extend([start])
 
 
 def _node_matcher(digraph, nxpattern, node_pred, edge_pred):
@@ -625,6 +865,7 @@ def match_patterns(
     metadata: PatternMetadataType | None = None,
     states: list[SDFGState] | None = None,
     options: list[dict[str, Any]] | None = None,
+    pipeline_results: dict[str, Any] | None = None,
 ):
     """Returns a generator of Transformations that match the input SDFG.
     Ordered by SDFG ID.
@@ -639,6 +880,9 @@ def match_patterns(
                    transformations on this list.
     :param options: An optional iterable of transformation parameter
                     dictionaries.
+    :param pipeline_results: Results of previously-run passes, made visible to each match's
+                             ``can_be_applied`` so a predicate can read a cached analysis
+                             rather than rescanning the SDFG per candidate.
     :return: A list of PatternTransformation objects that match.
     """
 
@@ -657,6 +901,7 @@ def match_patterns(
 
     # Collect SDFG and nested SDFGs
     cfrs = sdfg.all_control_flow_regions(recursive=True)
+    cfg_ids = CfgIds(sdfg)
 
     # Try to find transformations on each SDFG
     for cfr in cfrs:
@@ -669,7 +914,18 @@ def match_patterns(
         for xform, expr_idx, nxpattern, matcher, opts in interstate_transformations:
             for subgraph in matcher(digraph, nxpattern, node_match, edge_match):
                 match = _try_to_match_transformation(
-                    cfr, digraph, subgraph, cfr.sdfg, xform, expr_idx, nxpattern, -1, permissive, opts
+                    cfr,
+                    digraph,
+                    subgraph,
+                    cfr.sdfg,
+                    xform,
+                    expr_idx,
+                    nxpattern,
+                    -1,
+                    permissive,
+                    opts,
+                    pipeline_results,
+                    cfg_ids,
                 )
                 if match is not None:
                     yield match
@@ -681,17 +937,62 @@ def match_patterns(
         for state_id, state in enumerate(cfr.nodes()):
             if not isinstance(state, SDFGState) or (states is not None and state not in states):
                 continue
+            yield from state_matches(
+                state,
+                state_id,
+                cfr,
+                singlestate_transformations,
+                node_match,
+                edge_match,
+                permissive,
+                pipeline_results,
+                cfg_ids,
+            )
 
-            # Collapse multigraph into directed graph in order to use VF2
-            digraph = collapse_multigraph_to_nx(state)
 
-            for xform, expr_idx, nxpattern, matcher, opts in singlestate_transformations:
-                for subgraph in matcher(digraph, nxpattern, node_match, edge_match):
-                    match = _try_to_match_transformation(
-                        state, digraph, subgraph, cfr.sdfg, xform, expr_idx, nxpattern, state_id, permissive, opts
-                    )
-                    if match is not None:
-                        yield match
+def state_matches(
+    state: SDFGState,
+    state_id: int,
+    cfr: ControlFlowRegion,
+    singlestate_transformations: "TransformationData",
+    node_match: Callable[[Any, Any], bool],
+    edge_match: Callable[[Any, Any], bool] | None,
+    permissive: bool,
+    pipeline_results: dict[str, Any] | None,
+    cfg_ids: CfgIds,
+) -> Iterator[xf.PatternTransformation]:
+    """The single-state matches in ``state`` (``state_id`` in ``cfr``), in ``match_patterns`` order."""
+    candidates = singlestate_transformations
+    if node_match is type_match:
+        # A pattern whose node types do not all occur in the state cannot match there. Checking that
+        # first skips the collapse below, which is the whole cost of a scan over states that hold
+        # nothing to match (a restart after every application re-scans every state before the next).
+        present = {type(node) for node in state.nodes()}
+        candidates = [entry for entry in candidates if pattern_types_present(entry[2], present)]
+        if not candidates:
+            return
+
+    # Collapse multigraph into directed graph in order to use VF2
+    digraph = collapse_multigraph_to_nx(state)
+
+    for xform, expr_idx, nxpattern, matcher, opts in candidates:
+        for subgraph in matcher(digraph, nxpattern, node_match, edge_match):
+            match = _try_to_match_transformation(
+                state,
+                digraph,
+                subgraph,
+                cfr.sdfg,
+                xform,
+                expr_idx,
+                nxpattern,
+                state_id,
+                permissive,
+                opts,
+                pipeline_results,
+                cfg_ids,
+            )
+            if match is not None:
+                yield match
 
 
 def enumerate_matches(

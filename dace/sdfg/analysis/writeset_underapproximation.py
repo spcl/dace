@@ -13,6 +13,7 @@ import sympy
 
 import dace
 from dace import SDFG, Memlet, data, dtypes, registry, subsets, symbolic
+from dace.ordered import OrderedSet
 from dace.sdfg import SDFGState, graph, nodes, scope
 from dace.sdfg import graph as gr
 from dace.sdfg.analysis import cfg as cfg_analysis
@@ -187,7 +188,7 @@ class AffineUnderapproximationSMemlet(SeparableUnderapproximationMemletPattern):
     def can_be_applied(self, dim_exprs, variable_context, node_range, orig_edges, dim_index, total_dims):
 
         params = variable_context[-1]
-        defined_vars = variable_context[-2]
+        defined_names = set(map(str, variable_context[-2]))
         # Create wildcards for multiplication and addition
         a = sympy.Wild("a", exclude=params)
         b = sympy.Wild("b", exclude=params)
@@ -265,8 +266,8 @@ class AffineUnderapproximationSMemlet(SeparableUnderapproximationMemletPattern):
                     return False  # Step must be independent of parameter
 
             node_rb, node_re, node_rs = node_range[self.paramind]
-            if any(s not in defined_vars for s in node_rb.free_symbols) or any(
-                s not in defined_vars for s in node_re.free_symbols
+            if any(str(s) not in defined_names for s in node_rb.free_symbols) or any(
+                str(s) not in defined_names for s in node_re.free_symbols
             ):
                 # Cannot propagate variables only defined in this scope (e.g.,
                 # dynamic map ranges)
@@ -416,7 +417,12 @@ def _find_unconditionally_executed_states(sdfg: SDFG) -> set[SDFGState]:
     states = dominators[dummy_sink]
     # remove dummy state
     sdfg.remove_node(dummy_sink)
-    return states
+    # The dominators of the top-level CFG are ControlFlowBlocks, which since control-flow regions
+    # also include LoopRegions and ConditionalBlocks -- not only SDFGStates. Callers index the
+    # returned blocks as dataflow graphs (``state.in_edges(access_node)``), and a region's node set
+    # holds blocks rather than AccessNodes, so handing one back raises KeyError. Dropping them only
+    # loses write sites, which is the safe direction for an under-approximation.
+    return {state for state in states if isinstance(state, SDFGState)}
 
 
 def _freesyms(expr):
@@ -548,13 +554,13 @@ def _postorder_traversal(root: SDFGState, loop_nest_tree: dict[SDFGState, set[SD
     return post_order_list
 
 
-def _find_loop_nest_roots(loop_nest_tree: dict[SDFGState, set[SDFGState]]) -> set[SDFGState]:
+def _find_loop_nest_roots(loop_nest_tree: dict[SDFGState, set[SDFGState]]) -> OrderedSet[SDFGState]:
     """
     Given the loop nest trees in an SDFG in the form of a dictionary, returns the root nodes of
     all loop nest trees in that SDFG.
     """
-    all_nodes = set()
-    child_nodes = set()
+    all_nodes = OrderedSet()
+    child_nodes = OrderedSet()
 
     for parent, children in loop_nest_tree.items():
         all_nodes.add(parent)
@@ -743,10 +749,10 @@ class UnderapproximateWrites(ppl.Pass):
                 start = loop_analysis.get_init_assignment(region)
                 stop = loop_analysis.get_loop_end(region)
                 stride = loop_analysis.get_loop_stride(region)
-                for state in region.all_states():
+                for state in region.states():
                     self.ranges_per_state[state][region.loop_variable] = subsets.Range([(start, stop, stride)])
 
-            for state in region.all_states():
+            for state in region.states():
                 self._underapproximate_writes_state(sdfg, state)
 
         self._underapproximate_writes_loops(loops, sdfg)
@@ -903,7 +909,7 @@ class UnderapproximateWrites(ppl.Pass):
         #    approximation_dict
 
         # First, propagate nested SDFGs in a bottom-up fashion
-        dnodes: set[nodes.AccessNode] = set()
+        dnodes: OrderedSet[nodes.AccessNode] = OrderedSet()
         for node in state.nodes():
             if isinstance(node, AccessNode):
                 dnodes.add(node)
@@ -987,9 +993,14 @@ class UnderapproximateWrites(ppl.Pass):
         # subset corresponding to the outside memlet attached to that connector.
         # This is passed out via `border_memlets` and propagated along from there.
         states = _find_unconditionally_executed_states(nsdfg_node.sdfg)
+        # Connectors whose writes across states have inconsistent dimensionality cannot be combined into
+        # a single under-approximation. They are propagated out as unknown (None) so the datum
+        # round-trips -- the safe, under-approximate direction (never over-claim a write). Merging must
+        # never raise: the pass contract is that an unprovable write just under-approximates to less.
+        poisoned = set()
         for state in states:
             for node in state.data_nodes():
-                if node.label not in border_memlets:
+                if node.label not in border_memlets or node.label in poisoned:
                     continue
                 # Get the edges to this access node
                 edges = state.in_edges(node)
@@ -1010,19 +1021,29 @@ class UnderapproximateWrites(ppl.Pass):
                     for memlet in memlets:
                         subset = subsets.list_union(subset, memlet.subset)
                     # compute the union of the ranges to merge the subsets.
-                    border_memlet.subset = _merge_subsets(border_memlet.subset, subset)
+                    try:
+                        border_memlet.subset = _merge_subsets(border_memlet.subset, subset)
+                    except ValueError:
+                        poisoned.add(node.label)
 
             # collect the memlets for each loop in the NSDFG
             if state in self.loop_write_dict:
                 for node_label, loop_memlet in self.loop_write_dict[state].items():
-                    if node_label not in border_memlets:
+                    if node_label not in border_memlets or node_label in poisoned:
                         continue
                     border_memlet = border_memlets[node_label]
                     # initialize border memlet if it does not exist already
                     if border_memlet is None:
                         border_memlet = _init_border_memlet(loop_memlet, node_label)
                     # compute the union of the ranges to merge the subsets.
-                    border_memlet.subset = _merge_subsets(border_memlet.subset, loop_memlet.subset)
+                    try:
+                        border_memlet.subset = _merge_subsets(border_memlet.subset, loop_memlet.subset)
+                    except ValueError:
+                        poisoned.add(node_label)
+
+        # Unmergeable writes -> unknown: drop the border memlet so it propagates out as None (round-trip).
+        for connector in poisoned:
+            border_memlets[connector] = None
 
         # Make sure any potential NSDFG symbol mapping is correctly reversed
         # when propagating out.
@@ -1381,11 +1402,7 @@ class UnderapproximateWrites(ppl.Pass):
 
         sdfg = dfg_state.parent
         scope_node_symbols = {conn for conn in entry_node.in_connectors if not conn.startswith("IN_")}
-        defined_vars = {
-            symbolic.pystr_to_symbolic(s)
-            for s in (dfg_state.symbols_defined_at(entry_node).keys() | sdfg.constants.keys())
-            if s not in scope_node_symbols
-        }
+        defined_vars = (dfg_state.symbols_defined_at(entry_node).keys() | sdfg.constants.keys()) - scope_node_symbols
 
         # Find other adjacent edges within the connected to the scope node
         # and union their subsets
@@ -1462,7 +1479,8 @@ class UnderapproximateWrites(ppl.Pass):
         """
         if not surrounding_itvars:
             surrounding_itvars = set()
-        # Argument handling
+        # Argument handling. Defined variables are only ever membership-tested, so keep them as bare names:
+        # symbol identity includes the dtype, which a name reparsed out of its scope cannot know.
         if defined_variables is None:
             # Default defined variables is "everything but params"
             defined_variables = set()
@@ -1470,13 +1488,17 @@ class UnderapproximateWrites(ppl.Pass):
             for memlet in memlets:
                 defined_variables |= memlet.free_symbols
             defined_variables -= set(params)
-            defined_variables = {symbolic.pystr_to_symbolic(p) for p in defined_variables}
+        # ``?`` carries no value, so a range over it stays unpropagatable; by name alone it would read as defined.
+        defined_variables = set(map(str, defined_variables)) - {symbolic.UNDEFINED_NAME}
+
+        # Iteration variables are matched against the subsets, so they must be the very instances those carry.
+        scope_symbols = symbolic.symbols_in([m.subset for m in memlets] + [m.other_subset for m in memlets] + [rng])
 
         # Propagate subset
         variable_context = [
-            [symbolic.pystr_to_symbolic(p) for p in surrounding_itvars],
+            [symbolic.resolve_symbol(p, scope_symbols) for p in surrounding_itvars],
             defined_variables,
-            [symbolic.pystr_to_symbolic(p) for p in params],
+            [symbolic.resolve_symbol(p, scope_symbols) for p in params],
         ]
 
         new_subset = None

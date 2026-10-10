@@ -8,6 +8,7 @@ from dace import dtypes
 from dace import sdfg as sd
 from dace import subsets as sbs
 from dace.memlet import Memlet
+from dace.ordered import OrderedSet
 from dace.properties import CodeBlock
 from dace.sdfg import dealias
 from dace.sdfg import utils as sdutil
@@ -38,7 +39,7 @@ class ConditionMapInterchange(transformation.MultiStateTransformation):
         branch: ControlFlowRegion = self.cond_block.branches[0][1]
 
         # Each state in the branch is either empty or only contains maps
-        for state in branch.all_states():
+        for state in branch.states():
             for node in state.nodes():
                 if (
                     not isinstance(node, (MapEntry, MapExit))
@@ -56,7 +57,7 @@ class ConditionMapInterchange(transformation.MultiStateTransformation):
         branch: ControlFlowRegion = self.cond_block.branches[0][1]
         branch_cond = self.cond_block.branches[0][0]
         cond_syms = set(branch_cond.get_free_symbols())
-        all_states = list(branch.all_states())
+        all_states = branch.states()
 
         # Prepend the condition computation
         cond_sym = graph.sdfg.add_symbol(f"{self.cond_block.label}_cond", dtypes.bool, find_new_name=True)
@@ -76,14 +77,8 @@ class ConditionMapInterchange(transformation.MultiStateTransformation):
 
                 # Get inputs and outputs of the nested SDFG
                 map_exit = state.exit_node(node)
-                inputs = set()
-                outputs = set()
-                for edge in state.out_edges(node):
-                    if edge.data.data is not None:
-                        inputs.add(edge.data.data)
-                for edge in state.in_edges(map_exit):
-                    if edge.data.data is not None:
-                        outputs.add(edge.data.data)
+                inputs = OrderedSet(edge.data.data for edge in state.out_edges(node) if edge.data.data is not None)
+                outputs = OrderedSet(edge.data.data for edge in state.in_edges(map_exit) if edge.data.data is not None)
 
                 # Create the nested SDFG and add all symbols
                 sym_mapping = {s: s for s in list(state.sdfg.symbols.keys()) + node.map.params}
@@ -102,8 +97,12 @@ class ConditionMapInterchange(transformation.MultiStateTransformation):
 
                 start_state = nsdfg.sdfg.add_state(is_start_block=True)
                 copy_mapping = {}
+                # One memo for the whole clone: a scope's entry and exit share a single Map/Consume object,
+                # and a per-node deepcopy hands them one copy each -- an identity split that validate_state
+                # now rejects and that CPU codegen would otherwise turn into an unbalanced map brace.
+                memo = {}
                 for n in body:
-                    new_n = copy.deepcopy(n)
+                    new_n = copy.deepcopy(n, memo)
                     start_state.add_node(new_n)
                     copy_mapping[n] = new_n
 

@@ -1,14 +1,17 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
+import atexit
 import copy
 import functools
 import inspect
 import numbers
+import os
 import re
+import types
 import warnings
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, NamedTuple
+from typing import Any
 
 import numpy
 import sympy
@@ -19,6 +22,7 @@ from dace.config import Config
 from dace.frontend.python import astutils
 from dace.frontend.python.common import DaceSyntaxError, SDFGClosure, SDFGConvertible, StringLiteral
 from dace.sdfg import SDFG
+from dace.sdfg.sdfg import MPI_RANK_VARS
 
 
 class DaceRecursionError(Exception):
@@ -109,6 +113,17 @@ class ModuleResolver(ast.NodeTransformer):
         return self.generic_visit(node)
 
 
+def as_sympy_truth(value: Any) -> sympy.Basic:
+    """``value``'s Python truth as a SymPy boolean: a number or non-boolean expression is true when nonzero."""
+    if isinstance(value, (sympy.logic.boolalg.Boolean, sympy.core.relational.Relational)) and not isinstance(
+        value, sympy.Symbol
+    ):
+        return value
+    if isinstance(value, sympy.Basic):
+        return sympy.Ne(value, 0)
+    return sympy.true if value else sympy.false
+
+
 class RewriteSympyEquality(ast.NodeTransformer):
     """
     Replaces symbolic equality checks by ``sympy.{Eq,Ne}``.
@@ -126,11 +141,37 @@ class RewriteSympyEquality(ast.NodeTransformer):
         left = astutils.evalnode(self.visit(node.left), self.globals)
         right = astutils.evalnode(self.visit(node.comparators[0]), self.globals)
         if isinstance(left, sympy.Basic) or isinstance(right, sympy.Basic):
+            # The result must stay an AST node: a NodeTransformer that returns a non-AST object from a
+            # list-valued field (e.g., ``BoolOp.values`` in "a == b or c == d") has it spliced into that
+            # list by ``ast.NodeTransformer.generic_visit``, and on a single-valued field it is planted in
+            # the tree. ``astutils.evalnode`` reads the value back out of the constant.
             if isinstance(node.ops[0], ast.Eq):
-                return sympy.Eq(left, right)
+                return astutils.create_constant(sympy.Eq(left, right), node)
             elif isinstance(node.ops[0], ast.NotEq):
-                return sympy.Ne(left, right)
+                return astutils.create_constant(sympy.Ne(left, right), node)
         return self.generic_visit(node)
+
+    def visit_UnaryOp(self, node: ast.UnaryOp) -> Any:
+        """``not x`` on a symbol: Python's ``not`` would fold the always-truthy symbol object to ``False``."""
+        if not isinstance(node.op, ast.Not):
+            return self.generic_visit(node)
+        node.operand = self.visit(node.operand)
+        operand = astutils.evalnode(node.operand, self.globals)
+        if isinstance(operand, sympy.Basic):
+            return astutils.create_constant(sympy.Not(as_sympy_truth(operand)), node)
+        return node
+
+    def visit_BoolOp(self, node: ast.BoolOp) -> Any:
+        """``a and b`` / ``a or b`` with a symbolic operand: Python's short circuit would read the symbol as true."""
+        node.values = [self.visit(value) for value in node.values]
+        try:
+            values = [astutils.evalnode(value, self.globals) for value in node.values]
+        except SyntaxError:
+            return node  # Python's short circuit still folds a constant prefix (``False and unknown``)
+        if not any(isinstance(value, sympy.Basic) for value in values):
+            return node
+        combine = sympy.And if isinstance(node.op, ast.And) else sympy.Or
+        return astutils.create_constant(combine(*(as_sympy_truth(value) for value in values)), node)
 
     def visit_Constant(self, node):
         if isinstance(node.value, numpy.bool_):
@@ -157,7 +198,10 @@ class ConditionalCodeResolver(ast.NodeTransformer):
     def visit_If(self, node: ast.If) -> Any:
         node = self.generic_visit(node)
         try:
-            test = RewriteSympyEquality(self.globals_and_locals).visit(node.test)
+            # Rewrite a copy: the rewrite replaces nodes in-place, and the symbolic objects it leaves
+            # behind are only meant for the evaluation below. The original test has to survive intact
+            # for the cases where the condition turns out to be indeterminate.
+            test = RewriteSympyEquality(self.globals_and_locals).visit(astutils.copy_tree(node.test))
             result = astutils.evalnode(test, self.globals_and_locals)
 
             # Check symbolic conditions separately
@@ -427,6 +471,24 @@ def flatten_callback(func: Callable, node: ast.Call, global_vars: dict[str, Any]
     return make_cb(keywords, poscount, unflatten_instructions)
 
 
+def own_buffer(value: Any) -> Any:
+    """Materialize a numpy view so it owns its buffer; anything else passes through."""
+    if isinstance(value, numpy.ndarray) and value.base is not None:
+        return numpy.copy(value)
+    return value
+
+
+def aliases_live_object(qualname: str) -> bool:
+    """True if the qualname is a name/attribute/subscript chain, so it names something the caller holds."""
+    try:
+        node = ast.parse(qualname, mode="eval").body
+    except SyntaxError:
+        return False
+    while isinstance(node, (ast.Attribute, ast.Subscript)):
+        node = node.value
+    return isinstance(node, ast.Name)
+
+
 class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
     """Resolves global constants and lambda expressions if not
     already defined in the given scope."""
@@ -459,8 +521,13 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
 
     def _qualname_to_array_name(self, qualname: str, prefix: str = "__g_") -> str:
         """Converts a Python qualified attribute name to an SDFG array name."""
-        # We only support attributes and subscripts for now
-        sanitized = re.sub(r"[\.\[\]\'\",]", "_", qualname)
+        # Every non-identifier character, not just the attribute/subscript punctuation: a qualname
+        # can be a whole call EXPRESSION -- ``numpy.arange(3 * M // M, dtype=np.int64)[None, :]`` --
+        # whose parentheses, spaces and operators survived the narrower substitution and then failed
+        # validation. An empty prefix can also leave a leading digit, which is not a valid name.
+        sanitized = re.sub(r"\W", "_", qualname)
+        if sanitized and sanitized[0].isdigit():
+            sanitized = "_" + sanitized
         if not dtypes.validate_name(sanitized):
             raise NameError(
                 f'Variable name "{sanitized}" is not sanitized properly during parsing. Please report this issue.'
@@ -529,11 +596,19 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
                 arrname = self.closure.array_mapping[id(value)]
             else:
                 arrname = self._qualname_to_array_name(qualname)
-                desc = data.create_datadescriptor(value)
-                if keep_object:
-                    self.closure.closure_arrays[arrname] = (qualname, desc, lambda: value, False)
+                if keep_object or aliases_live_object(qualname):
+                    # Names something the caller holds: hand back THAT object. A copy would drop the
+                    # kernel's writes, and a fresh one per call defeats the ``array_mapping`` dedup.
+                    desc = data.create_datadescriptor(value)
+                    evaluator = (lambda: value) if keep_object else (lambda: eval(qualname, self.globals))
                 else:
-                    self.closure.closure_arrays[arrname] = (qualname, desc, lambda: eval(qualname, self.globals), False)
+                    # Hoisted out of an EXPRESSION (``np.arange(...)[None, :]``), so it is a temporary
+                    # nobody else holds -- and it can be a numpy VIEW, which the calling convention
+                    # refuses. Materialize it ONCE; re-evaluating would mint a new object per call.
+                    value = own_buffer(value)
+                    desc = data.create_datadescriptor(value)
+                    evaluator = lambda: value
+                self.closure.closure_arrays[arrname] = (qualname, desc, evaluator, False)
                 self.closure.array_mapping[id(value)] = arrname
 
             newnode = ast.Name(id=arrname, ctx=ast.Load())
@@ -1468,8 +1543,7 @@ class DisallowedAssignmentChecker(ast.NodeVisitor):
 
     def __init__(self, filename: str) -> None:
         super().__init__()
-        self.visitor = NamedTuple("Visitor", [("filename", str)])
-        self.visitor.filename = filename
+        self.visitor = types.SimpleNamespace(filename=filename)
 
     def _check_assignment_target(self, node: ast.expr, parent_node: ast.AST):
         if hasattr(node, "qualname"):
@@ -1547,13 +1621,61 @@ def mpi4py_is_usable() -> bool:
     fails to parse on a machine that merely has a stray ``pip install mpi4py``. Both cases mean the
     same thing to DaCe -- there is no MPI -- so both answer False here.
 
-    Importing the submodule does not initialize MPI, so this stays side-effect-free on the parse path.
+    Importing the submodule also runs ``MPI_Init`` unless ``mpi4py.rc`` says otherwise, which is why
+    ``ensure_mpi_initialized`` runs at import: on the parse path that bring-up must already be settled.
     """
     try:
         from mpi4py import MPI  # noqa: F401
     except Exception:  # noqa: BLE001 -- any failure to reach MPI means it is unavailable
         return False
     return True
+
+
+def ensure_mpi_initialized() -> None:
+    """Bring MPI up when a launcher started this process but mpi4py was told not to.
+
+    ``from mpi4py import MPI`` calls ``MPI_Init`` on import; ``MPI4PY_RC_INITIALIZE=0`` turns that
+    off, and callers export it to keep an unlaunched parse from bootstrapping a singleton MPI job,
+    whose bring-up stalls on a wedged transport and hangs the whole run. The switch is
+    process-global and one-way: nothing initializes MPI afterwards, so the first communicator call
+    -- dace's own, or the caller's -- aborts the entire job with ``MPI_Comm_rank() was called
+    before MPI_INIT`` and no Python traceback. One process setting it in a long-lived interpreter
+    therefore kills every later MPI user in it.
+
+    Under an MPI launcher the process IS a rank of a job, so that switch cannot be what the caller
+    meant, and MPI_Init is the thing the launcher already prepared. The launcher check comes first
+    because it is a dict lookup, while reaching MPI at all costs a ``dlopen`` of ``libmpi``.
+
+    ``mpi4py.rc`` is not the state to test: the environment switch is read inside the ``MPI``
+    submodule as it loads, never mirrored back into ``rc``, so ``rc.initialize`` stays True while
+    MPI is left down. Only ``MPI_Initialized`` knows.
+
+    The bring-up asks for ``MPI_THREAD_MULTIPLE``, which is what mpi4py's own automatic bring-up
+    asks for, so a rank that took this path is indistinguishable from one that did not. Bare
+    ``MPI_Init`` instead promises ``MPI_THREAD_SINGLE`` -- that the process has exactly one thread
+    -- and no DaCe process keeps that promise: its maps are OpenMP regions and its BLAS calls spawn
+    a pool. Which of the two paths a rank took should not be observable, and with ``MPI_Init`` it
+    was: the level differed by whether some earlier import had set ``MPI4PY_RC_INITIALIZE``.
+    """
+    if not any(os.environ.get(var) for var in MPI_RANK_VARS):
+        return  # no launcher: honour the switch, a singleton bring-up is what it guards against
+    try:
+        from mpi4py import MPI
+    except Exception:  # noqa: BLE001 -- as in mpi4py_is_usable: no reachable MPI, nothing to bring up
+        return
+    if not MPI.Is_initialized():
+        MPI.Init_thread(MPI.THREAD_MULTIPLE)
+        atexit.register(finalize_mpi, MPI)
+
+
+def finalize_mpi(MPI) -> None:
+    """Close the MPI session ``ensure_mpi_initialized`` opened.
+
+    mpi4py finalizes only what it initialized itself, so an ``MPI_Init`` made here has no owner and
+    the job would end with MPI still up -- which Open MPI reports as an error from every rank.
+    """
+    if MPI.Is_initialized() and not MPI.Is_finalized():
+        MPI.Finalize()
 
 
 class MPIResolver(ast.NodeTransformer):
@@ -1603,17 +1725,33 @@ class MPIResolver(ast.NodeTransformer):
         return node
 
 
-class ModuloConverter(ast.NodeTransformer):
-    """Converts a % b expressions to (a + b) % b for C/C++ compatibility."""
+def symbol_names(value: Any) -> set[str]:
+    """Names ``GlobalResolver`` inlines for a closure value: the free symbols of a symbolic value or of a list/tuple of them."""
+    if isinstance(value, (list, tuple)):
+        return set().union(*map(symbol_names, value))
+    if isinstance(value, sympy.Basic):
+        return {str(sym) for sym in value.free_symbols}
+    return set()
 
-    def visit_BinOp(self, node: ast.BinOp) -> ast.BinOp:
-        if isinstance(node.op, ast.Mod):
-            left = self.generic_visit(node.left)
-            right = self.generic_visit(node.right)
-            newleft = ast.copy_location(ast.BinOp(left=left, op=ast.Add(), right=astutils.copy_tree(right)), left)
-            node.left = newleft
-            return node
-        return self.generic_visit(node)
+
+def rename_locals_shadowing_closure_symbols(src_ast: ast.AST, closure: dict[str, Any]) -> None:
+    """Give a fresh name to every local that shares its name with a symbol a used closure value inlines to.
+
+    Inlining replaces a captured extent by its symbol's name, so an extent printing as ``k`` would otherwise be
+    read as a local counter ``k`` wherever it lands inside that counter's loop. Renames in place.
+    """
+    names = [node for node in ast.walk(src_ast) if isinstance(node, ast.Name)]
+    local = {node.id for node in names if isinstance(node.ctx, ast.Store)}
+    captured = set().union(
+        *(symbol_names(closure[node.id]) for node in names if node.id in closure and node.id not in local)
+    )
+    taken = local | captured | closure.keys() | {node.id for node in names}
+    renames: dict[str, str] = {}
+    for name in sorted(local & captured):
+        renames[name] = data.find_new_name(name, taken)
+        taken.add(renames[name])
+    for node in names:
+        node.id = renames.get(node.id, node.id)
 
 
 def preprocess_dace_program(
@@ -1663,11 +1801,11 @@ def preprocess_dace_program(
     # Guard the availability check only, so a genuine error inside the visitor still surfaces.
     if mpi4py_is_usable():
         src_ast = MPIResolver(global_vars).visit(src_ast)
-    src_ast = ModuloConverter().visit(src_ast)
 
     # Resolve constants to their values (if they are not already defined in this scope)
     # and symbols to their names
     resolved = {k: v for k, v in global_vars.items() if k not in (argtypes.keys() - default_args) and k != "_"}
+    rename_locals_shadowing_closure_symbols(src_ast, resolved)
     closure_resolver = GlobalResolver(resolved, resolve_functions, default_args=default_args)
 
     # Append element to call stack and handle max recursion depth

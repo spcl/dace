@@ -1,5 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import numpy as np
+import pytest
 from common import compare_numpy_output
 
 import dace
@@ -18,6 +19,20 @@ def test_usub(A: dace.int64[5, 5]):
 @compare_numpy_output(non_zero=True, positive=True)
 def test_invert(A: dace.int64[5, 5]):
     return ~A
+
+
+@compare_numpy_output(check_dtype=True)
+def test_invert_bool(A: dace.bool_[5, 5]):
+    return ~A
+
+
+def invert(A):
+    return ~A
+
+
+def test_invert_float_rejected():
+    with pytest.raises(TypeError):
+        dace.program(invert).to_sdfg(simplify=False, A=np.ones((5, 5), np.float32))
 
 
 @dace.program
@@ -41,3 +56,5 @@ if __name__ == "__main__":
     test_usub()
     test_not()
     test_invert()
+    test_invert_bool()
+    test_invert_float_rejected()

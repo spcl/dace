@@ -1,14 +1,50 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
+import math
+
+import numpy as np
 
 import dace.library
 import dace.properties
 import dace.sdfg.nodes
-from dace import Memlet
+from dace import Memlet, dtypes
+from dace.codegen import common
 from dace.libraries.blas import environments as blas_environments
 from dace.libraries.lapack import Potrf, environments
+from dace.libraries.linalg.nodes.solve import restride
 from dace.libraries.linalg.nodes.transpose import Transpose
+from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES
 from dace.transformation.transformation import ExpandTransformation
+
+#: The vendor GPU solvers. The branches below are about whether the factorization runs ON THE
+#: DEVICE -- which decides the column-major transposes and the device-side info code -- and not
+#: about which vendor it is, so a second backend must not need a second branch.
+GPU_SOLVERS = ("cuSolverDn", "rocSOLVER")
+
+#: The vendor BLAS that goes with each, for the transposes staged around the factorization. Naming
+#: a cuBLAS transpose inside a rocSOLVER graph selects an expansion whose environment is not
+#: installed, and every one of them silently drops to the serial loop.
+SOLVER_BLAS = {"cuSolverDn": "cuBLAS", "rocSOLVER": "rocBLAS"}
+
+
+def device_solver_implementation(node, state, connector):
+    """The vendor GPU solver for ``node`` when its ``connector`` operand is GPU-resident, else ``None``.
+
+    A storage-aware pick for a node expanded with no implementation set: without it
+    ``apply_gpu_transformations + expand_library_nodes`` lands on the library default (OpenBLAS)
+    for a device matrix, whose host call then reads ``GPU_Global`` memory. WHICH device solver
+    follows the configured backend -- cuSolverDn on an AMD node names an environment that is not
+    installed.
+    """
+    in_edges = [e for e in state.in_edges(node) if e.dst_conn == connector]
+    if in_edges:
+        outer = state.memlet_path(in_edges[0])[0].src
+        if (
+            isinstance(outer, dace.sdfg.nodes.AccessNode)
+            and state.sdfg.arrays[outer.data].storage == dtypes.StorageType.GPU_Global
+        ):
+            return "rocSOLVER" if common.get_gpu_backend() == "hip" else "cuSolverDn"
+    return None
 
 
 def _make_sdfg(node, parent_state, parent_sdfg, implementation):
@@ -22,7 +58,10 @@ def _make_sdfg(node, parent_state, parent_sdfg, implementation):
     ain_arr = sdfg.add_array("_a", inp_shape, dtype=dtype, strides=inp_desc.strides)
     bout_arr = sdfg.add_array("_b", out_shape, dtype=dtype, strides=out_desc.strides)
     info_arr = sdfg.add_array("_info", [1], dtype=dace.int32, transient=True, storage=storage)
-    if implementation == "cuSolverDn":
+    if implementation in GPU_SOLVERS:
+        info_host_arr = sdfg.add_array(
+            "_info_host", [1], dtype=dace.int32, transient=True, storage=dtypes.StorageType.CPU_Heap
+        )
         binout_arr = sdfg.add_array("_bt", inp_shape, dtype=dtype, transient=True, storage=storage)
     else:
         binout_arr = bout_arr
@@ -32,6 +71,10 @@ def _make_sdfg(node, parent_state, parent_sdfg, implementation):
     potrf_node = Potrf("potrf", lower=node.lower)
     potrf_node.implementation = implementation
 
+    # The triangle that _uzero_ zeroes lives in the operand's storage, so a device-resident factorization
+    # needs a device map. Under the default schedule, host code writes GPU_Global memory, which
+    # validation rejects (cegterg's canon GPU run, at the __inl18_chol edge).
+    uzero_schedule = dtypes.ScheduleType.GPU_Device if storage in GPU_RESIDENT_STORAGES else dtypes.ScheduleType.Default
     _, me, mx = state.add_mapped_tasklet(
         "_uzero_",
         dict(__i=f"0:{out_shape[0]}", __j=f"0:{out_shape[1]}"),
@@ -39,21 +82,23 @@ def _make_sdfg(node, parent_state, parent_sdfg, implementation):
         "_out = (__i < __j) ? 0 : _inp;",
         dict(_out=Memlet.simple("_b", "__i, __j")),
         language=dace.dtypes.Language.CPP,
+        schedule=uzero_schedule,
         external_edges=True,
     )
 
     ain = state.add_read("_a")
-    if implementation == "cuSolverDn":
+    info = state.add_access("_info")
+    if implementation in GPU_SOLVERS:
         binout1 = state.add_access("_bt")
         binout2 = state.add_access("_bt")
         binout3 = state.in_edges(me)[0].src
         bout = state.out_edges(mx)[0].dst
         transpose_ain = Transpose("AT", dtype=dtype)
-        transpose_ain.implementation = "cuBLAS"
+        transpose_ain.implementation = SOLVER_BLAS[implementation]
         state.add_edge(ain, None, transpose_ain, "_inp", Memlet.from_array(*ain_arr))
         state.add_edge(transpose_ain, "_out", binout1, None, Memlet.from_array(*binout_arr))
         transpose_out = Transpose("BT", dtype=dtype)
-        transpose_out.implementation = "cuBLAS"
+        transpose_out.implementation = SOLVER_BLAS[implementation]
         state.add_edge(binout2, None, transpose_out, "_inp", Memlet.from_array(*binout_arr))
         state.add_edge(transpose_out, "_out", binout3, None, Memlet.from_array(*bout_arr))
     else:
@@ -62,26 +107,68 @@ def _make_sdfg(node, parent_state, parent_sdfg, implementation):
         binout3 = state.out_edges(mx)[0].dst
         state.add_nedge(ain, binout1, Memlet.from_array(*ain_arr))
 
-    info = state.add_write("_info")
-
     state.add_memlet_path(binout1, potrf_node, dst_conn="_xin", memlet=Memlet.from_array(*binout_arr))
     state.add_memlet_path(potrf_node, info, src_conn="_res", memlet=Memlet.from_array(*info_arr))
     state.add_memlet_path(potrf_node, binout2, src_conn="_xout", memlet=Memlet.from_array(*binout_arr))
+
+    if implementation in GPU_SOLVERS:
+        info_host = state.add_write("_info_host")
+        state.add_nedge(info, info_host, Memlet.from_array(*info_host_arr))
 
     return sdfg
 
 
 @dace.library.expansion
 class ExpandCholeskyPure(ExpandTransformation):
-    """
-    Naive backend-agnostic expansion of LAPACK POTRF.
+    """Cholesky as loops and tasklets, with no library behind it.
+
+    Exists so a Cholesky can be rendered, read and edited on its own -- CPF emits one translation
+    unit with no BLAS to link, and an SDFG that reaches a vendor implementation cannot be rendered
+    at all. It is the textbook right-looking factorization, so it is correct rather than fast; a
+    build that has MKL or OpenBLAS should keep using them.
     """
 
     environments = []
 
     @staticmethod
-    def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
-        raise NotImplementedError
+    def expansion(node, parent_state, parent_sdfg, **kwargs):
+        inp_desc, inp_shape, out_desc, out_shape = node.validate(parent_sdfg, parent_state)
+        dtype = inp_desc.dtype
+        n = inp_shape[0]
+        lower = node.lower
+
+        # Every statement under the column loop is a map, the pivot a one-point one, so that over
+        # device memory each one is a kernel and the host loop touches no element of ``factor``.
+        @dace.program
+        def cholesky_pure(_a: dtype[n, n], _b: dtype[n, n]):
+            factor = dace.define_local([n, n], dtype)
+            factor[:] = 0  # the strict upper triangle is never assigned, and is read back on the copy
+            for j in range(n):
+                for single in dace.map[0:1]:
+                    diagonal = _a[j, j]
+                    for k in range(j):
+                        diagonal = diagonal - factor[j, k] * np.conj(factor[j, k])
+                    # A Hermitian positive-definite pivot is real; its rounding residue must not reach the factor.
+                    factor[j, j] = math.sqrt(np.real(diagonal))
+                for i in dace.map[j + 1 : n]:
+                    off = _a[i, j]
+                    for k in range(j):
+                        off = off - factor[i, k] * np.conj(factor[j, k])
+                    factor[i, j] = off / factor[j, j]
+            # ``factor`` is always the LOWER triangle; ``lower=False`` asks for the upper one, which
+            # is its conjugate transpose (A = L L^H = U^H U), so the orientation is a copy and not a
+            # second factorization. The conjugate is the identity on a real dtype.
+            for i, j in dace.map[0:n, 0:n]:
+                _b[i, j] = factor[i, j] if lower else np.conj(factor[j, i])
+
+        nsdfg = cholesky_pure.to_sdfg(simplify=True)
+        if node.schedule in dtypes.GPU_SCHEDULES:
+            # Left to the scope default, a device schedule makes the host-level scratch shared memory.
+            nsdfg.arrays["factor"].storage = dtypes.StorageType.GPU_Global
+        # See ``restride``: a connector may be a strided slice of a bigger array, and a contiguous
+        # reading of it is silently wrong rather than an error.
+        restride(nsdfg, (("_a", inp_shape, inp_desc.strides), ("_b", out_shape, out_desc.strides)), dtype)
+        return nsdfg
 
 
 @dace.library.expansion
@@ -111,13 +198,24 @@ class ExpandCholeskyCuSolverDn(ExpandTransformation):
         return _make_sdfg(node, parent_state, parent_sdfg, "cuSolverDn")
 
 
+@dace.library.expansion
+class ExpandCholeskyRocSolver(ExpandTransformation):
+    environments = [environments.rocsolver.rocSOLVER]
+
+    @staticmethod
+    def expansion(node, parent_state, parent_sdfg, **kwargs):
+        return _make_sdfg(node, parent_state, parent_sdfg, "rocSOLVER")
+
+
 @dace.library.node
 class Cholesky(dace.sdfg.nodes.LibraryNode):
     # Global properties
     implementations = {
+        "pure": ExpandCholeskyPure,
         "OpenBLAS": ExpandCholeskyOpenBLAS,
         "MKL": ExpandCholeskyMKL,
         "cuSolverDn": ExpandCholeskyCuSolverDn,
+        "rocSOLVER": ExpandCholeskyRocSolver,
     }
     default_implementation = None
 
@@ -135,15 +233,22 @@ class Cholesky(dace.sdfg.nodes.LibraryNode):
         )
         self.lower = lower
 
+    def expand(self, state_or_sdfg, *args, **kwargs):
+        if self.implementation is None:
+            state = state_or_sdfg if isinstance(state_or_sdfg, dace.SDFGState) else args[0]
+            self.implementation = device_solver_implementation(self, state, "_a")
+        return super().expand(state_or_sdfg, *args, **kwargs)
+
     def validate(self, sdfg, state):
         """
         :return: A two-tuple of the input and output descriptors
         """
-        in_edges = state.in_edges(self)
+        # The GPU stream pipeline attaches a non-dataflow in-edge, so select the data connector.
+        in_edges = list(state.in_edges_by_connector(self, "_a"))
         if len(in_edges) != 1:
             raise ValueError("Expected exactly one input to pcholesky")
         in_memlet = in_edges[0].data
-        out_edges = state.out_edges(self)
+        out_edges = list(state.out_edges_by_connector(self, "_b"))
         if len(out_edges) != 1:
             raise ValueError("Expected exactly one input from cholesky node")
         out_memlet = out_edges[0].data

@@ -1,8 +1,10 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 import numpy as np
 import pytest
+import sympy
 
 import dace
+from dace.libraries.fft.algorithms.dft import floating_factor
 
 
 @pytest.mark.parametrize("symbolic", (False, True))
@@ -48,6 +50,26 @@ def test_ifft(norm):
     assert np.allclose(b, np.fft.ifft(a, norm=norm))
 
 
+@pytest.mark.parametrize("norm", ("backward", "forward", "ortho"))
+@pytest.mark.parametrize("transform", ("fft", "ifft"))
+def test_1d_fft_normalization_over_a_symbolic_extent(transform, norm):
+    """A ``1/N`` or ``sqrt(1/N)`` factor over an integer extent symbol divides in floating point, never as C ints."""
+    N = dace.symbol("N")
+
+    @dace.program
+    def forward(x: dace.complex128[N]):
+        return np.fft.fft(x, norm=norm)
+
+    @dace.program
+    def inverse(x: dace.complex128[N]):
+        return np.fft.ifft(x, norm=norm)
+
+    rng = np.random.default_rng(7)
+    a = rng.standard_normal(21) + 1j * rng.standard_normal(21)
+    tester, reference = (forward, np.fft.fft) if transform == "fft" else (inverse, np.fft.ifft)
+    np.testing.assert_allclose(tester(a.copy()), reference(a, norm=norm), rtol=1e-12, atol=1e-12)
+
+
 @pytest.mark.gpu
 def test_cufft():
     import dace.libraries.fft as fftlib
@@ -90,6 +112,14 @@ def test_cufft_twoplans():
     assert np.allclose(d, np.fft.ifft(b, norm="forward"), rtol=1e-3, atol=1e-5)
 
 
+@pytest.mark.parametrize("factor", (1, sympy.Rational(1, 4)))
+def test_a_constant_1d_factor_is_spliced_as_a_float(factor):
+    """fft_1d on HIP: the unscaled transform multiplied a ``std::complex<double>`` by the int ``1``, which
+    has no operator outside DaCe's own complex type."""
+    assert isinstance(floating_factor(factor), float)
+    assert floating_factor(factor) == float(factor)
+
+
 if __name__ == "__main__":
     test_fft(False)
     test_fft(True)
@@ -99,3 +129,11 @@ if __name__ == "__main__":
     test_ifft("ortho")
     test_cufft()
     test_cufft_twoplans()
+    test_1d_fft_normalization_over_a_symbolic_extent("fft", "backward")
+    test_1d_fft_normalization_over_a_symbolic_extent("fft", "forward")
+    test_1d_fft_normalization_over_a_symbolic_extent("fft", "ortho")
+    test_1d_fft_normalization_over_a_symbolic_extent("ifft", "backward")
+    test_1d_fft_normalization_over_a_symbolic_extent("ifft", "forward")
+    test_1d_fft_normalization_over_a_symbolic_extent("ifft", "ortho")
+    test_a_constant_1d_factor_is_spliced_as_a_float(1)
+    test_a_constant_1d_factor_is_spliced_as_a_float(sympy.Rational(1, 4))

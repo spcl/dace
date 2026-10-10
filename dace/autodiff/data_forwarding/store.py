@@ -36,7 +36,7 @@ def resolve_overwrite_with_store(
     """
 
     # Modify the forward pass to save the data in a new array
-    new_stored_array, memlets = _store_data(
+    new_stored_array, memlets = store_data(
         bwd_generator=bwd_generator,
         forward_state=forward_state,
         backward_state=backward_state,
@@ -56,7 +56,7 @@ def resolve_overwrite_with_store(
             bwd_generator.backward_input_arrays[new_stored_array.data] = data_desc
 
     # Connect the new array to the target node
-    _connect_stored_data_to_target(
+    connect_stored_data_to_target(
         bwd_generator=bwd_generator,
         forward_state=forward_state,
         backward_state=backward_state,
@@ -68,7 +68,7 @@ def resolve_overwrite_with_store(
     )
 
 
-def _store_data(
+def store_data(
     bwd_generator: "BackwardPassGenerator",
     forward_state: SDFGState,
     backward_state: SDFGState,
@@ -118,13 +118,13 @@ def _store_data(
         # Otherwise, replace all the loop dependent allocations with the max length of the loop
         # For example, an array of size [i+1] in a range(2, 10) loop will be stored in a [10, 10] array (1)
         # Additionally, an array of size [32-i] in the same loop will be stored in a [10, 30]  (2)
-        loops = _get_all_enclosing_loops(forward_state)
+        loops = get_all_enclosing_loops(forward_state)
 
         if len(loops) > 0:
             # Loop over the shape dimensions
             for i, s in enumerate(shape):
                 if ad_utils.shape_has_symbols_to_replace(bwd_generator.sdfg, s):
-                    loop_size, loop_index = _get_symbol_upper_bound_from_loop(bwd_generator, s, loops)
+                    loop_size, loop_index = get_symbol_upper_bound_from_loop(bwd_generator, s, loops)
                     # Replace the symbol with the loop size and evaluate the expression
                     # Check if loop size can be converted to an integer
                     loop_index_sym = symbolic.pystr_to_symbolic(loop_index)
@@ -137,7 +137,7 @@ def _store_data(
     loop_param_list = []
     if enclosed:
         # Get all enclosing loops
-        all_encolsing_loops = _get_all_enclosing_loops(forward_state=forward_state)
+        all_encolsing_loops = get_all_enclosing_loops(forward_state=forward_state)
         nb_enclosing_loops = len(all_encolsing_loops)
         # Get the size of each loop and add it to the list
         for loop in all_encolsing_loops:
@@ -161,7 +161,7 @@ def _store_data(
                     new_dim = symbolic.pystr_to_symbolic(new_dim)
 
                 # Try to replace the symbols with the loop size
-                loop_size, loop_index = _get_symbol_upper_bound_from_loop(bwd_generator, new_dim, all_encolsing_loops)
+                loop_size, loop_index = get_symbol_upper_bound_from_loop(bwd_generator, new_dim, all_encolsing_loops)
                 loop_index_sym = symbolic.pystr_to_symbolic(loop_index)
                 loop_size_sym = loop_size if isinstance(loop_size, int) else symbolic.pystr_to_symbolic(loop_size)
                 new_dim = new_dim.subs(loop_index_sym, loop_size_sym)
@@ -227,7 +227,7 @@ def _store_data(
 
     params_to_add = new_param_dict
     # First, we need to add an assign tasklet
-    assign_tasklet_node, assign_tasklet_node_out_connector = _get_assign_tasklet(
+    assign_tasklet_node, assign_tasklet_node_out_connector = get_assign_tasklet(
         forward_state=forward_state,
         node=forward_an,
         stored_node=new_store_node,
@@ -242,7 +242,7 @@ def _store_data(
     for edge in reversed(all_edges):
         if isinstance(edge.src, nodes.MapEntry):
             # Get the corresponding map exit
-            map_exist = _find_map_exist_for_map_entry(map_entry=edge.src, state=forward_state)
+            map_exist = find_map_exist_for_map_entry(map_entry=edge.src, state=forward_state)
 
             # Add the Connectors to the map
             map_exit_in_connector = f"IN_stored_{new_store_node.label}"
@@ -398,7 +398,7 @@ def _store_data(
     return new_store_node, memlets_stack
 
 
-def _connect_stored_data_to_target(
+def connect_stored_data_to_target(
     bwd_generator: "BackwardPassGenerator",
     forward_state: SDFGState,
     backward_state: SDFGState,
@@ -438,7 +438,7 @@ def _connect_stored_data_to_target(
         edge_src = edge.src
         if isinstance(edge_src, nodes.MapEntry):
             # Get the correponding map exist
-            map_exit = _find_map_exist_for_map_entry(map_entry=edge_src, state=forward_state)
+            map_exit = find_map_exist_for_map_entry(map_entry=edge_src, state=forward_state)
 
             # Use the lookup table to get the map entry in the backward state corresponding to this map exist in the forward state
             # Sanity check: this map entry should already exist in the backward state
@@ -508,7 +508,7 @@ def _connect_stored_data_to_target(
     assert len(memlets) == 0
 
 
-def _get_assign_tasklet(
+def get_assign_tasklet(
     forward_state: SDFGState,
     node: nodes.AccessNode,
     stored_node: nodes.AccessNode,
@@ -624,7 +624,7 @@ def _get_assign_tasklet(
     return return_node, return_connector
 
 
-def _find_map_exist_for_map_entry(map_entry: nodes.MapEntry, state: SDFGState) -> nodes.MapExit:
+def find_map_exist_for_map_entry(map_entry: nodes.MapEntry, state: SDFGState) -> nodes.MapExit:
     """
     Find the map exist that corresponds to the input map entry
     """
@@ -637,7 +637,7 @@ def _find_map_exist_for_map_entry(map_entry: nodes.MapEntry, state: SDFGState) -
     return src_candidates[0]
 
 
-def _get_symbol_upper_bound_from_loop(
+def get_symbol_upper_bound_from_loop(
     bwd_generator: "BackwardPassGenerator", s: sp.Symbol, loops: list[LoopRegion]
 ) -> int:
     """
@@ -711,11 +711,11 @@ def _get_symbol_upper_bound_from_loop(
 
     # We will call this function recusrively until loop size is numeric or it is a global SDFG symbol
     if ad_utils.shape_has_symbols_to_replace(bwd_generator.sdfg, loop_size):
-        loop_size, _ = _get_symbol_upper_bound_from_loop(bwd_generator, loop_size, loops)
+        loop_size, _ = get_symbol_upper_bound_from_loop(bwd_generator, loop_size, loops)
     return loop_size, loop_index
 
 
-def _get_all_enclosing_loops(forward_state: SDFGState) -> list[LoopRegion]:
+def get_all_enclosing_loops(forward_state: SDFGState) -> list[LoopRegion]:
     """
     Check if this state will be executed several times within a loop.
     We check if any of the parents of this state is a loop region.

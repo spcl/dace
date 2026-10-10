@@ -22,6 +22,7 @@ from dace.sdfg import dealias
 
 import ast
 import copy
+import re
 import functools
 import itertools
 from numbers import Integral, Number
@@ -33,6 +34,107 @@ import numpy as np
 import sympy as sp
 
 numpy_version = np.lib.NumpyVersion(np.__version__)
+
+# Cephes Chebyshev tables for the modified Bessel function I0, split at |x| == 8. NumPy's own ``i0``
+# evaluates exactly these, so a native lowering built on them stays numerically indistinguishable
+# from the reference instead of merely close.
+I0_CHEBYSHEV_SMALL = (
+    -4.41534164647933937950e-18,
+    3.33079451882223809783e-17,
+    -2.43127984654795469359e-16,
+    1.71539128555513303061e-15,
+    -1.16853328779934516808e-14,
+    7.67618549860493561688e-14,
+    -4.85644678311192946090e-13,
+    2.95505266312963983461e-12,
+    -1.72682629144155570723e-11,
+    9.67580903537323691224e-11,
+    -5.18979560163526290666e-10,
+    2.65982372468238665035e-9,
+    -1.30002500998624804212e-8,
+    6.04699502254191894932e-8,
+    -2.67079385394061173391e-7,
+    1.11738753912010371815e-6,
+    -4.41673835845875056359e-6,
+    1.64484480707288970893e-5,
+    -5.75419501008210370398e-5,
+    1.88502885095841655729e-4,
+    -5.76375574538582365885e-4,
+    1.63947561694133579842e-3,
+    -4.32430999505057594430e-3,
+    1.05464603945949983183e-2,
+    -2.37374148058994688156e-2,
+    4.93052842396707084878e-2,
+    -9.49010970480476444210e-2,
+    1.71620901522208775349e-1,
+    -3.04682672343198398683e-1,
+    6.76795274409476084995e-1,
+)
+
+I0_CHEBYSHEV_LARGE = (
+    -7.23318048787475395456e-18,
+    -4.83050448594418207126e-18,
+    4.46562142029675999901e-17,
+    3.46122286769746109310e-17,
+    -2.82762398051658348494e-16,
+    -3.42548561967721913462e-16,
+    1.77256013305652638360e-15,
+    3.81168066935262242075e-15,
+    -9.55484669882830764870e-15,
+    -4.15056934728722208663e-14,
+    1.54008621752140982691e-14,
+    3.85277838274214270114e-13,
+    7.18012445138366623367e-13,
+    -1.79417853150680611778e-12,
+    -1.32158118404477131188e-11,
+    -3.14991652796324136454e-11,
+    1.18891471078464383424e-11,
+    4.94060238822496958910e-10,
+    3.39623202570838634515e-9,
+    2.26666899049817806459e-8,
+    2.04891858946906374183e-7,
+    2.89137052083475648297e-6,
+    6.88975834691682398426e-5,
+    3.36911647825569408990e-3,
+    8.04490411014108831608e-1,
+)
+
+
+def chbevl_code(coeffs: tuple[float, ...], arg: str, prefix: str, indent: str) -> str:
+    """Cephes ``chbevl`` unrolled into straight-line SSA, leaving the value in ``<prefix>res``.
+
+    The Clenshaw recurrence carries three running values, so it is spelled as one new name per step
+    rather than as a single nested expression, which would grow exponentially.
+    """
+    lines = [f"{prefix}b0_0 = {coeffs[0]!r}", f"{prefix}b1_0 = 0.0"]
+    for i, coeff in enumerate(coeffs[1:], start=1):
+        lines.append(f"{prefix}b1_{i} = {prefix}b0_{i - 1}")
+        lines.append(f"{prefix}b0_{i} = {arg} * {prefix}b1_{i} - {prefix}b1_{i - 1} + {coeff!r}")
+    last = len(coeffs) - 1
+    lines.append(f"{prefix}res = 0.5 * ({prefix}b0_{last} - {prefix}b1_{last - 1})")
+    return "\n".join(indent + line for line in lines)
+
+
+def i0_code() -> str:
+    """Tasklet body for ``numpy.i0``: two Chebyshev expansions selected on |x|, as in Cephes.
+
+    Written out rather than deferred to ``std::cyl_bessel_i``, which libc++ does not provide and
+    which has no device-side spelling at all.
+    """
+    small = chbevl_code(I0_CHEBYSHEV_SMALL, "__i0_xs", "__i0_s_", "    ")
+    large = chbevl_code(I0_CHEBYSHEV_LARGE, "__i0_xl", "__i0_l_", "    ")
+    return (
+        "__i0_ax = abs(__in1)\n"
+        "if __i0_ax <= 8.0:\n"
+        "    __i0_xs = __i0_ax / 2.0 - 2.0\n"
+        f"{small}\n"
+        "    __out = exp(__i0_ax) * __i0_s_res\n"
+        "else:\n"
+        "    __i0_xl = 32.0 / __i0_ax - 2.0\n"
+        f"{large}\n"
+        "    __out = exp(__i0_ax) * __i0_l_res / sqrt(__i0_ax)"
+    )
+
 
 # TODO: Add all ufuncs in subsequent PR's.
 ufuncs = dict(
@@ -149,8 +251,8 @@ ufuncs = dict(
         operator="Mod",
         inputs=["__in1", "__in2"],
         outputs=["__out"],
-        code="__out = py_mod(__in1, __in2)",
-        reduce="lambda a, b: py_mod(a, b)",
+        code="__out = PyMod(__in1, __in2)",
+        reduce="lambda a, b: PyMod(a, b)",
         initial=np.remainder.identity,
     ),
     mod=dict(
@@ -158,8 +260,8 @@ ufuncs = dict(
         operator="Mod",
         inputs=["__in1", "__in2"],
         outputs=["__out"],
-        code="__out = py_mod(__in1, __in2)",
-        reduce="lambda a, b: py_mod(a, b)",
+        code="__out = PyMod(__in1, __in2)",
+        reduce="lambda a, b: PyMod(a, b)",
         initial=np.mod.identity,
     ),
     fmod=dict(
@@ -167,13 +269,13 @@ ufuncs = dict(
         operator="Mod",
         inputs=["__in1", "__in2"],
         outputs=["__out"],
-        code="__out = cpp_mod(__in1, __in2)",
-        reduce="lambda a, b: cpp_mod(a, b)",
+        code="__out = CMod(__in1, __in2)",
+        reduce="lambda a, b: CMod(a, b)",
         initial=np.fmod.identity,
     ),
     divmod=dict(
         name="_numpy_divmod_",
-        operator="Div",
+        operator="Mod",
         inputs=["__in1", "__in2"],
         outputs=["__out1", "__out2"],
         code="py_divmod(__in1, __in2, __out1, __out2)",
@@ -788,7 +890,7 @@ ufuncs = dict(
         operator="Modf",
         inputs=["__in1"],
         outputs=["__out1", "__out2"],
-        code="np_modf(__in1, __out1, __out2)",
+        code="np_modf(__in1, __out2, __out1)",
         reduce=None,
         initial=np.modf.identity,
     ),
@@ -840,6 +942,15 @@ ufuncs = dict(
         code="__out = trunc(__in1)",
         reduce=None,
         initial=np.trunc.identity,
+    ),
+    i0=dict(
+        name="_numpy_i0_",
+        operator="Exp",  # Only tags the dtype rule: integers widen to float64, floats are kept
+        inputs=["__in1"],
+        outputs=["__out"],
+        code=i0_code(),
+        reduce=None,
+        initial=None,
     ),
 )
 
@@ -979,7 +1090,9 @@ def _validate_ufunc_outputs(
             ast_node,
             "You cannot specify 'out' in call to numpy.{f} as both a positional"
             " and keyword argument (positional {p}, keyword {k}).".format(
-                f=ufunc_name, p=args[num_outputs, :], k=kwargs["out"]
+                f=ufunc_name,
+                p=args[num_outputs, :],
+                k=kwargs["out"],
             ),
         )
     elif num_pos_outputs > 0:
@@ -1250,6 +1363,17 @@ def _create_output(
     return outputs
 
 
+def replace_connector(code: str, connector: str, replacement: str) -> str:
+    """Substitute a tasklet connector by NAME, never as a bare substring.
+
+    ``clip`` is the one entry whose connectors share a prefix (``__in_a``, ``__in_amin``,
+    ``__in_amax``), so a plain ``str.replace`` of ``__in_a`` also rewrote the middle of the other
+    two and produced ``dace.float64(__in_a)min`` -- two adjacent expressions, which is not parseable
+    Python. The tasklet then failed to build with a bare SyntaxError naming no kernel.
+    """
+    return re.sub(r"\b" + re.escape(connector) + r"\b", lambda _: replacement, code)
+
+
 def _set_tasklet_params(
     ufunc_impl: dict[str, Any], inputs: list[UfuncInput], casting: list[dtypes.typeclass] = None
 ) -> dict[str, Any]:
@@ -1274,10 +1398,10 @@ def _set_tasklet_params(
         inp_conn = inp_connectors[i]
         if casting and casting[i]:
             repl = "{c}({o})".format(c=str(casting[i]).replace("::", "."), o=inp_conn)
-            code = code.replace(inp_conn, repl)
+            code = replace_connector(code, inp_conn, repl)
         if isinstance(arg, (Number, sp.Basic)):
             inp_conn = inp_connectors[i]
-            code = code.replace(inp_conn, astutils.unparse(arg))
+            code = replace_connector(code, inp_conn, astutils.unparse(arg))
             inp_connectors.pop(i)
 
     return dict(name=name, inputs=inp_connectors, outputs=out_connectors, code=code)
@@ -1517,7 +1641,7 @@ def implement_ufunc(
 
     :return: List of output datanames
     """
-    from dace.frontend.python.replacements.operators import result_type
+    from dace.frontend.python.replacements.operators import fold_symbolic_operator, result_type
 
     # Flatten arguments
     args = _flatten_args(args)
@@ -1555,6 +1679,17 @@ def implement_ufunc(
         dtype = kwargs["dtype"]
         if dtype in dtypes.dtype_to_typeclass().keys():
             result_type = dtype
+
+    # Fold to a symbolic expression when no operand is backed by data, so the NumPy spelling of an
+    # operator produces exactly what the operator spelling produces (``np.bitwise_and(N, 3)`` gives
+    # the same expression as ``N & 3``) and stays usable in a map range, a memlet subset or an
+    # interstate condition instead of materializing a transient. Placed after ``result_type`` so its
+    # integer-only check still rejects float operands first. Skipped when an output container is
+    # requested (``out=`` or positional) or a ``where`` mask applies: both demand materialized data.
+    if not has_where and all(out is None for out in outputs):
+        folded = fold_symbolic_operator(ufunc_impl["operator"], inputs)
+        if folded is not None:
+            return [folded]
 
     # Create output data (if needed)
     outputs = _create_output(sdfg, inputs, outputs, out_shape, result_type, name_hint=visitor.get_target_name())
@@ -2135,50 +2270,54 @@ def implement_ufunc_outer(
     return outputs
 
 
+def method_reduce_kwargs(kwargs: dict[str, Any]) -> dict[str, Any]:
+    """``ndarray.sum(...)``-style keywords for :func:`implement_ufunc_reduce`: the method reduces every
+    axis by default, where ``ufunc.reduce`` reduces axis 0."""
+    return {"axis": None, **kwargs}
+
+
 @oprepo.replaces_method("Array", "sum")
 @oprepo.replaces_method("Scalar", "sum")
 @oprepo.replaces_method("View", "sum")
-def _ndarray_sum(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, kwargs: dict[str, Any] = None) -> str:
-    kwargs = kwargs or dict(axis=None)
-    return implement_ufunc_reduce(pv, None, sdfg, state, "add", [arr], kwargs)[0]
+def _ndarray_sum(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, **kwargs: Any) -> str:
+    return implement_ufunc_reduce(pv, None, sdfg, state, "add", [arr], method_reduce_kwargs(kwargs))[0]
 
 
 @oprepo.replaces_method("Array", "mean")
 @oprepo.replaces_method("Scalar", "mean")
 @oprepo.replaces_method("View", "mean")
-def _ndarray_mean(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, kwargs: dict[str, Any] = None) -> str:
+def _ndarray_mean(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, **kwargs: Any) -> str:
     from dace.frontend.python.replacements.misc import elementwise  # Avoid import loop
 
     nest = NestedCall(pv, sdfg, state)
-    kwargs = kwargs or dict(axis=None)
+    kwargs = method_reduce_kwargs(kwargs)
     sumarr = implement_ufunc_reduce(pv, None, sdfg, nest.add_state(), "add", [arr], kwargs)[0]
-    desc = sdfg.arrays[arr]
-    sz = functools.reduce(lambda x, y: x * y, desc.shape)
+    shape = sdfg.arrays[arr].shape
+    axis = kwargs["axis"]
+    axes = range(len(shape)) if axis is None else (axis,) if isinstance(axis, int) else axis
+    sz = functools.reduce(lambda x, y: x * y, (shape[a] for a in axes), 1)
     return nest, elementwise(pv, sdfg, nest.add_state(), f"lambda x: x / {sz}", sumarr)
 
 
 @oprepo.replaces_method("Array", "prod")
 @oprepo.replaces_method("Scalar", "prod")
 @oprepo.replaces_method("View", "prod")
-def _ndarray_prod(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, kwargs: dict[str, Any] = None) -> str:
-    kwargs = kwargs or dict(axis=None)
-    return implement_ufunc_reduce(pv, None, sdfg, state, "multiply", [arr], kwargs)[0]
+def _ndarray_prod(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, **kwargs: Any) -> str:
+    return implement_ufunc_reduce(pv, None, sdfg, state, "multiply", [arr], method_reduce_kwargs(kwargs))[0]
 
 
 @oprepo.replaces_method("Array", "all")
 @oprepo.replaces_method("Scalar", "all")
 @oprepo.replaces_method("View", "all")
-def _ndarray_all(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, kwargs: dict[str, Any] = None) -> str:
-    kwargs = kwargs or dict(axis=None)
-    return implement_ufunc_reduce(pv, None, sdfg, state, "logical_and", [arr], kwargs)[0]
+def _ndarray_all(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, **kwargs: Any) -> str:
+    return implement_ufunc_reduce(pv, None, sdfg, state, "logical_and", [arr], method_reduce_kwargs(kwargs))[0]
 
 
 @oprepo.replaces_method("Array", "any")
 @oprepo.replaces_method("Scalar", "any")
 @oprepo.replaces_method("View", "any")
-def _ndarray_any(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, kwargs: dict[str, Any] = None) -> str:
-    kwargs = kwargs or dict(axis=None)
-    return implement_ufunc_reduce(pv, None, sdfg, state, "logical_or", [arr], kwargs)[0]
+def _ndarray_any(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, **kwargs: Any) -> str:
+    return implement_ufunc_reduce(pv, None, sdfg, state, "logical_or", [arr], method_reduce_kwargs(kwargs))[0]
 
 
 @oprepo.replaces("numpy.clip")

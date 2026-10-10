@@ -1,6 +1,8 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests that validation errors can be formatted for every kind of control flow block."""
 
+import pytest
+
 import dace
 from dace.properties import CodeBlock
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
@@ -34,7 +36,19 @@ def test_edge_error_on_conditional_block():
     assert "at state cond" in str(InvalidSDFGEdgeError("message", sdfg, block_id, 0))
 
 
+def test_gap_in_tuple_return_names_is_a_validation_error():
+    """Validation reports ``__return_0`` and ``__return_2`` as an invalid SDFG, not as a ``TypeError`` from a
+    constructor call missing the SDFG."""
+    sdfg = dace.SDFG("gapped_returns")
+    sdfg.add_array("__return_0", [1], dace.float64)
+    sdfg.add_array("__return_2", [1], dace.float64)
+    sdfg.add_state("s", is_start_block=True)
+    with pytest.raises(InvalidSDFGError, match="not consecutively named"):
+        sdfg.validate()
+
+
 if __name__ == "__main__":
     test_error_on_conditional_block()
     test_node_error_on_conditional_block()
     test_edge_error_on_conditional_block()
+    test_gap_in_tuple_return_names_is_a_validation_error()

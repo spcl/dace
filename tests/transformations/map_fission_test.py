@@ -1,7 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
 
-import numpy as np
 import pytest
 
 import dace
@@ -10,6 +9,19 @@ from dace.sdfg import utils as sdutils
 from dace.transformation.dataflow import MapFission
 from dace.transformation.helpers import nest_state_subgraph
 from dace.transformation.interstate import InlineSDFG
+from tests.sdfg.cfg_list_in_place_test import assert_tree_consistent
+
+
+def assert_cfg_list_matches_reset(sdfg: dace.SDFG) -> None:
+    """The kept CFG list and ids equal a fresh copy's after ``reset_cfg_list``, and every parent pointer holds."""
+    fresh = copy.deepcopy(sdfg)
+    fresh.reset_cfg_list()
+    kept = [(type(r).__name__, r.label, r.cfg_id) for r in sdfg.cfg_list]
+    assert kept == [(type(r).__name__, r.label, r.cfg_id) for r in fresh.cfg_list]
+    assert_tree_consistent(sdfg)
+
+
+import numpy as np
 
 
 def mapfission_sdfg():
@@ -46,10 +58,14 @@ def mapfission_sdfg():
     state.add_memlet_path(rnode, ome, ime3, t3, memlet=dace.Memlet.simple("A", "2*i:2*i+2"), dst_conn="a")
     state.add_memlet_path(t3, imx3, s34node, memlet=dace.Memlet.simple("s3out", "0"), src_conn="b")
 
-    state.add_edge(t1, "b", t4, "ione", dace.Memlet.simple("s1", "0"))
+    s1node = state.add_access("s1")
+    state.add_edge(t1, "b", s1node, None, dace.Memlet.simple("s1", "0"))
+    state.add_edge(s1node, None, t4, "ione", dace.Memlet.simple("s1", "0"))
     state.add_edge(s24node, None, t4, "itwo", dace.Memlet.simple("s2", "0:2"))
     state.add_edge(s34node, None, t4, "ithree", dace.Memlet.simple("s3out", "0"))
-    state.add_edge(scalar, "out", t4, "sc", dace.Memlet.simple("scal", "0"))
+    scalnode = state.add_access("scal")
+    state.add_edge(scalar, "out", scalnode, None, dace.Memlet.simple("scal", "0"))
+    state.add_edge(scalnode, None, t4, "sc", dace.Memlet.simple("scal", "0"))
     state.add_memlet_path(t4, omx, wnode, memlet=dace.Memlet.simple("B", "i"), src_conn="out")
 
     sdfg.validate()
@@ -506,7 +522,11 @@ def test_single_data_multiple_connectors():
     ref_sdfg.name = f"{ref_sdfg.name}_ref"
     ref_sdfg(A=A, B=ref)
 
+    before = outer_sdfg.to_json()
+    assert MapFission.can_be_applied_to(outer_sdfg, expr_index=1, map_entry=me, nested_sdfg=inner_sdfg_node)
+    assert outer_sdfg.to_json() == before, "can_be_applied rewrote the nested SDFG it was asked about"
     MapFission.apply_to(outer_sdfg, expr_index=1, map_entry=me, nested_sdfg=inner_sdfg_node)
+    assert_cfg_list_matches_reset(outer_sdfg)
     val = np.empty_like(A)
     outer_sdfg(A=A, B=val)
 
@@ -625,11 +645,9 @@ def test_strided_fission_step2():
     strided_two_ops(A=A, B=B_ref)
 
     sdfg = strided_two_ops.to_sdfg()
-    sdfg.save("before.sdfg")
     assert sdfg.apply_transformations(MapFission, validate=True, validate_all=True) > 0
 
     sdfg(A=A, B=B_test)
-    sdfg.save("after.sdfg")
     assert np.allclose(B_test, B_ref)
 
 
@@ -849,7 +867,7 @@ def _find_map_entry(sdfg, param, nested):
     :param nested: Whether the map must be inside another scope.
     :returns: A ``(state, map_entry)`` pair, or ``(None, None)``.
     """
-    for st in sdfg.all_states():
+    for st in sdfg.states():
         for n in st.nodes():
             if isinstance(n, nodes.MapEntry) and n.map.params == [param]:
                 if (st.entry_node(n) is not None) == nested:
@@ -865,7 +883,7 @@ def _fission_maps(sdfg):
     """
     return [
         (st, n)
-        for st in sdfg.all_states()
+        for st in sdfg.states()
         for n in st.nodes()
         if isinstance(n, nodes.MapEntry) and st.entry_node(n) is None
     ]
@@ -971,7 +989,7 @@ def test_mapfission_refuses_conditional_component_stays_valid():
     x0, y0 = np.zeros((n, m)), np.zeros((n, m))
     copy.deepcopy(sdfg)(x=x0, y=y0, N=n, M=m)
 
-    for st in sdfg.all_states():
+    for st in sdfg.states():
         for me in st.nodes():
             if not isinstance(me, nodes.MapEntry):
                 continue
