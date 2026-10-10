@@ -55,6 +55,7 @@ from dace.transformation.passes.canonicalize.induction_variable_substitution imp
     InductionVariableSubstitution,
     LoopCarriedRotationSubstitution,
 )
+from dace.transformation.passes.canonicalize.lift_break_to_find_first import LiftBreakToFindFirst
 from dace.transformation.passes.canonicalize.lift_inv import LiftInv
 from dace.transformation.passes.canonicalize.lift_loop_carried_reduction import LiftLoopCarriedReduction
 from dace.transformation.passes.canonicalize.loop_to_conditional_reduce import LoopToConditionalReduce
@@ -709,14 +710,17 @@ def _build_stages(
     # CollapseNoOpCast first: ``__out = dace.float64(__inp)`` with matching dtypes hides a plain copy
     # from every textual matcher, TrivialTaskletElimination included. RewriteModuloToPyMod makes every
     # floored modulo ``py_mod``. NormalizeNegativeStride gives downstream positive strides only.
-    # ContinueToCondition turns ``continue`` into a guard before SplitStatements / IVS (``break``
-    # loops stay sequential). SimplifyPass's FuseStates collapses multi-state bodies for fission.
+    # ContinueToCondition turns ``continue`` into a guard before SplitStatements / IVS, and
+    # LiftBreakToFindFirst an early exit into a parallel find-first plus a loop below the hit (a
+    # ``break`` loop it cannot prove stays sequential). SimplifyPass's FuseStates collapses multi-state
+    # bodies for fission.
     s += [
         ("clean", CollapseNoOpCast()),
         ("clean", RewriteModuloToPyMod()),
         ("clean", NormalizeNegativeStride()),
         ("clean", unique_loop_iterators),
         ("clean", ContinueToCondition()),
+        ("clean", LiftBreakToFindFirst()),
         ("clean", SimplifyPass()),
     ]
 

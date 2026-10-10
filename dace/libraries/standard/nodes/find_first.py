@@ -245,6 +245,9 @@ class FindFirst(nodes.LibraryNode):
         default="false",
         desc=f"C++ predicate over the in-connectors, indexed by '{INDEX_NAME}'. True at the index the search returns.",
     )
+    symbols = properties.ListProperty(
+        element_type=str, default=[], desc="Symbols the predicate reads by name, so they reach the node's scope."
+    )
     begin = properties.SymbolicProperty(default=0, desc="First index to test.")
     end = properties.SymbolicProperty(default=0, desc="One past the last index to test; the no-hit answer.")
 
@@ -260,6 +263,10 @@ class FindFirst(nodes.LibraryNode):
         self.predicate = predicate
         self.begin = begin
         self.end = end
+
+    @property
+    def free_symbols(self) -> set[str]:
+        return super().free_symbols | set(self.symbols)
 
     def validate(self, sdfg: dace.SDFG, state: dace.SDFGState) -> None:
         """Require the index output and a predicate that actually names the index.
