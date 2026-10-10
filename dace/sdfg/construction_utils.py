@@ -11,9 +11,9 @@ def generate_assignment_as_tasklet_in_state(state: dace.SDFGState, lhs: str, rhs
     import sympy
 
     rhs = rhs.strip()
-    rhs_sym_expr = dace.symbolic.SymExpr(rhs).evalf()
+    rhs_sym_expr = dace.symbolic.SymExpr(rhs)
     lhs = lhs.strip()
-    lhs_sym_expr = dace.symbolic.SymExpr(lhs).evalf()
+    lhs_sym_expr = dace.symbolic.SymExpr(lhs)
 
     in_connectors = dict()
     out_connectors = dict()
