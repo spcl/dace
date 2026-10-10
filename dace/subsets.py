@@ -3,7 +3,6 @@ import itertools
 import warnings
 from collections.abc import Sequence
 from functools import reduce
-from typing import Union
 
 import sympy as sp
 
@@ -59,8 +58,6 @@ class Subset:
             )
         if not bounding_box_covers(self, other, facts, approximation=False):
             return False
-        if isinstance(self, Indices):
-            return True
         if not isinstance(self, Range):
             raise ValueError(f"Does not know how to compare a `{type(self).__name__}` with a `{type(other).__name__}`.")
 
@@ -72,8 +69,6 @@ class Subset:
             return symbolic.ask(relation, facts) is symbolic.Truth.TRUE
 
         # Every element of ``other`` lies on this range's lattice: its step divides the distance from its start
-        if isinstance(other, Indices):
-            return all(divides(step, index - start) for (start, _, step), index in zip(self.ranges, other.indices))
         return all(
             divides(step, ostep) and divides(step, ostart - start)
             for (start, _, step), (ostart, _, ostep) in zip(self.ranges, other.ranges)
@@ -204,10 +199,7 @@ class Range(Subset):
         self.tile_sizes = parsed_tiles
 
     @staticmethod
-    def from_indices(indices: Union["Indices", Sequence[int | str | symbolic.SymbolicType]]):
-        if isinstance(indices, Indices):
-            return Range([(i, i, 1) for i in indices.indices])
-
+    def from_indices(indices: Sequence[int | str | symbolic.SymbolicType]):
         indices = [symbolic.pystr_to_symbolic(i) for i in indices]
         return Range([(i, i, 1) for i in indices])
 
@@ -934,30 +926,6 @@ class Range(Subset):
         return True
 
 
-@dace.serialize.serializable
-class Indices(Range):
-    """A subset of one element representing a single index in an
-    N-dimensional data descriptor."""
-
-    def __init__(self, indices: Sequence[int | str | symbolic.SymbolicType]):
-        warnings.warn(
-            "The Indices class is deprecated and will be removed in future versions of DaCe.", DeprecationWarning
-        )
-        if indices is None:
-            raise TypeError("Expected an array of index expressions: got None")
-        elif isinstance(indices, str):
-            raise TypeError("Expected collection of index expression: got str")
-        elif isinstance(indices, symbolic.SymExpr):
-            raise TypeError("Expected collection of index expression: got SymExpr")
-
-        indices = [symbolic.pystr_to_symbolic(i) for i in indices]
-        super().__init__([(idx, idx, 1) for idx in indices])
-
-    @property
-    def indices(self) -> list[symbolic.SymbolicType]:
-        return [rb for rb, _, _ in self.ranges]
-
-
 class SubsetUnion(Subset):
     """
     Wrapper subset type that stores multiple Subsets in a list.
@@ -971,11 +939,11 @@ class SubsetUnion(Subset):
             for subset in subset:
                 if not subset:
                     break
-                if isinstance(subset, (Range, Indices)):
+                if isinstance(subset, Range):
                     self.subset_list.append(subset)
                 else:
                     raise NotImplementedError
-        elif isinstance(subset, (Range, Indices)):
+        elif isinstance(subset, Range):
             self.subset_list = [subset]
 
     def covers(self, other: Subset, facts: symbolic.Facts) -> bool:
@@ -1032,7 +1000,7 @@ class SubsetUnion(Subset):
         try:
             if isinstance(other, SubsetUnion):
                 self.subset_list += other.subset_list
-            elif isinstance(other, Indices) or isinstance(other, Range):
+            elif isinstance(other, Range):
                 self.subset_list.append(other)
             else:
                 raise TypeError
@@ -1100,7 +1068,7 @@ def union(subset_a: Subset, subset_b: Subset, facts: symbolic.Facts) -> Subset:
         return subset_a
     if isinstance(subset_a, SubsetUnion) or isinstance(subset_b, SubsetUnion):
         return list_union(subset_a, subset_b)
-    if not isinstance(subset_a, (Range, Indices)):
+    if not isinstance(subset_a, Range):
         warnings.warn("Unrecognized Subset type %s in union, degenerating to bounding box" % type(subset_a).__name__)
     return bounding_box_union(subset_a, subset_b, facts)
 
@@ -1145,10 +1113,6 @@ def intersects(subset_a: Subset, subset_b: Subset, facts: symbolic.Facts) -> sym
     """
     if subset_a is None or subset_b is None:
         return symbolic.Truth.FALSE
-    if isinstance(subset_a, Indices):
-        subset_a = Range.from_indices(subset_a)
-    if isinstance(subset_b, Indices):
-        subset_b = Range.from_indices(subset_b)
     if type(subset_a) is type(subset_b):
         return subset_a.intersects(subset_b, facts)
     return symbolic.Truth.UNKNOWN

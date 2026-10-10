@@ -5,7 +5,7 @@ from enum import Flag
 from networkx import DiGraph
 
 import dace
-from dace import SDFG, SDFGState, data, dtypes, subsets, symbolic
+from dace import SDFG, SDFGState, data, dtypes, symbolic
 from dace.memlet import Memlet
 from dace.sdfg import nodes
 from dace.sdfg.graph import MultiConnectorEdge
@@ -446,8 +446,6 @@ class VectorInferenceGraph(DiGraph):
         # Possibly multidimensional subset, find the dimension where the param occurs
         vec_dim = None
         subset = edge.data.subset
-        if isinstance(subset, subsets.Indices):
-            subset = subsets.Range.from_indices(subset)
         for dim, sub in enumerate(subset):
             if self.param in {sym.name for sym in symbolic.pystr_to_symbolic(sub[0]).free_symbols}:
                 if vec_dim is None:

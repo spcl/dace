@@ -67,9 +67,6 @@ class PowerRelaxer:
     def relax_subset(self, sub: subsets.Subset, facts_of: FactsOf) -> None:
         if isinstance(sub, subsets.Range):
             sub.ranges = [tuple(self.relax(component, facts_of) for component in rng) for rng in sub.ranges]
-        elif isinstance(sub, subsets.Indices):
-            # ``Indices`` sets ``indices`` in its constructor without declaring it
-            sub.indices = [self.relax(idx, facts_of) for idx in sub.indices]  # pyright: ignore[reportAttributeAccessIssue]
 
     def relax_descriptor(self, desc: data.Array, facts_of: FactsOf) -> None:
         desc.shape = tuple(self.relax(item, facts_of) for item in desc.shape)

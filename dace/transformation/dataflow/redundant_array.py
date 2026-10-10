@@ -68,17 +68,11 @@ def _validate_subsets(
                 padding = len(desc.shape) - len(src_subset)
                 if padding != 0:
                     if padding > 0:
-                        if isinstance(src_subset, subsets.Indices):
-                            indices = [0] * padding + src_subset.indices
-                            src_subset = subsets.Range.from_indices(indices)
-                        elif isinstance(src_subset, subsets.Range):
+                        if isinstance(src_subset, subsets.Range):
                             ranges = [(0, 0, 1)] * padding + src_subset.ranges
                             src_subset = subsets.Range(ranges)
                     elif padding < 0:
-                        if isinstance(src_subset, subsets.Indices):
-                            indices = src_subset.indices[-padding:]
-                            src_subset = subsets.Range.from_indices(indices)
-                        elif isinstance(src_subset, subsets.Range):
+                        if isinstance(src_subset, subsets.Range):
                             ranges = src_subset.ranges[-padding:]
                             src_subset = subsets.Range(ranges)
                     src_subset.offset(src_subset, True)
@@ -100,17 +94,11 @@ def _validate_subsets(
                 padding = len(desc.shape) - len(dst_subset)
                 if padding != 0:
                     if padding > 0:
-                        if isinstance(dst_subset, subsets.Indices):
-                            indices = [0] * padding + dst_subset.indices
-                            dst_subset = subsets.Range.from_indices(indices)
-                        elif isinstance(dst_subset, subsets.Range):
+                        if isinstance(dst_subset, subsets.Range):
                             ranges = [(0, 0, 1)] * padding + dst_subset.ranges
                             dst_subset = subsets.Range(ranges)
                     elif padding < 0:
-                        if isinstance(dst_subset, subsets.Indices):
-                            indices = dst_subset.indices[-padding:]
-                            dst_subset = subsets.Range.from_indices(indices)
-                        elif isinstance(dst_subset, subsets.Range):
+                        if isinstance(dst_subset, subsets.Range):
                             ranges = dst_subset.ranges[-padding:]
                             dst_subset = subsets.Range(ranges)
                     dst_subset.offset(dst_subset, True)
@@ -251,20 +239,15 @@ def find_dims_to_pop2(
 
 def pop_dims(subset, dims):
     popped = []
-    if isinstance(subset, subsets.Indices):
-        indices = copy.deepcopy(subsets.Indices)
-        popped.extend(indices.pop(i) for i in dims)
-        return subsets.Indices(indices)
-    else:
-        ranges = copy.deepcopy(subset.ranges)
-        tsizes = copy.deepcopy(subset.tile_sizes)
-        for i in dims:
-            r = ranges.pop(i)
-            t = tsizes.pop(i)
-            popped.append((r, t))
-        new_subset = subsets.Range(ranges)
-        new_subset.tile_sizes = tsizes
-        return new_subset, popped
+    ranges = copy.deepcopy(subset.ranges)
+    tsizes = copy.deepcopy(subset.tile_sizes)
+    for i in dims:
+        r = ranges.pop(i)
+        t = tsizes.pop(i)
+        popped.append((r, t))
+    new_subset = subsets.Range(ranges)
+    new_subset.tile_sizes = tsizes
+    return new_subset, popped
 
 
 def compose_and_push_back(first, second, dims=None, popped=None):

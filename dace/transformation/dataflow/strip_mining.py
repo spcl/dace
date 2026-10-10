@@ -16,31 +16,6 @@ from dace.transformation import helpers as xfh
 from dace.transformation import transformation
 
 
-def calc_set_image_index(map_idx, map_set, array_idx):
-    image = []
-    for a_idx in array_idx.indices:
-        new_range = [a_idx, a_idx, SymExpr(1, 1)]
-        for m_idx, m_range in zip(map_idx, map_set):
-            symbol = symbolic.pystr_to_symbolic(m_idx)
-            for i in range(2):
-                if isinstance(m_range[i], SymExpr):
-                    exact = m_range[i].expr
-                    approx = m_range[i].approx
-                else:
-                    exact = m_range[i]
-                    approx = overapproximate(m_range[i])
-                if isinstance(new_range[i], SymExpr):
-                    new_range[i] = SymExpr(
-                        new_range[i].expr.subs([(symbol, exact)]), new_range[i].approx.subs([(symbol, approx)])
-                    )
-                elif issymbolic(new_range[i]):
-                    new_range[i] = SymExpr(new_range[i].subs([(symbol, exact)]), new_range[i].subs([(symbol, approx)]))
-                else:
-                    new_range[i] = SymExpr(new_range[i], new_range[i])
-        image.append(new_range)
-    return subsets.Range(image)
-
-
 def calc_set_image_range(map_idx, map_set, array_range):
     image = []
     for a_range in array_range:
@@ -85,8 +60,6 @@ def calc_set_image_range(map_idx, map_set, array_range):
 def calc_set_image(map_idx, map_set, array_set):
     if isinstance(array_set, subsets.Range):
         return calc_set_image_range(map_idx, map_set, array_set)
-    if isinstance(array_set, subsets.Indices):
-        return calc_set_image_index(map_idx, map_set, array_set)
 
 
 def calc_set_union(set_a, set_b):

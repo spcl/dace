@@ -21,7 +21,7 @@ def test_intersects_symbolic():
     rng5 = subsets.Range([(0, 0, 1), (M, M, 1)])
     rng6 = subsets.Range([(0, N, 1), (0, M, 1)])
     rng7 = subsets.Range([(0, N - 1, 1), (N - 1, N, 1)])
-    ind1 = subsets.Indices([0, 1])
+    ind1 = subsets.Range.from_indices([0, 1])
 
     assert subsets.intersects(rng1, rng2, facts) is Truth.TRUE
     assert subsets.intersects(rng1, rng3_1, facts) is Truth.FALSE
@@ -41,9 +41,9 @@ def test_intersects_constant():
     rng2 = subsets.Range([(3, 4, 1)])
     rng3 = subsets.Range([(1, 5, 1)])
     rng4 = subsets.Range([(5, 7, 1)])
-    ind1 = subsets.Indices([0])
-    ind2 = subsets.Indices([1])
-    ind3 = subsets.Indices([5])
+    ind1 = subsets.Range.from_indices([0])
+    ind2 = subsets.Range.from_indices([1])
+    ind3 = subsets.Range.from_indices([5])
 
     assert subsets.intersects(rng1, rng2, facts) is Truth.TRUE
     assert subsets.intersects(rng1, rng3, facts) is Truth.TRUE
@@ -64,7 +64,7 @@ def test_covers_symbolic():
     rng5 = subsets.Range([(0, 0, 1), (M, M, 1)])
     rng6 = subsets.Range([(0, N, 1), (0, M, 1)])
     rng7 = subsets.Range([(0, N - 1, 1), (N - 1, N, 1)])
-    ind1 = subsets.Indices([0, 1])
+    ind1 = subsets.Range.from_indices([0, 1])
 
     assert rng1.covers(rng2, facts) is True
     assert rng1.covers(rng3_1, facts) is False
