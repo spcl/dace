@@ -162,11 +162,16 @@ DACE_DFI constexpr bool _is_half2_binop() {
          Op == '>' || Op == 'g' || Op == '=' || Op == '!';
 }
 
-// ROCm 7.2.3 ships the scalar ``__hmin`` / ``__hmax`` but no FP16x2 pair, so the two lanes fold
-// through the scalar ones there; CUDA keeps its single native instruction.
+// ROCm 7.2.3 ships no FP16x2 ``__hmin2`` / ``__hmax2``. Clang's elementwise min / max of a two-lane ``_Float16``
+// vector lowers to the packed ``v_pk_min_f16`` / ``v_pk_max_f16``; CUDA keeps its own native instruction.
+#if defined(__HIPCC__)
+typedef _Float16 _dace_f16x2 __attribute__((ext_vector_type(2)));
+#endif
+
 DACE_DFI __half2 _half2_min(__half2 a, __half2 b) {
 #if defined(__HIPCC__)
-  return __halves2half2(__hmin(__low2half(a), __low2half(b)), __hmin(__high2half(a), __high2half(b)));
+  return __builtin_bit_cast(__half2, __builtin_elementwise_min(__builtin_bit_cast(_dace_f16x2, a),
+                                                               __builtin_bit_cast(_dace_f16x2, b)));
 #else
   return __hmin2(a, b);
 #endif
@@ -174,7 +179,8 @@ DACE_DFI __half2 _half2_min(__half2 a, __half2 b) {
 
 DACE_DFI __half2 _half2_max(__half2 a, __half2 b) {
 #if defined(__HIPCC__)
-  return __halves2half2(__hmax(__low2half(a), __low2half(b)), __hmax(__high2half(a), __high2half(b)));
+  return __builtin_bit_cast(__half2, __builtin_elementwise_max(__builtin_bit_cast(_dace_f16x2, a),
+                                                               __builtin_bit_cast(_dace_f16x2, b)));
 #else
   return __hmax2(a, b);
 #endif

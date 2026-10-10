@@ -5,18 +5,20 @@ The lowering-selection + header contract is covered by
 ``passes/test_cuda_tile_lowering.py``; here we drive the full pipeline on a few
 fp16 kernels and assert (a) the ``assume_even`` structural result (a single
 strided ``0:N:W`` GPU_Device map, no mask), (b) the emitted CUDA calls the
-``dace::tileops::tile_*`` contract inside the device TU, and -- when nvcc is
-available -- (c) the generated code compiles and the fp16 arithmetic lowers to
-native ``f16x2`` SIMD in the PTX.
+``dace::tileops::tile_*`` contract inside the device TU, and (c) the generated code compiles and the fp16 arithmetic lowers to the
+backend's packed two-lane fp16 SIMD in the device assembly.
 """
 
 import os
 import shutil
+import subprocess
+from pathlib import Path
 
 import numpy as np
 import pytest
 
 import dace
+from dace.codegen import common
 from dace.dtypes import ScheduleType
 from dace.libraries.tileops import TileBinop, TileMaskGen
 from dace.transformation.interstate import LoopToMap
@@ -26,9 +28,35 @@ from dace.transformation.passes.vectorization.enums import ISA, RemainderStrateg
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import TILE_NODE_TYPES
 from dace.transformation.passes.vectorization.vectorize_gpu import VectorizeGPU
 
-HAS_NVCC = shutil.which("nvcc") is not None
 N = dace.symbol("N")
 TSTEPS = dace.symbol("TSTEPS")
+
+
+def _gpu_compiler_available() -> bool:
+    """Whether the active GPU backend's compiler (nvcc or hipcc) is on the PATH."""
+    return shutil.which("nvcc" if common.get_gpu_backend() == "cuda" else "hipcc") is not None
+
+
+#: The backend's packed two-lane fp16 add / max instructions in device assembly (PTX for CUDA, AMDGPU for HIP).
+PACKED_F16_ADD = {"cuda": "add.f16x2", "hip": "v_pk_add_f16"}
+PACKED_F16_MAX = {"cuda": "max.f16x2", "hip": "v_pk_max_f16"}
+
+
+def _device_assembly(tmp_path, body: str) -> str:
+    """The device assembly the active GPU backend compiles ``body`` (a kernel using ``tile_ops/cuda.h``) to."""
+    backend = common.get_gpu_backend()
+    src = tmp_path / "probe.cu"
+    out = tmp_path / "probe.s"
+    src.write_text('#include "dace/dace.h"\n#include "dace/tile_ops/cuda.h"\n' + body)
+    inc = str(Path(dace.__file__).parent / "runtime" / "include")
+    if backend == "cuda":
+        cmd = ["nvcc", "-I", inc, "-ptx", "-arch=sm_80", str(src), "-o", str(out)]
+    else:
+        arch = (dace.Config.get("compiler", "cuda", "hip_arch") or "gfx942").split(",")[0].strip()
+        cmd = ["hipcc", "-I", inc, "-x", "hip", "-O3", "--cuda-device-only", "-S", f"--offload-arch={arch}"]
+        cmd += [str(src), "-o", str(out)]
+    subprocess.run(cmd, check=True, capture_output=True)
+    return out.read_text()
 
 
 @dace.program
@@ -147,7 +175,7 @@ def test_scalar_cast_constant_broadcasts():
     sdfg.expand_library_nodes()
     # the constant stays at the input (fp16) precision -- no fp64 container leaked
     assert all(d.dtype != dace.float64 for d in sdfg.arrays.values())
-    if HAS_NVCC:
+    if _gpu_compiler_available():
         shutil.rmtree(os.path.join(".dacecache", sdfg.name), ignore_errors=True)
         sdfg.compile()
 
@@ -184,11 +212,10 @@ def test_gpu_half2_emits_tile_ops_in_device_tu():
 
 
 @pytest.mark.gpu
-@pytest.mark.nvcc
 @pytest.mark.parametrize("name,prog", [("add16", _add16), ("jacobi2d16", _jacobi2d16), ("heat3d16", _heat3d16)])
 def test_gpu_half2_compiles(name, prog):
     """The half2 GPU vectorization of an elementwise / stencil fp16 kernel
-    compiles end-to-end with nvcc (deferred expand -> compile)."""
+    compiles end-to-end with the backend's compiler (deferred expand -> compile)."""
     sdfg = _prep(prog)
     VectorizeGPU(VectorizeConfig(widths=(2,))).apply_pass(sdfg, {})
     sdfg.expand_library_nodes()
@@ -199,7 +226,7 @@ def test_gpu_half2_compiles(name, prog):
 def test_the_device_file_defines_each_index_helper_once():
     """An allocation inside a kernel is dispatched to the CPU codegen directly; it must still register its
     index helpers against the device file, or a later nest in the same kernel file defines them again
-    (``function "s_idx" has already been defined``). Checked on the text, so no nvcc is needed."""
+    (``function "s_idx" has already been defined``). Checked on the text, so no GPU compiler is needed."""
     import collections
     import re
 
@@ -221,7 +248,7 @@ def test_gpu_reduction_uses_gpu_expansion():
     block-reduce + one atomic per block -- the pure-WCR boundary form (see
     ``VectorizeMultiDim`` reduction handling; the ``Reduce``-node lift is the opt-in
     buffer form, dropped here). The map staying ``GPU_Device`` is what keeps the
-    reduction on the device rather than a CPU horizontal fold; it compiles with nvcc."""
+    reduction on the device rather than a CPU horizontal fold; it compiles with the backend's compiler."""
     from dace.sdfg.nodes import MapExit
 
     sdfg = _prep(_vsum16)
@@ -239,67 +266,37 @@ def test_gpu_reduction_uses_gpu_expansion():
         assert st.entry_node(mx).map.schedule == ScheduleType.GPU_Device, (
             "reduction map must be GPU-scheduled so codegen emits the GPU block-reduce, not a CPU fold"
         )
-    if HAS_NVCC:
+    if _gpu_compiler_available():
         sdfg.expand_library_nodes()
         shutil.rmtree(os.path.join(".dacecache", sdfg.name), ignore_errors=True)
         sdfg.compile()
 
 
 @pytest.mark.gpu
-@pytest.mark.nvcc
-def test_gpu_half2_lowers_to_native_f16x2():
-    """The fp16 add tile lowers to a native ``f16x2`` SIMD instruction (two lanes
-    per op), not the scalar float fallback -- verified in the generated PTX."""
-    import subprocess
-
-    src = (
-        '#include "dace/dace.h"\n#include "dace/tile_ops/cuda.h"\n'
+def test_gpu_half2_lowers_to_native_f16x2(tmp_path):
+    """The fp16 add tile lowers to a native packed two-lane fp16 instruction, not the scalar float fallback."""
+    asm = _device_assembly(
+        tmp_path,
         "__global__ void k(dace::float16* o, const dace::float16* a, const dace::float16* b) {\n"
-        "  dace::tileops::tile_binop<dace::float16, 2, '+', false, false, false>(o, a, b, nullptr);\n}\n"
+        "  dace::tileops::tile_binop<dace::float16, 2, '+', false, false, false>(o, a, b, nullptr);\n}\n",
     )
-    inc = os.path.join(os.path.dirname(dace.__file__), "runtime", "include")
-    tmp = os.path.join(os.path.dirname(__file__), "_f16x2_probe.cu")
-    ptx = tmp + ".ptx"
-    try:
-        with open(tmp, "w") as f:
-            f.write(src)
-        subprocess.run(["nvcc", "-I", inc, "-ptx", "-arch=sm_80", tmp, "-o", ptx], check=True, capture_output=True)
-        assert "f16x2" in open(ptx).read(), "fp16 tile add did not lower to native f16x2 SIMD"
-    finally:
-        for f in (tmp, ptx):
-            if os.path.exists(f):
-                os.remove(f)
+    assert PACKED_F16_ADD[common.get_gpu_backend()] in asm, "fp16 tile add did not lower to packed fp16 SIMD"
 
 
 @pytest.mark.gpu
-@pytest.mark.nvcc
-def test_gpu_half2_reduce_lowers_to_native_f16x2():
-    """The in-map fp16 horizontal reduce (``TileReduce`` -> ``dace::tileops::tile_reduce``)
-    folds via native ``f16x2`` SIMD (two lanes per op) and returns a single ``__half`` --
-    CUDA has no "reduce half2 -> half" intrinsic, so cuda.h composes one; verify the
-    composed fold uses the packed half2 add/max in the PTX (not the scalar fallback)."""
-    import subprocess
-
-    src = (
-        '#include "dace/dace.h"\n#include "dace/tile_ops/cuda.h"\n'
+def test_gpu_half2_reduce_lowers_to_native_f16x2(tmp_path):
+    """The in-map fp16 horizontal reduce (``TileReduce`` -> ``dace::tileops::tile_reduce``) folds via packed
+    two-lane fp16 add / max and returns a single ``__half``: neither backend has a "reduce half2 -> half"
+    intrinsic, so cuda.h composes one, and the fold must use the packed ops, not the scalar fallback."""
+    asm = _device_assembly(
+        tmp_path,
         "__global__ void k(dace::float16* o, const dace::float16* a) {\n"
         "  o[0] = dace::tileops::tile_reduce<dace::float16, 8, '+'>(a);\n"
-        "  o[1] = dace::tileops::tile_reduce<dace::float16, 8, 'M'>(a);\n}\n"
+        "  o[1] = dace::tileops::tile_reduce<dace::float16, 8, 'M'>(a);\n}\n",
     )
-    inc = os.path.join(os.path.dirname(dace.__file__), "runtime", "include")
-    tmp = os.path.join(os.path.dirname(__file__), "_f16x2_reduce_probe.cu")
-    ptx = tmp + ".ptx"
-    try:
-        with open(tmp, "w") as f:
-            f.write(src)
-        subprocess.run(["nvcc", "-I", inc, "-ptx", "-arch=sm_80", tmp, "-o", ptx], check=True, capture_output=True)
-        ptx_src = open(ptx).read()
-        assert "add.f16x2" in ptx_src, "fp16 tile_reduce(+) did not fold via native f16x2 add"
-        assert "max.f16x2" in ptx_src, "fp16 tile_reduce(max) did not fold via native f16x2 max"
-    finally:
-        for f in (tmp, ptx):
-            if os.path.exists(f):
-                os.remove(f)
+    backend = common.get_gpu_backend()
+    assert PACKED_F16_ADD[backend] in asm, "fp16 tile_reduce(+) did not fold via packed fp16 add"
+    assert PACKED_F16_MAX[backend] in asm, "fp16 tile_reduce(max) did not fold via packed fp16 max"
 
 
 @pytest.mark.gpu
@@ -327,33 +324,18 @@ def test_gpu_vectorize_width_gt2_numeric(width):
 
 
 @pytest.mark.gpu
-@pytest.mark.nvcc
 @pytest.mark.parametrize("width", [4, 8])
-def test_gpu_half2_wide_emits_width_over_2_f16x2(width):
-    """A wide fp16 tile (width 4 / 8) uses the SAME half2 fast path as width 2: the per-tile
-    binop lowers to exactly ``width / 2`` native ``add.f16x2`` instructions (the half2 branch
-    loops ``i += 2``, ``#pragma unroll``), NOT a per-lane scalar fallback -- verified in the PTX.
-    Refutes the (former) "only width 2 uses the half2 intrinsic; 4/8 lower per-lane"."""
-    import subprocess
-
-    src = (
-        '#include "dace/dace.h"\n#include "dace/tile_ops/cuda.h"\n'
+def test_gpu_half2_wide_emits_width_over_2_f16x2(tmp_path, width):
+    """A wide fp16 tile (width 4 / 8) uses the SAME half2 fast path as width 2: the per-tile binop lowers to
+    exactly ``width / 2`` packed fp16 adds (the half2 branch loops ``i += 2``, ``#pragma unroll``), not a
+    per-lane scalar fallback."""
+    asm = _device_assembly(
+        tmp_path,
         "__global__ void k(dace::float16* o, const dace::float16* a, const dace::float16* b) {\n"
-        f"  dace::tileops::tile_binop<dace::float16, {width}, '+', false, false, false>(o, a, b, nullptr);\n}}\n"
+        f"  dace::tileops::tile_binop<dace::float16, {width}, '+', false, false, false>(o, a, b, nullptr);\n}}\n",
     )
-    inc = os.path.join(os.path.dirname(dace.__file__), "runtime", "include")
-    tmp = os.path.join(os.path.dirname(__file__), f"_f16x2_w{width}_probe.cu")
-    ptx = tmp + ".ptx"
-    try:
-        with open(tmp, "w") as f:
-            f.write(src)
-        subprocess.run(["nvcc", "-I", inc, "-ptx", "-arch=sm_80", tmp, "-o", ptx], check=True, capture_output=True)
-        n = open(ptx).read().count("add.f16x2")
-        assert n == width // 2, f"width {width} fp16 add expected {width // 2} add.f16x2, got {n}"
-    finally:
-        for f in (tmp, ptx):
-            if os.path.exists(f):
-                os.remove(f)
+    n = asm.count(PACKED_F16_ADD[common.get_gpu_backend()])
+    assert n == width // 2, f"width {width} fp16 add expected {width // 2} packed fp16 adds, got {n}"
 
 
 @pytest.mark.gpu
@@ -378,6 +360,8 @@ def test_gpu_multidim_k2_runs():
 
 
 if __name__ == "__main__":
+    import tempfile
+
     test_assume_even_single_strided_gpu_map_no_mask()
     test_deferred_tile_nodes_are_cuda_stamped()
     test_scalar_cast_constant_broadcasts()
@@ -386,10 +370,10 @@ if __name__ == "__main__":
     test_gpu_half2_compiles("jacobi2d16", _jacobi2d16)
     test_gpu_half2_compiles("heat3d16", _heat3d16)
     test_gpu_reduction_uses_gpu_expansion()
-    test_gpu_half2_lowers_to_native_f16x2()
-    test_gpu_half2_reduce_lowers_to_native_f16x2()
+    test_gpu_half2_lowers_to_native_f16x2(Path(tempfile.mkdtemp()))
+    test_gpu_half2_reduce_lowers_to_native_f16x2(Path(tempfile.mkdtemp()))
     test_gpu_vectorize_width_gt2_numeric(4)
     test_gpu_vectorize_width_gt2_numeric(8)
-    test_gpu_half2_wide_emits_width_over_2_f16x2(4)
-    test_gpu_half2_wide_emits_width_over_2_f16x2(8)
+    test_gpu_half2_wide_emits_width_over_2_f16x2(Path(tempfile.mkdtemp()), 4)
+    test_gpu_half2_wide_emits_width_over_2_f16x2(Path(tempfile.mkdtemp()), 8)
     test_gpu_multidim_k2_runs()
