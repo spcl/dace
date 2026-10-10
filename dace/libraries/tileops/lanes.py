@@ -50,6 +50,41 @@ def distributed_lanes(distribution: LaneDistribution | None) -> Iterator[LaneDis
         _distribution.reset(token)
 
 
+@dataclasses.dataclass(frozen=True, slots=True)
+class LaneBounds:
+    """The lanes of a tile of ``widths`` in range: lane ``l`` of dim ``d`` when ``l < bounds[d]``."""
+
+    widths: tuple[int, ...]
+    bounds: tuple[str, ...]
+
+    def of_element(self, index: str) -> str:
+        """Whether the element at the row-major flat ``index`` of the tile is in range."""
+        if len(self.widths) == 1:
+            return f"{index} < ({self.bounds[0]})"
+        return " && ".join(
+            f"({index} / {math.prod(self.widths[d + 1 :])}) % {width} < ({bound})"
+            for d, (width, bound) in enumerate(zip(self.widths, self.bounds, strict=True))
+        )
+
+    def of_lanes(self) -> str:
+        """Whether the lane named ``__l<d>`` in each dim is in range."""
+        return " && ".join(f"__l{d} < ({bound})" for d, bound in enumerate(self.bounds))
+
+
+_bounds: contextvars.ContextVar[LaneBounds | None] = contextvars.ContextVar("tile_lane_bounds", default=None)
+
+
+@contextlib.contextmanager
+def bounded_lanes(bounds: LaneBounds | None) -> Iterator[None]:
+    """Within the block, the lane loops over a tile of the ``bounds`` widths skip the lanes out of range (``None``:
+    every lane is in range)."""
+    token = _bounds.set(bounds)
+    try:
+        yield
+    finally:
+        _bounds.reset(token)
+
+
 def distributed_element_loop(elements: int, decode: Sequence[str], body: str, indent: str = "    ") -> str | None:
     """The thread-strided loop over ``elements`` flat elements under the active distribution, or ``None`` without one.
 
@@ -60,6 +95,9 @@ def distributed_element_loop(elements: int, decode: Sequence[str], body: str, in
         return None
     distribution.loops += 1
     lines = [f"for (std::size_t __e = {distribution.thread}; __e < {elements}; __e += {distribution.threads}) {{"]
+    bounds = _bounds.get()
+    if bounds is not None and math.prod(bounds.widths) == elements:
+        lines.append(f"{indent}if (!({bounds.of_element('__e')})) continue;")
     lines.extend(f"{indent}{line}" for line in decode)
     lines.extend(f"{indent}{line}" for line in body.splitlines())
     lines.append("}")
@@ -134,7 +172,8 @@ def nested_loops(widths: Sequence[int], body: str, indent: str = "    ") -> str:
     lane indices ``__l0, __l1, ...``.
 
     Under :func:`distributed_lanes` a tile of constant widths is instead one thread-strided loop over its flat
-    elements that decodes the same lane indices, so the body is unchanged.
+    elements that decodes the same lane indices, so the body is unchanged. Under :func:`bounded_lanes` a tile of
+    the bounded widths skips the lanes out of range.
 
     Each fixed-width lane loop is preceded by ``#pragma unroll`` (guarded by
     :func:`constant_trip_count`): the trip count is the compile-time
@@ -167,6 +206,9 @@ def nested_loops(widths: Sequence[int], body: str, indent: str = "    ") -> str:
         if constant_trip_count(w):
             lines.append(f"{indent * d}#pragma unroll")
         lines.append(f"{indent * d}for (std::size_t __l{d} = 0; __l{d} < {w}; ++__l{d}) {{")
+    bounds = _bounds.get()
+    if bounds is not None and tuple(widths) == bounds.widths:
+        lines.append(f"{indent * K}if (!({bounds.of_lanes()})) continue;")
     lines.extend(f"{indent * K}{line}" for line in body.splitlines())
     lines.extend(f"{indent * d}}}" for d in reversed(range(K)))
     return "\n".join(lines)

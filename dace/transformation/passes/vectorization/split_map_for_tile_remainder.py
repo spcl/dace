@@ -134,12 +134,20 @@ class SplitMapForTileRemainder(ppl.Pass):
         "no guards, hence no facts, hence the per-element path for symbolic shapes.",
     )
 
+    even_widths = properties.ListProperty(
+        element_type=int,
+        default=[],
+        desc="Per-dim widths the even extent of ``assume_even`` is a multiple of, innermost last; empty: ``widths``. "
+        "A block tile is wider than the lanes of one thread, and its lowering skips the lanes past the map end.",
+    )
+
     def __init__(
         self,
         widths: tuple[int, ...] = (8,),
         tail_mode: str = "masked",
         assume_even: bool = False,
         range_check: bool = True,
+        even_widths: tuple[int, ...] = (),
     ) -> None:
         """Build the pass.
 
@@ -156,6 +164,7 @@ class SplitMapForTileRemainder(ppl.Pass):
             ``extent % W == 0`` even-extent assumption under ``assume_even``, and
             the ``stride % chunk == 0`` parity of the fp16 device arrays a tiled
             map touches. ``False`` -> no guard and therefore no fact.
+        :param even_widths: The widths the even extent of ``assume_even`` is a multiple of; empty: ``widths``.
         :raises ValueError: If ``widths`` length not in ``{1, 2, 3}`` or
             ``tail_mode`` invalid.
         """
@@ -170,6 +179,7 @@ class SplitMapForTileRemainder(ppl.Pass):
         self.tail_mode = tail_mode
         self.assume_even = assume_even
         self.range_check = range_check
+        self.even_widths = list(even_widths)
         # Guard collectors, declared here so they exist before any ``_split`` call; ``apply_pass``
         # resets both at the top of every run.
         self._range_checks: list[tuple[dace.SDFG, symbolic.SymbolicType, int]] = []
@@ -223,11 +233,11 @@ class SplitMapForTileRemainder(ppl.Pass):
         if K == 0 or len(ranges) < K:
             return False
         tiled_dims = list(range(len(ranges) - K, len(ranges)))
-        # ``assume_even``: caller guarantees every tiled extent is a multiple of W,
+        # ``assume_even``: caller guarantees every tiled extent is a multiple of its even width,
         # so no boundary -> skip peel, mark whole map ``__tile_main`` (mask-free).
         if self.assume_even:
             classes = []
-            for d, W in zip(tiled_dims, widths):
+            for d, W in zip(tiled_dims, (self.even_widths or list(widths))[-K:]):
                 lb, ub, _ = map_entry.map.range[d]
                 classes.append((self._trip_class(lb, ub, W), d, W, lb, ub))
             # A provably-too-small dim (extent < W) keeps the whole map scalar, matching MarkTileDims under

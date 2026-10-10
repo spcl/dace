@@ -14,7 +14,7 @@ import dace
 from dace import data, dtypes
 from dace.libraries.tileops.dispatch import lane_implementation
 from dace.libraries.tileops.isa import CHUNK_OFFSET, isa_chunk
-from dace.libraries.tileops.lanes import LaneDistribution, distributed_lanes
+from dace.libraries.tileops.lanes import LaneBounds, LaneDistribution, bounded_lanes, distributed_lanes
 from dace.memlet import Memlet
 from dace.sdfg import nodes
 from dace.transformation.transformation import ExpandTransformation
@@ -55,7 +55,8 @@ class ExpandTileBlock(ExpandTransformation):
     running its share of the output elements (:func:`block_layout`).
 
     The register tiles the node touches move to shared memory, where every thread of the block sees them. The barriers
-    between the nodes come from :class:`~dace.transformation.passes.tile_synchronization.InsertTileSync`.
+    between the nodes come from :class:`~dace.transformation.passes.tile_synchronization.InsertTileSync`. The lanes
+    past the ``lane_bounds`` of the node, which a tile at the end of its map has, are skipped.
     """
 
     environments: list[type] = []
@@ -64,11 +65,14 @@ class ExpandTileBlock(ExpandTransformation):
     @classmethod
     def expansion(cls, node: nodes.LibraryNode, parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> dace.SDFG:
         layout = block_layout(node, parent_state)
-        if layout.isa is not None:
-            tasklet = chunked_isa_tasklet(node, parent_state, parent_sdfg, node.implementations[layout.isa], layout)
-            threads = layout.threads
-        else:
-            threads, tasklet = distributed_pure_tasklet(node, parent_state, parent_sdfg, layout.threads)
+        bounds = LaneBounds(tuple(node.widths), tuple(node.lane_bounds)) if node.lane_bounds else None
+        with bounded_lanes(bounds):
+            if layout.isa is not None:
+                expansion = node.implementations[layout.isa]
+                tasklet = chunked_isa_tasklet(node, parent_state, parent_sdfg, expansion, layout)
+                threads = layout.threads
+            else:
+                threads, tasklet = distributed_pure_tasklet(node, parent_state, parent_sdfg, layout.threads)
 
         # An empty memlet only orders the node (a barrier before it), and stays on the expanded node
         edges = [
@@ -182,7 +186,9 @@ def chunked_isa_tasklet(
     ]
     body = "\n".join(f"    {line}" for line in (*views, *call.code.as_string.splitlines()))
     c = CHUNK_OFFSET
-    code = f"for (std::size_t {c} = {THREAD_INDEX} * {chunk}; {c} < {width}; {c} += {threads * chunk}) {{\n{body}\n}}"
+    # A chunk that starts in range runs whole: an unmasked map iterates whole chunks, a mask covers a partial one
+    end = f"{c} < {width}" + (f" && {c} < ({node.lane_bounds[0]})" if node.lane_bounds else "")
+    code = f"for (std::size_t {c} = {THREAD_INDEX} * {chunk}; {end}; {c} += {threads * chunk}) {{\n{body}\n}}"
     tasklet = nodes.Tasklet(
         call.label,
         inputs={lane_connector(conn): None for conn in call.in_connectors},

@@ -55,6 +55,13 @@ class TileOp(nodes.LibraryNode):
         desc="Consecutive lanes each thread of a WARP or BLOCK node takes at a time (Triton's sizePerThread); a node "
         "with a target ISA runs its ISA call on them, two fp16 lanes for one half2 instruction.",
     )
+    lane_bounds = properties.ListProperty(
+        element_type=str,
+        default=[],
+        desc="Per-dim exclusive bound on the lane index of a WARP or BLOCK node, innermost last: the iterations its "
+        "map has left from the tile start, a C++ expression of the symbols in scope. Its block lowering skips the "
+        "lanes past the bound of a tile at the end of the map; empty: every lane is in range.",
+    )
 
     def can_lower_to_isa(self, state: dace.SDFGState, sdfg: dace.SDFG) -> bool:
         """Whether a backend header has a lowering for this configuration of the node."""
