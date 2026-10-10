@@ -499,10 +499,11 @@ class MapFusionVertical(transformation.SingleStateTransformation):
     def _inout_split_is_safe(nsdfg: nodes.NestedSDFG, name: str) -> bool:
         """``True`` iff every inner AccessNode of ``name`` is either a pure
         read source (``in_degree == 0`` and ``out_degree > 0``) or a pure
-        write sink (``in_degree > 0`` and ``out_degree == 0``). Mixed-mode
-        accesses (read AN whose downstream is also written in the same state,
-        e.g. ``a -> ... -> a`` chains within one state) would require more
-        elaborate use-def analysis than v1 handles, so we refuse those.
+        write sink (``in_degree > 0`` and ``out_degree == 0``), and no read can
+        run after a write. Mixed-mode accesses (read AN whose downstream is also
+        written in the same state, e.g. ``a -> ... -> a`` chains within one state)
+        would require more elaborate use-def analysis than v1 handles, so we
+        refuse those.
         """
         inner_sdfg = nsdfg.sdfg
         if inner_sdfg is None:
@@ -516,8 +517,15 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                 if not ((in_d == 0 and out_d > 0) or (in_d > 0 and out_d == 0)):
                     return False
                 (writing_states if in_d else reading_states).add(state)
-        # A read outside the writing state consumes the value just written, not the incoming one.
-        return not (writing_states and (reading_states - writing_states))
+        if not writing_states:
+            return True
+        from dace.transformation.passes.analysis import StateReachability  # Avoid import loop
+
+        # The split binds every read to the INCOMING value, which is wrong for a read the control flow reaches
+        # after a write -- a later state, or the writing state itself on the next trip of a loop: an
+        # accumulation ``s = 0; for j: s = s - a[j]`` would read the array as it was before the map.
+        after = StateReachability().apply_pass(inner_sdfg, {})[inner_sdfg.cfg_id]
+        return not any(read in after.get(write, ()) for write in writing_states for read in reading_states)
 
     @staticmethod
     def _split_inout_for_intermediate(

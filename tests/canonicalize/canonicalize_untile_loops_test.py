@@ -1063,12 +1063,8 @@ def run_against_flat_stencil(prog, n=96, tsteps=3):
     a, b = a0.copy(), b0.copy()
     sdfg(A=a, B=b, N=n, TSTEPS=tsteps)
     assert np.allclose(a, want_a) and np.allclose(b, want_b), f"{prog.name}: untiled result diverged"
-    return [
-        r.loop_variable
-        for g in sdfg.all_sdfgs_recursive()
-        for r in g.all_control_flow_regions(recursive=True)
-        if isinstance(r, LoopRegion)
-    ]
+    # ``recursive=True`` already descends into nested SDFGs -- the CPU team hoist puts the time loop in one.
+    return [r.loop_variable for r in sdfg.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion)]
 
 
 def test_a_clamped_two_level_tile_collapses_to_the_flat_stencil():

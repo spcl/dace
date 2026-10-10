@@ -48,13 +48,26 @@ construct is executed by all P threads instead of once. Hence the two conditions
 **(H) Replication-freedom.** Every statement the loop body executes lies inside a ``CPU_Multicore``
 map scope. Access nodes and map entries/exits emit nothing, and pure control flow (loop counters,
 branch conditions) every thread evaluates identically, because the data it reads was last written
-before a barrier. Three things at a state's top level DO emit a statement and so break (H): a
-``Tasklet``, which the pass repairs by wrapping it in its own one-iteration ``CPU_Multicore`` map
-(an ``omp for`` over one iteration -- run once, by one thread, with a barrier after); a library node
-or nested SDFG, refused outright; and an edge between two ACCESS NODES, which is a bulk copy and
-is refused too. The copy is the one that does not look like a statement: ``jacobi_2d``'s
-``A[1:N-1, 1:N-1] = B[1:N-1, 1:N-1]`` is two access nodes and a memlet, and replicating it would
-have every thread write the whole array with no barrier before the next trip reads it.
+before a barrier. What does emit a statement at a state's top level is repaired where it can be and
+refused where it cannot:
+
+- a ``Tasklet`` is wrapped in its own one-iteration ``CPU_Multicore`` map (an ``omp for`` over one
+  iteration -- run once, by one thread, with a barrier after);
+- a ``Sequential`` map with no parallel map inside it -- one ``cpu_specialize`` sequentialized for
+  its size -- becomes a worksharing map: inside the team it costs one barrier, not a fork;
+- an edge between two ACCESS NODES is a bulk copy, the statement that does not look like one:
+  ``jacobi_2d``'s ``A[1:N-1, 1:N-1] = B[1:N-1, 1:N-1]`` is two access nodes and a memlet, and
+  replicated it has every thread write the whole array with no barrier before the next trip reads
+  it. It becomes a worksharing map over the copied elements; a copy that re-linearizes has no
+  element-for-element map and is refused;
+- a library node whose expansion is one map over its output's elements (``np.where``'s
+  ``MergeLibraryNode``, a ``FillLibraryNode``) is expanded into that map and shared out; any other
+  library node, and any nested SDFG, is refused.
+
+:func:`share_out_bulk_statements` makes the repairs. A loop is hoisted only if it already holds a
+``CPU_Multicore`` map: one whose maps the cost model all made sequential has nothing worth a team. And
+a repair is a barrier every time it runs, so each must run in a loop that also runs a worksharing map
+whose fork the team saves (:func:`repairs_amortized`).
 
 **(T) No accidental privatization.** Outlining moves a transient that nothing outside the loop
 observes INTO the nest, where it is declared inside the parallel region -- one copy per thread. That
@@ -62,8 +75,9 @@ is exactly right for the per-iteration scalars a map body is built from, and it 
 rewrite free: they never leave their ``omp for``. It is wrong for a transient that hands a value
 from one ``omp for`` to the NEXT, and such a transient is recognisable without any dataflow
 analysis, because value passing between two map scopes has to go through an access node at the
-state's TOP level. A loop with one of those is refused, unless its lifetime keeps it in the state
-struct (``Persistent`` / ``Global``), where it stays shared whichever SDFG owns the descriptor.
+state's TOP level. Those stay in the enclosing SDFG and cross into the nest as connectors
+(:func:`handed_between_scopes`), so they are allocated before the region opens and the team shares
+them; a ``Persistent`` / ``Global`` one lives in the state struct and is shared already.
 
 Not done here, deliberately
 ---------------------------
@@ -89,16 +103,20 @@ point that do not exist yet (``dace/codegen/targets/cpu.py`` carries the matchin
 ``TODO(later): barriers and map_header += " nowait"``).
 """
 
+import copy
 from typing import Any
 
-from dace import SDFG, dtypes, properties
-from dace.sdfg import nodes
-from dace.sdfg.graph import SubgraphView
+from dace import SDFG, Memlet, data, dtypes, properties, subsets
+from dace.libraries.standard.nodes import FillLibraryNode, MergeLibraryNode
+from dace.sdfg import memlet_utils, nodes
+from dace.sdfg import utils as sdutil
+from dace.sdfg.graph import MultiConnectorEdge, SubgraphView
 from dace.sdfg.state import (
     AbstractControlFlowRegion,
     BreakBlock,
     ConditionalBlock,
     ContinueBlock,
+    ControlFlowBlock,
     LoopRegion,
     ReturnBlock,
     SDFGState,
@@ -131,6 +149,298 @@ def top_level_nodes(state: SDFGState) -> list[nodes.Node]:
     return [n for n in state.nodes() if scopes[n] is None]
 
 
+def binds_a_view(edge: MultiConnectorEdge[Memlet], state: SDFGState) -> bool:
+    """Whether ``edge`` is the edge a view reads its data off: an alias, which emits no statement."""
+    return any(
+        isinstance(node.desc(state.sdfg), data.View) and sdutil.get_view_edge(state, node) is edge
+        for node in (edge.src, edge.dst)
+    )
+
+
+def bulk_copies(state: SDFGState) -> list[MultiConnectorEdge[Memlet]]:
+    """The edges of ``state`` that copy between two access nodes outside every map scope."""
+    scopes = state.scope_dict()
+    return [
+        edge
+        for edge in state.edges()
+        if isinstance(edge.src, nodes.AccessNode)
+        and isinstance(edge.dst, nodes.AccessNode)
+        and not edge.data.is_empty()
+        and scopes[edge.src] is None
+        and not binds_a_view(edge, state)
+    ]
+
+
+def shares_out_as_a_map(edge: MultiConnectorEdge[Memlet], state: SDFGState) -> bool:
+    """Whether the copy ``edge`` becomes a map that writes each element once: plain arrays on both sides,
+    no accumulation, and the same extents once unit dimensions are dropped (no re-linearization)."""
+    sdfg = state.sdfg
+    if edge.data.wcr is not None:
+        return False
+    if any(isinstance(node.desc(sdfg), data.View) for node in (edge.src, edge.dst)):
+        return False
+    if not memlet_utils.can_memlet_be_turned_into_a_map(edge, state, sdfg):
+        return False
+    source = edge.data.get_src_subset(edge, state) or subsets.Range.from_array(edge.src.desc(sdfg))
+    target = edge.data.get_dst_subset(edge, state) or subsets.Range.from_array(edge.dst.desc(sdfg))
+    extents = [[size for size in subset.size() if size != 1] for subset in (source, target)]
+    return bool(extents[0]) and [str(e) for e in extents[0]] == [str(e) for e in extents[1]]
+
+
+def elementwise(node: nodes.Node) -> bool:
+    """Whether ``node`` is a library node whose ``pure`` expansion is one map over its output's elements."""
+    return isinstance(node, (FillLibraryNode, MergeLibraryNode))
+
+
+def expand_in_place(node: nodes.LibraryNode, state: SDFGState) -> list[nodes.MapEntry]:
+    """Expand the elementwise ``node`` with its ``pure`` implementation and inline the result.
+
+    :returns: the map entries the expansion brought in.
+    """
+    from dace.transformation.interstate import InlineSDFG  # Avoid import loop
+
+    before = set(state.nodes())
+    node.expand(state, "pure")
+    nested = next(n for n in state.nodes() if n not in before and isinstance(n, nodes.NestedSDFG))
+    inner_maps = [n for n, _ in nested.sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry)]
+    InlineSDFG.apply_to(state.sdfg, nested_sdfg=nested, verify=False, save=False)
+    return inner_maps
+
+
+def fill_as_one_map(entry: nodes.MapEntry, state: SDFGState) -> nodes.MapEntry | None:
+    """Rebuild a sequential leaf map whose whole body is one static fill as ONE worksharing map over the
+    map's positions and the fill's elements: ``SpecializeCpuTransfers``' row loop around a row memset
+    goes back to the map it came from, so the body keeps one extent and the band cuts its columns.
+
+    :returns: the new map's entry, or ``None`` if the map is not that shape.
+    """
+    exit_node = state.exit_node(entry)
+    body = [n for n in state.scope_children()[entry] if n is not exit_node]
+    outputs = state.out_edges(exit_node)
+    if len(body) != 1 or not isinstance(body[0], FillLibraryNode) or body[0].value_edge(state) is not None:
+        return None
+    if len(outputs) != 1 or not isinstance(outputs[0].dst, nodes.AccessNode):
+        return None
+    if any(not e.data.is_empty() for e in state.in_edges(entry)):
+        return None
+    fill = body[0]
+    (written,) = state.out_edges(fill)
+    region = written.data.subset
+    if not isinstance(region, subsets.Range):
+        return None
+    ranges = {
+        param: str(subsets.Range([rng])) for param, rng in zip(entry.map.params, entry.map.range.ranges, strict=True)
+    }
+    index = []
+    for dim, ((begin, _, _), size) in enumerate(zip(region.ranges, region.size(), strict=True)):
+        if size == 1:
+            index.append(str(begin))
+        else:
+            ranges[f"__fill{dim}"] = f"0:{size}"
+            index.append(f"{begin} + __fill{dim}")
+    target = outputs[0].dst
+    predecessors = [e.src for e in state.in_edges(entry)]
+    state.remove_nodes_from([entry, fill, exit_node])
+    _, new_entry, _ = state.add_mapped_tasklet(
+        f"{fill.label}_map",
+        ranges,
+        {},
+        f"__out = {fill.value}",
+        {"__out": Memlet(data=target.data, subset=", ".join(index))},
+        schedule=WORKSHARED,
+        external_edges=True,
+        output_nodes={target.data: target},
+    )
+    for source in predecessors:
+        state.add_nedge(source, new_entry, Memlet())
+    return new_entry
+
+
+def reads_by_data(sdfg: SDFG) -> dict[str, list[subsets.Subset | None]]:
+    """Every read of every data container of ``sdfg`` (not of its nests), as the subset it reads; an
+    accumulating write reads too."""
+    reads: dict[str, list[subsets.Subset | None]] = {}
+    for state in sdfg.states():
+        for node in state.data_nodes():
+            for edge in state.out_edges(node):
+                if not edge.data.is_empty():
+                    reads.setdefault(node.data, []).append(edge.data.get_src_subset(edge, state))
+            for edge in state.in_edges(node):
+                if edge.data.wcr is not None:
+                    reads.setdefault(node.data, []).append(edge.data.get_dst_subset(edge, state))
+    return reads
+
+
+def whole_fill_hull(
+    fill: FillLibraryNode, state: SDFGState, reads: dict[str, list[subsets.Subset | None]], inputs: set[str]
+) -> subsets.Subset | None:
+    """The part of a transient that ``fill`` must write when it fills the whole array: the hull of its
+    ``reads``. ``None`` unless that hull is a strict part of the array and names only ``inputs`` -- the
+    symbols the SDFG is called with, the only ones known wherever the fill runs.
+
+    Nobody observes what the fill writes outside the hull, and only the hull has the extent the rest of
+    the loop body is banded on (``psum_solqa[:] = 0`` beside ``[kidia-1:kfdia]``).
+    """
+    outputs = state.out_edges(fill)
+    if len(outputs) != 1 or not isinstance(outputs[0].dst, nodes.AccessNode):
+        return None
+    edge = outputs[0]
+    desc = edge.dst.desc(state.sdfg)
+    full = subsets.Range.from_array(desc)
+    parts = reads.get(edge.dst.data, [])
+    if not desc.transient or isinstance(desc, data.View) or edge.data.get_dst_subset(edge, state) != full:
+        return None
+    if not parts or any(part is None for part in parts):
+        return None
+    hull = parts[0]
+    for part in parts[1:]:
+        hull = subsets.union(hull, part) if hull is not None else None
+    if hull is None or str(hull) == str(full) or not hull.free_symbols <= inputs:
+        return None
+    return hull
+
+
+def narrow_whole_fills(sdfg: SDFG) -> None:
+    """Shrink every whole-array fill of a transient in ``sdfg`` and its nests to the hull of the
+    transient's reads (:func:`whole_fill_hull`). Run before any loop is outlined: a nest's boundary
+    memlet is the union of what it touches, and would widen every hull it is part of."""
+    for owner in sdfg.all_sdfgs_recursive():
+        reads = inputs = None
+        for state in owner.states():
+            for node in [n for n in state.nodes() if isinstance(n, FillLibraryNode)]:
+                if reads is None or inputs is None:
+                    reads, inputs = reads_by_data(owner), owner.free_symbols
+                hull = whole_fill_hull(node, state, reads, inputs)
+                if hull is not None:
+                    (edge,) = state.out_edges(node)
+                    edge.data.subset = copy.deepcopy(hull)  # the hull may be a read memlet's own subset
+
+
+def split_shared_views(sdfg: SDFG, loop: LoopRegion) -> None:
+    """Give every view ``loop`` shares with the rest of ``sdfg`` its own descriptor inside the loop.
+
+    A view holds no data and is bound per access node, so renaming the uses in the loop's states changes
+    nothing -- and outlining can then move the view into the nest with its binding, where as a connector
+    it would have none.
+    """
+    private = loop_local_transients(sdfg, loop)
+    renamed: dict[str, str] = {}
+    for block in loop.all_control_flow_blocks():
+        if not isinstance(block, SDFGState):
+            continue
+        shared = {n.data for n in block.data_nodes() if isinstance(n.desc(sdfg), data.View) and n.data not in private}
+        for name in sorted(shared):
+            if name not in renamed:
+                renamed[name] = sdfg.add_datadesc(f"{name}_loop", copy.deepcopy(sdfg.arrays[name]), find_new_name=True)
+        if shared:
+            block.replace_dict({name: renamed[name] for name in shared})
+
+
+def sequential_leaf_map(node: nodes.Node, state: SDFGState) -> bool:
+    """Whether ``node`` enters a ``Sequential`` map with no parallel map anywhere inside it."""
+    if not isinstance(node, nodes.MapEntry) or node.map.schedule != dtypes.ScheduleType.Sequential:
+        return False
+    inner = state.scope_subgraph(node).nodes()
+    nested = [n.sdfg for n in inner if isinstance(n, nodes.NestedSDFG)]
+    return not any(
+        isinstance(n, nodes.MapEntry) and n.map.schedule != dtypes.ScheduleType.Sequential
+        for n in [*inner, *(m for sd in nested for m, _ in sd.all_nodes_recursive())]
+    )
+
+
+def replication_free(loop: LoopRegion) -> bool:
+    """Condition (H): every statement at the top level of ``loop``'s states is a worksharing map or one
+    :func:`share_out_bulk_statements` repairs, and at least one worksharing map is there already.
+
+    :param loop: the candidate loop region.
+    :returns: ``True`` if, once repaired, a team around ``loop`` replicates no statement.
+    """
+    worksharing = False
+    for block in loop.all_control_flow_blocks():
+        if isinstance(block, (BreakBlock, ContinueBlock, ReturnBlock)):
+            return False
+        if not isinstance(block, SDFGState):
+            continue
+        if not all(shares_out_as_a_map(edge, block) for edge in bulk_copies(block)):
+            return False
+        for node in top_level_nodes(block):
+            if isinstance(node, (nodes.AccessNode, nodes.Tasklet)) or elementwise(node):
+                continue
+            if isinstance(node, (nodes.MapEntry, nodes.MapExit)) and node.map.schedule == WORKSHARED:
+                worksharing = True
+                continue
+            entry = block.entry_node(node) if isinstance(node, nodes.MapExit) else node
+            if not sequential_leaf_map(entry, block):
+                return False
+    return worksharing
+
+
+def innermost_loop(block: ControlFlowBlock, loop: LoopRegion) -> LoopRegion:
+    """The innermost loop region strictly enclosing ``block`` inside ``loop`` (``loop`` itself if none is
+    closer)."""
+    region = block.parent_graph
+    while region is not loop and not isinstance(region, LoopRegion):
+        region = region.parent_graph
+    return region
+
+
+def repairs_amortized(loop: LoopRegion) -> bool:
+    """Whether every statement :func:`share_out_bulk_statements` repairs in ``loop`` runs in a loop that also
+    runs a worksharing map, directly or in a loop nested inside it.
+
+    A repaired statement costs a barrier each time it runs, and the team pays for that with the fork it saves
+    per worksharing map. Where a loop inside ``loop`` holds repairs and no worksharing map, every one of its
+    trips adds barriers and saves nothing: ``seidel_2d``'s scalar recurrence would become five barriers per
+    element.
+
+    :param loop: a loop :func:`replication_free` accepts.
+    :returns: ``True`` if no repair runs more often than the worksharing it rides on.
+    """
+    covered: set[int] = set()
+    repaired: set[int] = set()
+    for block in loop.all_control_flow_blocks():
+        if not isinstance(block, SDFGState):
+            continue
+        top = top_level_nodes(block)
+        if any(isinstance(n, nodes.MapEntry) and n.map.schedule == WORKSHARED for n in top):
+            region = innermost_loop(block, loop)
+            covered.add(id(region))
+            while region is not loop:
+                region = innermost_loop(region, loop)
+                covered.add(id(region))
+        if bulk_copies(block) or any(
+            isinstance(n, nodes.Tasklet) or elementwise(n) or sequential_leaf_map(n, block) for n in top
+        ):
+            repaired.add(id(innermost_loop(block, loop)))
+    return repaired <= covered
+
+
+def share_out_bulk_statements(sdfg: SDFG, loop: LoopRegion) -> None:
+    """Turn every bulk copy, elementwise library node and sequential leaf map at the top level of
+    ``loop``'s states into a ``CPU_Multicore`` map over the elements it writes, and split the views the
+    loop shares with the rest of ``sdfg`` (:func:`split_shared_views`).
+
+    A sequential leaf map holding nothing but a fill becomes one map over both
+    (:func:`fill_as_one_map`), which keeps every map of the body on one extent.
+
+    :param sdfg: the SDFG owning ``loop``.
+    :param loop: a loop :func:`replication_free` accepts.
+    """
+    split_shared_views(sdfg, loop)
+    for block in loop.all_control_flow_blocks():
+        if not isinstance(block, SDFGState):
+            continue
+        for edge in bulk_copies(block):
+            entry, _ = memlet_utils.memlet_to_map(edge, block, block.sdfg)
+            entry.map.schedule = WORKSHARED
+        for node in [n for n in top_level_nodes(block) if elementwise(n)]:
+            for entry in expand_in_place(node, block):
+                entry.map.schedule = WORKSHARED
+        for node in [n for n in top_level_nodes(block) if sequential_leaf_map(n, block)]:
+            if fill_as_one_map(node, block) is None:
+                node.map.schedule = WORKSHARED
+
+
 def loop_local_transients(sdfg: SDFG, loop: LoopRegion) -> set[str]:
     """The transients outlining ``loop`` would move into the nest rather than pass as a connector.
 
@@ -161,6 +471,72 @@ def loop_local_transients(sdfg: SDFG, loop: LoopRegion) -> set[str]:
     return {n for n in inside_names - outside_names if n in sdfg.arrays and sdfg.arrays[n].transient}
 
 
+def top_level_loop_locals(sdfg: SDFG, loop: LoopRegion) -> set[str]:
+    """The loop-local transients with an access node at the top level of one of ``loop``'s states and a
+    lifetime that is not shared already: what outlining would privatize although it can carry a value
+    from one map scope to another. Views are not among them: they alias storage and hold none.
+
+    :param sdfg: the SDFG holding ``loop``.
+    :param loop: the loop region about to be outlined.
+    :returns: their names.
+    """
+    privatized = loop_local_transients(sdfg, loop)
+    return {
+        node.data
+        for block in loop.all_control_flow_blocks()
+        if isinstance(block, SDFGState)
+        for node in top_level_nodes(block)
+        if isinstance(node, nodes.AccessNode)
+        and node.data in privatized
+        and sdfg.arrays[node.data].lifetime not in SHARED_LIFETIMES
+        and not isinstance(sdfg.arrays[node.data], data.View)
+    }
+
+
+def outlinable(sdfg: SDFG, loop: LoopRegion) -> bool:
+    """Whether ``loop`` can be outlined with :func:`top_level_loop_locals` kept outside the nest.
+
+    A container crossing the nest boundary -- one the rest of ``sdfg`` uses, or a transient kept outside
+    -- cannot have an extent naming a symbol the loop defines (its iterators, the symbols its interstate
+    edges assign): the nest would need that symbol from its caller before the loop has assigned it.
+    Views the loop shares with the rest of the SDFG are not a reason to refuse: :func:`split_shared_views`
+    gives them a descriptor of their own.
+
+    :param sdfg: the SDFG holding ``loop``.
+    :param loop: the loop region about to be outlined.
+    :returns: ``True`` if outlining keeps the SDFG valid.
+    """
+    defined = {b.loop_variable for b in [loop, *loop.all_control_flow_blocks()] if isinstance(b, LoopRegion)}
+    for edge in loop.all_interstate_edges(recursive=True):
+        defined.update(edge.data.assignments)
+    private = loop_local_transients(sdfg, loop) - top_level_loop_locals(sdfg, loop)
+    used = {n.data for b in loop.all_control_flow_blocks() if isinstance(b, SDFGState) for n in b.data_nodes()}
+    return not any(
+        {str(s) for s in sdfg.arrays[name].free_symbols} & defined
+        for name in used - private
+        if not isinstance(sdfg.arrays[name], data.View)
+    )
+
+
+def outline(loop: LoopRegion, sdfg: SDFG, keep_outside: set[str]) -> None:
+    """Nest ``loop`` into a nested SDFG wrapped in a one-iteration ``CPU_Persistent`` map.
+
+    :param loop: the loop region to outline.
+    :param sdfg: the SDFG owning ``loop``.
+    :param keep_outside: transients that stay in ``sdfg``, allocated before the region opens.
+    """
+    # ``loop`` may not be a node of ``sdfg`` when nested -- use ``loop.parent_graph`` instead.
+    state = xfh.nest_sdfg_subgraph(sdfg, SubgraphView(loop.parent_graph, [loop]), start=loop, keep_outside=keep_outside)
+    nsdfg = next(n for n in state.nodes() if isinstance(n, nodes.NestedSDFG))
+    # The outlining maps every symbol of ``sdfg`` into the nest. One that a LATER loop assigns then reads
+    # as used before that loop runs -- a free symbol of ``sdfg`` -- and outlining that loop in turn
+    # exports it back out through a ``symbolic_output`` state. Only what the nest reads crosses.
+    read_inside = nsdfg.sdfg.free_symbols
+    for name in [name for name in nsdfg.symbol_mapping if name not in read_inside]:
+        del nsdfg.symbol_mapping[name]
+    xfh.wrap_code_node_in_unit_map(state, nsdfg, dtypes.ScheduleType.CPU_Persistent, "_team")
+
+
 @properties.make_properties
 class HoistParallelRegion(ppl.Pass):
     """Wrap a sequential loop over parallel maps in one persistent OpenMP team."""
@@ -173,7 +549,7 @@ class HoistParallelRegion(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self):
+    def depends_on(self) -> set[type[ppl.Pass] | ppl.Pass]:
         return set()
 
     def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> int | None:
@@ -184,6 +560,7 @@ class HoistParallelRegion(ppl.Pass):
         :returns: how many loops were hoisted, or ``None`` if none were.
         """
         self.hoisted = 0
+        narrow_whole_fills(sdfg)
         # Outlining moves whole states into a new SDFG through ``add_node``, which re-homes every nested
         # SDFG that travelled with them.
         self.visit_sdfg(sdfg)
@@ -200,16 +577,26 @@ class HoistParallelRegion(ppl.Pass):
         """Hoist the OUTERMOST qualifying loop of each chain in ``region``, then descend.
 
         Outermost, because one region around the whole nest costs one fork where a region around an
-        inner loop costs one per trip of the outer one.
+        inner loop costs one per trip of the outer one. A loop satisfying (H) that can be outlined has
+        its bulk statements shared out on the spot: the team hoist takes every
+        such loop, so a repair is never left behind in a loop that stays sequential.
 
         :param region: the control-flow region to walk.
         :param sdfg: the SDFG owning ``region``.
         """
         for block in list(region.nodes()):
-            if isinstance(block, LoopRegion) and self.hoistable(block, sdfg):
-                self.hoist(block, sdfg)
-                self.hoisted += 1
-            elif isinstance(block, AbstractControlFlowRegion):
+            if (
+                isinstance(block, LoopRegion)
+                and replication_free(block)
+                and repairs_amortized(block)
+                and outlinable(sdfg, block)
+            ):
+                share_out_bulk_statements(sdfg, block)
+                if self.hoistable(block, sdfg):
+                    self.hoist(block, sdfg)
+                    self.hoisted += 1
+                    continue
+            if isinstance(block, AbstractControlFlowRegion):
                 self.visit_region(block, sdfg)
             elif isinstance(block, SDFGState):
                 for node in block.nodes():
@@ -217,46 +604,12 @@ class HoistParallelRegion(ppl.Pass):
                         self.visit_sdfg(node.sdfg)
 
     def hoistable(self, loop: LoopRegion, sdfg: SDFG) -> bool:
-        """Whether ``loop`` may be wrapped in a persistent team -- conditions (H) and (T).
+        """Whether this pass rewrites the replication-free, shared-out ``loop``: always, for the team.
 
         :param loop: the candidate loop region.
         :param sdfg: the SDFG owning ``loop``.
-        :returns: ``True`` if wrapping preserves semantics and is worth doing.
+        :returns: ``True``.
         """
-        worksharing = False
-        for block in loop.all_control_flow_blocks():
-            if isinstance(block, (BreakBlock, ContinueBlock, ReturnBlock)):
-                return False
-            if not isinstance(block, SDFGState):
-                continue
-            for edge in block.edges():
-                if (
-                    isinstance(edge.src, nodes.AccessNode)
-                    and isinstance(edge.dst, nodes.AccessNode)
-                    and edge.data is not None
-                    and not edge.data.is_empty()
-                ):
-                    return False
-            for node in top_level_nodes(block):
-                if isinstance(node, (nodes.AccessNode, nodes.Tasklet)):
-                    continue
-                if isinstance(node, (nodes.MapEntry, nodes.MapExit)) and node.map.schedule == WORKSHARED:
-                    worksharing = True
-                    continue
-                return False
-        if not worksharing:
-            return False
-        privatized = loop_local_transients(sdfg, loop)
-        for block in loop.all_control_flow_blocks():
-            if not isinstance(block, SDFGState):
-                continue
-            for node in top_level_nodes(block):
-                if (
-                    isinstance(node, nodes.AccessNode)
-                    and node.data in privatized
-                    and sdfg.arrays[node.data].lifetime not in SHARED_LIFETIMES
-                ):
-                    return False
         return True
 
     def hoist(self, loop: LoopRegion, sdfg: SDFG) -> None:
@@ -272,7 +625,4 @@ class HoistParallelRegion(ppl.Pass):
                     # iteration of ``omp for`` runs it once, on one thread, with the barrier kept.
                     if isinstance(node, nodes.Tasklet):
                         xfh.wrap_code_node_in_unit_map(block, node, WORKSHARED, "_single")
-        # ``loop`` may not be a node of ``sdfg`` when nested -- use ``loop.parent_graph`` instead.
-        state = xfh.nest_sdfg_subgraph(sdfg, SubgraphView(loop.parent_graph, [loop]), start=loop)
-        nsdfg = next(n for n in state.nodes() if isinstance(n, nodes.NestedSDFG))
-        xfh.wrap_code_node_in_unit_map(state, nsdfg, dtypes.ScheduleType.CPU_Persistent, "_team")
+        outline(loop, sdfg, top_level_loop_locals(sdfg, loop))
