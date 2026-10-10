@@ -3290,12 +3290,11 @@ def demote_symbol_to_scalar(
                     assert not tutil.tasklet_assigns_name(n, symbol_str)
                     assert symbol_str != "True"
                     assert symbol_str != "False"
-                    # ``py_only=False``: a non-Python body must be rewritten too, or the tasklet
-                    # keeps reading a symbol this call is removing from the SDFG. For a Python
-                    # tasklet the flag is not consulted at all (the symbolic path takes it), so
-                    # this only opens the C++ case -- token replacement over the whole body, which
-                    # is what a guard tasklet like ``if (s > 0) { std::abort(); }`` needs.
-                    tutil.tasklet_replace_code(n, {symbol_str: f"_in_{symbol_str}"}, py_only=False)
+                    # Token replacement over the whole body, in every language: a C++ guard such as
+                    # ``if (s > 0) { std::abort(); }`` must be rewritten too, and a Python body must
+                    # keep its expression as written -- the sympy path reorders it (``a - s`` into
+                    # ``-s + a``) and changes the rounding of anything with three or more terms.
+                    tutil.tasklet_replace_code(n, {symbol_str: f"_in_{symbol_str}"}, py_only=False, use_sym_expr=False)
                     n.add_in_connector(f"_in_{symbol_str}")
                     if sdict is None:
                         sdict = g.scope_dict()
