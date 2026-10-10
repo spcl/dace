@@ -102,7 +102,37 @@ def test_a_tasklet_reading_a_demoted_symbol_keeps_its_expression():
     assert R[0] == X[0] - S[0] + Y[0]
 
 
+def test_an_index_read_inside_a_branch_condition_stays_a_symbol():
+    """``j = I[0]`` then ``if A[j] > 0.5``: ``j`` selects the element the condition reads, so it is a data-access
+    symbol, while ``w = A[j]`` (a value only compared) becomes a scalar."""
+    sdfg = dace.SDFG("index_in_condition")
+    sdfg.add_symbol("j", dace.int64)
+    sdfg.add_symbol("w", dace.float64)
+    sdfg.add_array("I", [1], dace.int64)
+    sdfg.add_array("A", [4], dace.float64)
+    sdfg.add_array("R", [1], dace.float64)
+    start = sdfg.add_state("start", is_start_block=True)
+    read = sdfg.add_state_after(start, "read", assignments={"j": "I[0]"})
+    cond = ConditionalBlock("above")
+    branch = ControlFlowRegion("store")
+    body = branch.add_state(is_start_block=True)
+    write = body.add_tasklet("store", {}, {"o"}, "o = w")
+    body.add_edge(write, "o", body.add_write("R"), None, dace.Memlet("R[0]"))
+    cond.add_branch(dace.properties.CodeBlock("A[j] > 0.5"), branch)
+    sdfg.add_node(cond)
+    sdfg.add_edge(read, cond, dace.InterstateEdge(assignments={"w": "A[j]"}))
+    sdfg.validate()
+    assert DemoteNonStructuralSymbols().apply_pass(sdfg, {}) == 1
+    sdfg.validate()
+    assert "j" in sdfg.symbols and "w" in sdfg.arrays
+
+    I, A, R = np.array([2], dtype=np.int64), np.array([0.0, 0.1, 0.9, 0.2]), np.zeros(1)
+    sdfg(I=I, A=A, R=R)
+    assert R[0] == 0.9
+
+
 if __name__ == "__main__":
     test_a_counter_becomes_a_scalar_and_its_loop_maps()
     test_a_demoted_value_keeps_its_arithmetic_as_written()
     test_a_tasklet_reading_a_demoted_symbol_keeps_its_expression()
+    test_an_index_read_inside_a_branch_condition_stays_a_symbol()

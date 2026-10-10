@@ -8,18 +8,19 @@ merely updates it reads as carrying a symbol and stays sequential; as a scalar i
 and privatization passes handle.
 """
 
+import ast
 import dataclasses
 from collections.abc import Callable, Iterable
 from typing import Any
 
 from ordered_set import OrderedSet
 
-from dace import SDFG, properties
+from dace import SDFG, InterstateEdge, dtypes, properties
 from dace.memlet import Memlet
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.graph import MultiConnectorEdge
-from dace.sdfg.state import AbstractControlFlowRegion, LoopRegion
+from dace.sdfg.state import AbstractControlFlowRegion, ConditionalBlock, LoopRegion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 
@@ -38,7 +39,9 @@ class StructuralSymbols:
     regions: dict[AbstractControlFlowRegion, None] = dataclasses.field(default_factory=dict)
     map_entries: dict[nodes.MapEntry, None] = dataclasses.field(default_factory=dict)
     nested: dict[nodes.NestedSDFG, None] = dataclasses.field(default_factory=dict)
+    tasklets: dict[nodes.Tasklet, None] = dataclasses.field(default_factory=dict)
     edges: dict[MultiConnectorEdge[Memlet], None] = dataclasses.field(default_factory=dict)
+    interstate: dict[InterstateEdge, None] = dataclasses.field(default_factory=dict)
 
 
 def extend_structural_symbols(sd: SDFG, found: StructuralSymbols) -> None:
@@ -55,6 +58,15 @@ def extend_structural_symbols(sd: SDFG, found: StructuralSymbols) -> None:
             found.regions[region] = None
             if isinstance(region, LoopRegion):
                 found.names.update(sdutil.loop_domain_symbols(region))
+            if isinstance(region, (LoopRegion, ConditionalBlock)):
+                for code in region.get_meta_codeblocks():
+                    found.names.update(sdutil.subscript_index_symbols(code.code, sd.arrays))
+    for iedge in sd.all_interstate_edges():
+        if iedge.data not in found.interstate:
+            found.interstate[iedge.data] = None
+            found.names.update(sdutil.subscript_index_symbols(iedge.data.condition.code, sd.arrays))
+            for value in iedge.data.assignments.values():
+                found.names.update(sdutil.subscript_index_symbols(ast.parse(value), sd.arrays))
     for state in sd.states():
         for node in state.nodes():
             if isinstance(node, nodes.MapEntry) and node not in found.map_entries:
@@ -63,6 +75,11 @@ def extend_structural_symbols(sd: SDFG, found: StructuralSymbols) -> None:
             elif isinstance(node, nodes.NestedSDFG) and node not in found.nested:
                 found.nested[node] = None
                 found.names.update(sdutil.nested_mapping_symbols(node))
+            elif isinstance(node, nodes.Tasklet) and node not in found.tasklets:
+                found.tasklets[node] = None
+                if node.code.language is dtypes.Language.Python:
+                    connectors = node.in_connectors.keys() | node.out_connectors.keys()
+                    found.names.update(sdutil.subscript_index_symbols(node.code.code, connectors))
         for edge in state.edges():
             if edge not in found.edges:
                 found.edges[edge] = None

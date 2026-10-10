@@ -1,12 +1,13 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Various utility functions to create, traverse, and modify SDFGs."""
 
+import ast
 import collections
 import copy
 import time
 import traceback
 import warnings
-from collections.abc import Callable, Generator, Sequence
+from collections.abc import Callable, Container, Generator, Sequence
 from typing import Any, Optional
 
 import networkx as nx
@@ -3163,9 +3164,35 @@ def structural_symbols(sdfg: "dace.SDFG") -> set[str]:
                 structural.update(str(s) for s in node.map.range.free_symbols)
             elif isinstance(node, nd.NestedSDFG):
                 structural.update(nested_mapping_symbols(node))
+            if isinstance(node, nd.Tasklet) and node.code.language is dtypes.Language.Python:
+                structural.update(
+                    subscript_index_symbols(node.code.code, node.in_connectors.keys() | node.out_connectors.keys())
+                )
         for edge in state.edges():
             structural.update(str(s) for s in edge.data.free_symbols)
+    for edge in sdfg.all_interstate_edges():
+        structural.update(subscript_index_symbols(edge.data.condition.code, sdfg.arrays))
+        for value in edge.data.assignments.values():
+            structural.update(subscript_index_symbols(ast.parse(value), sdfg.arrays))
+    for block in sdfg.all_control_flow_blocks():
+        if isinstance(block, (LoopRegion, ConditionalBlock)):
+            for code in block.get_meta_codeblocks():
+                structural.update(subscript_index_symbols(code.code, sdfg.arrays))
     return structural
+
+
+def subscript_index_symbols(code: ast.AST | list[ast.AST], containers: Container[str]) -> set[str]:
+    """The names an index of a subscript into one of ``containers`` is written in: ``k`` in ``A[k, i] > 0``.
+
+    Such a name selects the element a data access reads, wherever the access is written -- a branch condition, an
+    interstate edge or a tasklet's own subscript of a connector -- so it is a data-access symbol.
+    """
+    names: set[str] = set()
+    for tree in code if isinstance(code, list) else [code]:
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name) and node.value.id in containers:
+                names.update(n.id for n in ast.walk(node.slice) if isinstance(n, ast.Name))
+    return names
 
 
 def loop_domain_symbols(loop: LoopRegion) -> set[str]:
@@ -3203,24 +3230,7 @@ def symbol_carries_graph_structure(sdfg: "dace.SDFG", symbol_str: str, structura
         an UNMUTATED span; answered by membership then. ``None`` runs the scan here, as before.
     :return: ``True`` if some structural use would break under demotion.
     """
-    if structural is not None:
-        return symbol_str in structural
-    for desc in sdfg.arrays.values():
-        if symbol_str in (str(s) for s in desc.free_symbols):
-            return True
-    for cfr in sdfg.all_control_flow_regions():
-        if isinstance(cfr, LoopRegion) and symbol_str in loop_domain_symbols(cfr):
-            return True
-    for state in sdfg.states():
-        for node in state.nodes():
-            if isinstance(node, nd.MapEntry) and symbol_str in (str(s) for s in node.map.range.free_symbols):
-                return True
-            if isinstance(node, nd.NestedSDFG) and symbol_str in nested_mapping_symbols(node):
-                return True
-        for edge in state.edges():
-            if symbol_str in (str(s) for s in edge.data.free_symbols):
-                return True
-    return False
+    return symbol_str in (structural if structural is not None else structural_symbols(sdfg))
 
 
 def demote_symbol_to_scalar(
