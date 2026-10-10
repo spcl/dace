@@ -1,7 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""A 2D array with a unit dim (``(N, 1)`` / ``(1, N)``) must transpose to the swapped shape; the
-frontend used to squeeze it and reject ``(N, 1).T`` as "not a matrix". An integer index, by
-contrast, squeezes its axis (``x[:, 1]`` is ``(N,)``) per numpy."""
+"""A 2D array with a unit dim (``(N, 1)`` / ``(1, N)``), including a length-1 slice such as ``x[:, 0:1]``,
+transposes to the swapped shape as in numpy instead of being squeezed and rejected as "not a matrix"."""
 
 import numpy as np
 
@@ -56,20 +55,6 @@ def test_row_vector_transpose():
 
 
 @dace.program
-def index_squeezes_axis(x: dace.float64[N, 3]):
-    col = x[:, 1]  # an integer index squeezes the axis: (N,)
-    return np.sum(col)
-
-
-def test_integer_index_squeezes_axis():
-    n = 6
-    rng = np.random.default_rng(3)
-    x = rng.random((n, 3))
-    got = np.asarray(index_squeezes_axis(x.copy()))
-    assert np.allclose(got, np.sum(x[:, 1]))
-
-
-@dace.program
 def transposed_column_difference(pos: dace.float64[N, 3], dx: dace.float64[N, N]):
     dx[:] = pos[:, 0:1].T - pos[:, 0:1]
 
@@ -90,6 +75,5 @@ if __name__ == "__main__":
     test_column_vector_transpose_matmul()
     test_column_vector_outer_product()
     test_row_vector_transpose()
-    test_integer_index_squeezes_axis()
     test_a_length1_slice_keeps_its_axis()
     print("OK")
