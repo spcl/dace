@@ -3,7 +3,6 @@ import itertools
 import warnings
 from collections.abc import Sequence
 from functools import reduce
-from typing import Union
 
 import sympy as sp
 
@@ -228,55 +227,37 @@ class Subset:
         #   with simplify. We do it because simplify is a very expensive operation and we try to
         #   avoid calling it.
         try:
-            # if self is an index no further distinction is needed
-            if isinstance(self, Indices):
-                return True
+            if isinstance(self, Range):
+                assert isinstance(other, Range)
+                # other is a range so in every dimension self.step has to divide other.step and
+                # self.start % self.step = other.start % other.step
+                self_steps = [r[2] for r in self.ranges]
+                other_steps = [r[2] for r in other.ranges]
+                starts = self.min_element()
+                ostarts = other.min_element()
 
-            elif isinstance(self, Range):
-                # other is an index so we need to check if the step of self is such that other is covered
-                # self.start % self.step == other.index % self.step
-                if isinstance(other, Indices):
-                    # TODO: Think if inverting the order is simpler.
-                    for simp_fun in [no_simplify, simplify]:
-                        for (start, _, step), i in zip(self.ranges, other.indices):
-                            simp_step = simp_fun(step)
+                for i, simp_fun in enumerate([no_simplify, simplify]):
+                    try:
+                        for start, step, ostart, ostep in zip(starts, self_steps, ostarts, other_steps):
                             simp_start = simp_fun(start)
-                            simp_i = simp_fun(i)
-                            if not (((simp_start % simp_step) == (simp_i % simp_step)) == True):
+                            simp_ostart = simp_fun(ostart)
+                            if not (
+                                ostep % step == 0
+                                and (
+                                    (simp_start == simp_ostart)
+                                    or (simp_start % simp_fun(step) == simp_ostart % simp_fun(ostep)) == True
+                                )
+                            ):
                                 return False
-                    return True
-
-                else:
-                    assert isinstance(other, Range)
-                    # other is a range so in every dimension self.step has to divide other.step and
-                    # self.start % self.step = other.start % other.step
-                    self_steps = [r[2] for r in self.ranges]
-                    other_steps = [r[2] for r in other.ranges]
-                    starts = self.min_element()
-                    ostarts = other.min_element()
-
-                    for i, simp_fun in enumerate([no_simplify, simplify]):
-                        try:
-                            for start, step, ostart, ostep in zip(starts, self_steps, ostarts, other_steps):
-                                simp_start = simp_fun(start)
-                                simp_ostart = simp_fun(ostart)
-                                if not (
-                                    ostep % step == 0
-                                    and (
-                                        (simp_start == simp_ostart)
-                                        or (simp_start % simp_fun(step) == simp_ostart % simp_fun(ostep)) == True
-                                    )
-                                ):
-                                    return False
-                        except TypeError:
-                            # If a ``TypeError`` happens during the "no simplify" phase, we immediately
-                            #   go to the simplify phase, in the hope that it might be possible to
-                            #   simplify the expression more. If we are already using simplify, then
-                            #   we return ``False``.
-                            if i == 0:
-                                continue
-                            return False
-                    return True
+                    except TypeError:
+                        # If a ``TypeError`` happens during the "no simplify" phase, we immediately
+                        #   go to the simplify phase, in the hope that it might be possible to
+                        #   simplify the expression more. If we are already using simplify, then
+                        #   we return ``False``.
+                        if i == 0:
+                            continue
+                        return False
+                return True
             else:
                 raise ValueError(
                     f"Does not know how to compare a `{type(self).__name__}` with a `{type(other).__name__}`."
@@ -410,10 +391,7 @@ class Range(Subset):
         self.tile_sizes = parsed_tiles
 
     @staticmethod
-    def from_indices(indices: Union["Indices", Sequence[int | str | symbolic.SymbolicType]]):
-        if isinstance(indices, Indices):
-            return Range([(i, i, 1) for i in indices.indices])
-
+    def from_indices(indices: Sequence[int | str | symbolic.SymbolicType]):
         indices = [symbolic.pystr_to_symbolic(i) for i in indices]
         return Range([(i, i, 1) for i in indices])
 
@@ -1149,30 +1127,6 @@ class Range(Subset):
         return True
 
 
-@dace.serialize.serializable
-class Indices(Range):
-    """A subset of one element representing a single index in an
-    N-dimensional data descriptor."""
-
-    def __init__(self, indices: Sequence[int | str | symbolic.SymbolicType]):
-        warnings.warn(
-            "The Indices class is deprecated and will be removed in future versions of DaCe.", DeprecationWarning
-        )
-        if indices is None:
-            raise TypeError("Expected an array of index expressions: got None")
-        elif isinstance(indices, str):
-            raise TypeError("Expected collection of index expression: got str")
-        elif isinstance(indices, symbolic.SymExpr):
-            raise TypeError("Expected collection of index expression: got SymExpr")
-
-        indices = [symbolic.pystr_to_symbolic(i) for i in indices]
-        super().__init__([(idx, idx, 1) for idx in indices])
-
-    @property
-    def indices(self) -> list[symbolic.SymbolicType]:
-        return [rb for rb, _, _ in self.ranges]
-
-
 class SubsetUnion(Subset):
     """
     Wrapper subset type that stores multiple Subsets in a list.
@@ -1186,11 +1140,11 @@ class SubsetUnion(Subset):
             for subset in subset:
                 if not subset:
                     break
-                if isinstance(subset, (Range, Indices)):
+                if isinstance(subset, Range):
                     self.subset_list.append(subset)
                 else:
                     raise NotImplementedError
-        elif isinstance(subset, (Range, Indices)):
+        elif isinstance(subset, Range):
             self.subset_list = [subset]
 
     def covers(self, other):
@@ -1247,7 +1201,7 @@ class SubsetUnion(Subset):
         try:
             if isinstance(other, SubsetUnion):
                 self.subset_list += other.subset_list
-            elif isinstance(other, Indices) or isinstance(other, Range):
+            elif isinstance(other, Range):
                 self.subset_list.append(other)
             else:
                 raise TypeError
@@ -1368,10 +1322,6 @@ def union(subset_a: Subset, subset_b: Subset) -> Subset:
             return list_union(subset_a, subset_b)
         elif type(subset_a) != type(subset_b):
             return bounding_box_union(subset_a, subset_b)
-        elif isinstance(subset_a, Indices):
-            # Two indices. If they are adjacent, returns a range that contains both,
-            # otherwise, returns a bounding box of the two
-            return bounding_box_union(subset_a, subset_b)
         elif isinstance(subset_a, Range):
             # TODO(later): More involved Strided-Tiled Range union
             return bounding_box_union(subset_a, subset_b)
@@ -1424,10 +1374,6 @@ def intersects(subset_a: Subset, subset_b: Subset) -> bool | None:
     try:
         if subset_a is None or subset_b is None:
             return False
-        if isinstance(subset_a, Indices):
-            subset_a = Range.from_indices(subset_a)
-        if isinstance(subset_b, Indices):
-            subset_b = Range.from_indices(subset_b)
         if type(subset_a) is type(subset_b):
             return subset_a.intersects(subset_b)
         return None

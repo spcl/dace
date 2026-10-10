@@ -1,5 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-from dace.subsets import Indices, Range
+from dace.subsets import Range
 
 
 def test_compose():
@@ -17,17 +17,17 @@ def test_compose():
 
     c1 = Range.from_string("0, 0:N, 0:M, 50:100")
     c2 = Range.from_string("0, 0, 0, 20:40")
-    c3 = Indices.from_string("0 , 0 , 0 , 0")
+    c3 = Range.from_string("0 , 0 , 0 , 0")
 
     c_res1 = Range.from_string("0, 0, 0, 70:90")
-    c_res2 = Indices.from_string("0, 0, 0, 50")
+    c_res2 = Range.from_string("0, 0, 0, 50")
     assert c_res1 == c1.compose(c2)
     assert c_res2 == c1.compose(c3)
 
     d1 = Range.from_string("i,j,0:N")
-    d2 = Indices.from_string("0,0,k")
+    d2 = Range.from_string("0,0,k")
 
-    d_res = Indices.from_string("i,j,k")
+    d_res = Range.from_string("i,j,k")
     assert d_res == d1.compose(d2)
 
 

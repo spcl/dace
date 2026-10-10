@@ -1741,21 +1741,15 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         master_subset = subsets_to_check[0]
         for ssidx in range(1, len(subsets_to_check)):
             subset = subsets_to_check[ssidx]
-            if isinstance(subset, subsets.Indices):
-                subset = subsets.Range.from_indices(subset)
-                # Do we also need the reverse? See below why.
-                if any(r != (0, 0, 1) for r in subset.offset_new(master_subset, negative=True)):
-                    return False
-            else:
-                # The original code used `Range.offset` here, but that one had trouble
-                #  for `r1 = 'j, 0:10'` and `r2 = 'j, 0`. The solution would be to test
-                #  symmetrically, i.e., `r1 - r2` and `r2 - r1`. However, if we would
-                #  have `r2_1 = 'j, 0:10'` it consider it as failing, which is not
-                #  what we want. Thus we will use symmetric cover.
-                if not master_subset.covers(subset):
-                    return False
-                if not subset.covers(master_subset):
-                    return False
+            # The original code used `Range.offset` here, but that one had trouble
+            #  for `r1 = 'j, 0:10'` and `r2 = 'j, 0`. The solution would be to test
+            #  symmetrically, i.e., `r1 - r2` and `r2 - r1`. However, if we would
+            #  have `r2_1 = 'j, 0:10'` it consider it as failing, which is not
+            #  what we want. Thus we will use symmetric cover.
+            if not master_subset.covers(subset):
+                return False
+            if not subset.covers(master_subset):
+                return False
 
         # All subsets are equal to the master subset, thus they are equal to each other.
         #  This means that the data accesses, described by this transformation is
@@ -2292,8 +2286,6 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         claimed = producer_leaf_edge.data.dst_subset
         if claimed is None:
             return False
-        if isinstance(claimed, subsets.Indices):
-            claimed = subsets.Range.from_indices(claimed)
         full_range = subsets.Range.from_array(intermediate_desc)
 
         # Only whole-array claims are handled here; partial claims use the regular machinery.
@@ -2323,8 +2315,6 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                         # No subset means the whole container is written.
                         write_subset = subsets.Range.from_array(inner_node.desc(inner_sdfg))
                     write_subset = copy.deepcopy(write_subset)
-                    if isinstance(write_subset, subsets.Indices):
-                        write_subset = subsets.Range.from_indices(write_subset)
                     symbolic.safe_replace(mapping=nsdfg.symbol_mapping, replace_callback=write_subset.replace)
                     if not set(map(str, write_subset.free_symbols)).issubset(allowed_symbols):
                         return False

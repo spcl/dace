@@ -887,7 +887,7 @@ def reduce_connector(
     if isinstance(new_desc, data.Scalar):
         squeeze = list(range(len(old_desc.shape)))
     if offset is not None and not isinstance(offset, subsets.Subset):
-        offset = subsets.Range.from_indices(subsets.Indices(list(offset)))
+        offset = subsets.Range.from_indices(list(offset))
 
     parent_node = nsdfg.parent_nsdfg_node
     symbol_types: dict[str, dtypes.typeclass] = {}

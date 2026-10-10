@@ -224,7 +224,7 @@ class StateFusionExtended(transformation.MultiStateTransformation):
         for ea in edges_a:
             for eb in edges_b:
                 sa, sb = subset_a(ea), subset_b(eb)
-                # ``subsets.intersects`` only knows Range/Indices, but a SubsetUnion is a legal
+                # ``subsets.intersects`` only knows Range, but a SubsetUnion is a legal
                 # ``Memlet.subset`` (properties.py) and would raise AttributeError. Indeterminate
                 # is the conservative answer, and it is what this function already returns True on.
                 if isinstance(sa, subsets.SubsetUnion) or isinstance(sb, subsets.SubsetUnion):
