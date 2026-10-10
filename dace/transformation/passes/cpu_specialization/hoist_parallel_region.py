@@ -210,7 +210,7 @@ def expand_in_place(node: nodes.LibraryNode, state: SDFGState) -> list[nodes.Map
 def fill_as_one_map(entry: nodes.MapEntry, state: SDFGState) -> nodes.MapEntry | None:
     """Rebuild a sequential leaf map whose whole body is one static fill as ONE worksharing map over the
     map's positions and the fill's elements: ``SpecializeCpuTransfers``' row loop around a row memset
-    goes back to the map it came from, so the body keeps one extent and the band cuts its columns.
+    goes back to the map it came from, so the body keeps one extent and the strip-mining cuts its columns.
 
     :returns: the new map's entry, or ``None`` if the map is not that shape.
     """
@@ -279,7 +279,7 @@ def whole_fill_hull(
     symbols the SDFG is called with, the only ones known wherever the fill runs.
 
     Nobody observes what the fill writes outside the hull, and only the hull has the extent the rest of
-    the loop body is banded on (``psum_solqa[:] = 0`` beside ``[kidia-1:kfdia]``).
+    the loop body is tiled on (``psum_solqa[:] = 0`` beside ``[kidia-1:kfdia]``).
     """
     outputs = state.out_edges(fill)
     if len(outputs) != 1 or not isinstance(outputs[0].dst, nodes.AccessNode):
@@ -415,21 +415,104 @@ def repairs_amortized(loop: LoopRegion) -> bool:
     return repaired <= covered
 
 
+def forwarded_index(region: subsets.Range, source: subsets.Range, target: subsets.Range) -> subsets.Range:
+    """``region`` of a copy's source, as the matching region of its target: the non-unit dimensions pair up in
+    order, shifted by the difference of their begins; a unit dimension of the target keeps its begin."""
+    pairs = iter(
+        [
+            (dim, begin)
+            for dim, ((begin, _, _), size) in enumerate(zip(source.ranges, source.size(), strict=True))
+            if size != 1
+        ]
+    )
+    ranges = []
+    for (begin, _, _), size in zip(target.ranges, target.size(), strict=True):
+        if size == 1:
+            ranges.append((begin, begin, 1))
+            continue
+        dim, source_begin = next(pairs)
+        low, high, step = region.ranges[dim]
+        ranges.append((low + begin - source_begin, high + begin - source_begin, step))
+    return subsets.Range(ranges)
+
+
+def forward_copies_into_exits(state: SDFGState, carried: set[str]) -> None:
+    """Retarget a map's scratch plane at the array it is copied into, inside every top-level map of ``state``.
+
+    ``for jm: { plane[:, :] = f(...); a[:, jm, :] = plane }`` -- a transient written by one inner map and
+    copied whole into the enclosing map's exit -- becomes the inner map writing ``a[:, jm, :]`` directly. The
+    copy covers the whole plane whatever slice of it the inner map computes, so a tile of the inner map would
+    copy everyone else's columns too; without the copy the tile writes only its own.
+
+    :param state: the state to rewrite in place.
+    :param carried: containers some state reads before writing -- values that cross states, never forwarded.
+    """
+    scopes = state.scope_dict()
+    entries = [n for n in state.nodes() if isinstance(n, nodes.MapEntry) and scopes[n] is None]
+    for exit_node in [state.exit_node(entry) for entry in entries]:
+        for edge in list(state.in_edges(exit_node)):
+            plane = edge.src
+            if not isinstance(plane, nodes.AccessNode) or edge.data.is_empty() or edge.data.wcr is not None:
+                continue
+            desc = plane.desc(state.sdfg)
+            writers = state.in_edges(plane)
+            if not desc.transient or isinstance(desc, data.View) or plane.data in carried:
+                continue
+            if sum(1 for n in state.data_nodes() if n.data == plane.data) != 1:
+                continue
+            if state.out_degree(plane) != 1 or len(writers) != 1 or not isinstance(writers[0].src, nodes.MapExit):
+                continue
+            source = edge.data.get_src_subset(edge, state)
+            target = edge.data.get_dst_subset(edge, state)
+            outgoing = [e for e in state.out_edges(exit_node) if e.src_conn == "OUT_" + edge.dst_conn[3:]]
+            if source is None or target is None or len(outgoing) != 1 or writers[0].data.wcr is not None:
+                continue
+            if str(source) != str(subsets.Range.from_array(desc)):
+                continue
+            sizes = [[size for size in subset.size() if size != 1] for subset in (source, target)]
+            if [str(size) for size in sizes[0]] != [str(size) for size in sizes[1]]:
+                continue
+            destination = outgoing[0].data.data
+            inner_exit = writers[0].src
+            for inner in state.memlet_tree(writers[0]).traverse_children(include_self=True):
+                memlet = inner.edge.data
+                memlet.subset = forwarded_index(memlet.subset, source, target)
+                memlet.data = destination
+            state.remove_edge(writers[0])
+            state.remove_edge(edge)
+            state.remove_node(plane)
+            state.add_edge(
+                inner_exit, writers[0].src_conn, exit_node, edge.dst_conn, Memlet(data=destination, subset=target)
+            )
+            if not any(n.data == plane.data for st in state.sdfg.states() for n in st.data_nodes()):
+                state.sdfg.remove_data(plane.data, validate=False)
+
+
 def share_out_bulk_statements(sdfg: SDFG, loop: LoopRegion) -> None:
     """Turn every bulk copy, elementwise library node and sequential leaf map at the top level of
     ``loop``'s states into a ``CPU_Multicore`` map over the elements it writes, and split the views the
     loop shares with the rest of ``sdfg`` (:func:`split_shared_views`).
 
-    A sequential leaf map holding nothing but a fill becomes one map over both
-    (:func:`fill_as_one_map`), which keeps every map of the body on one extent.
+    A sequential leaf map holding nothing but a fill becomes one map over both (:func:`fill_as_one_map`), and
+    a scratch plane copied whole into its map's exit is replaced by the array it is copied into
+    (:func:`forward_copies_into_exits`): both keep every map of the body on the elements it writes. The bulk
+    statements of a nested SDFG under a worksharing map become sequential maps
+    (:func:`sequential_bulk_statements`).
 
     :param sdfg: the SDFG owning ``loop``.
     :param loop: a loop :func:`replication_free` accepts.
     """
     split_shared_views(sdfg, loop)
+    carried = {
+        node.data
+        for state in sdfg.states()
+        for node in state.data_nodes()
+        if state.in_degree(node) == 0 and state.out_degree(node) > 0
+    }
     for block in loop.all_control_flow_blocks():
         if not isinstance(block, SDFGState):
             continue
+        forward_copies_into_exits(block, carried)
         for edge in bulk_copies(block):
             entry, _ = memlet_utils.memlet_to_map(edge, block, block.sdfg)
             entry.map.schedule = WORKSHARED
@@ -439,6 +522,38 @@ def share_out_bulk_statements(sdfg: SDFG, loop: LoopRegion) -> None:
         for node in [n for n in top_level_nodes(block) if sequential_leaf_map(n, block)]:
             if fill_as_one_map(node, block) is None:
                 node.map.schedule = WORKSHARED
+        for entry in [n for n in top_level_nodes(block) if isinstance(n, nodes.MapEntry)]:
+            if entry.map.schedule == WORKSHARED:
+                for node in block.scope_subgraph(entry).nodes():
+                    if isinstance(node, nodes.NestedSDFG) and node.sdfg is not None:
+                        sequential_bulk_statements(node.sdfg)
+
+
+def sequential_bulk_statements(sdfg: SDFG) -> None:
+    """Turn every bulk copy and elementwise library node at the top level of ``sdfg``'s states into a
+    ``Sequential`` map over the elements it writes.
+
+    ``sdfg`` is the body of a worksharing map, so its statements run on one thread already and the repair of
+    :func:`share_out_bulk_statements` is not needed for (H). It puts every statement of the body in a map
+    nest, which is what a tile narrows: CLOUDSC's monolith runs each species loop's plane updates as copies
+    and ``np.where`` nodes in such a body. The views that fed those nodes' operands are composed into the
+    arrays they view once the nodes are gone, so every access names its array.
+
+    :param sdfg: the nested SDFG to rewrite in place, not its own nests.
+    """
+    from dace.transformation.passes.remove_views import RemoveViews  # Avoid import loop
+
+    expanded = False
+    for state in sdfg.states():
+        for edge in [e for e in bulk_copies(state) if shares_out_as_a_map(e, state)]:
+            entry, _ = memlet_utils.memlet_to_map(edge, state, sdfg)
+            entry.map.schedule = dtypes.ScheduleType.Sequential
+        for node in [n for n in top_level_nodes(state) if elementwise(n)]:
+            expanded = True
+            for entry in expand_in_place(node, state):
+                entry.map.schedule = dtypes.ScheduleType.Sequential
+    if expanded:
+        RemoveViews().apply_pass(sdfg, {})
 
 
 def loop_local_transients(sdfg: SDFG, loop: LoopRegion) -> set[str]:

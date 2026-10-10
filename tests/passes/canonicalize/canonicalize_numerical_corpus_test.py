@@ -16,9 +16,9 @@ import os
 # No thread pin here: ``tests/conftest.py`` has already set OMP_NUM_THREADS (to at least four,
 # deliberately, so a race in a generated kernel is visible), which made the ``setdefault("1")``
 # that used to stand here a no-op under pytest -- and had it ever fired it would have hidden the
-# very failures this file exists to catch. BandCarriedLoops gave each thread a whole stencil sweep
-# with no barrier between the body's two maps, and adi / jacobi_1d / jacobi_2d came out wrong by
-# ~1e-2 relative at four threads while staying bit-exact at one.
+# very failures this file exists to catch: a tile of StripMineInterchange runs a whole stencil sweep
+# with no barrier between the body's two maps, so a dependence it misses between them shows only with
+# more than one thread (adi / jacobi_1d / jacobi_2d, ~1e-2 relative).
 os.environ.setdefault("MPI4PY_RC_INITIALIZE", "0")
 os.environ.setdefault("OMPI_MCA_pml", "ob1")
 os.environ.setdefault("OMPI_MCA_btl", "self,vader")

@@ -36,8 +36,8 @@ from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.passes.canonicalize.finalize import finalize_for_target
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
 from dace.transformation.passes.canonicalize.supply_num_threads import SupplyNumThreads
-from dace.transformation.passes.cpu_specialization.band_carried_loops import BandCarriedLoops
 from dace.transformation.passes.cpu_specialization.hoist_parallel_region import HoistParallelRegion
+from dace.transformation.passes.cpu_specialization.strip_mine_interchange import StripMineInterchange
 from tests.cfg_tree import assert_tree_matches_a_reset, spy_on_resets
 from tests.corpus.tsvc import tsvc
 from tests.corpus.tsvc.tsvc_numpy import REFERENCES
@@ -48,18 +48,18 @@ N = dace.symbol("N")
 #: map", i.e. the shape this pass exists for. ``s115`` additionally carries an anti-dependence
 #: snapshot at the state's top level, which is the branch that has to be worksharing-wrapped.
 #: Kernels the team hoist takes. ``s233`` is NOT among them any more: every one of its
-#: loop-carried dependences is at distance zero in the map parameter, so ``BandCarriedLoops``
-#: claims it first and gives each thread a whole band, which is the faster shape and the one this
+#: loop-carried dependences is at distance zero in the map parameter, so ``StripMineInterchange``
+#: claims it first and gives each tile its whole carry, which is the faster shape and the one this
 #: file's ``test_the_canonical_form_keeps_every_barrier`` predicted a specialization stage would
 #: take. Its numerics and its barrier policy are still checked, over ``TSVC_KERNELS`` below.
 HOISTED_KERNELS = ["s115_d_single", "s119_d_single"]
 
-#: Kernels banded instead of hoisted -- one region for the nest either way, but the worksharing
+#: Kernels tiled instead of hoisted -- one region for the nest either way, but the worksharing
 #: construct sits OUTSIDE the carry rather than inside it.
-BANDED_KERNELS = ["s233_d_single"]
+TILED_KERNELS = ["s233_d_single"]
 
 #: Every TSVC kernel this file finalizes, whichever of the two rewrites claims it.
-TSVC_KERNELS = HOISTED_KERNELS + BANDED_KERNELS
+TSVC_KERNELS = HOISTED_KERNELS + TILED_KERNELS
 
 
 def finalized(name, tag):
@@ -214,10 +214,10 @@ def test_s115_keeps_every_store_inside_a_worksharing_map():
     assert_matches_reference(kernel, sdfg)
 
 
-def test_wavefront_reaching_into_the_neighbouring_band_is_still_correct():
+def test_wavefront_reaching_into_the_neighbouring_tile_is_still_correct():
     """``a[i, j] = a[i, j] + a[i-1, j] + a[i-1, j+1]``: the case a ``nowait`` would silently break.
 
-    Every band reads one element of the band to its right, written on the previous trip. The team
+    Every tile reads one element of the tile to its right, written on the previous trip. The team
     hoist keeps the barrier that makes that read safe, so this must agree with numpy exactly -- it
     is the kernel that catches a barrier removed one stage too early.
     """
@@ -494,10 +494,10 @@ def test_break_in_the_loop_is_refused():
     assert_declined(sdfg, "a BreakBlock inside the loop is refused")
 
 
-def banded(sdfg):
-    """Run the band pass the way ``finalize_for_target`` does, with the thread-count symbol declared."""
+def tiled(sdfg):
+    """Run the strip-mine pass the way ``finalize_for_target`` does, with the thread-count symbol declared."""
     SupplyNumThreads().apply_pass(sdfg, {})
-    return BandCarriedLoops().apply_pass(sdfg, {})
+    return StripMineInterchange().apply_pass(sdfg, {})
 
 
 def sweep_state(container, label, target, code, ranges, inputs):
@@ -521,8 +521,9 @@ def chain(container, *states):
         container.add_edge(first, second, dace.InterstateEdge())
 
 
-#: Team sizes every banded kernel is checked at. The band count follows the team, so an odd extent puts
-#: band edges mid-dependence at each of them; 24 bands over the 37 columns below leave some bands one wide.
+#: Team sizes every tiled kernel is checked at. A tile is at most one thread's share of the axis, so an odd
+#: extent puts tile edges mid-dependence at each of them; 24 tiles over the 37 columns below are one or two
+#: wide.
 THREAD_COUNTS = (1, 4, 24)
 
 
@@ -547,10 +548,10 @@ def sweep_reference(a, step):
     return ref
 
 
-def test_band_reads_two_maps_by_their_offsets():
-    """``t[i]`` over ``0:N-1`` and ``t[j - 1]`` over ``1:N`` are one position of one band: the band cuts each
+def test_strip_mine_reads_two_maps_by_their_offsets():
+    """``t[i]`` over ``0:N-1`` and ``t[j - 1]`` over ``1:N`` are one position of one tile: the tile cuts each
     map's offsets from its begin, so the test compares offsets, not the parameters as spelled."""
-    sdfg = dace.SDFG("band_offsets")
+    sdfg = dace.SDFG("tile_offsets")
     sdfg.add_array("a", [N, N], dace.float64)
     sdfg.add_transient("t", [N - 1], dace.float64)
     outer = loop_region(sdfg, "outer", "N - 1")
@@ -558,15 +559,15 @@ def test_band_reads_two_maps_by_their_offsets():
     second = sweep_state(outer, "second", "a[it + 1, j]", "out = in0 + 1.0", {"j": "1:N"}, ["t[j - 1]"])
     chain(outer, first, second)
     sdfg.validate()
-    assert banded(sdfg) == 1
+    assert tiled(sdfg) == 1
     a = np.random.default_rng(7).random((37, 37))
     ref = sweep_reference(a, lambda prev, cur: np.concatenate([cur[:1], 2.0 * prev[1:] + 1.0]))
     matches_at_every_team_size(sdfg, {"a": ref}, a=a, N=37)
 
 
-def test_band_runs_a_scalar_statement_in_every_band():
-    """A tasklet beside the maps writing a loop-local scalar is run by every band on its own copy."""
-    sdfg = dace.SDFG("band_scalar_statement")
+def test_strip_mine_runs_a_scalar_statement_in_every_tile():
+    """A tasklet beside the maps writing a loop-local scalar is run by every tile on its own copy."""
+    sdfg = dace.SDFG("tile_scalar_statement")
     sdfg.add_array("a", [N, N], dace.float64)
     sdfg.add_array("c", [1], dace.float64)
     sdfg.add_transient("s", [1], dace.float64)
@@ -578,16 +579,16 @@ def test_band_runs_a_scalar_statement_in_every_band():
     sweep = sweep_state(outer, "sweep", "a[it + 1, i]", "out = in0 + in1", {"i": "0:N"}, ["a[it, i]", "s[0]"])
     chain(outer, prologue, sweep)
     sdfg.validate()
-    assert banded(sdfg) == 1
+    assert tiled(sdfg) == 1
     a, c = np.random.default_rng(8).random((37, 37)), np.array([0.25])
     ref = sweep_reference(a, lambda prev, cur: prev + 0.5)
     matches_at_every_team_size(sdfg, {"a": ref}, a=a, c=c, N=37)
 
 
-def test_band_refuses_a_scalar_statement_reading_what_another_band_writes():
-    """``s = a[it, 0]`` reads the column band 0 wrote on the previous trip -- ``s115``'s shape. The band
+def test_strip_mine_refuses_a_scalar_statement_reading_what_another_tile_writes():
+    """``s = a[it, 0]`` reads the column tile 0 wrote on the previous trip -- ``s115``'s shape. The tile
     refuses, and the team hoist, which keeps the barrier, takes the loop."""
-    sdfg = dace.SDFG("band_cross_scalar")
+    sdfg = dace.SDFG("tile_cross_scalar")
     sdfg.add_array("a", [N, N], dace.float64)
     sdfg.add_transient("s", [1], dace.float64)
     outer = loop_region(sdfg, "outer", "N - 1")
@@ -598,19 +599,19 @@ def test_band_refuses_a_scalar_statement_reading_what_another_band_writes():
     sweep = sweep_state(outer, "sweep", "a[it + 1, i]", "out = in0 + in1", {"i": "0:N"}, ["a[it, i]", "s[0]"])
     chain(outer, prologue, sweep)
     sdfg.validate()
-    assert banded(sdfg) is None
+    assert tiled(sdfg) is None
     assert HoistParallelRegion().apply_pass(sdfg, {}) == 1
     a = np.random.default_rng(9).random((37, 37))
     ref = sweep_reference(a, lambda prev, cur: prev + prev[0])
     matches_at_every_team_size(sdfg, {"a": ref}, a=a, N=37)
 
 
-def test_band_narrows_a_whole_fill_to_what_is_read():
-    """``t[:] = 0`` beside maps over ``1:N`` has a different extent, so the band could not cut it the same
-    way; nothing reads ``t[0]``, so the fill shrinks to ``t[1:N]`` and the loop bands."""
+def test_strip_mine_narrows_a_whole_fill_to_what_is_read():
+    """``t[:] = 0`` beside maps over ``1:N`` has a different extent, so it could not be cut the same
+    way; nothing reads ``t[0]``, so the fill shrinks to ``t[1:N]`` and the loop tiles."""
     from dace.libraries.standard.nodes.fill import FillLibraryNode
 
-    sdfg = dace.SDFG("band_fill_hull")
+    sdfg = dace.SDFG("tile_fill_hull")
     sdfg.add_array("a", [N, N], dace.float64)
     sdfg.add_transient("t", [N], dace.float64)
     outer = loop_region(sdfg, "outer", "N - 1")
@@ -622,18 +623,18 @@ def test_band_narrows_a_whole_fill_to_what_is_read():
     store = sweep_state(outer, "store", "a[it + 1, i]", "out = in0", {"i": "1:N"}, ["t[i]"])
     chain(outer, clear, gather, store)
     sdfg.validate()
-    assert banded(sdfg) == 1
+    assert tiled(sdfg) == 1
     a = np.random.default_rng(10).random((37, 37))
     ref = sweep_reference(a, lambda prev, cur: np.concatenate([cur[:1], prev[1:]]))
     matches_at_every_team_size(sdfg, {"a": ref}, a=a, N=37)
 
 
-def test_band_takes_a_row_fill_loop_as_one_map():
+def test_strip_mine_takes_a_row_fill_loop_as_one_map():
     """``SpecializeCpuTransfers``' shape: a sequential row loop around a row fill. It is rebuilt as one map
     over rows and columns, so its column axis is cut like every other map's."""
     from dace.libraries.standard.nodes.fill import FillLibraryNode
 
-    sdfg = dace.SDFG("band_row_fill")
+    sdfg = dace.SDFG("tile_row_fill")
     sdfg.add_array("a", [N, N], dace.float64)
     sdfg.add_transient("z", [3, N], dace.float64)
     outer = loop_region(sdfg, "outer", "N - 1")
@@ -652,17 +653,17 @@ def test_band_takes_a_row_fill_loop_as_one_map():
     sweep = sweep_state(outer, "sweep", "a[it + 1, i]", "out = in0 + in1", {"i": "0:N"}, ["a[it, i]", "z[1, i]"])
     chain(outer, clear, sweep)
     sdfg.validate()
-    assert banded(sdfg) == 1
+    assert tiled(sdfg) == 1
     assert not any(isinstance(n, nd.LibraryNode) for n, _ in sdfg.all_nodes_recursive())
     a = np.random.default_rng(11).random((37, 37))
     ref = sweep_reference(a, lambda prev, cur: prev + 1.5)
     matches_at_every_team_size(sdfg, {"a": ref}, a=a, N=37)
 
 
-def test_band_refuses_a_neighbour_read_between_two_maps():
-    """``t[i]`` written by one map and ``t[i + 1]`` read by the next: the read crosses a band edge within
+def test_strip_mine_refuses_a_neighbour_read_between_two_maps():
+    """``t[i]`` written by one map and ``t[i + 1]`` read by the next: the read crosses a tile edge within
     one trip, which only the barrier between the two ``omp for`` orders. The team hoist takes it."""
-    sdfg = dace.SDFG("band_neighbour_read")
+    sdfg = dace.SDFG("tile_neighbour_read")
     sdfg.add_array("a", [N, N], dace.float64)
     sdfg.add_transient("t", [N], dace.float64)
     outer = loop_region(sdfg, "outer", "N - 1")
@@ -670,17 +671,17 @@ def test_band_refuses_a_neighbour_read_between_two_maps():
     second = sweep_state(outer, "second", "a[it + 1, i]", "out = in0", {"i": "0:N-1"}, ["t[i + 1]"])
     chain(outer, first, second)
     sdfg.validate()
-    assert banded(sdfg) is None
+    assert tiled(sdfg) is None
     assert HoistParallelRegion().apply_pass(sdfg, {}) == 1
     a = np.random.default_rng(12).random((37, 37))
     ref = sweep_reference(a, lambda prev, cur: np.concatenate([prev[1:], cur[-1:]]))
     matches_at_every_team_size(sdfg, {"a": ref}, a=a, N=37)
 
 
-def test_band_refuses_maps_of_different_extents():
+def test_strip_mine_refuses_maps_of_different_extents():
     """A map over ``0:N`` and one over ``0:N-1`` are cut at different offsets, so the same position lands in
-    different bands even where both index it alike."""
-    sdfg = dace.SDFG("band_extents")
+    different tiles even where both index it alike."""
+    sdfg = dace.SDFG("tile_extents")
     sdfg.add_array("a", [N, N], dace.float64)
     sdfg.add_transient("t", [N], dace.float64)
     outer = loop_region(sdfg, "outer", "N - 1")
@@ -688,12 +689,12 @@ def test_band_refuses_maps_of_different_extents():
     second = sweep_state(outer, "second", "a[it + 1, i]", "out = in0", {"i": "0:N-1"}, ["t[i]"])
     chain(outer, first, second)
     sdfg.validate()
-    assert banded(sdfg) is None
+    assert tiled(sdfg) is None
 
 
-def test_band_refuses_an_accumulation_into_one_location():
-    """``s += a[it, i]`` over the map writes one location from every band. Refused."""
-    sdfg = dace.SDFG("band_accumulation")
+def test_strip_mine_refuses_an_accumulation_into_one_location():
+    """``s += a[it, i]`` over the map writes one location from every tile. Refused."""
+    sdfg = dace.SDFG("tile_accumulation")
     sdfg.add_array("a", [N, N], dace.float64)
     sdfg.add_array("s", [1], dace.float64)
     outer = loop_region(sdfg, "outer", "N")
@@ -708,12 +709,12 @@ def test_band_refuses_an_accumulation_into_one_location():
         external_edges=True,
     )
     sdfg.validate()
-    assert banded(sdfg) is None
+    assert tiled(sdfg) is None
 
 
-def test_band_takes_a_map_inside_a_conditional():
-    """A trip that runs its map only on even ``it`` still keeps every column in its band."""
-    sdfg = dace.SDFG("band_conditional")
+def test_strip_mine_takes_a_map_inside_a_conditional():
+    """A trip that runs its map only on even ``it`` still keeps every column in its tile."""
+    sdfg = dace.SDFG("tile_conditional")
     sdfg.add_array("a", [N, N], dace.float64)
     outer = loop_region(sdfg, "outer", "N - 1")
     branch = ConditionalBlock("even")
@@ -722,7 +723,7 @@ def test_band_takes_a_map_inside_a_conditional():
     branch.add_branch(CodeBlock("it % 2 == 0"), region)
     sweep_state(region, "sweep", "a[it + 1, i]", "out = in0 * 2.0", {"i": "0:N"}, ["a[it, i]"])
     sdfg.validate()
-    assert banded(sdfg) == 1
+    assert tiled(sdfg) == 1
     a = np.random.default_rng(13).random((37, 37))
     ref = a.copy()
     for it in range(36):
@@ -731,15 +732,227 @@ def test_band_takes_a_map_inside_a_conditional():
     matches_at_every_team_size(sdfg, {"a": ref}, a=a, N=37)
 
 
+def test_strip_mine_refuses_a_branch_on_what_a_tile_writes():
+    """Every tile tests ``a[it, 0] > 0.5`` itself, and only tile 0 wrote it on the previous trip. The team
+    hoist, whose barrier orders that write before every thread's test, takes the loop."""
+    sdfg = dace.SDFG("tile_data_branch")
+    sdfg.add_array("a", [N, N], dace.float64)
+    outer = loop_region(sdfg, "outer", "N - 1")
+    branch = ConditionalBlock("big")
+    outer.add_node(branch, is_start_block=True)
+    region = ControlFlowRegion("big_body")
+    branch.add_branch(CodeBlock("a[it, 0] > 0.5"), region)
+    sweep_state(region, "sweep", "a[it + 1, i]", "out = in0 * 2.0", {"i": "0:N"}, ["a[it, i]"])
+    sdfg.validate()
+    assert tiled(sdfg) is None
+    assert HoistParallelRegion().apply_pass(sdfg, {}) == 1
+    a = np.random.default_rng(18).random((37, 37))
+    ref = a.copy()
+    for it in range(36):
+        if ref[it, 0] > 0.5:
+            ref[it + 1] = 2.0 * ref[it]
+    matches_at_every_team_size(sdfg, {"a": ref}, a=a, N=37)
+
+
+@pytest.mark.parametrize("offset", [0, 1])
+def test_strip_mine_reads_through_a_view_as_the_array_it_views(offset):
+    """``v = a[it, :]; a[it + 1, i] = 2 * v[i + offset]``: the read is of ``a``, at the position the view
+    binds. In place it stays in its tile; one to the right it is the neighbouring tile's column."""
+    sdfg = dace.SDFG(f"tile_view_{offset}")
+    sdfg.add_array("a", [N, N], dace.float64)
+    sdfg.add_view("v", [N], dace.float64)
+    outer = loop_region(sdfg, "outer", "N - 1")
+    state = outer.add_state("body", is_start_block=True)
+    view = state.add_access("v")
+    state.add_edge(state.add_read("a"), None, view, None, dace.Memlet("a[it, 0:N]"))
+    state.add_mapped_tasklet(
+        "scale",
+        {"i": f"0:N-{offset}"},
+        {"x": dace.Memlet(f"v[i + {offset}]")},
+        "y = 2.0 * x",
+        {"y": dace.Memlet("a[it + 1, i]")},
+        schedule=dtypes.ScheduleType.CPU_Multicore,
+        external_edges=True,
+        input_nodes={"v": view},
+    )
+    sdfg.validate()
+    if offset:
+        assert tiled(sdfg) is None
+        assert HoistParallelRegion().apply_pass(sdfg, {}) == 1
+    else:
+        assert tiled(sdfg) == 1
+    a = np.random.default_rng(19).random((37, 37))
+    ref = sweep_reference(a, lambda prev, cur: np.concatenate([2.0 * prev[offset:], cur[37 - offset :]]))
+    matches_at_every_team_size(sdfg, {"a": ref}, a=a, N=37)
+
+
+def test_strip_mine_interchanges_an_outer_axis_whole():
+    """``a[it + 1, b, i]`` over ``b`` then ``i``: ``b`` is not innermost, so the tile loop takes it whole, one
+    position per tile, and the contiguous ``i`` map stays as it was inside the carry."""
+    sdfg = dace.SDFG("tile_outer_axis")
+    sdfg.add_array("a", [N, 5, N], dace.float64)
+    outer = loop_region(sdfg, "outer", "N - 1")
+    sweep_state(outer, "sweep", "a[it + 1, b, i]", "out = in0 * 2.0", {"b": "0:5", "i": "0:N"}, ["a[it, b, i]"])
+    sdfg.validate()
+    assert tiled(sdfg) == 1
+    entries = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nd.MapEntry)]
+    team = next(n for n in entries if n.map.params == ["__dace_tile"])
+    assert str(team.map.range) == "0:5", team.map.range
+    inner = next(n for n in entries if n.map.params == ["b", "i"])
+    assert str(inner.map.range.ranges[1][1]) == "N - 1", "the innermost axis is not cut"
+    a = np.random.default_rng(20).random((37, 5, 37))
+    ref = a.copy()
+    for it in range(36):
+        ref[it + 1] = 2.0 * ref[it]
+    matches_at_every_team_size(sdfg, {"a": ref}, a=a, N=37)
+
+
+@pytest.mark.parametrize(
+    "size, threads, expected",
+    [
+        (768, 12, 64),  # one round of cache tiles is too few: one thread's share
+        (4096, 12, 176),  # two rounds: an even share of 24 tiles, rounded up to a vector boundary
+        (37, 24, 16),  # a share of two positions: one minimal tile
+        (100000, 24, 256),  # many rounds: the cache tile
+    ],
+)
+def test_tile_size_is_the_cache_tile_evened_out_over_the_threads(monkeypatch, size, threads, expected):
+    """With a 1 MB L2 and 16 bytes per position the cache tile is 256; it shrinks to an even, vector-aligned
+    share of the threads when the axis is too short to give every thread the same number of tiles."""
+    from dace.transformation.passes.cpu_specialization import machine, strip_mine_interchange
+
+    host = machine.CpuTopology(24, 24, 32 * 1024, 1024 * 1024, 16 * 1024**2, 1)
+    monkeypatch.setattr(strip_mine_interchange, "topology", lambda: host)
+    n = dace.symbol("N")
+    cut = strip_mine_interchange.Cut([], n, True, 16)
+    tile = strip_mine_interchange.tile_size(cut)
+    value = dace.symbolic.evaluate(tile, {"N": size, dace.symbolic.NUM_THREADS_SYMBOL: threads})
+    assert int(value) == expected, tile
+    assert strip_mine_interchange.tile_size(strip_mine_interchange.Cut([], n, False, 16)) == 1
+
+
+def species_sdfg(name, offset=0, guard=None, scalar_read=False):
+    """``for it: map s in 0:3: a[it + 1, s, :] = 2 * a[it, s, offset:] (+ u)`` with the map body a nested
+    SDFG holding a column map into a scratch plane and a bulk copy of that plane out -- CLOUDSC's monolith
+    runs its species loops so. ``guard`` is a condition on ``ain`` the body's control flow tests;
+    ``scalar_read`` adds ``u = ain[0]`` outside every map of the body."""
+    extent = f"N - {offset}" if offset else "N"
+    sdfg = dace.SDFG(name)
+    sdfg.add_array("a", [N, 3, N], dace.float64)
+    outer = loop_region(sdfg, "outer", "N - 1")
+    state = outer.add_state("species", is_start_block=True)
+
+    inner = dace.SDFG(f"{name}_body")
+    inner.add_array("ain", [N], dace.float64)
+    inner.add_array("aout", [N], dace.float64)
+    inner.add_transient("t", [N], dace.float64)
+    body = inner.add_state("body", is_start_block=not (guard or scalar_read))
+    inputs = {"x": dace.Memlet(f"ain[b + {offset}]")}
+    code = "y = 2.0 * x"
+    if scalar_read:
+        inner.add_transient("u", [1], dace.float64)
+        inputs["v"] = dace.Memlet("u[0]")
+        code = "y = 2.0 * x + v"
+        pick = inner.add_state("pick", is_start_block=True)
+        tasklet = pick.add_tasklet("pick", {"z"}, {"w"}, "w = z")
+        pick.add_edge(pick.add_read("ain"), None, tasklet, "z", dace.Memlet("ain[0]"))
+        pick.add_edge(tasklet, "w", pick.add_write("u"), None, dace.Memlet("u[0]"))
+        inner.add_edge(pick, body, dace.InterstateEdge())
+    if guard:
+        start = inner.add_state("start", is_start_block=True)
+        inner.add_edge(start, body, dace.InterstateEdge(guard))
+        inner.add_edge(start, inner.add_state("skip"), dace.InterstateEdge(f"not ({guard})"))
+    plane = body.add_access("t")
+    body.add_mapped_tasklet(
+        "column",
+        {"b": f"0:{extent}"},
+        inputs,
+        code,
+        {"y": dace.Memlet("t[b]")},
+        external_edges=True,
+        output_nodes={"t": plane},
+    )
+    body.add_edge(plane, None, body.add_write("aout"), None, dace.Memlet(f"t[0:{extent}] -> [0:{extent}]"))
+
+    nsdfg = state.add_nested_sdfg(inner, {"ain"}, {"aout"}, symbol_mapping={"N": N})
+    entry, exit_node = state.add_map("species", {"s": "0:3"}, schedule=dtypes.ScheduleType.CPU_Multicore)
+    state.add_memlet_path(state.add_read("a"), entry, nsdfg, dst_conn="ain", memlet=dace.Memlet("a[it, s, 0:N]"))
+    state.add_memlet_path(
+        nsdfg, exit_node, state.add_write("a"), src_conn="aout", memlet=dace.Memlet(f"a[it + 1, s, 0:{extent}]")
+    )
+    convert_legacy_nested_sdfgs(sdfg)
+    sdfg.validate()
+    return sdfg
+
+
+def species_reference(a, offset=0, scalar_read=False):
+    """What :func:`species_sdfg` computes, on a copy of ``a``."""
+    ref = a.copy()
+    n = a.shape[0]
+    for it in range(n - 1):
+        for s in range(3):
+            shift = ref[it, s, 0] if scalar_read else 0.0
+            ref[it + 1, s, : n - offset] = 2.0 * ref[it, s, offset:] + shift
+    return ref
+
+
+def test_strip_mine_cuts_the_column_maps_inside_a_species_body():
+    """The species map has no column axis of its own, so the tiles narrow the column maps inside its nested
+    body -- the bulk copy there among them, once it is a map."""
+    sdfg = species_sdfg("tile_species")
+    assert tiled(sdfg) == 1
+    narrowed = [
+        n
+        for n, _ in sdfg.all_nodes_recursive()
+        if isinstance(n, nd.MapEntry) and "__dace_tile" in {str(s) for s in n.map.range.free_symbols}
+    ]
+    assert len(narrowed) == 2, "the column map and the copy's map are both cut"
+    a = np.random.default_rng(14).random((37, 3, 37))
+    matches_at_every_team_size(sdfg, {"a": species_reference(a)}, a=a, N=37)
+
+
+def test_strip_mine_refuses_a_neighbour_read_inside_a_species_body():
+    """``ain[b + 1]`` inside the body reads the column a neighbouring tile wrote on the previous trip."""
+    sdfg = species_sdfg("tile_species_neighbour", offset=1)
+    assert tiled(sdfg) is None
+    assert HoistParallelRegion().apply_pass(sdfg, {}) == 1
+    a = np.random.default_rng(15).random((37, 3, 37))
+    matches_at_every_team_size(sdfg, {"a": species_reference(a, offset=1)}, a=a, N=37)
+
+
+def test_strip_mine_refuses_control_flow_reading_data_inside_a_species_body():
+    """A branch on ``ain[0]`` is taken alike by every tile only if no other tile writes ``ain[0]``. The
+    species axis is no cut either: three positions are one tile, which would run the nest on one thread."""
+    sdfg = species_sdfg("tile_species_guard", guard="ain[0] > 0.5")
+    assert tiled(sdfg) is None
+    assert HoistParallelRegion().apply_pass(sdfg, {}) == 1
+    a = np.random.default_rng(17).random((37, 3, 37))
+    ref = a.copy()
+    for it in range(36):
+        for s in range(3):
+            if ref[it, s, 0] > 0.5:
+                ref[it + 1, s] = 2.0 * ref[it, s]
+    matches_at_every_team_size(sdfg, {"a": ref}, a=a, N=37)
+
+
+def test_strip_mine_refuses_a_scalar_statement_reading_a_column_inside_a_species_body():
+    """``u = ain[0]`` beside the maps of the body runs in every tile and reads tile 0's column."""
+    sdfg = species_sdfg("tile_species_scalar", scalar_read=True)
+    assert tiled(sdfg) is None
+    assert HoistParallelRegion().apply_pass(sdfg, {}) == 1
+    a = np.random.default_rng(16).random((37, 3, 37))
+    matches_at_every_team_size(sdfg, {"a": species_reference(a, scalar_read=True)}, a=a, N=37)
+
+
 @pytest.mark.parametrize("name", TSVC_KERNELS)
 def test_the_canonical_form_keeps_every_barrier(name):
     """No ``omp for`` may carry ``nowait``, and this is policy rather than an unfinished feature.
 
     Dropping the exit barrier is legal only when every thread's reads at trip ``k+1`` fall inside
-    the band it wrote at trip ``k`` -- formally, for a partition ``B_1..B_P`` of the map's index
+    the tile it wrote at trip ``k`` -- formally, for a partition ``B_1..B_P`` of the map's index
     space, ``R_p(k+1) & (U_q W_q(k)) subset W_p(k)``. ``s233``, ``s231`` and ``s235`` satisfy it;
-    ``s119`` and ``wf_diff_skew`` miss it by ONE element at the band boundary, and ``s115`` reads a
-    scalar that only one band writes. Measured out of tree by patching the pragma into the emitted
+    ``s119`` and ``wf_diff_skew`` miss it by ONE element at the tile boundary, and ``s115`` reads a
+    scalar that only one tile writes. Measured out of tree by patching the pragma into the emitted
     source: ``nowait`` leaves ``s233`` bit-identical and 2.4x faster, and turns ``s119`` into a
     wrong answer (max relative error 4.8e7). A verdict that sharp is a specialization decision --
     it belongs to a stage that can afford the dependence analysis, not to the canonical starting
@@ -790,7 +1003,7 @@ if __name__ == "__main__":
     for kernel_name in TSVC_KERNELS:
         test_finalized_kernel_matches_the_numpy_reference(kernel_name)
     test_s115_keeps_every_store_inside_a_worksharing_map()
-    test_wavefront_reaching_into_the_neighbouring_band_is_still_correct()
+    test_wavefront_reaching_into_the_neighbouring_tile_is_still_correct()
     test_minimal_loop_over_map_hoists()
     test_second_run_adds_no_second_team()
     test_nested_sdfg_inside_the_map_keeps_its_parent_pointers(pytest.MonkeyPatch())
@@ -804,15 +1017,25 @@ if __name__ == "__main__":
     test_relinearizing_bulk_copy_in_the_loop_is_refused()
     test_loop_without_a_parallel_map_is_refused()
     test_break_in_the_loop_is_refused()
-    test_band_reads_two_maps_by_their_offsets()
-    test_band_runs_a_scalar_statement_in_every_band()
-    test_band_refuses_a_scalar_statement_reading_what_another_band_writes()
-    test_band_narrows_a_whole_fill_to_what_is_read()
-    test_band_takes_a_row_fill_loop_as_one_map()
-    test_band_refuses_a_neighbour_read_between_two_maps()
-    test_band_refuses_maps_of_different_extents()
-    test_band_refuses_an_accumulation_into_one_location()
-    test_band_takes_a_map_inside_a_conditional()
+    test_strip_mine_reads_two_maps_by_their_offsets()
+    test_strip_mine_runs_a_scalar_statement_in_every_tile()
+    test_strip_mine_refuses_a_scalar_statement_reading_what_another_tile_writes()
+    test_strip_mine_narrows_a_whole_fill_to_what_is_read()
+    test_strip_mine_takes_a_row_fill_loop_as_one_map()
+    test_strip_mine_refuses_a_neighbour_read_between_two_maps()
+    test_strip_mine_refuses_maps_of_different_extents()
+    test_strip_mine_refuses_an_accumulation_into_one_location()
+    test_strip_mine_takes_a_map_inside_a_conditional()
+    test_strip_mine_refuses_a_branch_on_what_a_tile_writes()
+    test_strip_mine_interchanges_an_outer_axis_whole()
+    for case in [(768, 12, 64), (4096, 12, 176), (37, 24, 16), (100000, 24, 256)]:
+        test_tile_size_is_the_cache_tile_evened_out_over_the_threads(pytest.MonkeyPatch(), *case)
+    test_strip_mine_reads_through_a_view_as_the_array_it_views(0)
+    test_strip_mine_reads_through_a_view_as_the_array_it_views(1)
+    test_strip_mine_cuts_the_column_maps_inside_a_species_body()
+    test_strip_mine_refuses_a_neighbour_read_inside_a_species_body()
+    test_strip_mine_refuses_control_flow_reading_data_inside_a_species_body()
+    test_strip_mine_refuses_a_scalar_statement_reading_a_column_inside_a_species_body()
     for kernel_name in TSVC_KERNELS:
         test_the_canonical_form_keeps_every_barrier(kernel_name)
     test_a_loop_nested_inside_another_region_is_hoisted_in_its_own_graph()

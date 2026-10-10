@@ -122,7 +122,7 @@ EXPECTED: dict[str, Form] = {
         (),
         None,
         "aa[i, j] = bb[i, j] + cc[i, j] over the i >= j * VLEN triangle carries nothing at all; the "
-        "outer band takes the threads and the inner extent rides along as a Sequential map",
+        "outer tile loop takes the threads and the inner extent rides along as a Sequential map",
     ),
     "s1244_d_single": Form(
         2,
@@ -163,8 +163,8 @@ EXPECTED: dict[str, Form] = {
         (),
         None,
         "aa[j, i] = aa[j - 1, i] + bb[j, i] carries DOWN a column, so the j sweep is a genuine "
-        "recurrence; the columns i are independent and are what the threads split -- cut into per-thread "
-        "bands, so the band the carry is given to rides along as a Sequential map (one barrier for "
+        "recurrence; the columns i are independent and are what the threads split -- cut into tiles, so "
+        "the column map the carry is given to rides along as a Sequential map (one barrier for "
         "the nest instead of one per trip)",
     ),
     "s232_d_single": Form(
@@ -184,7 +184,7 @@ EXPECTED: dict[str, Form] = {
         None,
         "two inner nests, one carried down columns (aa[j - 1, i]) and one carried across rows "
         "(bb[j, i - 1]); the dimension free in both parallelizes and one recurrence keeps its loop, and "
-        "the band the carry is given to rides along as a Sequential map (one barrier for the nest "
+        "the column map the carry is given to rides along as a Sequential map (one barrier for the nest "
         "instead of one per trip)",
     ),
     "s235_d_single": Form(
@@ -194,8 +194,8 @@ EXPECTED: dict[str, Form] = {
         (),
         None,
         "a[i] += b[i] * c[i] is elementwise while aa[j, i] = aa[j - 1, i] + bb[j, i] * a[i] carries down "
-        "j; distribution frees the a statement and the column recurrence keeps its loop, and the band "
-        "the carry is given to rides along as a Sequential map (one barrier for the nest instead of "
+        "j; distribution frees the a statement and the column recurrence keeps its loop, and the column "
+        "map the carry is given to rides along as a Sequential map (one barrier for the nest instead of "
         "one per trip)",
     ),
     "s252_d_single": Form(
@@ -223,10 +223,10 @@ EXPECTED: dict[str, Form] = {
         (),
         None,
         "the guard aa[0, i] > 0 is invariant within a column, so the outer i is free; the inner "
-        "aa[j, i] = aa[j - 1, i] + ... is a real column recurrence and must stay a loop. A band owns whole "
-        "columns, so BandCarriedLoops takes i for the threads and the narrowed column map rides inside the "
-        "carry as the Sequential one -- s231's accepted shape behind a per-column guard, and the same band "
-        "plus Sequential inner s1232 pins above. Measured, not argued: the banded build is bit-identical to "
+        "aa[j, i] = aa[j - 1, i] + ... is a real column recurrence and must stay a loop. A tile owns whole "
+        "columns, so StripMineInterchange takes i for the threads and the narrowed column map rides inside the "
+        "carry as the Sequential one -- s231's accepted shape behind a per-column guard, and the same tile "
+        "plus Sequential inner s1232 pins above. Measured, not argued: the tiled build is bit-identical to "
         "the uncanonicalized one over 8 seeds at LEN_2D=1021, and to itself at 1, 2, 3, 5, 7 and 16 threads",
     ),
     "s2710_d_single": Form(

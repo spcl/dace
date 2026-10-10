@@ -51,9 +51,9 @@ from dace.transformation.interstate import InlineSDFG
 from dace.transformation.passes.canonicalize.hoist_loop_range_calls import HoistLoopRangeCalls
 from dace.transformation.passes.canonicalize.pipeline import run_structural_cleanup
 from dace.transformation.passes.canonicalize.shrink_map_local_transients import ShrinkMapLocalTransients
-from dace.transformation.passes.cpu_specialization.band_carried_loops import BandCarriedLoops
 from dace.transformation.passes.cpu_specialization.hoist_parallel_region import HoistParallelRegion
 from dace.transformation.passes.cpu_specialization.pipeline import cpu_specialize
+from dace.transformation.passes.cpu_specialization.strip_mine_interchange import StripMineInterchange
 from dace.transformation.passes.equalize_symbol_dtypes import equalized
 from dace.transformation.passes.fuse_maps import FuseMaps
 from dace.transformation.passes.gpu_block_size_selection import select_gpu_device_block_size
@@ -754,10 +754,10 @@ def finalize_stages(sdfg: SDFG, device: dtypes.DeviceType, break_anti_dependence
     # team, gets both. Connector types are re-inferred because the hoist outlines the loop into a
     # nested SDFG, whose boundary connectors are new.
     if device == dtypes.DeviceType.CPU:
-        # Banding runs FIRST and takes the loops it can: it produces the same one-region nest the
-        # hoist does, but with the worksharing construct outside the carry rather than inside it,
-        # so the nest pays one barrier instead of one per trip. A loop it declines -- a dependence
-        # crossing a band boundary -- still wants the plain hoist, which is what runs next.
-        banded = BandCarriedLoops().apply_pass(sdfg, {})
-        if HoistParallelRegion().apply_pass(sdfg, {}) or banded:
+        # Strip-mining runs FIRST and takes the loops it can: it produces the same one-region nest
+        # the hoist does, but with the worksharing construct outside the carry rather than inside
+        # it, so the nest pays one barrier instead of one per trip. A loop it declines -- a
+        # dependence crossing a tile boundary -- still wants the plain hoist, which runs next.
+        tiled = StripMineInterchange().apply_pass(sdfg, {})
+        if HoistParallelRegion().apply_pass(sdfg, {}) or tiled:
             infer_types.infer_connector_types(sdfg)
