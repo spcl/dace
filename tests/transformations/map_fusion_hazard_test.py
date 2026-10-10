@@ -11,7 +11,6 @@ always acceptable; changing the numbers never is.
 """
 
 import numpy as np
-import pytest
 
 import dace
 from dace.sdfg import nodes
@@ -254,6 +253,44 @@ def test_inout_split_must_not_redirect_a_cross_state_read():
         assert np.array_equal(got[name], expected), f"the InOut split changed {name}: {got[name]} != {expected}"
 
 
+M = dace.symbol("M")
+
+
+@dace.program
+def sink_ratio(zsolqa: dace.float64[M, 5], zmax: dace.float64[M], zsinksum: dace.float64[M], zratio: dace.float64[M]):
+    for i in dace.map[0:M]:
+        zsinksum[i] = 0.0
+        for j in range(5):
+            zsinksum[i] = zsinksum[i] - zsolqa[i, j]
+    for i in dace.map[0:M]:
+        zratio[i] = zmax[i] / max(zsinksum[i], zmax[i])
+
+
+def test_inout_split_must_not_redirect_a_read_inside_a_loop():
+    """CLOUDSC's sink sum: ``s = 0`` then ``s = s - a[j]`` in a loop, inside the producer's nest.
+
+    The read and the write back share one state, so a per-state test sees a pure read and a pure write
+    in the same state. But the loop runs that state again, and the first trip follows the zero-fill: the
+    read must see the value just written. A split binds it to the array as it was before the map, so
+    the sum came out as ``42 - zsolqa[:, 4]``.
+    """
+
+    def run(sdfg):
+        rng = np.random.default_rng(3)
+        args = {"zsolqa": -rng.random((7, 5)), "zmax": 0.5 * rng.random(7), "zsinksum": np.full(7, 42.0)}
+        args["zratio"] = np.zeros(7)
+        sdfg(**args, M=7)
+        return args
+
+    oracle = run(sink_ratio.to_sdfg(simplify=True))
+    fused = sink_ratio.to_sdfg(simplify=True)
+    fused.name = unique_name("sink_ratio_fused")
+    fused.apply_transformations_repeated(dftrans.MapFusionVertical, validate_all=True)
+    got = run(fused)
+    for name, expected in oracle.items():
+        assert np.allclose(got[name], expected), f"fusion changed {name}: {got[name]} != {expected}"
+
+
 def _wcr_shape(reduction_is_consumed: bool) -> dace.SDFG:
     """`map1` reduces into `out` (WCR) and writes `C`; `out *= 2`; `map2` writes `D`.
 
@@ -360,4 +397,10 @@ def test_reduction_independent_of_the_second_map_rides_along():
 
 
 if __name__ == "__main__":
-    pytest.main([__file__])
+    test_copy_memlet_naming_the_inner_container_hides_the_write()
+    test_view_of_the_same_array_is_not_a_different_array()
+    test_an_unknown_boundary_subset_must_not_erase_the_access_sets()
+    test_inout_split_must_not_redirect_a_cross_state_read()
+    test_inout_split_must_not_redirect_a_read_inside_a_loop()
+    test_reduction_consumed_by_the_second_map_is_not_fused()
+    test_reduction_independent_of_the_second_map_rides_along()
