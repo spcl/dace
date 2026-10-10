@@ -667,7 +667,30 @@ def test_isolating_an_accumulate_read_through_a_shared_view_keeps_the_views_sour
     assert np.array_equal(y, [1.0, 0.0, 3.0, 4.0])
 
 
+def test_aug_assign_python_logical_or():
+    """``a = a or k`` on booleans becomes a logical-or WCR."""
+    sdfg = dace.SDFG("aug_assign_python_or")
+    sdfg.add_array("A", [1], dace.bool_)
+    sdfg.add_array("B", [8], dace.bool_)
+    state = sdfg.add_state()
+    state.add_mapped_tasklet(
+        "update",
+        {"i": "0:8"},
+        {"a": dace.Memlet("A[0]"), "k": dace.Memlet("B[i]")},
+        "b = a or k",
+        {"b": dace.Memlet("A[0]")},
+        external_edges=True,
+    )
+    assert sdfg.apply_transformations_repeated(AugAssignToWCR, permissive=True) == 1
+    B = np.zeros(8, dtype=np.bool_)
+    B[5] = True
+    A = np.array([False])
+    sdfg(A=A, B=B)
+    assert A[0]
+
+
 if __name__ == "__main__":
+    test_aug_assign_python_logical_or()
     test_aug_assign_tasklet_lhs()
     test_aug_assign_tasklet_lhs_brackets()
     test_aug_assign_tasklet_rhs()

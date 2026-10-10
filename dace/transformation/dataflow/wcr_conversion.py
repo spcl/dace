@@ -277,6 +277,7 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
     _FUNCTIONS = ["min", "max"]
     _EXPR_MAP = {"-": ("+", "-({expr})"), "/": ("*", "((decltype({expr}))1)/({expr})")}
     _PYOP_MAP = {ast.Add: "+", ast.Sub: "-", ast.Mult: "*", ast.BitXor: "^", ast.Mod: "%", ast.Div: "/"}
+    _PYBOOLOP_MAP = {ast.Or: "or", ast.And: "and"}
     # Order-independent combines for copy-wrapped RMW. Subtraction only with acc on left
     # (checked at match): ``a - b1 - b2 == a - (b1 + b2)`` is order-independent.
     _RMW_BINOPS = {ast.Add: "+", ast.Sub: "-", ast.Mult: "*"}
@@ -387,6 +388,9 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
                 and len(rhs.args) == 2
             ):
                 operands = tuple(rhs.args)
+            elif isinstance(rhs, ast.BoolOp) and type(rhs.op) in AugAssignToWCR._PYBOOLOP_MAP and len(rhs.values) == 2:
+                # Fortran's ``.OR.`` / ``.AND.`` accumulations (``levelmask = levelmask .OR. levmask``)
+                operands = tuple(rhs.values)
             else:
                 return False
             inconns = tuple(edge.dst_conn for edge in inedges)
@@ -472,7 +476,18 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
             lhs: ast.Name = ast_node.targets[0]
             rhs = ast_node.value
             inconns = [edge.dst_conn for edge in inedges]
-            if isinstance(rhs, ast.Call):
+            if isinstance(rhs, ast.BoolOp):
+                op = AugAssignToWCR._PYBOOLOP_MAP[type(rhs.op)]
+                acc_arg = next(
+                    a
+                    for a in rhs.values
+                    if isinstance(a, ast.Name)
+                    and a.id in inconns
+                    and inedges[inconns.index(a.id)].data.subset == outedge.data.subset
+                )
+                inedge = inedges[inconns.index(acc_arg.id)]
+                new_rhs = rhs.values[1] if rhs.values[0] is acc_arg else rhs.values[0]
+            elif isinstance(rhs, ast.Call):
                 # min/max reduction. Accumulator = operand whose read slice matches the written
                 # slice (robust to arg order); WCR combines the OTHER (delta) operand into it.
                 op = rhs.func.id
