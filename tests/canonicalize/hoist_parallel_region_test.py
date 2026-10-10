@@ -20,6 +20,8 @@ os.environ.setdefault("OMPI_MCA_pml", "ob1")
 os.environ.setdefault("OMPI_MCA_btl", "self,vader")
 os.environ.setdefault("UCX_VFS_ENABLE", "n")
 
+import ctypes
+import ctypes.util
 import re
 
 import numpy as np
@@ -518,6 +520,24 @@ def chain(container, *states):
         container.add_edge(first, second, dace.InterstateEdge())
 
 
+#: Team sizes every banded kernel is checked at. The band count follows the team, so an odd extent puts
+#: band edges mid-dependence at each of them; 24 bands over the 37 columns below leave some bands one wide.
+THREAD_COUNTS = (1, 4, 24)
+
+
+def matches_at_every_team_size(sdfg, reference, **arguments):
+    """Run the compiled ``sdfg`` once per entry of :data:`THREAD_COUNTS` on fresh copies of the array
+    ``arguments`` and compare every array to ``reference`` (name -> expected array)."""
+    compiled = sdfg.compile()
+    gomp = ctypes.CDLL(ctypes.util.find_library("gomp"))
+    for threads in THREAD_COUNTS:
+        gomp.omp_set_num_threads(threads)
+        fresh = {k: v.copy() if isinstance(v, np.ndarray) else v for k, v in arguments.items()}
+        compiled(**fresh)
+        for name, expected in reference.items():
+            assert np.allclose(fresh[name], expected), f"{sdfg.name}: {name} differs at {threads} threads"
+
+
 def sweep_reference(a, step):
     """``a[it + 1, cols] = step(a[it, cols])`` for every ``it``, on a copy."""
     ref = a.copy()
@@ -538,10 +558,9 @@ def test_band_reads_two_maps_by_their_offsets():
     chain(outer, first, second)
     sdfg.validate()
     assert banded(sdfg) == 1
-    a = np.random.default_rng(7).random((9, 9))
+    a = np.random.default_rng(7).random((37, 37))
     ref = sweep_reference(a, lambda prev, cur: np.concatenate([cur[:1], 2.0 * prev[1:] + 1.0]))
-    sdfg(a=a, N=9)
-    assert np.allclose(a, ref)
+    matches_at_every_team_size(sdfg, {"a": ref}, a=a, N=37)
 
 
 def test_band_runs_a_scalar_statement_in_every_band():
@@ -559,10 +578,9 @@ def test_band_runs_a_scalar_statement_in_every_band():
     chain(outer, prologue, sweep)
     sdfg.validate()
     assert banded(sdfg) == 1
-    a, c = np.random.default_rng(8).random((7, 7)), np.array([0.25])
+    a, c = np.random.default_rng(8).random((37, 37)), np.array([0.25])
     ref = sweep_reference(a, lambda prev, cur: prev + 0.5)
-    sdfg(a=a, c=c, N=7)
-    assert np.allclose(a, ref)
+    matches_at_every_team_size(sdfg, {"a": ref}, a=a, c=c, N=37)
 
 
 def test_band_refuses_a_scalar_statement_reading_what_another_band_writes():
@@ -581,10 +599,9 @@ def test_band_refuses_a_scalar_statement_reading_what_another_band_writes():
     sdfg.validate()
     assert banded(sdfg) is None
     assert HoistParallelRegion().apply_pass(sdfg, {}) == 1
-    a = np.random.default_rng(9).random((7, 7))
+    a = np.random.default_rng(9).random((37, 37))
     ref = sweep_reference(a, lambda prev, cur: prev + prev[0])
-    sdfg(a=a, N=7)
-    assert np.allclose(a, ref)
+    matches_at_every_team_size(sdfg, {"a": ref}, a=a, N=37)
 
 
 def test_band_narrows_a_whole_fill_to_what_is_read():
@@ -605,10 +622,9 @@ def test_band_narrows_a_whole_fill_to_what_is_read():
     chain(outer, clear, gather, store)
     sdfg.validate()
     assert banded(sdfg) == 1
-    a = np.random.default_rng(10).random((6, 6))
+    a = np.random.default_rng(10).random((37, 37))
     ref = sweep_reference(a, lambda prev, cur: np.concatenate([cur[:1], prev[1:]]))
-    sdfg(a=a, N=6)
-    assert np.allclose(a, ref)
+    matches_at_every_team_size(sdfg, {"a": ref}, a=a, N=37)
 
 
 def test_band_takes_a_row_fill_loop_as_one_map():
@@ -637,10 +653,9 @@ def test_band_takes_a_row_fill_loop_as_one_map():
     sdfg.validate()
     assert banded(sdfg) == 1
     assert not any(isinstance(n, nd.LibraryNode) for n, _ in sdfg.all_nodes_recursive())
-    a = np.random.default_rng(11).random((6, 6))
+    a = np.random.default_rng(11).random((37, 37))
     ref = sweep_reference(a, lambda prev, cur: prev + 1.5)
-    sdfg(a=a, N=6)
-    assert np.allclose(a, ref)
+    matches_at_every_team_size(sdfg, {"a": ref}, a=a, N=37)
 
 
 @pytest.mark.parametrize("name", TSVC_KERNELS)
