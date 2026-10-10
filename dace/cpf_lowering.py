@@ -373,12 +373,6 @@ INLINE_DEFINITIONS: dict[str, str] = {
     "        return static_cast<int>(std::floor(value));\n"
     "    }\n"
     "}",
-    # prefix scans
-    # The DaCe runtime provides these in ``dace/scan.hpp``, one function per (op, inclusive) pair
-    # because an OpenMP reduction identifier cannot be a template parameter -- the operator has to
-    # be spelled into the clause. CPF reproduces them rather than rewriting a scan into a
-    # sequential loop: the ``inscan`` form IS the parallel one, and a rendering that quietly
-    # serialized every prefix sum would not be a canonical parallel form.
     "min_identity": "template <typename T>\n"
     "static inline T min_identity() {\n"
     "    return std::numeric_limits<T>::has_infinity ? T(std::numeric_limits<T>::infinity())\n"
@@ -388,90 +382,6 @@ INLINE_DEFINITIONS: dict[str, str] = {
     "static inline T max_identity() {\n"
     "    return std::numeric_limits<T>::has_infinity ? T(-std::numeric_limits<T>::infinity())\n"
     "                                                : std::numeric_limits<T>::lowest();\n"
-    "}",
-    "scan_incl_sum": "template <typename It, typename OutIt, typename T>\n"
-    "static inline void scan_incl_sum(It f, OutIt o, long lo, long hi, T seed) {\n"
-    "    T acc = seed;\n"
-    "    #pragma omp simd reduction(inscan, +:acc)\n"
-    "    for (long i = lo; i < hi; ++i) {\n"
-    "        acc = acc + f[i];\n"
-    "        #pragma omp scan inclusive(acc)\n"
-    "        o[i] = acc;\n"
-    "    }\n"
-    "}",
-    "scan_incl_product": "template <typename It, typename OutIt, typename T>\n"
-    "static inline void scan_incl_product(It f, OutIt o, long lo, long hi, T seed) {\n"
-    "    T acc = seed;\n"
-    "    #pragma omp simd reduction(inscan, *:acc)\n"
-    "    for (long i = lo; i < hi; ++i) {\n"
-    "        acc = acc * f[i];\n"
-    "        #pragma omp scan inclusive(acc)\n"
-    "        o[i] = acc;\n"
-    "    }\n"
-    "}",
-    "scan_incl_min": "template <typename It, typename OutIt, typename T>\n"
-    "static inline void scan_incl_min(It f, OutIt o, long lo, long hi, T seed) {\n"
-    "    T acc = seed;\n"
-    "    #pragma omp simd reduction(inscan, min:acc)\n"
-    "    for (long i = lo; i < hi; ++i) {\n"
-    "        acc = cpf_min(acc, static_cast<T>(f[i]));\n"
-    "        #pragma omp scan inclusive(acc)\n"
-    "        o[i] = acc;\n"
-    "    }\n"
-    "}",
-    "scan_incl_max": "template <typename It, typename OutIt, typename T>\n"
-    "static inline void scan_incl_max(It f, OutIt o, long lo, long hi, T seed) {\n"
-    "    T acc = seed;\n"
-    "    #pragma omp simd reduction(inscan, max:acc)\n"
-    "    for (long i = lo; i < hi; ++i) {\n"
-    "        acc = cpf_max(acc, static_cast<T>(f[i]));\n"
-    "        #pragma omp scan inclusive(acc)\n"
-    "        o[i] = acc;\n"
-    "    }\n"
-    "}",
-    # The exclusive form runs its two phases the other way round: the ``scan`` directive splits the
-    # body into an input phase and a scan phase, and for ``exclusive`` the SCAN phase is the one
-    # before the directive. Written the inclusive way round it still compiles and stores the seed
-    # into every element, so these mirror ``dace/scan.hpp`` statement for statement.
-    "scan_excl_sum": "template <typename It, typename OutIt, typename T>\n"
-    "static inline void scan_excl_sum(It f, OutIt o, long lo, long hi, T seed) {\n"
-    "    T acc = seed;\n"
-    "    #pragma omp simd reduction(inscan, +:acc)\n"
-    "    for (long i = lo; i < hi; ++i) {\n"
-    "        o[i] = acc;\n"
-    "        #pragma omp scan exclusive(acc)\n"
-    "        acc = acc + f[i];\n"
-    "    }\n"
-    "}",
-    "scan_excl_product": "template <typename It, typename OutIt, typename T>\n"
-    "static inline void scan_excl_product(It f, OutIt o, long lo, long hi, T seed) {\n"
-    "    T acc = seed;\n"
-    "    #pragma omp simd reduction(inscan, *:acc)\n"
-    "    for (long i = lo; i < hi; ++i) {\n"
-    "        o[i] = acc;\n"
-    "        #pragma omp scan exclusive(acc)\n"
-    "        acc = acc * f[i];\n"
-    "    }\n"
-    "}",
-    "scan_excl_min": "template <typename It, typename OutIt, typename T>\n"
-    "static inline void scan_excl_min(It f, OutIt o, long lo, long hi, T seed) {\n"
-    "    T acc = seed;\n"
-    "    #pragma omp simd reduction(inscan, min:acc)\n"
-    "    for (long i = lo; i < hi; ++i) {\n"
-    "        o[i] = acc;\n"
-    "        #pragma omp scan exclusive(acc)\n"
-    "        acc = cpf_min(acc, static_cast<T>(f[i]));\n"
-    "    }\n"
-    "}",
-    "scan_excl_max": "template <typename It, typename OutIt, typename T>\n"
-    "static inline void scan_excl_max(It f, OutIt o, long lo, long hi, T seed) {\n"
-    "    T acc = seed;\n"
-    "    #pragma omp simd reduction(inscan, max:acc)\n"
-    "    for (long i = lo; i < hi; ++i) {\n"
-    "        o[i] = acc;\n"
-    "        #pragma omp scan exclusive(acc)\n"
-    "        acc = cpf_max(acc, static_cast<T>(f[i]));\n"
-    "    }\n"
     "}",
     # find-first
     # An early-exit loop lifts to a ``FindFirst`` library node whose expansion calls the runtime's
@@ -700,6 +610,113 @@ INLINE_DEFINITIONS: dict[str, str] = {
     "    return static_cast<T>(static_cast<std::make_unsigned_t<T>>(value) >> amount);\n"
     "}",
 }
+
+#: Per scan operation: the OpenMP reduction identifier and how ``a`` folds in ``x`` in C++ and in C, with
+#: ``{T}`` the accumulator type. ``min`` / ``max`` cast the input to ``{T}`` so the comparison happens where
+#: the fold does; in C they keep ``a`` on a tie or a NaN, the rule of :data:`C_MINMAX_CONDITIONS`.
+SCAN_OPERATIONS: dict[str, tuple[str, str, str]] = {
+    "sum": ("+", "{a} + {x}", "{a} + {x}"),
+    "product": ("*", "{a} * {x}", "{a} * {x}"),
+    "min": ("min", "cpf_min({a}, static_cast<{T}>({x}))", "(({T}){x} < {a}) ? ({T}){x} : {a}"),
+    "max": ("max", "cpf_max({a}, static_cast<{T}>({x}))", "({a} < ({T}){x}) ? ({T}){x} : {a}"),
+}
+
+
+def blocked_scan_body(kind: str, operation: str, ctype: str, c_dialect: bool) -> list[str]:
+    """The body of one prefix scan over ``o[lo:hi]``: a blocked three-phase OpenMP scan, as
+    ``dace::scan::detail::blocked_scan`` runs it, with the ``inscan`` loop as each thread's block pass.
+
+    ``omp simd reduction(inscan)`` only vectorizes; the threads come from the blocking. Each thread folds
+    its contiguous block, the block totals are combined in order into each block's offset, and every
+    block is then scanned from its offset. Inside a parallel region, or with one thread, it is the plain
+    ``inscan`` loop. ``ctype`` is the accumulator (seed) type.
+    """
+    clause, cpp_step, c_step = SCAN_OPERATIONS[operation]
+    step = c_step if c_dialect else cpp_step
+
+    def fold(a: str, x: str) -> str:
+        return step.format(a=a, x=x, T=ctype)
+
+    update = "            acc = %s;" % fold("acc", "f[i]")
+    store = "            o[i] = acc;"
+    phases = (update, store) if kind == "incl" else (store, update)
+    directive = "inclusive" if kind == "incl" else "exclusive"
+    cast = "(%s)f[b]" % ctype if c_dialect else "static_cast<%s>(f[b])" % ctype
+    alloc = "(%s *)malloc(sizeof(%s) * (size_t)team)" % (ctype, ctype) if c_dialect else "new %s[team]" % ctype
+    release = "free(totals);" if c_dialect else "delete[] totals;"
+    return [
+        "    long team = 1;",
+        "#ifdef _OPENMP",
+        "    if (!omp_in_parallel()) team = (long)omp_get_max_threads();",
+        "#endif",
+        "    if (team > hi - lo) team = hi - lo;",
+        "    if (team <= 1) {",
+        "        %s acc = seed;" % ctype,
+        "        #pragma omp simd reduction(inscan, %s:acc)" % clause,
+        "        for (long i = lo; i < hi; ++i) {",
+        phases[0].replace("            ", "            "),
+        "            #pragma omp scan %s(acc)" % directive,
+        phases[1],
+        "        }",
+        "        return;",
+        "    }",
+        "#ifdef _OPENMP",
+        "    %s *totals = %s;" % (ctype, alloc),
+        "    #pragma omp parallel num_threads(team)",
+        "    {",
+        "        const long size = (long)omp_get_num_threads();",
+        "        const long me = (long)omp_get_thread_num();",
+        "        const long per = (hi - lo + size - 1) / size;",
+        "        const long b = lo + me * per < hi ? lo + me * per : hi;",
+        "        const long e = b + per < hi ? b + per : hi;",
+        "        if (b < e) {",
+        "            %s total = %s;" % (ctype, cast),
+        "            for (long i = b + 1; i < e; ++i) total = %s;" % fold("total", "f[i]"),
+        "            totals[me] = total;",
+        "        }",
+        "        #pragma omp barrier",
+        "        if (b < e) {",
+        "            %s acc = seed;" % ctype,
+        "            for (long q = 0; q < me; ++q) acc = %s;" % fold("acc", "totals[q]"),
+        "            #pragma omp simd reduction(inscan, %s:acc)" % clause,
+        "            for (long i = b; i < e; ++i) {",
+        "    " + phases[0],
+        "                #pragma omp scan %s(acc)" % directive,
+        "    " + phases[1],
+        "            }",
+        "        }",
+        "    }",
+        "    %s" % release,
+        "#endif",
+    ]
+
+
+def cpp_scan_definition(kind: str, operation: str) -> str:
+    """One prefix scan as a C++ template over ``<It, OutIt, T>``, the shape ``dace/scan.hpp`` gives it."""
+    return "\n".join(
+        [
+            "#ifdef _OPENMP",
+            "#include <omp.h>",
+            "#endif",
+            "template <typename It, typename OutIt, typename T>",
+            "static inline void scan_%s_%s(It f, OutIt o, long lo, long hi, T seed) {" % (kind, operation),
+            *blocked_scan_body(kind, operation, "T", c_dialect=False),
+            "}",
+        ]
+    )
+
+
+# prefix scans
+# The DaCe runtime provides these in ``dace/scan.hpp``, one function per (op, inclusive) pair because an
+# OpenMP reduction identifier cannot be a template parameter -- the operator has to be spelled into the
+# clause. CPF reproduces them, blocking included: the ``inscan`` loop alone is one thread.
+INLINE_DEFINITIONS.update(
+    {
+        f"scan_{kind}_{operation}": cpp_scan_definition(kind, operation)
+        for kind in ("incl", "excl")
+        for operation in SCAN_OPERATIONS
+    }
+)
 
 #: Definitions each definition calls. Emission is dependency-first (see :func:`definitions_for`).
 DEFINITION_DEPENDENCIES: dict[str, tuple[str, ...]] = {
@@ -1325,8 +1342,8 @@ def residue_class_loop(n: str, s: str, head: str, step: str, parallel: bool) -> 
 def respell_scan_entry_points(code: str) -> str:
     """Spell the ``Scan`` CPU lowering's ``dace::scan`` calls in the vocabulary CPF already defines.
 
-    A unit-stride ``inclusive_*`` / ``exclusive_*`` becomes the ``scan_incl_*`` / ``scan_excl_*``
-    ``inscan`` call the runtime's blocked scan runs per block, and the strided and affine entry
+    A unit-stride ``inclusive_*`` / ``exclusive_*`` becomes CPF's ``scan_incl_*`` / ``scan_excl_*``, the
+    runtime's blocked scan with its ``inscan`` block pass, and the strided and affine entry
     points become their residue-class loops, so both dialects render them with no new definition.
 
     :param code: the body as the expansion wrote it.
@@ -2266,16 +2283,6 @@ C_SCALAR_SPELLINGS: dict[str, str] = {
     "complex128": "double _Complex",
 }
 
-#: Prefix-scan operation -> ``(OpenMP reduction identifier, accumulator update)``. ``min`` / ``max``
-#: cast the input to the accumulator's type ``{T}`` so the comparison happens where the fold does,
-#: and keep ``acc`` on a tie or a NaN, the rule of :data:`C_MINMAX_CONDITIONS`.
-C_SCAN_OPERATIONS: dict[str, tuple[str, str]] = {
-    "sum": ("+", "acc + f[i]"),
-    "product": ("*", "acc * f[i]"),
-    "min": ("min", "(({T})f[i] < acc) ? ({T})f[i] : acc"),
-    "max": ("max", "(acc < ({T})f[i]) ? ({T})f[i] : acc"),
-}
-
 
 def c_scan_definition(name: str, kind: str, operation: str, source: str, target: str, accumulator: str) -> str:
     """One prefix scan as a C function over its three independent types.
@@ -2289,31 +2296,24 @@ def c_scan_definition(name: str, kind: str, operation: str, source: str, target:
     :param name: the instantiation's name.
     :param kind: ``'incl'`` or ``'excl'``. The ``scan`` directive splits the body into an input phase
                  and a scan phase, and ``exclusive`` names them the other way round.
-    :param operation: a :data:`C_SCAN_OPERATIONS` key.
+    :param operation: a :data:`SCAN_OPERATIONS` key.
     :param source: the input element's dace type.
     :param target: the output element's dace type.
     :param accumulator: the seed's dace type.
     :returns: the definition.
     :raises NotImplementedError: for a min or max over a complex accumulator, which has no order.
     """
-    clause, step = C_SCAN_OPERATIONS[operation]
     if operation in ("min", "max") and accumulator in C_COMPLEX_DTYPES:
         raise NotImplementedError(f"CPF cannot render a {operation} scan over {accumulator}: the type has no order")
     ctype = C_SCALAR_SPELLINGS[accumulator]
-    update = "        acc = %s;" % step.replace("{T}", ctype)
-    store = "        o[i] = acc;"
-    phases = (update, store) if kind == "incl" else (store, update)
     return "\n".join(
         (
+            "#ifdef _OPENMP",
+            "#include <omp.h>",
+            "#endif",
             "static inline void %s(const %s *f, %s *o, long lo, long hi, %s seed) {"
             % (name, C_SCALAR_SPELLINGS[source], C_SCALAR_SPELLINGS[target], ctype),
-            "    %s acc = seed;" % ctype,
-            "    #pragma omp simd reduction(inscan, %s:acc)" % clause,
-            "    for (long i = lo; i < hi; ++i) {",
-            phases[0],
-            "        #pragma omp scan %s(acc)" % ("inclusive" if kind == "incl" else "exclusive"),
-            phases[1],
-            "    }",
+            *blocked_scan_body(kind, operation, ctype, c_dialect=True),
             "}",
         )
     )
@@ -2568,7 +2568,7 @@ C_UNSUPPORTED: dict[str, str] = {}
 #: over the names the predicate reads (:func:`c_find_first`).
 C_REWRITTEN_IN_NATIVE_CODE: frozenset[str] = frozenset(
     {"min_identity", "max_identity", "find_first_index", "detect_collision"}
-    | {"scan_%s_%s" % (kind, operation) for kind in ("incl", "excl") for operation in C_SCAN_OPERATIONS}
+    | {"scan_%s_%s" % (kind, operation) for kind in ("incl", "excl") for operation in SCAN_OPERATIONS}
 )
 
 #: Headers CPF's C output always includes. ``<stdbool.h>`` is deliberately absent: ``bool`` /
