@@ -2064,6 +2064,152 @@ def test_a_host_level_cross_boundary_copy_never_falls_back_to_a_mapped_tasklet()
     assert select_copy_implementation(libnode, sdfg.start_state) == "MemcpyCUDA1D"
 
 
+@pytest.mark.parametrize("src_storage", _SINGLE_ELT_STORAGES)
+@pytest.mark.parametrize("dst_storage", _SINGLE_ELT_STORAGES)
+def test_memory_engine_copy_rejects_no_shared(src_storage, dst_storage):
+    """`MemoryEngineBulk` expansion accepts only cases `GPU_Global`->`GPU_Shared` or `GPU_Shared`->`GPU_Global`."""
+    sdfg, _ = _make_copy_sdfg(
+        _ArraySpec(shape=[32], storage=src_storage, transient=src_storage == dace.StorageType.GPU_Shared, name="In"),
+        _ArraySpec(shape=[32], storage=dst_storage, transient=dst_storage == dace.StorageType.GPU_Shared, name="Out"),
+        implementation="MemoryEngineBulk",
+        name="tma_bad",
+        libnode_name="tma_bad_node",
+    )
+    is_correct_memories = (src_storage, dst_storage) in [
+        (dace.StorageType.GPU_Global, dace.StorageType.GPU_Shared),
+        (dace.StorageType.GPU_Shared, dace.StorageType.GPU_Global)]
+    if is_correct_memories:
+        sdfg.expand_library_nodes()
+    else:
+        with pytest.raises(Exception, match="GPU_Shared / GPU_Global storages"):
+            sdfg.expand_library_nodes()
+
+
+def test_memory_engine_copy_rejects_inside_tblock_map():
+    """A `MemoryEngineBulk` copy nested in a `GPU_ThreadBlock` map raises at expansion."""
+    sdfg = dace.SDFG("tma_in_tblock")
+    sdfg.add_array("A", [256], dace.float64, dace.StorageType.GPU_Global)
+    sdfg.add_array("B", [256], dace.float64, dace.StorageType.GPU_Global)
+    sdfg.add_array("shmem", [32], dace.float64, dace.StorageType.GPU_Shared, transient=True)
+
+    state = sdfg.add_state("main")
+    a = state.add_access("A")
+    shm = state.add_access("shmem")
+
+    ome, omx = state.add_map("device_map", {"bi": "0:256:32"}, schedule=dace.ScheduleType.GPU_Device)
+    # ThreadBlock map is an invalid parent for a collective copy.
+    ime, imx = state.add_map("tblock_map", {"ti": "0:32"}, schedule=dace.ScheduleType.GPU_ThreadBlock)
+
+    libnode = CopyLibraryNode(name="tma_bad")
+    libnode.implementation = "MemoryEngineBulk"
+
+    state.add_memlet_path(a,
+                          ome,
+                          ime,
+                          libnode,
+                          dst_conn=CopyLibraryNode.INPUT_CONNECTOR_NAME,
+                          memlet=dace.Memlet("A[bi:bi+32]"))
+    state.add_memlet_path(libnode,
+                          imx,
+                          omx,
+                          shm,
+                          src_conn=CopyLibraryNode.OUTPUT_CONNECTOR_NAME,
+                          memlet=dace.Memlet("shmem[0:32]"))
+
+    with pytest.raises(Exception, match="GPU_ThreadBlock"):
+        sdfg.expand_library_nodes()
+
+
+def _make_memory_engine_copy_transpose_double(dtype):
+    """Creates a `B = 2 * A^T` kernel on GPU using the `MemoryEngineBulk` expansion to copy to shared memory."""
+    sdfg = dace.SDFG("transpose")
+    state = sdfg.add_state("main")
+
+    M, N = 156, 206
+
+    sdfg.add_array("A", [M, N], dtype, dace.StorageType.GPU_Global)
+    sdfg.add_array("B", [N, M], dtype, dace.StorageType.GPU_Global)
+    sdfg.add_array("shmem", [32, 32], dtype, dace.StorageType.GPU_Shared, transient=True)
+
+    a = state.add_access("A")
+    b = state.add_access("B")
+    shmem = state.add_access("shmem")
+
+    global_map_entry, global_map_exit = state.add_map("device",
+                                                      {"block_i": f"0:{M}:32", "block_j": f"0:{N}:32"},
+                                                      schedule=dace.ScheduleType.GPU_Device)
+    block_map_entry, block_map_exit = state.add_map("block",
+                                                    {"thread_i": f"0:32", "thread_j": f"0:32"},
+                                                    schedule=dace.ScheduleType.GPU_ThreadBlock)
+
+    libnode = CopyLibraryNode(name="tma_in")
+    libnode.implementation = "MemoryEngineBulk"
+
+    bi, bj = dace.symbol("bi"), dace.symbol("bj")
+    ti, tj = dace.symbol("ti"), dace.symbol("tj")
+
+    @dace.program
+    def inner(A: dtype[32, 32], B: dtype[N, M]):
+        if bj + tj < B.shape[0] and bi + ti < B.shape[1]:
+            B[bj + tj, bi + ti] = A[ti, tj] * 2
+
+    nested_sdfg_orig = inner.to_sdfg()
+    nested_sdfg = state.add_nested_sdfg(nested_sdfg_orig,
+                                        {"A"},
+                                        {"B"},
+                                        symbol_mapping={"bi": "block_i",
+                                                        "bj": "block_j",
+                                                        "ti": "thread_i",
+                                                        "tj": "thread_j"})
+
+    state.add_memlet_path(a,
+                          global_map_entry,
+                          libnode,
+                          dst_conn=CopyLibraryNode.INPUT_CONNECTOR_NAME,
+                          memlet=dace.Memlet("A[block_i:block_i+32, block_j:block_j+32]"))
+    state.add_memlet_path(libnode,
+                          shmem,
+                          src_conn=CopyLibraryNode.OUTPUT_CONNECTOR_NAME,
+                          memlet=dace.Memlet("shmem"))
+    state.add_memlet_path(shmem,
+                          block_map_entry,
+                          nested_sdfg,
+                          dst_conn="A",
+                          memlet=dace.Memlet("shmem[0:32, 0:32]"))
+    state.add_memlet_path(nested_sdfg,
+                          block_map_exit,
+                          global_map_exit,
+                          b,
+                          src_conn="B",
+                          memlet=dace.Memlet(f"B[0:{N}, 0:{M}]"))
+
+    return sdfg, libnode, M, N
+
+
+_DTYPE_SELECTION = [dace.int8,
+                    dace.int32,
+                    dace.int64,
+                    dace.float16,
+                    dace.float32,
+                    dace.float64]
+
+
+@pytest.mark.parametrize("dtype", _DTYPE_SELECTION)
+def test_memory_engine_copy_transpose(dtype):
+    """Test the `MemoryEngineBulk` expansion on a modified transpose kernel using multiple datatypes"""
+    sdfg, libnode, M, N = _make_memory_engine_copy_transpose_double(dtype)
+
+    assert libnode.implementation == "MemoryEngineBulk"
+
+    cp = pytest.importorskip("cupy")
+    A = cp.arange(M * N, dtype=dtype.as_numpy_dtype()).reshape((M, N))
+    B = cp.empty((N, M), dtype=dtype.as_numpy_dtype())
+
+    sdfg(A=A, B=B)
+
+    cp.testing.assert_array_equal(A.transpose() * 2, B)
+
+
 if __name__ == "__main__":
     test_copy_pure_cpu()
     test_copy_cpu_memcpy()
