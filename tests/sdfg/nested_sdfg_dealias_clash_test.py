@@ -599,6 +599,53 @@ def test_renamed_inner_container_avoids_scope_names():
     assert not inner.arrays["A"].transient
 
 
+def test_rebase_descendants_adds_missing_symbols():
+    """A connector adopted from the parent is rewritten in the parent's symbols.
+    ``rebase_descendants`` propagates the adoption to connectors further down
+    that described the same container. Those connectors now use the parent's
+    symbols, which the deeper nested SDFG may not have -- they must be added
+    to it, or validation fails with ``InvalidSDFGNodeError``.
+
+    The mapping ``N -> M + 1`` is not foldable (the value is not a valid name),
+    so the inner connector stays ``[N]`` until adoption replaces it with
+    ``[M + 1]``. ``rebase_descendants`` then replaces the deeper connector
+    (still ``[N]``, equivalent to the old one) with a copy of ``[M + 1]``,
+    which uses ``M`` -- a symbol the deeper SDFG does not know.
+    """
+    sdfg = dace.SDFG("parent")
+    sdfg.add_symbol("M", dace.int64)
+    sdfg.add_array("A", ["M + 1"], dace.float64)
+    state = sdfg.add_state()
+
+    # Inner SDFG: connector 'a' of shape [N], mapping N -> M + 1 (not foldable).
+    inner = dace.SDFG("inner")
+    inner.add_symbol("N", dace.int64)
+    inner.add_array("a", ["N"], dace.float64)
+    istate = inner.add_state()
+
+    # Deeper SDFG: connector 'a' of shape [N], identity mapping.
+    deeper = dace.SDFG("deeper")
+    deeper.add_symbol("N", dace.int64)
+    deeper.add_array("a", ["N"], dace.float64)
+    dstate = deeper.add_state()
+    dt = dstate.add_tasklet("dt", {}, {"o"}, "o = 1")
+    dstate.add_edge(dt, "o", dstate.add_write("a"), None, dace.Memlet("a[0]"))
+
+    # Nest the deeper SDFG inside the inner SDFG.
+    dnode = istate.add_nested_sdfg(deeper, {}, {"a"}, {"N": "N"})
+    istate.add_edge(dnode, "a", istate.add_write("a"), None, dace.Memlet.from_array("a", inner.arrays["a"]))
+
+    # Nest the inner SDFG in the parent and integrate.
+    node = state.add_nested_sdfg(inner, {}, {"a"}, {"N": "M + 1"})
+    state.add_edge(node, "a", state.add_write("A"), None, dace.Memlet.from_array("A", sdfg.arrays["A"]))
+    node.integrate_into_parent()
+
+    # 'M' must have been added to the deeper SDFG, which only knew 'N'.
+    assert "M" in deeper.symbols
+    assert "M" in dnode.symbol_mapping
+    sdfg.validate()
+
+
 if __name__ == "__main__":
     test_no_clash_identity_is_noop()
     test_symbol_clash_with_map_param()
@@ -622,3 +669,4 @@ if __name__ == "__main__":
     test_symbol_mapped_to_a_parent_symbol_is_folded()
     test_symbol_mapped_to_a_parent_container_is_kept()
     test_renamed_inner_container_avoids_scope_names()
+    test_rebase_descendants_adds_missing_symbols()
