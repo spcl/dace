@@ -797,7 +797,13 @@ def entry_parameter_name(param: str) -> str:
     return param.strip().split()[-1].lstrip("*")
 
 
-def qualify_readonly_pointers(code: str, sdfg: SDFG, entry: str, arglist: dict[str, dt.Data] | None = None) -> str:
+def qualify_readonly_pointers(
+    code: str,
+    sdfg: SDFG,
+    entry: str,
+    arglist: dict[str, dt.Data] | None = None,
+    writable: Sequence[str] = (),
+) -> str:
     """Add ``const`` to the entry point's read-only pointer parameters.
 
     The signature is built by ``Data.as_arg``, which is shared with every other DaCe backend and
@@ -814,9 +820,10 @@ def qualify_readonly_pointers(code: str, sdfg: SDFG, entry: str, arglist: dict[s
     :param sdfg: the PREPARED SDFG.
     :param entry: the entry point's name.
     :param arglist: ``sdfg.arglist()`` when the caller already holds it.
+    :param writable: parameters the caller's own declaration spells writable, kept so even when nothing writes them.
     :returns: the unit with the read-only parameters qualified.
     """
-    readonly = readonly_entry_arrays(sdfg, arglist)
+    readonly = readonly_entry_arrays(sdfg, arglist) - OrderedSet(writable)
     if not readonly:
         return code
     return rewrite_entry_parameters(
@@ -901,8 +908,9 @@ class EntrySignature:
     ``order`` names every parameter exactly once, in the order the caller passes them; it is
     applied by :func:`reorder_entry_parameters`, so each parameter keeps CPF's type and qualifiers.
     ``workspace`` / ``workspace_size`` add a caller-owned scratch buffer: a non-transient ``uint8_t``
-    array of ``workspace_size`` (``int64_t``) bytes, which ``order`` must name too. The body may
-    ignore it, and then it is a read-only pointer like any other (``const uint8_t *``).
+    array of ``workspace_size`` (``int64_t``) bytes, which ``order`` must name too. It exists only so the
+    entry matches the caller's prototype: the body never touches it, and it stays a writable
+    ``uint8_t *`` as the caller declares it.
     """
 
     order: Sequence[str]
@@ -1286,7 +1294,8 @@ def render(
                     )
                 # Nothing below changes the prepared SDFG, so one argument list serves both uses.
                 entry_arglist = prepared.arglist()
-                body = qualify_readonly_pointers(body, prepared, sdfg.name, entry_arglist)
+                caller_writable = (signature.workspace,) if signature is not None and signature.workspace else ()
+                body = qualify_readonly_pointers(body, prepared, sdfg.name, entry_arglist, caller_writable)
                 # After the qualifier pass, so each declaration carries the ``const`` CPF decided
                 # on before it moves; only the order changes here.
                 if signature is not None:
