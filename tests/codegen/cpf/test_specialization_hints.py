@@ -438,7 +438,7 @@ def test_a_map_codegen_lowers_a_copy_into_is_labelled():
 
 
 def test_a_loop_left_unlabelled_by_canonicalize_is_labelled_by_the_rendering():
-    """BandCarriedLoops and seam splitting add loops after ``AnnotateLoopKinds`` ran."""
+    """StripMineInterchange and seam splitting add loops after ``AnnotateLoopKinds`` ran."""
     rendered = comment_lines(render(carried_sdfg("cpf_kind_late")).code)
     assert any(line.startswith("// sequential -- carried: RAW on b[") for line in rendered), rendered
 
