@@ -143,7 +143,7 @@ __state->report.add_completion("{timer_name}", "GPU", __dace_ts_start_{idstr}, _
                 raise TypeError("GPU Event instrumentation only applies to GPU_Device map scopes")
 
             idstr = "b" + self._idstr(cfg, state, node)
-            stream = getattr(node, "_cuda_stream", -1)
+            stream = gpu_stream_of(node, state)
             outer_stream.write(self._record_event(idstr, stream), cfg, state_id, node)
 
     def on_scope_exit(
@@ -161,7 +161,7 @@ __state->report.add_completion("{timer_name}", "GPU", __dace_ts_start_{idstr}, _
         s = self._get_sobj(node)
         if s.instrument == dtypes.InstrumentationType.GPU_Events:
             idstr = "e" + self._idstr(cfg, state, entry_node)
-            stream = getattr(node, "_cuda_stream", -1)
+            stream = gpu_stream_of(node, state)
             outer_stream.write(self._record_event(idstr, stream), cfg, state_id, node)
             outer_stream.write(
                 self._report(f"{type(s).__name__} {s.label}", cfg, state, entry_node), cfg, state_id, node
@@ -184,7 +184,7 @@ __state->report.add_completion("{timer_name}", "GPU", __dace_ts_start_{idstr}, _
         if node.instrument == dtypes.InstrumentationType.GPU_Events:
             state_id = state.parent_graph.node_id(state)
             idstr = "b" + self._idstr(cfg, state, node)
-            stream = getattr(node, "_cuda_stream", -1)
+            stream = gpu_stream_of(node, state)
             outer_stream.write(self._record_event(idstr, stream), cfg, state_id, node)
 
     def on_node_end(
@@ -204,8 +204,23 @@ __state->report.add_completion("{timer_name}", "GPU", __dace_ts_start_{idstr}, _
         if node.instrument == dtypes.InstrumentationType.GPU_Events:
             state_id = state.parent_graph.node_id(state)
             idstr = "e" + self._idstr(cfg, state, node)
-            stream = getattr(node, "_cuda_stream", -1)
+            stream = gpu_stream_of(node, state)
             outer_stream.write(self._record_event(idstr, stream), cfg, state_id, node)
             outer_stream.write(
                 self._report(f"{type(node).__name__} {node.label}", cfg, state, node), cfg, state_id, node
             )
+
+
+def gpu_stream_of(node: nodes.Node, state: SDFGState) -> int:
+    """The GPU stream a node runs on, or ``-1`` (recorded on the default stream).
+
+    The experimental codegen schedules ``Node.gpu_stream_id`` and a map exit takes its entry's; the legacy
+    codegen attaches ``_cuda_stream`` to the node dynamically.
+    """
+    if isinstance(node, nodes.MapExit):
+        entry = state.entry_node(node)
+        if entry is not None and entry.gpu_stream_id is not None:
+            return entry.gpu_stream_id
+    if node.gpu_stream_id is not None:
+        return node.gpu_stream_id
+    return getattr(node, "_cuda_stream", -1)

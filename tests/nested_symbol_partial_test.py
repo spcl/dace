@@ -22,7 +22,8 @@ def test_nested_symbol_partial():
 
     expected = np.arange(0, 20, dtype=np.float64).sum()
     out = np.ndarray([1], dtype=np.float64)
-    nested_symbol_partial(A=out, sym_0=20)
+    # An unnamed symbol is numbered by a process-wide counter, so it is passed by the name it got
+    nested_symbol_partial(A=out, **{W.name: 20})
     assert np.allclose(out, expected)
 
 

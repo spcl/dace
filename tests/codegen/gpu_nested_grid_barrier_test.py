@@ -63,7 +63,7 @@ def _kernel_with_consecutive_maps(nested: bool) -> dace.SDFG:
 
 def _check_barrier(nested: bool):
     sdfg = _kernel_with_consecutive_maps(nested)
-    code = next(obj.clean_code for obj in sdfg.generate_code() if obj.language == "cu")
+    code = next(obj.clean_code for obj in sdfg.generate_code() if obj.title == "CUDA")
     assert "__gbar.Sync();" in code
     assert re.search(r"cub::GridBarrier\s+__gbar|GridBarrier\s*&\s*__gbar", code)
 

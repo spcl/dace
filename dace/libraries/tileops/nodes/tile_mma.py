@@ -1,0 +1,204 @@
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+"""Tile MMA (matrix-multiply-accumulate) library node.
+
+K-dim register-tile MMA with GEMM-style ``alpha`` / ``beta`` scalar prefactors (matching
+:class:`~dace.libraries.blas.nodes.gemm.Gemm` convention).
+
+Tile shapes:
+
+* ``_a``: ``(M, K_inner)`` -- left operand tile.
+* ``_b``: ``(K_inner, N)`` -- right operand tile.
+* ``_cin``: ``(M, N)`` -- accumulator input (only when ``beta != 0``).
+* ``_c``: ``(M, N)`` -- result output.
+
+The caller wires ``_cin`` and ``_c`` to the same AccessNode for in-place
+accumulation -- mirrors DaCe's Tasklet convention (Tasklet codegen
+disallows same-name in/out connectors, so the lib node carries distinct
+names that the expansion preserves).
+
+Compile-time properties:
+
+* ``alpha`` -- scalar prefactor for ``A @ B`` (default 1).
+* ``beta`` -- scalar prefactor for ``C`` (default 1 -- accumulate; set
+  to 0 to overwrite).
+* ``widths`` -- ``[M, K_inner, N]`` in source order; any positive ints (validated at expansion time).
+
+The pure expansion emits a 3-fold nested CPP loop:
+
+```cpp
+for (size_t i = 0; i < M; ++i) {
+    for (size_t j = 0; j < N; ++j) {
+        T acc = T(0);
+        for (size_t k = 0; k < K_inner; ++k) {
+            acc += _a[i * K_inner + k] * _b[k * N + j];
+        }
+        _c[i * N + j] = T(alpha) * acc + T(beta) * _c[i * N + j];
+    }
+}
+```
+"""
+
+import dace
+from dace import library, properties
+from dace.libraries.tileops.expansions import ExpandTilePure
+from dace.libraries.tileops.lanes import distributed_element_loop
+from dace.libraries.tileops.nodes.tile_op import TileOp
+from dace.libraries.tileops.operands import edge_ctype, output_edge
+from dace.optionals import required
+from dace.sdfg import nodes
+
+
+@library.expansion
+class ExpandTileMMAPure(ExpandTilePure):
+    pass
+
+
+@library.node
+class TileMMA(TileOp):
+    """K-dim register-tile MMA: ``c = alpha * (a @ b) + beta * c`` in-place.
+
+    GEMM-style ``alpha`` / ``beta`` compile-time scalar prefactors. The ``_c`` tile is both input (read for
+    accumulation) and output (written in place).
+    """
+
+    lanes_independent = True
+    implementations = {"pure": ExpandTileMMAPure}
+    default_implementation = "pure"
+
+    alpha = properties.Property(
+        allow_none=False,
+        default=1,
+        desc="Scalar prefactor for ``A @ B`` (matches :class:`Gemm.alpha` convention).",
+    )
+    beta = properties.Property(
+        allow_none=False,
+        default=1,
+        desc="Scalar prefactor for the accumulator ``C``. Default 1 accumulates "
+        "(``c = a @ b + c``); ``0`` overwrites (``c = a @ b``).",
+    )
+
+    def __init__(
+        self,
+        name: str,
+        widths: tuple[int, int, int],
+        alpha: int | float = 1,
+        beta: int | float = 1,
+        location: str | None = None,
+    ):
+        """Construct a ``TileMMA`` node.
+
+        :param name: Node label.
+        :param widths: ``(M, K_inner, N)`` tile dimensions.
+        :param alpha: Compile-time scalar prefactor for ``A @ B``.
+        :param beta: Compile-time scalar prefactor for the accumulator; 0
+            overwrites, non-zero accumulates.
+        :param location: Optional DaCe node location override.
+        """
+        if len(widths) != 3:
+            raise ValueError(f"TileMMA: widths must be a 3-tuple (M, K_inner, N); got {widths!r}")
+        if any(w <= 0 for w in widths):
+            raise ValueError(f"TileMMA: every dim must be positive; got widths={widths!r}")
+        # ``_cin`` is read for accumulation when ``beta != 0``; ``_c`` is
+        # always the output (caller wires both to the same AccessNode for
+        # in-place accumulation).
+        inputs = ["_a", "_b", "_cin"] if beta != 0 else ["_a", "_b"]
+        super().__init__(name, location=location, inputs=dict.fromkeys(inputs), outputs={"_c"})
+        self.widths = list(widths)
+        self.alpha = alpha
+        self.beta = beta
+
+    def validate(self, sdfg: dace.SDFG, state: dace.SDFGState) -> None:
+        """Verify connector descriptors match the declared ``(M, K_inner, N)``
+        and the dtypes of ``_a``, ``_b``, ``_cin`` / ``_c`` are uniform."""
+        in_e = {e.dst_conn: e for e in state.in_edges(self)}
+        out_e = {e.src_conn: e for e in state.out_edges(self)}
+        for connector in ("_a", "_b"):
+            if connector not in in_e:
+                raise ValueError(f"{self.label}: missing required input connector {connector!r}")
+        if "_c" not in out_e:
+            raise ValueError(f"{self.label}: missing required output connector '_c'")
+        if self.beta != 0 and "_cin" not in in_e:
+            raise ValueError(f"{self.label}: beta={self.beta!r} != 0 requires '_cin' input connector")
+        M, K_inner, N = self.widths
+        a_desc = sdfg.arrays[required(in_e["_a"].data.data)]
+        b_desc = sdfg.arrays[required(in_e["_b"].data.data)]
+        c_desc = sdfg.arrays[required(out_e["_c"].data.data)]
+        if a_desc.dtype != b_desc.dtype or a_desc.dtype != c_desc.dtype:
+            raise NotImplementedError(
+                f"{self.label}: requires uniform dtype across _a, _b, _c; "
+                f"got a={a_desc.dtype}, b={b_desc.dtype}, c={c_desc.dtype}"
+            )
+        for desc, name, expected in (
+            (a_desc, "_a", (M, K_inner)),
+            (b_desc, "_b", (K_inner, N)),
+            (c_desc, "_c", (M, N)),
+        ):
+            shape = tuple(desc.shape) if hasattr(desc, "shape") else ()
+            if len(shape) != 2 or tuple(int(s) for s in shape) != expected:
+                raise ValueError(f"{self.label}: {name!r} descriptor shape {shape} != expected {expected}")
+
+    def output_elements(self) -> int:
+        M, _, N = self.widths
+        return M * N
+
+    def reads_lane_wise(self, connector: str) -> bool:
+        # A dot product reads a row of ``_a`` and a column of ``_b``
+        return connector not in ("_a", "_b")
+
+    def pure_tasklet(self, state: dace.SDFGState, sdfg: dace.SDFG) -> nodes.Tasklet:
+        self.validate(sdfg, state)
+        M, K_inner, N = self.widths
+        # Pick the accumulator dtype from the ``_c`` output edge descriptor; the
+        # input ``_a`` / ``_b`` dtypes must match (enforced in ``validate``).
+        out_dtype = edge_ctype(sdfg, output_edge(state, self, "_c"))
+        alpha = self.alpha
+        beta = self.beta
+        # Specialise the accumulator update at compile time -- avoid the
+        # unnecessary ``* 1`` / ``+ 0`` arithmetic the compiler would otherwise
+        # have to fold (and which obscures the generated code).
+        if alpha == 1 and beta == 0:
+            update = f"_c[i * {N} + j] = acc;"
+        elif alpha == 1 and beta == 1:
+            update = f"_c[i * {N} + j] = acc + _cin[i * {N} + j];"
+        elif beta == 0:
+            update = f"_c[i * {N} + j] = {out_dtype}({alpha}) * acc;"
+        elif alpha == 1:
+            update = f"_c[i * {N} + j] = acc + {out_dtype}({beta}) * _cin[i * {N} + j];"
+        else:
+            update = f"_c[i * {N} + j] = {out_dtype}({alpha}) * acc + {out_dtype}({beta}) * _cin[i * {N} + j];"
+        # ``M`` / ``N`` / ``K_inner`` are compile-time-constant tile widths, so every loop
+        # (including the ``k`` dot-product accumulation) carries ``DACE_UNROLL`` -- the
+        # accumulator stays in a register and the compiler can re-vectorise the fold.
+        dot = [
+            f"{out_dtype} acc = {out_dtype}(0);",
+            "DACE_UNROLL",
+            f"for (std::size_t k = 0; k < {K_inner}; ++k) {{",
+            f"    acc += _a[i * {K_inner} + k] * _b[k * {N} + j];",
+            "}",
+            update,
+        ]
+        # Spread over a thread group, each thread computes the dot products of its own (i, j) elements
+        code = distributed_element_loop(
+            M * N, [f"const std::size_t i = __e / {N};", f"const std::size_t j = __e % {N};"], "\n".join(dot)
+        )
+        if code is None:
+            lines = [
+                "DACE_UNROLL",
+                f"for (std::size_t i = 0; i < {M}; ++i) {{",
+                "    DACE_UNROLL",
+                f"    for (std::size_t j = 0; j < {N}; ++j) {{",
+                *(f"        {line}" for line in dot),
+                "    }",
+                "}",
+            ]
+            code = "\n".join(lines)
+
+        # Inputs: ``_a``, ``_b`` always; ``_cin`` only when ``beta`` is non-zero
+        # (we read the accumulator in that case). Output: always ``_c``.
+        return nodes.Tasklet(
+            label=f"{self.label}_pure",
+            inputs=dict.fromkeys(["_a", "_b", "_cin"] if self.beta != 0 else ["_a", "_b"]),
+            outputs={"_c": None},
+            code=code,
+            language=dace.dtypes.Language.CPP,
+        )

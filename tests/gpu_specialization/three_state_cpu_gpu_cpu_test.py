@@ -1,0 +1,211 @@
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+"""Regression test for ``AutoGPUStreamScheduler`` sync placement at root level.
+
+Reproduces the shape of ``failed_validation.sdfg`` (an ICON-style program):
+
+  * Three top-level blocks: a CPU host state, a GPU computation state, then a CPU host state.
+  * The GPU state contains some free Tasklets/AccessNodes plus a ``GPU_Device`` map.
+  * The ``GPU_Device`` map's body has an inner ``GPU_ThreadBlock`` map and a ``NestedSDFG``.
+
+The earlier ``insert_sync_tasklets`` implementation walked the entire CFG recursively, so it
+descended into the NSDFG that sits inside the kernel and spliced a sync state there --
+planting a ``gpu_streams[0]`` memlet with no inner ``gpu_streams`` array, triggering
+``Node validation failed: 'gpu_streams'`` at validation time. The fix restricts sync placement
+to the root SDFG's ``.nodes()`` / ``.edges()`` only.
+
+This test pins that contract: build the SDFG by hand to mirror the failing shape, run the
+default pipeline, then assert (a) the sync state lands at the outer GPU -> CPU iedge, (b) no
+sync tasklets exist anywhere inside the NestedSDFG that lives inside the GPU kernel, and
+(c) the SDFG validates.
+"""
+
+import dace
+from dace.codegen import common
+from dace.transformation.passes.gpu_specialization.gpu_specialization_pipeline import GPUStreamPipeline
+
+
+def _build_simple_three_state_sdfg() -> dace.SDFG:
+    """Simpler ``cpu_pre -> gpu_mid -> cpu_post`` SDFG; ``gpu_mid`` wraps the GPU kernel
+    in a NestedSDFG so the outer state has no GPU-Device map of its own."""
+    sdfg = dace.SDFG("three_state_cpu_gpu_cpu")
+    sdfg.add_array("A", [16], dace.float32, storage=dace.dtypes.StorageType.GPU_Global)
+    sdfg.add_array("B", [16], dace.float32, storage=dace.dtypes.StorageType.GPU_Global)
+    sdfg.add_array("host_in", [1], dace.float32)
+    sdfg.add_array("host_out", [1], dace.float32)
+
+    cpu_pre = sdfg.add_state("cpu_pre", is_start_block=True)
+    t_pre = cpu_pre.add_tasklet(
+        "host_init", {}, {"__out": dace.pointer(dace.float32)}, "__out = 1.0f;", language=dace.Language.CPP
+    )
+    cpu_pre.add_edge(t_pre, "__out", cpu_pre.add_write("host_in"), None, dace.Memlet("host_in[0]"))
+
+    gpu_mid = sdfg.add_state("gpu_mid")
+    inner = dace.SDFG("inner_kernel")
+    inner.add_array("a_in", [16], dace.float32, storage=dace.dtypes.StorageType.GPU_Global)
+    inner.add_array("b_out", [16], dace.float32, storage=dace.dtypes.StorageType.GPU_Global)
+    inner_st = inner.add_state("inner_state")
+    me, mx = inner_st.add_map("gpu_map", dict(i="0:16"), schedule=dace.dtypes.ScheduleType.GPU_Device)
+    kt = inner_st.add_tasklet("mul2", {"_a": dace.float32}, {"_b": dace.float32}, "_b = _a * 2.0")
+    inner_st.add_memlet_path(inner_st.add_read("a_in"), me, kt, dst_conn="_a", memlet=dace.Memlet("a_in[i]"))
+    inner_st.add_memlet_path(kt, mx, inner_st.add_write("b_out"), src_conn="_b", memlet=dace.Memlet("b_out[i]"))
+    nsdfg_node = gpu_mid.add_nested_sdfg(inner, {"a_in": None}, {"b_out": None}, {})
+    gpu_mid.add_edge(gpu_mid.add_read("A"), None, nsdfg_node, "a_in", dace.Memlet("A[0:16]"))
+    gpu_mid.add_edge(nsdfg_node, "b_out", gpu_mid.add_write("B"), None, dace.Memlet("B[0:16]"))
+
+    cpu_post = sdfg.add_state("cpu_post")
+    t_post = cpu_post.add_tasklet(
+        "host_fin", {}, {"__out": dace.pointer(dace.float32)}, "__out = 9.0f;", language=dace.Language.CPP
+    )
+    cpu_post.add_edge(t_post, "__out", cpu_post.add_write("host_out"), None, dace.Memlet("host_out[0]"))
+
+    sdfg.add_edge(cpu_pre, gpu_mid, dace.InterstateEdge())
+    sdfg.add_edge(gpu_mid, cpu_post, dace.InterstateEdge())
+    return sdfg
+
+
+def _build_failed_validation_shape() -> dace.SDFG:
+    """``cpu_pre -> gpu_kernel_state -> cpu_post``; ``gpu_kernel_state`` carries a
+    ``GPU_Device`` map containing a ``GPU_ThreadBlock`` map and a ``NestedSDFG``."""
+    sdfg = dace.SDFG("failed_validation_shape")
+    sdfg.add_array("A", [16], dace.float32, storage=dace.dtypes.StorageType.GPU_Global)
+    sdfg.add_array("B", [16], dace.float32, storage=dace.dtypes.StorageType.GPU_Global)
+    sdfg.add_array("host_in", [1], dace.float32)
+    sdfg.add_array("host_out", [1], dace.float32)
+
+    # State 1 (CPU): host init.
+    cpu_pre = sdfg.add_state("cpu_pre", is_start_block=True)
+    t_pre = cpu_pre.add_tasklet(
+        "host_init", {}, {"__out": dace.pointer(dace.float32)}, "__out = 1.0f;", language=dace.Language.CPP
+    )
+    cpu_pre.add_edge(t_pre, "__out", cpu_pre.add_write("host_in"), None, dace.Memlet("host_in[0]"))
+
+    # State 2 (GPU): a GPU_Device map with a thread block map and a NestedSDFG inside.
+    gpu_state = sdfg.add_state("gpu_kernel_state")
+    a_read = gpu_state.add_read("A")
+    b_write = gpu_state.add_write("B")
+    dev_me, dev_mx = gpu_state.add_map(
+        "gpu_device_map", dict(blockIdx_x="0:1"), schedule=dace.dtypes.ScheduleType.GPU_Device
+    )
+    blk_me, blk_mx = gpu_state.add_map(
+        "gpu_threadblock_map", dict(threadIdx_x="0:16"), schedule=dace.dtypes.ScheduleType.GPU_ThreadBlock
+    )
+
+    # NestedSDFG INSIDE the GPU_Device + GPU_ThreadBlock scope -- this is the structure that
+    # the broken pipeline used to splice a sync state into.
+    inner = dace.SDFG("per_thread_body")
+    inner.add_symbol("threadIdx_x", dace.int64)
+    inner.add_array("a_lane", [16], dace.float32, storage=dace.dtypes.StorageType.GPU_Global)
+    inner.add_array("b_lane", [16], dace.float32, storage=dace.dtypes.StorageType.GPU_Global)
+    inner_st = inner.add_state("s")
+    in_t = inner_st.add_tasklet("mul2", {"_a": dace.float32}, {"_b": dace.float32}, "_b = _a * 2.0")
+    inner_st.add_edge(inner_st.add_read("a_lane"), None, in_t, "_a", dace.Memlet("a_lane[threadIdx_x]"))
+    inner_st.add_edge(in_t, "_b", inner_st.add_write("b_lane"), None, dace.Memlet("b_lane[threadIdx_x]"))
+    nsdfg_node = gpu_state.add_nested_sdfg(inner, {"a_lane": None}, {"b_lane": None}, {"threadIdx_x": "threadIdx_x"})
+
+    # Wire the memlet path: A -> Device map -> ThreadBlock map -> NSDFG -> ThreadBlock map -> Device map -> B.
+    gpu_state.add_memlet_path(
+        a_read, dev_me, blk_me, nsdfg_node, dst_conn="a_lane", memlet=dace.Memlet("A[threadIdx_x]")
+    )
+    gpu_state.add_memlet_path(
+        nsdfg_node, blk_mx, dev_mx, b_write, src_conn="b_lane", memlet=dace.Memlet("B[threadIdx_x]")
+    )
+
+    # State 3 (CPU): host finalize.
+    cpu_post = sdfg.add_state("cpu_post")
+    t_post = cpu_post.add_tasklet(
+        "host_fin", {}, {"__out": dace.pointer(dace.float32)}, "__out = 9.0f;", language=dace.Language.CPP
+    )
+    cpu_post.add_edge(t_post, "__out", cpu_post.add_write("host_out"), None, dace.Memlet("host_out[0]"))
+
+    sdfg.add_edge(cpu_pre, gpu_state, dace.InterstateEdge())
+    sdfg.add_edge(gpu_state, cpu_post, dace.InterstateEdge())
+    return sdfg
+
+
+def _sync_tasklets(state):
+    """``cudaStreamSynchronize`` / ``hipStreamSynchronize`` tasklets in ``state``."""
+    backend = common.get_gpu_backend()
+    needle = f"{backend}StreamSynchronize("
+    return [n for n in state.nodes() if isinstance(n, dace.nodes.Tasklet) and needle in n.code.as_string]
+
+
+def test_sync_at_root_with_nsdfg_inside_gpu_device_map():
+    """Sync must be placed at the ROOT, after the host sink ``cpu_post`` (which neither reads GPU
+    output nor writes GPU input, so the exit is the only point that needs the stream drained), not
+    inside the NestedSDFG that lives inside the ``GPU_Device`` map.
+
+    This is the exact failure mode ``failed_validation.sdfg`` exhibited under the old
+    recursive walk: the sync got placed inside the NSDFG body, planting a ``gpu_streams[0]``
+    memlet in a sub-SDFG that has no inner ``gpu_streams`` array."""
+    sdfg = _build_failed_validation_shape()
+    GPUStreamPipeline().apply_pass(sdfg, {})
+
+    # Root SDFG: original three states + one spliced sync state.
+    sync_states_at_root = [s for s in sdfg.states() if _sync_tasklets(s)]
+    assert len(sync_states_at_root) == 1, (
+        f"Expected exactly one sync state at root; got {[s.label for s in sync_states_at_root]}"
+    )
+    sync_state = sync_states_at_root[0]
+    assert sync_state.label.startswith("__gpu_sync_after_"), sync_state.label
+
+    # The sync state is the program's exit, right after cpu_post.
+    successors_of_sync = {e.dst.label for e in sdfg.out_edges(sync_state)}
+    predecessors_of_sync = {e.src.label for e in sdfg.in_edges(sync_state)}
+    assert predecessors_of_sync == {"cpu_post"}, predecessors_of_sync
+    assert successors_of_sync == set(), successors_of_sync
+
+    # No sync tasklets inside the NestedSDFG (or any other inner SDFG).
+    inner_syncs = []
+    for inner in sdfg.all_sdfgs_recursive():
+        if inner is sdfg:
+            continue
+        inner_syncs.extend(f"{inner.name}::{s.label}" for s in inner.states() if _sync_tasklets(s))
+    assert not inner_syncs, f"Expected no sync tasklets inside any nested SDFG; found syncs in: {inner_syncs}"
+
+    sdfg.validate()
+
+
+def host_after_copy_in(host_writes: str) -> dace.SDFG:
+    """``copy_in`` queues ``A -> A_gpu`` and a kernel on the stream; the host state after it writes ``host_writes``."""
+    sdfg = dace.SDFG(f"host_writes_{host_writes}_after_copy_in")
+    sdfg.add_array("A", [16], dace.float32)
+    sdfg.add_array("other", [16], dace.float32)
+    sdfg.add_array("A_gpu", [16], dace.float32, storage=dace.dtypes.StorageType.GPU_Global, transient=True)
+    sdfg.add_array("out", [16], dace.float32, storage=dace.dtypes.StorageType.GPU_Global)
+    copy_in = sdfg.add_state("copy_in", is_start_block=True)
+    a_gpu = copy_in.add_access("A_gpu")
+    copy_in.add_nedge(copy_in.add_read("A"), a_gpu, dace.Memlet("A[0:16]"))
+    me, mx = copy_in.add_map("kernel", dict(i="0:16"), schedule=dace.dtypes.ScheduleType.GPU_Device)
+    kt = copy_in.add_tasklet("twice", {"a"}, {"b"}, "b = 2 * a")
+    copy_in.add_memlet_path(a_gpu, me, kt, dst_conn="a", memlet=dace.Memlet("A_gpu[i]"))
+    copy_in.add_memlet_path(kt, mx, copy_in.add_write("out"), src_conn="b", memlet=dace.Memlet("out[i]"))
+    host = sdfg.add_state_after(copy_in, "host")
+    overwrite = host.add_tasklet("overwrite", {}, {"o"}, "o = 0")
+    host.add_edge(overwrite, "o", host.add_write(host_writes), None, dace.Memlet(f"{host_writes}[0]"))
+    return sdfg
+
+
+def sync_neighbours(sdfg: dace.SDFG):
+    (sync_state,) = [s for s in sdfg.states() if _sync_tasklets(s)]
+    return ({e.src.label for e in sdfg.in_edges(sync_state)}, {e.dst.label for e in sdfg.out_edges(sync_state)})
+
+
+def test_a_host_write_to_an_array_the_queued_copy_reads_waits_for_the_stream():
+    """The host must not overwrite ``A`` while the asynchronous copy-in may still be reading it."""
+    sdfg = host_after_copy_in("A")
+    GPUStreamPipeline().apply_pass(sdfg, {})
+    assert sync_neighbours(sdfg) == ({"copy_in"}, {"host"})
+    sdfg.validate()
+
+
+def test_a_host_state_without_a_hazard_leaves_the_sync_to_the_exit():
+    sdfg = host_after_copy_in("other")
+    GPUStreamPipeline().apply_pass(sdfg, {})
+    assert sync_neighbours(sdfg) == ({"host"}, set())
+    sdfg.validate()
+
+
+if __name__ == "__main__":
+    test_sync_at_root_with_nsdfg_inside_gpu_device_map()
+    test_a_host_write_to_an_array_the_queued_copy_reads_waits_for_the_stream()
+    test_a_host_state_without_a_hazard_leaves_the_sync_to_the_exit()

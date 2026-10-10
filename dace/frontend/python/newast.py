@@ -54,7 +54,7 @@ from dace.sdfg.state import (
 )
 from dace.sdfg.type_inference import infer_iteration_symbol_type
 from dace.symbolic import inequal_symbols, pystr_to_symbolic
-from dace.utils import until
+from dace.utils import find_new_name, until
 
 numpy_version = numpy.lib.NumpyVersion(numpy.__version__)
 
@@ -1148,7 +1148,12 @@ class ProgramVisitor(ExtNodeVisitor):
 
         # Indirections
         self.indirections = dict()
-        # Scalars already promoted to symbols here, so a second promotion reuses the symbol
+        #: The shape symbol each scalar's current VERSION was promoted to, with the region its assignment ran in.
+        #: A write to the scalar drops it, so a reassigned size mints a new symbol while every shape sized from one
+        #: value shares one, inside loops that never write it too (elementwise operations compare their extents).
+        self.shape_promotions: dict[str, tuple[symbolic.symbol, ControlFlowRegion]] = dict()
+        #: The one symbol a computed index (``A[i + 1]``) of each scalar is promoted to, re-assigned at every
+        #: promotion (No-View nested SDFGs); a bare scalar and a shape use their version above instead.
         self.promoted_scalars: dict[str, symbolic.symbol] = dict()
 
     @classmethod
@@ -2551,8 +2556,9 @@ class ProgramVisitor(ExtNodeVisitor):
 
             # Add loop to SDFG
             loop_cond = ">" if ((pystr_to_symbolic(ranges[0][2]) < 0) == True) else "<"
-            loop_cond_expr = f"{indices[0]} {loop_cond} {astutils.unparse(ast_ranges[0][1])}"
-            incr = {indices[0]: f"{indices[0]} = {indices[0]} + {astutils.unparse(ast_ranges[0][2])}"}
+            loop_cond_expr = "%s %s %s" % (indices[0], loop_cond, astutils.unparse(ast_ranges[0][1]))
+            incr = {indices[0]: "%s = %s + %s" % (indices[0], indices[0], astutils.unparse(ast_ranges[0][2]))}
+            self.drop_shape_versions_written_in(node)
             loop_region = self._add_loop_region(
                 loop_cond_expr,
                 label=f"for_{node.lineno}",
@@ -2692,6 +2698,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 self.sdfg.add_symbol(astr, dtype)
 
     def visit_While(self, node: ast.While):
+        self.drop_shape_versions_written_in(node)
         # Get loop condition expression and create the necessary states for it.
         loop_cond, _, test_region = self._visit_test(node.test)
         loop_region = self._add_loop_region(loop_cond, label=f"while_{node.lineno}", inverted=False)
@@ -2887,6 +2894,8 @@ class ProgramVisitor(ExtNodeVisitor):
             target_name = target
             target_array = self.sdfg.arrays[target_name]
             target_subset = subsets.Range.from_array(target_array)
+        # The write ends the version the scalar's shape symbol was read from
+        self.shape_promotions.pop(target_name, None)
         if isinstance(operand, tuple):
             op_name, op_subset = operand
             if op_subset is None:
@@ -3124,6 +3133,8 @@ class ProgramVisitor(ExtNodeVisitor):
             wtarget_name = wtarget
             wtarget_array = self.sdfg.arrays[wtarget_name]
             wtarget_subset = subsets.Range.from_array(wtarget_array)
+        # An update is a write too
+        self.shape_promotions.pop(wtarget_name, None)
         if isinstance(operand, tuple):
             op_name, op_subset = operand
             if op_subset is None:
@@ -4002,6 +4013,36 @@ class ProgramVisitor(ExtNodeVisitor):
                 return result[0]
         return result
 
+    def parse_window_argument(self, arg: ast.AST, written: bool):
+        """One argument of a call to a replacement that takes windows.
+
+        An array, or a slice of one, becomes the pair ``(container, subset)``: the container in the SDFG being built that
+        holds the data, which is a connector of it when the array lives outside this scope, and the range of the
+        container the argument names. Any other argument is parsed as usual.
+
+        :param arg: The argument of the call.
+        :param written: Whether the replacement writes the argument.
+        """
+        subscripted = isinstance(arg, ast.Subscript) and isinstance(arg.value, ast.Name)
+        if not subscripted and not isinstance(arg, ast.Name):
+            return self._parse_function_arg(arg)
+        name = rname(arg)
+        true_name = {**self.variables, **self.scope_vars}.get(name, name)
+        defined_arrays = {**self.sdfg.arrays, **self.scope_arrays, **self.defined.materialize()}
+        if not isinstance(defined_arrays.get(true_name), data.Array):
+            return self._parse_function_arg(arg)
+        true_node = copy.deepcopy(arg)
+        (true_node.value if subscripted else true_node).id = true_name
+        expr: MemletExpr = ParseMemlet(
+            self, defined_arrays, true_node, self._parse_subscript_slice(arg.slice) if subscripted else None
+        )
+        subset = expr.subset
+        if expr.arrdims:
+            raise DaceSyntaxError(self, arg, "A window passed to a call cannot be indexed by an array")
+        access = self._add_write_access if written else self._add_read_access
+        container, local_subset = access(name, subset, arg)
+        return container, subset if local_subset is None else local_subset
+
     def _is_inputnode(self, sdfg: SDFG, name: str):
         visited_data = set()
         for state in sdfg.states():
@@ -4405,7 +4446,7 @@ class ProgramVisitor(ExtNodeVisitor):
                                         break
                             if not sub:
                                 raise KeyError("Did not find output subscript")
-                            output_slices.add((sub, ast.Name(id=aname)))
+                            output_slices.add((sub, ast.Name(id=aname, ctx=ast.Load())))
                             slice_state.remove_edge(e)
                             slice_state.remove_node(e.src)
                         slice_state.remove_node(n)
@@ -4944,14 +4985,21 @@ class ProgramVisitor(ExtNodeVisitor):
                     self, node, f'Function "{funcname}" is not registered with an SDFG implementation'
                 )
 
-        # NOTE: Temporary fix for MPI library-node replacements
         # Parsing the arguments with `_parse_function_arg` will generate
-        # slices even for the output arguments.
+        # slices even for the output arguments. A replacement that wires the
+        # slices itself (see `oprepo.replaces_windows`) gets the containers and
+        # the ranges accessed instead, and writes the output arguments.
+        window_outputs = oprepo.Replacements.window_outputs(funcname)
+        if window_outputs is not None:
+            args.extend(
+                self.parse_window_argument(arg, written=index in window_outputs) for index, arg in enumerate(node.args)
+            )
+        # NOTE: Temporary fix for MPI library-node replacements
         # We make a special exception for MPI calls (`dace.comm` namespace)
         # and we pass instead the array names and the ranges accessed.
         # The replacement functions are responsible for generating the correct
         # subgraph/memlets.
-        if funcname.startswith("dace.comm"):
+        elif funcname.startswith("dace.comm"):
             mpi_args = []
             for arg in node.args:
                 # We are only looking for subscripts on arrays of the current SDFG.
@@ -5093,7 +5141,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 )
                 self._visit_assign(new_node, ast_tuple, None, is_return=True)
             else:
-                ast_name = ast.copy_location(ast.Name(id="__return"), node)
+                ast_name = ast.copy_location(ast.Name(id="__return", ctx=ast.Store()), node)
                 self._visit_assign(new_node, ast_name, None, is_return=True)
 
             if not isinstance(self.cfg_target, SDFG):
@@ -5509,6 +5557,81 @@ class ProgramVisitor(ExtNodeVisitor):
             )
         return tmp
 
+    def drop_shape_versions_written_in(self, loop: ast.For | ast.While):
+        """A loop that assigns a scalar re-enters its body with a new value, which a version read before the loop
+        does not see: a shape in the body ahead of the write must read the scalar again."""
+        for name in {n.id for n in ast.walk(loop) if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store)}:
+            self.shape_promotions.pop(self.variables.get(name, name), None)
+
+    def nested_in_region(self, defining_region: ControlFlowRegion) -> bool:
+        """Whether the current region is ``defining_region`` or nested in it within the same SDFG. Loops in between do
+        not matter for a shape symbol: a write to its scalar drops it, and so does entering a loop that writes it."""
+        region = self.cfg_target
+        while region is not defining_region:
+            if region is None or isinstance(region, SDFG):
+                return False
+            region = region.parent_graph
+        return True
+
+    def promote_scalar_to_symbol(self, scalar: str, key: str | None = None) -> symbolic.symbol:
+        """
+        Reads a scalar into a symbol on an interstate edge, leaving its descriptor in place.
+
+        :param scalar: Name of the scalar data descriptor to read.
+        :param key: Cache key: promotions of the same subscript expression reuse one symbol. Without a key it is a
+                    shape promotion: one symbol per VERSION of the scalar, shared by every shape sized from it until
+                    the scalar is written again, so two shapes sized from the same reassigned scalar keep their own
+                    values.
+        :return: The symbol carrying the scalar's value.
+        """
+        desc = self.sdfg.arrays[scalar]
+        # A shape symbol is reused by later shapes and by subscripts naming the scalar itself (``psi[:, :my_n]``
+        # bounds its slice by the extent ``np.zeros(my_n)`` took); a computed index keeps its expression's symbol.
+        # The scalar itself (a shape, or a subscript naming it) maps to one symbol per version, so a slice
+        # ``pol[:n]`` and a later ``np.ones(n)`` agree; a computed index keeps its expression's symbol.
+        version = key in (None, scalar) or self.variables.get(key) == scalar
+        if version and scalar in self.shape_promotions:
+            version_sym, region = self.shape_promotions[scalar]
+            if self.nested_in_region(region):
+                if key is None:
+                    self.globals[str(version_sym)] = version_sym
+                return version_sym
+        base = f"__sym_{scalar}"
+        # A computed index follows No-View nested SDFGs: one symbol per scalar, re-assigned at every promotion.
+        sym = None if version else (self.indirections.get(key) or self.promoted_scalars.get(scalar))
+        if sym is None:
+            if version:
+                # A minted shape symbol never takes the bare name the computed-index promotion reuses
+                name = find_new_name(base, self.sdfg.symbols.keys() | self.sdfg.arrays.keys() | {base})
+            else:
+                # A name that already means something else here would shadow it
+                name = (
+                    base
+                    if base not in self.sdfg.symbols
+                    else find_new_name(base, set(self.sdfg.symbols.keys()) | set(self.sdfg.arrays.keys()))
+                )
+            self.sdfg.add_symbol(name, desc.dtype)
+            sym = dace.symbol(name, dtype=desc.dtype)
+            if not version:
+                self.promoted_scalars[scalar] = sym
+                self.indirections[key] = sym
+            elif key is None:
+                # Shape symbols must resolve inside nested scopes, which look up free symbols in ``globals``.
+                # Subscript promotions stay out: they shadow names there.
+                self.globals[name] = sym
+        state = self._add_state(f"promote_{scalar}_to_{sym}")
+        if version:
+            # A call region runs once, in sequence, so its symbol holds for the rest of the caller's region.
+            region = self.cfg_target
+            while isinstance(region, FunctionCallRegion):
+                region = region.parent_graph
+            self.shape_promotions[scalar] = (sym, region)
+        edge = state.parent_graph.in_edges(state)[0]
+        # A Scalar reads by name; a size-1 array needs the subscript, or the assignment takes its pointer.
+        rhs = scalar if isinstance(desc, data.Scalar) else f"{scalar}[{', '.join(['0'] * len(desc.shape))}]"
+        edge.data.assignments = {str(sym): rhs}
+        return sym
+
     def _parse_subscript_slice(self, s: ast.AST, multidim: bool = False) -> Any | tuple[Any | str | symbolic.symbol]:
         """Parses the slice attribute of an ast.Subscript node.
         Scalar data are promoted to symbols.
@@ -5516,33 +5639,13 @@ class ProgramVisitor(ExtNodeVisitor):
 
         def _promote(node: ast.AST) -> Any | str | symbolic.symbol:
             node_str = astutils.unparse(node)
-            sym = None
-            if node_str in self.indirections:
-                sym = self.indirections[node_str]
             if isinstance(node, str):
                 scalar = node_str
             else:
                 scalar = self.visit(node)
             if isinstance(scalar, str) and scalar in self.sdfg.arrays:
-                desc = self.sdfg.arrays[scalar]
-                if isinstance(desc, data.Scalar):
-                    if not sym:
-                        sym = self.promoted_scalars.get(scalar)
-                    if not sym:
-                        # A name that already means something else here would shadow it
-                        symname = f"__sym_{scalar}"
-                        if symname in self.sdfg.symbols:
-                            symname = data.find_new_name(
-                                symname, set(self.sdfg.symbols.keys()) | set(self.sdfg.arrays.keys())
-                            )
-                        sym = dace.symbol(symname, dtype=desc.dtype)
-                        self.sdfg.add_symbol(symname, desc.dtype)
-                        self.promoted_scalars[scalar] = sym
-                        self.indirections[node_str] = sym
-                    state = self._add_state(f"promote_{scalar}_to_{str(sym)}")
-                    edge = state.parent_graph.in_edges(state)[0]
-                    edge.data.assignments = {str(sym): scalar}
-                    return sym
+                if isinstance(self.sdfg.arrays[scalar], data.Scalar):
+                    return self.promote_scalar_to_symbol(scalar, key=node_str)
             return scalar
 
         if isinstance(s, (Number, bool, numpy.bool_, sympy.Basic)):
@@ -5624,7 +5727,7 @@ class ProgramVisitor(ExtNodeVisitor):
         nslice = self._parse_subscript_slice(node.slice)
 
         # Try to construct memlet from subscript
-        node.value = ast.Name(id=array)
+        node.value = ast.Name(id=array, ctx=ast.Load())
         defined = dace.sdfg.NestedDict({**self.sdfg.arrays, **self.defined})
 
         if arrtype is data.Scalar and array in defined and isinstance(defined[array].dtype, dtypes.pyobject):
@@ -5664,7 +5767,7 @@ class ProgramVisitor(ExtNodeVisitor):
             elif isinstance(r, (Number, numpy.bool_)):
                 newnode = ast.Constant(value=r, kind="")
             else:
-                newnode = ast.Name(id=r)
+                newnode = ast.Name(id=r, ctx=ast.Load())
             ast.copy_location(newnode, node)
             out.append(newnode)
         if res_num == 1:
