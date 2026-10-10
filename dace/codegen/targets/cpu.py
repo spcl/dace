@@ -1519,14 +1519,7 @@ class CPUCodeGen(TargetCodeGenerator):
         else:
             raise TypeError(f"Unsupported connector type {def_type}")
 
-        if isinstance(memlet.subset, subsets.Indices):
-            offset = cpp.cpp_array_expr(sdfg, memlet, False, codegen=self)
-
-            # Compute address
-            memlet_params.append(memlet_expr + " + " + offset)
-            dims = 0
-
-        elif isinstance(memlet.subset, subsets.Range):
+        if isinstance(memlet.subset, subsets.Range):
             dims = len(memlet.subset.ranges)
             offset = cpp.cpp_offset_expr(sdfg.arrays[memlet.data], memlet.subset)
             if offset == "0":
