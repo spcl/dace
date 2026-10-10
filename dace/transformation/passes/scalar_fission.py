@@ -85,11 +85,15 @@ class ScalarFission(ppl.Pass):
         # the header's reference. Leave such scalars untouched. A branch condition is modelled: it
         # reads on entry to its conditional and is renamed with its scope.
         cond_referenced: set[str] = set()
+        # Read by a branch condition: versioned with its dominating write only. The undominated
+        # privatization below proves its legality from access nodes, which a condition read is not.
+        branch_referenced: set[str] = set()
         for region in sdfg.all_control_flow_regions():
+            names = {s for cb in region.get_meta_codeblocks() for s in cb.get_free_symbols()}
             if isinstance(region, ConditionalBlock):
-                continue
-            for cb in region.get_meta_codeblocks():
-                cond_referenced |= cb.get_free_symbols()
+                branch_referenced |= names
+            else:
+                cond_referenced |= names
         cond_referenced &= set(sdfg.arrays.keys())
 
         # A scalar threaded through a single ``NestedSDFG`` inout connector is a
@@ -123,7 +127,7 @@ class ScalarFission(ppl.Pass):
             # branch of a conditional and read after the merge (the cloudsc
             # zcor/zfac/zqe pattern). These are loop-local (no upward-exposed use),
             # so each enclosing loop gets its own copy -- scalar privatization.
-            if None in write_scope_dict:
+            if None in write_scope_dict and name not in branch_referenced:
                 # Built on the first undominated container, after any renames made before it. A rename
                 # only rewrites the container being processed, so the entries of the rest stay exact.
                 if carriers is None:
