@@ -7,6 +7,7 @@ import pytest
 
 import dace as dc
 import dace.dtypes
+from dace.codegen import common
 from dace.transformation.auto.auto_optimize import auto_optimize
 
 M, N, nnz = (dc.symbol(s, dtype=dc.int64) for s in ("M", "N", "nnz"))
@@ -87,6 +88,10 @@ def test_cpu():
 
 
 @pytest.mark.gpu
+@pytest.mark.skipif(
+    common.get_gpu_backend() == "hip",
+    reason="Dynamic memory allocation inside GPU kernels is not supported on AMD/HIP",
+)
 def test_gpu():
     run_spmv(dace.dtypes.DeviceType.GPU)
 
