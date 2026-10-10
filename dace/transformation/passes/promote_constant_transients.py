@@ -19,6 +19,22 @@ from dace.transformation import transformation
 
 Write = tuple[SDFGState, MultiConnectorEdge]
 
+#: The functions ``<stdlib.h>``, ``<string.h>`` and ``<math.h>`` declare at file scope. A constant is emitted at file
+#: scope, so one spelled like these (rk45_ensemble's ``atol``) redeclares the library function and does not compile;
+#: such a transient stays a local, which the compiler folds just the same.
+LIBC_FILE_SCOPE_NAMES = frozenset(
+    """
+    abort abs aligned_alloc at_quick_exit atexit atof atoi atol atoll bsearch calloc div exit free getenv labs
+    ldiv llabs lldiv malloc mblen mbstowcs mbtowc qsort quick_exit rand realloc srand strtod strtof strtol
+    strtold strtoll strtoul strtoull system wcstombs wctomb memchr memcmp memcpy memmove memset strcat strchr
+    strcmp strcoll strcpy strcspn strerror strlen strncat strncmp strncpy strpbrk strrchr strspn strstr strtok
+    strxfrm acos acosh asin asinh atan atan2 atanh cbrt ceil copysign cos cosh erf erfc exp exp2 expm1 fabs
+    fdim floor fma fmax fmin fmod frexp hypot ilogb ldexp lgamma llrint llround log log10 log1p log2 logb
+    lrint lround modf nan nearbyint nextafter nexttoward pow remainder remquo rint round scalbln scalbn sin
+    sinh sqrt tan tanh tgamma trunc
+    """.split()
+)
+
 
 @properties.make_properties
 @transformation.explicit_cf_compatible
@@ -48,7 +64,12 @@ class PromoteConstantTransients(ppl.Pass):
                     if any(e.dst_conn == "set" for e in state.out_edges(node)):
                         skip.add(node.data)
             for name, desc in list(sdfg.arrays.items()):
-                if name in skip or name in sdfg.constants_prop or not is_candidate(desc):
+                if (
+                    name in skip
+                    or name in sdfg.constants_prop
+                    or name in LIBC_FILE_SCOPE_NAMES
+                    or not is_candidate(desc)
+                ):
                     continue
                 value = constant_value(desc, writes.get(name, []))
                 if value is None:
