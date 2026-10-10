@@ -53,5 +53,32 @@ def test_a_counter_becomes_a_scalar_and_its_loop_maps():
     assert C[0] == np.count_nonzero(A > 0.5)
 
 
+def test_a_demoted_value_keeps_its_arithmetic_as_written():
+    """CloudSC's ``zrhc = ramid + (1 - ramid) * ((s - 0.8) / 0.2) ** 2`` must round exactly as the interstate edge
+    did: a sympy round-trip distributes the divisor (``5.0 * s - 4.0``) and changes the last bits."""
+    sdfg = dace.SDFG("demoted_value_as_written")
+    sdfg.add_symbol("z", dace.float64)
+    sdfg.add_array("S", [1], dace.float64)
+    sdfg.add_array("R", [1], dace.float64)
+    start = sdfg.add_state("start", is_start_block=True)
+    use = sdfg.add_state_after(start, "use", assignments={"z": "0.3 + (1.0 - 0.3) * ((S[0] - 0.8) / 0.2) ** 2"})
+    write = use.add_tasklet("store", {}, {"o"}, "o = z")
+    use.add_edge(write, "o", use.add_write("R"), None, dace.Memlet("R[0]"))
+    sdfg.validate()
+    assert DemoteNonStructuralSymbols().apply_pass(sdfg, {}) == 1
+    sdfg.validate()
+
+    assign = next(
+        n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.Tasklet) and n.label == "assign_z"
+    )
+    assert "/ 0.2" in assign.code.as_string, assign.code.as_string
+
+    S = np.array([0.9137], dtype=np.float64)
+    R = np.zeros(1)
+    sdfg(S=S, R=R)
+    assert R[0] == 0.3 + (1.0 - 0.3) * ((S[0] - 0.8) / 0.2) ** 2
+
+
 if __name__ == "__main__":
     test_a_counter_becomes_a_scalar_and_its_loop_maps()
+    test_a_demoted_value_keeps_its_arithmetic_as_written()
