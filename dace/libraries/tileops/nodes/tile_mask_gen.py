@@ -12,7 +12,7 @@ from dace.libraries.tileops.environments import (
     TileOpsSVE,
 )
 from dace.libraries.tileops.expansions import ExpandTileIsa, ExpandTilePure
-from dace.libraries.tileops.isa import require_k1
+from dace.libraries.tileops.isa import lane_start, require_k1
 from dace.libraries.tileops.lanes import nested_loops, tile_offset
 from dace.libraries.tileops.nodes.tile_op import TileOp
 from dace.libraries.tileops.validation import validate_mask_descriptor_lock
@@ -154,7 +154,8 @@ class TileMaskGen(TileOp):
     def isa_tasklet(self, state: dace.SDFGState, sdfg: dace.SDFG, backend: str) -> nodes.Tasklet:
         self.validate(sdfg, state)
         vlen = require_k1(self)
-        code = f"dace::tileops::tile_mask_gen<int64_t, {vlen}>(_o, ({self.iter_vars[0]}), ({self.global_ubs[0]}));"
+        start = lane_start(self.iter_vars[0])
+        code = f"dace::tileops::tile_mask_gen<int64_t, {vlen}>(_o, ({start}), ({self.global_ubs[0]}));"
         return nodes.Tasklet(
             label=f"{self.label}_{backend}",
             inputs={},

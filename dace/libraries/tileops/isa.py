@@ -16,6 +16,9 @@ from dace.subsets import Subset
 
 _chunk: contextvars.ContextVar[int | None] = contextvars.ContextVar("tile_isa_chunk", default=None)
 
+#: The first lane of the chunk an ISA call covers within a ``block`` lowering.
+CHUNK_OFFSET = "__c"
+
 
 @contextlib.contextmanager
 def isa_chunk(lanes: int) -> Iterator[None]:
@@ -34,6 +37,11 @@ def require_k1(node: nodes.LibraryNode) -> int:
         raise NotImplementedError(f"{node.label}: ISA tile-op backend is K=1 only; K>=2 lowers to 'pure'")
     chunk = _chunk.get()
     return node.widths[0] if chunk is None else chunk
+
+
+def lane_start(start: str) -> str:
+    """The position of the first lane an ISA call covers, for a tile whose lane 0 sits at ``start``."""
+    return start if _chunk.get() is None else f"({start}) + {CHUNK_OFFSET}"
 
 
 def broadcast_ref(conn: str, subset: Subset) -> str:

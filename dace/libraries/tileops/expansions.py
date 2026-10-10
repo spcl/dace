@@ -13,7 +13,7 @@ from typing import NamedTuple
 import dace
 from dace import data, dtypes
 from dace.libraries.tileops.dispatch import lane_implementation
-from dace.libraries.tileops.isa import isa_chunk
+from dace.libraries.tileops.isa import CHUNK_OFFSET, isa_chunk
 from dace.libraries.tileops.lanes import LaneDistribution, distributed_lanes
 from dace.memlet import Memlet
 from dace.sdfg import nodes
@@ -109,6 +109,9 @@ class ExpandTileBlock(ExpandTransformation):
             state.add_memlet_path(
                 tasklet, exit_node, state.add_write(conn), src_conn=lane_connector(conn), memlet=memlet
             )
+        # The code names symbols too (a mask's iteration variable and bound, a broadcast scalar expression), which no
+        # memlet carries into the nested SDFG
+        free |= set(re.findall(r"[A-Za-z_]\w*", tasklet.code.as_string)) & defined.keys()
         # A descriptor declares the symbols of its shape when it is added
         for name in sorted(free - nsdfg.symbols.keys()):
             nsdfg.add_symbol(name, defined.get(name, dace.int64))
@@ -172,13 +175,14 @@ def chunked_isa_tasklet(
         edge.src_conn: edge for edge in state.out_edges(node)
     }
     views = [
-        f"auto {conn} = {lane_connector(conn)} + __c;"
+        f"auto {conn} = {lane_connector(conn)} + {CHUNK_OFFSET};"
         if edges[conn].data.subset.num_elements() == width
         else f"auto {conn} = {lane_connector(conn)};"
         for conn in (*call.in_connectors, *call.out_connectors)
     ]
     body = "\n".join(f"    {line}" for line in (*views, *call.code.as_string.splitlines()))
-    code = f"for (std::size_t __c = {THREAD_INDEX} * {chunk}; __c < {width}; __c += {threads * chunk}) {{\n{body}\n}}"
+    c = CHUNK_OFFSET
+    code = f"for (std::size_t {c} = {THREAD_INDEX} * {chunk}; {c} < {width}; {c} += {threads * chunk}) {{\n{body}\n}}"
     tasklet = nodes.Tasklet(
         call.label,
         inputs={lane_connector(conn): None for conn in call.in_connectors},
