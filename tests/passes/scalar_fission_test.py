@@ -599,6 +599,36 @@ def test_scalar_read_by_a_branch_condition_is_private_to_each_loop():
     assert np.array_equal(C, np.where(A > 0.5, 2.0, 0.0))
 
 
+def test_an_access_in_two_write_scopes_leaves_the_scalar_whole():
+    """A read the analysis files under two writes (CloudSC's ``llo1``, read after a conditional whose branches write it
+    inside nested loops) can carry only one version's name, so it would read one branch's value after the other ran.
+    ScalarFission must then leave the container whole."""
+    sdfg = dace.SDFG("access_in_two_scopes")
+    sdfg.add_array("R", [1], dace.float64)
+    sdfg.add_scalar("t", dace.float64, transient=True)
+    writes = []
+    previous = None
+    for value in ("1.0", "2.0"):
+        state = sdfg.add_state(f"write_{value[0]}", is_start_block=previous is None)
+        if previous is not None:
+            sdfg.add_edge(previous, state, dace.InterstateEdge())
+        tasklet = state.add_tasklet("w", {}, {"o"}, f"o = {value}")
+        node = state.add_write("t")
+        state.add_edge(tasklet, "o", node, None, dace.Memlet("t[0]"))
+        writes.append((state, node))
+        previous = state
+    end = sdfg.add_state_after(previous, "end")
+    read = end.add_read("t")
+    tasklet = end.add_tasklet("r", {"x"}, {"o"}, "o = x")
+    end.add_edge(read, None, tasklet, "x", dace.Memlet("t[0]"))
+    end.add_edge(tasklet, "o", end.add_write("R"), None, dace.Memlet("R[0]"))
+    scopes = {"t": {writes[0]: {writes[0], (end, read)}, writes[1]: {writes[1], (end, read)}}}
+
+    renamed = ScalarFission().apply_pass(sdfg, {"ScalarWriteShadowScopes": {sdfg.cfg_id: scopes}})
+    assert not renamed, f"an access shared by two scopes must not be versioned, got {renamed}"
+    assert read.data == "t" and all(node.data == "t" for _, node in writes)
+
+
 if __name__ == "__main__":
     test_scalar_written_in_every_branch_is_private_to_each_loop()
     test_scalar_fission(False)
@@ -1029,3 +1059,4 @@ def test_scalar_written_in_every_branch_is_private_to_each_loop():
     assert np.array_equal(B, 2.0 * np.where(A > 0.5, 1.0, A))
     assert np.array_equal(C, np.where(A > 0.25, 3.0, A))
     test_scalar_read_by_a_branch_condition_is_private_to_each_loop()
+    test_an_access_in_two_write_scopes_leaves_the_scalar_whole()
