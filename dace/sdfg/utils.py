@@ -3114,3 +3114,220 @@ def expand_nodes(sdfg: SDFG, predicate: Callable[[nd.Node], bool]):
 
         if expanded_something:
             states.append(state)
+
+
+def symbol_demotes_to_transient_scalar(
+    sdfg: "dace.SDFG", symbol_str: str, free_symbols: set[str] | None = None
+) -> bool:
+    """Whether demoting ``symbol_str`` would produce a TRANSIENT scalar of ``sdfg``.
+
+    False for a symbol that enters ``sdfg`` from outside -- a top-level argument (shape,
+    stride or loop bound, i.e. a member of :attr:`~dace.sdfg.SDFG.free_symbols`) or a value
+    bound by the parent nested-SDFG node's symbol mapping. Such a symbol has no definition
+    inside ``sdfg`` to turn into a scalar assignment, so :func:`demote_symbol_to_scalar`
+    needs an ``in_scalar_name`` to write into and raises without one. Callers that demote
+    opportunistically test this first and leave the symbol alone.
+
+    :param sdfg: The SDFG holding the symbol.
+    :param symbol_str: Name of the symbol.
+    :param free_symbols: ``sdfg.free_symbols``, when the caller already holds it for an UNMUTATED
+        span. That property is uncached and re-parses every interstate assignment, so asking it per
+        candidate symbol re-walks the whole SDFG per symbol. ``None`` reads it here, as before.
+    :return: ``True`` if the demoted scalar would be transient.
+    """
+    if sdfg.parent_nsdfg_node is None:
+        return symbol_str not in (sdfg.free_symbols if free_symbols is None else free_symbols)
+    return symbol_str not in sdfg.parent_nsdfg_node.symbol_mapping
+
+
+def structural_symbols(sdfg: "dace.SDFG") -> set[str]:
+    """Every symbol :func:`symbol_carries_graph_structure` would refuse, collected in ONE scan.
+
+    That predicate walks the whole SDFG per symbol, so a selection loop over many candidates is
+    quadratic in the graph. Build this once for a span during which ``sdfg`` is NOT mutated and
+    answer every candidate by membership instead.
+
+    :param sdfg: The SDFG to scan, at the depth :func:`demote_symbol_to_scalar` rewrites (this
+        SDFG's own blocks, not the bodies of nested SDFGs).
+    :return: Names with a structural (non-tasklet) use.
+    """
+    structural: set[str] = set()
+    for desc in sdfg.arrays.values():
+        structural.update(str(s) for s in desc.free_symbols)
+    for cfr in sdfg.all_control_flow_regions():
+        if isinstance(cfr, LoopRegion):
+            structural.update(loop_domain_symbols(cfr))
+    for state in sdfg.states():
+        for node in state.nodes():
+            if isinstance(node, nd.MapEntry):
+                structural.update(str(s) for s in node.map.range.free_symbols)
+            elif isinstance(node, nd.NestedSDFG):
+                structural.update(nested_mapping_symbols(node))
+        for edge in state.edges():
+            structural.update(str(s) for s in edge.data.free_symbols)
+    return structural
+
+
+def loop_domain_symbols(loop: LoopRegion) -> set[str]:
+    """The symbols ``loop``'s iteration domain is written in: its variable and its init, condition and update."""
+    names = {str(loop.loop_variable)} if loop.loop_variable else set()
+    for code in (loop.init_statement, loop.loop_condition, loop.update_statement):
+        if code is not None:
+            names.update(str(s) for s in code.get_free_symbols())
+    return names
+
+
+def nested_mapping_symbols(node: nd.NestedSDFG) -> set[str]:
+    """The symbols ``node`` passes into its nested SDFG, which reads them as symbols."""
+    return {
+        str(s) for value in node.symbol_mapping.values() for s in dace.symbolic.pystr_to_symbolic(value).free_symbols
+    }
+
+
+def symbol_carries_graph_structure(sdfg: "dace.SDFG", symbol_str: str, structural: set[str] | None = None) -> bool:
+    """Whether ``symbol_str`` is load-bearing anywhere outside tasklet code in ``sdfg``.
+
+    A demoted symbol becomes a scalar container of the demotion dtype, so any use that
+    the graph itself evaluates symbolically -- a descriptor shape or stride, a memlet
+    subset, a map range, a loop's iteration domain, a nested SDFG's symbol mapping -- stops
+    being expressible. Those uses
+    make the symbol undemotable; a symbol read only by tasklet code (typically bound by an
+    interstate-edge assignment) is free to become a scalar.
+
+    Scanned at the same depth :func:`demote_symbol_to_scalar` rewrites: this SDFG's own
+    blocks, not the bodies of nested SDFGs.
+
+    :param sdfg: The SDFG to scan.
+    :param symbol_str: Name of the symbol.
+    :param structural: :func:`structural_symbols` for ``sdfg``, when the caller already holds it for
+        an UNMUTATED span; answered by membership then. ``None`` runs the scan here, as before.
+    :return: ``True`` if some structural use would break under demotion.
+    """
+    if structural is not None:
+        return symbol_str in structural
+    for desc in sdfg.arrays.values():
+        if symbol_str in (str(s) for s in desc.free_symbols):
+            return True
+    for cfr in sdfg.all_control_flow_regions():
+        if isinstance(cfr, LoopRegion) and symbol_str in loop_domain_symbols(cfr):
+            return True
+    for state in sdfg.states():
+        for node in state.nodes():
+            if isinstance(node, nd.MapEntry) and symbol_str in (str(s) for s in node.map.range.free_symbols):
+                return True
+            if isinstance(node, nd.NestedSDFG) and symbol_str in nested_mapping_symbols(node):
+                return True
+        for edge in state.edges():
+            if symbol_str in (str(s) for s in edge.data.free_symbols):
+                return True
+    return False
+
+
+def demote_symbol_to_scalar(
+    sdfg: "dace.SDFG",
+    symbol_str: str,
+    default_type: Optional["dace.dtypes.typeclass"] = None,
+    in_scalar_name: str | None = None,
+    free_symbols: set[str] | None = None,
+) -> None:
+    # ``free_symbols``: ``sdfg.free_symbols`` when the caller already holds it; see
+    # :func:`symbol_demotes_to_transient_scalar`.
+    # Avoid import loop: both modules import dace.sdfg.utils at module scope.
+    import dace.sdfg.construction_utils as cutil
+    import dace.sdfg.tasklet_utils as tutil
+
+    if default_type is None:
+        default_type = dace.int32
+
+    # If assignment is to symbol_str, append it to last scalar before
+    if symbol_str in sdfg.symbols:
+        sym_dtype = sdfg.symbols[symbol_str]
+    else:
+        warnings.warn(f"Symbol {symbol_str} not in the symbols of {sdfg.label}, using the default type {default_type}")
+        sym_dtype = default_type
+
+    # If top-level and in free symbols
+    # Or not top-level and in symbol mapping need to make it non transient
+    is_transient = symbol_demotes_to_transient_scalar(sdfg, symbol_str, free_symbols=free_symbols)
+
+    if is_transient is False:
+        if in_scalar_name is None:
+            raise Exception(
+                "Scalar to symbol demotion only works if the resulting scalar would be transient or an input scalar name is provided"
+            )
+
+    if symbol_str in sdfg.symbols:
+        sdfg.remove_symbol(symbol_str)
+
+    if is_transient is True:
+        sdfg.add_scalar(
+            name=symbol_str, dtype=sym_dtype, storage=dace.dtypes.StorageType.Register, transient=is_transient
+        )
+        scalar_name = symbol_str
+    else:
+        scalar_name = in_scalar_name
+
+    # For any tasklet that uses the symbol - make an access node to the scalar and connect through the in connector
+    # 1. Replace all symbols of name appearing
+    # 2.1 If symbol <- expr in any interstate edge
+    # 2.2 Add a new state before edge.dst, and add assignment to the scalar
+
+    # 1
+    # Replace all code in tasklets and access nodes
+    for g in sdfg.states():
+        # Once per state, not per match: the mutations below clear the scope-dict cache, and no
+        # lookup here is of a node they touch. Lazy, so a state with no match is never walked.
+        sdict = None
+        for n in g.nodes():
+            if isinstance(n, dace.nodes.Tasklet):
+                assert isinstance(g, dace.SDFGState)
+                if tutil.tasklet_has_symbol(n, symbol_str):
+                    # 2. If used in tasklet try to replace symbol name with an in connector and add an access to the scalar
+                    # Sanity check no tasklet should assign to a symbol. Read off the statements, not
+                    # off a ``" = "`` split of the source: a body need not be a single assignment, or
+                    # any assignment at all -- a C++ guard tasklet is ``if (s > 0) { std::abort(); }``
+                    # and splitting that crashed here instead of checking anything.
+                    assert not tutil.tasklet_assigns_name(n, symbol_str)
+                    assert symbol_str != "True"
+                    assert symbol_str != "False"
+                    # ``py_only=False``: a non-Python body must be rewritten too, or the tasklet
+                    # keeps reading a symbol this call is removing from the SDFG. For a Python
+                    # tasklet the flag is not consulted at all (the symbolic path takes it), so
+                    # this only opens the C++ case -- token replacement over the whole body, which
+                    # is what a guard tasklet like ``if (s > 0) { std::abort(); }`` needs.
+                    tutil.tasklet_replace_code(n, {symbol_str: f"_in_{symbol_str}"}, py_only=False)
+                    n.add_in_connector(f"_in_{symbol_str}")
+                    if sdict is None:
+                        sdict = g.scope_dict()
+                    access = g.add_access(scalar_name)
+                    g.add_edge(access, None, n, f"_in_{symbol_str}", dace.memlet.Memlet(expr=f"{scalar_name}[0]"))
+                    # If parent scope is not None add a dependency edge to it
+                    if sdict[n] is not None:
+                        g.add_edge(sdict[n], None, access, None, dace.memlet.Memlet())
+
+    # 2
+    # Snapshot, since the writes add edges. Each write goes on its OWN edge: ``add_state_before`` moves every
+    # in-edge of ``e.dst``, so a join ran every branch's write on every path and the last one won.
+    for e in list(sdfg.all_interstate_edges()):
+        matching_assignments = {(k, v) for k, v in e.data.assignments.items() if k.strip() == symbol_str}
+        if len(matching_assignments) > 0:
+            cfg = e.dst.parent_graph
+            state = cfg.add_state(label=f"_{e.dst}_sym_assign")
+            cfg.remove_edge(e)
+            cfg.add_edge(e.src, state, e.data)
+            cfg.add_edge(state, e.dst, dace.InterstateEdge())
+            # Go through all matching assignments
+            # Add symbols etc. as necessary
+            for k, v in matching_assignments:
+                del e.data.assignments[k]
+                symbol_str = k.strip()
+                if symbol_str in state.sdfg.symbols:
+                    state.sdfg.remove_symbol(symbol_str)
+                if symbol_str not in state.sdfg.arrays:
+                    state.sdfg.add_scalar(
+                        name=symbol_str,
+                        dtype=sym_dtype,
+                        storage=dace.dtypes.StorageType.Register,
+                        transient=is_transient,
+                    )
+                cutil.generate_assignment_as_tasklet_in_state(state, k, v)

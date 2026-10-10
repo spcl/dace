@@ -1,0 +1,57 @@
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+"""Only iteration domains and data accesses keep their symbols; every other interstate symbol becomes a scalar."""
+
+import numpy as np
+
+import dace
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
+from dace.transformation.dataflow import AugAssignToWCR
+from dace.transformation.interstate import LoopToMap
+from dace.transformation.passes.demote_non_structural_symbols import DemoteNonStructuralSymbols
+
+
+def counting_sdfg() -> dace.SDFG:
+    """ICON's ``clip_count``: ``n = N; k = 0; for i < n: if A[i] > 0.5: k = k + 1``, then ``C[0] = k``."""
+    sdfg = dace.SDFG("count_above_half")
+    sdfg.add_symbol("N", dace.int64)
+    sdfg.add_symbol("n", dace.int64)
+    sdfg.add_symbol("k", dace.int64)
+    sdfg.add_array("A", ["N"], dace.float64)
+    sdfg.add_array("C", [1], dace.int64)
+    start = sdfg.add_state("start", is_start_block=True)
+    loop = LoopRegion("loop", "i < n", "i", "i = 0", "i = i + 1")
+    sdfg.add_node(loop)
+    sdfg.add_edge(start, loop, dace.InterstateEdge(assignments={"n": "N", "k": "0"}))
+    cond = ConditionalBlock("above")
+    branch = ControlFlowRegion("count")
+    first = branch.add_state(is_start_block=True)
+    branch.add_state_after(first, assignments={"k": "k + 1"})
+    cond.add_branch(dace.properties.CodeBlock("A[i] > 0.5"), branch)
+    loop.add_node(cond, is_start_block=True)
+    end = sdfg.add_state("end")
+    sdfg.add_edge(loop, end, dace.InterstateEdge())
+    write = end.add_tasklet("store", {}, {"o"}, "o = k")
+    end.add_edge(write, "o", end.add_write("C"), None, dace.Memlet("C[0]"))
+    return sdfg
+
+
+def test_a_counter_becomes_a_scalar_and_its_loop_maps():
+    """``k`` shapes nothing, so it becomes a scalar; ``n`` bounds the loop and stays a symbol."""
+    sdfg = counting_sdfg()
+    sdfg.validate()
+    assert DemoteNonStructuralSymbols().apply_pass(sdfg, {}) == 1
+    sdfg.validate()
+    assert "k" in sdfg.arrays and "k" not in sdfg.symbols
+    assert "n" in sdfg.symbols and "n" not in sdfg.arrays
+
+    assert sdfg.apply_transformations_repeated(AugAssignToWCR) == 1
+    assert sdfg.apply_transformations_repeated(LoopToMap) == 1
+
+    A = np.arange(32, dtype=np.float64) / 31.0
+    C = np.zeros(1, dtype=np.int64)
+    sdfg(A=A, C=C, N=32)
+    assert C[0] == np.count_nonzero(A > 0.5)
+
+
+if __name__ == "__main__":
+    test_a_counter_becomes_a_scalar_and_its_loop_maps()
