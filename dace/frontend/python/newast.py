@@ -2566,8 +2566,8 @@ class ProgramVisitor(ExtNodeVisitor):
 
             # Add loop to SDFG
             loop_cond = ">" if ((pystr_to_symbolic(ranges[0][2]) < 0) == True) else "<"
-            loop_cond_expr = "%s %s %s" % (indices[0], loop_cond, astutils.unparse(ast_ranges[0][1]))
-            incr = {indices[0]: "%s = %s + %s" % (indices[0], indices[0], astutils.unparse(ast_ranges[0][2]))}
+            loop_cond_expr = f"{indices[0]} {loop_cond} {astutils.unparse(ast_ranges[0][1])}"
+            incr = {indices[0]: f"{indices[0]} = {indices[0]} + {astutils.unparse(ast_ranges[0][2])}"}
             self.drop_shape_versions_written_in(node)
             loop_region = self._add_loop_region(
                 loop_cond_expr,
