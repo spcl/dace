@@ -80,6 +80,7 @@ from dace.transformation.passes.canonicalize.require_structured_control_flow imp
 from dace.transformation.passes.canonicalize.reroll_unrolled_loops import RerollUnrolledLoops
 from dace.transformation.passes.canonicalize.reverse_map_traversal import ReverseMapTraversal
 from dace.transformation.passes.canonicalize.revert_nonreduction_wcr import RevertNonReductionWCR
+from dace.transformation.passes.canonicalize.route_ordering_through_data import RouteOrderingThroughData
 from dace.transformation.passes.canonicalize.split_statements import SplitStatements
 from dace.transformation.passes.canonicalize.supply_num_threads import SupplyNumThreads
 from dace.transformation.passes.canonicalize.symbol_dedup import SymbolDedup
@@ -306,12 +307,13 @@ def run_structural_cleanup(sdfg: SDFG) -> None:
 def _inline_single_state(label: str) -> list[tuple[str, ppl.Pass]]:
     """Flatten single-state NestedSDFG bodies; un-inlined, they report whole-array memlets and
     every dependence test refuses on the box (seidel_2d). ``PruneConnectors`` shares the fixpoint
-    because a dead connector is a hard ``InlineSDFG`` refusal.
+    because a dead connector is a hard ``InlineSDFG`` refusal; ``RouteOrderingThroughData`` runs first
+    because an ordering edge to or from a non-scope node is another.
 
     :param label: The owning stage label.
     :returns: ``(stage_label, pass)`` pairs, in order.
     """
-    return [(label, PruneAndInlineNestedSDFGs())]
+    return [(label, RouteOrderingThroughData()), (label, PruneAndInlineNestedSDFGs())]
 
 
 def _fold_scalar_slices(label: str) -> list[tuple[str, ppl.Pass]]:
