@@ -1453,7 +1453,7 @@ class StructInitializer(ExtNodeTransformer):
         return self.generic_visit(node)
 
 
-def owning_state(dfg: Union[SDFGState, StateSubgraphView]) -> SDFGState:
+def owning_state(dfg: SDFGState | StateSubgraphView) -> SDFGState:
     return dfg if isinstance(dfg, SDFGState) else dfg.graph
 
 
