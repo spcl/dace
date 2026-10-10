@@ -433,6 +433,27 @@ def test_cpu_scan_does_not_emit_the_composite_inscan_loop():
         assert "parallel for simd" not in src, src
 
 
+def test_first_gpu_auto_expansion_carries_the_cub_environment():
+    """``ExpandCUDA`` fills its environments inside ``expansion()``; the 'Auto' dispatch must copy them after."""
+    from dace.libraries.standard.nodes import scan as scan_module
+
+    scan_module.ExpandCUDA.environments = []
+    sdfg = dace.SDFG("scan_auto_gpu_environment")
+    for name in ("A", "B"):
+        sdfg.add_array(name, [64], dace.float64, storage=dace.StorageType.GPU_Global)
+    state = sdfg.add_state()
+    node = Scan("scan")
+    node.schedule = dace.ScheduleType.GPU_Device
+    state.add_node(node)
+    state.add_edge(state.add_read("A"), None, node, INPUT_CONNECTOR_NAME, dace.Memlet("A[0:64]"))
+    state.add_edge(node, OUTPUT_CONNECTOR_NAME, state.add_write("B"), None, dace.Memlet("B[0:64]"))
+
+    sdfg.expand_library_nodes()
+
+    (expanded,) = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.CodeNode) and n.label == "scan"]
+    assert any(env.endswith("ScanScratch") for env in expanded.environments)
+
+
 if __name__ == "__main__":
     import sys
 

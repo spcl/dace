@@ -5960,8 +5960,12 @@ class ProgramVisitor(ExtNodeVisitor):
         # We also check the type of the slice attribute of the node
         # in order to distinguish between A[0] and A[0:1], which are semantically different in numpy
         # (the former is an index, the latter is a slice).
+        # We also check the type of the slice attribute of the node
+        # in order to distinguish between A[0] and A[0:1], which are semantically different in numpy
+        # (the former is an index, the latter is a slice).
         # A[1:2, 1:2] has index-shaped ranges but non-empty slice_dims forces the slice path (stays 2-D).
         is_index = range_is_index(expr.subset) and not isinstance(node.slice, ast.Slice) and not expr.slice_dims
+        other_subset = copy.deepcopy(expr.subset)
         other_subset = copy.deepcopy(expr.subset)
         strides = list(arrobj.strides)
 

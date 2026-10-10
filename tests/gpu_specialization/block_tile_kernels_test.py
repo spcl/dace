@@ -13,6 +13,7 @@ import dace
 from dace import dtypes
 from dace.transformation.passes.canonicalize.finalize import finalize_for_target, offload_to_gpu
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
+from dace.transformation.passes.gpu_specialization.block_tile_kernels import BlockTileKernels
 
 M, N, K, NB, NNZ = (dace.symbol(s) for s in ("M", "N", "K", "NB", "NNZ"))
 SIZES = [(1, 1, 1, 1), (37, 300, 5, 3), (257, 513, 129, 2)]
@@ -98,6 +99,26 @@ def spmv(
         cols = A_indices[start:stop]
         vals = A_data[start:stop]
         y[i] = vals @ x[cols]
+
+
+def row_through_kernel_scratch() -> dace.SDFG:
+    """``B[k, :] = 2 * A[k, :]`` per kernel thread, through a scratch row the kernel allocates per thread."""
+    sdfg = dace.SDFG("row_through_kernel_scratch")
+    sdfg.add_array("A", [K, M], dace.float64, storage=dtypes.StorageType.GPU_Global)
+    sdfg.add_array("B", [K, M], dace.float64, storage=dtypes.StorageType.GPU_Global)
+    sdfg.add_transient("row", [M], dace.float64, storage=dtypes.StorageType.GPU_Global)
+    state = sdfg.add_state()
+    a, b, row = state.add_read("A"), state.add_write("B"), state.add_access("row")
+    kernel, kernel_exit = state.add_map("rows", {"k": "0:K"}, schedule=dtypes.ScheduleType.GPU_Device)
+    inner, inner_exit = state.add_map("cols", {"j": "0:M"}, schedule=dtypes.ScheduleType.Sequential)
+    tasklet = state.add_tasklet("twice", {"x"}, {"y"}, "y = 2 * x")
+    state.add_memlet_path(a, kernel, inner, tasklet, dst_conn="x", memlet=dace.Memlet("A[k, j]"))
+    state.add_memlet_path(tasklet, inner_exit, row, src_conn="y", memlet=dace.Memlet("row[j]"))
+    kernel_exit.add_in_connector("IN_B")
+    kernel_exit.add_out_connector("OUT_B")
+    state.add_edge(row, None, kernel_exit, "IN_B", dace.Memlet(data="B", subset="k, 0:M", other_subset="0:M"))
+    state.add_edge(kernel_exit, "OUT_B", b, None, dace.Memlet("B[0:K, 0:M]"))
+    return sdfg
 
 
 def canonical_gpu(program) -> dace.SDFG:
@@ -189,6 +210,13 @@ def test_a_body_that_accumulates_outside_the_inner_map_keeps_one_thread_per_iter
     assert not maps_by_schedule(sdfg, dtypes.ScheduleType.GPU_ThreadBlock)
 
 
+def test_a_per_thread_scratch_read_after_the_inner_map_keeps_one_thread_per_iteration():
+    """Each lane would fill its share of its own copy of ``row`` and then copy all of it out."""
+    sdfg = row_through_kernel_scratch()
+    BlockTileKernels().apply_pass(sdfg, {})
+    assert not maps_by_schedule(sdfg, dtypes.ScheduleType.GPU_ThreadBlock)
+
+
 @pytest.mark.gpu
 @pytest.mark.parametrize("m, n, k, nb", SIZES)
 def test_the_block_lowerings_compute_what_numpy_does(m, n, k, nb):
@@ -245,3 +273,17 @@ def test_the_block_lowerings_compute_what_numpy_does(m, n, k, nb):
         NNZ=mat.nnz,
     )
     np.testing.assert_allclose(y.get(), mat @ x, rtol=1e-12)
+
+
+if __name__ == "__main__":
+    test_an_inner_reduction_runs_across_the_lanes_of_one_block(matvec)
+    test_an_inner_reduction_runs_across_the_lanes_of_one_block(gemm_loops)
+    test_a_host_map_that_only_launches_device_work_is_the_kernel()
+    test_a_library_node_inside_a_kernel_takes_its_block_collective(batched_dot, "Dot", "CUDA (block strided)")
+    test_a_library_node_inside_a_kernel_takes_its_block_collective(batched_gemm, "Gemm", "CUDA (block strided)")
+    test_a_dot_over_a_gathered_row_fuses_into_one_block_reduction()
+    test_an_in_place_update_outside_the_inner_map_runs_on_lane_zero_between_barriers()
+    test_a_body_that_accumulates_outside_the_inner_map_keeps_one_thread_per_iteration()
+    test_a_per_thread_scratch_read_after_the_inner_map_keeps_one_thread_per_iteration()
+    for sizes in SIZES:
+        test_the_block_lowerings_compute_what_numpy_does(*sizes)

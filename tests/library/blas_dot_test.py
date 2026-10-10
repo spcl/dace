@@ -126,6 +126,18 @@ def test_dot_into_one_element_of_an_array():
 
 ###############################################################################
 
+
+def test_openblas_dot_with_a_wider_accumulator_expands_pure():
+    """``cblas_?dot`` accumulates in the operand type, so a wider accumulator falls back to the pure expansion."""
+    sdfg = make_sdfg("OpenBLAS", dace.float32)
+    dot_node = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, blas.nodes.dot.Dot))
+    dot_node.accumulator_type = dace.float64
+    with pytest.warns(UserWarning, match="no mixed-precision dot"):
+        sdfg.expand_library_nodes()
+    code = "\n".join(obj.clean_code for obj in sdfg.generate_code())
+    assert "cblas_sdot" not in code
+
+
 if __name__ == "__main__":
     test_dot("pure", dace.float32)
     test_dot("pure", dace.float64)
@@ -134,3 +146,4 @@ if __name__ == "__main__":
     test_dot("cuBLAS", dace.float32)
     test_dot("cuBLAS", dace.float64)
     test_dot_into_one_element_of_an_array()
+    test_openblas_dot_with_a_wider_accumulator_expands_pure()

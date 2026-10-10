@@ -113,6 +113,17 @@ class ModuleResolver(ast.NodeTransformer):
         return self.generic_visit(node)
 
 
+def as_sympy_truth(value: Any) -> sympy.Basic:
+    """``value``'s Python truth as a SymPy boolean: a number or non-boolean expression is true when nonzero."""
+    if isinstance(value, (sympy.logic.boolalg.Boolean, sympy.core.relational.Relational)) and not isinstance(
+        value, sympy.Symbol
+    ):
+        return value
+    if isinstance(value, sympy.Basic):
+        return sympy.Ne(value, 0)
+    return sympy.true if value else sympy.false
+
+
 class RewriteSympyEquality(ast.NodeTransformer):
     """
     Replaces symbolic equality checks by ``sympy.{Eq,Ne}``.
@@ -139,6 +150,28 @@ class RewriteSympyEquality(ast.NodeTransformer):
             elif isinstance(node.ops[0], ast.NotEq):
                 return astutils.create_constant(sympy.Ne(left, right), node)
         return self.generic_visit(node)
+
+    def visit_UnaryOp(self, node: ast.UnaryOp) -> Any:
+        """``not x`` on a symbol: Python's ``not`` would fold the always-truthy symbol object to ``False``."""
+        if not isinstance(node.op, ast.Not):
+            return self.generic_visit(node)
+        node.operand = self.visit(node.operand)
+        operand = astutils.evalnode(node.operand, self.globals)
+        if isinstance(operand, sympy.Basic):
+            return astutils.create_constant(sympy.Not(as_sympy_truth(operand)), node)
+        return node
+
+    def visit_BoolOp(self, node: ast.BoolOp) -> Any:
+        """``a and b`` / ``a or b`` with a symbolic operand: Python's short circuit would read the symbol as true."""
+        node.values = [self.visit(value) for value in node.values]
+        try:
+            values = [astutils.evalnode(value, self.globals) for value in node.values]
+        except SyntaxError:
+            return node  # Python's short circuit still folds a constant prefix (``False and unknown``)
+        if not any(isinstance(value, sympy.Basic) for value in values):
+            return node
+        combine = sympy.And if isinstance(node.op, ast.And) else sympy.Or
+        return astutils.create_constant(combine(*(as_sympy_truth(value) for value in values)), node)
 
     def visit_Constant(self, node):
         if isinstance(node.value, numpy.bool_):

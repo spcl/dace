@@ -165,8 +165,10 @@ def schedule_dispatch(auto_cls: type, node: nodes.LibraryNode, parent_state: dac
     :returns: whatever the picked expansion returns.
     """
     picked = type(node).implementations[select_implementation_by_schedule(node, parent_state)]
+    expansion = auto_dispatch(node, parent_state, select_implementation_by_schedule, type(node))
+    # after the dispatch: an expansion may fill its environments inside ``expansion()``
     auto_cls.environments = list(picked.environments)
-    return auto_dispatch(node, parent_state, select_implementation_by_schedule, type(node))
+    return expansion
 
 
 #: An enclosing loop of provably fewer than this many trips pays the fork/join of a library node

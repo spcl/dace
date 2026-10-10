@@ -208,10 +208,9 @@ class ExpandDotOpenBLAS(ExpandTransformation):
 
         func = func.lower() + "dot"
 
-        # The mixed-precision form names vendor DATATYPE enums, and ``dtype_to_cudadatatype`` only
-        # speaks CUDA's. Fall back rather than emit a rocBLAS call with CUDA enum names in it.
-        if node.accumulator_type is not None and not cls.ex_name:
-            warnings.warn(f"{cls.__name__} has no mixed-precision dot. Falling back to pure expansion")
+        # ``cblas_?dot`` accumulates in the operand type; a wider accumulator needs the pure expansion.
+        if node.accumulator_type is not None:
+            warnings.warn("CBLAS has no mixed-precision dot. Falling back to pure expansion")
             return ExpandDotPure.expansion(node, parent_state, parent_sdfg, n, **kwargs)
 
         n = n or node.n or sz
