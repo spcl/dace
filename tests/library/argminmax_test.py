@@ -1,14 +1,4 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Correctness tests for :class:`ArgMin` / :class:`ArgMax` library nodes.
-
-Covers:
-
-* whole-array reduction (Fortran ``MINLOC``/``MAXLOC`` scalar form)
-* per-axis reduction via the ``dim`` property
-* tie-break direction toggle via ``back``
-* 0-based vs 1-based output via ``one_based``
-"""
-
 import numpy as np
 
 import dace
@@ -16,13 +6,7 @@ from dace.libraries.standard.nodes import ArgMax, ArgMin
 
 
 def _build_whole(node_cls, in_shape, dtype, *, one_based=True, back=False):
-    """Build the whole-array (``dim=None``) form.
-
-    Fortran ``MINLOC`` / ``MAXLOC`` without ``DIM`` return a rank-1
-    integer array of length ``rank(input)`` with the multi-dim subscript
-    of the located element, NOT a flat scalar -- so the output buffer
-    here has shape ``[rank]``.
-    """
+    """The whole-array form: ``_idx`` holds one subscript per dimension, as Fortran ``MINLOC`` returns it."""
     rank = len(in_shape)
     sdfg = dace.SDFG(f"{node_cls.__name__}_whole_{'_'.join(map(str, in_shape))}_{int(back)}_{int(one_based)}")
     sdfg.add_array("v", list(in_shape), dtype)
@@ -69,6 +53,24 @@ def test_argmin_2d_dim2():
     np.testing.assert_array_equal(idx, np.argmin(x, axis=1) + 1)
 
 
+def test_argmax_skips_masked_elements_and_takes_the_last_tie():
+    x = np.array([5.0, 1.0, 9.0, 3.0, 3.0])
+    mask = np.array([1, 1, 0, 1, 1], dtype=np.int32)
+    sdfg = dace.SDFG("argmax_masked_back")
+    sdfg.add_array("v", [5], dace.float64)
+    sdfg.add_array("m", [5], dace.int32)
+    sdfg.add_array("idx", [1], dace.int32)
+    state = sdfg.add_state()
+    node = ArgMax("argmax", back=True, mask=True)
+    state.add_edge(state.add_read("v"), None, node, "_x", dace.Memlet("v[0:5]"))
+    state.add_edge(state.add_read("m"), None, node, "_mask", dace.Memlet("m[0:5]"))
+    state.add_edge(node, "_idx", state.add_write("idx"), None, dace.Memlet("idx[0]"))
+    idx = np.zeros(1, dtype=np.int32)
+    sdfg(v=x, m=mask, idx=idx)
+    assert idx[0] == 1  # x[0] is the largest unmasked element
+
+
 if __name__ == "__main__":
     test_argmax_3d_whole_array_returns_subscript()
     test_argmin_2d_dim2()
+    test_argmax_skips_masked_elements_and_takes_the_last_tie()
