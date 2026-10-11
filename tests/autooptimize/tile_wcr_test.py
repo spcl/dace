@@ -1,9 +1,10 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests write-conflict resolution tiling"""
 
+import numpy as np
+
 import dace
 from dace.transformation.auto import auto_optimize as aopt
-import numpy as np
 
 N = dace.symbol("N")
 

@@ -188,6 +188,7 @@ def test_distributed_and_local_builds_interleave(tmp_path, private_cache):
     other ranks load from its folder -- the one case a folder is read by processes that did not write
     it. The interleaved local build covers the reverse: it replays rank 0's recipe."""
     from mpi4py import MPI
+
     from dace.sdfg import utils
 
     comm = MPI.COMM_WORLD

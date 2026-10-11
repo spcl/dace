@@ -1,9 +1,10 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 
-import dace
-from dace.memlet import Memlet
 import numpy as np
 import scipy
+
+import dace
+from dace.memlet import Memlet
 
 vec_width = 2
 vtype = dace.vector(dace.float32, vec_width)
@@ -35,7 +36,7 @@ z_out = vecAdd_state.add_write("_res")
 # ---------- ----------
 # COMPUTE
 # ---------- ----------
-vecMap_entry, vecMap_exit = vecAdd_state.add_map("vecAdd_map", dict(i="0:n/{}".format(vec_width)))
+vecMap_entry, vecMap_exit = vecAdd_state.add_map("vecAdd_map", dict(i=f"0:n/{vec_width}"))
 
 vecAdd_tasklet = vecAdd_state.add_tasklet("vecAdd_task", {"x_con", "y_con"}, {"z_con"}, "z_con = x_con + y_con")
 

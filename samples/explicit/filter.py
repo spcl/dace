@@ -2,8 +2,10 @@
 """Predicate-based filtering with dynamic, explicit memlets in DaCe."""
 
 import argparse
-import dace
+
 import numpy as np
+
+import dace
 
 N = dace.symbol("N", positive=True)
 

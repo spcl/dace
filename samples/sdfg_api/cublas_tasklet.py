@@ -1,9 +1,11 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 """Example that defines a CUBLAS C++ tasklet."""
 
-import dace as dc
-import numpy as np
 import os
+
+import numpy as np
+
+import dace as dc
 
 # First, add libraries to link (CUBLAS) to configuration
 if os.name == "nt":

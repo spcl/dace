@@ -1,12 +1,14 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 # Original application code: NPBench - https://github.com/spcl/npbench
-import dace.dtypes
-import numpy as np
-import dace as dc
-import pytest
 import argparse
-from dace.transformation.auto.auto_optimize import auto_optimize
+
+import numpy as np
+import pytest
+
+import dace as dc
+import dace.dtypes
 from dace.autodiff import add_backward_pass
+from dace.transformation.auto.auto_optimize import auto_optimize
 
 N, H, W, C1, C2, S0, S1, S2, S3, S4, S5 = (
     dc.symbol(s, dtype=dc.int64) for s in ("N", "H", "W", "C1", "C2", "S0", "S1", "S2", "S3", "S4", "S5")
@@ -260,7 +262,7 @@ def run_resnet(device_type: dace.dtypes.DeviceType):
 def run_resnet_autodiff():
     import jax
     import jax.numpy as jnp
-    import jax.lax as lax
+    from jax import lax
 
     # Initialize data (npbench test size)
     N, W, H, C1, C2 = 2, 8, 8, 8, 4

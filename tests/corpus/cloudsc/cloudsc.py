@@ -7,6 +7,7 @@ SDFG that compiles and runs standalone. Input data generation lives in
 """
 
 import numpy as np
+
 import dace
 
 klon = dace.symbol("klon", dtype=dace.int32)

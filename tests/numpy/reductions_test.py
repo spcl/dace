@@ -1,7 +1,8 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
 import numpy as np
 from common import compare_numpy_output
+
+import dace
 
 
 @compare_numpy_output()
@@ -85,8 +86,8 @@ def test_argmax_1_int64(A: dace.int64[10, 5, 3]):
 
 
 def test_return_both():
-    from dace.frontend.python.replacements.reduction import _argminmax
     from dace.frontend.python.newast import ProgramVisitor
+    from dace.frontend.python.replacements.reduction import _argminmax
 
     sdfg = dace.SDFG("test_return_both")
     state = sdfg.add_state()

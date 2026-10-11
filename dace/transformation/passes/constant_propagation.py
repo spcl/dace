@@ -3,16 +3,19 @@
 import ast
 from dataclasses import dataclass
 from functools import lru_cache
+from typing import Any
+
+import sympy
+
+from dace import SDFG, SDFGState, data, dtypes, properties, symbolic
+from dace.cli.progress import optional_progressbar
 from dace.frontend.python import astutils
+from dace.sdfg import nodes
 from dace.sdfg.analysis import cfg as cfg_analysis
 from dace.sdfg.sdfg import InterstateEdge
-from dace.sdfg import nodes
 from dace.sdfg.state import AbstractControlFlowRegion, ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion
-from dace.transformation import pass_pipeline as ppl, transformation
-from dace.cli.progress import optional_progressbar
-from dace import data, SDFG, SDFGState, dtypes, symbolic, properties
-import sympy
-from typing import Any, Dict, FrozenSet, List, Set, Optional, Tuple
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation import transformation
 
 
 class _UnknownValue:
@@ -21,17 +24,17 @@ class _UnknownValue:
     pass
 
 
-ConstsT = Dict[str, Any]
-BlockConstsT = Dict[ControlFlowBlock, ConstsT]
-OrderCacheT = Dict[ControlFlowBlock, List[ControlFlowBlock]]
+ConstsT = dict[str, Any]
+BlockConstsT = dict[ControlFlowBlock, ConstsT]
+OrderCacheT = dict[ControlFlowBlock, list[ControlFlowBlock]]
 
 
 @lru_cache(maxsize=16384, typed=True)
-def _free_symbols_cached(value: Any) -> FrozenSet[str]:
+def _free_symbols_cached(value: Any) -> frozenset[str]:
     return frozenset(symbolic.free_symbols_and_functions(value))
 
 
-def _free_symbols(value: Any) -> FrozenSet[str]:
+def _free_symbols(value: Any) -> frozenset[str]:
     """Memoized ``symbolic.free_symbols_and_functions``, as the same values are queried on every block."""
     if isinstance(value, (str, sympy.Basic)):
         return _free_symbols_cached(value)
@@ -39,12 +42,12 @@ def _free_symbols(value: Any) -> FrozenSet[str]:
 
 
 @lru_cache(maxsize=16384, typed=True)
-def _arrays(value: Any) -> FrozenSet[str]:
+def _arrays(value: Any) -> frozenset[str]:
     return frozenset(symbolic.arrays(value))
 
 
 @lru_cache(maxsize=16384)
-def _parse_assignment(value: str) -> Tuple[str, FrozenSet[str]]:
+def _parse_assignment(value: str) -> tuple[str, frozenset[str]]:
     """
     Parses an assignment value once.
 
@@ -99,7 +102,7 @@ class ConstantPropagation(ppl.Pass):
 
         return False
 
-    def apply_pass(self, sdfg: SDFG, _, initial_symbols: Optional[Dict[str, Any]] = None) -> Optional[Set[str]]:
+    def apply_pass(self, sdfg: SDFG, _, initial_symbols: dict[str, Any] | None = None) -> set[str] | None:
         """
         Propagates constants throughout the SDFG.
 
@@ -116,13 +119,13 @@ class ConstantPropagation(ppl.Pass):
             return self._apply_pass(sdfg, _, initial_symbols or {}, used_symbols_memo)
 
     def _apply_pass(
-        self, sdfg: SDFG, _, initial_symbols: Dict[str, Any], used_symbols_memo: Dict[SDFG, Set[str]]
-    ) -> Optional[Set[str]]:
+        self, sdfg: SDFG, _, initial_symbols: dict[str, Any], used_symbols_memo: dict[SDFG, set[str]]
+    ) -> set[str] | None:
         # Early exit if no constants can be propagated
         if not initial_symbols and not self.should_apply(sdfg):
             result = {}
         else:
-            arrays: Set[str] = set(sdfg.arrays.keys() | sdfg.constants_prop.keys())
+            arrays: set[str] = set(sdfg.arrays.keys() | sdfg.constants_prop.keys())
 
             # Add nested data to arrays
             def _add_nested_datanames(name: str, desc: data.Structure):
@@ -145,8 +148,8 @@ class ConstantPropagation(ppl.Pass):
             self._collect_constants_for_region(sdfg, arrays, in_constants, pre_constants, post_constants, out_constants)
 
             # Keep track of replaced and ambiguous symbols
-            symbols_replaced: Dict[str, Any] = {}
-            remaining_unknowns: Set[str] = set()
+            symbols_replaced: dict[str, Any] = {}
+            remaining_unknowns: set[str] = set()
 
             # Collect symbols from symbol-dependent data descriptors
             # If there can be multiple values over the SDFG, the symbols are not propagated
@@ -234,18 +237,18 @@ class ConstantPropagation(ppl.Pass):
         if self.recursive:
             # Change result to set of tuples
             sid = sdfg.cfg_id
-            result = set((sid, sym) for sym in result) | nested_result
+            result = {(sid, sym) for sym in result} | nested_result
 
         # Return result
         if not result:
             return None
         return result
 
-    def report(self, pass_retval: Set[str]) -> str:
+    def report(self, pass_retval: set[str]) -> str:
         return f"Propagated {len(pass_retval)} constants."
 
     def _propagate_loop(
-        self, loop: LoopRegion, post_constants: BlockConstsT, multivalue_desc_symbols: Set[str]
+        self, loop: LoopRegion, post_constants: BlockConstsT, multivalue_desc_symbols: set[str]
     ) -> None:
         if loop in post_constants and post_constants[loop] is not None:
             if loop.update_statement is not None and (
@@ -266,7 +269,7 @@ class ConstantPropagation(ppl.Pass):
     def _collect_constants_for_conditional(
         self,
         conditional: ConditionalBlock,
-        arrays: Set[str],
+        arrays: set[str],
         in_const_dict: BlockConstsT,
         pre_const_dict: BlockConstsT,
         post_const_dict: BlockConstsT,
@@ -337,11 +340,10 @@ class ConstantPropagation(ppl.Pass):
                     out_consts[k] = _UnknownValue
             out_const_dict[conditional] = out_consts
 
-    def _assignments_in_loop(self, loop: LoopRegion) -> Set[str]:
+    def _assignments_in_loop(self, loop: LoopRegion) -> set[str]:
         assignments_within = set()
         for e in loop.all_interstate_edges():
-            for k in e.data.assignments.keys():
-                assignments_within.add(k)
+            assignments_within.update(e.data.assignments.keys())
         if loop.loop_variable is not None:
             assignments_within.add(loop.loop_variable)
         return assignments_within
@@ -349,13 +351,13 @@ class ConstantPropagation(ppl.Pass):
     def _collect_constants_for_region(
         self,
         cfg: ControlFlowRegion,
-        arrays: Set[str],
+        arrays: set[str],
         in_const_dict: BlockConstsT,
         pre_const_dict: BlockConstsT,
         post_const_dict: BlockConstsT,
         out_const_dict: BlockConstsT,
-        order_cache: Optional[OrderCacheT] = None,
-        last_in: Optional[BlockConstsT] = None,
+        order_cache: OrderCacheT | None = None,
+        last_in: BlockConstsT | None = None,
     ) -> None:
         """
         Finds all constants and constant-assigned symbols in the control flow graph for each block.
@@ -425,7 +427,7 @@ class ConstantPropagation(ppl.Pass):
                 assignments = {}
                 for edge in in_edges:
                     # If source was already visited, use its propagated constants
-                    constants: Dict[str, Any] = {}
+                    constants: dict[str, Any] = {}
                     if edge.src in out_const_dict:
                         constants.update(out_const_dict[edge.src])
 
@@ -538,7 +540,7 @@ class ConstantPropagation(ppl.Pass):
             out_consts.update(post_consts)
         out_const_dict[cfg] = out_consts
 
-    def _find_desc_symbols(self, sdfg: SDFG, constants: Dict[SDFGState, Dict[str, Any]]) -> Tuple[Set[str], Set[str]]:
+    def _find_desc_symbols(self, sdfg: SDFG, constants: dict[SDFGState, dict[str, Any]]) -> tuple[set[str], set[str]]:
         """
         Finds constant symbols that data descriptors (e.g., arrays) depend on.
 
@@ -546,12 +548,12 @@ class ConstantPropagation(ppl.Pass):
         :param constants: Constant symbols found in ``collect_constants``.
         :return: A tuple of two sets: (all descriptor-related symbols, symbols that take multiple values).
         """
-        symbols_in_data: Set[str] = set()
-        symbols_in_data_with_multiple_values: Set[str] = set()
+        symbols_in_data: set[str] = set()
+        symbols_in_data_with_multiple_values: set[str] = set()
         for arr in sdfg.arrays.values():
             symbols_in_data |= set(map(str, arr.free_symbols))
 
-        values: Dict[str, Any] = {}
+        values: dict[str, Any] = {}
         for mapping in constants.values():
             # Symbols that data descriptors depend on must receive a single value, otherwise mark as unknown
             for k, v in mapping.items():
@@ -567,7 +569,7 @@ class ConstantPropagation(ppl.Pass):
 
         return symbols_in_data, symbols_in_data_with_multiple_values
 
-    def _propagate(self, symbols: Dict[str, Any], new_symbols: Dict[str, Any]) -> bool:
+    def _propagate(self, symbols: dict[str, Any], new_symbols: dict[str, Any]) -> bool:
         """
         Updates symbols dictionary in-place with new symbols, propagating existing ones within.
 
@@ -612,7 +614,7 @@ class ConstantPropagation(ppl.Pass):
 
         return original_symbols != symbols
 
-    def _data_independent_assignments(self, edge: InterstateEdge, arrays: Set[str]) -> Dict[str, Any]:
+    def _data_independent_assignments(self, edge: InterstateEdge, arrays: set[str]) -> dict[str, Any]:
         """
         Return symbol assignments that only depend on other symbols and constants, rather than data descriptors.
         """

@@ -5,44 +5,47 @@ dataflow multigraph representation."""
 import ast
 import contextlib
 import contextvars
-from copy import deepcopy as dcpy
-from collections.abc import KeysView
-import dace
 import itertools
-import dace.serialize
-import sympy as sp
-from typing import Any, Dict, Optional, Set, Union
-from dace.config import Config
-from dace.sdfg import graph
-from dace.frontend.python.astutils import rname
-from dace.properties import (
-    EnumProperty,
-    Property,
-    CodeProperty,
-    RangeProperty,
-    DebugInfoProperty,
-    SetProperty,
-    make_properties,
-    indirect_properties,
-    DataProperty,
-    SymbolicProperty,
-    ListProperty,
-    SDFGReferenceProperty,
-    DictProperty,
-    LibraryImplementationProperty,
-    CodeBlock,
-)
-from dace.symbolic import issymbolic, pystr_to_symbolic
-from dace import subsets as sbs, dtypes
-from dace.sdfg import tasklet_validation as tval
-from dace.sdfg.type_inference import infer_types, infer_iteration_symbol_type
 import pydoc
 import warnings
+from collections.abc import KeysView
+from copy import deepcopy as dcpy
+from typing import Any, Optional, Union
+
+import sympy as sp
+
+import dace
+import dace.serialize
+from dace import dtypes
+from dace import subsets as sbs
+from dace.config import Config
+from dace.frontend.python.astutils import rname
+from dace.properties import (
+    CodeBlock,
+    CodeProperty,
+    DataProperty,
+    DebugInfoProperty,
+    DictProperty,
+    EnumProperty,
+    LibraryImplementationProperty,
+    ListProperty,
+    Property,
+    RangeProperty,
+    SDFGReferenceProperty,
+    SetProperty,
+    SymbolicProperty,
+    indirect_properties,
+    make_properties,
+)
+from dace.sdfg import graph
+from dace.sdfg import tasklet_validation as tval
+from dace.sdfg.type_inference import infer_iteration_symbol_type, infer_types
+from dace.symbolic import issymbolic, pystr_to_symbolic
 
 # -----------------------------------------------------------------------------
 
 
-def _constant_types(sdfg) -> Dict[str, dtypes.typeclass]:
+def _constant_types(sdfg) -> dict[str, dtypes.typeclass]:
     """
     Returns the types of the scalar compile-time constants visible in an SDFG, e.g., specialized symbols. A range
     bound that names one then takes its declared type, rather than the type its symbol instance carries (which is the
@@ -61,7 +64,7 @@ def _constant_types(sdfg) -> Dict[str, dtypes.typeclass]:
     return result
 
 
-_nested_used_symbols_memo: contextvars.ContextVar[Optional[Dict["dace.SDFG", Set[str]]]] = contextvars.ContextVar(
+_nested_used_symbols_memo: contextvars.ContextVar[dict["dace.SDFG", set[str]] | None] = contextvars.ContextVar(
     "nested_used_symbols_memo", default=None
 )
 
@@ -88,7 +91,7 @@ def memoize_nested_used_symbols():
 
 
 @make_properties
-class Node(object):
+class Node:
     """Base node class."""
 
     in_connectors = DictProperty(
@@ -102,9 +105,9 @@ class Node(object):
     def __init__(self, in_connectors=None, out_connectors=None):
         # Convert connectors to typed connectors with autodetect type
         if isinstance(in_connectors, (set, list, KeysView)):
-            in_connectors = {k: None for k in in_connectors}
+            in_connectors = dict.fromkeys(in_connectors)
         if isinstance(out_connectors, (set, list, KeysView)):
-            out_connectors = {k: None for k in out_connectors}
+            out_connectors = dict.fromkeys(out_connectors)
 
         self.in_connectors = in_connectors or {}
         self.out_connectors = out_connectors or {}
@@ -214,7 +217,7 @@ class Node(object):
     def _add_scope_connectors(
         self,
         connector_name: str,
-        dtype: Optional[dtypes.typeclass] = None,
+        dtype: dtypes.typeclass | None = None,
         force: bool = False,
     ) -> None:
         """Adds input and output connector names to `self` in one step.
@@ -326,16 +329,16 @@ class Node(object):
         return str(self._next_connector_int() - 1)
 
     @property
-    def free_symbols(self) -> Set[str]:
+    def free_symbols(self) -> set[str]:
         """Returns a set of symbols used in this node's properties."""
         return set()
 
-    def new_symbols(self, sdfg, state, symbols) -> Dict[str, dtypes.typeclass]:
+    def new_symbols(self, sdfg, state, symbols) -> dict[str, dtypes.typeclass]:
         """Returns a mapping between symbols defined by this node (e.g., for
         scope entries) to their type."""
         return {}
 
-    def new_symbol_names(self, sdfg, state) -> Set[str]:
+    def new_symbol_names(self, sdfg, state) -> set[str]:
         """Returns the names of the symbols defined by this node, i.e., the keys of ``new_symbols``,
         without inferring their types."""
         return set(self.new_symbols(sdfg, state, {}).keys())
@@ -372,7 +375,7 @@ class AccessNode(Node):
     )
 
     def __init__(self, data, debuginfo=None):
-        super(AccessNode, self).__init__()
+        super().__init__()
 
         # Properties
         self.debuginfo = debuginfo
@@ -417,7 +420,7 @@ class AccessNode(Node):
         return sdfg.arrays[self.data]
 
     def root_desc(self, sdfg):
-        from dace.sdfg import SDFGState, ScopeSubgraphView
+        from dace.sdfg import ScopeSubgraphView, SDFGState
 
         if isinstance(sdfg, (SDFGState, ScopeSubgraphView)):
             sdfg = sdfg.parent
@@ -425,7 +428,7 @@ class AccessNode(Node):
 
     def validate(self, sdfg, state):
         if self.data not in sdfg.arrays:
-            raise KeyError('Array "%s" not found in SDFG' % self.data)
+            raise KeyError(f'Array "{self.data}" not found in SDFG')
 
     def has_writes(self, state):
         for e in state.in_edges(self):
@@ -466,13 +469,13 @@ class CodeNode(Node):
     )
 
     def __init__(self, label="", location=None, inputs=None, outputs=None):
-        super(CodeNode, self).__init__(inputs or set(), outputs or set())
+        super().__init__(inputs or set(), outputs or set())
         # Properties
         self.label = label
         self.location = location if location is not None else {}
 
     @property
-    def free_symbols(self) -> Set[str]:
+    def free_symbols(self) -> set[str]:
         return set().union(*[v.free_symbols for v in self.location.values()])
 
     def has_side_effects(self, sdfg) -> bool:
@@ -551,7 +554,7 @@ class Tasklet(CodeNode):
         ignored_symbols=None,
         debuginfo=None,
     ):
-        super(Tasklet, self).__init__(label, location, inputs, outputs)
+        super().__init__(label, location, inputs, outputs)
 
         self.code = CodeBlock(code, language)
 
@@ -579,13 +582,13 @@ class Tasklet(CodeNode):
 
     def validate(self, sdfg: "dace.sdfg.SDFG", state: "dace.sdfg.SDFGState"):
         if not dtypes.validate_name(self.label):
-            raise NameError('Invalid tasklet name "%s"' % self.label)
+            raise NameError(f'Invalid tasklet name "{self.label}"')
         for in_conn in self.in_connectors:
             if not dtypes.validate_name(in_conn):
-                raise NameError('Invalid input connector "%s"' % in_conn)
+                raise NameError(f'Invalid input connector "{in_conn}"')
         for out_conn in self.out_connectors:
             if not dtypes.validate_name(out_conn):
-                raise NameError('Invalid output connector "%s"' % out_conn)
+                raise NameError(f'Invalid output connector "{out_conn}"')
         if self.language == dtypes.Language.Python and self.code.code:
             validator = tval.ConnectorDimensionalityValidator(
                 {e.dst_conn: e.data for e in state.in_edges(self)},
@@ -596,7 +599,7 @@ class Tasklet(CodeNode):
                 validator.visit(stmt)
 
     @property
-    def free_symbols(self) -> Set[str]:
+    def free_symbols(self) -> set[str]:
         symbols_to_ignore = self.in_connectors.keys() | self.out_connectors.keys()
         symbols_to_ignore |= self.ignored_symbols
 
@@ -658,7 +661,7 @@ class Tasklet(CodeNode):
 
         if any(cval.type is None for cval in self.in_connectors.values()):
             raise TypeError(
-                'Cannot infer output connectors of tasklet "%s", not all input connectors have types' % str(self)
+                f'Cannot infer output connectors of tasklet "{str(self)}", not all input connectors have types'
             )
 
         # Get symbols defined at beginning of node, and infer all types in
@@ -670,7 +673,7 @@ class Tasklet(CodeNode):
             if oconn.type is None:
                 if cname not in new_syms:
                     raise TypeError(
-                        'Cannot infer type of tasklet %s output "%s", please specify manually.' % (self.label, cname)
+                        f'Cannot infer type of tasklet {self.label} output "{cname}", please specify manually.'
                     )
                 self.out_connectors[cname] = new_syms[cname]
 
@@ -735,17 +738,17 @@ class NestedSDFG(CodeNode):
         self,
         label,
         sdfg: Optional["dace.SDFG"],
-        inputs: Set[str],
-        outputs: Set[str],
-        symbol_mapping: Dict[str, Any] = None,
+        inputs: set[str],
+        outputs: set[str],
+        symbol_mapping: dict[str, Any] = None,
         location=None,
         debuginfo=None,
-        path: Optional[str] = None,
+        path: str | None = None,
     ):
-        super(NestedSDFG, self).__init__(label, location, inputs, outputs)
+        super().__init__(label, location, inputs, outputs)
 
         # Properties
-        self.sdfg: "dace.SDFG" = sdfg
+        self.sdfg: dace.SDFG = sdfg
         self.ext_sdfg_path = path
         self.symbol_mapping = symbol_mapping or {}
         self.debuginfo = debuginfo
@@ -778,7 +781,7 @@ class NestedSDFG(CodeNode):
         memo[id(self)] = result
         for k, v in self.__dict__.items():
             # Skip GUID.
-            if k in ("guid",):
+            if k == "guid":
                 continue
             setattr(result, k, dcpy(v, memo))
         if result._sdfg is not None:
@@ -812,7 +815,7 @@ class NestedSDFG(CodeNode):
             for node, parent in self.sdfg.all_nodes_recursive()
         )
 
-    def used_symbols(self, all_symbols: bool) -> Set[str]:
+    def used_symbols(self, all_symbols: bool) -> set[str]:
         free_syms = set().union(*(map(str, pystr_to_symbolic(v).free_symbols) for v in self.location.values()))
 
         keys_to_use = set(self.symbol_mapping.keys())
@@ -836,12 +839,12 @@ class NestedSDFG(CodeNode):
         return free_syms
 
     @property
-    def free_symbols(self) -> Set[str]:
+    def free_symbols(self) -> set[str]:
         return self.used_symbols(all_symbols=True)
 
     def infer_connector_types(self, sdfg, state):
         # Avoid import loop
-        from dace.sdfg.infer_types import infer_connector_types, infer_aliasing
+        from dace.sdfg.infer_types import infer_aliasing, infer_connector_types
 
         # Propagate aliasing information into SDFG
         infer_aliasing(self, sdfg, state)
@@ -855,17 +858,15 @@ class NestedSDFG(CodeNode):
         else:
             return self.label
 
-    def validate(
-        self, sdfg: "dace.SDFG", state: "dace.SDFGState", references: Optional[Set[int]] = None, **context: bool
-    ):
+    def validate(self, sdfg: "dace.SDFG", state: "dace.SDFGState", references: set[int] | None = None, **context: bool):
         if not dtypes.validate_name(self.label):
-            raise NameError('Invalid nested SDFG name "%s"' % self.label)
+            raise NameError(f'Invalid nested SDFG name "{self.label}"')
         for in_conn in self.in_connectors:
             if not dtypes.validate_name(in_conn):
-                raise NameError('Invalid input connector "%s"' % in_conn)
+                raise NameError(f'Invalid input connector "{in_conn}"')
         for out_conn in self.out_connectors:
             if not dtypes.validate_name(out_conn):
-                raise NameError('Invalid output connector "%s"' % out_conn)
+                raise NameError(f'Invalid output connector "{out_conn}"')
         if self.sdfg:
             if self.sdfg.parent_nsdfg_node is not self:
                 raise ValueError("Parent nested SDFG node not properly set")
@@ -877,7 +878,7 @@ class NestedSDFG(CodeNode):
             connectors = self.in_connectors.keys() | self.out_connectors.keys()
             # Connector descriptors are compared as if written in the parent's symbols (see ``Data.is_equivalent``)
             replacements = dace.symbolic.symbol_replacements(self.symbol_mapping)
-            connector_symbols: Set[str] = set()
+            connector_symbols: set[str] = set()
             for conn in sorted(connectors):
                 if conn in self.sdfg.symbols:
                     raise ValueError(
@@ -921,9 +922,9 @@ class NestedSDFG(CodeNode):
 
             for dname, desc in self.sdfg.arrays.items():
                 if not desc.transient and dname not in connectors:
-                    raise NameError('Data descriptor "%s" not found in nested SDFG connectors' % dname)
+                    raise NameError(f'Data descriptor "{dname}" not found in nested SDFG connectors')
                 if dname in connectors and desc.transient:
-                    raise NameError('"%s" is a connector but its corresponding array is transient' % dname)
+                    raise NameError(f'"{dname}" is a connector but its corresponding array is transient')
 
         # Validate inout connectors
         from dace.sdfg import utils  # Avoids circular import
@@ -947,10 +948,10 @@ class NestedSDFG(CodeNode):
 
         # Validate undefined symbols
         if self.sdfg:
-            symbols = set(k for k in self.sdfg.used_symbols(False) if k not in connectors)
+            symbols = {k for k in self.sdfg.used_symbols(False) if k not in connectors}
             missing_symbols = [s for s in symbols if s not in self.symbol_mapping]
             if missing_symbols:
-                raise ValueError("Missing symbols on nested SDFG: %s" % (missing_symbols))
+                raise ValueError(f"Missing symbols on nested SDFG: {missing_symbols}")
             # A mapped symbol is given its value by the node, but its type by the nested SDFG
             undeclared_symbols = sorted(s for s in symbols if s not in self.sdfg.symbols)
             if undeclared_symbols:
@@ -1004,7 +1005,7 @@ class MapEntry(EntryNode):
     """
 
     def __init__(self, map: "Map", dynamic_inputs=None):
-        super(MapEntry, self).__init__(dynamic_inputs or set())
+        super().__init__(dynamic_inputs or set())
         if map is None:
             raise ValueError("Map for MapEntry can not be None.")
         self._map = map
@@ -1050,11 +1051,11 @@ class MapEntry(EntryNode):
         return str(self.map)
 
     @property
-    def free_symbols(self) -> Set[str]:
-        dyn_inputs = set(c for c in self.in_connectors if not c.startswith("IN_"))
-        return set(k for k in self._map.range.free_symbols if k not in dyn_inputs)
+    def free_symbols(self) -> set[str]:
+        dyn_inputs = {c for c in self.in_connectors if not c.startswith("IN_")}
+        return {k for k in self._map.range.free_symbols if k not in dyn_inputs}
 
-    def new_symbols(self, sdfg, state, symbols) -> Dict[str, dtypes.typeclass]:
+    def new_symbols(self, sdfg, state, symbols) -> dict[str, dtypes.typeclass]:
         result = {}
         # Dynamic map ranges first: a bound may name one, and the connector type is the declared
         # answer for it. Inferring the parameter without them falls back to the dtype the bound's
@@ -1062,7 +1063,7 @@ class MapEntry(EntryNode):
         # by name, so an expression rebuilt from a string (any ``replace_dict`` substitution) mints
         # its names untyped, while deserialization rebuilds them from the declared table. The same
         # map would then report two different parameter types across a save/load round trip.
-        dyn_inputs = set(c for c in self.in_connectors if not c.startswith("IN_"))
+        dyn_inputs = {c for c in self.in_connectors if not c.startswith("IN_")}
         for e in state.in_edges(self):
             if e.dst_conn in dyn_inputs:
                 result[e.dst_conn] = self.in_connectors[e.dst_conn] or sdfg.arrays[e.data.data].dtype
@@ -1074,11 +1075,11 @@ class MapEntry(EntryNode):
 
         return result
 
-    def new_symbol_names(self, sdfg, state) -> Set[str]:
-        dyn_inputs = set(c for c in self.in_connectors if not c.startswith("IN_"))
+    def new_symbol_names(self, sdfg, state) -> set[str]:
+        dyn_inputs = {c for c in self.in_connectors if not c.startswith("IN_")}
         return set(self._map.params) | {e.dst_conn for e in state.in_edges(self) if e.dst_conn in dyn_inputs}
 
-    def used_symbols_within_scope(self, parent_state: "dace.SDFGState", all_symbols: bool = False) -> Set[str]:
+    def used_symbols_within_scope(self, parent_state: "dace.SDFGState", all_symbols: bool = False) -> set[str]:
         """
         Returns a set of symbol names that are used within the Map scope created by this MapEntry
 
@@ -1142,7 +1143,7 @@ class MapExit(ExitNode):
     """
 
     def __init__(self, map: "Map"):
-        super(MapExit, self).__init__()
+        super().__init__()
         if map is None:
             raise ValueError("Map for MapExit can not be None.")
         self._map = map
@@ -1192,7 +1193,7 @@ class MapExit(ExitNode):
 
 
 @make_properties
-class Map(object):
+class Map:
     """A Map is a two-node representation of parametric graphs, containing
     an integer set by which the contents (nodes dominated by an entry
     node and post-dominated by an exit node) are replicated.
@@ -1313,7 +1314,7 @@ class Map(object):
         fence_instrumentation=False,
         debuginfo=None,
     ):
-        super(Map, self).__init__()
+        super().__init__()
 
         # Assign properties
         self.label = label
@@ -1329,9 +1330,7 @@ class Map(object):
         return (
             self.label
             + "["
-            + ", ".join(
-                ["{}={}".format(i, r) for i, r in zip(self._params, [sbs.Range.dim_to_string(d) for d in self._range])]
-            )
+            + ", ".join([f"{i}={r}" for i, r in zip(self._params, [sbs.Range.dim_to_string(d) for d in self._range])])
             + "]"
         )
 
@@ -1391,7 +1390,7 @@ class ConsumeEntry(EntryNode):
     """
 
     def __init__(self, consume: "Consume", dynamic_inputs=None):
-        super(ConsumeEntry, self).__init__(dynamic_inputs or set())
+        super().__init__(dynamic_inputs or set())
         if consume is None:
             raise ValueError("Consume for ConsumeEntry can not be None.")
         self._consume = consume
@@ -1439,14 +1438,14 @@ class ConsumeEntry(EntryNode):
         return str(self.consume)
 
     @property
-    def free_symbols(self) -> Set[str]:
-        dyn_inputs = set(c for c in self.in_connectors if not c.startswith("IN_"))
+    def free_symbols(self) -> set[str]:
+        dyn_inputs = {c for c in self.in_connectors if not c.startswith("IN_")}
         result = set(map(str, self._consume.num_pes.free_symbols))
         if self._consume.condition is not None:
             result |= set(self._consume.condition.get_free_symbols())
         return result - dyn_inputs
 
-    def new_symbols(self, sdfg, state, symbols) -> Dict[str, dtypes.typeclass]:
+    def new_symbols(self, sdfg, state, symbols) -> dict[str, dtypes.typeclass]:
         result = {}
         # Add PE index
         result[self._consume.pe_index] = infer_iteration_symbol_type(
@@ -1454,7 +1453,7 @@ class ConsumeEntry(EntryNode):
         )
 
         # Add dynamic inputs
-        dyn_inputs = set(c for c in self.in_connectors if not c.startswith("IN_"))
+        dyn_inputs = {c for c in self.in_connectors if not c.startswith("IN_")}
 
         # Try to get connector type from connector
         for e in state.in_edges(self):
@@ -1472,7 +1471,7 @@ class ConsumeExit(ExitNode):
     """
 
     def __init__(self, consume: "Consume"):
-        super(ConsumeExit, self).__init__()
+        super().__init__()
         if consume is None:
             raise ValueError("Consume for ConsumeExit can not be None.")
         self._consume = consume
@@ -1520,7 +1519,7 @@ class ConsumeExit(ExitNode):
 
 
 @make_properties
-class Consume(object):
+class Consume:
     """Consume is a scope, like `Map`, that is a part of the parametric
     graph extension of the SDFG. It creates a producer-consumer
     relationship between the input stream and the scope subgraph. The
@@ -1557,7 +1556,7 @@ class Consume(object):
         return Map(self.label, [self.pe_index], sbs.Range([(0, self.num_pes - 1, 1)]), self.schedule)
 
     def __init__(self, label, pe_tuple, condition, schedule=dtypes.ScheduleType.Default, chunksize=1, debuginfo=None):
-        super(Consume, self).__init__()
+        super().__init__()
 
         # Properties
         self.label = label
@@ -1569,18 +1568,15 @@ class Consume(object):
 
     def __str__(self):
         if self.condition is not None:
-            return "%s [%s=0:%s], Condition: %s" % (
-                self._label,
-                self.pe_index,
-                self.num_pes,
-                CodeProperty.to_string(self.condition),
+            return (
+                f"{self._label} [{self.pe_index}=0:{self.num_pes}], Condition: {CodeProperty.to_string(self.condition)}"
             )
         else:
-            return "%s [%s=0:%s]" % (self._label, self.pe_index, self.num_pes)
+            return f"{self._label} [{self.pe_index}=0:{self.num_pes}]"
 
     def validate(self, sdfg, state, node):
         if not dtypes.validate_name(self.label):
-            raise NameError('Invalid consume name "%s"' % self.label)
+            raise NameError(f'Invalid consume name "{self.label}"')
 
     def get_param_num(self):
         """Returns the number of consume dimension parameters/symbols."""
@@ -1594,7 +1590,7 @@ ConsumeEntry = indirect_properties(Consume, lambda obj: obj.consume)(ConsumeEntr
 
 
 # Based on https://stackoverflow.com/a/2020083/6489142
-def full_class_path(cls_or_obj: Union[type, object]):
+def full_class_path(cls_or_obj: type | object):
     if isinstance(cls_or_obj, type):
         cls = cls_or_obj
     else:
@@ -1696,11 +1692,11 @@ class LibraryNode(CodeNode):
             # Old interface (still supported):
             result = node.expand(sdfg, state)
         """
-        from dace.transformation.transformation import ExpandTransformation  # Avoid import loop
         import warnings
 
         # Handle both old and new signatures for backward compatibility
         from dace.sdfg.state import SDFGState
+        from dace.transformation.transformation import ExpandTransformation  # Avoid import loop
 
         if isinstance(state_or_sdfg, SDFGState):
             # New interface: expand(state, implementation=None, **kwargs)
@@ -1744,9 +1740,7 @@ class LibraryNode(CodeNode):
                 if config_override and target_implementation in self.implementations:
                     if target_implementation is not None:
                         warnings.warn(
-                            "Overriding explicitly specified implementation {} for {} with {}.".format(
-                                target_implementation, self.label, config_implementation
-                            )
+                            f"Overriding explicitly specified implementation {target_implementation} for {self.label} with {config_implementation}."
                         )
                     target_implementation = config_implementation
             except KeyError:
@@ -1767,7 +1761,7 @@ class LibraryNode(CodeNode):
                     if target_implementation is None:
                         raise ValueError("No implementation or default implementation specified.")
         if target_implementation not in self.implementations.keys():
-            raise KeyError("Unknown implementation for node {}: {}".format(type(self).__name__, target_implementation))
+            raise KeyError(f"Unknown implementation for node {type(self).__name__}: {target_implementation}")
         transformation_type = type(self).implementations[target_implementation]
         cfg_id = actual_state.parent_graph.cfg_id
         state_id = actual_state.block_id
@@ -1787,11 +1781,11 @@ class LibraryNode(CodeNode):
         transformation_type._match_node = cls
 
     @property
-    def free_symbols(self) -> Set[str]:
-        fsyms = super(LibraryNode, self).free_symbols
+    def free_symbols(self) -> set[str]:
+        fsyms = super().free_symbols
         for p, v in self.properties():
             if isinstance(p, SymbolicProperty) and issymbolic(v):
-                fsyms.update((str(s) for s in v.free_symbols))
+                fsyms.update(str(s) for s in v.free_symbols)
         return fsyms
 
 
@@ -1809,9 +1803,9 @@ class UnregisteredLibraryNode(LibraryNode):
         # Start with original json, then update the modified parts
         for pname, prop in curjson.items():
             if isinstance(prop, dict):  # Dictionary property update (e.g., attributes)
-                jsonobj[pname].update(curjson[pname])
+                jsonobj[pname].update(prop)
             else:  # Direct property update
-                jsonobj[pname] = curjson[pname]
+                jsonobj[pname] = prop
 
         return jsonobj
 

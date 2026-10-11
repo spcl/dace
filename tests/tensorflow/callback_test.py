@@ -1,12 +1,14 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import pytest
-import numpy as np
 from importlib.util import find_spec
+
+import numpy as np
+import pytest
 
 
 @pytest.mark.tensorflow
 def test_callback():
     import tensorflow as tf
+
     from dace.frontend.ml.tensorflow import TFSession
 
     input_image = tf.constant(0.69, tf.float64, [2, 2, 5, 5, 2])

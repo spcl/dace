@@ -1,10 +1,13 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 # Original application code: NPBench - https://github.com/spcl/npbench
-import dace.dtypes
-import numpy as np
-import dace
-import pytest
 import argparse
+
+import numpy as np
+import pytest
+
+import dace
+import dace.dtypes
+from dace.codegen import common
 from dace.transformation.auto.auto_optimize import auto_optimize
 
 N, npt = (dace.symbol(s, dtype=dace.int64) for s in ("N", "npt"))
@@ -83,6 +86,10 @@ def test_cpu():
 
 
 @pytest.mark.gpu
+@pytest.mark.skipif(
+    common.get_gpu_backend() == "hip",
+    reason="Dynamic memory allocation inside GPU kernels is not supported on AMD/HIP",
+)
 def test_gpu():
     run_azimint_naive(dace.dtypes.DeviceType.GPU)
 

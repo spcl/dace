@@ -1,10 +1,11 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import numpy as np
+import pytest
+
 import dace
 from dace import dtypes
-from dace.transformation.dataflow import TaskletFusion, MapFusionVertical
+from dace.transformation.dataflow import MapFusionVertical, TaskletFusion
 from dace.transformation.optimizer import Optimizer
-import pytest
 
 datatype = dace.float32
 np_datatype = np.float32
@@ -28,7 +29,7 @@ def _make_sdfg(language: str, with_data: bool = False):
     lang = dtypes.Language.Python if language == "Python" else dtypes.Language.CPP
     endl = "\n" if language == "Python" else ";\n"
 
-    sdfg = dace.SDFG(f"map_with_tasklets")
+    sdfg = dace.SDFG("map_with_tasklets")
     sdfg.add_array("A", (N,), datatype)
     sdfg.add_array("B", (M,), datatype)
     sdfg.add_array("C", (M,), datatype)

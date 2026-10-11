@@ -3,7 +3,7 @@
 Implements Forward and Inverse Fast Fourier Transform (FFT) library nodes
 """
 
-from dace import data, dtypes, SDFG, SDFGState, symbolic, library, nodes, properties
+from dace import SDFG, SDFGState, data, dtypes, library, nodes, properties, symbolic
 from dace import transformation as xf
 from dace.libraries.fft import environments as env
 
@@ -157,7 +157,7 @@ def _generate_cufft_code(indesc: data.Data, outdesc: data.Data, sdfg: SDFG, is_i
     """
 
     # Make plan in init if not symbolic or not data-dependent, otherwise make at callsite.
-    symbols_that_change = set(s for ise in sdfg.edges() for s in ise.data.assignments.keys())
+    symbols_that_change = {s for ise in sdfg.edges() for s in ise.data.assignments.keys()}
     symbols_that_change &= set(map(str, sdfg.symbols.keys()))
 
     def _fsyms(x):

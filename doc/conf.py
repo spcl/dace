@@ -15,8 +15,9 @@ import sys
 
 sys.path.insert(0, os.path.abspath("."))
 sys.path.insert(0, os.path.abspath(".."))
-from dace import __version__
 from schema_generator import generate_docs
+
+from dace import __version__
 
 # -- Project information -----------------------------------------------------
 

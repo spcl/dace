@@ -1,14 +1,15 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """TensorTranspose library node and its pure / HPTT / cuTENSOR expansions."""
 
-import dace
 import multiprocessing
-from dace import library, nodes, properties
-from dace.transformation.transformation import ExpandTransformation
-from dace.libraries.blas import blas_helpers
-from numbers import Number
-from dace.libraries.linalg import environments
 import warnings
+from numbers import Number
+
+import dace
+from dace import library, nodes, properties
+from dace.libraries.blas import blas_helpers
+from dace.libraries.linalg import environments
+from dace.transformation.transformation import ExpandTransformation
 
 
 @library.expansion

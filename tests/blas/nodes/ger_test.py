@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 
-import numpy as np
-
 import argparse
+
+import numpy as np
 import scipy
 
 import dace
-import dace.libraries.blas as blas
+from dace.libraries import blas
 from dace.libraries.standard.memory import aligned_ndarray
 from dace.memlet import Memlet
 from dace.transformation.interstate.sdfg_nesting import InlineSDFG

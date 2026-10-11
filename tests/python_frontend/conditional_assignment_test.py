@@ -2,8 +2,9 @@
 """Tests assignments in conditions."""
 
 import numpy as np
-import dace
 import pytest
+
+import dace
 
 
 def test_none_or_field_call():

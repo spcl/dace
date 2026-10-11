@@ -1,8 +1,10 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+import unittest
+
+import numpy as np
+
 import dace
 from dace.transformation.dataflow import MapDimShuffle
-import unittest
-import numpy as np
 
 I = dace.symbol("I")
 J = dace.symbol("J")

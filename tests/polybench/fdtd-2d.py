@@ -1,6 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
 import polybench
+
+import dace
 
 NX = dace.symbol("NX")
 NY = dace.symbol("NY")

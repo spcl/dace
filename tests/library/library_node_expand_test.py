@@ -1,12 +1,14 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 
-import pytest
-import dace
-import sys
-import os
-import numpy as np
 import copy
-from dace import SDFGState, SDFG, library
+import os
+import sys
+
+import numpy as np
+import pytest
+
+import dace
+from dace import SDFG, SDFGState, library
 from dace.transformation.transformation import ExpandTransformation
 
 # Add the test library to the path

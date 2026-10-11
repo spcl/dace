@@ -1,22 +1,25 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 
-import sympy as sp
-from dace import sdfg as sd, symbolic, properties
-from dace import data as dt
-from dace.sdfg.state import LoopRegion
-from dace.data import Scalar
-from dace.transformation import transformation as xf
-from dace.transformation import pass_pipeline as ppl
-from dace.transformation.passes.analysis import (
-    loop_analysis,
-    StateReachability,
-    FindAccessStates,
-    ConditionUniqueWrites,
-)
-from dace.symbolic import pystr_to_symbolic, issymbolic
-from dace.subsets import Range
 import copy
-from typing import Union, Set, Optional, Dict, Any
+from typing import Any
+
+import sympy as sp
+
+from dace import data as dt
+from dace import properties, symbolic
+from dace import sdfg as sd
+from dace.data import Scalar
+from dace.sdfg.state import LoopRegion
+from dace.subsets import Range
+from dace.symbolic import issymbolic, pystr_to_symbolic
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation import transformation as xf
+from dace.transformation.passes.analysis import (
+    ConditionUniqueWrites,
+    FindAccessStates,
+    StateReachability,
+    loop_analysis,
+)
 
 
 @properties.make_properties
@@ -125,7 +128,7 @@ class LoopLocalMemoryReduction(ppl.Pass):
     def depends_on(self):
         return [StateReachability, FindAccessStates, ConditionUniqueWrites]
 
-    def apply_pass(self, sdfg: sd.SDFG, pipeline_results: Dict[str, Any]) -> Optional[Set[str]]:
+    def apply_pass(self, sdfg: sd.SDFG, pipeline_results: dict[str, Any]) -> set[str] | None:
         self.num_applications = 0
         self.out_of_loop_states_cache = {}
 
@@ -156,13 +159,13 @@ class LoopLocalMemoryReduction(ppl.Pass):
                 for edge in node.all_interstate_edges():
                     changing_syms.update(edge.data.assignments.keys())
 
-                arrays = set(acc_node.data for acc_node in node.data_nodes())
+                arrays = {acc_node.data for acc_node in node.data_nodes()}
                 for arr in arrays:
                     self._apply_for_array(arr, sdfg, node, changing_syms)
 
         self.out_of_loop_states_cache = {}
 
-    def _get_edge_indices(self, subset: Range, loop: LoopRegion) -> list[Union[tuple, None]]:
+    def _get_edge_indices(self, subset: Range, loop: LoopRegion) -> list[tuple | None]:
         # list of tuples of (a, b) for a*i + b, None if cannot be determined
         indices = list()
         itervar = loop.loop_variable
@@ -181,25 +184,25 @@ class LoopLocalMemoryReduction(ppl.Pass):
 
     def _get_read_write_indices(
         self, array_name: str, loop: LoopRegion
-    ) -> tuple[list[list[Union[tuple, None]]], list[list[Union[tuple, None]]], list[list[Union[tuple, None]]]]:
+    ) -> tuple[list[list[tuple | None]], list[list[tuple | None]], list[list[tuple | None]]]:
         # list of list of tuples of (a, b) for a*i + b
         read_indices = list()
         uncond_write_indices = list()
         all_write_indices = list()
 
-        read_edges = set(
+        read_edges = {
             e for st in loop.all_states() for an in st.data_nodes() if an.data == array_name for e in st.out_edges(an)
-        )
-        uncond_write_edges = set(
+        }
+        uncond_write_edges = {
             e
             for st in loop.all_states()
             for an in st.data_nodes()
             if an.data == array_name and an not in self.cond_unique
             for e in st.in_edges(an)
-        )
-        all_write_edges = set(
+        }
+        all_write_edges = {
             e for st in loop.all_states() for an in st.data_nodes() if an.data == array_name for e in st.in_edges(an)
-        )
+        }
 
         for edge in read_edges:
             eri = self._get_edge_indices(edge.data.src_subset, loop)
@@ -215,7 +218,7 @@ class LoopLocalMemoryReduction(ppl.Pass):
 
         return read_indices, uncond_write_indices, all_write_indices
 
-    def _has_constant_loop_expressions(self, sdfg: sd.SDFG, loop: LoopRegion) -> tuple[bool, Union[int, None]]:
+    def _has_constant_loop_expressions(self, sdfg: sd.SDFG, loop: LoopRegion) -> tuple[bool, int | None]:
         itervar = loop.loop_variable
         step = loop_analysis.get_loop_stride(loop)
         if step is None:
@@ -236,13 +239,13 @@ class LoopLocalMemoryReduction(ppl.Pass):
     def _get_K_values(
         self,
         array_name: str,
-        read_indices: list[list[Union[tuple, None]]],
-        uncond_write_indices: list[list[Union[tuple, None]]],
-        all_write_indices: list[list[Union[tuple, None]]],
+        read_indices: list[list[tuple | None]],
+        uncond_write_indices: list[list[tuple | None]],
+        all_write_indices: list[list[tuple | None]],
         step: int,
         sdfg: sd.SDFG,
         loop: LoopRegion,
-    ) -> list[Union[int, None]]:
+    ) -> list[int | None]:
         k_values = []
         max_indices = self._get_max_indices_before_loop(array_name, sdfg, loop)
 
@@ -330,7 +333,7 @@ class LoopLocalMemoryReduction(ppl.Pass):
         else:
             loop_states = set(loop.all_states())
             states_reach = self.states_reach[sdfg.cfg_id]
-            out_of_loop_states = set(v for st in loop_states for v in states_reach[st] if v not in loop_states)
+            out_of_loop_states = {v for st in loop_states for v in states_reach[st] if v not in loop_states}
             self.out_of_loop_states_cache[loop] = out_of_loop_states
 
         access_states = self.access_states[sdfg.cfg_id]
@@ -343,11 +346,11 @@ class LoopLocalMemoryReduction(ppl.Pass):
         # Collect all read and write subsets of the array before the loop.
         loop_states = set(loop.all_states())
         subsets = set()
-        for k1, v1 in self.states_reach.items():
+        for v1 in self.states_reach.values():
             for k2, v2 in v1.items():
                 if len(v2.intersection(loop_states)) == 0 or k2 in loop_states:
                     continue
-                access_nodes = set(an for an in k2.data_nodes() if an.data == array_name)
+                access_nodes = {an for an in k2.data_nodes() if an.data == array_name}
 
                 # Replace loop variables in subsets with their max value.
                 pgraph = k2.parent_graph
@@ -359,8 +362,8 @@ class LoopLocalMemoryReduction(ppl.Pass):
                 replacement.update(sdfg.constants)
 
                 for acc in access_nodes:
-                    write_subsets = set(e.data.dst_subset for e in k2.in_edges(acc))
-                    read_subsets = set(e.data.src_subset for e in k2.out_edges(acc))
+                    write_subsets = {e.data.dst_subset for e in k2.in_edges(acc)}
+                    read_subsets = {e.data.src_subset for e in k2.out_edges(acc)}
                     for s in write_subsets.union(read_subsets):
                         s2 = copy.deepcopy(s)
                         s2.replace(replacement)
@@ -450,7 +453,7 @@ class LoopLocalMemoryReduction(ppl.Pass):
             collapsed_all_write_indices.append([(m[a], m[b])])
 
         # The scaling factor a must be the same for all indices if a != 0.
-        a_values = set(i[0] for il in collapsed_read_indices + collapsed_all_write_indices for i in il if i[0] != 0)
+        a_values = {i[0] for il in collapsed_read_indices + collapsed_all_write_indices for i in il if i[0] != 0}
         if len(a_values) > 1:
             return
         if len(a_values) == 0:
@@ -497,12 +500,12 @@ class LoopLocalMemoryReduction(ppl.Pass):
         self.num_applications += 1
 
         # Replace all read and write edges in the loop with modulo accesses.
-        read_edges = set(
+        read_edges = {
             e for st in sdfg.all_states() for an in st.data_nodes() if an.data == array_name for e in st.out_edges(an)
-        )
-        write_edges = set(
+        }
+        write_edges = {
             e for st in sdfg.all_states() for an in st.data_nodes() if an.data == array_name for e in st.in_edges(an)
-        )
+        }
 
         # XXX: We use abs() because pystr_to_symbolic() rewrites modulo operations, e.g. (-i + 32) % 31 -> Mod(1 - i, 31), which changes the behavior as C++ modulo differs from Python for negative numbers.
         for edge in read_edges:

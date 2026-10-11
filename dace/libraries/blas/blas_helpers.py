@@ -1,7 +1,9 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+from typing import Any
+
 import numpy as np
-from dace import dtypes, data
-from typing import Any, Dict, Tuple
+
+from dace import data, dtypes
 
 
 def to_blastype(dtype):
@@ -19,10 +21,10 @@ def to_blastype(dtype):
     elif dtype == np.complex128:
         return "Z"
     else:
-        raise TypeError("Type %s not supported in BLAS operations" % dtype.__name__)
+        raise TypeError(f"Type {dtype.__name__} not supported in BLAS operations")
 
 
-def cublas_type_metadata(dtype: dtypes.typeclass) -> Tuple[str, str, str]:
+def cublas_type_metadata(dtype: dtypes.typeclass) -> tuple[str, str, str]:
     """
     Returns type metadata on a given dace dtype.
 
@@ -40,7 +42,7 @@ def cublas_type_metadata(dtype: dtypes.typeclass) -> Tuple[str, str, str]:
     elif dtype == dtypes.complex128:
         return "Z", "cuDoubleComplex", "Complex128"
     else:
-        raise TypeError("Type %s not supported in BLAS operations" % str(dtype))
+        raise TypeError(f"Type {str(dtype)} not supported in BLAS operations")
 
 
 def dtype_to_cudadatatype(dtype: dtypes.typeclass) -> str:
@@ -82,7 +84,7 @@ def to_cublas_computetype(dtype: dtypes.typeclass) -> str:
     return types[dtype]
 
 
-def get_gemm_opts(a_strides, b_strides, c_strides) -> Dict[str, Any]:
+def get_gemm_opts(a_strides, b_strides, c_strides) -> dict[str, Any]:
     """
     Returns GEMM argument order, transposition, and leading dimensions
     based on column-major storage from dace arrays.

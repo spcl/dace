@@ -1,15 +1,14 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+import contextlib
 import inspect
 import sys
 import types
-from typing import Set, List
-import contextlib
+
 import networkx as nx
-import types
 
 import dace.properties
 from dace.sdfg.nodes import LibraryNode, full_class_path
-from dace.transformation.transformation import PatternTransformation, ExpandTransformation
+from dace.transformation.transformation import ExpandTransformation, PatternTransformation
 
 
 def register_implementation(implementation_name, expansion_cls, node_cls):
@@ -18,19 +17,17 @@ def register_implementation(implementation_name, expansion_cls, node_cls):
     library module, but this function can be used to add additional
     expansions from an external context."""
     if not issubclass(expansion_cls, ExpandTransformation):
-        raise TypeError("Expected ExpandTransformation class, got: {}".format(type(node_cls).__name__))
+        raise TypeError(f"Expected ExpandTransformation class, got: {type(node_cls).__name__}")
     if not issubclass(node_cls, LibraryNode):
-        raise TypeError("Expected LibraryNode class, got: {}".format(type(node_cls).__name__))
+        raise TypeError(f"Expected LibraryNode class, got: {type(node_cls).__name__}")
     if hasattr(expansion_cls, "_dace_library_node") and expansion_cls._dace_library_node != node_cls:
         raise ValueError(
-            "Transformation {} is already registered with a different library node: {}".format(
-                expansion_cls.__name__, expansion_cls._dace_library_node
-            )
+            f"Transformation {expansion_cls.__name__} is already registered with a different library node: {expansion_cls._dace_library_node}"
         )
     expansion_cls._dace_library_node = node_cls
     if implementation_name in node_cls.implementations:
         if node_cls.implementations[implementation_name] != expansion_cls:
-            raise ValueError("Implementation {} registered with multiple expansions.".format(implementation_name))
+            raise ValueError(f"Implementation {implementation_name} registered with multiple expansions.")
     else:
         node_cls.implementations[implementation_name] = expansion_cls
 
@@ -48,16 +45,14 @@ def register_node(node_cls, library):
     but this function can be used to add additional node classes from an
     external context."""
     if not issubclass(node_cls, LibraryNode):
-        raise TypeError("Expected LibraryNode class, got: {}".format(type(node_cls).__name__))
+        raise TypeError(f"Expected LibraryNode class, got: {type(node_cls).__name__}")
     if not isinstance(library, types.ModuleType):
-        raise TypeError("Expected Python module, got: {}".format(type(library).__name__))
+        raise TypeError(f"Expected Python module, got: {type(library).__name__}")
     if not hasattr(node_cls, "_dace_library_node"):
-        raise ValueError("Library node class {} must be decorated with @dace.library.node.".format(node_cls.__name__))
+        raise ValueError(f"Library node class {node_cls.__name__} must be decorated with @dace.library.node.")
     if hasattr(node_cls, "_dace_library_name") and node_cls._dace_library_name != library.__name__:
         raise ValueError(
-            "Node class {} registered with multiple libraries: {} and {}".format(
-                node_cls.__name__, node_cls._dace_library_name, library.__name__
-            )
+            f"Node class {node_cls.__name__} registered with multiple libraries: {node_cls._dace_library_name} and {library.__name__}"
         )
     if node_cls not in library._dace_library_nodes:
         library._dace_library_nodes.append(node_cls)
@@ -73,14 +68,12 @@ def register_transformation(transformation_cls, library):
     external context."""
 
     if not issubclass(transformation_cls, PatternTransformation):
-        raise TypeError("Expected PatternTransformation, got: {}".format(transformation_cls.__name__))
+        raise TypeError(f"Expected PatternTransformation, got: {transformation_cls.__name__}")
     if not isinstance(library, types.ModuleType):
-        raise TypeError("Expected Python module, got: {}".format(type(library).__name__))
+        raise TypeError(f"Expected Python module, got: {type(library).__name__}")
     if hasattr(transformation_cls, "_dace_library_name") and transformation_cls._dace_library_name != library.__name__:
         raise ValueError(
-            "Transformation class {} registered with multiple libraries: {} and {}".format(
-                transformation_cls.__name__, transformation_cls._dace_library_name, library.__name__
-            )
+            f"Transformation class {transformation_cls.__name__} registered with multiple libraries: {transformation_cls._dace_library_name} and {library.__name__}"
         )
     if transformation_cls not in library._dace_library_transformations:
         library._dace_library_transformations.append(transformation_cls)
@@ -99,7 +92,7 @@ def register_library(module_name, name):
         module.default_implementation = None
     _DACE_REGISTERED_LIBRARIES[name] = module
     # Register content
-    for key, value in module.__dict__.items():
+    for value in module.__dict__.values():
         if isinstance(value, type):
             if issubclass(value, LibraryNode):
                 register_node(value, module)
@@ -179,7 +172,7 @@ def environment(env):
     return env
 
 
-def get_environments_and_dependencies(names: Set[str]) -> List:
+def get_environments_and_dependencies(names: set[str]) -> list:
     """Get the environment objects from names. Also resolve the dependencies.
 
     :names: set of environment names.
@@ -214,7 +207,7 @@ def get_environment(env_name):
     try:
         env = dace.library._DACE_REGISTERED_ENVIRONMENTS[env_name]
     except KeyError:
-        raise KeyError("Undefined DaCe environment {}.".format(env_name))
+        raise KeyError(f"Undefined DaCe environment {env_name}.")
     return env
 
 
@@ -241,7 +234,7 @@ def get_library(lib_name):
     try:
         lib = dace.library._DACE_REGISTERED_LIBRARIES[lib_name]
     except KeyError:
-        raise KeyError("Undefined DaCe library {}.".format(lib_name))
+        raise KeyError(f"Undefined DaCe library {lib_name}.")
     return lib
 
 

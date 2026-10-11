@@ -1,10 +1,9 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
-import pytest
 import numpy as np
+import pytest
 
 import dace
-import dace.libraries.blas as blas
-
+from dace.libraries import blas
 from dace.library import change_default
 
 

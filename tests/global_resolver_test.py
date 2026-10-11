@@ -1,7 +1,8 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import unittest
-from dace.frontend.python.preprocessing import GlobalResolver
+
 from dace.frontend.python import astutils
+from dace.frontend.python.preprocessing import GlobalResolver
 
 
 def toresolve():

@@ -4,7 +4,6 @@ Assortment of passes for schedule trees.
 """
 
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
-from typing import List, Optional, Set, Tuple
 
 
 def remove_unused_and_duplicate_labels(stree: tn.ScheduleTreeScope):
@@ -16,14 +15,14 @@ def remove_unused_and_duplicate_labels(stree: tn.ScheduleTreeScope):
 
     class FindGotos(tn.ScheduleNodeVisitor):
         def __init__(self):
-            self.gotos: Set[str] = set()
+            self.gotos: set[str] = set()
 
         def visit_GotoNode(self, node: tn.GotoNode):
             if node.target is not None:
                 self.gotos.add(node.target)
 
     class RemoveLabels(tn.ScheduleNodeTransformer):
-        def __init__(self, labels_to_keep: Set[str]) -> None:
+        def __init__(self, labels_to_keep: set[str]) -> None:
             self.labels_to_keep = labels_to_keep
             self.labels_seen = set()
 
@@ -58,14 +57,14 @@ def remove_empty_scopes(stree: tn.ScheduleTreeScope):
     return RemoveEmptyScopes().visit(stree)
 
 
-def _contains_goto(node: tn.ScheduleTreeNode, label: Optional[str]) -> bool:
+def _contains_goto(node: tn.ScheduleTreeNode, label: str | None) -> bool:
     """
     Returns True if the given node is or contains a goto to the given label (``None`` for exit gotos).
     """
     return any(isinstance(n, tn.GotoNode) and n.target == label for n in node.preorder_traversal())
 
 
-def _conditional_chain_end(nodes: List[tn.ScheduleTreeNode], start: int) -> int:
+def _conditional_chain_end(nodes: list[tn.ScheduleTreeNode], start: int) -> int:
     """
     Returns the index after the last branch of the if/elif/else chain that starts at the given index.
     """
@@ -75,7 +74,7 @@ def _conditional_chain_end(nodes: List[tn.ScheduleTreeNode], start: int) -> int:
     return end
 
 
-def _may_fall_through(nodes: List[tn.ScheduleTreeNode], label: Optional[str]) -> bool:
+def _may_fall_through(nodes: list[tn.ScheduleTreeNode], label: str | None) -> bool:
     """
     Returns False if every path through the given nodes ends with a goto to the given label.
     """
@@ -98,10 +97,10 @@ def _may_fall_through(nodes: List[tn.ScheduleTreeNode], label: Optional[str]) ->
 
 
 def _eliminate_gotos(
-    nodes: List[tn.ScheduleTreeNode],
-    label: Optional[str],
-    updates: List[Tuple[tn.ScheduleTreeScope, List[tn.ScheduleTreeNode]]],
-) -> Optional[List[tn.ScheduleTreeNode]]:
+    nodes: list[tn.ScheduleTreeNode],
+    label: str | None,
+    updates: list[tuple[tn.ScheduleTreeScope, list[tn.ScheduleTreeNode]]],
+) -> list[tn.ScheduleTreeNode] | None:
     """
     Returns a version of the given nodes, which are followed by the given label, without gotos to that label.
 
@@ -112,7 +111,7 @@ def _eliminate_gotos(
     :param updates: A list of scopes and their new children, which is extended by this function.
     :return: The rewritten nodes, or None if the gotos cannot be eliminated.
     """
-    result: List[tn.ScheduleTreeNode] = []
+    result: list[tn.ScheduleTreeNode] = []
     index = 0
     while index < len(nodes):
         node = nodes[index]
@@ -159,7 +158,7 @@ def _eliminate_gotos(
     return result
 
 
-def eliminate_forward_gotos(scope: tn.ScheduleTreeScope, end: int, label: Optional[str]) -> bool:
+def eliminate_forward_gotos(scope: tn.ScheduleTreeScope, end: int, label: str | None) -> bool:
     """
     Removes gotos to a label that directly follows a range of children in a scope by restructuring conditionals.
 
@@ -171,7 +170,7 @@ def eliminate_forward_gotos(scope: tn.ScheduleTreeScope, end: int, label: Option
     :param label: The name of the label, or ``None`` for exit gotos at the end of the program.
     :return: True if all gotos to the label within the range were removed. If False, the tree is left unmodified.
     """
-    updates: List[Tuple[tn.ScheduleTreeScope, List[tn.ScheduleTreeNode]]] = []
+    updates: list[tuple[tn.ScheduleTreeScope, list[tn.ScheduleTreeNode]]] = []
     new_children = _eliminate_gotos(scope.children[:end], label, updates)
     if new_children is None:
         return False

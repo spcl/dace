@@ -2,11 +2,11 @@
 """Contains classes that implement the trivial-map-elimination transformation."""
 
 import dace
+from dace.memlet import Memlet
+from dace.properties import make_properties
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.transformation import transformation
-from dace.properties import make_properties
-from dace.memlet import Memlet
 
 
 @make_properties

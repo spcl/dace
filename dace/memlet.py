@@ -1,32 +1,33 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
-from copy import deepcopy as dcpy, copy
-from functools import reduce
 import operator
-from typing import TYPE_CHECKING, List, Optional, Set, Union
+from copy import copy
+from copy import deepcopy as dcpy
+from functools import reduce
+from typing import TYPE_CHECKING
 
 import dace
-from dace.sdfg.graph import generate_element_id
 import dace.serialize
-from dace import subsets, dtypes, symbolic
+from dace import dtypes, subsets, symbolic
 from dace.frontend.operations import detect_reduction_type
 from dace.frontend.python.astutils import unparse
 from dace.properties import (
-    Property,
-    make_properties,
     DataProperty,
-    SubsetProperty,
-    SymbolicProperty,
     DebugInfoProperty,
     LambdaProperty,
+    Property,
+    SubsetProperty,
+    SymbolicProperty,
+    make_properties,
 )
+from dace.sdfg.graph import generate_element_id
 
 if TYPE_CHECKING:
     import dace.sdfg.graph
 
 
 @make_properties
-class Memlet(object):
+class Memlet:
     """Data movement object. Represents the data, the subset moved, and the
     manner it is reindexed (`other_subset`) into the destination.
     If there are multiple conflicting writes, this object also specifies
@@ -82,14 +83,14 @@ class Memlet(object):
 
     def __init__(
         self,
-        expr: Optional[str] = None,
-        data: Optional[str] = None,
-        subset: Union[str, subsets.Subset, None] = None,
-        other_subset: Union[str, subsets.Subset, None] = None,
-        volume: Union[int, str, symbolic.SymbolicType, None] = None,
+        expr: str | None = None,
+        data: str | None = None,
+        subset: str | subsets.Subset | None = None,
+        other_subset: str | subsets.Subset | None = None,
+        volume: int | str | symbolic.SymbolicType | None = None,
         dynamic: bool = False,
-        wcr: Union[str, ast.AST, None] = None,
-        debuginfo: Optional[dtypes.DebugInfo] = None,
+        wcr: str | ast.AST | None = None,
+        debuginfo: dtypes.DebugInfo | None = None,
         wcr_nonatomic: bool = False,
         allow_oob: bool = False,
     ):
@@ -153,13 +154,12 @@ class Memlet(object):
 
         if volume is not None:
             self.volume = volume
+        elif self.subset is not None:
+            self.volume = self.subset.num_elements()
+        elif self.other_subset is not None:
+            self.volume = self.other_subset.num_elements()
         else:
-            if self.subset is not None:
-                self.volume = self.subset.num_elements()
-            elif self.other_subset is not None:
-                self.volume = self.other_subset.num_elements()
-            else:
-                self.volume = 1
+            self.volume = 1
 
         self.dynamic = dynamic
         self.wcr = wcr
@@ -364,7 +364,7 @@ class Memlet(object):
     def _parse_from_subexpr(self, expr: str):
         if expr[-1] != "]":  # No subset given, try to use whole array
             if not dtypes.validate_name(expr):
-                raise SyntaxError('Invalid memlet syntax "%s"' % expr)
+                raise SyntaxError(f'Invalid memlet syntax "{expr}"')
             return expr, None
 
         # [subset] syntax
@@ -374,7 +374,7 @@ class Memlet(object):
         # array[subset] syntax
         arrname, subset_str = expr[:-1].split("[")
         if not dtypes.validate_name(arrname):
-            raise SyntaxError('Invalid array name "%s" in memlet' % arrname)
+            raise SyntaxError(f'Invalid array name "{arrname}" in memlet')
         return arrname, SubsetProperty.from_string(subset_str)
 
     def _parse_memlet_from_str(self, expr: str):
@@ -578,12 +578,12 @@ class Memlet(object):
 
     def validate(self, sdfg, state):
         if self.data is not None and self.data not in sdfg.arrays:
-            raise KeyError('Array "%s" not found in SDFG' % self.data)
+            raise KeyError(f'Array "{self.data}" not found in SDFG')
         # NOTE: We do not check here is the subsets have a negative size, because such as subset
         #  is valid, in certain cases, for example if an AccessNode is connected to a MapEntry,
         #  because the Map is not executed. Thus we do the check in the `validate_state()` function.
 
-    def used_symbols(self, all_symbols: bool, edge=None) -> Set[str]:
+    def used_symbols(self, all_symbols: bool, edge=None) -> set[str]:
         """
         Returns a set of symbols used in this edge's properties.
 
@@ -627,11 +627,11 @@ class Memlet(object):
         return result
 
     @property
-    def free_symbols(self) -> Set[str]:
+    def free_symbols(self) -> set[str]:
         """Returns a set of symbols used in this edge's properties."""
         return self.used_symbols(all_symbols=True)
 
-    def get_free_symbols_by_indices(self, indices_src: List[int], indices_dst: List[int]) -> Set[str]:
+    def get_free_symbols_by_indices(self, indices_src: list[int], indices_dst: list[int]) -> set[str]:
         """
         Returns set of free symbols used in this edges properties but only taking certain indices of the src and dst
         subset into account
@@ -700,7 +700,7 @@ class Memlet(object):
         if self.dynamic:
             result += "(dyn) "
         elif self.volume != num_elements:
-            result += "(%s) " % SymbolicProperty.to_string(self.volume)
+            result += f"({SymbolicProperty.to_string(self.volume)}) "
         arrayNotation = True
         try:
             if shape is not None and reduce(operator.mul, shape, 1) == 1:
@@ -711,7 +711,7 @@ class Memlet(object):
             # Will fail if trying to check the truth value of a sympy expr
             pass
         if arrayNotation:
-            result += "[%s]" % str(self.subset)
+            result += f"[{str(self.subset)}]"
         if self.wcr is not None and str(self.wcr) != "":
             # Autodetect reduction type
             redtype = detect_reduction_type(self.wcr)
@@ -721,20 +721,20 @@ class Memlet(object):
                 wcrstr = str(redtype)
                 wcrstr = wcrstr[wcrstr.find(".") + 1 :]  # Skip "ReductionType."
 
-            result += " (CR: %s)" % wcrstr
+            result += f" (CR: {wcrstr})"
 
         if self.other_subset is not None:
             if self._is_data_src is False:
                 result = f"[{self.other_subset}] -> {result}"
             else:
-                result += " -> [%s]" % str(self.other_subset)
+                result += f" -> [{str(self.other_subset)}]"
         return result
 
     def __repr__(self):
         return "Memlet (" + self.__str__() + ")"
 
 
-class MemletTree(object):
+class MemletTree:
     """A tree of memlet edges.
 
     Since memlets can form paths through scope nodes, and since these
@@ -755,7 +755,7 @@ class MemletTree(object):
         edge: "dace.sdfg.graph.MultiConnectorEdge[Memlet]",
         downwards: bool = True,
         parent: "MemletTree" = None,
-        children: Optional[List["MemletTree"]] = None,
+        children: list["MemletTree"] | None = None,
     ) -> None:
         self.edge = edge
         self.parent = parent
@@ -785,7 +785,7 @@ class MemletTree(object):
             node = node.parent
         return node
 
-    def leaves(self) -> "List[dace.sdfg.graph.MultiConnectorEdge[Memlet]]":
+    def leaves(self) -> "list[dace.sdfg.graph.MultiConnectorEdge[Memlet]]":
         """Returns a list of all the leaves of this MemletTree, i.e., the innermost edges."""
         if not self.children:
             return [self.edge]

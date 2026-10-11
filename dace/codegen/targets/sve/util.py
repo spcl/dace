@@ -3,15 +3,17 @@
 Utility functions for SVE: Contains many datatype mappings (Python to SVE) and frequently used functions.
 """
 
-import numpy as np
-import dace
-import dace.dtypes as dtypes
 import ast
-import dace.codegen.targets
-from dace.codegen.targets.sve import infer as infer
 import collections
 import itertools
+
 import numpy
+import numpy as np
+
+import dace
+import dace.codegen.targets
+from dace import dtypes
+from dace.codegen.targets.sve import infer as infer
 
 # Translation of types to C++ types
 _SVE_CTYPES = {
@@ -135,7 +137,7 @@ TYPE_TO_SVE_SUFFIX = {
     dace.float64: "f64",
 }
 
-SVE_SUFFIX_TO_TYPE = dict((v, k) for k, v in TYPE_TO_SVE_SUFFIX.items())
+SVE_SUFFIX_TO_TYPE = {v: k for k, v in TYPE_TO_SVE_SUFFIX.items()}
 
 TYPE_TO_SVE = {
     int: "svint32_t",
@@ -237,7 +239,7 @@ def infer_ast(defined_symbols: collections.OrderedDict, *args) -> tuple:
 
 def only_scalars_involed(defined_symbols: collections.OrderedDict, *terms) -> bool:
     """Takes AST nodes and returns whether only scalars are involved in the subtrees."""
-    return all([is_scalar(infer_ast(defined_symbols, t)[0]) for t in terms])
+    return all(is_scalar(infer_ast(defined_symbols, t)[0]) for t in terms)
 
 
 def get_sve_scope(sdfg: dace.sdfg.SDFG, state: dace.sdfg.SDFGState, node: dace.sdfg.nodes.Node) -> dace.nodes.Map:

@@ -3,13 +3,14 @@
 Tests conversion of schedule trees to SDFGs.
 """
 
-import dace
 import numpy as np
 import pytest
 
-from dace.sdfg.analysis.schedule_tree import tree_to_sdfg as t2s, treenodes as tn
+import dace
 from dace.properties import CodeBlock
 from dace.sdfg import dealias
+from dace.sdfg.analysis.schedule_tree import tree_to_sdfg as t2s
+from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.sdfg.state import BreakBlock, ConditionalBlock, LoopRegion, NamedRegion, ReturnBlock
 from dace.transformation.pass_pipeline import FixedPointPipeline
 from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising
@@ -484,7 +485,7 @@ def _add_conditional_return(
     """
     block = ConditionalBlock("maybe_return")
     region.add_node(block, is_start_block=True)
-    branch = dace.sdfg.ControlFlowRegion("return_branch", sdfg=region.sdfg if region.sdfg else region, parent=block)
+    branch = dace.sdfg.ControlFlowRegion("return_branch", sdfg=region.sdfg or region, parent=block)
     branch.add_node(ReturnBlock("return"), is_start_block=True)
     block.add_branch(CodeBlock(condition), branch)
     region.add_edge(block, after, dace.InterstateEdge())

@@ -1,8 +1,8 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+import dace
+
 from .ast_node import AST_Node
 from .ast_values import AST_Constant
-
-import dace
 
 
 class AST_Matrix_Row(AST_Node):

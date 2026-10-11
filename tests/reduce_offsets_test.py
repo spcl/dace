@@ -1,8 +1,10 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
+
+import numpy as np
+
 import dace
 import dace.sdfg.nodes
-import numpy as np
 
 # Python version of the SDFG below
 # @dace.program
