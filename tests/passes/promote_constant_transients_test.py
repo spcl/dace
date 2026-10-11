@@ -846,6 +846,27 @@ def test_data_bound_to_a_reference_is_not_promoted():
     assert init in state.nodes()
 
 
+def test_a_literal_named_like_a_libc_function_stays_a_local():
+    """``atol`` at file scope would redeclare ``<stdlib.h>``'s function, so it is not promoted and the program builds."""
+    sdfg = dace.SDFG("libc_named_literal")
+    sdfg.add_scalar("atol", dace.float64, transient=True)
+    sdfg.add_array("B", [1], dace.float64)
+    s1 = sdfg.add_state("init")
+    s1.add_edge(
+        s1.add_tasklet("init", {}, {"out"}, "out = 1e-9"), "out", s1.add_write("atol"), None, dace.Memlet("atol[0]")
+    )
+    s2 = sdfg.add_state_after(s1, "use")
+    use = s2.add_tasklet("use", {"inp"}, {"out"}, "out = inp * 2")
+    s2.add_edge(s2.add_read("atol"), None, use, "inp", dace.Memlet("atol[0]"))
+    s2.add_edge(use, "out", s2.add_write("B"), None, dace.Memlet("B[0]"))
+
+    assert _run(sdfg) is None
+    assert "atol" not in sdfg.constants_prop
+    B = np.zeros(1)
+    sdfg(B=B)
+    assert B[0] == 2e-9
+
+
 if __name__ == "__main__":
     test_scalar_constant_single_write()
     test_array_full_constant_write()
@@ -872,3 +893,4 @@ if __name__ == "__main__":
     test_zero_input_const_tasklet_anchored_via_sibling_access_node_stays_in_map_scope()
     test_promoting_a_held_fill_removes_both_ends_of_its_scope()
     test_data_bound_to_a_reference_is_not_promoted()
+    test_a_literal_named_like_a_libc_function_stays_a_local()

@@ -583,7 +583,7 @@ def libnode_is_sequential(node: nodes.LibraryNode, state: SDFGState, sdfg: SDFG)
         if isinstance(scope, nodes.MapEntry):
             if scope.map.schedule != dtypes.ScheduleType.Sequential:
                 return True
-        elif isinstance(scope, LoopRegion):
+        elif isinstance(scope, LoopRegion) and getattr(node, "serial_on_loop_reentry", True):
             return True
     return False
 

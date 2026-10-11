@@ -822,8 +822,9 @@ def test_c_common_type_is_the_type_the_compiler_gives_the_sum(c_sum_types, first
     assert cpf_lowering.c_common_type((first, second)) == c_sum_types[(first, second)]
 
 
-def test_c_scan_helpers_keep_the_parallel_inscan_form():
-    """The scan is the reason the helpers exist; a serial loop would not be a parallel scan.
+def test_c_scan_helpers_keep_the_blocked_parallel_inscan_form():
+    """The scan is the reason the helpers exist; a serial loop would not be a parallel scan, and the
+    ``inscan`` loop alone only vectorizes, so the threads come from the blocked region around it.
 
     The PHASE ORDER is asserted with the clause because it is the half that fails quietly: the
     ``scan`` directive splits the loop body into an input phase and a scan phase, and ``exclusive``
@@ -840,11 +841,17 @@ def test_c_scan_helpers_keep_the_parallel_inscan_form():
             assert "#pragma omp simd reduction(inscan, %s:acc)" % reduction in definition
             directive = "#pragma omp scan %s(acc)" % clause
             assert directive in definition
-            store = "o[i] = acc;"
-            before, after = definition.split(directive)
-            assert (store in after) if clause == "inclusive" else (store in before), (
-                f"scan_{kind}_{operation} runs its phases in the {clause} order the other kind needs"
+            assert "#pragma omp parallel num_threads(team)" in definition
+            assert (
+                "#pragma omp parallel num_threads(team)" in cpf_lowering.INLINE_DEFINITIONS[f"scan_{kind}_{operation}"]
             )
+            store = "o[i] = acc;"
+            for loop in definition.split("reduction(inscan")[1:]:
+                before, after = loop.split(directive)
+                after = after.split("}")[0]
+                assert (store in after) if clause == "inclusive" else (store in before), (
+                    f"scan_{kind}_{operation} runs its phases in the {clause} order the other kind needs"
+                )
 
 
 def scan_probe_body(statement, names):

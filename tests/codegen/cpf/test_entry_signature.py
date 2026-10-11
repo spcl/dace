@@ -81,7 +81,7 @@ def test_the_order_lands_with_a_pointer_behind_the_scalars(language):
 
 
 @pytest.mark.parametrize("language", ["c++", "c"])
-def test_the_workspace_pair_is_a_const_byte_pointer_and_an_int64_size(language):
+def test_the_workspace_pair_is_a_writable_byte_pointer_and_an_int64_size(language):
     result = rendered(cpf_sig_scale, "cpf_sig_ws", language, with_workspace("dst", "src", "N", "factor"))
     restrict = "restrict" if language == "c" else "__restrict__"
     assert entry_parameters(result.code, "cpf_sig_ws") == [
@@ -89,7 +89,7 @@ def test_the_workspace_pair_is_a_const_byte_pointer_and_an_int64_size(language):
         f"const double * {restrict} src",
         "int N",
         "double factor",
-        f"const uint8_t * {restrict} workspace",
+        f"uint8_t * {restrict} workspace",
         "int64_t workspace_size",
     ]
     assert result.arguments == tuple(entry_names(result.code, "cpf_sig_ws"))
@@ -142,6 +142,7 @@ def test_the_device_entry_takes_the_order_and_a_device_workspace():
     result = render_gpu(cpf_sig_scale, "cpf_sig_hip", signature=signature)
     assert entry_names(result.code, "cpf_sig_hip") == tuple(signature.order)
     assert result.sdfg.arrays["workspace"].storage is dace.StorageType.GPU_Global
+    assert "uint8_t * __restrict__ workspace" in entry_parameters(result.code, "cpf_sig_hip")
 
 
 def test_a_signature_that_does_not_fit_is_refused():
@@ -173,8 +174,8 @@ if __name__ == "__main__":
     test_the_arglist_order_as_a_signature_is_byte_identical_to_none()
     test_the_order_lands_with_a_pointer_behind_the_scalars("c++")
     test_the_order_lands_with_a_pointer_behind_the_scalars("c")
-    test_the_workspace_pair_is_a_const_byte_pointer_and_an_int64_size("c++")
-    test_the_workspace_pair_is_a_const_byte_pointer_and_an_int64_size("c")
+    test_the_workspace_pair_is_a_writable_byte_pointer_and_an_int64_size("c++")
+    test_the_workspace_pair_is_a_writable_byte_pointer_and_an_int64_size("c")
     test_a_unit_called_in_the_asked_order_reproduces_the_numbers("axpy", "c++")
     test_a_unit_called_in_the_asked_order_reproduces_the_numbers("axpy", "c")
     test_a_unit_called_in_the_asked_order_reproduces_the_numbers("rowsum", "c++")

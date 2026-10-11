@@ -163,6 +163,7 @@ def test_deferred_tile_nodes_are_cuda_stamped(group: TileGroup, implementation: 
         assert (n.group, n.implementation, n.lanes_per_thread) == (group, implementation, lanes)
 
 
+@pytest.mark.gpu
 def test_scalar_cast_constant_broadcasts():
     """The canonical constant-input shape ``tmp = float16(0.5); C = A * tmp`` -- a
     scalar cast feeding a binop -- vectorizes to one ``TileBinop`` per branch arm (the
@@ -243,6 +244,7 @@ def test_the_device_file_defines_each_index_helper_once():
     assert all(count == 1 for count in helpers.values()), helpers
 
 
+@pytest.mark.gpu
 def test_gpu_reduction_uses_gpu_expansion():
     """A top-level fp16 scalar reduction (``out = sum(A)``) is kept as a
     GPU-scheduled map-exit WCR (``... -[CR:+]-> MapExit -[CR:+]-> out``), NOT lifted

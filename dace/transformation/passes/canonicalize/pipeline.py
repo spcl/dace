@@ -55,6 +55,7 @@ from dace.transformation.passes.canonicalize.induction_variable_substitution imp
     InductionVariableSubstitution,
     LoopCarriedRotationSubstitution,
 )
+from dace.transformation.passes.canonicalize.lift_break_to_find_first import LiftBreakToFindFirst
 from dace.transformation.passes.canonicalize.lift_inv import LiftInv
 from dace.transformation.passes.canonicalize.lift_loop_carried_reduction import LiftLoopCarriedReduction
 from dace.transformation.passes.canonicalize.loop_to_conditional_reduce import LoopToConditionalReduce
@@ -631,6 +632,11 @@ def _resolve_target_default(target: str, knob: str, explicit: Any | None, fallba
     return TARGET_DEFAULTS.get(target, {}).get(knob, fallback)
 
 
+#: Indices one find-first chunk searches before the body below its hit runs (``LiftBreakToFindFirst``): on CPU a
+#: chunk whose arrays stay in the last-level cache for the body's second read, on GPU about four times a full grid.
+FIND_FIRST_CHUNK: dict[str, int] = {"cpu": 1 << 20, "gpu": 1 << 21}
+
+
 def _build_stages(
     unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     peel_limit: int = 4,
@@ -710,14 +716,17 @@ def _build_stages(
     # CollapseNoOpCast first: ``__out = dace.float64(__inp)`` with matching dtypes hides a plain copy
     # from every textual matcher, TrivialTaskletElimination included. RewriteModuloToPyMod makes every
     # floored modulo ``py_mod``. NormalizeNegativeStride gives downstream positive strides only.
-    # ContinueToCondition turns ``continue`` into a guard before SplitStatements / IVS (``break``
-    # loops stay sequential). SimplifyPass's FuseStates collapses multi-state bodies for fission.
+    # ContinueToCondition turns ``continue`` into a guard before SplitStatements / IVS, and
+    # LiftBreakToFindFirst an early exit into a parallel find-first plus a loop below the hit (a
+    # ``break`` loop it cannot prove stays sequential). SimplifyPass's FuseStates collapses multi-state
+    # bodies for fission.
     s += [
         ("clean", CollapseNoOpCast()),
         ("clean", RewriteModuloToPyMod()),
         ("clean", NormalizeNegativeStride()),
         ("clean", unique_loop_iterators),
         ("clean", ContinueToCondition()),
+        ("clean", LiftBreakToFindFirst(chunk=FIND_FIRST_CHUNK[target])),
         ("clean", SimplifyPass()),
     ]
 

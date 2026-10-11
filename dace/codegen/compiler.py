@@ -354,9 +354,12 @@ def cmake_installation_environment(cmake: str) -> list[str]:
             return fp.read().split()
     except OSError:
         pass
-    root = subprocess.run(
-        [cmake, "-P", "/dev/stdin"], input='message("${CMAKE_ROOT}")', capture_output=True, text=True, check=True
-    ).stderr.strip()
+    # A script file, not ``-P /dev/stdin``: CMake 3.28 seeks back over a byte-order mark and refuses a pipe.
+    with tempfile.TemporaryDirectory() as scratch:
+        script = os.path.join(scratch, "cmake_root.cmake")
+        with open(script, "w") as fp:
+            fp.write('message("${CMAKE_ROOT}")')
+        root = subprocess.run([cmake, "-P", script], capture_output=True, text=True, check=True).stderr.strip()
     documented = glob.glob(os.path.join(root, "Help", "envvar", "*.rst"))
     modules = [os.path.join(r, f) for r, _, fs in os.walk(os.path.join(root, "Modules")) for f in fs]
     if not (documented and modules):

@@ -84,10 +84,11 @@ def test_every_ite_arm_is_typed():
     instead of failing, and that is worse than the error this started as.
     """
     cu = _device_code(_vectorized())
-    ites = re.findall(r"ITE\((.*?)\);", cu)
+    # ``ITE(c, t, e)`` is emitted as the conditional operator ``((c) ? (t) : (e))``.
+    ites = re.findall(r"\) \? \((.*?)\);", cu)
     assert ites, "no scalar-tail ITE emitted; the test would prove nothing"
     for args in ites:
-        assert "dace::float16(" in args, f"an ITE arm reached C++ without a dtype: ITE({args})"
+        assert "dace::float16(" in args, f"an ITE arm reached C++ without a dtype: ? ({args}"
 
 
 def test_no_python_syntax_in_device_code():

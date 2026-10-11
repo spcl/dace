@@ -74,8 +74,6 @@ UNTILED_KERNELS = frozenset(
         "s322_d_single",
         "s332_d_single",
         "s343_d_single",
-        "s481_d_single",
-        "s482_d_single",
         "vsumr_d_single",
     }
 )

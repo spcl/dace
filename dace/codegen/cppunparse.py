@@ -1656,6 +1656,14 @@ class CPPUnparser:
             if t.func.id in self._typecast_funcs:
                 self.write(self.typecast(self._typecast_funcs[t.func.id], ", ".join(self.render(e) for e in t.args)))
                 return
+            if t.func.id == "ITE" and len(t.args) == 3 and not t.keywords:
+                # The ITE blend is the C conditional operator on every target; spelled as one, the
+                # compiler sees a select it can vectorize rather than a call it first has to inline.
+                for text, operand in zip(("((", ") ? (", ") : ("), t.args):
+                    self.write(text)
+                    self.dispatch(operand)
+                self.write("))")
+                return
             if t.func.id in self._renamed_funcs:
                 self.emit_call(self._renamed_funcs[t.func.id], t.args)
                 return
