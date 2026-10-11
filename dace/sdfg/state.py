@@ -9,6 +9,8 @@ import copy
 import inspect
 import itertools
 import re
+import sys
+import types
 import warnings
 from collections.abc import Callable, Iterable, Iterator
 from typing import (
@@ -79,10 +81,25 @@ def _get_debug_info(explicit_lineinfo: dtypes.DebugInfo | None) -> dtypes.DebugI
         return explicit_lineinfo
 
     if dace.Config.get("compiler", "lineinfo") == "inspect":
-        caller = inspect.getframeinfo(inspect.stack()[2][0], context=0)
-        return dtypes.DebugInfo(caller.lineno, 0, caller.lineno, 0, caller.filename)
+        # Two frames up is this function's caller's caller; ``inspect.stack()`` would resolve every frame to the root
+        lineno, filename = caller_position(sys._getframe(2))
+        return dtypes.DebugInfo(lineno, 0, lineno, 0, filename)
 
     return None
+
+
+#: ``(code, instruction offset) -> (line, file)`` per resolved call site; ``getframeinfo`` stats the file each call.
+CALLER_POSITIONS: dict[tuple[types.CodeType, int], tuple[int, str]] = {}
+
+
+def caller_position(frame: types.FrameType) -> tuple[int, str]:
+    """``(lineno, filename)`` as ``inspect.getframeinfo(frame, context=0)`` reports them, once per call site."""
+    key = (frame.f_code, frame.f_lasti)
+    position = CALLER_POSITIONS.get(key)
+    if position is None:
+        info = inspect.getframeinfo(frame, context=0)
+        position = CALLER_POSITIONS[key] = (info.lineno, info.filename)
+    return position
 
 
 def _make_iterators(ndrange):
