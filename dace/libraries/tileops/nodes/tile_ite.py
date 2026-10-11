@@ -81,6 +81,7 @@ class TileITE(TileOp):
     arms and the output share one. Masking the write is the job of the :class:`TileScatter` that consumes ``_o``.
     """
 
+    lanes_independent = True
     implementations = {
         "pure": ExpandTileITEPure,
         "scalar": ExpandTileITEScalar,

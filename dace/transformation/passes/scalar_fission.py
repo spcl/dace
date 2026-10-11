@@ -80,18 +80,20 @@ class ScalarFission(ppl.Pass):
 
         shadow_scope_dict: ap.WriteScopeDict = pipeline_results[self.shadow_analysis().__name__][sdfg.cfg_id]
 
-        # A control-flow condition (branch condition, loop bound/condition) is a
-        # code block that READS every data container it names -- its value must
-        # outlive the condition. Such a scalar is not a privatizable per-iteration
-        # temporary but a pending ``ScalarToSymbolPromotion`` target. Fission would
-        # rename its writer without rewriting the condition (region meta-code is not
-        # a dataflow edge, so it is invisible to the write-shadow analysis and to
-        # the rename below), orphaning the reference into an undefined symbol. Treat
-        # condition-referenced scalars as used and leave them untouched.
+        # A loop header (init, condition, update) READS every data container it names, at points
+        # the write-shadow analysis does not model, so fission would rename the writer and orphan
+        # the header's reference. Leave such scalars untouched. A branch condition is modelled: it
+        # reads on entry to its conditional and is renamed with its scope.
         cond_referenced: set[str] = set()
+        # Read by a branch condition: versioned with its dominating write only. The undominated
+        # privatization below proves its legality from access nodes, which a condition read is not.
+        branch_referenced: set[str] = set()
         for region in sdfg.all_control_flow_regions():
-            for cb in region.get_meta_codeblocks():
-                cond_referenced |= cb.get_free_symbols()
+            names = {s for cb in region.get_meta_codeblocks() for s in cb.get_free_symbols()}
+            if isinstance(region, ConditionalBlock):
+                branch_referenced |= names
+            else:
+                cond_referenced |= names
         cond_referenced &= set(sdfg.arrays.keys())
 
         # A scalar threaded through a single ``NestedSDFG`` inout connector is a
@@ -108,8 +110,7 @@ class ScalarFission(ppl.Pass):
             if not self.accepts(desc):
                 continue
 
-            # A scalar read by a control-flow condition is used, not a privatizable
-            # temporary -- leave it for symbol promotion (see ``cond_referenced``).
+            # A scalar read by a loop header is left whole (see ``cond_referenced``).
             if name in cond_referenced:
                 continue
 
@@ -126,7 +127,7 @@ class ScalarFission(ppl.Pass):
             # branch of a conditional and read after the merge (the cloudsc
             # zcor/zfac/zqe pattern). These are loop-local (no upward-exposed use),
             # so each enclosing loop gets its own copy -- scalar privatization.
-            if None in write_scope_dict:
+            if None in write_scope_dict and name not in branch_referenced:
                 # Built on the first undominated container, after any renames made before it. A rename
                 # only rewrites the container being processed, so the entries of the rest stay exact.
                 if carriers is None:
@@ -148,6 +149,18 @@ class ScalarFission(ppl.Pass):
             # accesses tied to the outer scope, and LoopToMap refuses them.
             dominated = [w for w in write_scope_dict if w is not None]
             if len(dominated) == 0 or (len(dominated) == 1 and None not in write_scope_dict):
+                continue
+
+            # Versioning gives each access ONE name, so an access in two scopes (a read after a
+            # conditional whose branches write in nested loops, which the analysis cannot merge into
+            # one scope) would read only one branch's version. Leave such a container whole.
+            seen: set[int] = set()
+            overlapping = False
+            for accesses in write_scope_dict.values():
+                for _block, access in accesses:
+                    overlapping |= id(access) in seen
+                    seen.add(id(access))
+            if overlapping:
                 continue
 
             for write, shadowed_reads in write_scope_dict.items():
@@ -173,6 +186,8 @@ class ScalarFission(ppl.Pass):
                                 affected_states.add(read[0])
                         elif isinstance(read[1], InterstateEdge):
                             read[1].replace_dict({name: newname})
+                        elif isinstance(read[1], ConditionalBlock):
+                            read[1].replace_meta_accesses({name: newname})
 
                     # Propagate the rename across every NestedSDFG boundary
                     # touched by the renamed accesses: connector names, inner

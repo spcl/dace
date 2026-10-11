@@ -72,12 +72,20 @@ class MarkTileDims(ppl.Pass):
         "short dim IS tiled, as an empty interior plus one masked remainder tile.",
     )
 
+    even_widths = properties.ListProperty(
+        element_type=int,
+        default=[],
+        desc="Per-dim widths the even extent of ``assume_even`` is a multiple of, innermost last; empty: ``widths``. "
+        "A block tile is wider than the lanes of one thread, and its lowering skips the lanes past the map end.",
+    )
+
     def __init__(
         self,
         widths: tuple[int, ...] = (8,),
         skip_ineligible: bool = False,
         require_gpu_resident: bool = False,
         assume_even: bool = False,
+        even_widths: tuple[int, ...] = (),
     ) -> None:
         """Build the pass.
 
@@ -91,6 +99,7 @@ class MarkTileDims(ppl.Pass):
             tiles and no remainder is emitted, so a provably-short dim must stay scalar. Must match
             the ``SplitMapForTileRemainder`` running alongside, or the two disagree about which
             maps are tiled and a strided map ends up with a scalar body.
+        :param even_widths: The widths the even extent is a multiple of; empty: ``widths``.
         :raises ValueError: If ``widths`` length not in ``{1, 2, 3}``.
         """
         super().__init__()
@@ -99,6 +108,7 @@ class MarkTileDims(ppl.Pass):
         self.skip_ineligible = skip_ineligible
         self.require_gpu_resident = require_gpu_resident
         self.assume_even = assume_even
+        self.even_widths = list(even_widths)
 
     def modifies(self) -> ppl.Modifies:
         """Read-only pass.
@@ -140,7 +150,8 @@ class MarkTileDims(ppl.Pass):
         # region -> short, symbolic, or wavefront trips handled by masking (or the scalar
         # remainder loop under ``scalar_postamble``). No ``trip >= W`` precondition, no runtime
         # trap: too-small trip just runs fewer active lanes.
-        for (lb, ub, step), iv, W in zip(slice_ranges, iter_vars, widths):
+        even_widths = (self.even_widths or list(widths))[-K:]
+        for (lb, ub, step), iv, even in zip(slice_ranges, iter_vars, even_widths):
             if step != 1 and str(step) != "1":
                 return self._fail_or_skip(
                     f"map {map_entry.label!r} dim {iv!r} has step {step!r}; v2 requires step == 1"
@@ -155,7 +166,7 @@ class MarkTileDims(ppl.Pass):
             # extent stays tiled: the masked remainder / runtime guard handles a runtime trip < W.
             if self.assume_even:
                 try:
-                    if int(as_expr(symbolic.simplify(ub - lb + 1))) < W:
+                    if int(as_expr(symbolic.simplify(ub - lb + 1))) < even:
                         return None
                 except (TypeError, ValueError):
                     pass

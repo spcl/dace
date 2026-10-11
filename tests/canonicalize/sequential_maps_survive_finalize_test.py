@@ -30,6 +30,8 @@ parallel (a race) or leaves a genuinely parallel map serial (a silent regression
 loses a guard.
 """
 
+from collections import defaultdict
+
 import numpy as np
 import pytest
 
@@ -113,25 +115,27 @@ def enclosing_branch_conditions(block: ControlFlowBlock) -> list[str]:
 
 
 def names_behind(sdfg: dace.SDFG, condition: str) -> OrderedSet[str]:
-    """Names ``condition`` reads once staged interstate assignments are substituted back in.
+    """Names ``condition`` reads once staged values are substituted back in.
 
-    Canonicalize stages an array read into a symbol on an interstate edge (``cond_index =
-    cond[i]``) and writes the SYMBOL into the branch predicate, so the predicate's own free
-    symbols no longer mention the array the guard actually tests.
+    Canonicalize stages an array read (``cond_index = cond[i]``) into a symbol on an interstate
+    edge, or into a scalar a tasklet writes, and the branch predicate reads that, so the
+    predicate's own free symbols no longer mention the array the guard actually tests.
     """
-    assigns = {
-        lhs: rhs
-        for sd in sdfg.all_sdfgs_recursive()
-        for cfg in sd.all_control_flow_regions(recursive=False)
-        for e in cfg.edges()
-        for lhs, rhs in e.data.assignments.items()
-    }
+    sources: dict[str, OrderedSet[str]] = defaultdict(OrderedSet)
+    for sd in sdfg.all_sdfgs_recursive():
+        for cfg in sd.all_control_flow_regions(recursive=False):
+            for e in cfg.edges():
+                for lhs, rhs in e.data.assignments.items():
+                    sources[lhs] |= OrderedSet(str(s) for s in CodeBlock(rhs).get_free_symbols())
+        for state in sd.states():
+            for node in state.data_nodes():
+                for e in state.in_edges(node):
+                    sources[node.data] |= OrderedSet(i.data.data for i in state.in_edges(e.src) if i.data.data)
     names: OrderedSet[str] = OrderedSet(str(s) for s in CodeBlock(condition).get_free_symbols())
-    for _ in range(len(assigns) + 1):
+    for _ in range(len(sources) + 1):
         grown = OrderedSet(names)
         for name in names:
-            if name in assigns:
-                grown |= OrderedSet(str(s) for s in CodeBlock(assigns[name]).get_free_symbols())
+            grown |= sources.get(name, OrderedSet())
         if len(grown) == len(names):
             return grown
         names = grown

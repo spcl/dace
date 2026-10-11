@@ -33,7 +33,7 @@ def is_device_wide_libnode(node: nodes.Node) -> bool:
     """
     if not isinstance(node, nodes.LibraryNode) or is_copy_or_fill_libnode(node):
         return False
-    expansion = type(node).implementations.get(node.implementation)
+    expansion = type(node).implementations.get(node.implementation or type(node).default_implementation)
     return expansion is None or not expansion.runs_inside_kernel
 
 

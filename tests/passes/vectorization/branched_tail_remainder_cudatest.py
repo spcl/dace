@@ -39,6 +39,7 @@ import pytest
 import dace
 from dace.dtypes import DeviceType
 from dace.libraries.tileops import MaskedCopyLibraryNode, TileITE
+from dace.libraries.tileops.dispatch import TileGroup
 from dace.sdfg.state import ConditionalBlock
 from dace.transformation.interstate import LoopToMap
 from dace.transformation.passes.canonicalize.finalize import offload_to_gpu
@@ -282,7 +283,10 @@ def test_branched_tail_provably_nondivisible_does_not_raise():
         VectorizeGPU(VectorizeConfig(widths=(8,), assume_even=True)).apply_pass(_prep(_add16_literal), {})
 
     sdfg = _prep(_add16_literal)
-    VectorizeGPU(VectorizeConfig(widths=(8,), remainder_strategy=RemainderStrategy.BRANCHED_TAIL)).apply_pass(sdfg, {})
+    # One thread's tile, so the map strides by W; a block tile strides by the block's W * threads.
+    VectorizeGPU(
+        VectorizeConfig(widths=(8,), remainder_strategy=RemainderStrategy.BRANCHED_TAIL, tile_group=TileGroup.THREAD)
+    ).apply_pass(sdfg, {})
     sdfg.validate()
     maps = _top_maps(sdfg)
     assert len(maps) == 1, f"branched_tail must fuse to one map; got {len(maps)}"

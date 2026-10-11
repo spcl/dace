@@ -96,6 +96,7 @@ from dace.transformation.passes.clean_tasklet_to_scalar_slice_to_access_node_pat
 from dace.transformation.passes.constant_propagation import ConstantPropagation
 from dace.transformation.passes.dead_dataflow_elimination import DeadDataflowElimination
 from dace.transformation.passes.dead_state_elimination import DeadStateElimination
+from dace.transformation.passes.demote_non_structural_symbols import DemoteNonStructuralSymbols
 from dace.transformation.passes.empty_loop_elimination import EmptyLoopElimination
 from dace.transformation.passes.equalize_symbol_dtypes import EqualizeSymbolDtypes, equalize
 from dace.transformation.passes.fuse_maps import FuseMaps
@@ -985,6 +986,10 @@ def _build_stages(
     # A store a LATER iteration overwrites unread is the only carrier some loops have (TSVC
     # ``s244``); dropping it, and peeling the tail iterations whose store does survive, hands
     # LoopToMap a DOALL loop. Must precede it -- afterwards there is no LoopRegion to peel.
+    # Only iteration domains and data accesses keep their symbols, so a loop that merely updates a counter or a guard
+    # stops carrying one. After the lifting band, whose matchers read those symbols (ArgMaxLift's index, an IV), and
+    # past the last scalar-to-symbol promotion; ScalarFission then gives each loop its own copy of a demoted name.
+    s += [("parallelize", DemoteNonStructuralSymbols()), ("parallelize", ppl.Pipeline([ScalarFission()]))]
     s += [("parallelize", DeadCarriedStoreElimination())]
     s += [("parallelize", PropagateMemlets())]
     s += [("parallelize", ParallelizeLoops(propagate=False))]

@@ -769,27 +769,22 @@ def conditional_block_fixture(name: str, exhaustive: bool):
 
 
 def test_conditional_block_without_else_is_refused():
-    """Refusal: without an ``else`` no branch is guaranteed to run, so the read after it stays undominated."""
-    sdfg, writes, end_access = conditional_block_fixture("conditional_partial", False)
+    """``if c: A = 1`` has no dominating write: the branch may not run, so the read stays unscoped."""
+    sdfg, _, end_access = conditional_block_fixture("conditional_no_else", exhaustive=False)
     res = write_scopes(sdfg)
 
     assert end_access in res["A"][None]
-    for write in writes:
-        assert write not in res["A"] or res["A"][write] == {write}
 
 
-def test_a_conditional_writing_on_every_path_shadows_the_read_after_it():
-    """With an ``else`` every branch writes, so the read after the block joins ONE scope with every branch's write.
-
-    One scope for all of them: naming one branch's write alone would let a consumer version it while leaving
-    its sibling behind.
-    """
-    sdfg, writes, end_access = conditional_block_fixture("conditional_exhaustive", True)
+def test_conditional_block_writing_every_branch_is_one_scope():
+    """``if c: A = 1 else: A = 2``: every branch writes, so the block dominates the read. Both branch
+    writes share ONE scope (rooted at the first), so a consumer versions them together."""
+    sdfg, (first, second), end_access = conditional_block_fixture("conditional_else", exhaustive=True)
     res = write_scopes(sdfg)
 
-    assert end_access not in res["A"][None]
-    (scope,) = [members | {root} for root, members in res["A"].items() if root is not None and end_access in members]
-    assert set(writes) <= scope
+    assert set(res["A"][first]) == {second, end_access}
+    assert second not in res["A"]
+    assert not res["A"][None]
 
 
 def test_loop_carried_read_is_not_split_from_the_body_write():
@@ -866,3 +861,9 @@ if __name__ == "__main__":
     test_loop_fake_complex_shadow(True)
     test_loop_real_shadow(True)
     test_dominationless_write_branch(True)
+    test_loop_region_write_dominates_read_after_loop()
+    test_symbolic_trip_count_loop_is_refused()
+    test_conditional_write_inside_provable_loop_is_refused()
+    test_conditional_block_without_else_is_refused()
+    test_conditional_block_writing_every_branch_is_one_scope()
+    test_loop_carried_read_is_not_split_from_the_body_write()

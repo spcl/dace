@@ -76,3 +76,10 @@ class TileOpsCUDA(TileOpsHeaderOnly):
     """
 
     headers = {"frame": ["dace/tile_ops/cuda.h"], "cuda": ["dace/tile_ops/cuda.h"]}
+
+
+@dace.library.environment
+class TileOpsCUDABlock(TileOpsHeaderOnly):
+    """The thread-block collectives of the ``block`` lowering (``cub``, ``hipcub`` on HIP), only in device code."""
+
+    headers = {"cuda": ["dace/tile_ops/cuda_block.h"]}
