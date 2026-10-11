@@ -103,8 +103,10 @@ def test_the_tiles_cover_the_axis_exactly_once():
     ``t * T`` and stops before ``(t + 1) * T``, so consecutive tiles abut, and the last one stops at the
     axis end."""
     code = emitted(finalized(column_scan, "tile_cover"))
-    assert re.search(r"__dace_tile \* ", code), "tile lower bound missing"
-    assert re.search(r"\(__dace_tile \+ 1\) \* ", code), "tile upper bound missing"
+    # The tile size is a multiple of the minimum tile, so the printer may group it with the tile index first:
+    # ``(16 * __dace_tile) * T`` as well as ``__dace_tile * T``.
+    assert re.search(r"__dace_tile\)? \* ", code), "tile lower bound missing"
+    assert re.search(r"\(__dace_tile \+ 1\)\)? \* ", code), "tile upper bound missing"
     assert "Min(" in code, "the last tile must stop at the axis end"
 
 
