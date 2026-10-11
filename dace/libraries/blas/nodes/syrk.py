@@ -1,131 +1,129 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-import copy
-
-import dace.library
-import dace.properties
-import dace.sdfg.nodes
-from dace import SDFG, SDFGState
+import dace
+from dace import SDFG, SDFGState, library, properties
 from dace import memlet as mm
 from dace.frontend.common import op_repository as oprepo
 from dace.libraries.blas import blas_helpers, environments
+from dace.libraries.blas.blas_helpers import operand
+from dace.libraries.blas.nodes.symv import symmetric_element
+from dace.sdfg import nodes
 from dace.transformation.transformation import ExpandTransformation
 
 
-@dace.library.expansion
+@library.expansion
+class ExpandSyrkPure(ExpandTransformation):
+    environments: list[type] = []
+
+    @staticmethod
+    def expansion(node, parent_state, parent_sdfg, **kwargs):
+        node.validate(parent_sdfg, parent_state)
+        sdfg = blas_helpers.connector_sdfg(node, parent_state, parent_sdfg)
+        n = sdfg.arrays["_Cin"].shape[0]
+        k = sdfg.arrays["_A"].shape[0 if node.transA else 1]
+        sdfg.add_transient("_product", [n, n], sdfg.arrays["_Cin"].dtype, sdfg.arrays["_Cin"].storage)
+        init = sdfg.add_state(f"{node.label}_init")
+        init.add_mapped_tasklet(
+            "zero",
+            {"__i": f"0:{n}", "__j": f"0:{n}"},
+            {},
+            "__out = 0",
+            {"__out": dace.Memlet("_product[__i, __j]")},
+            external_edges=True,
+        )
+        # A @ A^T multiplies rows i and j of A; A^T @ A its columns
+        ai, aj = ("_A[__k, __i]", "_A[__k, __j]") if node.transA else ("_A[__i, __k]", "_A[__j, __k]")
+        product = sdfg.add_state_after(init, f"{node.label}_product")
+        product.add_mapped_tasklet(
+            "syrk",
+            {"__i": f"0:{n}", "__j": f"0:{n}", "__k": f"0:{k}"},
+            {"__ai": dace.Memlet(ai), "__aj": dace.Memlet(aj)},
+            "__out = __ai * __aj",
+            {"__out": dace.Memlet("_product[__i, __j]", wcr="lambda a, b: a + b")},
+            external_edges=True,
+        )
+        # As in BLAS, only the referenced triangle of C is updated
+        update = sdfg.add_state_after(product, f"{node.label}_update")
+        update.add_mapped_tasklet(
+            "update",
+            {"__i": f"0:{n}", "__j": f"0:{n}"},
+            {"__c": dace.Memlet("_Cin[__i, __j]"), "__p": dace.Memlet("_product[__i, __j]")},
+            f"__out = ({node.alpha}) * __p + ({node.beta}) * __c if {symmetric_element(node.uplo, '__i', '__j')} "
+            "else __c",
+            {"__out": dace.Memlet("_Cout[__i, __j]")},
+            external_edges=True,
+        )
+        return sdfg
+
+
+def syrk_call(node, state, sdfg) -> SDFG:
+    """``_Cout = _Cin``, then ``?syrk`` updates ``_Cout`` in place."""
+    a, c = operand(node, state, sdfg, "_A"), operand(node, state, sdfg, "_Cout")
+    layout = blas_helpers.matrix_layout(a, c)
+    prefix = blas_helpers.blas_prefix(a.desc.dtype)
+    if layout is None or prefix is None:
+        return ExpandSyrkPure.expansion(node, state, sdfg)
+    scalars, arg = blas_helpers.scalar_arguments(a.desc.dtype, alpha=node.alpha, beta=node.beta)
+    lda, ldc = layout.leading
+    order = "CblasRowMajor" if layout.row_major else "CblasColMajor"
+    uplo = "CblasUpper" if node.uplo else "CblasLower"
+    trans = "CblasTrans" if node.transA else "CblasNoTrans"
+    call = (
+        f"cblas_{prefix.lower()}syrk({order}, {uplo}, {trans}, {c.shape[0]}, {a.shape[0 if node.transA else 1]}, "
+        f"{arg['alpha']}, __A, {lda}, {arg['beta']}, __Cout, {ldc});"
+    )
+    return blas_helpers.in_place_call(node, state, sdfg, "_Cin", "_Cout", scalars + call)
+
+
+@library.expansion
 class ExpandSyrkOpenBLAS(ExpandTransformation):
     environments = [environments.openblas.OpenBLAS]
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, **kwargs):
-        (desc_A, lda), (desc_Cin, ldc_in), ldc_out, n, k = node.validate(parent_sdfg, parent_state)
-        dt = desc_A.dtype.base_type
-        func, _, _ = blas_helpers.cublas_type_metadata(dt)
-        prefix = func.lower()
-        uplo = "CblasUpper" if node.uplo else "CblasLower"
-        trans = "CblasTrans" if node.transA else "CblasNoTrans"
-        a, b = node.alpha, node.beta
-        code = f"""
-        std::memcpy(_Cout, _Cin, sizeof({dt.ctype}) * ({n}) * ({ldc_in}));
-        cblas_{prefix}syrk(CblasRowMajor, {uplo}, {trans}, {n}, {k}, ({dt.ctype})({a}), _A, {lda}, ({dt.ctype})({b}), _Cout, {ldc_out});
-        """
-        return dace.sdfg.nodes.Tasklet(
-            node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
-        )
+        node.validate(parent_sdfg, parent_state)
+        return syrk_call(node, parent_state, parent_sdfg)
 
 
-@dace.library.expansion
+@library.expansion
 class ExpandSyrkMKL(ExpandTransformation):
     environments = [environments.intel_mkl.IntelMKL]
 
     @staticmethod
-    def expansion(*args, **kwargs):
-        return ExpandSyrkOpenBLAS.expansion(*args, **kwargs)
-
-
-@dace.library.expansion
-class ExpandSyrkCuBLAS(ExpandTransformation):
-    environments = [environments.cublas.cuBLAS]
-
-    @staticmethod
     def expansion(node, parent_state, parent_sdfg, **kwargs):
-        (desc_A, lda), (desc_Cin, ldc_in), ldc_out, n, k = node.validate(parent_sdfg, parent_state)
-        dt = desc_A.dtype.base_type
-        func, _, _ = blas_helpers.cublas_type_metadata(dt)
-        uplo = "CUBLAS_FILL_MODE_UPPER" if node.uplo else "CUBLAS_FILL_MODE_LOWER"
-        trans = "CUBLAS_OP_T" if node.transA else "CUBLAS_OP_N"
-        a, b = node.alpha, node.beta
-        code = environments.cublas.cuBLAS.handle_setup_code(node)
-        code += f"""
-        {dt.ctype} __alpha = ({dt.ctype})({a}); {dt.ctype} __beta = ({dt.ctype})({b});
-        cudaMemcpyAsync(_Cout, _Cin, sizeof({dt.ctype}) * ({n}) * ({ldc_in}),
-                        cudaMemcpyDeviceToDevice, __dace_current_stream);
-        cublas{func}syrk(__dace_cublas_handle, {uplo}, {trans}, {n}, {k}, &__alpha, _A, {lda}, &__beta, _Cout, {ldc_out});
-        """
-        return dace.sdfg.nodes.Tasklet(
-            node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
-        )
+        node.validate(parent_sdfg, parent_state)
+        return syrk_call(node, parent_state, parent_sdfg)
 
 
-@dace.library.node
-class Syrk(dace.sdfg.nodes.LibraryNode):
-    # Global properties
-    implementations = {"OpenBLAS": ExpandSyrkOpenBLAS, "MKL": ExpandSyrkMKL, "cuBLAS": ExpandSyrkCuBLAS}
+@library.node
+class Syrk(nodes.LibraryNode):
+    """BLAS ``?syrk``: ``_Cout = alpha * _A @ _A^T + beta * _Cin``, or ``alpha * _A^T @ _A + beta * _Cin`` with
+    ``transA``, updating only the upper (``uplo``) or the lower triangle; the other one keeps ``_Cin``."""
+
+    implementations = {"pure": ExpandSyrkPure, "OpenBLAS": ExpandSyrkOpenBLAS, "MKL": ExpandSyrkMKL}
     default_implementation = None
 
-    # Object fields
-    uplo = dace.properties.Property(dtype=bool, default=False, desc="True if upper triangle of C is written")
-    transA = dace.properties.Property(dtype=bool, default=False, desc="False: C += alpha A A^T; True: C += alpha A^T A")
-    alpha = dace.properties.SymbolicProperty(allow_none=False, default=1)
-    beta = dace.properties.SymbolicProperty(allow_none=False, default=0)
+    uplo = properties.Property(dtype=bool, default=False, desc="Update the upper triangle of C instead of the lower.")
+    transA = properties.Property(dtype=bool, default=False, desc="Compute _A^T @ _A instead of _A @ _A^T.")
+    alpha = properties.SymbolicProperty(allow_none=False, default=1)
+    beta = properties.SymbolicProperty(allow_none=False, default=0)
 
     def __init__(self, name, uplo=False, transA=False, alpha=1, beta=0, **kwargs):
         super().__init__(name, inputs={"_A", "_Cin"}, outputs={"_Cout"}, **kwargs)
         self.uplo, self.transA, self.alpha, self.beta = uplo, transA, alpha, beta
 
     def validate(self, sdfg, state):
-        """
-        :return: A five-tuple ((A, lda), (C, ldc_in), ldc_out, n, k).
-        """
-        desc_A = desc_C = lda = ldc_in = ldc_out = None
-        n = k = None
-        for e in state.in_edges(self):
-            sq = copy.deepcopy(e.data.subset)
-            dims = sq.squeeze()
-            desc = sdfg.arrays[e.data.data]
-            if e.dst_conn == "_A":
-                desc_A, lda = desc, desc.strides[dims[0]]
-                if self.transA:
-                    k = sq.size()[0]
-                else:
-                    k = sq.size()[1]
-            elif e.dst_conn == "_Cin":
-                desc_C, ldc_in = desc, desc.strides[dims[0]]
-                n = sq.size()[0]
-        for e in state.out_edges(self):
-            if e.src_conn == "_Cout":
-                sq = copy.deepcopy(e.data.subset)
-                dims = sq.squeeze()
-                ldc_out = sdfg.arrays[e.data.data].strides[dims[0]]
-        if desc_A is None or desc_C is None:
-            raise ValueError("SYRK needs _A and _Cin inputs and _Cout output")
-        return (desc_A, lda), (desc_C, ldc_in), ldc_out, n, k
+        a, cin, cout = (operand(self, state, sdfg, c).shape for c in ("_A", "_Cin", "_Cout"))
+        n = a[1] if self.transA else a[0]
+        if len(a) != 2 or not cin == cout == [n, n]:
+            raise ValueError(f"{self.label}: _Cin and _Cout must be {n} x {n} matrices")
 
 
-# Numpy replacement
 @oprepo.replaces("dace.libraries.blas.syrk")
 @oprepo.replaces("dace.libraries.blas.Syrk")
-def syrk_libnode(
-    pv: "ProgramVisitor", sdfg: SDFG, state: SDFGState, A, C, result=None, uplo=False, transA=False, alpha=1, beta=0
-):
+def syrk_libnode(pv, sdfg: SDFG, state: SDFGState, A, C, result=None, uplo=False, transA=False, alpha=1, beta=0):
     result = result if result is not None else C
-    A_in, C_in = state.add_read(A), state.add_read(C)
-    C_out = state.add_write(result)
-
-    libnode = Syrk("syrk", uplo=uplo, transA=transA, alpha=alpha, beta=beta)
-    state.add_node(libnode)
-
-    state.add_edge(A_in, None, libnode, "_A", mm.Memlet(A))
-    state.add_edge(C_in, None, libnode, "_Cin", mm.Memlet(C))
-    state.add_edge(libnode, "_Cout", C_out, None, mm.Memlet(result))
-
+    node = Syrk("syrk", uplo=uplo, transA=transA, alpha=alpha, beta=beta)
+    for name, connector in ((A, "_A"), (C, "_Cin")):
+        state.add_edge(state.add_read(name), None, node, connector, mm.Memlet(name))
+    state.add_edge(node, "_Cout", state.add_write(result), None, mm.Memlet(result))
     return []

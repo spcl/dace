@@ -127,8 +127,8 @@ def dft_nd_sdfg(indesc, outdesc, factor, inverse, axis, name="dft_nd"):
     shape = list(outdesc.shape)
     ct = outdesc.dtype  # complex output type
     sdfg = dace.SDFG(name)
-    sdfg.add_array("_inp", indesc.shape, indesc.dtype, storage=indesc.storage)
-    sdfg.add_array("_out", outdesc.shape, outdesc.dtype, storage=outdesc.storage)
+    sdfg.add_array("_inp", indesc.shape, indesc.dtype, storage=indesc.storage, strides=indesc.strides)
+    sdfg.add_array("_out", outdesc.shape, outdesc.dtype, storage=outdesc.storage, strides=outdesc.strides)
     sdfg.add_transient("__buf0", shape, ct, storage=outdesc.storage)
     if len(axes) >= 2:
         sdfg.add_transient("__buf1", shape, ct, storage=outdesc.storage)

@@ -97,6 +97,24 @@ def test_gpu_fft_twoplans():
     assert np.allclose(d, np.fft.ifft(b, norm="forward"), rtol=1e-3, atol=1e-5)
 
 
+@pytest.mark.gpu
+def test_gpu_fft_along_the_first_axis():
+    import dace.libraries.fft as fftlib
+
+    @dace.program
+    def tester(x: dace.complex128[16, 12]):
+        return np.fft.fft(x, axis=0)
+
+    sdfg = tester.to_sdfg()
+    sdfg.apply_gpu_transformations()
+    fftlib.FFT.default_implementation = _gpu_fft()
+    sdfg.expand_library_nodes()
+    fftlib.FFT.default_implementation = "pure"
+
+    a = np.random.rand(16, 12) + 1j * np.random.rand(16, 12)
+    assert np.allclose(sdfg(a), np.fft.fft(a, axis=0))
+
+
 if __name__ == "__main__":
     test_fft(False)
     test_fft(True)
@@ -106,3 +124,4 @@ if __name__ == "__main__":
     test_ifft("ortho")
     test_gpu_fft()
     test_gpu_fft_twoplans()
+    test_gpu_fft_along_the_first_axis()
