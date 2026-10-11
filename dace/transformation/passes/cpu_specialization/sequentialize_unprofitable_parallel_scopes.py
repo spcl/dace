@@ -98,7 +98,7 @@ def release_one_trip_maps(sdfg: SDFG) -> int:
     the peeled first vertical level of ``cloudsc_monolith`` is such a map, and inferred under it its 132
     plane maps ran on one thread, 3.7 s of a 4 s call at 24 threads.
 
-    :param sdfg: the SDFG to rewrite, nested SDFGs included.
+    :param sdfg: the SDFG whose own states are rewritten.
     :returns: how many such maps were found.
     """
     found = 0

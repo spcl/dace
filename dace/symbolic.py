@@ -1703,7 +1703,8 @@ def numeric_bounds(expr: sympy.Basic) -> tuple[Any, Any]:
 def _interval(expr: Any, remainders: dict[Any, tuple[Any, Any]]) -> tuple[Any, Any]:
     """:func:`numeric_bounds` of an expression whose rounding terms are already ``remainders``."""
     if expr.is_Number:
-        return expr, expr
+        # ``oo`` is a sympy Number too: an infinite bound is no bound, and ``oo - oo`` would make it ``nan``.
+        return (expr, expr) if expr.is_finite else (None, None)
     if expr.is_Symbol:
         if expr in remainders:
             return remainders[expr]
