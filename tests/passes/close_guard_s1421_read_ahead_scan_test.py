@@ -58,8 +58,8 @@ def test_int_floor_stride_is_proven_nonpositive():
     n = symbolic.symbol("LEN_1D", dtype=dace.int64, nonnegative=True)
     stride = -symbolic.int_floor(n, 2)
 
-    # Bare SymPy cannot sign ``int_floor``; the floor rewrite is what makes the proof go through.
-    assert stride.is_nonpositive is None
+    # ``int_floor`` signs itself from its operands: a nonnegative dividend over a positive divisor.
+    assert stride.is_nonpositive is True
     assert _provably_nonpositive(stride)
     assert _admissible_scan_stride(stride) is None
 
