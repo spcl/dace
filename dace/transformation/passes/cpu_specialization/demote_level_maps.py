@@ -18,12 +18,15 @@ whether it pays is the stride test (:func:`level_is_more_contiguous`): wherever 
 map's parameter must be at a provably smaller stride than the outermost parameter of the plane map.
 """
 
+from typing import NamedTuple
+
 from dace import SDFG, dtypes
 from dace.sdfg import nodes
-from dace.sdfg.state import LoopRegion, SDFGState
+from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState
 from dace.transformation.dataflow.map_for_loop import MapToForLoop
 from dace.transformation.interstate.expand_nested_sdfg_inputs import ExpandNestedSDFGInputs
 from dace.transformation.interstate.multistate_inline import InlineMultistateSDFG
+from dace.transformation.passes.loop_fission import LoopFission, _independent_block_groups
 from dace.transformation.passes.minimize_stride_permutation import (
     NO_HOME_SCORE,
     UndecidableStride,
@@ -35,42 +38,74 @@ from dace.transformation.passes.minimize_stride_permutation import (
 Plane = tuple[SDFG, SDFGState, nodes.MapEntry]
 
 
-def nested_planes(body: SDFG) -> list[Plane] | None:
-    """The maps at the top level of the states of ``body``, or ``None`` if a loop in it runs none.
+def block_planes(block: ControlFlowBlock) -> list[Plane]:
+    """The maps at the top level of ``block`` (a state) or of its states (a region), nested SDFGs excluded."""
+    states = [block] if isinstance(block, SDFGState) else block.states()
+    return [(state.sdfg, state, n) for state in states for n in state.scope_children()[None] if isinstance(n, nodes.MapEntry)]
+
+
+def holds_loop_without_planes(block: ControlFlowBlock) -> bool:
+    """Whether ``block`` is or holds a loop that runs no map: scalar statements walked element by element."""
+    if not isinstance(block, ControlFlowRegion):
+        return False
+    loops = [block] if isinstance(block, LoopRegion) else []
+    loops += [b for b in block.all_control_flow_blocks() if isinstance(b, LoopRegion)]
+    return any(not block_planes(loop) for loop in loops)
+
+
+def nested_planes(body: SDFG) -> tuple[list[Plane], bool] | None:
+    """The plane maps of ``body`` and whether the demoted loop must be distributed first, or ``None``.
 
     A loop of scalar statements alone -- a reduction over the plane, ``levelmask[jk] |= clip[i, jk, b]`` walked
     element by element -- would run whole in every tile of the demoted nest, so the tiling refuses the loop and
-    the demotion only takes the levels' parallelism away.
+    the demotion would only take the levels' parallelism away. It is acceptable in a block group of the body that
+    shares no written data with the plane maps (the groups
+    :class:`~dace.transformation.passes.loop_fission.LoopFission` distributes a loop over): that group then runs as
+    a loop of its own.
     """
-    for block in body.all_control_flow_blocks():
-        if isinstance(block, LoopRegion) and not any(
-            isinstance(node, nodes.MapEntry) for state in block.states() for node in state.scope_children()[None]
-        ):
-            return None
-    planes: list[Plane] = []
-    for state in body.states():
-        planes += [(body, state, node) for node in state.scope_children()[None] if isinstance(node, nodes.MapEntry)]
-    return planes
-
-
-def level_planes(sdfg: SDFG, state: SDFGState, entry: nodes.MapEntry) -> list[Plane] | None:
-    """The plane maps of the one-parameter, unscheduled map ``entry``: the maps directly in its scope and those of
-    the nested SDFGs there. ``None`` when its scope holds a library node or a nested SDFG refuses
-    (:func:`nested_planes`)."""
-    if len(entry.map.params) != 1 or entry.map.schedule != dtypes.ScheduleType.Default:
+    if not any(holds_loop_without_planes(block) for block in body.nodes()):
+        return block_planes(body), False
+    groups = _independent_block_groups(body)
+    if groups is None:
         return None
     planes: list[Plane] = []
-    for node in state.scope_children()[entry]:
+    for group in groups:
+        group_planes = [plane for block in group for plane in block_planes(block)]
+        if group_planes and any(holds_loop_without_planes(block) for block in group):
+            return None
+        planes += group_planes
+    return (planes, True) if planes else None
+
+
+class Level(NamedTuple):
+    """What :func:`level_planes` found in a level map's scope."""
+
+    planes: list[Plane]
+    #: The demoted loop is distributed, so a group without plane maps runs as a loop of its own.
+    distribute: bool
+
+
+def level_planes(sdfg: SDFG, state: SDFGState, entry: nodes.MapEntry) -> Level | None:
+    """The plane maps of the one-parameter, unscheduled map ``entry``: the maps directly in its scope and those of
+    the nested SDFGs there. ``None`` when its scope holds a library node or a nested SDFG refuses
+    (:func:`nested_planes`); a body that must be distributed is accepted only as the sole node of the scope."""
+    if len(entry.map.params) != 1 or entry.map.schedule != dtypes.ScheduleType.Default:
+        return None
+    children = [n for n in state.scope_children()[entry] if not isinstance(n, (nodes.AccessNode, nodes.MapExit))]
+    planes: list[Plane] = []
+    distribute = False
+    for node in children:
         if isinstance(node, nodes.MapEntry):
             planes.append((sdfg, state, node))
         elif isinstance(node, nodes.NestedSDFG) and node.sdfg is not None:
             inner = nested_planes(node.sdfg)
-            if inner is None:
+            if inner is None or (inner[1] and len(children) > 1):
                 return None
-            planes += inner
-        elif not isinstance(node, (nodes.AccessNode, nodes.MapExit, nodes.Tasklet)):
+            planes += inner[0]
+            distribute = inner[1]
+        elif not isinstance(node, nodes.Tasklet):
             return None
-    return planes
+    return Level(planes, distribute)
 
 
 def level_is_more_contiguous(param: str, planes: list[Plane]) -> bool:
@@ -109,6 +144,15 @@ def inline_into(sdfg: SDFG, nested: nodes.NestedSDFG) -> None:
         InlineMultistateSDFG.apply_to(sdfg, nested_sdfg=nested, verify=False, save=False)
 
 
+def demote(sdfg: SDFG, entry: nodes.MapEntry) -> LoopRegion:
+    """Turn the map of ``entry`` into a loop (:class:`~dace.transformation.dataflow.map_for_loop.MapToForLoop`)."""
+    state = next(s for s in sdfg.states() if entry in s.nodes())
+    to_loop = MapToForLoop()
+    to_loop.setup_match(sdfg, state.parent_graph.cfg_id, state.block_id, {MapToForLoop.map_entry: entry}, 0, override=True)
+    to_loop.apply(state, sdfg)
+    return to_loop.loop_region
+
+
 def demote_strided_level_maps(sdfg: SDFG) -> int:
     """Turn every top-level level map of ``sdfg``'s own states whose parameter is more contiguous than the planes
     its body sweeps into a sequential loop, the nested SDFGs of its body inlined into the loop. Runs while
@@ -122,13 +166,15 @@ def demote_strided_level_maps(sdfg: SDFG) -> int:
         for entry in state.scope_children()[None]:
             if not isinstance(entry, nodes.MapEntry):
                 continue
-            planes = level_planes(sdfg, state, entry)
-            if planes and level_is_more_contiguous(entry.map.params[0], planes):
+            level = level_planes(sdfg, state, entry)
+            if level is not None and level.planes and level_is_more_contiguous(entry.map.params[0], level.planes):
                 nested = [n for n in state.scope_children()[entry] if isinstance(n, nodes.NestedSDFG)]
-                candidates.append((entry, nested))
+                candidates.append((entry, nested, level.distribute))
     # By node, not by state: inlining one body moves the rest of its state's dataflow into a fresh state.
-    for entry, nested in candidates:
-        MapToForLoop.apply_to(sdfg, map_entry=entry, verify=False, save=False)
+    for entry, nested, distribute in candidates:
+        loop = demote(sdfg, entry)
         for node in nested:
             inline_into(sdfg, node)
+        if distribute:
+            LoopFission.fission(loop)
     return len(candidates)
