@@ -10,7 +10,6 @@ different layouts CPython 3.10-3.14 emit for the same Python control flow yield 
 import dis
 import sys
 import types
-from typing import Dict, FrozenSet, List, Optional, Set, Tuple
 
 from torch._dynamo import bytecode_analysis
 from torch._dynamo import bytecode_transformation as bt
@@ -35,10 +34,10 @@ class CodeInfo:
 
     def __init__(self, code: types.CodeType):
         self.code = code
-        self.instructions: List[bt.Instruction] = bt.cleaned_instructions(code)
+        self.instructions: list[bt.Instruction] = bt.cleaned_instructions(code)
         self.indexof = {inst: i for i, inst in enumerate(self.instructions)}
         n = len(self.instructions)
-        self.successors: List[List[int]] = []
+        self.successors: list[list[int]] = []
         for i, inst in enumerate(self.instructions):
             target = self.indexof[inst.target] if inst.target is not None else None
             if inst.opcode in bytecode_analysis.TERMINAL_OPCODES:
@@ -48,11 +47,11 @@ class CodeInfo:
             else:
                 successors = [i + 1]
             self.successors.append([s for s in successors if s is not None and s < n])
-        self._depths: Optional[Dict[int, int]] = None
-        self._iterators: Optional[Dict[int, int]] = None
-        self._dominators: Optional[Dict[int, Set[int]]] = None
-        self._live: Optional[Dict[int, Set[str]]] = None
-        self._loops: Dict[int, Set[int]] = {}
+        self._depths: dict[int, int] | None = None
+        self._iterators: dict[int, int] | None = None
+        self._dominators: dict[int, set[int]] | None = None
+        self._live: dict[int, set[str]] | None = None
+        self._loops: dict[int, set[int]] = {}
 
     def resolve(self, index: int) -> int:
         """
@@ -71,7 +70,7 @@ class CodeInfo:
                 break
         return index
 
-    def branch_successors(self, index: int) -> Optional[Dict[bool, int]]:
+    def branch_successors(self, index: int) -> dict[bool, int] | None:
         """For a conditional jump on a truth value, the resolved successors by truth value; otherwise ``None``."""
         inst = self.instructions[index]
         if inst.opname not in JUMP_ON_TRUTH:
@@ -80,9 +79,9 @@ class CodeInfo:
         jumps_on = JUMP_ON_TRUTH[inst.opname]
         return {jumps_on: target, not jumps_on: fallthrough}
 
-    def region(self, entries: List[int]) -> Set[int]:
+    def region(self, entries: list[int]) -> set[int]:
         """Instructions reachable from ``entries``."""
-        seen: Set[int] = set()
+        seen: set[int] = set()
         work = list(entries)
         while work:
             i = work.pop()
@@ -92,7 +91,7 @@ class CodeInfo:
             work.extend(self.successors[i])
         return seen
 
-    def leaders(self, entries: List[int]) -> FrozenSet[int]:
+    def leaders(self, entries: list[int]) -> frozenset[int]:
         """
         The instructions that start a block in the region reachable from ``entries``: the entries, every resolved
         jump target, and every resolved successor of a conditional jump. Blocks end where control reaches another
@@ -127,11 +126,11 @@ class CodeInfo:
             i += 1
         return self.resolve(i)
 
-    def dominators(self) -> Dict[int, Set[int]]:
+    def dominators(self) -> dict[int, set[int]]:
         """The instructions that dominate each reachable instruction (every path from the start passes them)."""
         if self._dominators is None:
             nodes = sorted(self.region([0]))
-            predecessors: Dict[int, List[int]] = {n: [] for n in nodes}
+            predecessors: dict[int, list[int]] = {n: [] for n in nodes}
             for n in nodes:
                 for s in self.successors[n]:
                     predecessors[s].append(n)
@@ -150,7 +149,7 @@ class CodeInfo:
             self._dominators = dominators
         return self._dominators
 
-    def loop_body(self, header: int) -> Set[int]:
+    def loop_body(self, header: int) -> set[int]:
         """
         The natural loop of ``header``: the instructions that reach one of its back edges (an edge to ``header`` from
         an instruction it dominates) without passing through ``header``. Empty if ``header`` heads no loop.
@@ -158,7 +157,7 @@ class CodeInfo:
         if header not in self._loops:
             dominators = self.dominators()
             sources = [n for n, doms in dominators.items() if header in self.successors[n] and header in doms]
-            predecessors: Dict[int, List[int]] = {}
+            predecessors: dict[int, list[int]] = {}
             for n in dominators:
                 for s in self.successors[n]:
                     predecessors.setdefault(s, []).append(n)
@@ -176,13 +175,13 @@ class CodeInfo:
     def is_loop_header(self, index: int) -> bool:
         return bool(self.loop_body(index))
 
-    def loops_containing(self, index: int) -> List[int]:
+    def loops_containing(self, index: int) -> list[int]:
         """The ``FOR_ITER`` instructions of the for loops whose body contains ``index``."""
         return [
             i for i, inst in enumerate(self.instructions) if inst.opname == "FOR_ITER" and index in self.loop_body(i)
         ]
 
-    def stored_names(self, indices: Set[int]) -> Set[str]:
+    def stored_names(self, indices: set[int]) -> set[str]:
         """Local variables assigned by the instructions."""
         return {
             self.instructions[i].argval
@@ -191,7 +190,7 @@ class CodeInfo:
             and isinstance(self.instructions[i].argval, str)
         }
 
-    def stack_depths(self) -> Dict[int, int]:
+    def stack_depths(self) -> dict[int, int]:
         """The value-stack depth before every reachable instruction (from the start of the code object)."""
         if self._depths is None:
             self._analyze_stack()
@@ -207,8 +206,8 @@ class CodeInfo:
         return self._iterators.get(index, 0)
 
     def _analyze_stack(self) -> None:
-        depths: Dict[int, int] = {0: 0}
-        iterators: Dict[int, int] = {0: 0}
+        depths: dict[int, int] = {0: 0}
+        iterators: dict[int, int] = {0: 0}
         work = [0]
         while work:
             i = work.pop()
@@ -226,13 +225,13 @@ class CodeInfo:
                     work.append(s)
         self._depths, self._iterators = depths, iterators
 
-    def has_exception_handlers(self, indices: Set[int]) -> bool:
+    def has_exception_handlers(self, indices: set[int]) -> bool:
         """Whether any of the instructions is covered by an exception handler (``try``, ``with``) on 3.11+."""
         if sys.version_info < (3, 11):
             return any(self.instructions[i].opname in ("SETUP_FINALLY", "SETUP_WITH") for i in indices)
         return any(self.instructions[i].exn_tab_entry is not None for i in indices)
 
-    def livevars(self, index: int) -> Set[str]:
+    def livevars(self, index: int) -> set[str]:
         """
         Local variables that may be read at or after ``index`` before being written (exact on the control-flow
         graph; Dynamo's own analysis keeps every variable of a loop body live).
@@ -241,8 +240,8 @@ class CodeInfo:
             self._live = self._liveness()
         return self._live.get(index, set())
 
-    def _liveness(self) -> Dict[int, Set[str]]:
-        uses: Dict[int, Tuple[Set[str], Set[str]]] = {}  # Instruction -> (reads before writes, writes)
+    def _liveness(self) -> dict[int, set[str]]:
+        uses: dict[int, tuple[set[str], set[str]]] = {}  # Instruction -> (reads before writes, writes)
         for i, inst in enumerate(self.instructions):
             reads, writes = set(), set()
             if inst.opcode in dis.haslocal:
@@ -255,7 +254,7 @@ class CodeInfo:
                 else:  # LOAD_FAST*, DELETE_FAST
                     reads.update(names)
             uses[i] = (reads, writes)
-        live: Dict[int, Set[str]] = {i: set() for i in range(len(self.instructions))}
+        live: dict[int, set[str]] = {i: set() for i in range(len(self.instructions))}
         changed = True
         while changed:
             changed = False

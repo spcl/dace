@@ -1,21 +1,26 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Indirect-access lowerings: ``index.Tensor`` (embedding lookups, index_select), ``gather``, ``argmax``/``argmin``."""
 
-from typing import List
-
 import torch
 
+from dace.frontend.ml.torch.dynamo.context import (
+    ConstValue,
+    LoweringContext,
+    TensorValue,
+    UnsupportedOpError,
+    as_sym,
+    index_memlet,
+)
 from dace.memlet import Memlet
 
-from ..context import ConstValue, LoweringContext, TensorValue, UnsupportedOpError, as_sym, index_memlet
+from . import register_lowering, resolve
 from .pointwise import cast_expr
 from .reduction import emit_reduce_into
-from . import register_lowering, resolve
 
 aten = torch.ops.aten
 
 
-def _range_memlet(name: str, indices: List[str], tshape, dim: int) -> Memlet:
+def _range_memlet(name: str, indices: list[str], tshape, dim: int) -> Memlet:
     """Memlet selecting single elements on all dims except ``dim``, which spans the full extent."""
     parts = []
     for k, i in enumerate(indices):

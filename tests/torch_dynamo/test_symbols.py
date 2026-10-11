@@ -52,8 +52,8 @@ def test_torch_sympy_functions():
 
 @pytest.mark.torch
 def test_symint_from_shape_env():
-    from torch.fx.experimental.symbolic_shapes import ShapeEnv
     from torch._subclasses.fake_tensor import FakeTensorMode
+    from torch.fx.experimental.symbolic_shapes import ShapeEnv
 
     shape_env = ShapeEnv()
     with FakeTensorMode(shape_env=shape_env) as mode:

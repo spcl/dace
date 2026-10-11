@@ -103,7 +103,7 @@ def test_add_backward_pass_separate_sdfgs():
 
     sdfg = program.to_sdfg(simplify=True)
     backward = add_backward_pass(sdfg, outputs=["__return"], inputs=["A"], separate_sdfgs=True)
-    for name, desc in backward.arglist().items():
+    for name in backward.arglist():
         if not name.startswith("gradient_") and name in sdfg.arrays:
             assert not sdfg.arrays[name].transient, f"the backward pass reads {name}, which the forward pass hides"
 

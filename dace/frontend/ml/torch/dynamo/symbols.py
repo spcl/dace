@@ -7,7 +7,7 @@ uses sympy, so the translation mostly re-roots the expression on DaCe ``symbol``
 name) and rewrites the handful of torch-specific sympy functions (``FloorDiv``, ``CeilDiv``, ``PythonMod``, ...).
 """
 
-from typing import Dict, Iterable, Optional, Tuple, Union
+from collections.abc import Iterable
 
 import sympy
 import torch
@@ -15,7 +15,7 @@ import torch
 import dace
 from dace import dtypes, symbolic
 
-SymExpr = Union[int, sympy.Basic]
+SymExpr = int | sympy.Basic
 
 
 class UnsupportedSymbolicExpression(NotImplementedError):
@@ -55,15 +55,15 @@ class SymbolTable:
     HOP body is bound to the same DaCe symbol as in the enclosing graph.
     """
 
-    def __init__(self, dtype: dtypes.typeclass = dace.int64, names: Optional[Dict[str, str]] = None):
+    def __init__(self, dtype: dtypes.typeclass = dace.int64, names: dict[str, str] | None = None):
         self.dtype = dtype
-        self.symbols: Dict[str, symbolic.symbol] = {}
-        self.names: Dict[str, str] = dict(names or {})  #: Dynamo symbol name -> DaCe symbol name
+        self.symbols: dict[str, symbolic.symbol] = {}
+        self.names: dict[str, str] = dict(names or {})  #: Dynamo symbol name -> DaCe symbol name
         #: Dynamo symbols that stand for an expression over other symbols (e.g., the clamped extent of a slice with a
         #: data-dependent bound); they are substituted instead of becoming DaCe symbols
-        self.aliases: Dict[str, SymExpr] = {}
+        self.aliases: dict[str, SymExpr] = {}
 
-    def get(self, sym: Union[sympy.Symbol, str]) -> symbolic.symbol:
+    def get(self, sym: sympy.Symbol | str) -> symbolic.symbol:
         name = sym.name if isinstance(sym, sympy.Symbol) else str(sym)
         if name not in self.symbols:
             self.symbols[name] = symbolic.symbol(self.names.get(name, name), self.dtype, nonnegative=True)
@@ -150,11 +150,11 @@ class SymbolTable:
     def _as_sympy(v: SymExpr) -> sympy.Basic:
         return sympy.Integer(v) if isinstance(v, int) else v
 
-    def shape(self, sizes: Iterable) -> Tuple[SymExpr, ...]:
+    def shape(self, sizes: Iterable) -> tuple[SymExpr, ...]:
         return tuple(self.to_dace(s) for s in sizes)
 
     @property
-    def symbol_types(self) -> Dict[str, dtypes.typeclass]:
+    def symbol_types(self) -> dict[str, dtypes.typeclass]:
         return {sym.name: sym.dtype for sym in self.symbols.values()}
 
 

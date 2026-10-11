@@ -6,13 +6,14 @@ FX graph walker: lowers an ATen FX graph (as produced by AOTAutograd) into a sch
 from __future__ import annotations
 
 import dataclasses
-from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
+from collections.abc import Sequence
+from typing import Any
 
 import sympy
 import torch
 import torch.fx
-from torch.fx.experimental.symbolic_shapes import free_unbacked_symbols
 from torch._subclasses.fake_tensor import unset_fake_temporarily
+from torch.fx.experimental.symbolic_shapes import free_unbacked_symbols
 from torch.fx.node import map_arg
 
 from dace import dtypes
@@ -38,10 +39,10 @@ class InputSpec:
 @dataclasses.dataclass
 class OutputSpec:
     kind: str  #: 'tensor' | 'input' | 'sym' | 'scalar' | 'const' | 'none'
-    name: Optional[str] = None  #: output container name (for 'tensor' and 'scalar', a rank-0 container)
-    tshape: Tuple[SymExpr, ...] = ()
-    tstrides: Tuple[SymExpr, ...] = ()
-    torch_dtype: Optional[torch.dtype] = None
+    name: str | None = None  #: output container name (for 'tensor' and 'scalar', a rank-0 container)
+    tshape: tuple[SymExpr, ...] = ()
+    tstrides: tuple[SymExpr, ...] = ()
+    torch_dtype: torch.dtype | None = None
     device: Any = None
     position: int = -1  #: input position (for 'input')
     expr: Any = None  #: symbolic expression (for 'sym')
@@ -52,9 +53,9 @@ class OutputSpec:
 class ImportResult:
     sdfg: SDFG
     stree: tn.ScheduleTreeRoot
-    inputs: List[InputSpec]
-    outputs: List[OutputSpec]
-    symbols: Dict[str, Any]
+    inputs: list[InputSpec]
+    outputs: list[OutputSpec]
+    symbols: dict[str, Any]
 
 
 @dataclasses.dataclass
@@ -62,8 +63,8 @@ class PhaseInterface:
     """Calling convention of one phase of a joint SDFG (see :mod:`.joint`)."""
 
     phase: int
-    inputs: List[InputSpec]
-    outputs: List[OutputSpec]
+    inputs: list[InputSpec]
+    outputs: list[OutputSpec]
 
 
 @dataclasses.dataclass
@@ -72,7 +73,7 @@ class JointImportResult:
     stree: tn.ScheduleTreeRoot
     forward: PhaseInterface
     backward: PhaseInterface
-    symbols: Dict[str, Any]
+    symbols: dict[str, Any]
 
 
 class GraphImporter:
@@ -87,8 +88,8 @@ class GraphImporter:
         gm: torch.fx.GraphModule,
         example_inputs: Sequence[Any],
         name: str,
-        symbol_names: Optional[Dict[str, str]] = None,
-        input_names: Optional[Sequence[Optional[str]]] = None,
+        symbol_names: dict[str, str] | None = None,
+        input_names: Sequence[str | None] | None = None,
         return_arrays: bool = False,
     ) -> ImportResult:
         """
@@ -139,8 +140,8 @@ class GraphImporter:
         self,
         plan: jt.JointPlan,
         name: str,
-        symbol_names: Optional[Dict[str, str]] = None,
-        input_names: Optional[Sequence[Optional[str]]] = None,
+        symbol_names: dict[str, str] | None = None,
+        input_names: Sequence[str | None] | None = None,
     ) -> JointImportResult:
         """
         Lowers a joint forward/backward graph into one SDFG with two phases, selected by the
@@ -172,7 +173,7 @@ class GraphImporter:
             input_names = None
 
         # Forward phase: primals -> forward outputs, saved values
-        forward_inputs: List[InputSpec] = []
+        forward_inputs: list[InputSpec] = []
         for position, node in enumerate(forward_placeholders):
             container = input_names[position] if input_names is not None and input_names[position] else node.name
             value, spec = self._bind_input(ctx, container, node.meta.get("val"), position)
@@ -180,7 +181,7 @@ class GraphImporter:
             if spec is not None:
                 forward_inputs.append(spec)
         primals = dict(ctx.env)
-        forward_children: List[tn.ScheduleTreeNode] = []
+        forward_children: list[tn.ScheduleTreeNode] = []
         with ctx.scope(forward_children):
             self.walk(ctx, plan.joint, plan.forward_nodes())
             returned = [
@@ -195,7 +196,7 @@ class GraphImporter:
 
         # Backward phase: saved values, tangents -> gradients. Everything else it needs is recomputed.
         ctx.env = {}
-        backward_inputs: List[InputSpec] = []
+        backward_inputs: list[InputSpec] = []
         for position, node in enumerate(backward_placeholders):
             if node.name in plan.saved:
                 value, spec = self._bind_saved(saved_values[node.name], position)
@@ -207,7 +208,7 @@ class GraphImporter:
         gradients = jt.flat_outputs(plan.joint)[plan.num_fwd_outputs :]
         if len(gradients) != len(jt.flat_outputs(plan.backward)):
             raise UnsupportedOpError("joint", "the backward graph does not return one value per gradient")
-        backward_children: List[tn.ScheduleTreeNode] = []
+        backward_children: list[tn.ScheduleTreeNode] = []
         with ctx.scope(backward_children):
             self.walk(ctx, plan.joint, plan.backward_nodes())
             returned = [ctx.env[v] if isinstance(v, torch.fx.Node) else ConstValue(v) for v in gradients]
@@ -244,7 +245,7 @@ class GraphImporter:
         )
 
     @staticmethod
-    def _bind_saved(value: Value, position: int) -> Tuple[Value, Optional[InputSpec]]:
+    def _bind_saved(value: Value, position: int) -> tuple[Value, InputSpec | None]:
         """Binds a value saved by the forward phase as an input of the backward phase."""
         if isinstance(value, TensorValue):
             return dataclasses.replace(value, source="input"), InputSpec("tensor", value.name, position)
@@ -258,7 +259,7 @@ class GraphImporter:
 
     def lower_subgraph(
         self, ctx: LoweringContext, sub_gm: torch.fx.GraphModule, bindings: Sequence[Value]
-    ) -> List[Value]:
+    ) -> list[Value]:
         """Lowers a HOP subgraph into the current scope, binding its placeholders to ``bindings`` positionally."""
         placeholders = [n for n in sub_gm.graph.nodes if n.op == "placeholder"]
         if len(placeholders) != len(bindings):
@@ -273,9 +274,9 @@ class GraphImporter:
         ctx: LoweringContext,
         gm: torch.fx.GraphModule,
         example_inputs: Sequence[Any],
-        input_names: Optional[Sequence[Optional[str]]] = None,
-    ) -> List[InputSpec]:
-        specs: List[InputSpec] = []
+        input_names: Sequence[str | None] | None = None,
+    ) -> list[InputSpec]:
+        specs: list[InputSpec] = []
         position = 0
         for node in gm.graph.nodes:
             if node.op != "placeholder":
@@ -311,14 +312,14 @@ class GraphImporter:
 
     # ------------------------------------------------------------------ walking
     def walk(
-        self, ctx: LoweringContext, gm: torch.fx.GraphModule, include: Optional[Set[torch.fx.Node]] = None
-    ) -> List[Value]:
+        self, ctx: LoweringContext, gm: torch.fx.GraphModule, include: set[torch.fx.Node] | None = None
+    ) -> list[Value]:
         """
         Lowers the nodes of ``gm`` in order and returns the values of its outputs.
 
         :param include: If given, only lowers these nodes (and returns no outputs).
         """
-        outputs: List[Value] = []
+        outputs: list[Value] = []
         for node in gm.graph.nodes:
             if include is not None and (node not in include or node.op in ("placeholder", "output")):
                 continue
@@ -390,16 +391,16 @@ class GraphImporter:
 
     # ------------------------------------------------------------------ outputs
     def _finalize_outputs(
-        self, ctx: LoweringContext, values: List[Value], inputs: List[InputSpec]
-    ) -> Tuple[List[OutputSpec], List[Value]]:
+        self, ctx: LoweringContext, values: list[Value], inputs: list[InputSpec]
+    ) -> tuple[list[OutputSpec], list[Value]]:
         """
         Makes the outputs SDFG arguments: inputs are returned as-is, views, aliases, and constants are copied into new
         containers, and other transients become non-transient.
 
         :return: The output specifications and the value each output is read from after the SDFG returns.
         """
-        specs: List[OutputSpec] = []
-        finals: List[Value] = []
+        specs: list[OutputSpec] = []
+        finals: list[Value] = []
         input_positions = {spec.name: spec.position for spec in inputs if spec.kind == "tensor"}
         already_returned = set()
         for i, v in enumerate(values):
@@ -440,9 +441,9 @@ class GraphImporter:
                 )
         return specs, finals
 
-    def _return_outputs(self, ctx: LoweringContext, values: List[Value]) -> List[OutputSpec]:
+    def _return_outputs(self, ctx: LoweringContext, values: list[Value]) -> list[OutputSpec]:
         """Copies every output into a ``__return``/``__return_<i>`` container (see ``return_arrays``)."""
-        specs: List[OutputSpec] = []
+        specs: list[OutputSpec] = []
         for i, v in enumerate(values):
             name = "__return" if len(values) == 1 else f"__return_{i}"
             if isinstance(v, TensorValue):
@@ -471,7 +472,7 @@ class GraphImporter:
 _SCALAR_TORCH_DTYPES = {dtypes.float64: torch.float64, dtypes.bool_: torch.bool, dtypes.int64: torch.int64}
 
 
-def _data_dependent_symbols(ctx: LoweringContext, *exprs) -> Set[str]:
+def _data_dependent_symbols(ctx: LoweringContext, *exprs) -> set[str]:
     """Names of the symbols in ``exprs`` that the program assigns from data (``.item()``)."""
     assigned = {symbol.name for symbol in ctx.assigned_symbols.values()}
     return {s.name for e in exprs if not isinstance(e, int) for s in e.free_symbols} & assigned
@@ -500,7 +501,7 @@ def _check_data_dependent_sizes(ctx: LoweringContext, node: torch.fx.Node) -> No
         )
 
 
-def _argument_names(inputs: List[InputSpec], outputs: List[OutputSpec]) -> List[str]:
+def _argument_names(inputs: list[InputSpec], outputs: list[OutputSpec]) -> list[str]:
     names = [spec.name for spec in inputs if spec.kind == "tensor"]
     return names + [spec.name for spec in outputs if spec.kind == "tensor" and spec.name not in names]
 

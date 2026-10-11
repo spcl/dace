@@ -1,14 +1,12 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Reduction lowerings onto the standard-library ``Reduce`` node."""
 
-from typing import List
-
 import torch
 
 from dace import dtypes
+from dace.frontend.ml.torch.dynamo.context import ConstValue, LoweringContext, TensorValue, TupleValue, as_sym
+from dace.frontend.ml.torch.dynamo.dtypes import is_floating
 
-from ..context import ConstValue, LoweringContext, TensorValue, TupleValue, as_sym
-from ..dtypes import is_floating
 from . import register_lowering, resolve
 
 aten = torch.ops.aten
@@ -38,7 +36,7 @@ def _identity(kind: str, dtype: dtypes.typeclass):
     return dtypes.min_value(dtype) if kind == "amax" else dtypes.max_value(dtype)
 
 
-def _norm_dims(dims, rank: int) -> List[int]:
+def _norm_dims(dims, rank: int) -> list[int]:
     if dims is None:
         return list(range(rank))
     if isinstance(dims, (ConstValue, TupleValue)) or not isinstance(dims, (list, tuple)):
@@ -50,7 +48,7 @@ def _norm_dims(dims, rank: int) -> List[int]:
 
 
 def emit_reduce(
-    ctx: LoweringContext, node, tensor: TensorValue, kind: str, dims: List[int], keepdim: bool
+    ctx: LoweringContext, node, tensor: TensorValue, kind: str, dims: list[int], keepdim: bool
 ) -> TensorValue:
     """
     Emits a ``Reduce`` library call into a container shaped like ``node.meta['val']``. With ``keepdim`` the node
@@ -161,7 +159,7 @@ def lower_prims_var(
     summed = ctx.add_array("t_" + node.name + "_sum", red_shape, tensor.torch_dtype, device=tensor.device)
     emit_reduce_into(ctx, node.name + "_sum", tensor, "sum", dims, summed)
     pointwise_into(ctx, node.name + "_mean", mean, [summed], f"{{0}} / ({count})")
-    from ..context import contiguous_strides
+    from dace.frontend.ml.torch.dynamo.context import contiguous_strides
 
     mean_k = (
         ctx.emit_view_raw(
@@ -181,7 +179,7 @@ def lower_prims_var(
 
 
 def emit_reduce_into(
-    ctx: LoweringContext, name: str, tensor: TensorValue, kind: str, dims: List[int], out: TensorValue
+    ctx: LoweringContext, name: str, tensor: TensorValue, kind: str, dims: list[int], out: TensorValue
 ) -> None:
     from dace.libraries.standard import Reduce
 

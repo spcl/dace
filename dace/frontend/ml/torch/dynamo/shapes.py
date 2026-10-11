@@ -24,7 +24,8 @@ warning is emitted, because ``torch.compile`` cannot impose the equality from th
 
 import dataclasses
 import inspect
-from typing import Any, Callable, List, Optional
+from collections.abc import Callable
+from typing import Any
 
 import torch
 
@@ -35,9 +36,9 @@ ALL = "all"
 class DimSpec:
     """One symbolic dimension requested by the user."""
 
-    name: Optional[str] = None  #: DaCe symbol name (``None``: keep Dynamo's name)
-    min: Optional[int] = None
-    max: Optional[int] = None
+    name: str | None = None  #: DaCe symbol name (``None``: keep Dynamo's name)
+    min: int | None = None
+    max: int | None = None
     strict: bool = True  #: Raise if the program specializes the dimension (``mark_dynamic`` vs ``maybe_mark_dynamic``)
 
 
@@ -59,7 +60,7 @@ def _is_static_dim(entry: Any) -> bool:
     return isinstance(entry, _StaticDim)
 
 
-def _dim_hint_type(entry: Any) -> Optional[str]:
+def _dim_hint_type(entry: Any) -> str | None:
     """Returns 'AUTO', 'DYNAMIC' or 'STATIC' for ``torch.export.Dim.AUTO`` etc., ``None`` otherwise."""
     from torch.export.dynamic_shapes import _DimHint
 
@@ -68,7 +69,7 @@ def _dim_hint_type(entry: Any) -> Optional[str]:
     return None
 
 
-def parse_dim(entry: Any) -> Optional[DimSpec]:
+def parse_dim(entry: Any) -> DimSpec | None:
     """Translates one per-dimension entry of a ``dynamic_shapes`` specification. ``None`` means static."""
     if isinstance(entry, DimSpec):
         return entry
@@ -111,7 +112,7 @@ def normalize(spec: Any, signature: inspect.Signature) -> Any:
         return None
     if spec is True or spec == ALL:
         return ALL
-    params = [p for p in signature.parameters.values()]
+    params = list(signature.parameters.values())
     if isinstance(spec, dict):
         names = {p.name for p in params}
         unknown = set(spec) - names
@@ -149,7 +150,7 @@ def spec_at(spec: Any, key: Any) -> Any:
     return None
 
 
-def dim_specs(spec: Any, ndim: int) -> List[Optional[DimSpec]]:
+def dim_specs(spec: Any, ndim: int) -> list[DimSpec | None]:
     """Per-dimension specification for a tensor of rank ``ndim``."""
     if spec is None:
         return [None] * ndim

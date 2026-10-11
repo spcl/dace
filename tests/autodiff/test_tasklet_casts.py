@@ -23,7 +23,7 @@ def test_cast_around_compound_expression(cast):
             with dace.tasklet:
                 a << x[i]
                 b >> y[i]
-                b = dtype(((a - 1.0) * (a - 1.0)))
+                b = dtype((a - 1.0) * (a - 1.0))
         loss[0] = np.sum(y)
 
     sdfg = squared_shift.to_sdfg(simplify=True)
@@ -43,7 +43,7 @@ def test_nested_casts():
             with dace.tasklet:
                 a << x[i]
                 b >> y[i]
-                b = dace.float64(dace.float64(a * 3.0) * dace.float64((a + 2.0)))
+                b = dace.float64(dace.float64(a * 3.0) * dace.float64(a + 2.0))
         loss[0] = np.sum(y)
 
     sdfg = nested.to_sdfg(simplify=True)

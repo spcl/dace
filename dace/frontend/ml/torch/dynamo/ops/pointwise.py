@@ -8,7 +8,8 @@ inputs are cast to the compute dtype where they differ and the result is cast to
 """
 
 import math
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
+from collections.abc import Callable, Sequence
+from typing import Any
 
 import numpy
 import sympy
@@ -16,15 +17,22 @@ import torch
 
 import dace
 from dace import dtypes
+from dace.frontend.ml.torch.dynamo.context import (
+    ConstValue,
+    LoweringContext,
+    SymValue,
+    TensorValue,
+    UnsupportedOpError,
+    index_memlet,
+)
+from dace.frontend.ml.torch.dynamo.dtypes import is_boolean, is_floating, to_dace_dtype
 
-from ..context import ConstValue, LoweringContext, SymValue, TensorValue, UnsupportedOpError, index_memlet
-from ..dtypes import is_boolean, is_floating, to_dace_dtype
 from . import register_lowering, resolve
 
 aten = torch.ops.aten
 prims = torch.ops.prims
 
-Operand = Union[TensorValue, SymValue, ConstValue, int, float, bool, sympy.Basic]
+Operand = TensorValue | SymValue | ConstValue | int | float | bool | sympy.Basic
 
 
 # ---------------------------------------------------------------------- helpers
@@ -43,13 +51,13 @@ def _is_one(d) -> bool:
     return (isinstance(d, int) and d == 1) or (isinstance(d, sympy.Basic) and d == 1)
 
 
-def broadcast_indices(tensor: TensorValue, out_rank: int, params: Sequence[str]) -> List[str]:
+def broadcast_indices(tensor: TensorValue, out_rank: int, params: Sequence[str]) -> list[str]:
     """Right-aligned broadcast indices of ``tensor`` into an output iterated by ``params``."""
     offset = out_rank - tensor.rank
     return ["0" if _is_one(d) else params[offset + k] for k, d in enumerate(tensor.tshape)]
 
 
-def literal(value: Any, dtype: Optional[dtypes.typeclass]) -> str:
+def literal(value: Any, dtype: dtypes.typeclass | None) -> str:
     """Formats a Python/sympy scalar as tasklet code, typed to ``dtype`` where that matters."""
     if isinstance(value, ConstValue):
         value = value.value
@@ -81,9 +89,9 @@ def emit_elementwise(
     ctx: LoweringContext,
     name: str,
     out: TensorValue,
-    inputs: Sequence[Tuple[TensorValue, Sequence[str]]],
+    inputs: Sequence[tuple[TensorValue, Sequence[str]]],
     code: str,
-    params: Optional[Sequence[str]] = None,
+    params: Sequence[str] | None = None,
 ) -> None:
     """Emits ``map over out: __out = code(__in0, __in1, ...)`` with explicit per-input index expressions."""
     params = list(params) if params is not None else [f"__i{k}" for k in range(out.rank)]
@@ -104,12 +112,12 @@ def lower_pointwise_values(
     ctx: LoweringContext,
     node,
     operands: Sequence[Operand],
-    template: Union[str, Callable[[dtypes.typeclass], str]],
+    template: str | Callable[[dtypes.typeclass], str],
     *,
     nocast: Sequence[int] = (),
-    kwargs: Optional[Dict[str, Any]] = None,
-    prefix: Optional[str] = None,
-    compute_dtype: Optional[torch.dtype] = None,
+    kwargs: dict[str, Any] | None = None,
+    prefix: str | None = None,
+    compute_dtype: torch.dtype | None = None,
 ) -> TensorValue:
     """
     Generic pointwise lowering into a fresh output shaped like ``node.meta['val']``.
@@ -131,11 +139,11 @@ def pointwise_into(
     name: str,
     out: TensorValue,
     operands: Sequence[Operand],
-    template: Union[str, Callable[[dtypes.typeclass], str]],
+    template: str | Callable[[dtypes.typeclass], str],
     *,
     nocast: Sequence[int] = (),
-    kwargs: Optional[Dict[str, Any]] = None,
-    compute_dtype: Optional[torch.dtype] = None,
+    kwargs: dict[str, Any] | None = None,
+    compute_dtype: torch.dtype | None = None,
 ) -> None:
     """Emits a broadcasting pointwise expression over ``operands`` into the existing container ``out``."""
     out_dtype = out.dtype
@@ -149,8 +157,8 @@ def pointwise_into(
     compute = to_dace_dtype(compute_dtype)
 
     params = [f"__i{k}" for k in range(out.rank)]
-    inputs: List[Tuple[TensorValue, Sequence[str]]] = []
-    operand_strs: List[str] = []
+    inputs: list[tuple[TensorValue, Sequence[str]]] = []
+    operand_strs: list[str] = []
     for k, op in enumerate(operands):
         if isinstance(op, TensorValue):
             conn = f"__in{len(inputs)}"

@@ -67,7 +67,7 @@ def test_cast_around_conditional():
             with dace.tasklet:
                 a << x[i]
                 b >> y[i]
-                b = dace.float64((a * 3.0 if a > 0.5 else a * a))
+                b = dace.float64(a * 3.0 if a > 0.5 else a * a)
         loss[0] = np.sum(y)
 
     x = np.random.rand(N)

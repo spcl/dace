@@ -10,8 +10,15 @@ import torch
 
 from dace import dtypes
 from dace import symbolic as dsym
+from dace.frontend.ml.torch.dynamo.context import (
+    ConstValue,
+    SymValue,
+    TensorValue,
+    TupleValue,
+    UnsupportedOpError,
+    as_sym,
+)
 
-from ..context import ConstValue, SymValue, TensorValue, TupleValue, UnsupportedOpError, as_sym
 from . import register_lowering, resolve
 
 aten = torch.ops.aten

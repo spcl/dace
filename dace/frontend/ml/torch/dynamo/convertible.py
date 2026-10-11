@@ -17,7 +17,8 @@ import inspect
 import itertools
 import warnings
 import weakref
-from typing import Any, Callable, Dict, Iterator, List, Optional, Sequence, Set, Tuple
+from collections.abc import Callable, Iterator, Sequence
+from typing import Any
 
 import numpy
 import sympy
@@ -38,7 +39,7 @@ from .symbols import free_symbol_names
 _ADAPTERS: "weakref.WeakKeyDictionary[torch.nn.Module, ModuleConvertible]" = weakref.WeakKeyDictionary()
 
 #: Guards on a value, as the projection of the value that the guard compares
-_GUARD_PROJECTIONS: Dict[str, Callable[[Any], Any]] = {
+_GUARD_PROJECTIONS: dict[str, Callable[[Any], Any]] = {
     "TYPE_MATCH": type,
     "ID_MATCH": id,
     "MODULE_MATCH": id,
@@ -54,7 +55,7 @@ _GUARD_PROJECTIONS: Dict[str, Callable[[Any], Any]] = {
 }
 
 #: Guards on global state that change the captured graph
-_GLOBAL_STATE_GUARDS: Dict[str, Callable[[], Any]] = {
+_GLOBAL_STATE_GUARDS: dict[str, Callable[[], Any]] = {
     "DEFAULT_DEVICE": lambda: str(torch.get_default_device()),
     "DETERMINISTIC_ALGORITHMS": torch.are_deterministic_algorithms_enabled,
 }
@@ -82,22 +83,22 @@ class ModuleConvertible(SDFGConvertible):
     def __init__(self, module: torch.nn.Module):
         self.module = module
         self.signature = inspect.signature(module.forward)
-        self.program: Optional[CapturedProgram] = None  #: The most recent capture
-        self.unchecked_guards: List[CapturedGuard] = []  #: Guards of the most recent capture that are not checked
-        self._closure: Dict[str, Callable[[], Any]] = {}
-        self._guards: Dict[str, Callable[[], Any]] = {}
+        self.program: CapturedProgram | None = None  #: The most recent capture
+        self.unchecked_guards: list[CapturedGuard] = []  #: Guards of the most recent capture that are not checked
+        self._closure: dict[str, Callable[[], Any]] = {}
+        self._guards: dict[str, Callable[[], Any]] = {}
 
     @property
     def name(self) -> str:
         return sanitize_name(type(self.module).__name__.lower())
 
     # ------------------------------------------------------------------------------------------ SDFGConvertible
-    def __sdfg_signature__(self) -> Tuple[Sequence[str], Sequence[str]]:
+    def __sdfg_signature__(self) -> tuple[Sequence[str], Sequence[str]]:
         variadic = (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)
         return [p.name for p in self.signature.parameters.values() if p.kind not in variadic], []
 
     def closure_resolver(
-        self, constant_args: Dict[str, Any], given_args: Set[str], parent_closure: Optional[SDFGClosure] = None
+        self, constant_args: dict[str, Any], given_args: set[str], parent_closure: SDFGClosure | None = None
     ) -> SDFGClosure:
         # Parameters and buffers are known before capturing: they are the closure arrays of the program
         closure = SDFGClosure()
@@ -110,12 +111,12 @@ class ModuleConvertible(SDFGConvertible):
             )
         return closure
 
-    def __sdfg_closure__(self, reevaluate: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+    def __sdfg_closure__(self, reevaluate: dict[str, str] | None = None) -> dict[str, Any]:
         if self.program is None:
             return {sanitize_name(qualname): tensor for qualname, tensor in self._state_tensors()}
         return {name: getter() for name, getter in self._closure.items()}
 
-    def __sdfg_guards__(self) -> Dict[str, Callable[[], Any]]:
+    def __sdfg_guards__(self) -> dict[str, Callable[[], Any]]:
         return dict(self._guards)
 
     def __sdfg__(self, *args, **kwargs) -> SDFG:
@@ -150,7 +151,7 @@ class ModuleConvertible(SDFGConvertible):
         return result.sdfg
 
     # ------------------------------------------------------------------------------------------ helpers
-    def _state_tensors(self) -> List[Tuple[str, torch.Tensor]]:
+    def _state_tensors(self) -> list[tuple[str, torch.Tensor]]:
         return list(self.module.named_parameters()) + list(self.module.named_buffers())
 
 
@@ -169,7 +170,7 @@ def _state_getter(module: torch.nn.Module, qualname: str) -> Callable[[], torch.
 
 
 # ---------------------------------------------------------------------------------------------- example arguments
-def example_arguments(arguments: Dict[str, Any]) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+def example_arguments(arguments: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
     """
     Creates example values for capturing from the arguments of a call site in a ``@dace.program``, which are data
     descriptors (possibly with symbolic sizes), constants, or lists, tuples, and dicts of those, and the
@@ -182,8 +183,8 @@ def example_arguments(arguments: Dict[str, Any]) -> Tuple[Dict[str, Any], Dict[s
 
     :return: A tuple of (example values by argument name, ``dynamic_shapes`` specification by argument name).
     """
-    static: Set[int] = set()
-    symbols: List[str] = []
+    static: set[int] = set()
+    symbols: list[str] = []
     for leaf in _leaves(arguments):
         if isinstance(leaf, data.Array):
             for size in itertools.chain(leaf.shape, leaf.strides):
@@ -196,10 +197,10 @@ def example_arguments(arguments: Dict[str, Any]) -> Tuple[Dict[str, Any], Dict[s
         elif isinstance(leaf, int) and not isinstance(leaf, bool):
             static.add(leaf)
     candidates = (h for h in itertools.count(2) if h not in static)
-    hints: Dict[str, int] = {sym: next(candidates) for sym in dict.fromkeys(symbols)}
+    hints: dict[str, int] = {sym: next(candidates) for sym in dict.fromkeys(symbols)}
 
-    examples: Dict[str, Any] = {}
-    spec: Dict[str, Any] = {}
+    examples: dict[str, Any] = {}
+    spec: dict[str, Any] = {}
     for name, value in arguments.items():
         examples[name], spec[name] = _example(value, name, (), hints, candidates)
     return examples, spec
@@ -217,8 +218,8 @@ def _leaves(value: Any) -> Iterator[Any]:
 
 
 def _example(
-    value: Any, name: str, path: Tuple[Any, ...], hints: Dict[str, int], candidates: Iterator[int]
-) -> Tuple[Any, Any]:
+    value: Any, name: str, path: tuple[Any, ...], hints: dict[str, int], candidates: Iterator[int]
+) -> tuple[Any, Any]:
     """Example value and ``dynamic_shapes`` entry of one (possibly structured) argument; see :func:`example_arguments`."""
     if isinstance(value, dict):
         pairs = {k: _example(v, name, path + (k,), hints, candidates) for k, v in value.items()}
@@ -247,7 +248,7 @@ def _example(
     return value, None
 
 
-def _example_tensor(desc: data.Array, hints: Dict[str, int]) -> torch.Tensor:
+def _example_tensor(desc: data.Array, hints: dict[str, int]) -> torch.Tensor:
     shape = [int(symbolic.evaluate(s, hints)) if symbolic.issymbolic(s) else int(s) for s in desc.shape]
     strides = [int(symbolic.evaluate(s, hints)) if symbolic.issymbolic(s) else int(s) for s in desc.strides]
     device = "cuda" if desc.storage == dtypes.StorageType.GPU_Global else "cpu"
@@ -257,7 +258,7 @@ def _example_tensor(desc: data.Array, hints: Dict[str, int]) -> torch.Tensor:
 # ---------------------------------------------------------------------------------------------- guards
 def guard_evaluators(
     program: CapturedProgram, module: torch.nn.Module, prefix: str
-) -> Tuple[Dict[str, Callable[[], Any]], List[CapturedGuard]]:
+) -> tuple[dict[str, Callable[[], Any]], list[CapturedGuard]]:
     """
     Translates the guards of a capture into evaluators for a ``@dace.program`` cache key.
 
@@ -267,8 +268,8 @@ def guard_evaluators(
 
     :return: A tuple of (evaluators by unique name, guards that are neither implied nor checked).
     """
-    evaluators: Dict[str, Callable[[], Any]] = {}
-    unchecked: List[CapturedGuard] = []
+    evaluators: dict[str, Callable[[], Any]] = {}
+    unchecked: list[CapturedGuard] = []
     for index, guard in enumerate(program.guards):
         if guard.kind in _IMPLIED_GUARDS or (guard.source is not None and guard.source.kind == "argument"):
             continue
@@ -290,7 +291,7 @@ def _identity(value: Any) -> Any:
 
 
 def _source_evaluator(
-    ref: SourceRef, projection: Callable[[Any], Any], module: torch.nn.Module, global_vars: Dict[str, Any]
+    ref: SourceRef, projection: Callable[[Any], Any], module: torch.nn.Module, global_vars: dict[str, Any]
 ) -> Callable[[], Any]:
 
     def evaluate() -> Any:

@@ -14,7 +14,8 @@ import dataclasses
 import itertools
 import keyword
 import re
-from typing import Any, Dict, Iterator, List, Optional, Sequence, Tuple, Union
+from collections.abc import Iterator, Sequence
+from typing import Any
 
 import sympy
 import torch
@@ -44,11 +45,11 @@ class TensorValue:
 
     name: str
     desc: data.Data
-    tshape: Tuple[SymExpr, ...]  #: torch-level shape (empty for rank-0 tensors; the container is then shape (1,))
-    tstrides: Tuple[SymExpr, ...]
+    tshape: tuple[SymExpr, ...]  #: torch-level shape (empty for rank-0 tensors; the container is then shape (1,))
+    tstrides: tuple[SymExpr, ...]
     torch_dtype: torch.dtype
     device: Any = None
-    source: Optional[str] = None  #: 'input', 'const', or None for transients
+    source: str | None = None  #: 'input', 'const', or None for transients
 
     @property
     def dtype(self) -> dtypes.typeclass:
@@ -85,10 +86,10 @@ class ConstValue:
 
 @dataclasses.dataclass(eq=False)
 class TupleValue:
-    items: List[Any]
+    items: list[Any]
 
 
-Value = Union[TensorValue, SymValue, ConstValue, TupleValue, None]
+Value = TensorValue | SymValue | ConstValue | TupleValue | None
 
 
 def as_sym(v) -> SymExpr:
@@ -183,7 +184,7 @@ def sanitize_name(name: str) -> str:
     return name
 
 
-def _container_shape(tshape: Sequence[SymExpr], tstrides: Sequence[SymExpr]) -> Tuple[Tuple, Tuple]:
+def _container_shape(tshape: Sequence[SymExpr], tstrides: Sequence[SymExpr]) -> tuple[tuple, tuple]:
     if len(tshape) == 0:
         return (1,), (1,)
     return tuple(tshape), tuple(tstrides)
@@ -205,16 +206,16 @@ class LoweringContext:
         self.options = options
         self.importer = importer
         self.storage = storage
-        self.containers: Dict[str, data.Data] = {}
-        self.root_children: List[tn.ScheduleTreeNode] = []
-        self._scopes: List[List[tn.ScheduleTreeNode]] = [self.root_children]
-        self.env: Dict[Any, Value] = {}
+        self.containers: dict[str, data.Data] = {}
+        self.root_children: list[tn.ScheduleTreeNode] = []
+        self._scopes: list[list[tn.ScheduleTreeNode]] = [self.root_children]
+        self.env: dict[Any, Value] = {}
         self._names: set = set()
         self._counter = itertools.count()
         #: Compile-time constant containers (name -> (descriptor, value)), see ``ScheduleTreeRoot.constants``
-        self.constants: Dict[str, Tuple[data.Data, Any]] = {}
+        self.constants: dict[str, tuple[data.Data, Any]] = {}
         #: Dynamo's unbacked (data-dependent) symbols the program assigns, by Dynamo name
-        self.assigned_symbols: Dict[str, symbolic.symbol] = {}
+        self.assigned_symbols: dict[str, symbolic.symbol] = {}
 
     # ------------------------------------------------------------------ naming / containers
     def new_name(self, prefix: str) -> str:
@@ -232,11 +233,11 @@ class LoweringContext:
         prefix: str,
         tshape: Sequence[SymExpr],
         torch_dtype: torch.dtype,
-        tstrides: Optional[Sequence[SymExpr]] = None,
+        tstrides: Sequence[SymExpr] | None = None,
         transient: bool = True,
         device=None,
-        source: Optional[str] = None,
-        storage: Optional[dtypes.StorageType] = None,
+        source: str | None = None,
+        storage: dtypes.StorageType | None = None,
         exact_name: bool = False,
     ) -> TensorValue:
         """
@@ -295,7 +296,7 @@ class LoweringContext:
         return node
 
     @contextlib.contextmanager
-    def scope(self, children: List[tn.ScheduleTreeNode]) -> Iterator[List[tn.ScheduleTreeNode]]:
+    def scope(self, children: list[tn.ScheduleTreeNode]) -> Iterator[list[tn.ScheduleTreeNode]]:
         self._scopes.append(children)
         try:
             yield children
@@ -303,7 +304,7 @@ class LoweringContext:
             self._scopes.pop()
 
     # ------------------------------------------------------------------ data-dependent symbols
-    def unassigned_unbacked(self, value: Any) -> Optional[sympy.Symbol]:
+    def unassigned_unbacked(self, value: Any) -> sympy.Symbol | None:
         """
         If ``value`` (e.g., an output size in ``node.meta['val']``) is one of Dynamo's unbacked symbols that the
         program has not assigned yet, returns it; the lowering that produces it must assign it.
@@ -327,7 +328,7 @@ class LoweringContext:
     def assign_symbol(
         self,
         unbacked: sympy.Symbol,
-        value: Union[str, SymExpr],
+        value: str | SymExpr,
         dtype: dtypes.typeclass = dtypes.int64,
         nonnegative: bool = False,
     ) -> symbolic.symbol:
@@ -345,7 +346,7 @@ class LoweringContext:
 
     # ------------------------------------------------------------------ emission helpers
     def emit_view(
-        self, prefix: str, base: TensorValue, val: torch.Tensor, subset: Optional[subsets.Range] = None
+        self, prefix: str, base: TensorValue, val: torch.Tensor, subset: subsets.Range | None = None
     ) -> TensorValue:
         """
         Emits a view of ``base`` with the shape/strides of FakeTensor ``val``. ``subset`` selects the viewed region of
@@ -362,7 +363,7 @@ class LoweringContext:
         tshape: Sequence[SymExpr],
         tstrides: Sequence[SymExpr],
         torch_dtype: torch.dtype,
-        subset: Optional[subsets.Range] = None,
+        subset: subsets.Range | None = None,
     ) -> TensorValue:
         view = self.add_view(prefix, base, tshape, tstrides, torch_dtype)
         subset = subset if subset is not None else base.full_range()
@@ -376,8 +377,8 @@ class LoweringContext:
         self,
         src: TensorValue,
         dst: TensorValue,
-        src_subset: Optional[subsets.Range] = None,
-        dst_subset: Optional[subsets.Range] = None,
+        src_subset: subsets.Range | None = None,
+        dst_subset: subsets.Range | None = None,
     ) -> None:
         memlet = Memlet(
             data=src.name,
@@ -389,9 +390,9 @@ class LoweringContext:
     def emit_tasklet(
         self,
         name: str,
-        inputs: Dict[str, Memlet],
+        inputs: dict[str, Memlet],
         code: str,
-        outputs: Dict[str, Memlet],
+        outputs: dict[str, Memlet],
         language: dtypes.Language = dtypes.Language.Python,
     ) -> tn.TaskletNode:
         tasklet = nodes.Tasklet(sanitize_name(name), set(inputs.keys()), set(outputs.keys()), code, language=language)
@@ -401,10 +402,10 @@ class LoweringContext:
         self,
         name: str,
         params: Sequence[str],
-        ranges: Sequence[Tuple[SymExpr, SymExpr, SymExpr]],
-        inputs: Dict[str, Memlet],
+        ranges: Sequence[tuple[SymExpr, SymExpr, SymExpr]],
+        inputs: dict[str, Memlet],
         code: str,
-        outputs: Dict[str, Memlet],
+        outputs: dict[str, Memlet],
     ) -> None:
         """Emits ``map params in ranges: tasklet``; without parameters emits a bare tasklet."""
         if len(params) == 0:
@@ -421,12 +422,12 @@ class LoweringContext:
         self,
         name: str,
         outer_params: Sequence[str],
-        outer_ranges: Sequence[Tuple],
+        outer_ranges: Sequence[tuple],
         inner_params: Sequence[str],
-        inner_ranges: Sequence[Tuple],
-        inputs: Dict[str, Memlet],
+        inner_ranges: Sequence[tuple],
+        inputs: dict[str, Memlet],
         code: str,
-        outputs: Dict[str, Memlet],
+        outputs: dict[str, Memlet],
     ) -> None:
         """Emits ``map outer: map inner: tasklet`` (e.g. a reduction window inside an output-element map)."""
         name = sanitize_name(name)
@@ -444,7 +445,7 @@ class LoweringContext:
         self.emit(tn.MapScope(node=nodes.MapEntry(outer), children=[inner_scope]))
 
     def emit_library_call(
-        self, node: nodes.LibraryNode, in_memlets: Dict[str, Memlet], out_memlets: Dict[str, Memlet]
+        self, node: nodes.LibraryNode, in_memlets: dict[str, Memlet], out_memlets: dict[str, Memlet]
     ) -> None:
         self.emit(tn.LibraryCall(node=node, in_memlets=dict(in_memlets), out_memlets=dict(out_memlets)))
 
@@ -453,7 +454,7 @@ class LoweringContext:
         return f"{sanitize_name(prefix)}_{next(self._counter)}"
 
 
-def contiguous_strides(shape: Sequence[SymExpr]) -> Tuple[SymExpr, ...]:
+def contiguous_strides(shape: Sequence[SymExpr]) -> tuple[SymExpr, ...]:
     strides = []
     acc: SymExpr = 1
     for s in reversed(tuple(shape)):
@@ -462,7 +463,7 @@ def contiguous_strides(shape: Sequence[SymExpr]) -> Tuple[SymExpr, ...]:
     return tuple(reversed(strides))
 
 
-def dense_strides(tstrides: Sequence[SymExpr], tshape: Sequence[SymExpr]) -> Optional[Tuple[SymExpr, ...]]:
+def dense_strides(tstrides: Sequence[SymExpr], tshape: Sequence[SymExpr]) -> tuple[SymExpr, ...] | None:
     """
     Returns ``tstrides`` if they describe a dense (non-overlapping) layout usable for a freshly allocated container,
     otherwise ``None`` (meaning: use a contiguous layout). Broadcast (stride 0) layouts are not dense.
@@ -473,7 +474,7 @@ def dense_strides(tstrides: Sequence[SymExpr], tshape: Sequence[SymExpr]) -> Opt
     return tuple(tstrides)
 
 
-def index_memlet(name: str, indices: Sequence[Union[str, SymExpr]]) -> Memlet:
+def index_memlet(name: str, indices: Sequence[str | SymExpr]) -> Memlet:
     """Builds a single-element memlet ``name[i0, i1, ...]``."""
     idx = ", ".join(str(i) for i in indices) if len(indices) > 0 else "0"
     return Memlet.simple(name, idx)

@@ -1,7 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Runtime wrapper: calls a compiled SDFG with torch tensors and SymInt arguments supplied by AOTAutograd."""
 
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import sympy
 import torch
@@ -12,7 +12,7 @@ from dace.codegen.compiled_sdfg import CompiledSDFG
 from .training import CompiledTwoPhase, TwoPhaseFunction
 
 
-def _evaluate(expr, symvals: Dict[str, int]) -> int:
+def _evaluate(expr, symvals: dict[str, int]) -> int:
     if isinstance(expr, (int, bool)):
         return int(expr)
     if isinstance(expr, sympy.Basic) and expr.is_Integer:
@@ -33,9 +33,9 @@ class CompiledGraph:
     def __init__(
         self,
         csdfg: CompiledSDFG,
-        inputs: List[Any],
-        outputs: List[Any],
-        fixed_arguments: Optional[Dict[str, Any]] = None,
+        inputs: list[Any],
+        outputs: list[Any],
+        fixed_arguments: dict[str, Any] | None = None,
     ):
         """
         :param csdfg: The compiled SDFG.
@@ -53,13 +53,13 @@ class CompiledGraph:
         self.fixed_arguments = dict(fixed_arguments or {})
         self.name = csdfg.sdfg.name
 
-    def __call__(self, *args) -> List[Any]:
+    def __call__(self, *args) -> list[Any]:
         if len(args) == 1 and isinstance(args[0], list):  # Boxed: graph inputs are tensors and numbers, never lists
             inputs = args[0]
             args = tuple(inputs)
             inputs.clear()
-        kwargs: Dict[str, Any] = dict(self.fixed_arguments)
-        symvals: Dict[str, int] = {}
+        kwargs: dict[str, Any] = dict(self.fixed_arguments)
+        symvals: dict[str, int] = {}
         for spec in self.inputs:
             if spec.kind == "sym":
                 symvals[spec.name] = int(args[spec.position])
@@ -71,8 +71,8 @@ class CompiledGraph:
                     t = t.reshape(1)  # rank-0 tensors are shape-(1,) containers in the SDFG
                 kwargs[spec.name] = t
 
-        results: List[Any] = []
-        scalars: List[Any] = []  #: (index, buffer) of outputs only known after the call
+        results: list[Any] = []
+        scalars: list[Any] = []  #: (index, buffer) of outputs only known after the call
         for out in self.outputs:
             if out.kind == "tensor":
                 shape = [_evaluate(s, symvals) for s in out.tshape]
@@ -114,16 +114,16 @@ class DifferentiableGraph:
     autograd function whose backward runs the backward phase.
     """
 
-    def __init__(self, compiled: CompiledTwoPhase, inputs: List[Any], outputs: List[Any]):
+    def __init__(self, compiled: CompiledTwoPhase, inputs: list[Any], outputs: list[Any]):
         self.compiled = compiled
         self.inputs = inputs
         self.outputs = outputs
 
-    def __call__(self, *args) -> List[Any]:
+    def __call__(self, *args) -> list[Any]:
         if len(args) == 1 and isinstance(args[0], list):  # Boxed calling convention
             args = tuple(args[0])
-        call: Dict[str, Any] = {}
-        tensors: Dict[str, torch.Tensor] = {}
+        call: dict[str, Any] = {}
+        tensors: dict[str, torch.Tensor] = {}
         for spec in self.inputs:
             if spec.kind == "sym":
                 call[spec.name] = int(args[spec.position])

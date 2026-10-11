@@ -2,7 +2,6 @@
 """Reverse-mode differentiation of reductions whose results feed further computation (not only the loss)."""
 
 import numpy as np
-
 import pytest
 
 import dace

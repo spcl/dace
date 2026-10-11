@@ -16,7 +16,7 @@ reference: an optimizer updating them in place is seen by the next call without 
 import dataclasses
 import inspect
 import warnings
-from typing import Any, Dict, List, Set, Tuple
+from typing import Any
 
 import torch
 
@@ -47,8 +47,8 @@ def _gradient_name(name: str) -> str:
 @dataclasses.dataclass
 class _Compiled:
     csdfg: CompiledSDFG
-    differentiated: List[str]  #: Containers whose gradients the SDFG computes (closure parameters and arguments)
-    arguments: Set[str]  #: Names of the SDFG's arguments
+    differentiated: list[str]  #: Containers whose gradients the SDFG computes (closure parameters and arguments)
+    arguments: set[str]  #: Names of the SDFG's arguments
 
 
 class _ProgramCompiler:
@@ -57,15 +57,15 @@ class _ProgramCompiler:
     def __init__(self, program: DaceProgram):
         self.program = program
         self._signature = inspect.signature(program.f)
-        self._compiled: Dict[Tuple, Any] = {}
+        self._compiled: dict[tuple, Any] = {}
         self.compile_count = 0  #: Number of SDFGs compiled (test oracle for compile-once behavior)
 
-    def _arguments(self, args: Tuple, kwargs: Dict[str, Any]) -> Dict[str, Any]:
+    def _arguments(self, args: tuple, kwargs: dict[str, Any]) -> dict[str, Any]:
         arguments = dict(zip(self.program.argnames, args))
         arguments.update(kwargs)
         return arguments
 
-    def _key(self, arguments: Dict[str, Any]) -> Tuple:
+    def _key(self, arguments: dict[str, Any]) -> tuple:
         """Argument types and the names of the closure parameters and arguments that require gradients."""
         values = {**self.program.__sdfg_closure__(), **arguments}
         differentiated = tuple(
@@ -82,7 +82,7 @@ class _ProgramCompiler:
             return repr((value.dtype, tuple(value.shape), tuple(value.stride())))
         return repr((type(value), value if isinstance(value, (bool, int, float, str)) else None))
 
-    def _parse(self, args: Tuple, kwargs: Dict[str, Any], arguments: Dict[str, Any]) -> Tuple[Any, Tuple, List[str]]:
+    def _parse(self, args: tuple, kwargs: dict[str, Any], arguments: dict[str, Any]) -> tuple[Any, tuple, list[str]]:
         """Parses the program; returns the SDFG, the cache key, and the containers to differentiate."""
         sdfg = self.program.to_sdfg(*args, simplify=True, **kwargs)
         # The closure (and with it the modules' parameters) is only known once the program has been parsed
@@ -92,7 +92,7 @@ class _ProgramCompiler:
             raise ValueError(f"{self.program.name} uses no parameters or arguments that require gradients")
         return sdfg, key, differentiated
 
-    def _call_arguments(self, sdfg, arguments: Dict[str, Any]) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    def _call_arguments(self, sdfg, arguments: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
         """The SDFG arguments for a call (tensors detached) with inferred symbols, and the objects they come from."""
         objects = {**arguments, **self.program.__sdfg_closure__()}
         call = {name: _detached(value) for name, value in objects.items()}
@@ -141,7 +141,7 @@ class TrainingStep(_ProgramCompiler):
                 target.grad += gradient
         return loss.reshape(())
 
-    def _compile(self, args: Tuple, kwargs: Dict[str, Any], arguments: Dict[str, Any]) -> _Compiled:
+    def _compile(self, args: tuple, kwargs: dict[str, Any], arguments: dict[str, Any]) -> _Compiled:
         key = self._key(arguments)
         if key in self._compiled:
             return self._compiled[key]
@@ -186,10 +186,10 @@ class SDFGPair:
     forward: CompiledSDFG
     backward: CompiledSDFG
     backward_pass: BackwardPass
-    outputs: List[str]  #: Return containers of the program
-    differentiated: List[str]  #: Containers whose gradients the backward SDFG computes
-    forward_arguments: Set[str]  #: Names of the forward SDFG's arguments
-    backward_arguments: Set[str]  #: Names of the backward SDFG's arguments
+    outputs: list[str]  #: Return containers of the program
+    differentiated: list[str]  #: Containers whose gradients the backward SDFG computes
+    forward_arguments: set[str]  #: Names of the forward SDFG's arguments
+    backward_arguments: set[str]  #: Names of the backward SDFG's arguments
 
 
 class DifferentiableProgram(_ProgramCompiler):
@@ -209,7 +209,7 @@ class DifferentiableProgram(_ProgramCompiler):
         outputs = SDFGPairFunction.apply(pair, call, *[objects[name] for name in pair.differentiated])
         return outputs[0] if len(outputs) == 1 else outputs
 
-    def _compile(self, args: Tuple, kwargs: Dict[str, Any], arguments: Dict[str, Any]) -> SDFGPair:
+    def _compile(self, args: tuple, kwargs: dict[str, Any], arguments: dict[str, Any]) -> SDFGPair:
         key = self._key(arguments)
         if key in self._compiled:
             return self._compiled[key]
@@ -223,7 +223,7 @@ class DifferentiableProgram(_ProgramCompiler):
         return pair
 
 
-def compile_pair(backward_pass: BackwardPass, outputs: List[str], differentiated: List[str]) -> SDFGPair:
+def compile_pair(backward_pass: BackwardPass, outputs: list[str], differentiated: list[str]) -> SDFGPair:
     """Compiles the forward and backward SDFGs of ``backward_pass``."""
     return SDFGPair(
         backward_pass.forward.compile(),
@@ -244,7 +244,7 @@ class SDFGPairFunction(torch.autograd.Function):
     """
 
     @staticmethod
-    def forward(ctx, pair: SDFGPair, call: Dict[str, Any], *differentiated: torch.Tensor):
+    def forward(ctx, pair: SDFGPair, call: dict[str, Any], *differentiated: torch.Tensor):
         backward_pass = pair.backward_pass
         sdfg = pair.forward.sdfg
         symbols = {name: value for name, value in call.items() if name in sdfg.symbols}
@@ -299,8 +299,8 @@ class CompiledTwoPhase:
 
     csdfg: CompiledSDFG
     two_phase: TwoPhaseBackwardPass
-    outputs: List[str]  #: Return containers
-    differentiated: List[str]  #: Containers whose gradients the backward phase computes
+    outputs: list[str]  #: Return containers
+    differentiated: list[str]  #: Containers whose gradients the backward phase computes
 
 
 class TwoPhaseFunction(torch.autograd.Function):
@@ -312,7 +312,7 @@ class TwoPhaseFunction(torch.autograd.Function):
     """
 
     @staticmethod
-    def forward(ctx, compiled: CompiledTwoPhase, call: Dict[str, Any], *differentiated: torch.Tensor):
+    def forward(ctx, compiled: CompiledTwoPhase, call: dict[str, Any], *differentiated: torch.Tensor):
         two_phase, sdfg = compiled.two_phase, compiled.csdfg.sdfg
         symbols = {name: value for name, value in call.items() if name in sdfg.symbols}
         tape = {name: _allocate(sdfg.arrays[name], symbols) for name in two_phase.tape}
@@ -351,7 +351,7 @@ class TwoPhaseFunction(torch.autograd.Function):
         return (None, None, *[gradients.get(name) for name in compiled.differentiated])
 
 
-def _call_phase(compiled: CompiledTwoPhase, phase: int, used: Set[str], given: Dict[str, Any]):
+def _call_phase(compiled: CompiledTwoPhase, phase: int, used: set[str], given: dict[str, Any]):
     """Calls one phase of a two-phase SDFG: arrays of the other phase are None, its symbols are placeholders."""
     arguments = {compiled.two_phase.phase: phase}
     for name, desc in compiled.csdfg.sdfg.arglist().items():
@@ -388,11 +388,11 @@ def differentiable(program: DaceProgram) -> DifferentiableProgram:
     return DifferentiableProgram(program)
 
 
-def _shape(desc: data.Data, symbols: Dict[str, Any]) -> Tuple[int, ...]:
+def _shape(desc: data.Data, symbols: dict[str, Any]) -> tuple[int, ...]:
     return tuple(int(symbolic.evaluate(size, symbols)) for size in desc.shape)
 
 
-def _allocate(desc: data.Data, symbols: Dict[str, Any]) -> torch.Tensor:
+def _allocate(desc: data.Data, symbols: dict[str, Any]) -> torch.Tensor:
     """A torch tensor for a container, with its strides."""
     strides = tuple(int(symbolic.evaluate(stride, symbols)) for stride in desc.strides)
     return torch.empty_strided(_shape(desc, symbols), strides, dtype=to_torch_dtype(desc.dtype))

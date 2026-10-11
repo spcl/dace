@@ -9,7 +9,8 @@ import hashlib
 import os
 import warnings
 from collections import Counter
-from typing import Any, Callable, Deque, Dict, Iterable, List, Optional, Tuple
+from collections.abc import Callable, Iterable
+from typing import Any
 
 import torch
 from torch._dynamo.backends.common import aot_autograd
@@ -21,13 +22,13 @@ from dace import data, dtypes
 from dace.autodiff import make_two_phase_backward_pass
 from dace.config import Config
 
-from .decompositions import build_decomposition_table
 from . import joint as jt
 from .context import UnsupportedOpError
+from .decompositions import build_decomposition_table
 from .importer import GraphImporter, PhaseInterface
 from .runtime import CompiledGraph, DifferentiableGraph
-from .training import CompiledTwoPhase
 from .sources import GraphDescription, describe_graph
+from .training import CompiledTwoPhase
 
 #: Dynamo settings for tracing programs that DaCe compiles: ``.item()`` stays in the graph as a data-dependent symbol
 #: (assigned from data in the SDFG) instead of breaking the graph
@@ -36,14 +37,14 @@ CAPTURE_CONFIG = {"capture_scalar_outputs": True}
 
 @dataclasses.dataclass
 class DaceBackendOptions:
-    sdfg_name: Optional[str] = None  #: Base name of the generated SDFGs (defaults to the compiled function's name)
+    sdfg_name: str | None = None  #: Base name of the generated SDFGs (defaults to the compiled function's name)
     simplify: bool = True  #: Run ``SDFG.simplify`` after conversion
     validate: bool = True  #: Validate the generated SDFG
     auto_optimize: bool = False  #: Run ``dace.transformation.auto.auto_optimize`` before compiling
     onnx_fallback: bool = True  #: Fall back to ``dace.libraries.onnx`` expansions for unsupported operators
-    extra_decompositions: Optional[Iterable] = None  #: Additional operators to decompose
-    native_ops: Optional[Iterable] = None  #: Operators to keep intact (user-provided lowerings)
-    save_sdfg: Optional[str] = None  #: Directory to save generated SDFGs into (for debugging)
+    extra_decompositions: Iterable | None = None  #: Additional operators to decompose
+    native_ops: Iterable | None = None  #: Operators to keep intact (user-provided lowerings)
+    save_sdfg: str | None = None  #: Directory to save generated SDFGs into (for debugging)
     verbose: bool = False
     print_ops: bool = False  #: Print the post-decomposition operator histogram of each graph
     #: Normalized ``dynamic_shapes`` specification (see :mod:`~dace.frontend.ml.torch.dynamo.shapes`); used to name
@@ -55,7 +56,7 @@ class DaceBackendOptions:
     joint: bool = True
     #: AOTAutograd partition function that picks the values the forward saves for the backward (defaults to
     #: ``default_partition``, which saves instead of recomputing)
-    partitioner: Optional[Callable] = None
+    partitioner: Callable | None = None
 
 
 class DaceBackend:
@@ -75,21 +76,21 @@ class DaceBackend:
                     setattr(self.options, key, Config.get_bool("frontend", "torch_dynamo", key))
                 except (KeyError, TypeError, ValueError):  # pragma: no cover - missing schema entry
                     pass
-        self._decomp_table: Optional[Dict] = None
+        self._decomp_table: dict | None = None
         self.compile_count = 0  #: Number of SDFGs compiled by this backend (test oracle for compile-once behavior)
         self.last_sdfg = None  #: The most recently generated SDFG (before compilation)
         self.last_result = None  #: The most recent :class:`~dace.frontend.ml.torch.dynamo.importer.ImportResult`
-        self._name_counter: Dict[str, int] = {}
+        self._name_counter: dict[str, int] = {}
         #: Sources, symbol names, and guards of the most recent Dynamo-level graph
-        self.last_description: Optional[GraphDescription] = None
-        self.last_dynamo_graph: Optional[torch.fx.GraphModule] = None  #: The most recent Dynamo-level graph
+        self.last_description: GraphDescription | None = None
+        self.last_dynamo_graph: torch.fx.GraphModule | None = None  #: The most recent Dynamo-level graph
         #: Joint plans by forward graph code, recorded by the partitioner until the forward graph is compiled
-        self._joint_plans: Dict[str, Deque[jt.JointPlan]] = collections.defaultdict(collections.deque)
+        self._joint_plans: dict[str, collections.deque[jt.JointPlan]] = collections.defaultdict(collections.deque)
         #: Backward phases of compiled joint SDFGs by backward graph code, until AOTAutograd asks for them
-        self._joint_backward: Dict[str, Deque[CompiledGraph]] = collections.defaultdict(collections.deque)
+        self._joint_backward: dict[str, collections.deque[CompiledGraph]] = collections.defaultdict(collections.deque)
 
     @property
-    def symbol_names(self) -> Dict[str, str]:
+    def symbol_names(self) -> dict[str, str]:
         """Dynamo symbol -> DaCe symbol name of the most recent graph."""
         return dict(self.last_description.symbol_names) if self.last_description is not None else {}
 
@@ -98,12 +99,12 @@ class DaceBackend:
     backend_ctx_ctor = contextlib.nullcontext
 
     @property
-    def decomposition_table(self) -> Dict:
+    def decomposition_table(self) -> dict:
         if self._decomp_table is None:
             self._decomp_table = build_decomposition_table(self.options.extra_decompositions, self.options.native_ops)
         return self._decomp_table
 
-    def __call__(self, gm: torch.fx.GraphModule, example_inputs: List[Any]) -> Callable:
+    def __call__(self, gm: torch.fx.GraphModule, example_inputs: list[Any]) -> Callable:
         # The Dynamo-level graph knows which argument, parameter, or buffer each placeholder came from; the AOT graphs
         # below do not (their placeholders correspond to the Dynamo-level ones positionally)
         description = describe_graph(gm, self.options.signature, self.options.dynamic_shapes)
@@ -134,7 +135,7 @@ class DaceBackend:
 
     def _partition(
         self, joint: torch.fx.GraphModule, joint_inputs: Any, **kwargs
-    ) -> Tuple[torch.fx.GraphModule, torch.fx.GraphModule]:
+    ) -> tuple[torch.fx.GraphModule, torch.fx.GraphModule]:
         """AOTAutograd's partition function: partitions the joint graph and records it for joint compilation."""
         forward, backward = (self.options.partitioner or default_partition)(joint, joint_inputs, **kwargs)
         if self.options.joint:
@@ -149,7 +150,7 @@ class DaceBackend:
         return forward, backward
 
     def _compile_forward(
-        self, gm: torch.fx.GraphModule, example_inputs: List[Any], description: Optional[GraphDescription] = None
+        self, gm: torch.fx.GraphModule, example_inputs: list[Any], description: GraphDescription | None = None
     ) -> Callable:
         description = description or self.last_description
         input_names = description.input_names() if len(description.inputs) == len(example_inputs) else None
@@ -162,7 +163,7 @@ class DaceBackend:
         return self._compile_graph(gm, example_inputs, self._graph_name(gm), description.symbol_names, input_names)
 
     def _compile_backward(
-        self, gm: torch.fx.GraphModule, example_inputs: List[Any], description: Optional[GraphDescription] = None
+        self, gm: torch.fx.GraphModule, example_inputs: list[Any], description: GraphDescription | None = None
     ) -> Callable:
         compiled = self._joint_backward.get(gm.code)
         if compiled:  # The backward phase of a joint SDFG
@@ -172,7 +173,7 @@ class DaceBackend:
         return self._compile_graph(gm, example_inputs, self._graph_name(gm, "backward"), description.symbol_names, None)
 
     def _compile_joint(
-        self, plan: jt.JointPlan, name: str, symbol_names: Dict[str, str], input_names: Optional[List[Optional[str]]]
+        self, plan: jt.JointPlan, name: str, symbol_names: dict[str, str], input_names: list[str | None] | None
     ) -> Callable:
         """Compiles a training graph into one SDFG; returns its forward phase and keeps its backward phase."""
         if self.options.print_ops:
@@ -197,10 +198,10 @@ class DaceBackend:
     def _compile_graph(
         self,
         gm: torch.fx.GraphModule,
-        example_inputs: List[Any],
+        example_inputs: list[Any],
         name: str,
-        symbol_names: Dict[str, str],
-        input_names: Optional[List[Optional[str]]],
+        symbol_names: dict[str, str],
+        input_names: list[str | None] | None,
     ) -> Callable:
         if self.options.print_ops:
             _print_op_histogram(gm)
@@ -211,7 +212,7 @@ class DaceBackend:
         return CompiledGraph(csdfg, result.inputs, result.outputs)
 
     def _compile_with_dace_autodiff(
-        self, gm: torch.fx.GraphModule, example_inputs: List[Any], description: GraphDescription
+        self, gm: torch.fx.GraphModule, example_inputs: list[Any], description: GraphDescription
     ) -> Callable:
         """
         Compiles a training graph into a forward and a backward SDFG with DaCe's automatic differentiation (instead of
@@ -270,11 +271,11 @@ def _has_captured_control_flow(gm: torch.fx.GraphModule) -> bool:
     return any(node.op == "call_function" and str(node.target) == "dace.cfg.default" for node in gm.graph.nodes)
 
 
-def _requires_gradients(example_inputs: List[Any]) -> bool:
+def _requires_gradients(example_inputs: list[Any]) -> bool:
     return torch.is_grad_enabled() and any(isinstance(x, torch.Tensor) and x.requires_grad for x in example_inputs)
 
 
-def _phase_arguments(sdfg, interface: PhaseInterface, other: PhaseInterface) -> Dict[str, Any]:
+def _phase_arguments(sdfg, interface: PhaseInterface, other: PhaseInterface) -> dict[str, Any]:
     """
     The arguments of a joint SDFG that one phase does not get from its caller: the phase itself, ``None`` for the
     arrays of the other phase, and a placeholder value for the symbols only the other phase defines (and uses).
@@ -283,7 +284,7 @@ def _phase_arguments(sdfg, interface: PhaseInterface, other: PhaseInterface) -> 
         spec.name for spec in interface.outputs if spec.kind == "tensor"
     }
     other_symbols = {spec.name for spec in other.inputs if spec.kind == "sym"}
-    arguments: Dict[str, Any] = {jt.PHASE_SYMBOL: interface.phase}
+    arguments: dict[str, Any] = {jt.PHASE_SYMBOL: interface.phase}
     for name, desc in sdfg.arglist().items():
         if name in given or name in arguments:
             continue

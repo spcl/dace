@@ -3,27 +3,28 @@
 
 import functools
 import inspect
-from typing import Any, Callable, Optional
+from collections.abc import Callable
+from typing import Any
 
 import torch
 
-from .backend import CAPTURE_CONFIG, DaceBackend
 from . import shapes
+from .backend import CAPTURE_CONFIG, DaceBackend
 
 
 def compile(
-    model: Optional[Any] = None,
+    model: Any | None = None,
     *,
-    dynamic: Optional[bool] = True,
+    dynamic: bool | None = True,
     dynamic_shapes: Any = None,
     fullgraph: bool = False,
-    sdfg_name: Optional[str] = None,
+    sdfg_name: str | None = None,
     simplify: bool = True,
     auto_optimize: bool = False,
     onnx_fallback: bool = True,
     extra_decompositions=None,
     native_ops=None,
-    save_sdfg: Optional[str] = None,
+    save_sdfg: str | None = None,
     verbose: bool = False,
     **torch_compile_kwargs,
 ) -> Callable:

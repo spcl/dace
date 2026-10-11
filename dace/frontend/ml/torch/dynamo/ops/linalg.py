@@ -3,8 +3,8 @@
 
 import torch
 
+from dace.frontend.ml.torch.dynamo.context import LoweringContext, TensorValue, as_sym
 
-from ..context import LoweringContext, TensorValue, as_sym
 from . import register_lowering
 
 aten = torch.ops.aten

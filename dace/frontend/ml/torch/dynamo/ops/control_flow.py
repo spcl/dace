@@ -13,18 +13,25 @@ Subgraph placeholders bind positionally to the HOP operands (verified orders for
 ``(carries..., x_slices..., additional...)``; ``map_impl`` body takes ``(x_slices..., args...)``).
 """
 
-from typing import List, Sequence
+from collections.abc import Sequence
 
 import sympy
 import torch
 from torch.fx import GraphModule
 
 from dace import subsets, symbolic
+from dace.frontend.ml.torch.dynamo.context import (
+    ConstValue,
+    LoweringContext,
+    SymValue,
+    TensorValue,
+    TupleValue,
+    UnsupportedOpError,
+)
 from dace.properties import CodeBlock
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.sdfg.state import LoopRegion
 
-from ..context import ConstValue, LoweringContext, SymValue, TensorValue, TupleValue, UnsupportedOpError
 from . import register_lowering, resolve
 
 
@@ -43,7 +50,7 @@ def _graph(v) -> GraphModule:
     return v
 
 
-def _tensors(ctx: LoweringContext, values: Sequence, what: str) -> List[TensorValue]:
+def _tensors(ctx: LoweringContext, values: Sequence, what: str) -> list[TensorValue]:
     result = []
     for v in values:
         if not isinstance(v, TensorValue):
@@ -66,7 +73,7 @@ def predicate_expr(pred) -> str:
     raise UnsupportedOpError("predicate", f"unsupported predicate type {type(pred).__name__}")
 
 
-def _lower_into(ctx: LoweringContext, gm: GraphModule, bindings: Sequence, children: list) -> List:
+def _lower_into(ctx: LoweringContext, gm: GraphModule, bindings: Sequence, children: list) -> list:
     with ctx.scope(children):
         return ctx.importer.lower_subgraph(ctx, gm, bindings)
 

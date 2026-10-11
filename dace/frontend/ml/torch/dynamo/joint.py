@@ -14,7 +14,7 @@ conventions of the two phases follow AOTAutograd's partitioned graphs, which the
 """
 
 import dataclasses
-from typing import Dict, List, Optional, Sequence, Set
+from collections.abc import Sequence
 
 import torch.fx
 
@@ -31,18 +31,18 @@ class JointPlan:
     forward: torch.fx.GraphModule  #: The partitioned forward graph (defines the forward calling convention)
     backward: torch.fx.GraphModule  #: The partitioned backward graph (defines the backward calling convention)
     num_fwd_outputs: int  #: Number of joint outputs that are forward outputs (the rest are gradients)
-    saved: List[str]  #: Names of the joint nodes passed from the forward to the backward phase (the cut)
+    saved: list[str]  #: Names of the joint nodes passed from the forward to the backward phase (the cut)
 
-    def nodes(self) -> Dict[str, torch.fx.Node]:
+    def nodes(self) -> dict[str, torch.fx.Node]:
         return {n.name: n for n in self.joint.graph.nodes}
 
-    def forward_nodes(self) -> Set[torch.fx.Node]:
+    def forward_nodes(self) -> set[torch.fx.Node]:
         """The joint nodes the forward phase computes: ancestors of the forward outputs and the saved values."""
         nodes = self.nodes()
         roots = [nodes[n] for n in _output_names(self.forward)]
         return _ancestors(roots, stop=set())
 
-    def backward_nodes(self) -> Set[torch.fx.Node]:
+    def backward_nodes(self) -> set[torch.fx.Node]:
         """The joint nodes the backward phase computes: ancestors of the gradients, up to (excluding) saved values."""
         nodes = self.nodes()
         stop = {nodes[n] for n in self.saved}
@@ -52,7 +52,7 @@ class JointPlan:
 
 def plan_from_partition(
     joint: torch.fx.GraphModule, forward: torch.fx.GraphModule, backward: torch.fx.GraphModule, num_fwd_outputs: int
-) -> Optional[JointPlan]:
+) -> JointPlan | None:
     """
     Builds the plan of a partitioned joint graph, or returns ``None`` if the partitioned graphs cannot be expressed
     in terms of the joint graph (e.g., the partitioner introduced operators of its own).
@@ -70,7 +70,7 @@ def plan_from_partition(
     return JointPlan(joint, forward, backward, num_fwd_outputs, saved)
 
 
-def placeholder_names(gm: torch.fx.GraphModule) -> List[str]:
+def placeholder_names(gm: torch.fx.GraphModule) -> list[str]:
     return [n.name for n in gm.graph.nodes if n.op == "placeholder"]
 
 
@@ -78,20 +78,20 @@ def _is_tangent(node: torch.fx.Node) -> bool:
     return node.op == "placeholder" and node.name.startswith("tangents")
 
 
-def flat_outputs(gm: torch.fx.GraphModule) -> List:
+def flat_outputs(gm: torch.fx.GraphModule) -> list:
     """The values (nodes or constants) a graph returns."""
     output = next(n for n in gm.graph.nodes if n.op == "output")
     values = output.args[0]
     return list(values) if isinstance(values, (list, tuple)) else [values]
 
 
-def _output_names(gm: torch.fx.GraphModule) -> List[str]:
+def _output_names(gm: torch.fx.GraphModule) -> list[str]:
     return [v.name for v in flat_outputs(gm) if isinstance(v, torch.fx.Node)]
 
 
-def _ancestors(roots: Sequence[torch.fx.Node], stop: Set[torch.fx.Node]) -> Set[torch.fx.Node]:
+def _ancestors(roots: Sequence[torch.fx.Node], stop: set[torch.fx.Node]) -> set[torch.fx.Node]:
     """``roots`` and their transitive inputs, not crossing (and not including) ``stop``."""
-    result: Set[torch.fx.Node] = set()
+    result: set[torch.fx.Node] = set()
     work = list(roots)
     while work:
         node = work.pop()

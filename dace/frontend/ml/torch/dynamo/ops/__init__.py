@@ -7,9 +7,10 @@ A lowering has the signature ``lower(ctx: LoweringContext, node: torch.fx.Node, 
 to ``node.meta['val']`` (FakeTensor/SymInt) which is the authoritative source for output shapes, strides, and dtypes.
 """
 
-from typing import Any, Callable, Dict, Optional
+from typing import Any
+from collections.abc import Callable
 
-_LOWERINGS: Dict[Any, Callable] = {}
+_LOWERINGS: dict[Any, Callable] = {}
 
 
 def register_lowering(*targets):
@@ -23,7 +24,7 @@ def register_lowering(*targets):
     return decorator
 
 
-def lookup(target) -> Optional[Callable]:
+def lookup(target) -> Callable | None:
     fn = _LOWERINGS.get(target)
     if fn is None and hasattr(target, "overloadpacket"):
         fn = _LOWERINGS.get(target.overloadpacket)

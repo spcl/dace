@@ -1,8 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Mapping between ``torch.dtype`` and DaCe typeclasses."""
 
-from typing import Dict
-
 import torch
 
 import dace
@@ -13,7 +11,7 @@ class UnsupportedDtypeError(NotImplementedError):
     pass
 
 
-TORCH_TO_DACE: Dict[torch.dtype, dtypes.typeclass] = {
+TORCH_TO_DACE: dict[torch.dtype, dtypes.typeclass] = {
     torch.float32: dace.float32,
     torch.float64: dace.float64,
     torch.float16: dace.float16,
@@ -37,7 +35,7 @@ for _tname, _dname in (
     if hasattr(torch, _tname) and hasattr(dace, _dname):
         TORCH_TO_DACE[getattr(torch, _tname)] = getattr(dace, _dname)
 
-DACE_TO_TORCH: Dict[dtypes.typeclass, torch.dtype] = {v: k for k, v in TORCH_TO_DACE.items()}
+DACE_TO_TORCH: dict[dtypes.typeclass, torch.dtype] = {v: k for k, v in TORCH_TO_DACE.items()}
 
 
 def to_dace_dtype(dtype: torch.dtype) -> dtypes.typeclass:

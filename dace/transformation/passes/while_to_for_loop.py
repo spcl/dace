@@ -2,14 +2,15 @@
 """Turns while loops that step a counter by a constant into for loops (with an init and an update statement)."""
 
 import ast
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any
 
 import sympy
 
 from dace import SDFG, symbolic
 from dace.properties import CodeBlock
 from dace.sdfg.state import AbstractControlFlowRegion, ControlFlowBlock, ControlFlowRegion, LoopRegion, ReturnBlock
-from dace.transformation import pass_pipeline as ppl, transformation
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation import transformation
 
 _DIRECTIONS = {
     sympy.StrictLessThan: (1, True),
@@ -47,7 +48,7 @@ class WhileToForLoop(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return modified & (ppl.Modifies.CFG | ppl.Modifies.InterstateEdges)
 
-    def apply_pass(self, sdfg: SDFG, _: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _: dict[str, Any]) -> int | None:
         """
         :return: The number of converted loops, or None if no loop was converted.
         """
@@ -122,7 +123,7 @@ class WhileToForLoop(ppl.Pass):
         return True
 
 
-def _step(loop: LoopRegion, counter: str, sign: int, variant: Set[Any]) -> Optional[Tuple[Any, Any, Set, Any]]:
+def _step(loop: LoopRegion, counter: str, sign: int, variant: set[Any]) -> tuple[Any, Any, set, Any] | None:
     """
     The step of a counter: the edge of the loop that every iteration takes once and that steps the counter by a
     loop-invariant constant in the direction that ends the loop.
@@ -154,7 +155,7 @@ def _step(loop: LoopRegion, counter: str, sign: int, variant: Set[Any]) -> Optio
     return step_edge, step, after, start
 
 
-def condition_terms(condition: str) -> List[str]:
+def condition_terms(condition: str) -> list[str]:
     """The terms of a condition that is a conjunction (``a and b and c``), or the condition itself."""
     try:
         tree = ast.parse(condition, mode="eval").body
@@ -173,7 +174,7 @@ def condition_terms(condition: str) -> List[str]:
     return terms
 
 
-def _comparison(condition: str) -> Optional[Tuple[str, Any, int, bool]]:
+def _comparison(condition: str) -> tuple[str, Any, int, bool] | None:
     """
     Matches a condition that compares a symbol with a bound.
 
@@ -211,7 +212,7 @@ def _comparison(condition: str) -> Optional[Tuple[str, Any, int, bool]]:
     return str(lhs), rhs, sign, strict
 
 
-def _assigned_symbols(region: AbstractControlFlowRegion) -> Set[str]:
+def _assigned_symbols(region: AbstractControlFlowRegion) -> set[str]:
     """Symbols that a region (including nested regions) assigns."""
     assigned = set()
     for edge in region.all_interstate_edges():
@@ -222,7 +223,7 @@ def _assigned_symbols(region: AbstractControlFlowRegion) -> Set[str]:
     return assigned
 
 
-def _blocks_after(loop: LoopRegion, step_edge) -> Optional[Set[ControlFlowBlock]]:
+def _blocks_after(loop: LoopRegion, step_edge) -> set[ControlFlowBlock] | None:
     """
     The blocks of the loop body that execute after the step, or None if some path through the body does not take the
     step edge (the body is acyclic).
@@ -243,7 +244,7 @@ def _blocks_after(loop: LoopRegion, step_edge) -> Optional[Set[ControlFlowBlock]
     return after
 
 
-def _successors(region: ControlFlowRegion, block: ControlFlowBlock) -> Set[ControlFlowBlock]:
+def _successors(region: ControlFlowRegion, block: ControlFlowBlock) -> set[ControlFlowBlock]:
     result = set()
     stack = [block]
     while stack:
@@ -255,7 +256,7 @@ def _successors(region: ControlFlowRegion, block: ControlFlowBlock) -> Set[Contr
     return result
 
 
-def _value_on_entry(loop: LoopRegion, counter: str) -> Optional[Any]:
+def _value_on_entry(loop: LoopRegion, counter: str) -> Any | None:
     """
     The value of ``counter`` when the loop is entered: the value of the last assignment on the chain of edges that
     leads to the loop, if the symbols it reads are not reassigned on the way.

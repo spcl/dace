@@ -7,7 +7,7 @@ views, matmul, convolution) that the frontend lowers natively. Operators that Da
 structured maps) are removed from the table so they are not decomposed into less efficient forms.
 """
 
-from typing import Dict, Iterable, Optional
+from collections.abc import Iterable
 
 import torch
 
@@ -173,7 +173,7 @@ def _resolve_packets(names: Iterable):
     return result
 
 
-def _materialize(table) -> Dict:
+def _materialize(table) -> dict:
     if hasattr(table, "materialize"):
         return dict(table.materialize())
     return dict(table)
@@ -189,7 +189,7 @@ def _packets(ops: Iterable):
     return result
 
 
-def build_decomposition_table(extra: Optional[Iterable] = None, native_ops: Optional[Iterable] = None) -> Dict:
+def build_decomposition_table(extra: Iterable | None = None, native_ops: Iterable | None = None) -> dict:
     """
     Builds the decomposition table for AOTAutograd.
 

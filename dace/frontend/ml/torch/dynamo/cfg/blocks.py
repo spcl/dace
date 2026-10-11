@@ -35,7 +35,8 @@ import operator
 import sys
 import threading
 import types
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from collections.abc import Callable
+from typing import Any, Optional
 
 import torch
 from torch._dynamo import bytecode_transformation as bt
@@ -57,7 +58,8 @@ from torch.fx.experimental.symbolic_shapes import free_unbacked_symbols
 from torch.utils._sympy.numbers import int_oo
 from torch.utils._sympy.value_ranges import bound_sympy
 
-from ..backend import CAPTURE_CONFIG, DaceBackend
+from dace.frontend.ml.torch.dynamo.backend import CAPTURE_CONFIG, DaceBackend
+
 from . import transport
 from .analysis import JUMP_ON_TRUTH, CodeInfo
 from .transport import BRANCH, GOTO, RETURN, Binding, BlockRecord, CfgRecord
@@ -73,11 +75,11 @@ class CaptureFallback(Exception):
 @dataclasses.dataclass
 class _Exit:
     kind: str
-    targets: Dict[Any, int]  #: Leader index by edge label (``None`` for goto, truth value for branch)
-    names: List[str]  #: CFG variables passed on as graph outputs (after the predicate for a branch)
-    return_count: Optional[int] = None  #: Number of tensors returned (``None``: a single tensor, not a tuple)
-    side: Dict[str, Any] = dataclasses.field(default_factory=dict)  #: Other live values passed on (not graph outputs)
-    extra: Dict[Any, Dict[str, Any]] = dataclasses.field(default_factory=dict)  #: Side values for one edge label
+    targets: dict[Any, int]  #: Leader index by edge label (``None`` for goto, truth value for branch)
+    names: list[str]  #: CFG variables passed on as graph outputs (after the predicate for a branch)
+    return_count: int | None = None  #: Number of tensors returned (``None``: a single tensor, not a tuple)
+    side: dict[str, Any] = dataclasses.field(default_factory=dict)  #: Other live values passed on (not graph outputs)
+    extra: dict[Any, dict[str, Any]] = dataclasses.field(default_factory=dict)  #: Side values for one edge label
 
 
 @dataclasses.dataclass
@@ -88,20 +90,20 @@ class _Active:
     prefix: int  #: Number of instructions prepended to the original code
     start: int
     entered: bool = False
-    exit: Optional[_Exit] = None
+    exit: _Exit | None = None
 
 
 class Region:
     """The capture of one frame region, from its entry jump to every return reachable from it."""
 
-    def __init__(self, tx, info: CodeInfo, entry_targets: Dict[Any, int]):
+    def __init__(self, tx, info: CodeInfo, entry_targets: dict[Any, int]):
         """
         :param entry_targets: The instructions control enters the region at: by truth value of the entry predicate
                               (a branch), or under ``None`` (a goto, e.g., into a loop).
         """
         self.tx = tx
         self.info = info
-        self.entry_targets: Dict[Any, int] = dict(entry_targets)
+        self.entry_targets: dict[Any, int] = dict(entry_targets)
         self.leaders = info.leaders(list(entry_targets.values()))
         region = info.region(list(entry_targets.values()))
         depths = info.stack_depths()
@@ -111,17 +113,17 @@ class Region:
                 raise CaptureFallback("a block would start with values on the stack")
         if info.has_exception_handlers(region):
             raise CaptureFallback("the control flow is inside a try or with block")
-        self.active: Optional[_Active] = None
-        self.blocks: List[BlockRecord] = []
-        self._keys: Dict[Tuple, int] = {}
-        self._starts: Dict[int, int] = {}
-        self._outer_tensors: List[Any] = []  #: Outer proxies of the operator's tensor inputs
-        self._outer_syms: List[Any] = []  #: Outer proxies of the operator's SymInt inputs
-        self.return_examples: Optional[List[Any]] = None
-        self.return_count: Optional[int] = None
-        self._widened: Dict[Tuple[int, str], SymNodeVariable] = {}
+        self.active: _Active | None = None
+        self.blocks: list[BlockRecord] = []
+        self._keys: dict[tuple, int] = {}
+        self._starts: dict[int, int] = {}
+        self._outer_tensors: list[Any] = []  #: Outer proxies of the operator's tensor inputs
+        self._outer_syms: list[Any] = []  #: Outer proxies of the operator's SymInt inputs
+        self.return_examples: list[Any] | None = None
+        self.return_count: int | None = None
+        self._widened: dict[tuple[int, str], SymNodeVariable] = {}
         self._nonnegative_assumed: set = set()
-        self.entry_constants: Dict[str, Any] = {}
+        self.entry_constants: dict[str, Any] = {}
 
     # ------------------------------------------------------------------------------------------ operator inputs
     def bind_outer(self, proxy) -> Binding:
@@ -136,7 +138,7 @@ class Region:
         return Binding("sym" if is_sym else "tensor", len(values) - 1)
 
     # ------------------------------------------------------------------------------------------ blocks
-    def live(self, start: int, available: Dict[str, Any]) -> List[str]:
+    def live(self, start: int, available: dict[str, Any]) -> list[str]:
         """The variables live at ``start``: user variables, and the state of the loops ``start`` is in."""
         loops = self.info.loops_containing(start)
         names = set(self.info.livevars(start))
@@ -146,7 +148,7 @@ class Region:
             names.add(_take_name(start))
         return sorted(name for name in names if name in available)
 
-    def widen(self, start: int, incoming: Dict[str, Any]) -> Dict[str, Any]:
+    def widen(self, start: int, incoming: dict[str, Any]) -> dict[str, Any]:
         """
         At a loop header, integers the loop assigns become unbacked symbols: the loop body is traced once for all
         iterations instead of once per value.
@@ -189,7 +191,7 @@ class Region:
             self._widened[key] = SymNodeVariable(torch.fx.Proxy(node), symbol)
         return self._widened[key]
 
-    def block_for(self, start: int, incoming: Dict[str, Any]) -> Tuple[int, bool]:
+    def block_for(self, start: int, incoming: dict[str, Any]) -> tuple[int, bool]:
         """The block id for ``start`` given the incoming variable values; ``True`` if it still has to be traced."""
         live = self.live(start, incoming)
         incoming = self.widen(start, {name: _block_input(incoming[name]) for name in live})
@@ -210,9 +212,9 @@ class Region:
         self._incoming[block_id] = {name: incoming[name] for name in live}
         return block_id, True
 
-    def trace(self, entry_values: Dict[str, Any]) -> CfgRecord:
+    def trace(self, entry_values: dict[str, Any]) -> CfgRecord:
         """Traces all blocks reachable from the entry and registers the control-flow graph."""
-        self._incoming: Dict[int, Dict[str, Any]] = {}
+        self._incoming: dict[int, dict[str, Any]] = {}
         work = []
         entry_successors = {}
         for label, target in self.entry_targets.items():
@@ -240,7 +242,7 @@ class Region:
         self.entry_successors = entry_successors
         return None
 
-    def _trace_block(self, block_id: int) -> Dict[Any, Tuple[int, bool]]:
+    def _trace_block(self, block_id: int) -> dict[Any, tuple[int, bool]]:
         tx = self.tx
         block = self.blocks[block_id]
         incoming = self._incoming[block_id]
@@ -315,10 +317,10 @@ class Region:
         self,
         translator,
         kind: str,
-        targets: Dict[Any, int],
+        targets: dict[Any, int],
         predicate=None,
         value=None,
-        extra: Optional[Dict[Any, Dict[str, Any]]] = None,
+        extra: dict[Any, dict[str, Any]] | None = None,
     ) -> None:
         """
         Ends the block being traced by returning the values its successors need from the continuation.
@@ -376,7 +378,7 @@ class Region:
         items = list(result.unpack_var_sequence(tx)) if hasattr(result, "unpack_var_sequence") else list(result.items)
         return items[0] if self.return_count is None else TupleVariable(items)
 
-    def capture(self, predicate, entry_values: Dict[str, Any]) -> Any:
+    def capture(self, predicate, entry_values: dict[str, Any]) -> Any:
         """
         Traces the region and returns the frame's return value (the result of the ``dace::cfg`` call).
 
@@ -430,7 +432,7 @@ def _example(vt) -> Any:
     return vt.as_proxy().node.meta["example_value"]
 
 
-def _metadata(example) -> Tuple:
+def _metadata(example) -> tuple:
     if isinstance(example, torch.Tensor):
         return (
             "tensor",
@@ -442,7 +444,7 @@ def _metadata(example) -> Tuple:
     return ("value", str(example))
 
 
-def _signature(vt) -> Tuple:
+def _signature(vt) -> tuple:
     """What a block specialization depends on for one incoming variable."""
     if isinstance(vt, (TensorVariable, SymNodeVariable)):
         return _metadata(_example(vt))
@@ -498,7 +500,7 @@ def _is_symbolic_bool(vt) -> bool:
     )
 
 
-def _loop_header(info: CodeInfo, get_iter: int) -> Optional[int]:
+def _loop_header(info: CodeInfo, get_iter: int) -> int | None:
     following = get_iter + 1
     if following < len(info.instructions) and info.instructions[following].opname == "FOR_ITER":
         return following
@@ -547,10 +549,10 @@ def _return_from(translator, value) -> None:
     translator.RETURN_VALUE(bt.create_instruction("RETURN_VALUE"))
 
 
-_CONTINUATIONS: Dict[types.CodeType, Tuple[types.CodeType, int]] = {}
+_CONTINUATIONS: dict[types.CodeType, tuple[types.CodeType, int]] = {}
 
 
-def _continuation(info: CodeInfo, start: int, argnames: List[str], markers: int = 0) -> Tuple[types.CodeType, int]:
+def _continuation(info: CodeInfo, start: int, argnames: list[str], markers: int = 0) -> tuple[types.CodeType, int]:
     """
     A code object that runs ``info.code`` from instruction ``start`` with the locals ``argnames`` as positional
     parameters. A prefix (``RESUME`` on 3.11+, ``markers`` placeholders for the iterators of the enclosing for loops,
@@ -560,7 +562,7 @@ def _continuation(info: CodeInfo, start: int, argnames: List[str], markers: int 
         raise CaptureFallback("frames with cell or free variables are not supported yet")
     prefix_len = 0
 
-    def transform(instructions: List[bt.Instruction], code_options: Dict[str, Any]) -> None:
+    def transform(instructions: list[bt.Instruction], code_options: dict[str, Any]) -> None:
         nonlocal prefix_len
         prefix = [bt.create_instruction("RESUME", arg=0)] if sys.version_info >= (3, 11) else []
         prefix.extend(bt.create_load_const(None) for _ in range(markers))
@@ -619,7 +621,7 @@ def _backend_of(tx) -> Any:
     return fn
 
 
-def _position_key(tx, inst) -> Tuple:
+def _position_key(tx, inst) -> tuple:
     """A source position identifying a jump across analyses of the same frame."""
     pos = inst.positions
     if pos is not None and pos.lineno is not None:
@@ -627,7 +629,7 @@ def _position_key(tx, inst) -> Tuple:
     return (tx.f_code.co_filename, inst.starts_line, inst.opname)
 
 
-def _translator_classes() -> List[type]:
+def _translator_classes() -> list[type]:
     result, stack = [], [sc.InstructionTranslatorBase]
     while stack:
         cls = stack.pop()
@@ -637,7 +639,7 @@ def _translator_classes() -> List[type]:
 
 
 # ---------------------------------------------------------------------------------------------- Dynamo handlers
-def _region_of(translator) -> Tuple[Optional["ControlFlowBackend"], Optional[Region]]:
+def _region_of(translator) -> tuple[Optional["ControlFlowBackend"], Region | None]:
     backend = _backend_of(translator)
     if not isinstance(backend, ControlFlowBackend):
         return None, None
@@ -882,7 +884,7 @@ def _forget_range_handlers() -> None:
 class _Patches:
     """Installs the handlers in every translator class (once; they are inert for other backends)."""
 
-    _saved: List[Tuple[Any, Any, Any]] = []
+    _saved: list[tuple[Any, Any, Any]] = []
     _refcount = 0
     _lock = threading.Lock()
 
@@ -944,14 +946,14 @@ class ControlFlowBackend(DaceBackend):
     def __init__(self, symbolic_branches: bool = False, **options):
         super().__init__(**options)
         self.symbolic_branches = symbolic_branches
-        self.regions: List[Region] = []
+        self.regions: list[Region] = []
         self.blacklist: set = set()
         self.loop_requests: set = set()  #: GET_ITERs whose loops are captured because their bodies need it
-        self.events: List[Tuple[str, str, str]] = []  #: (kind, function name, detail)
+        self.events: list[tuple[str, str, str]] = []  #: (kind, function name, detail)
         _Patches.install()
 
     def log(self, kind: str, where: str, detail: str = "") -> None:
         self.events.append((kind, where, detail))
 
-    def kinds(self) -> List[str]:
+    def kinds(self) -> list[str]:
         return [kind for kind, _, _ in self.events]

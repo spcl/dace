@@ -6,15 +6,22 @@ All reinterpretations use the output FakeTensor's shape and strides (``node.meta
 these operators when the result is expressible as a strided view of the input storage, so the metadata is exact.
 """
 
-from typing import Optional, Sequence
+from collections.abc import Sequence
 
 import sympy
 import torch
 
 from dace import subsets
 from dace import symbolic as dsym
+from dace.frontend.ml.torch.dynamo.context import (
+    ConstValue,
+    LoweringContext,
+    TensorValue,
+    TupleValue,
+    UnsupportedOpError,
+    as_sym,
+)
 
-from ..context import ConstValue, LoweringContext, TensorValue, TupleValue, UnsupportedOpError, as_sym
 from . import register_lowering, resolve
 
 aten = torch.ops.aten
@@ -42,9 +49,9 @@ def alias_view(
     ctx: LoweringContext,
     node,
     base: TensorValue,
-    subset: Optional[subsets.Range] = None,
-    val: Optional[torch.Tensor] = None,
-    prefix: Optional[str] = None,
+    subset: subsets.Range | None = None,
+    val: torch.Tensor | None = None,
+    prefix: str | None = None,
 ) -> TensorValue:
     """
     Creates a view of ``base`` with the shape/strides of ``node``'s FakeTensor (or ``val``).

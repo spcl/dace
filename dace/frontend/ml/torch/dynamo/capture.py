@@ -11,7 +11,8 @@ come from.
 
 import dataclasses
 import inspect
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
+from collections.abc import Callable, Sequence
+from typing import Any
 
 import torch
 from torch._dynamo.exc import BackendCompilerFailed
@@ -30,23 +31,23 @@ class CapturedProgram:
     """The result of :func:`capture`."""
 
     graph: torch.fx.GraphModule  #: Functional ATen graph (AOTAutograd forward graph, inference)
-    example_inputs: List[Any]  #: Fake inputs of ``graph`` in placeholder order
-    inputs: List[SourceRef]  #: Source of each placeholder of ``graph``
-    symbol_names: Dict[str, str]  #: Dynamo symbol name -> DaCe symbol name
-    guards: List[CapturedGuard]  #: Dynamo guards on arguments, module state, and global state
-    shape_guards: List[Any]  #: Relations between symbols that Dynamo assumed (DaCe expressions or strings)
-    symbol_ranges: Dict[str, Tuple[Any, Any]]  #: DaCe symbol name -> (lower, upper) value range
+    example_inputs: list[Any]  #: Fake inputs of ``graph`` in placeholder order
+    inputs: list[SourceRef]  #: Source of each placeholder of ``graph``
+    symbol_names: dict[str, str]  #: Dynamo symbol name -> DaCe symbol name
+    guards: list[CapturedGuard]  #: Dynamo guards on arguments, module state, and global state
+    shape_guards: list[Any]  #: Relations between symbols that Dynamo assumed (DaCe expressions or strings)
+    symbol_ranges: dict[str, tuple[Any, Any]]  #: DaCe symbol name -> (lower, upper) value range
     dynamo_graph: torch.fx.GraphModule  #: The graph as Dynamo traced it (torch-level operators)
     options: DaceBackendOptions = dataclasses.field(default_factory=DaceBackendOptions)
     owner: Any = None  #: The captured module, if a module was captured
-    signature: Optional[inspect.Signature] = None  #: Signature of the captured callable (``forward`` for modules)
-    global_vars: Dict[str, Any] = dataclasses.field(default_factory=dict)  #: Globals of the captured callable
-    import_result: Optional[ImportResult] = None  #: The most recent result of :meth:`import_graph`
+    signature: inspect.Signature | None = None  #: Signature of the captured callable (``forward`` for modules)
+    global_vars: dict[str, Any] = dataclasses.field(default_factory=dict)  #: Globals of the captured callable
+    import_result: ImportResult | None = None  #: The most recent result of :meth:`import_graph`
 
-    def input_names(self) -> List[Optional[str]]:
+    def input_names(self) -> list[str | None]:
         return GraphDescription(self.inputs, self.symbol_names, self.guards).input_names()
 
-    def compile(self, name: str = "captured") -> Callable[..., List[Any]]:
+    def compile(self, name: str = "captured") -> Callable[..., list[Any]]:
         """
         Compiles the graph and returns a function with the signature of the captured callable that returns the flat
         list of graph outputs. No guards are checked: the caller must respect :attr:`guards`.
@@ -54,7 +55,7 @@ class CapturedProgram:
         result = self.import_graph(name)
         compiled = CompiledGraph(result.sdfg.compile(), result.inputs, result.outputs)
 
-        def call(*args, **kwargs) -> List[Any]:
+        def call(*args, **kwargs) -> list[Any]:
             with torch.no_grad():
                 return compiled(*self.bind(*args, **kwargs))
 
@@ -82,7 +83,7 @@ class CapturedProgram:
     def to_sdfg(self, name: str = "captured") -> SDFG:
         return self.import_graph(name).sdfg
 
-    def bind(self, *args, **kwargs) -> List[Any]:
+    def bind(self, *args, **kwargs) -> list[Any]:
         """
         Evaluates the graph inputs for a call of the captured callable with ``args`` and ``kwargs`` from their sources
         (arguments, current parameter/buffer/attribute values of the module, globals), in placeholder order.
@@ -112,7 +113,7 @@ class _CaptureBackend(DaceBackend):
     """A ``DaceBackend`` that stops after AOTAutograd produced the forward graph and returns it instead."""
 
     def _compile_forward(
-        self, gm: torch.fx.GraphModule, example_inputs: List[Any], description: Optional[GraphDescription] = None
+        self, gm: torch.fx.GraphModule, example_inputs: list[Any], description: GraphDescription | None = None
     ) -> Callable:
         description = description or self.last_description
         inputs = description.inputs
@@ -138,10 +139,10 @@ class _CaptureBackend(DaceBackend):
 def capture(
     fn: Callable,
     *args,
-    dynamic: Optional[bool] = True,
+    dynamic: bool | None = True,
     dynamic_shapes: Any = None,
-    extra_decompositions: Optional[Sequence] = None,
-    native_ops: Optional[Sequence] = None,
+    extra_decompositions: Sequence | None = None,
+    native_ops: Sequence | None = None,
     simplify: bool = True,
     specialize_float: bool = False,
     **kwargs,

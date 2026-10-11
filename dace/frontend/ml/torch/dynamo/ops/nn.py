@@ -7,24 +7,31 @@ elements. Convolution accumulates with a write-conflict-resolution sum in a nest
 (statically sized) window inside one tasklet per output element.
 """
 
-from typing import List, Sequence
+from collections.abc import Sequence
 
 import sympy
 import torch
 
 from dace import subsets
+from dace.frontend.ml.torch.dynamo.context import (
+    LoweringContext,
+    TensorValue,
+    TupleValue,
+    UnsupportedOpError,
+    as_sym,
+    index_memlet,
+)
+from dace.frontend.ml.torch.dynamo.dtypes import is_floating
 from dace.memlet import Memlet
 
-from ..context import LoweringContext, TensorValue, TupleValue, UnsupportedOpError, as_sym, index_memlet
-from ..dtypes import is_floating
+from . import register_lowering, resolve
 from .pointwise import cast_expr, emit_elementwise, literal
 from .reduction import emit_reduce_into
-from . import register_lowering, resolve
 
 aten = torch.ops.aten
 
 
-def _ints(v, n: int) -> List:
+def _ints(v, n: int) -> list:
     """Normalizes an int-or-list argument to a list of ``n`` symbolic ints."""
     v = v.items if hasattr(v, "items") and not isinstance(v, dict) else v
     if isinstance(v, (list, tuple)):
@@ -136,7 +143,7 @@ def _window_tasklet(
     dilation,
     pad_value,
     reduce_code,
-    outputs: List[TensorValue],
+    outputs: list[TensorValue],
     extra_code_vars: dict,
 ) -> None:
     """Emits one map over the output elements; the tasklet reads the whole (static) window via one memlet each."""
@@ -198,7 +205,7 @@ def lower_max_pool(
             lines.append(f"if {name} > best:")
             lines.append(f"    best = {name}")
             lines.append(f"    besti = {_flat_index(pos, stride, dilation, padding, spatial)}")
-        lines.append(f"__out0 = best")
+        lines.append("__out0 = best")
         lines.append(f"__out1 = {cast_expr('besti', idx.dtype)}")
         return "\n".join(lines)
 
@@ -255,7 +262,7 @@ def lower_avg_pool(
 
 
 # ---------------------------------------------------------------------- backward operators
-def _window_extents(spatial, padding, ospatial, stride, kernel, dilation) -> List:
+def _window_extents(spatial, padding, ospatial, stride, kernel, dilation) -> list:
     """Spatial extents of a padded input that covers every window position (see ``_pad_input``)."""
     return [
         sympy.Max(s + 2 * p, (o - 1) * st + (k - 1) * d + 1)

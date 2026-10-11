@@ -11,7 +11,8 @@ raises the gotos into loops and conditionals.
 """
 
 import dataclasses
-from typing import Any, Dict, List, Sequence
+from collections.abc import Sequence
+from typing import Any
 
 import sympy
 import torch
@@ -21,13 +22,21 @@ from torch.fx.experimental.symbolic_shapes import free_unbacked_symbols
 from torch.nn.attention import SDPBackend, sdpa_kernel
 
 from dace import InterstateEdge, dtypes, symbolic
+from dace.frontend.ml.torch.dynamo.cfg import transport
+from dace.frontend.ml.torch.dynamo.cfg.transport import BRANCH, GOTO, RETURN, Binding, CfgRecord
+from dace.frontend.ml.torch.dynamo.context import (
+    ConstValue,
+    LoweringContext,
+    SymValue,
+    TensorValue,
+    TupleValue,
+    UnsupportedOpError,
+    as_sym,
+)
+from dace.frontend.ml.torch.dynamo.decompositions import build_decomposition_table
 from dace.properties import CodeBlock
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 
-from ..cfg import transport
-from ..cfg.transport import BRANCH, GOTO, RETURN, Binding, CfgRecord
-from ..context import ConstValue, LoweringContext, SymValue, TensorValue, TupleValue, UnsupportedOpError, as_sym
-from ..decompositions import build_decomposition_table
 from . import register_lowering
 from .control_flow import predicate_expr
 
@@ -41,7 +50,7 @@ def _fake(arg) -> Any:
     return arg.meta["val"] if isinstance(arg, torch.fx.Node) else arg
 
 
-def _to_aten(graph: torch.fx.Graph, examples: Sequence[Any], decompositions: Dict) -> torch.fx.GraphModule:
+def _to_aten(graph: torch.fx.Graph, examples: Sequence[Any], decompositions: dict) -> torch.fx.GraphModule:
     """Converts a block's torch-level graph to a functional ATen graph with ``node.meta['val']``."""
     gm = torch.fx.GraphModule(torch.nn.Module(), graph)
     # Inputs that alias (e.g., after ``z = y``) must be distinct tensors: make_fx maps each tensor to one placeholder
@@ -89,7 +98,7 @@ def lower_cfg(ctx: LoweringContext, node, cfg_id, tensors, symints):
     def bound_fake(binding: Binding):
         return fake_tensors[binding.index] if binding.kind == "tensor" else fake_syms[binding.index]
 
-    def own_examples(block_id: int) -> Dict[str, Any]:
+    def own_examples(block_id: int) -> dict[str, Any]:
         """Symbolic inputs keep the symbols they were traced with (loop counters differ between edges)."""
         block = record.block(block_id)
         return {
@@ -99,7 +108,7 @@ def lower_cfg(ctx: LoweringContext, node, cfg_id, tensors, symints):
         }
 
     # Example (fake) inputs of every block: tensors are propagated from the entry along the edges in discovery order
-    examples: Dict[int, Dict[str, Any]] = {}
+    examples: dict[int, dict[str, Any]] = {}
     for block_id in set(record.entry_successors.values()):
         examples[block_id] = {
             name: bound_fake(record.entry_bindings[name])
@@ -107,7 +116,7 @@ def lower_cfg(ctx: LoweringContext, node, cfg_id, tensors, symints):
             if name in record.entry_bindings
         }
         examples[block_id].update(own_examples(block_id))
-    aten: Dict[int, torch.fx.GraphModule] = {}
+    aten: dict[int, torch.fx.GraphModule] = {}
     order = sorted(set(record.entry_successors.values()))
     visited = set()
     while order:
@@ -134,7 +143,7 @@ def lower_cfg(ctx: LoweringContext, node, cfg_id, tensors, symints):
             order.append(successor)
 
     # Containers of the CFG variables (per block) and of the outputs
-    inputs: Dict[int, Dict[str, Any]] = {}
+    inputs: dict[int, dict[str, Any]] = {}
     for block_id, values in examples.items():
         inputs[block_id] = {}
         for name, example in values.items():
@@ -156,7 +165,7 @@ def lower_cfg(ctx: LoweringContext, node, cfg_id, tensors, symints):
 
     exit_label = f"{prefix}_exit"
 
-    def pass_values(values: Dict[str, Any], constants: Dict[str, Any], successor: int) -> Dict[str, Any]:
+    def pass_values(values: dict[str, Any], constants: dict[str, Any], successor: int) -> dict[str, Any]:
         """
         Copies tensors into the successor's containers; returns the assignments to its loop-carried symbols (to be
         made at once with :func:`_assign_at_once`).
@@ -172,15 +181,15 @@ def lower_cfg(ctx: LoweringContext, node, cfg_id, tensors, symints):
                     assignments[target.symbol.name] = value
         return assignments
 
-    def goto(successor: int, assignments: Dict[str, Any]) -> None:
+    def goto(successor: int, assignments: dict[str, Any]) -> None:
         """Jumps to ``successor``, assigning its loop-carried symbols on the way."""
         _assign_at_once(ctx, assignments)
         ctx.emit(tn.GotoNode(target=label(successor)))
 
     #: Segments that assign symbols on a taken conditional edge before jumping on: (label, assignments, successor)
-    trampolines: List[Any] = []
+    trampolines: list[Any] = []
 
-    def branch(predicate, values: Dict[str, Any], constants: Dict[str, Any], successors: Dict[bool, int]) -> None:
+    def branch(predicate, values: dict[str, Any], constants: dict[str, Any], successors: dict[bool, int]) -> None:
         # Tensors are copied before branching (every block has its own containers); symbols are assigned on the edge
         # taken, after the predicate is evaluated
         assignments = {label: pass_values(values, constants, successor) for label, successor in successors.items()}
@@ -191,7 +200,7 @@ def lower_cfg(ctx: LoweringContext, node, cfg_id, tensors, symints):
         ctx.emit(tn.StateIfScope(condition=CodeBlock(predicate_expr(predicate)), children=[tn.GotoNode(target=target)]))
         goto(successors[False], assignments[False])
 
-    children: List[tn.ScheduleTreeNode] = [tn.StateLabel(state=f"{prefix}_entry")]
+    children: list[tn.ScheduleTreeNode] = [tn.StateLabel(state=f"{prefix}_entry")]
     with ctx.scope(children):
         entry_values = {name: bound(binding) for name, binding in record.entry_bindings.items()}
         if record.entry_condition is not None:
@@ -240,7 +249,7 @@ class _Carried:
     symbol: Any
 
 
-def _assign_at_once(ctx: LoweringContext, assignments: Dict[str, Any]) -> None:
+def _assign_at_once(ctx: LoweringContext, assignments: dict[str, Any]) -> None:
     """
     Assigns symbols as if at once, each value reading the symbols before any assignment. Assignments on one
     interstate edge may not read each other, so values that read an assigned symbol go through temporaries on a
@@ -283,7 +292,7 @@ def _nonnegative(example: torch.SymInt) -> bool:
     return value_range is not None and bool(value_range.lower >= 0)
 
 
-def _output_nodes(gm: torch.fx.GraphModule) -> List[torch.fx.Node]:
+def _output_nodes(gm: torch.fx.GraphModule) -> list[torch.fx.Node]:
     output = next(n for n in gm.graph.nodes if n.op == "output")
     args = output.args[0]
     return list(args) if isinstance(args, (list, tuple)) else [args]

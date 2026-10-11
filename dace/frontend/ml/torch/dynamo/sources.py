@@ -11,7 +11,8 @@ collects the guards and symbol assumptions of a compilation.
 import dataclasses
 import inspect
 import warnings
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from collections.abc import Sequence
+from typing import Any
 
 import sympy
 import torch
@@ -42,23 +43,23 @@ class SourceRef:
     #: ``'stride'``, ``'storage_offset'`` (of a tensor given by the other fields), or ``'unknown'``
     kind: str
     #: Argument or global name; ``None`` for module-relative sources
-    root: Optional[str]
+    root: str | None
     #: Accessors from the root (attribute names, item indices), e.g. ``('fc1', 'weight')`` for a parameter
-    path: Tuple[Any, ...]
+    path: tuple[Any, ...]
     #: Dynamo's spelling of the source, e.g. ``"L['self']._modules['fc1']._parameters['weight']"``
     text: str
     #: Dimension of a ``size``/``stride`` source
-    dim: Optional[int] = None
+    dim: int | None = None
     #: Accessors as Dynamo spelled them, including ``torch.nn.Module`` containers (``_modules``, ``_parameters``,
     #: ``_buffers``) that :attr:`path` omits; ``None`` if equal to :attr:`path`
-    raw_path: Optional[Tuple[Any, ...]] = None
+    raw_path: tuple[Any, ...] | None = None
 
     @property
     def qualname(self) -> str:
         """Dotted name relative to the callable, e.g. ``fc1.weight`` for a parameter or ``x`` for an argument."""
         return ".".join(([self.root] if self.root else []) + [str(p) for p in self.path])
 
-    def evaluate(self, owner: Any, arguments: Dict[str, Any], global_vars: Dict[str, Any]) -> Any:
+    def evaluate(self, owner: Any, arguments: dict[str, Any], global_vars: dict[str, Any]) -> Any:
         """
         Returns the current value of this source.
 
@@ -90,18 +91,18 @@ class CapturedGuard:
     """An assumption Dynamo made while tracing; the graph is only valid while it holds."""
 
     kind: str  #: Dynamo's guard type, e.g. ``'TENSOR_MATCH'``, ``'CONSTANT_MATCH'``, ``'TYPE_MATCH'``, ``'GRAD_MODE'``
-    source: Optional[SourceRef]  #: The guarded value, or ``None`` for global state (grad mode, default device, ...)
+    source: SourceRef | None  #: The guarded value, or ``None`` for global state (grad mode, default device, ...)
 
 
 @dataclasses.dataclass
 class GraphDescription:
     """What the backend knows about a Dynamo-level graph before AOTAutograd lowers it to ATen."""
 
-    inputs: List[SourceRef]  #: Source of each placeholder, in placeholder order
-    symbol_names: Dict[str, str]  #: Dynamo symbol name -> DaCe symbol name
-    guards: List[CapturedGuard]
+    inputs: list[SourceRef]  #: Source of each placeholder, in placeholder order
+    symbol_names: dict[str, str]  #: Dynamo symbol name -> DaCe symbol name
+    guards: list[CapturedGuard]
 
-    def input_names(self) -> List[Optional[str]]:
+    def input_names(self) -> list[str | None]:
         """
         Container names for the placeholders: arguments (elements of list, tuple, and dict arguments are named as the
         Python frontend binds them, e.g., ``xs_0``), and qualified names of parameters, buffers, attributes, and
@@ -110,7 +111,7 @@ class GraphDescription:
         return [input_name(ref) for ref in self.inputs]
 
 
-def input_name(ref: SourceRef) -> Optional[str]:
+def input_name(ref: SourceRef) -> str | None:
     """The container name of a graph input from ``ref``, or ``None`` if it is not a container (e.g., a size)."""
     if ref.kind == "argument":
         return sanitize_name(structured_argument_name(ref.root, ref.path))
@@ -128,7 +129,7 @@ class SourceResolver:
                       signature maps those back to argument names.
     """
 
-    def __init__(self, signature: Optional[inspect.Signature] = None):
+    def __init__(self, signature: inspect.Signature | None = None):
         parameters = list(signature.parameters.values()) if signature is not None else []
         self.parameter_names = {p.name for p in parameters}
         self.positional_names = [p.name for p in parameters if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)]
@@ -136,8 +137,8 @@ class SourceResolver:
 
     def resolve(self, source) -> SourceRef:
         text = source.name if source is not None else ""
-        accessors: List[Any] = []
-        prop: Optional[Tuple[str, Optional[int]]] = None
+        accessors: list[Any] = []
+        prop: tuple[str, int | None] | None = None
         while True:
             if isinstance(source, dsource.LocalSource):
                 return self._classify(source.local_name, tuple(reversed(accessors)), prop, text, is_global=False)
@@ -160,7 +161,7 @@ class SourceResolver:
                 return SourceRef("unknown", None, (), text)
 
     def _classify(
-        self, root: str, path: Tuple[Any, ...], prop: Optional[Tuple[str, Optional[int]]], text: str, is_global: bool
+        self, root: str, path: tuple[Any, ...], prop: tuple[str, int | None] | None, text: str, is_global: bool
     ) -> SourceRef:
         kind = "global"
         if not is_global:
@@ -185,7 +186,7 @@ class SourceResolver:
             return SourceRef(prop[0], root, path, text, prop[1])
         return SourceRef(kind, root, path, text)
 
-    def _unwrap(self, local: str, path: Tuple[Any, ...]) -> Tuple[Optional[str], Tuple[Any, ...]]:
+    def _unwrap(self, local: str, path: tuple[Any, ...]) -> tuple[str | None, tuple[Any, ...]]:
         if local == "args" and "args" not in self.parameter_names and path and isinstance(path[0], int):
             return (self.positional_names[path[0]] if path[0] < len(self.positional_names) else None), path[1:]
         if local == "kwargs" and "kwargs" not in self.parameter_names and path and isinstance(path[0], str):
@@ -193,7 +194,7 @@ class SourceResolver:
         return local, path
 
 
-def describe_graph(gm: torch.fx.GraphModule, signature: Optional[inspect.Signature], spec: Any) -> GraphDescription:
+def describe_graph(gm: torch.fx.GraphModule, signature: inspect.Signature | None, spec: Any) -> GraphDescription:
     """
     Describes a graph handed to a backend by Dynamo: the source of every placeholder, the DaCe names of its shape
     symbols, and the guards Dynamo installed. Must be called during compilation (it reads the tracing context).
@@ -226,7 +227,7 @@ def describe_graph(gm: torch.fx.GraphModule, signature: Optional[inspect.Signatu
     return GraphDescription(inputs, symbol_names_for_graph(gm, spec, signature), guards)
 
 
-def shape_assumptions(symbol_names: Dict[str, str]) -> Tuple[List[Any], Dict[str, Tuple[Any, Any]]]:
+def shape_assumptions(symbol_names: dict[str, str]) -> tuple[list[Any], dict[str, tuple[Any, Any]]]:
     """
     Returns the symbol relations Dynamo and AOTAutograd assumed so far (as DaCe expressions where translatable, as
     strings otherwise) and the value ranges of all symbols, from the shape environment of the current compilation.
@@ -254,13 +255,13 @@ def shape_assumptions(symbol_names: Dict[str, str]) -> Tuple[List[Any], Dict[str
     return relations, ranges
 
 
-def _bound(value) -> Optional[int]:
+def _bound(value) -> int | None:
     """An integer bound of a symbol's value range, or ``None`` if it is unbounded (``int_oo``) or not an integer."""
     return int(value) if isinstance(value, sympy.Integer) else None
 
 
 # ---------------------------------------------------------------------------------------------- naming symbols
-def _default_name(local: str, path: Sequence[Any], dim: Optional[int]) -> str:
+def _default_name(local: str, path: Sequence[Any], dim: int | None) -> str:
     name = local + "".join(f"_{p}" for p in path)
     if dim is not None:
         name = f"{name}_dim{dim}"
@@ -276,8 +277,8 @@ def _bare_symbol(size: Any):
 
 
 def symbol_names_for_graph(
-    gm: torch.fx.GraphModule, spec: Any, signature: Optional[inspect.Signature] = None
-) -> Dict[str, str]:
+    gm: torch.fx.GraphModule, spec: Any, signature: inspect.Signature | None = None
+) -> dict[str, str]:
     """
     Maps Dynamo shape symbols (``s77``) to user-facing names, using the placeholders' sources of a Dynamo-level graph.
 
@@ -289,8 +290,8 @@ def symbol_names_for_graph(
     """
     if spec is None:
         return {}
-    names: Dict[str, str] = {}
-    used: Dict[str, str] = {}  # dace name -> dynamo symbol
+    names: dict[str, str] = {}
+    used: dict[str, str] = {}  # dace name -> dynamo symbol
     resolver = SourceResolver(signature)
 
     def assign(sym_name: str, name: str) -> None:

@@ -7,11 +7,11 @@ converting a small SDFG such that the SDFG-to-tree conversion is exercised as we
 factory fails ``test_all_node_types_have_factory``.
 """
 
-from typing import Callable
+from collections.abc import Callable
 
-import dace
 import pytest
 
+import dace
 from dace import data
 from dace.libraries.blas import MatMul
 from dace.properties import CodeBlock
