@@ -21,6 +21,7 @@ from dace.libraries.tileops import (
     TileITE,
     TileMMA,
     TileReduce,
+    TileScan,
     TileUnop,
 )
 from dace.libraries.tileops.dispatch import TileGroup
@@ -222,16 +223,38 @@ def where(
     return result
 
 
-@oprepo.replaces_windows("dace.tile.sum")
-def tile_sum(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str | Window) -> str:
-    """The sum of every lane of a tile or window: a new one-lane tile."""
-    what = "dace.tile.sum"
-    tiles, lanes, dtype = operand_tiles(pv, sdfg, state, what, (a,))
-    node = add_block_node(state, TileReduce("sum", widths=lanes, op="+"))
-    state.add_edge(tiles[0], None, node, "_src", full_memlet(sdfg, tiles[0].data))
-    result = state.add_write(new_tile(sdfg, (1,), dtype, "sum"))
-    state.add_edge(node, "_dst", result, None, full_memlet(sdfg, result.data))
-    return result.data
+def register_reduce(name: str, op: str) -> None:
+    what = f"dace.tile.{name}"
+
+    def reduce(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str | Window) -> str:
+        tiles, lanes, dtype = operand_tiles(pv, sdfg, state, what, (a,))
+        node = add_block_node(state, TileReduce(name, widths=lanes, op=op))
+        state.add_edge(tiles[0], None, node, "_src", full_memlet(sdfg, tiles[0].data))
+        result = state.add_write(new_tile(sdfg, (1,), dtype, name))
+        state.add_edge(node, "_dst", result, None, full_memlet(sdfg, result.data))
+        return result.data
+
+    reduce.__doc__ = f"``{op}`` over every lane of a tile or window: a new one-lane tile."
+    oprepo.replaces_windows(what)(reduce)
+
+
+def register_scan(name: str, op: str) -> None:
+    what = f"dace.tile.{name}"
+
+    def scan(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str | Window) -> str:
+        lanes = common_lanes(pv, what, (as_window(pv, sdfg, a, what),))
+        if len(lanes) != 1:
+            raise DaceSyntaxError(pv, None, f"{what}: scans a one-dim tile, got the lanes {lanes}")
+        return elementwise(pv, sdfg, state, what, TileScan(name, widths=lanes, op=op), ("_src",), "_dst", (a,))
+
+    scan.__doc__ = f"The inclusive ``{op}`` scan of a one-dim tile or window: a new tile."
+    oprepo.replaces_windows(what)(scan)
+
+
+for _name, _op in (("sum", "+"), ("prod", "*"), ("max", "max"), ("min", "min")):
+    register_reduce(_name, _op)
+for _name, _op in (("cumsum", "+"), ("cumprod", "*"), ("cummax", "max"), ("cummin", "min")):
+    register_scan(_name, _op)
 
 
 @oprepo.replaces_windows("dace.tile.load")

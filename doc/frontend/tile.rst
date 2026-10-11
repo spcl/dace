@@ -15,15 +15,20 @@ Tile nodes are supported by the new code generators: ``compiler.cpu.implementati
 Who runs a tile
 ---------------
 
-Every call makes a node of the ``BLOCK`` group (:class:`~dace.libraries.tileops.dispatch.TileGroup`). The program
-says what a whole block computes, and the compiler decides which thread computes which element:
+Every call makes a node of the ``BLOCK`` group (:class:`~dace.libraries.tileops.dispatch.TileGroup`), the only group
+the frontend offers: a call takes no group argument. The program says what a whole thread block computes, and the
+compiler decides which thread computes which element:
 
 * On a CPU one core runs the tile, as a loop over its lanes that the compiler vectorizes. A ``BLOCK`` node lowers
   exactly as a ``THREAD`` node does.
 * In a GPU kernel the threads of the block share the tile. Each node becomes a thread-block map whose thread ``t``
   computes every ``threads``-th element from ``t``, so consecutive threads touch consecutive elements; a node with a
   target ISA takes ``lanes_per_thread`` consecutive elements at a time, two fp16 lanes for one half2 instruction. The
-  tiles move to shared memory. A node whose lanes depend on each other (``sum``) runs on one thread of the block.
+  tiles move to shared memory. A full reduction folds each thread's share of the lanes and then the threads with
+  ``cub::BlockReduce`` (``hipcub`` on AMD), and a scan uses ``cub::BlockScan``; a reduction along one axis runs on one
+  thread of the block. ``WARP`` reductions and scans have no lowering yet and raise.
+* The code between the tile calls runs on every thread of the block. A write-conflict resolution there into memory
+  the threads share, ``S[0:1] += dace.tile.sum(...)``, runs on one thread, as a loop of atomics.
 
 The block has ``32 * num_warps`` threads, four warps unless a node's ``num_warps`` says otherwise. The vectorizer emits
 ``THREAD`` nodes, one thread's register tile, which lower to the instructions of a target ISA.
@@ -67,8 +72,11 @@ Calls
 ``dace.tile.where(mask, then, otherwise)``
     ``then`` where the ``bool`` tile or window ``mask`` is set, ``otherwise`` elsewhere.
 
-``dace.tile.sum(a)``
-    The sum of all lanes of ``a``, as a tile of one lane.
+``dace.tile.sum``, ``prod``, ``max``, ``min`` ``(a)``
+    The reduction of all lanes of ``a``, as a tile of one lane.
+
+``dace.tile.cumsum``, ``cumprod``, ``cummax``, ``cummin`` ``(a)``
+    The inclusive scan of the one-dim window or tile ``a``: lane ``l`` combines lanes ``0`` to ``l``.
 
 ``dace.tile.mma(a, b, c)``
     Accumulates the matrix product of the ``(M, K)`` tile ``a`` and the ``(K, N)`` tile ``b`` into the ``(M, N)`` tile

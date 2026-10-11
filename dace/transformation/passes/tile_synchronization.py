@@ -15,10 +15,15 @@ A load is a token like any other write: the barrier before its first use is wher
 A block-level tile node runs the pass when it expands (:meth:`~dace.libraries.tileops.nodes.tile_op.TileOp.expand`),
 so the first node of a kernel to expand places the barriers of all of them; a kernel holding an expanded tile node is
 left alone, and a barrier already in a kernel settles the tokens like a new one.
+
+Every thread of the block runs the code between the tile nodes, so a write-conflict resolution there into data the
+threads share would land once per thread. Before the walk, such a scope -- a tasklet, or the map over the lanes that
+``S[...] += tile`` makes -- moves into a one-thread ``GPU_ThreadBlock`` map: its conflicts stay a loop of atomics.
 """
 
 import copy
 import dataclasses
+from collections.abc import Iterator
 from typing import NamedTuple
 
 from dace import SDFG, SDFGState, data, dtypes, properties, subsets, symbolic
@@ -36,6 +41,9 @@ from dace.transformation.passes.analysis.loop_analysis import get_loop_stride
 
 #: The layout an access has: the tile layout of a block-level node, or ``None`` for an access by any thread.
 Layout = BlockLayout | None
+
+#: The name prefix of the one-thread map a write-conflict resolution between the tile nodes runs in.
+WCR_THREAD_MAP = "tile_wcr_"
 
 #: Where a barrier goes: before ``node`` in ``state``.
 BarrierSite = tuple[SDFGState, nodes.Node]
@@ -135,6 +143,8 @@ class InsertTileSync(ppl.Pass):
                     groups = {inner.group for inner in inner_nodes if is_block_tile_node(inner)}
                     # A kernel with an expanded tile node was synchronized before that node expanded
                     if groups and not any(is_tile_expansion(inner) for inner in inner_nodes):
+                        for wcr_state, scope in list(shared_wcr_scopes(state, node, shared_data(state.sdfg))):
+                            run_on_one_thread(wcr_state, scope)
                         # Tiles that only warps share need only their warp to wait
                         walk.scope_of_kernel = SyncScope.WARP if groups == {TileGroup.WARP} else SyncScope.BLOCK
                         walk.scope(state, node, Tokens())
@@ -145,6 +155,73 @@ class InsertTileSync(ppl.Pass):
             position = order.index(node)
             self.inserted.append((state, insert_barrier(state, order[:position], order[position:], scope)))
         return len(self.inserted) or None
+
+
+def shared_data(sdfg: SDFG) -> set[str]:
+    """The containers of ``sdfg`` the threads of a kernel share: arguments and global or shared memory."""
+    shared_storage = (dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared)
+    return {name for name, desc in sdfg.arrays.items() if not desc.transient or desc.storage in shared_storage}
+
+
+def shared_wcr_scopes(
+    state: SDFGState, scope: nodes.MapEntry | None, shared: set[str]
+) -> Iterator[tuple[SDFGState, nodes.CodeNode | nodes.MapEntry]]:
+    """The tasklets and maps right below ``scope`` (``None``: the top of a nested SDFG), and below in the nested SDFGs
+    there, that every thread runs and that resolve a write conflict into the ``shared`` containers."""
+    for node in state.scope_children()[scope]:
+        if isinstance(node, nodes.NestedSDFG) and not is_tile_expansion(node):
+            inner_shared = {edge.src_conn for edge in state.out_edges(node) if edge.data.data in shared}
+            inner_shared |= {
+                name
+                for name, desc in node.sdfg.arrays.items()
+                if desc.transient and desc.storage == dtypes.StorageType.GPU_Shared
+            }
+            for inner_state in node.sdfg.all_control_flow_blocks():
+                if not isinstance(inner_state, SDFGState):
+                    continue
+                yield from shared_wcr_scopes(inner_state, None, inner_shared)
+            continue
+        if isinstance(node, nodes.Tasklet):
+            leaving = state.out_edges(node)
+        elif isinstance(node, nodes.MapEntry) and node.map.schedule not in (
+            *dtypes.GPU_SCHEDULES,
+            *dtypes.EXPERIMENTAL_GPU_SCHEDULES,
+        ):
+            leaving = state.out_edges(state.exit_node(node))
+        else:
+            continue
+        if any(edge.data.wcr is not None and edge.data.data in shared for edge in leaving):
+            yield state, node
+
+
+def run_on_one_thread(state: SDFGState, node: nodes.CodeNode | nodes.MapEntry) -> None:
+    """Move the tasklet or map ``node`` into a one-thread ``GPU_ThreadBlock`` map."""
+    last = state.exit_node(node) if isinstance(node, nodes.MapEntry) else node
+    entry, exit_node = state.add_map(
+        f"{WCR_THREAD_MAP}{node.label}", {"__wcr_t": "0:1"}, schedule=dtypes.ScheduleType.GPU_ThreadBlock
+    )
+    for edge in list(state.in_edges(node)):
+        state.remove_edge(edge)
+        if edge.data.is_empty():
+            state.add_nedge(edge.src, entry, Memlet())
+            state.add_edge(entry, None, node, edge.dst_conn, Memlet())
+        else:
+            state.add_memlet_path(
+                edge.src, entry, node, src_conn=edge.src_conn, dst_conn=edge.dst_conn, memlet=edge.data
+            )
+    for edge in list(state.out_edges(last)):
+        state.remove_edge(edge)
+        if edge.data.is_empty():
+            state.add_edge(last, edge.src_conn, exit_node, None, Memlet())
+            state.add_nedge(exit_node, edge.dst, Memlet())
+        else:
+            state.add_memlet_path(
+                last, exit_node, edge.dst, src_conn=edge.src_conn, dst_conn=edge.dst_conn, memlet=edge.data
+            )
+    if state.in_degree(node) == 0:
+        state.add_nedge(entry, node, Memlet())
+    if state.out_degree(last) == 0:
+        state.add_nedge(last, exit_node, Memlet())
 
 
 def is_tile_expansion(node: nodes.Node) -> bool:

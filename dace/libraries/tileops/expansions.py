@@ -67,7 +67,11 @@ class ExpandTileBlock(ExpandTransformation):
         layout = block_layout(node, parent_state)
         bounds = LaneBounds(tuple(node.widths), tuple(node.lane_bounds)) if node.lane_bounds else None
         with bounded_lanes(bounds):
-            if layout.isa is not None:
+            collective = node.block_collective(parent_state, parent_sdfg)
+            if collective is not None:
+                threads, tasklet = node.group_threads(), renamed_connectors(collective)
+                tasklet.environments = set(collective.environments)
+            elif layout.isa is not None:
                 expansion = node.implementations[layout.isa]
                 tasklet = chunked_isa_tasklet(node, parent_state, parent_sdfg, expansion, layout)
                 threads = layout.threads

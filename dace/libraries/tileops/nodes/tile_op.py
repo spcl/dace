@@ -73,6 +73,11 @@ class TileOp(nodes.LibraryNode):
     def isa_tasklet(self, state: dace.SDFGState, sdfg: dace.SDFG, backend: str) -> nodes.Tasklet:
         raise NotImplementedError(f"{type(self).__name__} defines no ISA lowering")
 
+    def block_collective(self, state: dace.SDFGState, sdfg: dace.SDFG) -> nodes.Tasklet | None:
+        """The tasklet every thread of the group runs together in a ``block`` lowering, a collective over the lanes
+        with the thread index ``__tile_t``; ``None`` spreads the lanes as the ``block_layout`` of the node says."""
+        return None
+
     def reads_lane_wise(self, connector: str) -> bool:
         """Whether lane ``l`` of the output reads lane ``l`` of ``connector`` alone (an output connector: writes)."""
         return self.lanes_independent

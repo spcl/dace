@@ -3,17 +3,19 @@
 
 import dace
 from dace import cpf_lowering, library, properties
+from dace.libraries.tileops.dispatch import TileGroup
 from dace.libraries.tileops.environments import (
     TileOpsAVX2,
     TileOpsAVX512,
     TileOpsCUDA,
+    TileOpsCUDABlock,
     TileOpsNeon,
     TileOpsScalar,
     TileOpsSVE,
 )
-from dace.libraries.tileops.expansions import ExpandTileIsa, ExpandTilePure
+from dace.libraries.tileops.expansions import THREAD_INDEX, ExpandTileIsa, ExpandTilePure
 from dace.libraries.tileops.isa import require_k1
-from dace.libraries.tileops.lanes import nested_loops, tile_offset
+from dace.libraries.tileops.lanes import LaneDistribution, distributed_lanes, nested_loops, tile_offset
 from dace.libraries.tileops.nodes.tile_op import TileOp
 from dace.libraries.tileops.operands import connected_edges, edge_ctype, output_edge
 from dace.libraries.tileops.ops import BINARY_OPS, REDUCE_OPS
@@ -31,6 +33,13 @@ def identity_literal(op: str, ctype: str) -> str:
     if op == "max":
         return f"std::numeric_limits<{ctype}>::lowest()"
     raise ValueError(f"unknown op {op!r}")
+
+
+def collective_group(node: TileOp, what: str) -> int:
+    """The threads of the group a thread-block collective of ``node`` runs on, which a ``WARP`` node has not yet."""
+    if node.group is TileGroup.WARP:
+        raise NotImplementedError(f"{what}: a WARP group has no lowering yet, use BLOCK or THREAD")
+    return node.group_threads()
 
 
 def combine_expr(op: str, acc: str, value: str, ctype: str) -> str:
@@ -196,6 +205,44 @@ class TileReduce(TileOp):
             code=code,
             language=dace.dtypes.Language.CPP,
         )
+
+    def block_collective(self, state: dace.SDFGState, sdfg: dace.SDFG) -> nodes.Tasklet | None:
+        """A full reduction: each thread folds its share of the lanes, ``cub::BlockReduce`` folds the threads, and
+        every thread reads the result from shared memory. A reduction along an axis runs on one thread."""
+        if self.axis is not None:
+            return None
+        threads = collective_group(self, "TileReduce")
+        widths = list(self.widths)
+        ctype = edge_ctype(sdfg, connected_edges(state, self)["_src"])
+        gate = f"if (_mask[{tile_offset(widths)}]) " if self.has_mask else ""
+        body = f"{gate}__acc = {combine_expr(self.op, '__acc', f'_src[{tile_offset(widths)}]', ctype)};"
+        with distributed_lanes(LaneDistribution(THREAD_INDEX, threads)):
+            partial = nested_loops(widths, body)
+        reduce = f"dace::tileops::BlockReduce<{ctype}, {threads}>"
+        combine = f"dace::tileops::tile_combine<{ctype}, '{BINARY_OPS[self.op].isa_code}'>()"
+        out_edge = output_edge(state, self, "_dst")
+        scalar_destination = out_edge.data.subset is None or out_edge.data.subset.num_elements() == 1
+        destination = "_dst" if scalar_destination else "_dst[0]"
+        # The storage is reused by the next run of the node, after every thread has left this one
+        code = (
+            f"{ctype} __acc = {identity_literal(self.op, ctype)};\n{partial}\n"
+            f"__shared__ typename {reduce}::TempStorage __reduce_storage;\n"
+            f"__shared__ {ctype} __reduced;\n"
+            f"const {ctype} __total = {reduce}(__reduce_storage).Reduce(__acc, {combine});\n"
+            f"if ({THREAD_INDEX} == 0) __reduced = __total;\n"
+            "__syncthreads();\n"
+            f"{destination} = __reduced;\n"
+            "__syncthreads();"
+        )
+        tasklet = nodes.Tasklet(
+            label=f"{self.label}_block",
+            inputs=dict.fromkeys(["_src", "_mask"] if self.has_mask else ["_src"]),
+            outputs={"_dst": None},
+            code=code,
+            language=dace.dtypes.Language.CPP,
+        )
+        tasklet.environments = {TileOpsCUDABlock.full_class_path()}
+        return tasklet
 
     def isa_tasklet(self, state: dace.SDFGState, sdfg: dace.SDFG, backend: str) -> nodes.Tasklet:
         vlen = require_k1(self)
