@@ -3290,6 +3290,16 @@ class SDFG(ControlFlowRegion):
                           including library nodes that expand to library nodes.
         """
 
+        from dace.sdfg.state import EXPANSION_DEFINED_SYMBOLS
+
+        token = EXPANSION_DEFINED_SYMBOLS.set({}) if EXPANSION_DEFINED_SYMBOLS.get() is None else None
+        try:
+            self._expand_library_nodes(recursive)
+        finally:
+            if token is not None:
+                EXPANSION_DEFINED_SYMBOLS.reset(token)
+
+    def _expand_library_nodes(self, recursive: bool) -> None:
         states = list(self.states())
         while len(states) > 0:
             state = states.pop()
