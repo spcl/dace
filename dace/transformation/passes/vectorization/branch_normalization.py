@@ -2,11 +2,10 @@
 """Flatten residual ``ConditionalBlock`` s into ``ITE``-tasklet form.
 
 Runs after ``SameWriteSetIfElseToITECFG`` (handles identical-write arms).
-Single-arm ``if`` -> ``arr = ITE(cond, expr, arr)``; disjoint two-arm ``if/else``
--> split into two sequential single-arm conditionals + re-normalize;
+Single-arm ``if`` -> ``arr = ITE(cond, expr, arr)``; a two-arm ``if/else`` whose write sets differ
+-> split into two sequential single-arm conditionals on the frozen guard + re-normalize;
 ``>=3`` arms or ``if/elif`` without ``else`` -> a chain of single-arm blocks, arm ``k``
 guarded by ``not c0 and ... and ck`` (first-match semantics);
-overlapping-but-not-identical write sets unsupported (``NotImplementedError``).
 No ``ConditionalBlock`` remains afterwards.
 """
 
@@ -828,7 +827,7 @@ class BranchNormalization(ppl.Pass):
         body0: ControlFlowRegion,
         body1: ControlFlowRegion,
     ) -> bool:
-        # Split a disjoint-write ``if/else`` into two sequential single-arm ``if`` s.
+        # Split a two-arm ``if/else`` whose write sets differ into two sequential single-arm ``if`` s.
         # Refuse to even split an index-guarded ``if/else`` (see _normalize_single_arm): the
         # negated-else halves this produces would be flattened just the same, fabricating the
         # out-of-range read. Leave it whole for the masking path.
@@ -843,25 +842,9 @@ class BranchNormalization(ppl.Pass):
         w1 = self._collect_write_subsets(s1)
         if w0 is None or w1 is None:
             return False
-        # Same-array writes conflict only when element subsets intersect.
-        # Element-disjoint (cloudsc ``zsolqa[i,a]`` vs ``zsolqa[i,b]``) split
-        # cleanly; each arm gates its own subset next cycle. intersects()
-        # returns True/False/None; treat None as a conservative conflict.
-        truly_overlapping = [
-            name for name in set(w0) & set(w1) if dace.subsets.intersects(w0[name], w1[name]) is not False
-        ]
-        if truly_overlapping:
-            # Same-element-write case is M3.1b's job; if it reached here,
-            # M3.1b didn't match.
-            raise NotImplementedError(
-                f"BranchNormalization: two-arm ConditionalBlock {cb.label!r} has overlapping "
-                f"write subsets {sorted(truly_overlapping)} that M3.1b did not normalize; this pass "
-                f"cannot flatten it without dropping or duplicating writes"
-            )
-
-        # Split into two single-arm conditionals: else-body -> new ``if not cond0: body1``
-        # block after ``cb`` (now if-arm only); later cycles rewrite each single-arm form.
-        # Same serialization the asymmetric-arm path uses, guard snapshot included.
+        # Overlapping writes serialize just as disjoint ones do: with the guard frozen exactly one arm's writes
+        # take effect, and the arm whose guard is false writes back the value it found, so an element both
+        # arms write ends with the value of the arm that ran.
         return self.serialize_two_arm(cb, cond0, body0, body1)
 
     def _collect_write_subsets(self, state: dace.SDFGState) -> dict[str, subsets.Range] | None:

@@ -54,6 +54,7 @@ from dace.transformation.passes.canonicalize.assume_symbols_nonnegative import A
 from dace.transformation.passes.canonicalize.normalize_floor_division import NormalizeFloorDivision
 from dace.transformation.passes.cpu_specialization.calibrate_thresholds import CalibrateCpuThresholds
 from dace.transformation.passes.cpu_specialization.chunk_anti_dependence import ChunkAntiDependence
+from dace.transformation.passes.cpu_specialization.if_convert_map_bodies import IfConvertParallelMapBodies
 from dace.transformation.passes.cpu_specialization.recompute_oversized_intermediates import (
     RecomputeOversizedIntermediates,
 )
@@ -91,6 +92,8 @@ def cpu_specialize(sdfg: SDFG, break_anti_dependence: bool = True, validate: boo
     RecomputeOversizedIntermediates().apply_pass(sdfg, {})
     SequentializeReductionAxes().apply_pass(sdfg, {})
     SequentializeUnprofitableParallelScopes().apply_pass(sdfg, {})
+    # After the schedules are final: only a body that stays a parallel map is if-converted.
+    IfConvertParallelMapBodies().apply_pass(sdfg, {})
     SpecializeCpuTransfers().apply_pass(sdfg, {})
 
     AssumeSymbolConstraints().apply_pass(sdfg, {})

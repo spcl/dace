@@ -427,8 +427,9 @@ def test_branched_tail_where_literal_arm_typed_not_bare_double():
 
     sdfg.expand_library_nodes()
     cu = "\n".join(c.clean_code for c in sdfg.generate_code() if c.title == "CUDA")
-    ite_calls = [line.strip() for line in cu.splitlines() if "ITE(" in line]
-    assert ite_calls, "expected a scalar-remainder ITE(...) call in the generated CUDA source"
+    # ``ITE(c, t, e)`` is emitted as the conditional operator ``((c) ? (t) : (e))``.
+    ite_calls = [line.strip() for line in cu.splitlines() if ") ? (" in line]
+    assert ite_calls, "expected a scalar-remainder ITE ternary in the generated CUDA source"
     for line in ite_calls:
         assert "dace::float16(0.0)" in line, f"literal ITE arm not typed to fp16: {line!r}"
         assert "double" not in line, f"a bare/unfixed double literal leaked into the ITE call: {line!r}"
