@@ -33,7 +33,7 @@ def candidate_loops(sdfg: SDFG) -> list[LoopRegion]:
     return [r for r in sdfg.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion) and r.loop_variable]
 
 
-def edge_assignment_counts(region: ControlFlowRegion) -> Counter:
+def edge_assignment_counts(region: ControlFlowRegion) -> Counter[str]:
     """How many interstate edges of ``region`` and its sub-regions (not across nested SDFGs) assign each name."""
     return Counter(k for e in region.all_interstate_edges() for k in e.data.assignments)
 
@@ -345,7 +345,7 @@ class ParallelizeLoops(ppl.Pass):
         self,
         sdfg: SDFG,
         pipeline_results: dict[str, Any],
-        order,
+        order: Callable[[LoopRegion], Any] | None,
         contexts: dict[SDFG, LiftContext],
         invariants: dict[SDFG, LiftInvariants],
         loop_facts: dict[Any, LoopFacts],

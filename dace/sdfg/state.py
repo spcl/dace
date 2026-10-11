@@ -2241,10 +2241,12 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
                 symbol_mapping.setdefault(fs, fs)
             s.symbol_mapping = symbol_mapping
 
-            # Add new global symbols to nested SDFG
-            defined_symbols = self.defined_symbols() if self.sdfg is not None else {}
-            for sym, symval in s.symbol_mapping.items():
-                if sym not in sdfg.symbols:
+            # Add new global symbols to nested SDFG. Their types come from the symbols defined here, a walk
+            # over the whole parent graph, so it is made only when a symbol is actually missing.
+            missing = [(sym, symval) for sym, symval in s.symbol_mapping.items() if sym not in sdfg.symbols]
+            if missing:
+                defined_symbols = self.defined_symbols() if self.sdfg is not None else {}
+                for sym, symval in missing:
                     sdfg.add_symbol(sym, infer_expr_type(symval, defined_symbols) or dtypes.typeclass(int))
 
         return s
