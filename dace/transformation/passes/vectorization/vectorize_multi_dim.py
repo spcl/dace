@@ -1487,11 +1487,43 @@ class VectorizeGPUMultiDim(VectorizeMultiDim):
 
     def apply_pass(self, sdfg: dace.SDFG, pipeline_results: dict[str, Any]) -> dict[str, Any] | None:
         # The iteration of a block tile's map is a whole thread block, every thread of which would reduce into the
-        # map's output: an SDFG with such a reduction keeps one thread's register tiles
-        if self._tile_group is TileGroup.BLOCK and _has_kernel_reduction(sdfg):
+        # map's output, and a map inside a kernel runs on threads the kernel's own map already took: an SDFG with
+        # either keeps one thread's register tiles
+        if self._tile_group is TileGroup.BLOCK and (_has_kernel_reduction(sdfg) or _has_map_inside_kernel(sdfg)):
             thread_tiles = type(self)(dataclasses.replace(self._requested, tile_group=TileGroup.THREAD))
             return thread_tiles.apply_pass(sdfg, pipeline_results)
         return super().apply_pass(sdfg, pipeline_results)
+
+
+def _has_map_inside_kernel(sdfg: dace.SDFG) -> bool:
+    """Whether a map of ``sdfg`` (recursively) runs inside a ``GPU_Device`` map, i.e. per thread."""
+    for sd in sdfg.all_sdfgs_recursive():
+        for state in sd.states():
+            scopes = state.scope_dict()
+            for node in state.nodes():
+                if not isinstance(node, dace.nodes.MapEntry):
+                    continue
+                parent = scopes[node]
+                while parent is not None:
+                    if parent.map.schedule == dace.dtypes.ScheduleType.GPU_Device:
+                        return True
+                    parent = scopes[parent]
+                if node.map.schedule != dace.dtypes.ScheduleType.GPU_Device and _inside_kernel(sd):
+                    return True
+    return False
+
+
+def _inside_kernel(sdfg: dace.SDFG) -> bool:
+    """Whether ``sdfg`` is nested (at any depth) in a state scope under a ``GPU_Device`` map."""
+    while sdfg.parent_nsdfg_node is not None:
+        state = sdfg.parent
+        parent = state.entry_node(sdfg.parent_nsdfg_node)
+        while parent is not None:
+            if isinstance(parent, dace.nodes.MapEntry) and parent.map.schedule == dace.dtypes.ScheduleType.GPU_Device:
+                return True
+            parent = state.entry_node(parent)
+        sdfg = sdfg.parent_sdfg
+    return False
 
 
 def _has_kernel_reduction(sdfg: dace.SDFG) -> bool:

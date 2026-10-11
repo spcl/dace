@@ -78,6 +78,12 @@ class ExpandTileBlock(ExpandTransformation):
         edges = [
             edge for edge in (*parent_state.in_edges(node), *parent_state.out_edges(node)) if not edge.data.is_empty()
         ]
+        # A node run on one thread that writes only scalars writes each thread's own register: every thread runs it
+        outputs_are_scalars = all(
+            isinstance(parent_sdfg.arrays[edge.data.data], data.Scalar) for edge in edges if edge.src is node
+        )
+        if threads == 1 and outputs_are_scalars and any(edge.src is node for edge in edges):
+            threads = node.group_threads()
         for edge in edges:
             share_tile(parent_sdfg.arrays[edge.data.data])
 
