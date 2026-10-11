@@ -64,7 +64,11 @@ class ExpandTileBlock(ExpandTransformation):
     @classmethod
     def expansion(cls, node: nodes.LibraryNode, parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> dace.SDFG:
         layout = block_layout(node, parent_state)
-        if layout.isa is not None:
+        collective = node.block_collective(parent_state, parent_sdfg)
+        if collective is not None:
+            threads, tasklet = node.group_threads(), renamed_connectors(collective)
+            tasklet.environments = set(collective.environments)
+        elif layout.isa is not None:
             tasklet = chunked_isa_tasklet(node, parent_state, parent_sdfg, node.implementations[layout.isa], layout)
             threads = layout.threads
         else:
