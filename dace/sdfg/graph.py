@@ -29,7 +29,7 @@ NodeT = TypeVar("NodeT")
 EdgeT = TypeVar("EdgeT")
 
 # ``id(graph) -> (graph, {id(node): index})`` while the graphs are frozen; the graph is kept to pin its id.
-_frozen_node_ids: ContextVar[Optional[Dict[int, Tuple[Any, Dict[int, int]]]]] = ContextVar(
+_frozen_node_ids: ContextVar[dict[int, tuple[Any, dict[int, int]]] | None] = ContextVar(
     "_frozen_node_ids", default=None
 )
 
