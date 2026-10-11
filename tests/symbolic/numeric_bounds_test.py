@@ -56,6 +56,13 @@ def test_divide_fix_writes_dace_int_floor():
     assert fixed.is_integer is True
 
 
+def test_an_undefined_symbol_has_no_bounds():
+    """An expression over an ``UndefinedSymbol`` is no number; ``expand`` around one never returns."""
+    undefined = symbolic.UndefinedSymbol()
+    assert symbolic.numeric_bounds(undefined * 5 + 1) == (None, None)
+    assert symbolic.ask("nonnegative", undefined * 5 + 1) is None
+
+
 if __name__ == "__main__":
     test_min_bounds_a_peeled_first_trip()
     test_max_bounds_from_below()
@@ -65,3 +72,4 @@ if __name__ == "__main__":
     test_an_unbounded_symbol_stays_undecided()
     test_int_floor_and_int_ceil_know_their_sign()
     test_divide_fix_writes_dace_int_floor()
+    test_an_undefined_symbol_has_no_bounds()

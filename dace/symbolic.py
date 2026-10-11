@@ -1677,6 +1677,9 @@ def numeric_bounds(expr: sympy.Basic) -> tuple[Any, Any]:
     it cannot see that a peeled first trip ``14:Min(14, N - 1) + 1`` has at most one iteration. A symbol is
     bounded below only by its own assumptions (``positive`` integer from 1, ``nonnegative`` from 0).
     """
+    if any(isinstance(atom, UndefinedSymbol) for atom in expr.atoms(sympy.Symbol)):
+        # An undefined symbol is no number at all, and expanding around one never settles.
+        return None, None
     remainders: dict[Any, tuple[Any, Any]] = {}
 
     def remainder(lower: Any, upper: Any) -> sympy.Dummy:
