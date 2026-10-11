@@ -930,6 +930,8 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
 
         # Symbols-and-constants stays here: it is memoized on this code generator, not on the SDFG.
         fsyms = {sdfg.cfg_id: self.symbols_and_constants(sdfg) for sdfg in top_sdfg.all_sdfgs_recursive()}
+        # Per SDFG, built on its first container that needs a common (post)dominator.
+        dominance: dict[int, Dominance] = {}
 
         for sdfg, name, desc in top_sdfg.arrays_recursive(include_nested_data=True):
             if isinstance(desc, data.DistributedDescriptor):
@@ -1158,7 +1160,9 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                         continue
 
                     if any(inst not in reachability[sdfg.cfg_id][first_state_instance] for inst in instances):
-                        first_state_instance, last_state_instance = _get_dominator_and_postdominator(sdfg, instances)
+                        first_state_instance, last_state_instance = _get_dominator_and_postdominator(
+                            sdfg, instances, dominance
+                        )
                         # Declare in SDFG scope
                         # NOTE: Even if we declare the data at a common dominator, we keep the first and last node
                         # instances. This is especially needed for Views which require both the SDFGState and the
@@ -1594,16 +1598,28 @@ def allocation_block(state: SDFGState, desc: data.Data, access_states: set[SDFGS
     return block
 
 
-def _get_dominator_and_postdominator(sdfg: SDFG, accesses: list[tuple[SDFGState, nodes.AccessNode]]):
+#: Per SDFG ``cfg_id``: immediate dominators, all dominators, immediate and all post-dominators of its blocks.
+Dominance = tuple[dict, dict, dict, dict]
+
+
+def _get_dominator_and_postdominator(
+    sdfg: SDFG, accesses: list[tuple[SDFGState, nodes.AccessNode]], dominance: dict[int, Dominance]
+):
     """
     Gets the closest common dominator and post-dominator for a list of states.
     Used for determining allocation of data used in branched states.
+
+    The dominator relations are built once per SDFG and kept in ``dominance``: every container needing a
+    common dominator rebuilt the whole SDFG's (post)dominators and their transitive closure otherwise.
     """
-    alldoms: dict[ControlFlowBlock, set[ControlFlowBlock]] = collections.defaultdict(lambda: set())
-    allpostdoms: dict[ControlFlowBlock, set[ControlFlowBlock]] = collections.defaultdict(lambda: set())
-    idom: dict[ControlFlowRegion, dict[ControlFlowBlock, ControlFlowBlock]] = {}
-    ipostdom: dict[ControlFlowRegion, dict[ControlFlowBlock, ControlFlowBlock]] = {}
-    utils.get_control_flow_block_dominators(sdfg, idom, alldoms, ipostdom, allpostdoms)
+    if sdfg.cfg_id not in dominance:
+        alldoms_new: dict[ControlFlowBlock, set[ControlFlowBlock]] = collections.defaultdict(set)
+        allpostdoms_new: dict[ControlFlowBlock, set[ControlFlowBlock]] = collections.defaultdict(set)
+        idom_new: dict[ControlFlowBlock, ControlFlowBlock] = {}
+        ipostdom_new: dict[ControlFlowBlock, ControlFlowBlock] = {}
+        utils.get_control_flow_block_dominators(sdfg, idom_new, alldoms_new, ipostdom_new, allpostdoms_new)
+        dominance[sdfg.cfg_id] = (idom_new, alldoms_new, ipostdom_new, allpostdoms_new)
+    idom, alldoms, ipostdom, allpostdoms = dominance[sdfg.cfg_id]
 
     states = [a for a, _ in accesses]
     data_name = accesses[0][1].data
