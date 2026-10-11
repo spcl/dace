@@ -102,7 +102,7 @@ def refuse_wrong_machine(node: "FindFirst", state: dace.SDFGState, sdfg: dace.SD
 class ExpandFindFirstCPU(ExpandTransformation):
     """CPU lowering: chunks handed out ``schedule(dynamic, 1)``, cancelling on a shared hint. See
     :cpp:func:`dace::find_first_index` for why the hint's race is benign. A ``Sequential`` node, or one
-    re-entered by an enclosing parallel scope or loop, runs the chunk loop on one thread: still
+    re-entered by an enclosing parallel scope (or a loop, unless the node opts out), runs the chunk loop on one thread: still
     blocked, ``simd``-scanned and cancelling between chunks."""
 
     environments: list[type] = []
@@ -239,6 +239,10 @@ class FindFirst(nodes.LibraryNode):
     #: ``*out`` on the host. Promoting it to device memory makes host code write a device pointer --
     #: which validates, then corrupts. Declared so an offloader keeps it where the expansion writes.
     host_connectors = frozenset({OUTPUT_CONNECTOR_NAME})
+
+    #: An enclosing loop is not a reason to search on one thread: a lifted early exit's chunk loop
+    #: re-enters the search once per chunk of work, which the fork amortizes as it does a map's.
+    serial_on_loop_reentry = False
 
     predicate = properties.Property(
         dtype=str,

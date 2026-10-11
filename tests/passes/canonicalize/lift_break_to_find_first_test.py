@@ -107,6 +107,19 @@ def test_a_test_that_reads_what_the_body_writes_is_refused():
     assert result is None and has_break(sdfg) and not find_firsts(sdfg)
 
 
+def test_the_chunked_search_stays_parallel_inside_its_chunk_loop():
+    """The chunk loop hands the search a chunk of work per entry: the CPU tail must not serialize it."""
+    from dace.transformation.passes.canonicalize.finalize import finalize_for_target
+    from dace.transformation.passes.canonicalize.pipeline import canonicalize
+
+    sdfg = body_then_break.to_sdfg(simplify=True)
+    sdfg.name = "lift_ff_parallel_chunk"
+    canonicalize(sdfg, target="cpu")
+    finalize_for_target(sdfg, "cpu")
+    (node,) = find_firsts(sdfg)
+    assert node.schedule != dace.ScheduleType.Sequential
+
+
 if __name__ == "__main__":
     test_capture_finds_the_first_hit_and_runs_the_effect_once(17)
     test_capture_finds_the_first_hit_and_runs_the_effect_once(0)
@@ -116,3 +129,4 @@ if __name__ == "__main__":
         test_the_body_runs_exactly_below_the_hit(break_then_body, None, size)
         test_the_body_runs_exactly_below_the_hit(body_then_break, 211, size)
     test_a_test_that_reads_what_the_body_writes_is_refused()
+    test_the_chunked_search_stays_parallel_inside_its_chunk_loop()
