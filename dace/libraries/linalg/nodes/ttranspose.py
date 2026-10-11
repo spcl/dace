@@ -104,10 +104,12 @@ class ExpandHPTT(ExpandTransformation):
             raise TypeError("HPTT supports only single and double (and corresponding complex) FP datatypes")
         alpha = sym2cpp(node.alpha)
         beta = sym2cpp(node.beta)
+        # The complex entry points take whether to conjugate A right after alpha
+        conj_a = "false, " if dchar in ("c", "z") else ""
         code = f"""
             int perm[{len(inp_shape)}] = {{{axes}}};
             int size[{len(inp_shape)}] = {{{shape}}};
-            {dchar}TensorTranspose(perm, {len(inp_shape)}, {alpha}, _inp_tensor, size, NULL, {beta}, _out_tensor, NULL, {multiprocessing.cpu_count()}, 1);
+            {dchar}TensorTranspose(perm, {len(inp_shape)}, {alpha}, {conj_a}_inp_tensor, size, NULL, {beta}, _out_tensor, NULL, {multiprocessing.cpu_count()}, 1);
         """
 
         tasklet = nodes.Tasklet(
