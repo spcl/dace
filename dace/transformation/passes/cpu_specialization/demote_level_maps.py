@@ -141,8 +141,12 @@ def level_is_more_contiguous(param: str, planes: list[Plane]) -> bool:
     return homed
 
 
-def inline_into(sdfg: SDFG, nested: nodes.NestedSDFG) -> None:
-    """Inline ``nested`` into the state holding it, widening its connectors first where the inliner needs it."""
+def inline_into(nested: nodes.NestedSDFG) -> None:
+    """Inline ``nested`` into the state holding it, widening its connectors first where the inliner needs it.
+
+    The holder is ``nested``'s parent SDFG, not the demoted map's: when :class:`MapToForLoop` cannot flatten
+    the NestedSDFG it wraps the body in, the loop and the body's nested SDFGs stay inside that wrapper."""
+    sdfg = nested.sdfg.parent_sdfg
     if ExpandNestedSDFGInputs.can_be_applied_to(sdfg, nested_sdfg=nested):
         ExpandNestedSDFGInputs.apply_to(sdfg, nested_sdfg=nested, verify=False, save=False)
     if InlineMultistateSDFG.can_be_applied_to(sdfg, nested_sdfg=nested):
@@ -181,7 +185,7 @@ def demote_strided_level_maps(sdfg: SDFG) -> int:
     for entry, nested, distribute in candidates:
         loop = demote(sdfg, entry)
         for node in nested:
-            inline_into(sdfg, node)
+            inline_into(node)
         if distribute:
             LoopFission.fission(loop)
     return len(candidates)
