@@ -658,6 +658,8 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
         fsyms = {}
         reachability = StateReachability().apply_pass(top_sdfg, {})
         access_instances: dict[int, dict[str, list[tuple[SDFGState, nodes.AccessNode]]]] = {}
+        # Per SDFG, built on its first container that needs a common (post)dominator
+        dominance: dict[int, tuple[_DominatorTree, _DominatorTree]] = {}
         code_instances: dict[int, dict[str, list[tuple[SDFGState, nodes.Node]]]] = {}
         for sdfg in top_sdfg.all_sdfgs_recursive():
             shared_transients[sdfg.cfg_id] = sdfg.shared_transients(check_toplevel=False, include_nested_data=True)
@@ -930,7 +932,11 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                         continue
 
                     if any(inst not in reachability[sdfg.cfg_id][first_state_instance] for inst in instances):
-                        first_state_instance, last_state_instance = _get_dominator_and_postdominator(sdfg, instances)
+                        if sdfg.cfg_id not in dominance:
+                            dominance[sdfg.cfg_id] = _dominator_trees(sdfg)
+                        first_state_instance, last_state_instance = _get_dominator_and_postdominator(
+                            instances, *dominance[sdfg.cfg_id]
+                        )
                         # Declare in SDFG scope
                         # NOTE: Even if we declare the data at a common dominator, we keep the first and last node
                         # instances. This is especially needed for Views which require both the SDFGState and the
@@ -1270,36 +1276,74 @@ def allocation_block(state: SDFGState, desc: data.Data, access_states: set[SDFGS
     return block
 
 
-def _get_dominator_and_postdominator(sdfg: SDFG, accesses: list[tuple[SDFGState, nodes.AccessNode]]):
+class _DominatorTree:
+    """The tree of ``immediate`` (a root maps to itself), numbered by a DFS: ``a`` dominates ``b`` iff ``b``'s
+    entry/exit interval lies within ``a``'s. One walk answers every query, where the transitive closure of the tree is
+    quadratic in its depth."""
+
+    def __init__(self, immediate: dict[ControlFlowBlock, ControlFlowBlock]) -> None:
+        self.immediate = immediate
+        children: dict[ControlFlowBlock, list[ControlFlowBlock]] = collections.defaultdict(list)
+        roots = {parent for parent in immediate.values() if immediate.get(parent, parent) is parent}
+        for block, parent in immediate.items():
+            if parent is not block:
+                children[parent].append(block)
+        self.entry: dict[ControlFlowBlock, int] = {}
+        self.exit: dict[ControlFlowBlock, int] = {}
+        clock = 0
+        for root in roots:
+            stack = [(root, iter(children[root]))]
+            self.entry[root] = clock
+            clock += 1
+            while stack:
+                block, pending = stack[-1]
+                child = next(pending, None)
+                if child is None:
+                    self.exit[block] = clock
+                    clock += 1
+                    stack.pop()
+                elif child not in self.entry:
+                    self.entry[child] = clock
+                    clock += 1
+                    stack.append((child, iter(children[child])))
+
+    def dominates(self, a: ControlFlowBlock, b: ControlFlowBlock) -> bool:
+        if a is b:
+            return True
+        if a not in self.entry or b not in self.entry:
+            return False
+        return self.entry[a] <= self.entry[b] and self.exit[b] <= self.exit[a]
+
+
+def _dominator_trees(sdfg: SDFG) -> tuple[_DominatorTree, _DominatorTree]:
+    """The dominator and post-dominator trees of the blocks of ``sdfg``, across its control flow regions."""
+    idom: dict[ControlFlowBlock, ControlFlowBlock] = {}
+    ipostdom: dict[ControlFlowBlock, ControlFlowBlock] = {}
+    utils.get_control_flow_block_dominators(sdfg, idom, None, ipostdom, None)
+    return _DominatorTree(idom), _DominatorTree(ipostdom)
+
+
+def _get_dominator_and_postdominator(
+    accesses: list[tuple[SDFGState, nodes.AccessNode]], dom: _DominatorTree, postdom: _DominatorTree
+):
     """
     Gets the closest common dominator and post-dominator for a list of states.
     Used for determining allocation of data used in branched states.
     """
-    alldoms: dict[ControlFlowBlock, set[ControlFlowBlock]] = collections.defaultdict(lambda: set())
-    allpostdoms: dict[ControlFlowBlock, set[ControlFlowBlock]] = collections.defaultdict(lambda: set())
-    idom: dict[ControlFlowRegion, dict[ControlFlowBlock, ControlFlowBlock]] = {}
-    ipostdom: dict[ControlFlowRegion, dict[ControlFlowBlock, ControlFlowBlock]] = {}
-    utils.get_control_flow_block_dominators(sdfg, idom, alldoms, ipostdom, allpostdoms)
-
     states = [a for a, _ in accesses]
     data_name = accesses[0][1].data
 
-    # All dominators and postdominators include the states themselves
-    for state in states:
-        alldoms[state].add(state)
-        allpostdoms[state].add(state)
-
     start_state = states[0]
-    while any(start_state not in alldoms[n] for n in states):
-        if idom[start_state] is start_state:
+    while not all(dom.dominates(start_state, n) for n in states):
+        if dom.immediate[start_state] is start_state:
             raise NotImplementedError(f'Could not find an appropriate dominator for allocation of "{data_name}"')
-        start_state = idom[start_state]
+        start_state = dom.immediate[start_state]
 
     end_state = states[-1]
-    while any(end_state not in allpostdoms[n] for n in states):
-        if ipostdom[end_state] is end_state:
+    while not all(postdom.dominates(end_state, n) for n in states):
+        if postdom.immediate[end_state] is end_state:
             raise NotImplementedError(f'Could not find an appropriate post-dominator for deallocation of "{data_name}"')
-        end_state = ipostdom[end_state]
+        end_state = postdom.immediate[end_state]
 
     # TODO(later): If any of the symbols were not yet defined, or have changed afterwards, fail
     # raise NotImplementedError
