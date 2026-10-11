@@ -1,28 +1,22 @@
 # Copyright 2023-2026 ETH Zurich and the DaCe authors. All rights reserved.
 
 import warnings
-
-from dace.data import Scalar
-
-import dace.frontend.fortran.ast_components as ast_components
-import dace.frontend.fortran.ast_transforms as ast_transforms
-import dace.frontend.fortran.ast_utils as ast_utils
-import dace.frontend.fortran.ast_internal_classes as ast_internal_classes
-from typing import List, Optional
-from dace import dtypes
-from dace import Language as lang
-from dace import data as dat
-from dace import SDFG, InterstateEdge, Memlet, pointer, nodes
-from dace import symbolic as sym
-from dace.sdfg import dealias
-from dace.sdfg.state import ControlFlowRegion, LoopRegion
 from copy import deepcopy as dpcp
 
-from dace.properties import CodeBlock
-from fparser.two.parser import ParserFactory as pf
-from fparser.common.readfortran import FortranStringReader as fsr
 from fparser.common.readfortran import FortranFileReader as ffr
+from fparser.common.readfortran import FortranStringReader as fsr
+from fparser.two.parser import ParserFactory as pf
 from fparser.two.symbol_table import SymbolTable
+
+from dace import SDFG, InterstateEdge, Memlet, dtypes, nodes, pointer
+from dace import Language as lang
+from dace import data as dat
+from dace import symbolic as sym
+from dace.data import Scalar
+from dace.frontend.fortran import ast_components, ast_internal_classes, ast_transforms, ast_utils
+from dace.properties import CodeBlock
+from dace.sdfg import dealias
+from dace.sdfg.state import ControlFlowRegion, LoopRegion
 
 
 class AST_translator:
@@ -101,7 +95,7 @@ class AST_translator:
         return a
 
     def get_memlet_range(
-        self, sdfg: SDFG, variables: List[ast_internal_classes.FNode], var_name: str, var_name_tasklet: str
+        self, sdfg: SDFG, variables: list[ast_internal_classes.FNode], var_name: str, var_name_tasklet: str
     ) -> str:
         """
         This function returns the memlet range for the given variable.
@@ -123,7 +117,7 @@ class AST_translator:
             if o_v.name == var_name_tasklet:
                 return ast_utils.generate_memlet(o_v, sdfg, self)
 
-    def translate(self, node: ast_internal_classes.FNode, sdfg: SDFG, cfg: Optional[ControlFlowRegion] = None):
+    def translate(self, node: ast_internal_classes.FNode, sdfg: SDFG, cfg: ControlFlowRegion | None = None):
         """
         This function is responsible for translating the AST into a SDFG.
         :param node: The node to be translated
@@ -492,7 +486,7 @@ class AST_translator:
             globalsdfg_name = self.name_mapping.get(self.globalsdfg).get(ast_utils.get_name(variable_in_call))
             matched = False
             for array_name, array in all_arrays.items():
-                if array_name in [sdfg_name]:
+                if array_name == sdfg_name:
                     matched = True
                     local_name = parameters[variables_in_call.index(variable_in_call)]
                     self.name_mapping[new_sdfg][local_name.name] = new_sdfg._find_new_name(local_name.name)
@@ -536,9 +530,7 @@ class AST_translator:
                     else:
                         # This is the case where the array is not a scalar and we need to create a view
                         if not isinstance(variable_in_call, ast_internal_classes.Name_Node):
-                            offsets_zero = []
-                            for index in offsets:
-                                offsets_zero.append(0)
+                            offsets_zero = [0 for _ in offsets]
                             viewname, view = sdfg.add_view(
                                 array_name + "_view_" + str(self.views),
                                 shape,
@@ -582,7 +574,7 @@ class AST_translator:
             if not matched:
                 # This handles the case where the function is called with global variables
                 for array_name, array in all_arrays.items():
-                    if array_name in [globalsdfg_name]:
+                    if array_name == globalsdfg_name:
                         local_name = parameters[variables_in_call.index(variable_in_call)]
                         self.name_mapping[new_sdfg][local_name.name] = new_sdfg._find_new_name(local_name.name)
                         self.all_array_names.append(self.name_mapping[new_sdfg][local_name.name])
@@ -612,18 +604,10 @@ class AST_translator:
                             )
 
         # Preparing symbol dictionary for nested sdfg
-        sym_dict = {}
-        for i in sdfg.symbols:
-            sym_dict[i] = i
+        sym_dict = {i: i for i in sdfg.symbols}
 
-        not_found_write_names = []
-        not_found_read_names = []
-        for i in write_names:
-            if self.name_mapping[new_sdfg].get(i) is None:
-                not_found_write_names.append(i)
-        for i in read_names:
-            if self.name_mapping[new_sdfg].get(i) is None:
-                not_found_read_names.append(i)
+        not_found_write_names = [i for i in write_names if self.name_mapping[new_sdfg].get(i) is None]
+        not_found_read_names = [i for i in read_names if self.name_mapping[new_sdfg].get(i) is None]
 
         # This handles the library states that are needed to inject dataflow to prevent library calls from being reordered
         # Currently not sufficient for all cases

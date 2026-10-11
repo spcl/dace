@@ -1,9 +1,10 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Unit tests for the GPU to-device transformation."""
 
-import dace
 import numpy as np
 import pytest
+
+import dace
 from dace.transformation.dataflow import GPUTransformLocalStorage
 from dace.transformation.interstate import GPUTransformSDFG
 

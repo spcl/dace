@@ -15,31 +15,30 @@ The implementations handle various ONNX operations including:
 
 import copy
 import itertools
-from typing import List, Optional, Tuple, Dict, Union
 
 import numpy as np
 
 # DaCe core imports
 import dace
-from dace.frontend.common import einsum
-import dace.libraries
-from dace.registry import autoregister_params
-from dace import nodes as nd
-
-# ONNX-specific imports
-import dace.libraries.onnx as donnx
-from dace.libraries.onnx.op_implementations.linalg_ops import PureEinsum
-from dace.transformation.onnx.replacement import onnx_constant_or_none
 
 # Autodiff imports
 import dace.autodiff.utils as butils
-from dace.autodiff.base_abc import BackwardImplementation, BackwardContext, BackwardResult
+import dace.libraries
+
+# ONNX-specific imports
+import dace.libraries.onnx as donnx
+from dace import nodes as nd
+from dace.autodiff.base_abc import BackwardContext, BackwardImplementation, BackwardResult
+from dace.frontend.common import einsum
+from dace.libraries.onnx.op_implementations.linalg_ops import PureEinsum
+from dace.registry import autoregister_params
 
 # Utility imports
 from dace.sdfg.utils import in_desc_with_name
+from dace.transformation.onnx.replacement import onnx_constant_or_none
 
 
-def reverse_einsum_wrt_input(forward_node: "donnx.nodes.onnx_op.ONNXOp", input_name: str) -> Tuple[List[str], str]:
+def reverse_einsum_wrt_input(forward_node: "donnx.nodes.onnx_op.ONNXOp", input_name: str) -> tuple[list[str], str]:
     """Produce the einsum string that computes the gradient of forward_node w.r.t. input_name.
 
     .. note::
@@ -80,9 +79,9 @@ class DefaultEinsumBackward(BackwardImplementation):
     def backward(
         forward_node: nd.Node,
         context: BackwardContext,
-        given_gradients: List[Optional[str]],
-        required_gradients: List[Optional[str]],
-    ) -> Tuple[nd.Node, BackwardResult]:
+        given_gradients: list[str | None],
+        required_gradients: list[str | None],
+    ) -> tuple[nd.Node, BackwardResult]:
 
         nsdfg = dace.SDFG(forward_node.label + "_backward")
         nstate = nsdfg.add_state()
@@ -101,7 +100,7 @@ class DefaultEinsumBackward(BackwardImplementation):
 
         # the forward inputs we will require
         # maps the connector name to the accessnode
-        required_forward_inputs: Dict[str, nd.AccessNode] = {}
+        required_forward_inputs: dict[str, nd.AccessNode] = {}
 
         for input_name in sorted(required_gradients):
             # we add an einsum for each required gradient
@@ -111,7 +110,7 @@ class DefaultEinsumBackward(BackwardImplementation):
             nstate.add_node(einsum_node)
 
             # the first input is always the output grad
-            einsum_node.add_in_connector(f"Inputs__0")
+            einsum_node.add_in_connector("Inputs__0")
             nstate.add_edge(
                 access_output_grad,
                 None,
@@ -169,9 +168,9 @@ class DefaultClipBackward(BackwardImplementation):
     def backward(
         forward_node: nd.Node,
         context: BackwardContext,
-        given_gradients: List[Optional[str]],
-        required_gradients: List[Optional[str]],
-    ) -> Tuple[Union[nd.Node, dace.SDFG], BackwardResult]:
+        given_gradients: list[str | None],
+        required_gradients: list[str | None],
+    ) -> tuple[nd.Node | dace.SDFG, BackwardResult]:
 
         result_node, result = butils.add_empty_sdfg_for_node(
             forward_node, ["input_grad", "output_grad", "input"], context
@@ -203,11 +202,11 @@ else:
             forward_node.label + "_backward",
             map_ranges=map_ranges,
             inputs={
-                f"__output_grad": dace.Memlet(f"output_grad[{index_str}]"),
-                f"__input": dace.Memlet(f"input[{index_str}]"),
+                "__output_grad": dace.Memlet(f"output_grad[{index_str}]"),
+                "__input": dace.Memlet(f"input[{index_str}]"),
             },
             code=code,
-            outputs={f"__input_grad": dace.Memlet(f"input_grad[{index_str}]")},
+            outputs={"__input_grad": dace.Memlet(f"input_grad[{index_str}]")},
             external_edges=True,
         )
 
@@ -225,9 +224,9 @@ class DefaultDropoutBackward(BackwardImplementation):
     def backward(
         forward_node: nd.Node,
         context: BackwardContext,
-        given_gradients: List[Optional[str]],
-        required_gradients: List[Optional[str]],
-    ) -> Tuple[Union[nd.Node, dace.SDFG], BackwardResult]:
+        given_gradients: list[str | None],
+        required_gradients: list[str | None],
+    ) -> tuple[nd.Node | dace.SDFG, BackwardResult]:
 
         result_node, result = butils.add_empty_sdfg_for_node(
             forward_node, ["data_grad", "output_grad", "mask", "ratio"], context
@@ -254,7 +253,7 @@ __data_grad = __output_grad * __mask * scale
                 "__ratio": dace.Memlet("ratio[0]"),
             },
             code=code,
-            outputs={f"__data_grad": dace.Memlet(f"data_grad[{index_str}]")},
+            outputs={"__data_grad": dace.Memlet(f"data_grad[{index_str}]")},
             external_edges=True,
         )
 
@@ -274,9 +273,9 @@ class DefaultSoftmaxBackward(BackwardImplementation):
     def backward(
         forward_node: nd.Node,
         context: BackwardContext,
-        given_gradients: List[Optional[str]],
-        required_gradients: List[Optional[str]],
-    ) -> Tuple[Union[nd.Node, dace.SDFG], BackwardResult]:
+        given_gradients: list[str | None],
+        required_gradients: list[str | None],
+    ) -> tuple[nd.Node | dace.SDFG, BackwardResult]:
 
         dim = forward_node.axis
 
@@ -406,9 +405,9 @@ class DefaultMaxPoolBackward(BackwardImplementation):
     def backward(
         forward_node: nd.Node,
         context: BackwardContext,
-        given_gradients: List[Optional[str]],
-        required_gradients: List[Optional[str]],
-    ) -> Tuple[Union[nd.Node, dace.SDFG], BackwardResult]:
+        given_gradients: list[str | None],
+        required_gradients: list[str | None],
+    ) -> tuple[nd.Node | dace.SDFG, BackwardResult]:
 
         output_shape = butils.forward_out_desc_with_name(forward_node, context, "Y").shape
 
@@ -463,9 +462,9 @@ class DefaultLogSoftmaxBackward(BackwardImplementation):
     def backward(
         forward_node: nd.Node,
         context: BackwardContext,
-        given_gradients: List[Optional[str]],
-        required_gradients: List[Optional[str]],
-    ) -> Tuple[nd.Node, BackwardResult]:
+        given_gradients: list[str | None],
+        required_gradients: list[str | None],
+    ) -> tuple[nd.Node, BackwardResult]:
 
         dim = forward_node.axis
         output_shape = butils.forward_out_desc_with_name(forward_node, context, "output").shape
@@ -506,9 +505,9 @@ class PureGlobalAveragePoolingBackward(BackwardImplementation):
     def backward(
         forward_node: nd.Node,
         context: BackwardContext,
-        given_gradients: List[Optional[str]],
-        required_gradients: List[Optional[str]],
-    ) -> Tuple[nd.Node, BackwardResult]:
+        given_gradients: list[str | None],
+        required_gradients: list[str | None],
+    ) -> tuple[nd.Node, BackwardResult]:
         desc = butils.forward_in_desc_with_name(forward_node, context, "X")
         N, C, H, W = desc.shape
         dtype = desc.dtype
@@ -536,9 +535,9 @@ class DefaultTransposeBackward(BackwardImplementation):
     def backward(
         forward_node: nd.Node,
         context: BackwardContext,
-        given_gradients: List[Optional[str]],
-        required_gradients: List[Optional[str]],
-    ) -> Tuple[nd.Node, BackwardResult]:
+        given_gradients: list[str | None],
+        required_gradients: list[str | None],
+    ) -> tuple[nd.Node, BackwardResult]:
         inv_perm = tuple(np.argsort(forward_node.perm))
 
         node = donnx.ONNXTranspose(forward_node.name + "_backward", perm=inv_perm)
@@ -563,9 +562,9 @@ class WhereBackward(BackwardImplementation):
     def backward(
         forward_node: nd.Node,
         context: BackwardContext,
-        given_gradients: List[Optional[str]],
-        required_gradients: List[Optional[str]],
-    ) -> Tuple[nd.Node, BackwardResult]:
+        given_gradients: list[str | None],
+        required_gradients: list[str | None],
+    ) -> tuple[nd.Node, BackwardResult]:
         # condition, X, Y -> Output
         # Get condition descriptor for shape information
         _ = butils.forward_in_desc_with_name(forward_node, context, "condition")
@@ -608,9 +607,9 @@ class DefaultLayerNormalizationBackward(BackwardImplementation):
     def backward(
         forward_node: nd.Node,
         context: BackwardContext,
-        given_gradients: List[Optional[str]],
-        required_gradients: List[Optional[str]],
-    ) -> Tuple[nd.Node, BackwardResult]:
+        given_gradients: list[str | None],
+        required_gradients: list[str | None],
+    ) -> tuple[nd.Node, BackwardResult]:
         # Create new SDFG
         nsdfg = dace.SDFG(forward_node.label + "_backward")
         nstate = nsdfg.add_state()
@@ -676,7 +675,7 @@ class DefaultLayerNormalizationBackward(BackwardImplementation):
             name="init_axes",
             inputs={},
             outputs={"out": dace.pointer(dace.int64)},
-            code=f"\n".join([f"out[{i}] = {0};" for i, _ in enumerate(reduction_axes)]),
+            code="\n".join([f"out[{i}] = {0};" for i, _ in enumerate(reduction_axes)]),
             language=dace.Language.CPP,
         )
         nstate.add_edge(axes_tasklet, "out", axes_access, None, dace.Memlet(f"{axes_name}[0:{len(reduction_axes)}]"))
@@ -1006,9 +1005,9 @@ class DefaultReduceSumBackward(BackwardImplementation):
     def backward(
         forward_node: nd.Node,
         context: BackwardContext,
-        given_gradients: List[Optional[str]],
-        required_gradients: List[Optional[str]],
-    ) -> Tuple[nd.Node, BackwardResult]:
+        given_gradients: list[str | None],
+        required_gradients: list[str | None],
+    ) -> tuple[nd.Node, BackwardResult]:
 
         # The backward pass of a reduction is a broadcast.
         # We use ONNXExpand to perform the broadcast.

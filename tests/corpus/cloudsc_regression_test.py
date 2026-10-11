@@ -68,7 +68,7 @@ def test_simplify_stays_within_its_time_budget():
         durations.append(time.perf_counter() - start)
 
     median = statistics.median(durations)
-    reps = ", ".join("%.1f" % d for d in durations)
+    reps = ", ".join(f"{d:.1f}" for d in durations)
     assert median < SIMPLIFY_BUDGET_SECONDS, (
         f"median simplify took {median:.1f}s, budget is {SIMPLIFY_BUDGET_SECONDS:.0f}s; reps={reps}"
     )

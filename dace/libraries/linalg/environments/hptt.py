@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import os
+
 from dace import config, library
 
 
@@ -8,7 +9,6 @@ class HPTT:
     cmake_minimum_version = None
     cmake_packages = []
     cmake_variables = {}
-    cmake_libraries = []
     cmake_compile_flags = []
     cmake_link_flags = []
     cmake_files = []

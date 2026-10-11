@@ -1,41 +1,40 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
-from typing import Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
 import numpy as np
+import torch
 
 import dace
-import torch
-from dace import config
-from dace.properties import make_properties
-from dace.transformation import transformation
-from dace.sdfg import nodes as nd
-from dace.sdfg import utils as sdutil
-
 import dace.libraries.onnx as donnx
+from dace import config
 from dace.libraries.onnx.converters import clean_onnx_name
 from dace.libraries.onnx.nodes.onnx_op import ONNXOp
+from dace.properties import make_properties
+from dace.sdfg import nodes as nd
+from dace.sdfg import utils as sdutil
+from dace.transformation import transformation
 
 if TYPE_CHECKING:
     from dace.frontend.ml.onnx import ONNXModel
 
 # blocklist of nondeterministic ops
 # fmt: off
-NONDETERMINISTIC_OPS = {'ONNXDropout',
-                        'ONNXGradient',
-                        'ONNXGraphCall',
-                        'ONNXIf',
-                        'ONNXLoop',
-                        'ONNXMomentum',
-                        'ONNXMultinomial',
-                        'ONNXRandomNormal',
-                        'ONNXRandomNormalLike',
-                        'ONNXRandomUniform',
-                        'ONNXRandomUniformLike',
-                        'ONNXSVMClassifier',
-                        'ONNXSVMRegressor',
-                        'ONNXScan',
-                        'ONNXTreeEnsembleClassifier',
-                        'ONNXTreeEnsembleRegressor'}
+NONDETERMINISTIC_OPS = {"ONNXDropout",
+                        "ONNXGradient",
+                        "ONNXGraphCall",
+                        "ONNXIf",
+                        "ONNXLoop",
+                        "ONNXMomentum",
+                        "ONNXMultinomial",
+                        "ONNXRandomNormal",
+                        "ONNXRandomNormalLike",
+                        "ONNXRandomUniform",
+                        "ONNXRandomUniformLike",
+                        "ONNXSVMClassifier",
+                        "ONNXSVMRegressor",
+                        "ONNXScan",
+                        "ONNXTreeEnsembleClassifier",
+                        "ONNXTreeEnsembleRegressor"}
 # fmt: on
 
 
@@ -97,10 +96,10 @@ class ConstantFolding(transformation.SingleStateTransformation):
     @classmethod
     def match_to_str(cls, graph):
         node: ONNXOp = cls.onnx_node
-        return "Precompute outputs of {}".format(node)
+        return f"Precompute outputs of {node}"
 
     def apply(self, state: dace.SDFGState, sdfg: dace.SDFG):
-        parent: "ONNXModel" = sdfg._parent_onnx_model
+        parent: ONNXModel = sdfg._parent_onnx_model
         node = self.onnx_node
         if config.Config.get_bool("debugprint"):
             print(f"Applying constant folding: {node} in {state}")
@@ -130,7 +129,7 @@ class ConstantFolding(transformation.SingleStateTransformation):
         remove_node_and_computation(sdfg, state, node)
 
 
-def remove_node_and_computation(sdfg: dace.SDFG, state: dace.SDFGState, node: nd.Node, connector: Optional[str] = None):
+def remove_node_and_computation(sdfg: dace.SDFG, state: dace.SDFGState, node: nd.Node, connector: str | None = None):
     """Remove a node and the parent nodes that compute this node, if the outputs are not used elsewhere.
 
     :param sdfg: the sdfg containing the node.

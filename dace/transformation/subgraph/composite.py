@@ -3,19 +3,17 @@
 Subgraph Fusion - Stencil Tiling Transformation
 """
 
-from dace.sdfg.state import SDFGState, StateSubgraphView
-from dace.transformation.subgraph import SubgraphFusion, MultiExpansion
-from dace.transformation.subgraph.stencil_tiling import StencilTiling
-from dace.transformation.subgraph import helpers
-from dace.transformation import transformation
-
-from dace import dtypes
-from dace.properties import EnumProperty, make_properties, Property, ShapeProperty
-from dace.sdfg import SDFG
-from dace.sdfg.graph import SubgraphView
-
 import copy
 import warnings
+
+from dace import dtypes
+from dace.properties import EnumProperty, Property, ShapeProperty, make_properties
+from dace.sdfg import SDFG
+from dace.sdfg.graph import SubgraphView
+from dace.sdfg.state import SDFGState, StateSubgraphView
+from dace.transformation import transformation
+from dace.transformation.subgraph import MultiExpansion, SubgraphFusion, helpers
+from dace.transformation.subgraph.stencil_tiling import StencilTiling
 
 
 @make_properties

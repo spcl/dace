@@ -1,6 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import collections
-from typing import Dict, Tuple
 
 import dace
 import dace.library
@@ -83,8 +82,8 @@ class Stencil(dace.library.LibraryNode):
         self,
         label: str,
         code: str = "",
-        iterator_mapping: Dict[str, Tuple[int]] = {},
-        boundary_conditions: Dict[str, Dict] = {},
+        iterator_mapping: dict[str, tuple[int]] = {},
+        boundary_conditions: dict[str, dict] = {},
         **kwargs,
     ):
         super().__init__(label, **kwargs)

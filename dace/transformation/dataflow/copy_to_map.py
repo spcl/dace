@@ -1,8 +1,10 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 
 from dace import properties
+from dace.sdfg import SDFG, SDFGState, nodes
+from dace.sdfg import memlet_utils as mutils
+from dace.sdfg import utils as sdutil
 from dace.transformation import transformation as xf
-from dace.sdfg import SDFGState, SDFG, nodes, utils as sdutil, memlet_utils as mutils
 
 
 @properties.make_properties

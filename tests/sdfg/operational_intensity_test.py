@@ -3,20 +3,19 @@
 
 import contextlib
 import io
-from typing import Dict, Tuple
+from math import isclose
 from unittest import mock
 
-import pytest
-import dace
-import sympy as sp
 import numpy as np
-from dace.sdfg.performance_evaluation.operational_intensity import analyze_sdfg_op_in
-from dace.sdfg.performance_evaluation.helpers import get_uuid
-from dace.sdfg.utils import inline_control_flow_regions
-from dace.symbolic import pystr_to_symbolic, SymbolicType
-from dace.frontend.python.parser import DaceProgram
+import pytest
+import sympy as sp
 
-from math import isclose
+import dace
+from dace.frontend.python.parser import DaceProgram
+from dace.sdfg.performance_evaluation.helpers import get_uuid
+from dace.sdfg.performance_evaluation.operational_intensity import analyze_sdfg_op_in
+from dace.sdfg.utils import inline_control_flow_regions
+from dace.symbolic import SymbolicType, pystr_to_symbolic
 
 N = dace.symbol("N")
 M = dace.symbol("M")
@@ -109,7 +108,7 @@ def reduction_library_node(x: dace.float64[N]):
 
 
 # (sdfg, c, l, assumptions, expected_result)
-test_cases: Dict[str, Tuple[DaceProgram, int, int, Dict[str, int], SymbolicType]] = {
+test_cases: dict[str, tuple[DaceProgram, int, int, dict[str, int], SymbolicType]] = {
     "single_map64_even": (single_map64, 64 * 64, 64, {"N": 512}, 1 / 24),
     "single_map16_even": (single_map16, 64 * 64, 64, {"N": 512}, 1 / 6),
     "single_for_loop": (single_for_loop, 64 * 64, 64, {"N": 512}, 1 / 16),
@@ -140,7 +139,7 @@ test_cases: Dict[str, Tuple[DaceProgram, int, int, Dict[str, int], SymbolicType]
 @pytest.mark.parametrize("test_name", list(test_cases.keys()))
 def test_operational_intensity(test_name: str):
     test, c, l, assumptions, correct = test_cases[test_name]
-    op_in_map: Dict[str, sp.Expr] = {}
+    op_in_map: dict[str, sp.Expr] = {}
     sdfg = test.to_sdfg()
     if test_name == "nested_reuse":
         sdfg.expand_library_nodes()
@@ -176,7 +175,7 @@ def ask_user_branch_in_loop(x: dace.float64[64], y: dace.float64[64]):
             y[:] = x * x * x * x
 
 
-def _op_in_with_choice(program: DaceProgram, choice: int) -> Tuple[int, float]:
+def _op_in_with_choice(program: DaceProgram, choice: int) -> tuple[int, float]:
     """Run the analysis in ``ask_user`` mode, answering every branch prompt with ``choice``.
 
     :param program: The DaCe program to analyze.
@@ -191,7 +190,7 @@ def _op_in_with_choice(program: DaceProgram, choice: int) -> Tuple[int, float]:
         prompts.append(choice)
         return str(choice)
 
-    op_in_map: Dict[str, sp.Expr] = {}
+    op_in_map: dict[str, sp.Expr] = {}
     with mock.patch("builtins.input", fake_input), contextlib.redirect_stdout(io.StringIO()):
         analyze_sdfg_op_in(sdfg, op_in_map, 1024, 64, {}, ask_user=True)
     return len(prompts), float(op_in_map[get_uuid(sdfg)])
@@ -219,7 +218,7 @@ def test_operational_intensity_range_simulation():
     """Smoke-test the simulation path: a symbol given a range ``'start,stop,step'`` is sampled, its
     cache misses simulated per sample, and the operational intensity fitted as a function of it.
     Streaming ``single_map64`` has no reuse, so the fit is the constant ``1 / 24``."""
-    op_in_map: Dict[str, sp.Expr] = {}
+    op_in_map: dict[str, sp.Expr] = {}
     sdfg = single_map64.to_sdfg()
     # Sampling at multiples of 8 keeps the 64-byte cache lines (8 doubles) evenly divided.
     analyze_sdfg_op_in(sdfg, op_in_map, 64 * 64, 64, {"N": "64,576,64"}, test_set_size=2)
@@ -238,7 +237,7 @@ def test_operational_intensity_bails_on_unstructured_control_flow():
     sdfg = ask_user_branch.to_sdfg()
     sdfg.simplify()
     inline_control_flow_regions(sdfg)
-    op_in_map: Dict[str, sp.Expr] = {}
+    op_in_map: dict[str, sp.Expr] = {}
     with pytest.warns(UserWarning, match="structured control flow"):
         analyze_sdfg_op_in(sdfg, op_in_map, 1024, 64, {})
     assert op_in_map[get_uuid(sdfg)] == 0

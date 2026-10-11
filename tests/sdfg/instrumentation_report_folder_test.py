@@ -78,6 +78,7 @@ def test_perf_folder_created_exactly_when_instrumented(tmp_path):
 
 if __name__ == "__main__":
     test_is_instrumented_distinguishes_enum_kinds()
-    import tempfile, pathlib
+    import pathlib
+    import tempfile
 
     test_perf_folder_created_exactly_when_instrumented(pathlib.Path(tempfile.mkdtemp()))

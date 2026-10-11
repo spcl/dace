@@ -1,12 +1,12 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests for the PBLAS GEMV library node."""
 
-import dace
 import numpy as np
 import pytest
 
-from dace.transformation.auto.auto_optimize import auto_optimize
+import dace
 from dace.sdfg import utils
+from dace.transformation.auto.auto_optimize import auto_optimize
 
 # Symbols
 
@@ -94,9 +94,7 @@ def test_pgemm():
     def compile(sdfg):
         return utils.distributed_compile(sdfg, commworld)
 
-    sdfgs = []
-    for prog in (pdgemm, gemm, k2mm, k3mm):
-        sdfgs.append(optimize(prog))
+    sdfgs = [optimize(prog) for prog in (pdgemm, gemm, k2mm, k3mm)]
 
     # Test for different grids possible with the given number of MPI processes.
     grid_dims = grids[size]
@@ -115,9 +113,7 @@ def test_pgemm():
             if rank == 0:
                 print(f"Testing PBLAS GEMM on a [{NPx}, {NPy}] grid with sizes ({M}, {N}, {K}, {R}, {S}).", flush=True)
 
-            funcs = []
-            for sd in sdfgs:
-                funcs.append(compile(sd))
+            funcs = [compile(sd) for sd in sdfgs]
             func, func1, func2, func3 = funcs
 
             A = rng.random((M, K), dtype=np.float64)

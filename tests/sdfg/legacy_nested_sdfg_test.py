@@ -15,7 +15,8 @@ import pytest
 import dace
 from dace import nodes
 from dace.memlet import Memlet
-from dace.sdfg import InterstateEdge, dealias, utils as sdutil
+from dace.sdfg import InterstateEdge, dealias
+from dace.sdfg import utils as sdutil
 from dace.transformation.interstate import InlineSDFG
 
 N = 20

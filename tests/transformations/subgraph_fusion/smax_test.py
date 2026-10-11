@@ -5,7 +5,7 @@ from util import expand_maps, expand_reduce, fusion
 
 import dace
 import dace.libraries.standard as stdlib
-import dace.sdfg.nodes as nodes
+from dace.sdfg import nodes
 from dace.sdfg.graph import SubgraphView
 
 dace_dtype = dace.float32
@@ -81,31 +81,6 @@ def test_2fuse():
     res2 = csdfg(X_in=X_in, H=10, B=10, SN=20, SM=20)
     del csdfg
 
-    assert np.allclose(res1, res2)
-    print("PASS")
-    return
-
-
-def test_1fuse():
-    sdfg = softmax.to_sdfg()
-    sdfg.name = "softmax_fused"
-    sdfg.simplify()
-    X_in = np.random.rand(10, 10, 20, 20).astype(np.float32)
-
-    csdfg = sdfg.compile()
-    res1 = csdfg(X_in=X_in, H=10, B=10, SN=20, SM=20)
-    del csdfg
-
-    expand_reduce(sdfg, sdfg.nodes()[0])
-    expand_maps(sdfg, sdfg.nodes()[0])
-    fusion(sdfg, sdfg.nodes()[0])
-
-    csdfg = sdfg.compile()
-    res2 = csdfg(X_in=X_in, H=10, B=10, SN=20, SM=20)
-    del csdfg
-
-    print(np.linalg.norm(res1))
-    print(np.linalg.norm(res2))
     assert np.allclose(res1, res2)
     print("PASS")
     return

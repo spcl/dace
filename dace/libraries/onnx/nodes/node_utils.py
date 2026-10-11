@@ -13,12 +13,10 @@ These utilities support the ONNX node system by handling the complexities
 of variadic inputs/outputs and parameter naming conventions.
 """
 
-from typing import Tuple
-
 from dace.libraries.onnx.schema import ONNXParameterType, ONNXSchema
 
 
-def parse_variadic_param(param: str) -> Tuple[str, int]:
+def parse_variadic_param(param: str) -> tuple[str, int]:
     """Parse a variadic parameter name into its base name and index.
 
     ONNX operations can have variadic inputs/outputs, which are named using
@@ -41,16 +39,16 @@ def parse_variadic_param(param: str) -> Tuple[str, int]:
     """
     split = param.split("__")
     if len(split) != 2:
-        raise ValueError("Unable to parse variadic parameter '{}'".format(param))
+        raise ValueError(f"Unable to parse variadic parameter '{param}'")
     name = split[0]
     number = split[1]
 
     if number[0] == "0" and len(number) > 1:
-        raise ValueError("Variadic parameters must not be numbered with leading zeros, got: '{}'".format(number))
+        raise ValueError(f"Variadic parameters must not be numbered with leading zeros, got: '{number}'")
 
     number = int(number)
     if number < 0:
-        raise ValueError("Variadic parameter numberings must be greater than zero, got: '{}'".format(number))
+        raise ValueError(f"Variadic parameter numberings must be greater than zero, got: '{number}'")
     return name, number
 
 
@@ -75,19 +73,17 @@ def get_position(schema: ONNXSchema, is_input: bool, parameter_name: str):
         if param.name == parameter_name
     ]
     if len(matches) != 1:
-        raise ValueError("Error in schema: found more or less than one parameter with name {}".format(parameter_name))
+        raise ValueError(f"Error in schema: found more or less than one parameter with name {parameter_name}")
 
     index, param = matches[0]
 
     if variadic_number is not None and param.param_type != ONNXParameterType.Variadic:
-        raise ValueError("Got variadic index for non-variadic parameter {}".format(parameter_name))
+        raise ValueError(f"Got variadic index for non-variadic parameter {parameter_name}")
 
     if variadic_number is None and param.param_type == ONNXParameterType.Variadic:
         raise ValueError(
-            "Did not get variadic index for variadic parameter {}. "
-            "Specify a variadic index by renaming the parameter to {}__i, where i is a number".format(
-                parameter_name, parameter_name
-            )
+            f"Did not get variadic index for variadic parameter {parameter_name}. "
+            f"Specify a variadic index by renaming the parameter to {parameter_name}__i, where i is a number"
         )
 
     if variadic_number is not None:

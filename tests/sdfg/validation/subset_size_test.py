@@ -1,14 +1,14 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-from typing import Tuple
+
+import re
+
+import numpy as np
+import pytest
 
 import dace
 
-import re
-import pytest
-import numpy as np
 
-
-def _make_sdfg_with_zero_sized_an_to_an_memlet() -> Tuple[dace.SDFG, dace.SDFGState]:
+def _make_sdfg_with_zero_sized_an_to_an_memlet() -> tuple[dace.SDFG, dace.SDFGState]:
     """Generates an SDFG that performs a copy that has a zero size."""
     sdfg = dace.SDFG("zero_size_copy_sdfg")
     state = sdfg.add_state(is_start_block=True)
@@ -77,7 +77,7 @@ def test_an_to_an_memlet_with_negative_size():
     with pytest.raises(
         expected_exception=dace.sdfg.InvalidSDFGEdgeError,
         match=re.escape(
-            f"`subset` of an AccessNode to AccessNode Memlet contains a negative size; the size was [15, -11]"
+            "`subset` of an AccessNode to AccessNode Memlet contains a negative size; the size was [15, -11]"
         ),
     ):
         sdfg.validate()

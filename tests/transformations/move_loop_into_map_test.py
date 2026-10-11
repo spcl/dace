@@ -1,10 +1,12 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 
+import copy
+
+import numpy as np
+
 import dace
 from dace.sdfg.state import LoopRegion
 from dace.transformation.interstate import MoveLoopIntoMap
-import copy
-import numpy as np
 
 I = dace.symbol("I")
 J = dace.symbol("J")

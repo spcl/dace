@@ -1,8 +1,8 @@
 import dace
-from dace.sdfg import nodes as dace_nodes
-from dace.sdfg import graph as dace_graph
-from dace.symbolic import pystr_to_symbolic as s2s
 from dace.codegen.targets import cpp as dace_cpp
+from dace.sdfg import graph as dace_graph
+from dace.sdfg import nodes as dace_nodes
+from dace.symbolic import pystr_to_symbolic as s2s
 
 
 def _make_sdfg() -> tuple[

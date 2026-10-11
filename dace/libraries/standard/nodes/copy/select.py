@@ -1,7 +1,8 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Implementation selection for ``CopyLibraryNode``."""
 
-from typing import Optional, TYPE_CHECKING
+import itertools
+from typing import TYPE_CHECKING
 
 import dace
 from dace import dtypes, symbolic
@@ -11,8 +12,8 @@ from dace.libraries.standard.helper import (
     is_in_parallel_scope,
     is_parallel_cpu_transfer_size,
 )
+from dace.libraries.standard.nodes.copy.common import _both_packed_same_layout, _is_cross_cpu_gpu, cuda2d_pitch_params
 from dace.sdfg.scope import is_devicelevel_gpu, is_in_scope
-from dace.libraries.standard.nodes.copy.common import cuda2d_pitch_params, _both_packed_same_layout, _is_cross_cpu_gpu
 
 if TYPE_CHECKING:
     from dace.libraries.standard.nodes.copy.node import CopyLibraryNode
@@ -83,7 +84,7 @@ def select_copy_implementation(node: "CopyLibraryNode", parent_state: dace.SDFGS
     # an element loop, which is strictly worse than the single call at any size.
     host_storages = CPU_RESIDENT_STORAGES | {dtypes.StorageType.Default}
     same_shape = len(inp.shape) == len(out.shape) and not any(
-        symbolic.inequal_symbols(a, b) for a, b in zip(in_subset.size(), out_subset.size())
+        itertools.starmap(symbolic.inequal_symbols, zip(in_subset.size(), out_subset.size()))
     )
     if (
         {inp.storage, out.storage} <= host_storages
@@ -120,7 +121,7 @@ def select_copy_implementation(node: "CopyLibraryNode", parent_state: dace.SDFGS
     return impl or "MappedTasklet"
 
 
-def _refine_cuda_impl_for_subsets(node: "CopyLibraryNode", parent_state: dace.SDFGState) -> Optional[str]:
+def _refine_cuda_impl_for_subsets(node: "CopyLibraryNode", parent_state: dace.SDFGState) -> str | None:
     """Upgrade ``MemcpyCUDA1D`` to a more specific impl for non-contiguous subsets.
 
       both subsets contiguous                       -> ``None`` (keep CUDA1D)

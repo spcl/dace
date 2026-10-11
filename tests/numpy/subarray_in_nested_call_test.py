@@ -1,6 +1,8 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 import math
+
 import numpy as np
+
 import dace
 
 M = dace.symbol("M")

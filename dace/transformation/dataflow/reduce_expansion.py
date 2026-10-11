@@ -1,20 +1,19 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """This module contains classes that implement the reduce-map transformation."""
 
+from copy import deepcopy as dcpy
+
 from dace import dtypes
-from dace.sdfg import SDFG, nodes, utils, graph, dealias
+from dace.data import View
+from dace.frontend.operations import detect_reduction_type
 from dace.memlet import Memlet
+from dace.properties import Property, make_properties
+from dace.sdfg import SDFG, dealias, graph, nodes, utils
+from dace.sdfg.propagation import propagate_memlets_scope
 from dace.sdfg.scope import ScopeTree
 from dace.sdfg.state import SDFGState
-from dace.transformation import transformation
-from dace.properties import make_properties, Property
 from dace.symbolic import symstr
-from dace.data import View
-
-from dace.frontend.operations import detect_reduction_type
-from dace.sdfg.propagation import propagate_memlets_scope
-
-from copy import deepcopy as dcpy
+from dace.transformation import transformation
 
 
 @make_properties
@@ -214,7 +213,7 @@ class ReduceExpansion(transformation.SingleStateTransformation):
             # create an in-transient between inner and outer map entry
             array_in = nstate.in_edges(outer_entry)[0].data.data
 
-            from dace.transformation.dataflow.local_storage import LocalStorage, InLocalStorage
+            from dace.transformation.dataflow.local_storage import InLocalStorage, LocalStorage
 
             local_storage_subgraph = {
                 LocalStorage.node_a: nsdfg.sdfg.nodes()[0].nodes().index(outer_entry),
@@ -286,7 +285,7 @@ class ReduceExpansion(transformation.SingleStateTransformation):
                     reduce_node_new.identity = dtypes.min_value(sdfg.arrays[out_storage_node.data].dtype)
                 else:
                     raise ValueError(
-                        f"Cannot infer reduction identity.Please specify the identity of node{{reduce_node_new}}"
+                        "Cannot infer reduction identity.Please specify the identity of node{reduce_node_new}"
                     )
 
         return
@@ -304,7 +303,7 @@ class ReduceExpansion(transformation.SingleStateTransformation):
         output_data = sdfg.arrays[outedge.data.data]
 
         # Standardize axes
-        axes = node.axes if node.axes else [i for i in range(input_dims)]
+        axes = node.axes or list(range(input_dims))
 
         # Create nested SDFG
         nsdfg = SDFG("reduce")
@@ -343,7 +342,7 @@ class ReduceExpansion(transformation.SingleStateTransformation):
             output_size = outedge.data.subset.size()
 
             ome, omx = nstate.add_map(
-                "reduce_output", {"_o%d" % i: "0:%s" % symstr(sz) for i, sz in enumerate(outedge.data.subset.size())}
+                "reduce_output", {"_o%d" % i: f"0:{symstr(sz)}" for i, sz in enumerate(outedge.data.subset.size())}
             )
             outm = Memlet.simple("_out", ",".join(["_o%d" % i for i in range(output_dims)]), wcr_str=node.wcr)
             inmm = Memlet.simple("_in", ",".join(input_subset))
@@ -356,7 +355,7 @@ class ReduceExpansion(transformation.SingleStateTransformation):
         # an identity tasklet
         ime, imx = nstate.add_map(
             "reduce_values",
-            {"_i%d" % i: "0:%s" % symstr(inedge.data.subset.size()[axis]) for i, axis in enumerate(sorted(axes))},
+            {"_i%d" % i: f"0:{symstr(inedge.data.subset.size()[axis])}" for i, axis in enumerate(sorted(axes))},
         )
 
         # Add identity tasklet for reduction

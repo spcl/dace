@@ -1,9 +1,9 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
-from dace.transformation.subgraph import MultiExpansion, SubgraphFusion
 import numpy as np
 
+import dace
 from dace.sdfg.graph import SubgraphView
+from dace.transformation.subgraph import MultiExpansion, SubgraphFusion
 
 N, M, O, P, Q, R = [dace.symbol(s) for s in ["N", "M", "O", "P", "Q", "R"]]
 
@@ -125,7 +125,7 @@ def test_p1():
     )
     del csdfg
 
-    subgraph = SubgraphView(state, [node for node in state.nodes()])
+    subgraph = SubgraphView(state, list(state.nodes()))
     expansion = MultiExpansion()
     expansion.setup_match(subgraph)
     fusion = SubgraphFusion()

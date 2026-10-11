@@ -1,9 +1,10 @@
-from typing import Union
-import dace
-import numpy as np
 import copy
 import time
+
+import numpy as np
 import pytest
+
+import dace
 
 try:
     import cupy as cp
@@ -12,8 +13,8 @@ except ImportError:
 
 
 def _make_sdfg(
-    lb: Union[str, int],
-    ub: Union[str, int],
+    lb: str | int,
+    ub: str | int,
     on_gpu: bool,
 ) -> tuple[dace.SDFG, dace.nodes.MapEntry]:
     # The four CPU tests here share this name, and at second resolution two
@@ -57,8 +58,8 @@ def _make_sdfg(
 
 
 def _run_test(
-    lb: Union[str, int],
-    ub: Union[str, int],
+    lb: str | int,
+    ub: str | int,
     on_gpu: bool,
     **kwargs,
 ):

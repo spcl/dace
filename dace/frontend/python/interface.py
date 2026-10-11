@@ -2,20 +2,15 @@
 """Python interface for DaCe functions."""
 
 import inspect
+from collections import deque
+from collections.abc import Callable, Generator, Iterable, Iterator
 from typing import (
     Any,
-    Callable,
-    Deque,
-    Dict,
-    Generator,
-    Optional,
-    TypeVar,
-    Union,
-    overload,
     Generic,
-    Iterable,
-    Iterator,
+    TypeVar,
+    overload,
 )
+
 from typing_extensions import Self
 
 from dace import dtypes
@@ -157,7 +152,7 @@ def method(
     # Create a wrapper class that can bind to the object instance
     class MethodWrapper:
         def __init__(self):
-            self.wrapped: Dict[int, parser.DaceProgram] = {}
+            self.wrapped: dict[int, parser.DaceProgram] = {}
 
         def __get__(self, obj, objtype=None) -> parser.DaceProgram:
             # Modify wrapped instance as necessary, only clearing
@@ -211,13 +206,13 @@ def method(
 _MapT = TypeVar("_MapT")
 
 
-class MapGenerator(Generic[_MapT], Iterable[_MapT]):
+class MapGenerator(Iterable[_MapT], Generic[_MapT]):
     """
     An SDFG map generator class that allows applying operators on it, used
     for syntactic sugar.
     """
 
-    def __init__(self, rng: Union[slice, tuple[slice, ...]]):
+    def __init__(self, rng: slice | tuple[slice, ...]):
         self.rng = rng
 
     def __matmul__(self, schedule: dtypes.ScheduleType) -> Self:
@@ -258,7 +253,7 @@ class MapMetaclass(type):
     def __getitem__(cls, rng: tuple[slice, ...]) -> MapGenerator[tuple[int, ...]]: ...
     # fmt: on
 
-    def __getitem__(cls, rng: Union[slice, tuple[slice, ...]]) -> MapGenerator[Any]:
+    def __getitem__(cls, rng: slice | tuple[slice, ...]) -> MapGenerator[Any]:
         """
         Iterates over an N-dimensional region in parallel.
 
@@ -280,7 +275,7 @@ class map(metaclass=MapMetaclass):
 
 
 class consume:
-    def __init__(self, stream: Deque[T], processing_elements: int = 1, condition: Optional[Callable[[], bool]] = None):
+    def __init__(self, stream: deque[T], processing_elements: int = 1, condition: Callable[[], bool] | None = None):
         """
         Consume is a scope, like ``Map``, that creates parallel execution.
         Unlike `Map`, it creates a producer-consumer relationship between an
@@ -338,7 +333,7 @@ class tasklet(metaclass=TaskletMetaclass):
     The DaCe framework cannot analyze these tasklets for optimization.
     """
 
-    def __init__(self, language: Union[str, dtypes.Language] = dtypes.Language.Python, side_effects: bool = False):
+    def __init__(self, language: str | dtypes.Language = dtypes.Language.Python, side_effects: bool = False):
         if isinstance(language, str):
             language = dtypes.Language[language]
         self.language = language
@@ -459,7 +454,7 @@ class named:
     Creates a `NamedRegion` with the given label.
     """
 
-    def __init__(self, name: Optional[str] = None):
+    def __init__(self, name: str | None = None):
         self.name = name
 
     def __enter__(self):

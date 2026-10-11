@@ -1,8 +1,9 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests dereferencing issues with tasklets that use dynamic memlets."""
 
-import dace
 import numpy as np
+
+import dace
 
 
 def test_dynamic_memlets():

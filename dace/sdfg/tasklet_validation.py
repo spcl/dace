@@ -1,11 +1,12 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
 from typing import TYPE_CHECKING
+
 from dace import data
 
 if TYPE_CHECKING:
-    from dace.sdfg.sdfg import SDFG
     from dace.memlet import Memlet
+    from dace.sdfg.sdfg import SDFG
 
 
 class ConnectorDimensionalityValidator(ast.NodeVisitor):

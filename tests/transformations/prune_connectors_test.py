@@ -1,14 +1,14 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import argparse
-import numpy as np
-import os
 import copy
-from typing import Tuple
+import os
+
+import numpy as np
 
 import dace
+from dace.sdfg.state import StateSubgraphView
 from dace.transformation.dataflow import PruneConnectors
 from dace.transformation.helpers import nest_state_subgraph
-from dace.sdfg.state import StateSubgraphView
 
 
 def make_sdfg():
@@ -92,15 +92,15 @@ def make_sdfg():
             memlet=dace.Memlet(f"write_{s}_middle[i, 0:N]"),
         )
 
-    read_inner = state_inner.add_read(f"read_used_inner")
-    write_inner = state_inner.add_write(f"write_used_inner")
+    read_inner = state_inner.add_read("read_used_inner")
+    write_inner = state_inner.add_write("write_used_inner")
 
     state_inner.add_memlet_path(
-        read_inner, entry_inner, tasklet, dst_conn=f"read_tasklet", memlet=dace.Memlet(f"read_{s}_inner[j]")
+        read_inner, entry_inner, tasklet, dst_conn="read_tasklet", memlet=dace.Memlet(f"read_{s}_inner[j]")
     )
 
     state_inner.add_memlet_path(
-        tasklet, exit_inner, write_inner, src_conn=f"write_tasklet", memlet=dace.Memlet(f"write_{s}_inner[j]")
+        tasklet, exit_inner, write_inner, src_conn="write_tasklet", memlet=dace.Memlet(f"write_{s}_inner[j]")
     )
 
     # Create mapped nested SDFG where the map entry and exit would be orphaned
@@ -157,7 +157,7 @@ of << i << "\\n";""",
 
 def _make_read_write_sdfg(
     conforming_memlet: bool,
-) -> Tuple[dace.SDFG, dace.nodes.NestedSDFG]:
+) -> tuple[dace.SDFG, dace.nodes.NestedSDFG]:
     """Creates an SDFG for the `test_read_write_{1, 2}` tests.
 
     The SDFG is rather synthetic, it has an input `in_arg` and adds to every element
@@ -280,10 +280,8 @@ def test_prune_connectors(n=None):
 
     assert np.allclose(arr_out, arr_in + 1)
 
-    numbers_written = []
-    with open("prune_connectors_test.txt", "r") as f:
-        for line in f:
-            numbers_written.append(int(line.strip()))
+    with open("prune_connectors_test.txt") as f:
+        numbers_written = [int(line.strip()) for line in f]
     assert all(sorted(numbers_written) == np.arange(n))
 
     os.remove("prune_connectors_test.txt")

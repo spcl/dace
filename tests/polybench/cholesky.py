@@ -1,8 +1,10 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import math
-import dace
-import polybench
+
 import numpy as np
+import polybench
+
+import dace
 
 N = dace.symbol("N")
 
@@ -62,12 +64,11 @@ def cholesky(A: datatype[N, N]):
 def print_result(filename, *args, n=None, **kwargs):
     with open(filename, "w") as fp:
         fp.write("==BEGIN DUMP_ARRAYS==\n")
-        fp.write("begin dump: %s\n" % "A")
+        fp.write("begin dump: {}\n".format("A"))
         for i in range(0, n):
-            for j in range(0, i + 1):
-                fp.write("{:.7f} ".format(args[0][i, j]))
+            fp.writelines(f"{args[0][i, j]:.7f} " for j in range(0, i + 1))
             fp.write("\n")
-        fp.write("\nend   dump: %s\n" % "A")
+        fp.write("\nend   dump: {}\n".format("A"))
         fp.write("==END   DUMP_ARRAYS==\n")
 
 

@@ -1,13 +1,14 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests the `apply_to` transformation API."""
 
-import dace
 import numpy as np
 import pytest
+
+import dace
 from dace.sdfg import utils as sdutil
 from dace.transformation.dataflow import MapFusionVertical
-from dace.transformation.subgraph import SubgraphFusion
 from dace.transformation.passes.pattern_matching import enumerate_matches
+from dace.transformation.subgraph import SubgraphFusion
 
 
 @dace.function

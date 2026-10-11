@@ -8,7 +8,6 @@ import torch
 from torch import nn
 
 import dace
-
 from dace.ml import DaceModule
 from tests.utils import tensors_close, torch_tensors_close
 

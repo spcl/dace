@@ -1,13 +1,15 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """Explicitly distributed Gesummv sample."""
 
-import dace as dc
-import numpy as np
 import os
 import sys
 import timeit
-from dace.sdfg.utils import load_precompiled_sdfg
+
+import numpy as np
 from mpi4py import MPI
+
+import dace as dc
+from dace.sdfg.utils import load_precompiled_sdfg
 
 lM = dc.symbol("lM", dtype=dc.int64, integer=True, positive=True)
 lN = dc.symbol("lN", dtype=dc.int64, integer=True, positive=True)
@@ -181,7 +183,7 @@ if __name__ == "__main__":
 
     if rank == 0:
         ms_time = time_to_ms(raw_time)
-        print("Median is {}ms".format(ms_time))
+        print(f"Median is {ms_time}ms")
 
         alpha, beta, refA, refB, refx, refy = init_data(M, N, np.float64)
         shared_sdfg = gesummv_shared.compile()

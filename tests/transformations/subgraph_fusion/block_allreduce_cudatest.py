@@ -1,10 +1,10 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
 import numpy as np
 import pytest
-from dace.transformation.dataflow import ReduceExpansion
 
+import dace
 from dace.libraries.standard.nodes.reduce import Reduce
+from dace.transformation.dataflow import ReduceExpansion
 
 N = dace.symbol("N")
 M = dace.symbol("M")

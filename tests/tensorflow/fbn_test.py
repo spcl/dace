@@ -1,12 +1,13 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import pytest
 import numpy as np
+import pytest
 
 
 @pytest.mark.tensorflow
 def test_fused_batch_norm():
     import tensorflow as tf
     from tensorflow.python.ops import gen_nn_ops
+
     from dace.frontend.ml.tensorflow import TFSession
 
     num_channels = 3
@@ -80,7 +81,7 @@ def test_fused_batch_norm():
         inp,
         scale,
         outputs[1],
-        tf.math.rsqrt(outputs[2] + float(0.1)) if tf.test.is_built_with_cuda() else outputs[2],
+        tf.math.rsqrt(outputs[2] + 0.1) if tf.test.is_built_with_cuda() else outputs[2],
         epsilon=0.1,
         is_training=True,
     )
