@@ -1976,8 +1976,11 @@ class LoopToMap(xf.MultiStateTransformation):
 
         # Find NestedSDFG's / Loop's unique data
         rw_set = read_set | write_set
+        # A constant array is declared in every nested SDFG it inherits ``constants_prop`` into: copied
+        # in, never a connector, never moved out of the parent (other blocks may still read it).
+        constant_set = {name for name in rw_set if name in sdfg.constants_prop}
         unique_set = set()
-        for name in rw_set:
+        for name in rw_set - constant_set:
             if not sdfg.arrays[name].transient:
                 continue
             if lift_ctx is not None:
@@ -2009,8 +2012,8 @@ class LoopToMap(xf.MultiStateTransformation):
 
         # Do not route views through the NestedSDFG
         view_set = set(view_to_data.keys())
-        read_set -= view_set
-        write_set -= view_set
+        read_set -= view_set | constant_set
+        write_set -= view_set | constant_set
 
         # Ordered from here on: these name the nested SDFG's connectors and fix the order its
         # access nodes are wired in, which is what numbers the enclosing map's IN_n / OUT_n. Left
@@ -2053,7 +2056,7 @@ class LoopToMap(xf.MultiStateTransformation):
                 name = root_data_name
             nsdfg.arrays[name] = copy.deepcopy(sdfg.arrays[name])
             nsdfg.arrays[name].transient = False
-        for name in unique_set | view_set:
+        for name in unique_set | view_set | constant_set:
             if "." in name:
                 root_data_name = name.split(".")[0]
                 name = root_data_name

@@ -35,6 +35,7 @@ import pytest
 
 import dace
 from dace.libraries.tileops.alignment import STRIDE_GUARD_PREFIX
+from dace.libraries.tileops.dispatch import TileGroup
 from dace.transformation.dataflow import MapFusion
 from dace.transformation.interstate import LoopToMap
 from dace.transformation.passes.canonicalize.finalize import offload_to_gpu
@@ -125,7 +126,7 @@ def _heat3d_oracle(A, B, steps):
     return A, B
 
 
-def _vectorized(prog, name=None, assume_even=False, fuse=False):
+def _vectorized(prog, name=None, assume_even=False, fuse=False, tile_group=TileGroup.BLOCK):
     """@dace.program -> simplify -> GPU offload -> the half2 GPU vectorizer.
 
     ``fuse`` adds the LoopToMap + MapFusion pair a real optimization recipe runs first. It is not
@@ -140,7 +141,7 @@ def _vectorized(prog, name=None, assume_even=False, fuse=False):
         sdfg.apply_transformations_repeated([MapFusion])
         sdfg.simplify()
     offload_to_gpu(sdfg)
-    VectorizeGPU(VectorizeConfig(widths=(2,), assume_even=assume_even)).apply_pass(sdfg, {})
+    VectorizeGPU(VectorizeConfig(widths=(2,), assume_even=assume_even, tile_group=tile_group)).apply_pass(sdfg, {})
     if name:
         sdfg.name = name
     return sdfg
@@ -176,7 +177,8 @@ def _sass_ops(build_folder) -> collections.Counter:
 def test_odd_neighbour_load_is_shifted_even_is_plain():
     """``A[i, j±1]`` (odd offset) carries the shift argument; the aligned tile carries only the
     alignment; and the odd-offset store keeps the 3-argument (scalar) call."""
-    cu = _device_code(_vectorized(_stencil3_2d))
+    # One thread's 2-lane tile: a block tile is aligned at the block's width instead.
+    cu = _device_code(_vectorized(_stencil3_2d, tile_group=TileGroup.THREAD))
     loads = re.findall(r"tile_load<dace::float16, 2, false([^>]*)>", cu)
     assert loads, "no fp16 width-2 tile_load emitted"
     assert set(loads) == {", 4", ", 4, 1"}, (
@@ -267,7 +269,7 @@ def test_interior_transient_stride_widens():
     extent fact that decides its parity, ``N = 2t + 2``, also makes the stride ``2t``. heat3d's
     fused kernel holds two such transients; before the extent rewrite was moved ahead of the test
     they were the only per-element loads left in the kernel."""
-    cu = _device_code(_vectorized(_heat3d_symbolic, assume_even=True, fuse=True))
+    cu = _device_code(_vectorized(_heat3d_symbolic, assume_even=True, fuse=True, tile_group=TileGroup.THREAD))
     strided = re.findall(r"tile_load<dace::float16, 2, false[^>]*>\([^,]+, \([A-Za-z_0-9]+ \+ \([^)]*ipow\(N - 2", cu)
     assert strided, "no (N-2)-strided access in the fused kernel; the test proves nothing"
     loads = re.findall(r"tile_load<dace::float16, 2, false([^>]*)>", cu)

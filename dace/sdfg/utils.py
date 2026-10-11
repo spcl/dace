@@ -7,7 +7,7 @@ import copy
 import re
 import time
 import warnings
-from collections.abc import Callable, Generator, Mapping, Sequence
+from collections.abc import Callable, Container, Generator, Mapping, Sequence
 from typing import Any, Optional
 
 import numpy
@@ -3179,15 +3179,59 @@ def structural_symbols(sdfg: "dace.SDFG") -> set[str]:
     for desc in sdfg.arrays.values():
         structural.update(str(s) for s in desc.free_symbols)
     for cfr in sdfg.all_control_flow_regions():
-        if isinstance(cfr, LoopRegion) and cfr.loop_variable:
-            structural.add(str(cfr.loop_variable))
+        if isinstance(cfr, LoopRegion):
+            structural.update(loop_domain_symbols(cfr))
     for state in sdfg.states():
         for node in state.nodes():
             if isinstance(node, nd.MapEntry):
                 structural.update(str(s) for s in node.map.range.free_symbols)
+            elif isinstance(node, nd.NestedSDFG):
+                structural.update(nested_mapping_symbols(node))
+            if isinstance(node, nd.Tasklet) and node.code.language is dtypes.Language.Python:
+                structural.update(
+                    subscript_index_symbols(node.code.code, node.in_connectors.keys() | node.out_connectors.keys())
+                )
         for edge in state.edges():
             structural.update(str(s) for s in edge.data.free_symbols)
+    for edge in sdfg.all_interstate_edges():
+        structural.update(subscript_index_symbols(edge.data.condition.code, sdfg.arrays))
+        for value in edge.data.assignments.values():
+            structural.update(subscript_index_symbols(ast.parse(value), sdfg.arrays))
+    for block in sdfg.all_control_flow_blocks():
+        if isinstance(block, (LoopRegion, ConditionalBlock)):
+            for code in block.get_meta_codeblocks():
+                structural.update(subscript_index_symbols(code.code, sdfg.arrays))
     return structural
+
+
+def subscript_index_symbols(code: ast.AST | list[ast.AST], containers: Container[str]) -> set[str]:
+    """The names an index of a subscript into one of ``containers`` is written in: ``k`` in ``A[k, i] > 0``.
+
+    Such a name selects the element a data access reads, wherever the access is written -- a branch condition, an
+    interstate edge or a tasklet's own subscript of a connector -- so it is a data-access symbol.
+    """
+    names: set[str] = set()
+    for tree in code if isinstance(code, list) else [code]:
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name) and node.value.id in containers:
+                names.update(n.id for n in ast.walk(node.slice) if isinstance(n, ast.Name))
+    return names
+
+
+def loop_domain_symbols(loop: LoopRegion) -> set[str]:
+    """The symbols ``loop``'s iteration domain is written in: its variable and its init, condition and update."""
+    names = {str(loop.loop_variable)} if loop.loop_variable else set()
+    for code in (loop.init_statement, loop.loop_condition, loop.update_statement):
+        if code is not None:
+            names.update(str(s) for s in code.get_free_symbols())
+    return names
+
+
+def nested_mapping_symbols(node: nd.NestedSDFG) -> set[str]:
+    """The symbols ``node`` passes into its nested SDFG, which reads them as symbols."""
+    return {
+        str(s) for value in node.symbol_mapping.values() for s in dace.symbolic.pystr_to_symbolic(value).free_symbols
+    }
 
 
 def symbol_carries_graph_structure(sdfg: "dace.SDFG", symbol_str: str, structural: set[str] | None = None) -> bool:
@@ -3195,7 +3239,8 @@ def symbol_carries_graph_structure(sdfg: "dace.SDFG", symbol_str: str, structura
 
     A demoted symbol becomes a scalar container of the demotion dtype, so any use that
     the graph itself evaluates symbolically -- a descriptor shape or stride, a memlet
-    subset, a map range, a loop iteration variable -- stops being expressible. Those uses
+    subset, a map range, a loop's iteration domain, a nested SDFG's symbol mapping -- stops
+    being expressible. Those uses
     make the symbol undemotable; a symbol read only by tasklet code (typically bound by an
     interstate-edge assignment) is free to become a scalar.
 
@@ -3208,22 +3253,7 @@ def symbol_carries_graph_structure(sdfg: "dace.SDFG", symbol_str: str, structura
         an UNMUTATED span; answered by membership then. ``None`` runs the scan here, as before.
     :return: ``True`` if some structural use would break under demotion.
     """
-    if structural is not None:
-        return symbol_str in structural
-    for desc in sdfg.arrays.values():
-        if symbol_str in (str(s) for s in desc.free_symbols):
-            return True
-    for cfr in sdfg.all_control_flow_regions():
-        if isinstance(cfr, LoopRegion) and cfr.loop_variable == symbol_str:
-            return True
-    for state in sdfg.states():
-        for node in state.nodes():
-            if isinstance(node, nd.MapEntry) and symbol_str in (str(s) for s in node.map.range.free_symbols):
-                return True
-        for edge in state.edges():
-            if symbol_str in (str(s) for s in edge.data.free_symbols):
-                return True
-    return False
+    return symbol_str in (structural if structural is not None else structural_symbols(sdfg))
 
 
 def demote_symbol_to_scalar(
@@ -3293,12 +3323,11 @@ def demote_symbol_to_scalar(
                     assert not tutil.tasklet_assigns_name(n, symbol_str)
                     assert symbol_str != "True"
                     assert symbol_str != "False"
-                    # ``py_only=False``: a non-Python body must be rewritten too, or the tasklet
-                    # keeps reading a symbol this call is removing from the SDFG. For a Python
-                    # tasklet the flag is not consulted at all (the symbolic path takes it), so
-                    # this only opens the C++ case -- token replacement over the whole body, which
-                    # is what a guard tasklet like ``if (s > 0) { std::abort(); }`` needs.
-                    tutil.tasklet_replace_code(n, {symbol_str: f"_in_{symbol_str}"}, py_only=False)
+                    # Token replacement over the whole body, in every language: a C++ guard such as
+                    # ``if (s > 0) { std::abort(); }`` must be rewritten too, and a Python body must
+                    # keep its expression as written -- the sympy path reorders it (``a - s`` into
+                    # ``-s + a``) and changes the rounding of anything with three or more terms.
+                    tutil.tasklet_replace_code(n, {symbol_str: f"_in_{symbol_str}"}, py_only=False, use_sym_expr=False)
                     n.add_in_connector(f"_in_{symbol_str}")
                     if sdict is None:
                         sdict = g.scope_dict()

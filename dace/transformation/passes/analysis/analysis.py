@@ -37,7 +37,11 @@ WriteScopeDict = dict[
     str,
     dict[
         tuple[SDFGState, nd.AccessNode] | None,
-        set[tuple[SDFGState, nd.AccessNode] | tuple[ControlFlowBlock, InterstateEdge]],
+        set[
+            tuple[SDFGState, nd.AccessNode]
+            | tuple[ControlFlowBlock, InterstateEdge]
+            | tuple[ConditionalBlock, ConditionalBlock]
+        ],
     ],
 ]
 SymbolScopeDict = dict[str, dict[Edge[InterstateEdge], set[Edge[InterstateEdge] | ControlFlowBlock]]]
@@ -1030,7 +1034,7 @@ class ScalarWriteShadowScopes(ppl.Pass):
         self,
         desc: str,
         block: ControlFlowBlock,
-        read: nd.AccessNode | InterstateEdge,
+        read: nd.AccessNode | InterstateEdge | ConditionalBlock,
         access_nodes: dict[SDFGState, tuple[set[nd.AccessNode], set[nd.AccessNode]]],
         idom_dict: dict[ControlFlowRegion, dict[ControlFlowBlock, ControlFlowBlock]],
         access_sets: dict[ControlFlowBlock, tuple[set[str], set[str]]],
@@ -1214,6 +1218,12 @@ class ScalarWriteShadowScopes(ppl.Pass):
                     for name in oedge.data.free_symbols & anames:
                         if name in accesses[0]:
                             iedge_reads[name].append((block, oedge))
+            # A branch condition reads on entry to its conditional, before any branch runs.
+            condition_reads: dict[str, list[ConditionalBlock]] = defaultdict(list)
+            for block in sdfg.all_control_flow_blocks():
+                if isinstance(block, ConditionalBlock):
+                    for name in {s for c in block.get_meta_codeblocks() for s in c.get_free_symbols()} & anames:
+                        condition_reads[name].append(block)
 
             for desc in self.shadow_candidates(sdfg):
                 # Restrict to states this SDFG owns. With cloned NestedSDFGs after loop
@@ -1257,6 +1267,18 @@ class ScalarWriteShadowScopes(ppl.Pass):
                         reach_cache=reach_cache,
                     )
                     result[desc][write].add((block, oedge.data))
+                for block in condition_reads.get(desc, ()):
+                    write = self._find_dominating_write(
+                        desc,
+                        block,
+                        block,
+                        access_nodes,
+                        idom_dict,
+                        access_sets,
+                        must_write_cache=must_write_cache,
+                        reach_cache=reach_cache,
+                    )
+                    result[desc][write].add((block, block))
                 # Take care of any write nodes that have not been assigned to a scope yet, i.e., writes that are not
                 # dominating any reads and are thus not part of the results yet.
                 for state in desc_states_with_nodes:

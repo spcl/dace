@@ -25,6 +25,7 @@ class TileIota(TileOp):
     * A multi-dim indirect one: ``extra_inputs = ("_src", )`` and ``expr = "_src[<flat offset of the lanes>]"``.
     """
 
+    lanes_independent = True
     implementations = {"pure": ExpandTileIotaPure}
     default_implementation = "pure"
 

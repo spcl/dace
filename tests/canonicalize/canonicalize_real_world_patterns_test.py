@@ -408,8 +408,10 @@ def test_cloudsc_iphase_shape_structure():
     ``loop_to_reduce`` recognises only single-statement accumulator loops, so it
     cannot lift this reduction without loop fission first isolating it -- and the
     front-loaded recipe runs ``loop_to_reduce`` before fission. So ``JM`` remains
-    a ``LoopRegion`` and the four inner ``JL`` statements become three Maps (the
-    two phase-guarded accumulations share one). The two per-``JM`` phase guards
+    a ``LoopRegion`` and the four inner ``JL`` statements become two Maps: the guards are
+    scalars read from ``iphase``, so the ``fluxq`` write, the ``tendency_cld`` update and the
+    first guarded accumulation fuse, and the second accumulation (the same ``tendency_t``
+    cell, so not fusable with the first) takes the other. The two per-``JM`` phase guards
     (``iphase[jm] == 1`` / ``== 2``) survive as ``ConditionalBlock`` s (their
     condition reads a per-iteration array).
     Correctness is pinned numerically by ``test_cloudsc_iphase_shape_e2e``.
@@ -423,10 +425,7 @@ def test_cloudsc_iphase_shape_structure():
     assert _ncond_blocks(sdfg) == 2, (
         f"both IPHASE phase guards must survive (correct refusal); got {_ncond_blocks(sdfg)} conditionals"
     )
-    assert _nmaps(sdfg) == 3, (
-        f"the four JL statements must land in exactly three maps -- the two "
-        f"phase-guarded accumulations share one; got {_nmaps(sdfg)}"
-    )
+    assert _nmaps(sdfg) == 2, f"the four JL statements must land in exactly two maps; got {_nmaps(sdfg)}"
 
 
 def test_cloudsc_iphase_shape_e2e():

@@ -8,4 +8,5 @@ from dace.libraries.tileops.environments.tile_backends import (
     TileOpsNeon,
     TileOpsSVE,
     TileOpsCUDA,
+    TileOpsCUDABlock,
 )

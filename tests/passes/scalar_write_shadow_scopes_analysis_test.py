@@ -769,26 +769,22 @@ def conditional_block_fixture(name: str, exhaustive: bool):
 
 
 def test_conditional_block_without_else_is_refused():
-    """Refusal: without an ``else`` no branch is guaranteed to run, so the read after the block stays undominated."""
-    sdfg, writes, end_access = conditional_block_fixture("conditional_False", False)
+    """``if c: A = 1`` has no dominating write: the branch may not run, so the read stays unscoped."""
+    sdfg, _, end_access = conditional_block_fixture("conditional_no_else", exhaustive=False)
     res = write_scopes(sdfg)
 
     assert end_access in res["A"][None]
-    for write in writes:
-        assert write not in res["A"] or res["A"][write] == {write}
 
 
-def test_exhaustive_conditional_block_shadows_the_read_after_it():
-    """WITH an ``else`` in which every branch writes, every path writes ``A``: the read after the block joins one
-    scope keyed on the first branch's write, and the other branch's write joins that scope too, so a consumer
-    versions both branches together."""
-    sdfg, writes, end_access = conditional_block_fixture("conditional_True", True)
+def test_conditional_block_writing_every_branch_is_one_scope():
+    """``if c: A = 1 else: A = 2``: every branch writes, so the block dominates the read. Both branch
+    writes share ONE scope (rooted at the first), so a consumer versions them together."""
+    sdfg, (first, second), end_access = conditional_block_fixture("conditional_else", exhaustive=True)
     res = write_scopes(sdfg)
 
-    first, second = writes
-    assert not res["A"][None]
-    assert set(res["A"][first]) == {end_access, second}
+    assert set(res["A"][first]) == {second, end_access}
     assert second not in res["A"]
+    assert not res["A"][None]
 
 
 def test_loop_carried_read_is_not_split_from_the_body_write():
@@ -869,5 +865,5 @@ if __name__ == "__main__":
     test_symbolic_trip_count_loop_is_refused()
     test_conditional_write_inside_provable_loop_is_refused()
     test_conditional_block_without_else_is_refused()
-    test_exhaustive_conditional_block_shadows_the_read_after_it()
+    test_conditional_block_writing_every_branch_is_one_scope()
     test_loop_carried_read_is_not_split_from_the_body_write()

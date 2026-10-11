@@ -52,14 +52,17 @@ import re
 from typing import Any
 
 from dace import SDFG, dtypes, properties, symbolic
+from dace.data import Scalar
 from dace.properties import CodeBlock
+from dace.sdfg import utils as sdutil
+from dace.sdfg.graph import SubgraphView
 from dace.sdfg.narrowing import as_map_entry
 from dace.sdfg.nodes import AccessNode, MapEntry, MapExit, NestedSDFG
 from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
-from dace.transformation.helpers import nest_state_subgraph
+from dace.transformation.helpers import nest_state_subgraph, state_fission
 
 
 def _identifiers(expr: str) -> set[str]:
@@ -206,8 +209,9 @@ def _condition_invariant(
             return not (resolved_syms & map_params)
         if name in reads:
             # A data container read through a connector: invariant exactly when
-            # the memlet that brings it in does not index by a map parameter.
-            return not (reads[name] & map_params)
+            # the memlet that brings it in does not index by a map parameter and
+            # the body does not write it.
+            return not (reads[name] & map_params) and name not in ns.out_connectors
         # Not a map parameter and not defined anywhere we can see: it is an
         # outer-scope symbol, constant for the whole map.
         return name not in map_params
@@ -321,6 +325,32 @@ def _candidates(sdfg: SDFG, allow_inner_defs: bool = True, require_full_hoist: b
                     ):
                         continue
                 yield cand
+
+
+def _split_map_producers(sdfg: SDFG, require_full_hoist: bool = False) -> bool:
+    """Move the dataflow that only feeds a hoistable map into a state of its own, before it.
+
+    A demoted guard is written into a scalar right before the map that reads it, and state fusion puts that write in
+    the map's state, where :func:`_match` refuses the state for holding more than the map. Splitting it off leaves the
+    single-map state the hoist needs; the producer still runs first, unconditionally.
+
+    :returns: Whether a state was split.
+    """
+    for st, me, _ns, _cb in _candidates(sdfg, allow_inner_defs=False, require_full_hoist=require_full_hoist):
+        if st.entry_node(me) is not None:
+            continue
+        top = [n for n in st.nodes() if st.entry_node(n) is None]
+        if len([n for n in top if isinstance(n, MapEntry)]) != 1:
+            continue
+        producers = [n for n in top if not isinstance(n, (AccessNode, MapEntry, MapExit))]
+        if not producers:
+            continue
+        after_map = sdutil.find_downstream_nodes(st.exit_node(me), st)
+        if any(n in after_map or me not in sdutil.find_downstream_nodes(n, st) for n in producers):
+            continue
+        state_fission(SubgraphView(st, producers))
+        return True
+    return False
 
 
 def _candidate_at(
@@ -529,6 +559,8 @@ class MoveMapInvariantIfUp(ppl.Pass):
                 self._move(*m)
                 count += 1
                 continue
+            if _split_map_producers(sdfg, self.require_full_hoist):
+                continue
             # No top-level candidate left; try to expose one by isolating an
             # inner map of a chain into its own nested SDFG. That makes its
             # state a single-map state, which the top-level path above then
@@ -651,6 +683,12 @@ class MoveMapInvariantIfUp(ppl.Pass):
             outer_cond = None
             if cond is not None:
                 resolved, _syms = _resolve_through_mapping(cond, ns.symbol_mapping)
+                # A connector the condition reads becomes the element the map brings in.
+                for e in st.in_edges(ns):
+                    if e.dst_conn is not None and not e.data.is_empty() and e.dst_conn in _identifiers(resolved):
+                        outer = e.data.data
+                        element = outer if isinstance(st.sdfg.arrays[outer], Scalar) else f"{outer}[{e.data.subset}]"
+                        resolved = _substitute_name(resolved, e.dst_conn, element)
                 outer_cond = CodeBlock(resolved)
             outer_cb.add_branch(outer_cond, wrap)
 

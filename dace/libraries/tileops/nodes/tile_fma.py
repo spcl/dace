@@ -95,6 +95,7 @@ class TileFMA(TileOp):
     is false are zero.
     """
 
+    lanes_independent = True
     implementations = {
         "pure": ExpandTileFMAPure,
         "scalar": ExpandTileFMAScalar,
