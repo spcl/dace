@@ -41,7 +41,12 @@ Plane = tuple[SDFG, SDFGState, nodes.MapEntry]
 def block_planes(block: ControlFlowBlock) -> list[Plane]:
     """The maps at the top level of ``block`` (a state) or of its states (a region), nested SDFGs excluded."""
     states = [block] if isinstance(block, SDFGState) else block.states()
-    return [(state.sdfg, state, n) for state in states for n in state.scope_children()[None] if isinstance(n, nodes.MapEntry)]
+    return [
+        (state.sdfg, state, n)
+        for state in states
+        for n in state.scope_children()[None]
+        if isinstance(n, nodes.MapEntry)
+    ]
 
 
 def holds_loop_without_planes(block: ControlFlowBlock) -> bool:
@@ -148,7 +153,9 @@ def demote(sdfg: SDFG, entry: nodes.MapEntry) -> LoopRegion:
     """Turn the map of ``entry`` into a loop (:class:`~dace.transformation.dataflow.map_for_loop.MapToForLoop`)."""
     state = next(s for s in sdfg.states() if entry in s.nodes())
     to_loop = MapToForLoop()
-    to_loop.setup_match(sdfg, state.parent_graph.cfg_id, state.block_id, {MapToForLoop.map_entry: entry}, 0, override=True)
+    to_loop.setup_match(
+        sdfg, state.parent_graph.cfg_id, state.block_id, {MapToForLoop.map_entry: entry}, 0, override=True
+    )
     to_loop.apply(state, sdfg)
     return to_loop.loop_region
 
