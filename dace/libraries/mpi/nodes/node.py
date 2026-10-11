@@ -2,8 +2,9 @@
 
 from typing import Any
 
-from dace import dtypes
+from dace import data, dtypes
 from dace.sdfg import nodes
+from dace.sdfg import utils as sdutil
 
 
 def input_descriptor_name(node: nodes.Node, state: Any, connector: str) -> str | None:
@@ -29,11 +30,46 @@ def expanded_input_connectors(node: nodes.Node, state: Any) -> dict[str, Any]:
     return connectors
 
 
+def resolve_comm(node: nodes.Node, state: Any) -> str:
+    """Communicator token for an MPI node: _comm if wired, else _grid if wired, else MPI_COMM_WORLD."""
+    if input_descriptor_name(node, state, "_comm"):
+        return "_comm"
+    if input_descriptor_name(node, state, "_grid"):
+        return "_grid"
+    return "MPI_COMM_WORLD"
+
+
 def validate_integer_descriptor(desc: Any, name: str) -> None:
     if desc is None:
         raise ValueError(f"{name} connector is missing")
     if desc.dtype.base_type not in dtypes.INTEGER_TYPES:
         raise ValueError(f"{name} must be an integer")
+
+
+def integer_input(node: nodes.LibraryNode, state: Any, sdfg: Any, connector: str) -> data.Data:
+    """The integer descriptor on input ``connector`` of ``node``."""
+    desc = sdutil.in_desc_with_name(node, state, sdfg, connector)
+    validate_integer_descriptor(desc, f"{node.label} {connector}")
+    return desc
+
+
+def integer_output(node: nodes.LibraryNode, state: Any, sdfg: Any, connector: str) -> data.Data:
+    """The integer descriptor on output ``connector`` of ``node``."""
+    desc = sdutil.out_desc_with_name(node, state, sdfg, connector)
+    validate_integer_descriptor(desc, f"{node.label} {connector}")
+    return desc
+
+
+def mpi_tasklet(node: nodes.LibraryNode, state: Any, code: str, **out_types: dtypes.typeclass) -> nodes.Tasklet:
+    """The C++ tasklet of an MPI call; ``out_types`` overrides output connector types, e.g. an ``MPI_Comm`` handle."""
+    return nodes.Tasklet(
+        node.name,
+        expanded_input_connectors(node, state),
+        {**node.out_connectors, **out_types},
+        code,
+        language=dtypes.Language.CPP,
+        side_effects=True,
+    )
 
 
 class MPINode(nodes.LibraryNode):
