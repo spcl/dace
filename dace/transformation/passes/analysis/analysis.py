@@ -62,7 +62,9 @@ class StateReachability(ppl.Pass):
     def depends_on(self):
         return [ControlFlowBlockReachability]
 
-    def apply_pass(self, top_sdfg: SDFG, pipeline_res: dict) -> dict[int, dict[SDFGState, OrderedSet[SDFGState]]]:
+    def apply_pass(
+        self, top_sdfg: SDFG, pipeline_res: dict[str, Any]
+    ) -> dict[int, dict[SDFGState, OrderedSet[SDFGState]]]:
         """
         :return: A dictionary mapping each state to its other reachable states.
         """
@@ -123,7 +125,7 @@ class ControlFlowBlockReachability(ppl.Pass):
 
     contain_to_single_level = properties.Property(dtype=bool, default=False, category="Parameters")
 
-    def __init__(self, contain_to_single_level=False) -> None:
+    def __init__(self, contain_to_single_level: bool = False) -> None:
         super().__init__()
 
         self.contain_to_single_level = contain_to_single_level
@@ -524,7 +526,7 @@ class SymbolWriteScopes(ppl.ControlFlowRegionPass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return modified & ppl.Modifies.Symbols | ppl.Modifies.CFG | ppl.Modifies.Edges | ppl.Modifies.Nodes
 
-    def depends_on(self):
+    def depends_on(self) -> list[type[ppl.Pass] | ppl.Pass]:
         return [SymbolAccessSets, ControlFlowBlockReachability]
 
     def _find_dominating_write(
@@ -563,7 +565,7 @@ class SymbolWriteScopes(ppl.ControlFlowRegionPass):
             n_block = block_idom[n_block] if block_idom[n_block] != n_block else None
         return write_isedge
 
-    def apply(self, region, pipeline_results) -> SymbolScopeDict:
+    def apply(self, region: ControlFlowRegion, pipeline_results: dict[str, Any]) -> SymbolScopeDict:
         result: SymbolScopeDict = defaultdict(lambda: defaultdict(lambda: OrderedSet()))
 
         idom = sdutil.immediate_dominators(region.nx, region.start_block)
@@ -666,8 +668,8 @@ def dominated_through_region(
     return False
 
 
-#: Dominator trees :class:`StateFlow` keeps, one per source state.
-DOMINANCE_MEMO = 64
+#: Reachable sets :class:`StateFlow` keeps, one per (source state, avoided state) pair.
+REACH_MEMO = 64
 
 
 class StateFlow:
@@ -684,8 +686,8 @@ class StateFlow:
         self.index: dict[tuple[str, int], int] = {}
         self.succ_ids: list[list[int]] = []
         self.pred_ids: list[list[int]] = []
-        #: Per source state id, its dominator tree as DFS entry / exit times (see :meth:`dominator_tree`).
-        self.dominance: dict[int, tuple[list[int], list[int]]] = {}
+        #: Per (source, avoided) node pair, the nodes reached from the source without entering the avoided one.
+        self.reached: dict[tuple[int, int], bytearray] = {}
         self.add_region(sdfg)
 
     def link(self, src: tuple[str, ControlFlowBlock], dst: tuple[str, ControlFlowBlock]) -> None:
@@ -731,21 +733,18 @@ class StateFlow:
     def reaches_avoiding(self, src: SDFGState, dst: SDFGState, kill: SDFGState) -> bool:
         """Whether ``dst`` can start executing after ``src`` on a path that never runs ``kill``.
 
-        A path from the exit of ``src`` to the entry of ``dst`` avoids the entry of ``kill`` exactly when that
-        entry does not dominate ``dst``'s in the flow rooted at ``src``'s exit, so every kill asked about one
-        source is answered from that source's dominator tree instead of one search per (source, kill) pair.
-        ``kill``'s own entry counts as reached."""
+        One search per (source, kill) pair answers every target asked about it: a caller asks about one write's
+        state, against another write of the container, for each access in that write's scope. ``kill``'s own
+        entry counts as reached when the search reaches one of its predecessors."""
         index = self.numbered()
         root, target = index.get(("out", id(src))), index.get(("in", id(dst)))
         if root is None or target is None:
             return False
-        entry, leave = self.dominator_tree(root)
-        if entry[target] < 0:
-            return False
-        blocked = index.get(("in", id(kill)))
-        if blocked is None or blocked == target or entry[blocked] < 0:
-            return True
-        return not (entry[blocked] <= entry[target] and leave[target] <= leave[blocked])
+        blocked = index.get(("in", id(kill)), -1)
+        reached = self.reach_avoiding(root, blocked)
+        if target != blocked:
+            return bool(reached[target])
+        return root == blocked or any(reached[parent] for parent in self.pred_ids[blocked])
 
     def numbered(self) -> dict[tuple[str, int], int]:
         if not self.index:
@@ -762,79 +761,25 @@ class StateFlow:
                     self.pred_ids[self.index[key]].append(number)
         return self.index
 
-    def dominator_tree(self, root: int) -> tuple[list[int], list[int]]:
-        """DFS entry and exit times of the dominator tree rooted at ``root`` (``-1``: unreachable).
-
-        Iterative Cooper-Harvey-Kennedy over a reverse postorder; ``a`` dominates ``b`` iff ``b``'s interval
-        nests in ``a``'s. Kept for the last :data:`DOMINANCE_MEMO` roots: a caller asks about one write's
-        state for every other write of the container, and returns to it for the next container."""
-        known = self.dominance.get(root)
+    def reach_avoiding(self, root: int, blocked: int) -> bytearray:
+        """The nodes reached from ``root`` without entering ``blocked`` (``-1``: none avoided); ``root`` itself is
+        reached. Kept for the last :data:`REACH_MEMO` pairs."""
+        known = self.reached.get((root, blocked))
         if known is not None:
             return known
-        succ, pred = self.succ_ids, self.pred_ids
-        size = len(succ)
-        post = [-1] * size
-        order: list[int] = []
-        seen = bytearray(size)
-        seen[root] = 1
-        stack = [(root, iter(succ[root]))]
+        succ = self.succ_ids
+        reached = bytearray(len(succ))
+        reached[root] = 1
+        stack = [root]
         while stack:
-            node, children = stack[-1]
-            for child in children:
-                if not seen[child]:
-                    seen[child] = 1
-                    stack.append((child, iter(succ[child])))
-                    break
-            else:
-                stack.pop()
-                post[node] = len(order)
-                order.append(node)
-        idom = [-1] * size
-        idom[root] = root
-        rpo = order[-2::-1]
-        changed = True
-        while changed:
-            changed = False
-            for node in rpo:
-                new = -1
-                for parent in pred[node]:
-                    if idom[parent] < 0:
-                        continue
-                    if new < 0:
-                        new = parent
-                        continue
-                    a, b = parent, new
-                    while a != b:
-                        while post[a] < post[b]:
-                            a = idom[a]
-                        while post[b] < post[a]:
-                            b = idom[b]
-                    new = a
-                if idom[node] != new:
-                    idom[node] = new
-                    changed = True
-        children_of: list[list[int]] = [[] for _ in range(size)]
-        for node in rpo:
-            children_of[idom[node]].append(node)
-        entry, leave = [-1] * size, [-1] * size
-        clock = 0
-        entry[root] = clock
-        walk = [(root, iter(children_of[root]))]
-        while walk:
-            node, children = walk[-1]
-            child = next(children, None)
-            if child is None:
-                walk.pop()
-                clock += 1
-                leave[node] = clock
-            else:
-                clock += 1
-                entry[child] = clock
-                walk.append((child, iter(children_of[child])))
-        if len(self.dominance) >= DOMINANCE_MEMO:
-            del self.dominance[next(iter(self.dominance))]
-        self.dominance[root] = (entry, leave)
-        return entry, leave
+            for child in succ[stack.pop()]:
+                if not reached[child] and child != blocked:
+                    reached[child] = 1
+                    stack.append(child)
+        if len(self.reached) >= REACH_MEMO:
+            del self.reached[next(iter(self.reached))]
+        self.reached[(root, blocked)] = reached
+        return reached
 
 
 def diverting_exit_inside(region: AbstractControlFlowRegion) -> bool:
@@ -981,7 +926,7 @@ class ScalarWriteShadowScopes(ppl.Pass):
         # If anything was modified, reapply
         return modified & ppl.Modifies.States
 
-    def depends_on(self):
+    def depends_on(self) -> list[type[ppl.Pass] | ppl.Pass]:
         return [AccessSets, FindAccessNodes, ControlFlowBlockReachability]
 
     def shadow_candidates(self, sdfg: SDFG) -> Iterable[str]:
@@ -1002,7 +947,7 @@ class ScalarWriteShadowScopes(ppl.Pass):
     @staticmethod
     def _reach_memo(
         state: SDFGState, desc: str, cache: dict[tuple[int, str], dict[nd.AccessNode, set[nd.Node]]] | None
-    ) -> dict:
+    ) -> dict[nd.AccessNode, set[nd.Node]]:
         """The descendant memo for the write nodes of ``desc`` in ``state``.
 
         Safe: an analysis pass, and ``cache`` spans one SDFG of one ``apply_pass``, over which no
@@ -1011,7 +956,7 @@ class ScalarWriteShadowScopes(ppl.Pass):
         return {} if cache is None else cache.setdefault((id(state), desc), {})
 
     @staticmethod
-    def _reaches(state: SDFGState, src: nd.Node, dst: nd.Node, memo: dict) -> bool:
+    def _reaches(state: SDFGState, src: nd.Node, dst: nd.Node, memo: dict[nd.AccessNode, set[nd.Node]]) -> bool:
         """``dst`` is reachable from ``src``, answered from ``memo`` and filled on demand.
 
         One BFS per source instead of one per (source, target) pair. ``nx.descendants`` omits the
@@ -1023,7 +968,12 @@ class ScalarWriteShadowScopes(ppl.Pass):
             reach = memo[src] = nx.descendants(state._nx, src)
         return dst in reach
 
-    def _last_write(self, desc: str, state: SDFGState, access_nodes) -> tuple[SDFGState, nd.AccessNode] | None:
+    def _last_write(
+        self,
+        desc: str,
+        state: SDFGState,
+        access_nodes: dict[str, dict[SDFGState, tuple[OrderedSet[nd.AccessNode], OrderedSet[nd.AccessNode]]]],
+    ) -> tuple[SDFGState, nd.AccessNode] | None:
         """The write to ``desc`` in ``state`` that every other write there reaches, i.e. the one whose value leaves."""
         closest_candidate = None
         memo = self._reach_memo(state, desc, None)
@@ -1788,7 +1738,7 @@ class StatePropagation(ppl.ControlFlowRegionPass):
                     reached.executions = 0
                     blk.dynamic_executions = True
 
-    def apply(self, region, pipeline_results) -> None:
+    def apply(self, region: AbstractControlFlowRegion, pipeline_results: dict[str, Any]) -> None:
         if isinstance(region, ConditionalBlock):
             # In a conditional block, each branch is executed up to as many times as the conditional block itself is.
             # TODO(later): We may be able to derive ranges here based on the branch conditions too.
@@ -1885,10 +1835,10 @@ class ConditionUniqueWrites(ppl.Pass):
         # If anything was modified, reapply
         return modified & ppl.Modifies.CFG
 
-    def depends_on(self):
+    def depends_on(self) -> list[type[ppl.Pass] | ppl.Pass]:
         return []
 
-    def apply_pass(self, top_sdfg: SDFG, pipeline_res: dict) -> OrderedSet[nd.AccessNode]:
+    def apply_pass(self, top_sdfg: SDFG, pipeline_res: dict[str, Any]) -> OrderedSet[nd.AccessNode]:
         """
         :return: A set of access nodes, which are unique writes in conditional blocks.
         """

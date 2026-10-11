@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""``StateFlow.reaches_avoiding`` answers from one dominator tree per source: the same answers as a
+"""``StateFlow.reaches_avoiding`` answers from one search per (source, kill) pair: the same answers as a
 search per query, over loops, branches, breaks and a kill on the only path."""
 
 import itertools
@@ -123,21 +123,23 @@ def test_a_foreign_state_reaches_nothing():
     assert flow.reaches_avoiding(states[0], states[-1], other)
 
 
-def test_every_kill_for_one_source_shares_one_dominator_tree():
+def test_every_target_for_one_source_and_kill_shares_one_search():
+    """A caller asks about one write's state against another write for every access in that write's scope:
+    one search per (source, kill) pair answers all of them."""
     sdfg = branchy_loop_sdfg()
     flow = StateFlow(sdfg)
     states = {s.label: s for s in sdfg.states()}
-    with mock.patch.object(StateFlow, "dominator_tree", autospec=True, side_effect=StateFlow.dominator_tree) as spy:
-        for dst, kill in itertools.product(states.values(), repeat=2):
-            flow.reaches_avoiding(states["head"], dst, kill)
+    with mock.patch.object(StateFlow, "reach_avoiding", autospec=True, side_effect=StateFlow.reach_avoiding) as spy:
+        for dst in states.values():
+            flow.reaches_avoiding(states["head"], dst, states["a"])
         flow.reaches_avoiding(states["start"], states["end"], states["b"])
         flow.reaches_avoiding(states["head"], states["end"], states["a"])
-    built = {call.args[1] for call in spy.call_args_list}
-    assert len(built) == 2 and len(flow.dominance) == 2
+    pairs = {call.args[1:] for call in spy.call_args_list}
+    assert len(pairs) == 2 and len(flow.reached) == 2
 
 
 if __name__ == "__main__":
     test_answers_match_a_search_per_query()
     test_answers_match_a_search_per_query_across_breaks_and_sibling_loops()
     test_a_foreign_state_reaches_nothing()
-    test_every_kill_for_one_source_shares_one_dominator_tree()
+    test_every_target_for_one_source_and_kill_shares_one_search()
