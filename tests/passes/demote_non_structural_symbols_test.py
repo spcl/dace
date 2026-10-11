@@ -131,8 +131,36 @@ def test_an_index_read_inside_a_branch_condition_stays_a_symbol():
     assert R[0] == 0.9
 
 
+def test_a_boolean_guard_stays_a_symbol():
+    """``g = B[0]`` (a ``bool`` array element the frontend declares as an integer symbol) and ``h = A[0] > 0.5`` only
+    guard a branch: control flow, so both stay symbols."""
+    sdfg = dace.SDFG("boolean_guard")
+    sdfg.add_symbol("g", dace.int32)
+    sdfg.add_symbol("h", dace.bool)
+    sdfg.add_array("B", [1], dace.bool)
+    sdfg.add_array("A", [1], dace.float64)
+    sdfg.add_array("R", [1], dace.float64)
+    start = sdfg.add_state("start", is_start_block=True)
+    cond = ConditionalBlock("guarded")
+    branch = ControlFlowRegion("store")
+    body = branch.add_state(is_start_block=True)
+    write = body.add_tasklet("store", {}, {"o"}, "o = 1.0")
+    body.add_edge(write, "o", body.add_write("R"), None, dace.Memlet("R[0]"))
+    cond.add_branch(dace.properties.CodeBlock("g and h"), branch)
+    sdfg.add_node(cond)
+    sdfg.add_edge(start, cond, dace.InterstateEdge(assignments={"g": "B[0]", "h": "A[0] > 0.5"}))
+    sdfg.validate()
+    assert DemoteNonStructuralSymbols().apply_pass(sdfg, {}) is None
+    assert "g" in sdfg.symbols and "h" in sdfg.symbols
+
+    B, A, R = np.array([True]), np.array([0.9]), np.zeros(1)
+    sdfg(B=B, A=A, R=R)
+    assert R[0] == 1.0
+
+
 if __name__ == "__main__":
     test_a_counter_becomes_a_scalar_and_its_loop_maps()
     test_a_demoted_value_keeps_its_arithmetic_as_written()
     test_a_tasklet_reading_a_demoted_symbol_keeps_its_expression()
     test_an_index_read_inside_a_branch_condition_stays_a_symbol()
+    test_a_boolean_guard_stays_a_symbol()

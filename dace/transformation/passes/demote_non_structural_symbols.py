@@ -6,6 +6,9 @@ bounds. A value an interstate edge assigns that does none of this (a counter suc
 + 1``, a guard, a scale factor) is data spelled as a symbol. Loop analyses cannot see it as data flow, so a loop that
 merely updates it reads as carrying a symbol and stays sequential; as a scalar it is an ordinary write the reduction
 and privatization passes handle.
+
+A boolean stays a symbol: it is almost always a branch guard, i.e. control flow, and as a scalar every condition that
+tests it becomes a data read the control-flow passes must carry along.
 """
 
 import ast
@@ -85,8 +88,35 @@ def extend_structural_symbols(sd: SDFG, found: StructuralSymbols) -> None:
                 found.names.update(str(s) for s in edge.data.free_symbols)
 
 
+def is_boolean_symbol(sd: SDFG, name: str) -> bool:
+    """Whether ``name`` is declared ``bool``, or every value ``sd``'s interstate edges assign it is boolean: a
+    comparison, a ``not``/``and``/``or``, a ``True``/``False`` literal, or a read of a ``bool`` array or scalar.
+    The frontend declares a symbol assigned from a ``bool`` array element as an integer, so the dtype alone misses it.
+    """
+    if sd.symbols[name] == dtypes.bool:
+        return True
+
+    def boolean(value: ast.expr) -> bool:
+        if isinstance(value, (ast.Compare, ast.BoolOp)):
+            return True
+        if isinstance(value, ast.UnaryOp):
+            return isinstance(value.op, ast.Not)
+        if isinstance(value, ast.Constant):
+            return isinstance(value.value, bool)
+        if isinstance(value, ast.Subscript):
+            value = value.value
+        return isinstance(value, ast.Name) and value.id in sd.arrays and sd.arrays[value.id].dtype == dtypes.bool
+
+    values = [
+        ast.parse(edge.data.assignments[name], mode="eval").body
+        for edge in sd.all_interstate_edges()
+        if name in edge.data.assignments
+    ]
+    return bool(values) and all(boolean(value) for value in values)
+
+
 def demote_symbols(sdfg: SDFG, candidates: Callable[[SDFG], Iterable[str]]) -> int:
-    """Demote to a transient scalar each symbol ``candidates`` names in an SDFG of ``sdfg``, unless the graph's
+    """Demote to a transient scalar each non-boolean symbol ``candidates`` names in an SDFG of ``sdfg``, unless the graph's
     structure is built from it (an array shape, a memlet subset, a map range, a loop's iteration domain, a nested
     SDFG's mapping) or it cannot become a transient.
 
@@ -102,7 +132,7 @@ def demote_symbols(sdfg: SDFG, candidates: Callable[[SDFG], Iterable[str]]) -> i
         structural_stale = False
         free_syms: set[str] | None = None
         for name in candidates(sd):
-            if name not in sd.symbols:
+            if name not in sd.symbols or is_boolean_symbol(sd, name):
                 continue
             if structural is None:
                 structural = StructuralSymbols()
@@ -138,7 +168,7 @@ def assigned_symbols(sd: SDFG) -> OrderedSet[str]:
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class DemoteNonStructuralSymbols(ppl.Pass):
-    """Demote every interstate-assigned symbol no iteration domain or data access is written in to a scalar."""
+    """Demote every non-boolean interstate-assigned symbol no iteration domain or data access is written in to a scalar."""
 
     CATEGORY: str = "Canonicalization"
 
