@@ -38,8 +38,9 @@ window's base is added once, on loop entry, and the immediates are small differe
 
 import re
 import warnings
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, Iterator, List, Optional, Set, Tuple, Type
+from typing import Any
 
 import sympy as sp
 
@@ -53,7 +54,8 @@ from dace.sdfg.memlet_access_policy import LoopCursor, MemletAccessPolicy
 from dace.sdfg.scope import is_devicelevel_gpu
 from dace.sdfg.state import LoopRegion
 from dace.subsets import Range
-from dace.transformation import pass_pipeline as ppl, transformation
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation import transformation
 from dace.transformation.passes.analysis import loop_analysis
 
 _SCOPE_NODES = (nodes.EntryNode, nodes.ExitNode)
@@ -78,7 +80,7 @@ class OffsetDecomposition:
     class_base: symbolic.SymbolicType  #: the part of beta a cursor tracks (contains ``v``)
     immediate: symbolic.SymbolicType  #: beta - class_base (loop invariant)
     lane_part: symbolic.SymbolicType  #: part of class_base that depends on lane/thread symbols
-    cursor_key: Tuple[str, str, str]  #: (loop label, step, class_base without the ``v`` term)
+    cursor_key: tuple[str, str, str]  #: (loop label, step, class_base without the ``v`` term)
 
     @property
     def step(self) -> symbolic.SymbolicType:
@@ -91,30 +93,30 @@ class OffsetDecomposition:
         return sp.expand(self.beta - (v * self.delta if v is not None else 0) - self.lane_part)
 
 
-def _symbol_named(expr: sp.Basic, name: str) -> Optional[sp.Symbol]:
+def _symbol_named(expr: sp.Basic, name: str) -> sp.Symbol | None:
     for s in expr.free_symbols:
         if str(s) == name:
             return s
     return None
 
 
-def _names(expr: sp.Basic) -> Set[str]:
+def _names(expr: sp.Basic) -> set[str]:
     return {str(s) for s in expr.free_symbols}
 
 
-def _invariant_part(expr: sp.Basic, inner: Set[str]) -> sp.Basic:
+def _invariant_part(expr: sp.Basic, inner: set[str]) -> sp.Basic:
     """The terms of ``expr`` that do not depend on symbols defined inside the loop body."""
     return sp.Add(*[t for t in sp.Add.make_args(sp.expand(expr)) if not (_names(t) & inner)])
 
 
-def _choose_anchor(candidates: List[sp.Basic]) -> sp.Basic:
+def _choose_anchor(candidates: list[sp.Basic]) -> sp.Basic:
     """Pick the offset a cursor class is anchored at, among its members' nest-invariant offsets: the member that
     is smallest in every monomial coefficient if there is one (e.g. the first element of a window; every access
     then carries a non-negative immediate), otherwise the coefficient-wise (lower) median, which centres a
     stencil neighbourhood so that the immediates are the +-stride differences. Deterministic."""
-    coeffs: List[Dict[sp.Basic, sp.Basic]] = []
+    coeffs: list[dict[sp.Basic, sp.Basic]] = []
     for cand in candidates:
-        d: Dict[sp.Basic, sp.Basic] = {}
+        d: dict[sp.Basic, sp.Basic] = {}
         for term in sp.Add.make_args(sp.expand(cand)):
             coeff, monomial = term.as_coeff_Mul()
             d[monomial] = d.get(monomial, sp.Integer(0)) + coeff
@@ -135,7 +137,7 @@ def base_offset(desc: dt.Data, memlet: Memlet) -> sp.Basic:
     return symbolic.pystr_to_symbolic(subset.at([0] * len(desc.strides), desc.strides))
 
 
-def flat_length(desc: dt.Data, subset) -> Optional[symbolic.SymbolicType]:
+def flat_length(desc: dt.Data, subset) -> symbolic.SymbolicType | None:
     """Number of elements of ``subset`` if it is a contiguous run in memory (at most one dimension of size > 1,
     with unit step and unit stride), otherwise ``None``."""
     if not isinstance(subset, Range):
@@ -183,7 +185,7 @@ def _scope_node(edge: MultiConnectorEdge[Memlet]) -> nodes.Node:
     return edge.dst if not isinstance(edge.dst, _SCOPE_NODES) else edge.src
 
 
-def _root(state: SDFGState, edge: MultiConnectorEdge[Memlet]) -> Tuple[Optional[nodes.AccessNode], bool]:
+def _root(state: SDFGState, edge: MultiConnectorEdge[Memlet]) -> tuple[nodes.AccessNode | None, bool]:
     """The access node of the memlet's data at the root of the edge's memlet path, and whether the memlet reads
     it. ``(None, False)`` if the data is read and written by the same path or the root is not its access node."""
     path = state.memlet_path(edge)
@@ -196,12 +198,12 @@ def _root(state: SDFGState, edge: MultiConnectorEdge[Memlet]) -> Tuple[Optional[
     return (first, True) if is_read else (last, False)
 
 
-def enclosing_loops(state: SDFGState) -> List[LoopRegion]:
+def enclosing_loops(state: SDFGState) -> list[LoopRegion]:
     """Loop regions enclosing ``state`` within its SDFG, innermost first."""
     return _enclosing_loops_of_region(state)
 
 
-def _enclosing_loops_of_region(block) -> List[LoopRegion]:
+def _enclosing_loops_of_region(block) -> list[LoopRegion]:
     """Loop regions strictly enclosing a control flow block/region within its SDFG, innermost first."""
     result = []
     region = block.parent_graph
@@ -212,16 +214,16 @@ def _enclosing_loops_of_region(block) -> List[LoopRegion]:
     return result
 
 
-def outer_loop_variables(loop: LoopRegion) -> Set[str]:
+def outer_loop_variables(loop: LoopRegion) -> set[str]:
     """Induction variables of the loops enclosing ``loop`` (the variables an inner cursor can be chained on)."""
     return {outer.loop_variable for outer in _enclosing_loops_of_region(loop) if outer.loop_variable}
 
 
-def inner_symbols(loop: LoopRegion) -> Set[str]:
+def inner_symbols(loop: LoopRegion) -> set[str]:
     """Symbols (re)defined inside the loop body: parameters of maps in the body, variables of nested loops,
     and symbols assigned on interstate edges of the body. Terms of a memlet offset that depend on them vary
     *within* an iteration and therefore belong to the per-access immediate, never to the cursor."""
-    result: Set[str] = set()
+    result: set[str] = set()
     for region in loop.all_control_flow_regions(recursive=False):
         if isinstance(region, LoopRegion) and region is not loop and region.loop_variable:
             result.add(region.loop_variable)
@@ -234,11 +236,11 @@ def inner_symbols(loop: LoopRegion) -> Set[str]:
     return result
 
 
-def lane_symbols(state: SDFGState, node: nodes.Node) -> Set[str]:
+def lane_symbols(state: SDFGState, node: nodes.Node) -> set[str]:
     """Parameters of enclosing maps that code generation assigns to threads/lanes (GPU_ThreadBlock/GPU_Warp
     maps, or a map directly nested in a GPU kernel map -- the ``[0:W, 0:64]`` wave/lane convention)."""
     sdict = state.scope_dict()
-    result: Set[str] = set()
+    result: set[str] = set()
     cur = sdict.get(node)
     while cur is not None:
         parent = sdict.get(cur)
@@ -258,7 +260,7 @@ def extent_bytes_int32(desc: dt.Data) -> bool:
         return False
 
 
-def flat_addressable_array(desc: Optional[dt.Data]) -> bool:
+def flat_addressable_array(desc: dt.Data | None) -> bool:
     """Arrays whose base address a flat reference can hold: plain arrays (no views, references, scalars, streams)."""
     return isinstance(desc, dt.Array) and not isinstance(desc, dt.View)
 
@@ -291,9 +293,9 @@ class GlobalPath:
 
     def __init__(self, state: SDFGState, edge: MultiConnectorEdge[Memlet], is_read: bool):
         self.is_read = is_read
-        self.levels: List[PathLevel] = [PathLevel(state.sdfg, state, _scope_node(edge), edge.data.data)]
-        self._mappings: List[Optional[Dict[str, sp.Basic]]] = [None]  #: Per level, its node's symbol mapping.
-        self._atoms: Dict[str, Tuple[int, sp.Basic]] = {}  #: Atom name -> (level, symbol it stands for).
+        self.levels: list[PathLevel] = [PathLevel(state.sdfg, state, _scope_node(edge), edge.data.data)]
+        self._mappings: list[dict[str, sp.Basic] | None] = [None]  #: Per level, its node's symbol mapping.
+        self._atoms: dict[str, tuple[int, sp.Basic]] = {}  #: Atom name -> (level, symbol it stands for).
         sdfg, array = state.sdfg, edge.data.data
         while True:
             node, outer_state = sdfg.parent_nsdfg_node, sdfg.parent
@@ -327,15 +329,15 @@ class GlobalPath:
         return self.levels[0]
 
     @property
-    def atom_names(self) -> Set[str]:
+    def atom_names(self) -> set[str]:
         """Names of the atoms created so far (symbols defined inside a nested SDFG of the path)."""
         return set(self._atoms)
 
-    def loops(self) -> List[Tuple[int, LoopRegion]]:
+    def loops(self) -> list[tuple[int, LoopRegion]]:
         """``(level, loop)`` of every loop enclosing the leaf memlet along the path, innermost first."""
         return [(k, loop) for k, level in enumerate(self.levels) for loop in enclosing_loops(level.state)]
 
-    def find_loop(self, label: str, variable: str) -> Optional[Tuple[int, LoopRegion]]:
+    def find_loop(self, label: str, variable: str) -> tuple[int, LoopRegion] | None:
         """The innermost enclosing loop with the given label and induction variable, or ``None``."""
         for k, loop in self.loops():
             if loop.label == label and loop.loop_variable == variable:
@@ -359,9 +361,9 @@ class GlobalPath:
             expr = expr.xreplace(repl)
         return expr
 
-    def lanes(self, level: int) -> Set[str]:
+    def lanes(self, level: int) -> set[str]:
         """Thread/lane symbols of the scopes between ``level`` and the leaf, in the symbols of ``level``."""
-        result: Set[str] = set()
+        result: set[str] = set()
         for k in range(level + 1):
             lv = self.levels[k]
             for name in lane_symbols(lv.state, lv.node):
@@ -415,11 +417,11 @@ def decompose(
     desc: dt.Data,
     memlet: Memlet,
     loop: LoopRegion,
-    inner: Set[str],
-    lanes: Set[str],
-    outer: Optional[Set[str]] = None,
-    translate: Optional[Callable[[Any], sp.Basic]] = None,
-) -> Optional[OffsetDecomposition]:
+    inner: set[str],
+    lanes: set[str],
+    outer: set[str] | None = None,
+    translate: Callable[[Any], sp.Basic] | None = None,
+) -> OffsetDecomposition | None:
     """Decompose ``memlet``'s base offset w.r.t. ``loop`` (see module docstring). ``None`` if the memlet is
     not cursor-addressable against this loop: dynamic, offset not affine in the loop variable, step depending on
     inner symbols, or the moved shape varying with the loop variable.
@@ -481,8 +483,8 @@ def decompose(
 
 
 def analyze_edge(
-    path: GlobalPath, edge: MultiConnectorEdge[Memlet], inner_cache: Dict[LoopRegion, Set[str]]
-) -> Optional[Tuple[int, OffsetDecomposition]]:
+    path: GlobalPath, edge: MultiConnectorEdge[Memlet], inner_cache: dict[LoopRegion, set[str]]
+) -> tuple[int, OffsetDecomposition] | None:
     """Decompose the edge's memlet against the innermost loop along its global path whose variable it depends on.
 
     :return: The level of the loop's SDFG on the path and the decomposition (in that SDFG's symbols), or ``None``.
@@ -505,9 +507,9 @@ def _decompose_on_path(
     edge: MultiConnectorEdge[Memlet],
     level: int,
     loop: LoopRegion,
-    inner_cache: Dict[LoopRegion, Set[str]],
-    outer_loops: Optional[List[Tuple[int, LoopRegion]]] = None,
-) -> Optional[OffsetDecomposition]:
+    inner_cache: dict[LoopRegion, set[str]],
+    outer_loops: list[tuple[int, LoopRegion]] | None = None,
+) -> OffsetDecomposition | None:
     """Decompose the leaf memlet of ``path`` against ``loop`` of SDFG level ``level`` (see :func:`decompose`).
     Symbols defined inside the nested SDFGs below that level (atoms) vary within an iteration of ``loop``."""
     if loop not in inner_cache:
@@ -577,14 +579,14 @@ class AssignLoopCursors(ppl.Pass):
     def depends_on(self):
         return set()
 
-    def apply_pass(self, sdfg: SDFG, _: Dict[str, Any]) -> Optional[Dict[str, int]]:
+    def apply_pass(self, sdfg: SDFG, _: dict[str, Any]) -> dict[str, int] | None:
         """
         :return: ``{'assigned': n, 'classes': k, 'skipped': m}`` summed over all SDFGs, or ``None`` if nothing
                  was assigned.
         """
         assigned = skipped = 0
-        classes: Set[Tuple] = set()
-        inner_cache: Dict[LoopRegion, Set[str]] = {}
+        classes: set[tuple] = set()
+        inner_cache: dict[LoopRegion, set[str]] = {}
         for nsdfg in sdfg.all_sdfgs_recursive():
             for state in nsdfg.states():
                 for edge in leaf_edges(state):
@@ -664,16 +666,16 @@ class LowerMemletAccessPolicies(ppl.Pass):
     def depends_on(self):
         return set()
 
-    def apply_pass(self, sdfg: SDFG, _: Dict[str, Any]) -> Optional[Dict[str, int]]:
+    def apply_pass(self, sdfg: SDFG, _: dict[str, Any]) -> dict[str, int] | None:
         """
         :return: The summed counters of the policy kinds' lowerings (for loop cursors ``{'cursors': n,
                  'memlets': m, 'dropped': d}``), or ``None`` if there was nothing to lower.
         """
-        totals: Dict[str, int] = {}
+        totals: dict[str, int] = {}
         options = {"assume_int32": self.assume_int32, "chain_outer_loops": self.chain_outer_loops}
         # Policies are lowered per kind over the whole SDFG tree: a memlet in a nested SDFG may be addressed
         # relative to a loop of an enclosing SDFG along its memlet path.
-        by_kind: Dict[Type[MemletAccessPolicy], List[Tuple[SDFGState, MultiConnectorEdge[Memlet]]]] = {}
+        by_kind: dict[type[MemletAccessPolicy], list[tuple[SDFGState, MultiConnectorEdge[Memlet]]]] = {}
         for nsdfg in sdfg.all_sdfgs_recursive():
             for state in nsdfg.states():
                 for edge in leaf_edges(state):
@@ -688,13 +690,13 @@ class LowerMemletAccessPolicies(ppl.Pass):
 # ---------------------------------------------------------------------------------------------------------------
 # Loop-cursor lowering
 # ---------------------------------------------------------------------------------------------------------------
-def _statement_assignments(block: Optional[CodeBlock]) -> Dict[str, str]:
+def _statement_assignments(block: CodeBlock | None) -> dict[str, str]:
     return loop_analysis.get_assignments(block)
 
 
 def _append_statement(loop: LoopRegion, which: str, statement: str) -> None:
     """Append ``statement`` to the loop's init or update code block (code blocks may hold several statements)."""
-    block: Optional[CodeBlock] = getattr(loop, which)
+    block: CodeBlock | None = getattr(loop, which)
     code = statement if block is None else f"{block.as_string}\n{statement}"
     setattr(loop, which, CodeBlock(code))
 
@@ -710,14 +712,14 @@ class _CursorTable:
     def __init__(self, sdfg: SDFG, chain_outer_loops: bool):
         self.sdfg = sdfg
         self.chain = chain_outer_loops
-        self.classes: Dict[Tuple, Tuple[symbolic.symbol, sp.Basic]] = {}  #: class key -> (cursor symbol, anchor)
-        self.used: Set[str] = set(sdfg.symbols.keys())
+        self.classes: dict[tuple, tuple[symbolic.symbol, sp.Basic]] = {}  #: class key -> (cursor symbol, anchor)
+        self.used: set[str] = set(sdfg.symbols.keys())
         self.created = 0
 
     @staticmethod
     def class_key(
-        loop: LoopRegion, array: str, dtype: dtypes.typeclass, share_key: Optional[str], class_base: sp.Basic
-    ) -> Tuple:
+        loop: LoopRegion, array: str, dtype: dtypes.typeclass, share_key: str | None, class_base: sp.Basic
+    ) -> tuple:
         """Cursor-class identity: same loop, array, cursor type, override key, per-iteration step and tracked base
         without the loop-variable term. Members of a class differ only by a loop-invariant immediate."""
         v = _symbol_named(class_base, loop.loop_variable)
@@ -733,8 +735,8 @@ class _CursorTable:
         dtype: dtypes.typeclass,
         class_base: sp.Basic,
         anchor: sp.Basic,
-        share_key: Optional[str],
-    ) -> Tuple[symbolic.symbol, sp.Basic]:
+        share_key: str | None,
+    ) -> tuple[symbolic.symbol, sp.Basic]:
         """Return (creating if needed) the cursor symbol of ``loop`` that tracks ``class_base`` -- an expression
         affine in the loop variable and free of symbols defined inside the loop body -- together with the
         nest-invariant ``anchor`` the cursor additionally holds (the anchor requested here if the cursor is
@@ -814,9 +816,9 @@ class _References:
 
     def __init__(self, sdfg: SDFG):
         self.sdfg = sdfg
-        self.init_state: Optional[SDFGState] = None
-        self.flat: Dict[str, str] = {}
-        self.nodes: Dict[Tuple[SDFGState, str, bool], nodes.AccessNode] = {}
+        self.init_state: SDFGState | None = None
+        self.flat: dict[str, str] = {}
+        self.nodes: dict[tuple[SDFGState, str, bool], nodes.AccessNode] = {}
         self.windows = 0
 
     def flat_reference(self, array: str) -> str:
@@ -891,11 +893,11 @@ def _reroute(
 
 def lower_loop_cursors(
     sdfg: SDFG,
-    entries: List[Tuple[SDFGState, MultiConnectorEdge[Memlet]]],
+    entries: list[tuple[SDFGState, MultiConnectorEdge[Memlet]]],
     assume_int32: bool = False,
     chain_outer_loops: bool = True,
     **_,
-) -> Dict[str, int]:
+) -> dict[str, int]:
     """Lower the :class:`~dace.sdfg.memlet_access_policy.LoopCursor` policies of an SDFG and its nested SDFGs (see
     module docstring). A cursor is created in the SDFG of its loop and passed down, as a symbol, to the nested SDFGs
     along the memlet path of each memlet it addresses; flat references are created in the SDFG of the memlet.
@@ -906,12 +908,12 @@ def lower_loop_cursors(
     :param chain_outer_loops: Initialize inner cursors from outer cursors (see :meth:`_CursorTable.cursor_for`).
     :return: ``{'cursors': n, 'memlets': m, 'dropped': d}`` (``memlets`` includes already-lowered ones).
     """
-    tables: Dict[SDFG, _CursorTable] = {}
-    refs: Dict[SDFG, _References] = {}
+    tables: dict[SDFG, _CursorTable] = {}
+    refs: dict[SDFG, _References] = {}
     lowered = dropped = 0
 
     # Collect per loop, skipping memlets that were already lowered and dropping stale policies.
-    per_loop: Dict[LoopRegion, List[Tuple[SDFGState, MultiConnectorEdge[Memlet], GlobalPath, int]]] = {}
+    per_loop: dict[LoopRegion, list[tuple[SDFGState, MultiConnectorEdge[Memlet], GlobalPath, int]]] = {}
     for state, edge in entries:
         policy: LoopCursor = edge.data.access_policy
         if policy.is_lowered:
@@ -937,7 +939,7 @@ def lower_loop_cursors(
         per_loop.setdefault(loop, []).append((state, edge, path, level))
 
     # Outer loops first, so a chained inner cursor can share the class cursor an outer memlet created.
-    inner_cache: Dict[LoopRegion, Set[str]] = {}
+    inner_cache: dict[LoopRegion, set[str]] = {}
     ordered = sorted(per_loop.items(), key=lambda item: len(_enclosing_loops_of_region(item[0])))
     for loop, loop_entries in ordered:
         if loop_analysis.get_init_assignment(loop) is None:
@@ -953,9 +955,9 @@ def lower_loop_cursors(
         if loop_sdfg not in tables:
             tables[loop_sdfg] = _CursorTable(loop_sdfg, chain_outer_loops)
         # Re-derive every policy (dropping stale ones), then group the memlets into cursor classes.
-        members: Dict[Tuple, List[Tuple[SDFGState, MultiConnectorEdge[Memlet], GlobalPath, int, OffsetDecomposition]]]
+        members: dict[tuple, list[tuple[SDFGState, MultiConnectorEdge[Memlet], GlobalPath, int, OffsetDecomposition]]]
         members = {}
-        dtypes_of: Dict[Tuple, dtypes.typeclass] = {}
+        dtypes_of: dict[tuple, dtypes.typeclass] = {}
         for state, edge, path, level in loop_entries:
             memlet = edge.data
             policy: LoopCursor = memlet.access_policy

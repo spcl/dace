@@ -35,17 +35,17 @@ convert them.
 
 import dataclasses
 from dataclasses import dataclass, field
-from typing import Any, ClassVar, Dict, List, Optional, Tuple, Union
+from typing import Any, ClassVar
 
 import sympy
 
 import dace.serialize
 from dace import dtypes, symbolic
 
-SymbolicLike = Union[str, int, symbolic.SymbolicType, None]
+SymbolicLike = str | int | symbolic.SymbolicType | None
 
 
-def _to_sym(value: SymbolicLike) -> Optional[symbolic.SymbolicType]:
+def _to_sym(value: SymbolicLike) -> symbolic.SymbolicType | None:
     if value is None or isinstance(value, sympy.Basic):
         return value
     return symbolic.pystr_to_symbolic(value)
@@ -88,7 +88,7 @@ class MemletAccessPolicy:
         return False
 
     @classmethod
-    def lower(cls, sdfg, entries: List[Tuple[Any, Any]], **options) -> Dict[str, int]:
+    def lower(cls, sdfg, entries: list[tuple[Any, Any]], **options) -> dict[str, int]:
         """Materialize all memlets of this policy kind in one SDFG as ordinary SDFG constructs.
 
         Called by :class:`~dace.transformation.passes.memlet_access_policies.LowerMemletAccessPolicies` once per
@@ -178,11 +178,11 @@ class LoopCursor(MemletAccessPolicy):
     step: SymbolicLike = field(metadata={"kind": "symbolic"})
     base_invariant: SymbolicLike = field(default=0, metadata={"kind": "symbolic"})
     lane_part: SymbolicLike = field(default=0, metadata={"kind": "symbolic"})
-    cursor_type: Optional[dtypes.typeclass] = field(default=None, metadata={"kind": "dtype"})
-    share_key: Optional[str] = None
-    cursor: Optional[str] = None
-    reference: Optional[str] = None
-    window: Optional[str] = None
+    cursor_type: dtypes.typeclass | None = field(default=None, metadata={"kind": "dtype"})
+    share_key: str | None = None
+    cursor: str | None = None
+    reference: str | None = None
+    window: str | None = None
     immediate: SymbolicLike = field(default=None, metadata={"kind": "symbolic"})
 
     def __post_init__(self):
@@ -196,7 +196,7 @@ class LoopCursor(MemletAccessPolicy):
         return self.cursor is not None and self.reference is not None
 
     @classmethod
-    def lower(cls, sdfg, entries, **options) -> Dict[str, int]:
+    def lower(cls, sdfg, entries, **options) -> dict[str, int]:
         from dace.transformation.passes.memlet_access_policies import lower_loop_cursors  # avoid import cycle
 
         return lower_loop_cursors(sdfg, entries, **options)

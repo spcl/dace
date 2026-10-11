@@ -13,7 +13,7 @@ import dace
 from dace.sdfg.memlet_access_policy import CopyOnAccess, LoopCursor
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.analysis import loop_analysis
-from dace.transformation.passes.memlet_access_policies import LowerMemletAccessPolicies, AssignLoopCursors
+from dace.transformation.passes.memlet_access_policies import AssignLoopCursors, LowerMemletAccessPolicies
 
 N = dace.symbol("N")
 
@@ -572,7 +572,7 @@ def test_nested_loops_chain_cursors():
     inner_a, inner_a_init, inner_a_step = _cursor_of(loops["j"], "A")
     inner_b, inner_b_init, _ = _cursor_of(loops["j"], "B")
     inner_c, inner_c_init, _ = _cursor_of(loops["j"], "C")
-    assert {c for c in _cursors(loops["i"])} == {outer_a, outer_c}
+    assert set(_cursors(loops["i"])) == {outer_a, outer_c}
     assert str(outer_a_step) == "M" and str(inner_a_step) == "1" and str(outer_a_init) == "0"
     assert str(inner_a_init) == outer_a and str(inner_c_init) == outer_c and str(inner_b_init) == "0"
     code = _code(sdfg)
