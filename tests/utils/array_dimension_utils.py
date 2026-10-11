@@ -1,8 +1,9 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 
-import dace
-import tempfile
 import os
+import tempfile
+
+import dace
 
 N = dace.symbol("N")
 

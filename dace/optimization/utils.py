@@ -1,10 +1,10 @@
-import os
-import math
-import dace
 import itertools
+import math
+import os
+
 import numpy as np
 
-from typing import Dict
+import dace
 
 
 def measure(sdfg, dreport=None, repetitions=30, print_report: bool = False):
@@ -77,9 +77,8 @@ def get_world_size():
         return 1
 
 
-import traceback
-
 import multiprocessing as mp
+import traceback
 
 if __name__ == "__main__":
     mp.set_start_method("spawn")
@@ -109,7 +108,7 @@ def subprocess_measure(cutout: dace.SDFG, dreport, repetitions: int = 30, timeou
     return runtime
 
 
-def _subprocess_measure(cutout_json: Dict, dreport, repetitions: int, q: mp.Queue) -> float:
+def _subprocess_measure(cutout_json: dict, dreport, repetitions: int, q: mp.Queue) -> float:
     cutout = dace.SDFG.from_json(cutout_json)
 
     arguments = {}

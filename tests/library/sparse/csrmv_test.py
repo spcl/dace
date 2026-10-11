@@ -1,11 +1,12 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
 import copy
-import pytest
-import numpy as np
 
-from dace.libraries.sparse import CSRMV
+import numpy as np
+import pytest
 from scipy.sparse import csr_matrix
+
+import dace
+from dace.libraries.sparse import CSRMV
 
 N = dace.symbol("N")
 M = dace.symbol("M")
@@ -78,8 +79,8 @@ def test_csrmv(alpha, beta, implementation, dtype):
     m = 8
 
     A = np.random.random((n, m)).astype(dtype.as_numpy_dtype())
-    B = np.random.random((m)).astype(dtype.as_numpy_dtype())
-    C = np.random.random((n)).astype(dtype.as_numpy_dtype())
+    B = np.random.random(m).astype(dtype.as_numpy_dtype())
+    C = np.random.random(n).astype(dtype.as_numpy_dtype())
     C_ = copy.deepcopy(C)
 
     A_csr = csr_matrix(A)

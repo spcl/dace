@@ -1,8 +1,8 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import pytest
-import numpy as np
-
 import addlib
+import numpy as np
+import pytest
+
 import dace
 import dace.library
 from dace.sdfg import infer_types

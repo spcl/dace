@@ -2,6 +2,7 @@
 """Tests the scalar write shadowing analysis pass."""
 
 import pytest
+
 import dace
 from dace.transformation.pass_pipeline import Pipeline
 from dace.transformation.passes.analysis import ScalarWriteShadowScopes

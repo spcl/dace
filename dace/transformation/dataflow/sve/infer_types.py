@@ -3,18 +3,18 @@
 SVE Infer Types: This module is responsible for inferring connector types in the SDFG.
 """
 
+from collections import defaultdict
+
+from dace import data, dtypes
+from dace.sdfg import SDFG, nodes
 from dace.sdfg.graph import SubgraphView
-from dace.sdfg.state import SDFGState
-from dace.sdfg import nodes, SDFG, SDFGState
 from dace.sdfg.nodes import Tasklet
-import dace.data as data
-import dace.dtypes as dtypes
-from dace.sdfg.utils import dfs_topological_sort
+from dace.sdfg.state import SDFGState
 from dace.sdfg.type_inference import infer_types
-from typing import Tuple, DefaultDict
+from dace.sdfg.utils import dfs_topological_sort
 
 
-class TypeInferenceDict(DefaultDict[Tuple[Tasklet, str, bool], dtypes.typeclass]):
+class TypeInferenceDict(defaultdict[tuple[Tasklet, str, bool], dtypes.typeclass]):
     def __init__(self):
         super().__init__(lambda: dtypes.typeclass(None))
 
@@ -26,9 +26,7 @@ def infer_tasklet_connectors(sdfg: SDFG, state: SDFGState, node: Tasklet, inferr
         raise NotImplementedError("Tasklet inference for other languages than Python not supported")
 
     if any(inferred[(node, conn, True)].type is None for conn in node.in_connectors):
-        raise TypeError(
-            'Cannot infer output connectors of tasklet "%s", not all input connectors have types' % str(node)
-        )
+        raise TypeError(f'Cannot infer output connectors of tasklet "{str(node)}", not all input connectors have types')
 
     # Get symbols defined at beginning of node
     syms = state.symbols_defined_at(node)
@@ -49,9 +47,7 @@ def infer_tasklet_connectors(sdfg: SDFG, state: SDFGState, node: Tasklet, inferr
     for cname in node.out_connectors:
         if inferred[(node, cname, False)].type is None:
             if cname not in new_syms:
-                raise TypeError(
-                    'Cannot infer type of tasklet %s output "%s", please specify manually.' % (node.label, cname)
-                )
+                raise TypeError(f'Cannot infer type of tasklet {node.label} output "{cname}", please specify manually.')
             inferred[(node, cname, False)] = new_syms[cname]
 
 
@@ -86,9 +82,7 @@ def infer_node_connectors(sdfg: SDFG, state: SDFGState, node: nodes.Node, inferr
                 src_edge = state.memlet_path(e)[0]
                 sconn = src_edge.src.out_connectors[src_edge.src_conn]
                 if sconn.type is None:
-                    raise TypeError(
-                        'Ambiguous or uninferable type in connector "%s" of node "%s"' % (sconn, src_edge.src)
-                    )
+                    raise TypeError(f'Ambiguous or uninferable type in connector "{sconn}" of node "{src_edge.src}"')
                 ctype = sconn
             inferred[(node, cname, True)] = ctype
 
@@ -134,7 +128,7 @@ def infer_node_connectors(sdfg: SDFG, state: SDFGState, node: nodes.Node, inferr
     for e in state.out_edges(node):
         cname = e.src_conn
         if cname and inferred[(node, cname, False)].type is None:
-            raise TypeError('Ambiguous or uninferable type in connector "%s" of node "%s"' % (cname, node))
+            raise TypeError(f'Ambiguous or uninferable type in connector "{cname}" of node "{node}"')
 
 
 def infer_connector_types(

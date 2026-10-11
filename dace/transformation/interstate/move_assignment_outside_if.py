@@ -5,11 +5,12 @@ questionable.
 """
 
 import ast
-from typing import Dict, List, Tuple
+
 import sympy as sp
 
 from dace import sdfg as sd
-from dace.sdfg import utils as sdutil, nodes as nd
+from dace.sdfg import nodes as nd
+from dace.sdfg import utils as sdutil
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
 from dace.symbolic import pystr_to_symbolic
 from dace.transformation import transformation
@@ -38,7 +39,7 @@ class MoveAssignmentOutsideIf(transformation.MultiStateTransformation):
         # set of the variables which get a const value assigned
         assigned_const = set()
         # Dict which collects all AccessNodes for each variable together with its state
-        access_nodes: Dict[str, List[Tuple[nd.AccessNode, sd.SDFGState]]] = {}
+        access_nodes: dict[str, list[tuple[nd.AccessNode, sd.SDFGState]]] = {}
         # set of the variables which are only written to
         self.write_only_values = set()
         # Dictionary which stores additional information for the variables which are written only

@@ -5,14 +5,15 @@ pytest.importorskip("onnx", reason="ONNX not installed. Please install with: pip
 pytest.importorskip("torch", reason="PyTorch not installed. Please install with: pip install dace[ml]")
 
 import copy
+
 import numpy as np
 
 import dace
-from dace import transformation, data as dt
-from dace.libraries import blas
-import dace.library
-
 import dace.libraries.onnx as donnx
+import dace.library
+from dace import data as dt
+from dace import transformation
+from dace.libraries import blas
 from dace.transformation.onnx import expand_onnx_nodes
 
 
@@ -156,15 +157,15 @@ def test_cast_float_to_long():
 
 @pytest.mark.onnx
 @pytest.mark.parametrize("reduce_type, keepdims, axes",
-                         [('Sum',  True,  [0]),
-                          ('Sum',  False, [-1]),
-                          ('Sum',  True,  [0, -1]),
-                          ('Max',  False, [0, -1]),
-                          ('Max',  True,  [0]),
-                          ('Max',  True,  [-1]),
-                          ('Mean', True,  [-1]),
-                          ('Mean', True,  [0, -1]),
-                          ('Mean', False, [0])])  # fmt: skip
+                         [("Sum",  True,  [0]),
+                          ("Sum",  False, [-1]),
+                          ("Sum",  True,  [0, -1]),
+                          ("Max",  False, [0, -1]),
+                          ("Max",  True,  [0]),
+                          ("Max",  True,  [-1]),
+                          ("Mean", True,  [-1]),
+                          ("Mean", True,  [0, -1]),
+                          ("Mean", False, [0])])  # fmt: skip
 def test_reduce(keepdims, reduce_type, axes):
 
     X = np.random.normal(scale=10, size=(2, 4, 10)).astype(np.float32)

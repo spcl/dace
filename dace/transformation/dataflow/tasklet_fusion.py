@@ -3,12 +3,13 @@
 
 import ast
 import re
-from typing import Any, Dict, Optional, Set
+from typing import Any
 
 import astunparse
+
 import dace
 from dace.dtypes import Language
-from dace.properties import make_properties, Property
+from dace.properties import Property, make_properties
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.transformation import transformation as pm
@@ -17,7 +18,7 @@ from dace.transformation import transformation as pm
 class PythonConnectorRenamer(ast.NodeTransformer):
     """Renames connector names in Tasklet code."""
 
-    def __init__(self, repl_dict: Dict[str, str]) -> None:
+    def __init__(self, repl_dict: dict[str, str]) -> None:
         """Initializes AST transformer.
 
         :param repl_dict: Replacement dictionary.
@@ -32,13 +33,13 @@ class PythonConnectorRenamer(ast.NodeTransformer):
 
 
 class CPPConnectorRenamer:
-    def __init__(self, repl_dict: Dict[str, str]) -> None:
+    def __init__(self, repl_dict: dict[str, str]) -> None:
         self.repl_dict = repl_dict
 
     def rename(self, code: str) -> str:
         new_code = code
         for old_val, new_val in self.repl_dict.items():
-            new_code = re.sub(r"\b%s\b" % re.escape(old_val), new_val, new_code)
+            new_code = re.sub(rf"\b{re.escape(old_val)}\b", new_val, new_code)
         return new_code
 
 
@@ -60,7 +61,7 @@ class CPPInliner:
         self.inline_val = inline_val
 
     def inline(self, code: str):
-        return re.sub(r"\b%s\b" % re.escape(self.inline_target), "(" + self.inline_val + ")", code)
+        return re.sub(rf"\b{re.escape(self.inline_target)}\b", "(" + self.inline_val + ")", code)
 
 
 @make_properties
@@ -263,7 +264,7 @@ class TaskletFusion(pm.SingleStateTransformation):
             lhs_matches = re.findall(r"[\s\t\n\r]*([\w]*)[\s\t]*=", assigned_value)
             if lhs_matches:
                 lhs = lhs_matches[0]
-                rhs_matches = re.findall(r"%s[\s\t]*=[\s\t]*([^=]*);" % lhs, assigned_value)
+                rhs_matches = re.findall(rf"{lhs}[\s\t]*=[\s\t]*([^=]*);", assigned_value)
                 if rhs_matches:
                     rhs = rhs_matches[0]
 
@@ -315,7 +316,7 @@ class TaskletFusion(pm.SingleStateTransformation):
         graph.remove_node(t2)
 
 
-def _merge_dicts(a: Optional[Dict[Any, Any]], b: Optional[Dict[Any, Any]]):
+def _merge_dicts(a: dict[Any, Any] | None, b: dict[Any, Any] | None):
     if a is None and b is not None:
         return b
     if b is None and a is not None:
@@ -326,7 +327,7 @@ def _merge_dicts(a: Optional[Dict[Any, Any]], b: Optional[Dict[Any, Any]]):
     return result
 
 
-def _merge_sets(a: Optional[Set[Any]], b: Optional[Set[Any]]):
+def _merge_sets(a: set[Any] | None, b: set[Any] | None):
     if a is None and b is not None:
         return b
     if b is None and a is not None:
@@ -337,7 +338,7 @@ def _merge_sets(a: Optional[Set[Any]], b: Optional[Set[Any]]):
     return result
 
 
-def _merge_debuginfo(a: Optional[dace.DebugInfo], b: Optional[dace.DebugInfo]):
+def _merge_debuginfo(a: dace.DebugInfo | None, b: dace.DebugInfo | None):
     if a is None and b is not None:
         return b
     if b is None and a is not None:

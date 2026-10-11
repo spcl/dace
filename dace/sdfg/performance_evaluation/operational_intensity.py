@@ -3,31 +3,29 @@
 or from the VS Code extension."""
 
 import argparse
-from dace.sdfg import nodes as nd
-from dace import dtypes, SDFG
-from dace.sdfg.state import SDFGState, ControlFlowRegion, LoopRegion, FunctionCallRegion, ConditionalBlock
-from typing import Tuple, Dict
 import os
-import sympy as sp
-from copy import deepcopy
-from dace.symbolic import pystr_to_symbolic, SymExpr, symbol, simplify
 import re
 import warnings
+from copy import deepcopy
 
-from dace.sdfg.performance_evaluation.helpers import (
-    get_uuid,
-    get_static_symbols,
-    subs_till_fixed_point,
-    has_unstructured_control_flow,
-)
-from dace.transformation.passes.symbol_ssa import StrictSymbolSSA
-from dace.transformation.pass_pipeline import FixedPointPipeline
+import sympy as sp
 
+from dace import SDFG, dtypes
 from dace.data import Array
-from dace.sdfg.performance_evaluation.op_in_helpers import CacheLineTracker, AccessStack, fit_curve, plot, compute_mape
+from dace.sdfg import nodes as nd
+from dace.sdfg.performance_evaluation.helpers import (
+    get_static_symbols,
+    get_uuid,
+    has_unstructured_control_flow,
+    subs_till_fixed_point,
+)
+from dace.sdfg.performance_evaluation.op_in_helpers import AccessStack, CacheLineTracker, compute_mape, fit_curve, plot
 from dace.sdfg.performance_evaluation.work_depth import analyze_sdfg, get_tasklet_work
-
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, FunctionCallRegion, LoopRegion, SDFGState
+from dace.symbolic import SymExpr, pystr_to_symbolic, simplify, symbol
+from dace.transformation.pass_pipeline import FixedPointPipeline
 from dace.transformation.passes.analysis import loop_analysis
+from dace.transformation.passes.symbol_ssa import StrictSymbolSSA
 
 
 class SymbolRange:
@@ -58,12 +56,11 @@ def update_map(op_in_map, uuid, new_misses, average=True):
             op_in_map[uuid] = (misses + new_misses, encounters + 1)
         else:
             op_in_map[uuid] = (new_misses, 1)
+    elif uuid in op_in_map:
+        misses, encounters = op_in_map[uuid]
+        op_in_map[uuid] = (misses + new_misses, encounters)
     else:
-        if uuid in op_in_map:
-            misses, encounters = op_in_map[uuid]
-            op_in_map[uuid] = (misses + new_misses, encounters)
-        else:
-            op_in_map[uuid] = (new_misses, 1)
+        op_in_map[uuid] = (new_misses, 1)
 
 
 def calculate_op_in(op_in_map, work_map, stringify=False, assumptions={}):
@@ -162,7 +159,7 @@ def assignment_misses(edge, mapping, stack, clt, C, symbols, array_names):
                 dist = stack.touch(line_id)
                 misses += 1 if dist >= C or dist == -1 else 0
         except Exception as e:
-            warnings.warn("Skipping a cache-miss contribution from an unparsable edge assignment: %s" % e)
+            warnings.warn(f"Skipping a cache-miss contribution from an unparsable edge assignment: {e}")
     return misses
 
 
@@ -185,7 +182,7 @@ def update_map_iterators(map, mapping, symbols):
 
 def map_op_in(
     state: SDFGState,
-    op_in_map: Dict[str, sp.Expr],
+    op_in_map: dict[str, sp.Expr],
     entry,
     mapping,
     stack,
@@ -234,7 +231,7 @@ def _edge_miss(edge, clt: CacheLineTracker, array_names, mapping, symbols, stack
 
 def scope_misses(
     state: SDFGState,
-    op_in_map: Dict[str, sp.Expr],
+    op_in_map: dict[str, sp.Expr],
     mapping,
     stack: AccessStack,
     clt: CacheLineTracker,
@@ -351,7 +348,7 @@ def scope_misses(
 
 def cfr_misses(
     cfr: ControlFlowRegion,
-    op_in_map: Dict[str, Tuple[sp.Expr, sp.Expr]],
+    op_in_map: dict[str, tuple[sp.Expr, sp.Expr]],
     mapping,
     stack: AccessStack,
     clt: CacheLineTracker,
@@ -426,7 +423,7 @@ def cfr_misses(
             if len(possibilities) > 1:
                 print(f"\n\nWhich branch to take at {cfr.name}")
                 for i in range(len(possibilities)):
-                    print(f"({i}) for branch {possibilities[i] if possibilities[i] else 'else_branch'}")
+                    print(f"({i}) for branch {possibilities[i] or 'else_branch'}")
                 chosen = int(input("Choose an option from above: "))
                 # if the user chooses one, we check only that branch
                 branches = [possibilities[chosen]]
@@ -504,7 +501,7 @@ def cfr_misses(
 
 def cfg_misses(
     cfg: ControlFlowRegion,
-    op_in_map: Dict[str, Tuple[sp.Expr, sp.Expr]],
+    op_in_map: dict[str, tuple[sp.Expr, sp.Expr]],
     mapping,
     stack: AccessStack,
     clt: CacheLineTracker,
@@ -570,7 +567,7 @@ def cfg_misses(
         except Exception:
             warnings.warn(
                 "Uncommon assignment on an interstate edge (e.g. bitwise operators); "
-                "analysis may give wrong results. Assignments: %s" % edge.data.assignments
+                f"analysis may give wrong results. Assignments: {edge.data.assignments}"
             )
         curr_state = edge.dst
         if curr_state == end:
@@ -585,7 +582,7 @@ def cfg_misses(
 
 def analyze_sdfg_op_in(
     sdfg: SDFG,
-    op_in_map: Dict[str, sp.Expr],
+    op_in_map: dict[str, sp.Expr],
     C,
     L,
     assumptions,
@@ -653,117 +650,116 @@ def analyze_sdfg_op_in(
         raise Exception(
             f"Undefined symbols detected: {undefined_symbols}. Please specify a value for all free symbols of the SDFG."
         )
+    # all symbols defined
+    elif len(range_symbol) > 1:
+        raise Exception("More than one range symbol detected! Only one range symbol allowed.")
+    elif len(range_symbol) == 0:
+        # all symbols are concretized --> run normal op_in analysis with concretized symbols
+        sdfg.specialize(assumptions)
+        mapping = {}
+        # add the static symbols to the map to allow for better analysis
+        static_symbols = get_static_symbols(sdfg)
+        mapping.update(static_symbols)
+
+        mapping.update(assumptions)
+
+        mapping = {k: subs_till_fixed_point(v, mapping) for k, v in mapping.items()}
+        stack = AccessStack(C)
+        clt = CacheLineTracker(L)
+
+        cfg_misses(sdfg, op_in_map, mapping, stack, clt, C, {}, {}, {}, ask_user)
+        # compute bytes
+        for k, v in op_in_map.items():
+            op_in_map[k] = v[0] / v[1] * L
+        calculate_op_in(op_in_map, work_map, stringify)
     else:
-        # all symbols defined
-        if len(range_symbol) > 1:
-            raise Exception("More than one range symbol detected! Only one range symbol allowed.")
-        elif len(range_symbol) == 0:
-            # all symbols are concretized --> run normal op_in analysis with concretized symbols
-            sdfg.specialize(assumptions)
+        # we have one variable symbol
+
+        # decided_branches: Dict[SDFGState, InterstateEdge] = {}
+        cache_miss_measurements = {}
+        work_measurements = []
+        t = 0
+        while True:
+            new_val = False
+            for sym, r in range_symbol.items():
+                val = r.next()
+                if val > -1:
+                    new_val = True
+                    assumptions[sym] = val
+                elif t < test_set_size:
+                    # now we sample test set
+                    t += 1
+                    assumptions[sym] = r.max_value() + t * 3
+                    new_val = True
+            if not new_val:
+                break
+
+            r_sdfg = deepcopy(sdfg)
+
+            curr_op_in_map = {}
             mapping = {}
             # add the static symbols to the map to allow for better analysis
-            static_symbols = get_static_symbols(sdfg)
+            static_symbols = get_static_symbols(r_sdfg)
             mapping.update(static_symbols)
-
             mapping.update(assumptions)
-
             mapping = {k: subs_till_fixed_point(v, mapping) for k, v in mapping.items()}
+
             stack = AccessStack(C)
             clt = CacheLineTracker(L)
+            cfg_misses(r_sdfg, curr_op_in_map, mapping, stack, clt, C, {}, {}, {}, ask_user)
 
-            cfg_misses(sdfg, op_in_map, mapping, stack, clt, C, {}, {}, {}, ask_user)
-            # compute bytes
+            # compute average cache misses
+            for k, v in curr_op_in_map.items():
+                curr_op_in_map[k] = v[0] / v[1]
+
+            # save cache misses
+            curr_cache_misses = dict(curr_op_in_map)
+
+            work_measurements.append(work_map[get_uuid(sdfg)].subs(assumptions))
+            # put curr values in cache_miss_measurements
+            for k, v in curr_cache_misses.items():
+                if k in cache_miss_measurements:
+                    cache_miss_measurements[k].append(v)
+                else:
+                    cache_miss_measurements[k] = [v]
+
+        symbol_name = next(iter(range_symbol.keys()))
+        x_values = range_symbol[symbol_name].to_list()
+        x_values.extend([r.max_value() + t * 3 for t in range(1, test_set_size + 1)])
+
+        sympy_fs = {}
+        for k, v in cache_miss_measurements.items():
+            final_f, sympy_f, r_s = fit_curve(x_values[:-test_set_size], v[:-test_set_size], symbol_name)
+            op_in_map[k] = simplify(sympy_f * L)
+            sympy_fs[k] = sympy_f
+            if k == get_uuid(sdfg):
+                # compute MAPE on total SDFG
+                mape = compute_mape(final_f, x_values[-test_set_size:], v[-test_set_size:], test_set_size)
+                if mape > 0.2:
+                    warnings.warn(
+                        f"High MAPE ({mape}) with R^2 = {r_s}: the fit matches the test data but "
+                        "may not generalize; generating plots is suggested."
+                    )
+        calculate_op_in(op_in_map, work_map, not generate_plots)
+
+        if generate_plots:
+            # plot results for the whole SDFG
+            plot(
+                x_values,
+                work_map,
+                cache_miss_measurements,
+                op_in_map,
+                symbol_name,
+                C,
+                L,
+                sympy_fs,
+                get_uuid(sdfg),
+                sdfg.name,
+            )
+
+        if stringify:
             for k, v in op_in_map.items():
-                op_in_map[k] = v[0] / v[1] * L
-            calculate_op_in(op_in_map, work_map, stringify)
-        else:
-            # we have one variable symbol
-
-            # decided_branches: Dict[SDFGState, InterstateEdge] = {}
-            cache_miss_measurements = {}
-            work_measurements = []
-            t = 0
-            while True:
-                new_val = False
-                for sym, r in range_symbol.items():
-                    val = r.next()
-                    if val > -1:
-                        new_val = True
-                        assumptions[sym] = val
-                    elif t < test_set_size:
-                        # now we sample test set
-                        t += 1
-                        assumptions[sym] = r.max_value() + t * 3
-                        new_val = True
-                if not new_val:
-                    break
-
-                r_sdfg = deepcopy(sdfg)
-
-                curr_op_in_map = {}
-                mapping = {}
-                # add the static symbols to the map to allow for better analysis
-                static_symbols = get_static_symbols(r_sdfg)
-                mapping.update(static_symbols)
-                mapping.update(assumptions)
-                mapping = {k: subs_till_fixed_point(v, mapping) for k, v in mapping.items()}
-
-                stack = AccessStack(C)
-                clt = CacheLineTracker(L)
-                cfg_misses(r_sdfg, curr_op_in_map, mapping, stack, clt, C, {}, {}, {}, ask_user)
-
-                # compute average cache misses
-                for k, v in curr_op_in_map.items():
-                    curr_op_in_map[k] = v[0] / v[1]
-
-                # save cache misses
-                curr_cache_misses = dict(curr_op_in_map)
-
-                work_measurements.append(work_map[get_uuid(sdfg)].subs(assumptions))
-                # put curr values in cache_miss_measurements
-                for k, v in curr_cache_misses.items():
-                    if k in cache_miss_measurements:
-                        cache_miss_measurements[k].append(v)
-                    else:
-                        cache_miss_measurements[k] = [v]
-
-            symbol_name = next(iter(range_symbol.keys()))
-            x_values = range_symbol[symbol_name].to_list()
-            x_values.extend([r.max_value() + t * 3 for t in range(1, test_set_size + 1)])
-
-            sympy_fs = {}
-            for k, v in cache_miss_measurements.items():
-                final_f, sympy_f, r_s = fit_curve(x_values[:-test_set_size], v[:-test_set_size], symbol_name)
-                op_in_map[k] = simplify(sympy_f * L)
-                sympy_fs[k] = sympy_f
-                if k == get_uuid(sdfg):
-                    # compute MAPE on total SDFG
-                    mape = compute_mape(final_f, x_values[-test_set_size:], v[-test_set_size:], test_set_size)
-                    if mape > 0.2:
-                        warnings.warn(
-                            "High MAPE (%s) with R^2 = %s: the fit matches the test data but "
-                            "may not generalize; generating plots is suggested." % (mape, r_s)
-                        )
-            calculate_op_in(op_in_map, work_map, not generate_plots)
-
-            if generate_plots:
-                # plot results for the whole SDFG
-                plot(
-                    x_values,
-                    work_map,
-                    cache_miss_measurements,
-                    op_in_map,
-                    symbol_name,
-                    C,
-                    L,
-                    sympy_fs,
-                    get_uuid(sdfg),
-                    sdfg.name,
-                )
-
-            if stringify:
-                for k, v in op_in_map.items():
-                    op_in_map[k] = str(v)
+                op_in_map[k] = str(v)
     return op_in_map[get_uuid(sdfg)]
 
 

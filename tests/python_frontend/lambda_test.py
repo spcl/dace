@@ -1,9 +1,10 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests lambda functions."""
 
-import dace
 import numpy as np
 import pytest
+
+import dace
 
 
 def test_inline_lambda_tasklet():

@@ -1,9 +1,9 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import numpy as np
+import pytest
+
 import dace
 from dace.transformation.interstate import GPUTransformSDFG
-
-import pytest
 
 
 def create_zero_initialization(init_state: dace.SDFGState, array_name):

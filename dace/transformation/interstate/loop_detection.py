@@ -1,13 +1,18 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 """Loop detection transformation"""
 
-import sympy as sp
-import networkx as nx
-from typing import AnyStr, Iterable, Optional, Tuple, List, Set
+from collections.abc import Iterable
+from typing import AnyStr
 
-from dace import sdfg as sd, symbolic
-from dace.sdfg import graph as gr, utils as sdutil, InterstateEdge
-from dace.sdfg.state import ControlFlowRegion, ControlFlowBlock
+import networkx as nx
+import sympy as sp
+
+from dace import sdfg as sd
+from dace import symbolic
+from dace.sdfg import InterstateEdge
+from dace.sdfg import graph as gr
+from dace.sdfg import utils as sdutil
+from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion
 from dace.transformation import transformation
 
 
@@ -32,8 +37,8 @@ class DetectLoop(transformation.PatternTransformation):
     # Available for explicit-latch rotated loops
     loop_break = transformation.PatternNode(ControlFlowBlock)
 
-    break_edges: Set[gr.Edge[InterstateEdge]] = set()
-    continue_edges: Set[gr.Edge[InterstateEdge]] = set()
+    break_edges: set[gr.Edge[InterstateEdge]] = set()
+    continue_edges: set[gr.Edge[InterstateEdge]] = set()
 
     @classmethod
     def expressions(cls):
@@ -148,7 +153,7 @@ class DetectLoop(transformation.PatternTransformation):
 
     def detect_loop(
         self, graph: ControlFlowRegion, multistate_loop: bool, accept_missing_itvar: bool = False
-    ) -> Optional[str]:
+    ) -> str | None:
         """
         Detects a loop of the form:
 
@@ -178,7 +183,7 @@ class DetectLoop(transformation.PatternTransformation):
             return None
 
         # All incoming edges to the guard must set the same variable
-        itvar: Optional[Set[str]] = None
+        itvar: set[str] | None = None
         for iedge in guard_inedges:
             if itvar is None:
                 itvar = set(iedge.data.assignments.keys())
@@ -231,11 +236,10 @@ class DetectLoop(transformation.PatternTransformation):
             if not accept_missing_itvar:
                 # Either no consistent iteration variable found, or too many consistent iteration variables found
                 return None
+            elif len(itvar) == 0:
+                return ""
             else:
-                if len(itvar) == 0:
-                    return ""
-                else:
-                    return None
+                return None
 
         return next(iter(itvar))
 
@@ -245,7 +249,7 @@ class DetectLoop(transformation.PatternTransformation):
         multistate_loop: bool,
         accept_missing_itvar: bool = False,
         separate_latch: bool = False,
-    ) -> Optional[str]:
+    ) -> str | None:
         """
         Detects a loop of the form:
 
@@ -325,7 +329,7 @@ class DetectLoop(transformation.PatternTransformation):
 
         return rotated_loop_find_itvar(begin_inedges, latch_inedges, backedge, ltest, accept_missing_itvar)[0]
 
-    def detect_self_loop(self, graph: ControlFlowRegion, accept_missing_itvar: bool = False) -> Optional[str]:
+    def detect_self_loop(self, graph: ControlFlowRegion, accept_missing_itvar: bool = False) -> str | None:
         """
         Detects a loop of the form:
 
@@ -376,11 +380,10 @@ class DetectLoop(transformation.PatternTransformation):
             if not accept_missing_itvar:
                 # Either no consistent iteration variable found, or too many consistent iteration variables found
                 return None
+            elif len(itvar) == 0:
+                return ""
             else:
-                if len(itvar) == 0:
-                    return ""
-                else:
-                    return None
+                return None
 
         return next(iter(itvar))
 
@@ -391,14 +394,15 @@ class DetectLoop(transformation.PatternTransformation):
     # Functionality that provides loop metadata
 
     def loop_information(
-        self, itervar: Optional[str] = None
-    ) -> Optional[
-        Tuple[
+        self, itervar: str | None = None
+    ) -> (
+        tuple[
             AnyStr,
-            Tuple[symbolic.SymbolicType, symbolic.SymbolicType, symbolic.SymbolicType],
-            Tuple[List[sd.SDFGState], sd.SDFGState],
+            tuple[symbolic.SymbolicType, symbolic.SymbolicType, symbolic.SymbolicType],
+            tuple[list[sd.SDFGState], sd.SDFGState],
         ]
-    ]:
+        | None
+    ):
 
         entry = self.loop_begin
         if self.expr_index <= 1:
@@ -448,7 +452,7 @@ class DetectLoop(transformation.PatternTransformation):
             except StopIteration:
                 stack.pop()
 
-    def loop_body(self) -> List[ControlFlowBlock]:
+    def loop_body(self) -> list[ControlFlowBlock]:
         """
         Returns a list of all control flow blocks (or states) contained in the loop.
         """
@@ -473,7 +477,7 @@ class DetectLoop(transformation.PatternTransformation):
 
         return []
 
-    def loop_meta_states(self) -> List[ControlFlowBlock]:
+    def loop_meta_states(self) -> list[ControlFlowBlock]:
         """
         Returns the non-body control-flow blocks of this loop (e.g., guard, latch).
         """
@@ -571,12 +575,12 @@ class DetectLoop(transformation.PatternTransformation):
 
 
 def rotated_loop_find_itvar(
-    begin_inedges: List[gr.Edge[InterstateEdge]],
-    latch_inedges: List[gr.Edge[InterstateEdge]],
+    begin_inedges: list[gr.Edge[InterstateEdge]],
+    latch_inedges: list[gr.Edge[InterstateEdge]],
     backedge: gr.Edge[InterstateEdge],
     latch: ControlFlowBlock,
     accept_missing_itvar: bool = False,
-) -> Tuple[Optional[str], Optional[gr.Edge[InterstateEdge]]]:
+) -> tuple[str | None, gr.Edge[InterstateEdge] | None]:
     # The iteration variable must be assigned (initialized) on all edges leading into the beginning block, which
     # are not the backedge. Gather all variabes for which that holds - they are all candidates for the iteration
     # variable (Phase 1). Said iteration variable must then be incremented:
@@ -635,11 +639,10 @@ def rotated_loop_find_itvar(
         if not accept_missing_itvar:
             # Either no consistent iteration variable found, or too many consistent iteration variables found
             return None, None
+        elif len(filtered_candidates) == 0:
+            return "", None
         else:
-            if len(filtered_candidates) == 0:
-                return "", None
-            else:
-                return None, None
+            return None, None
     else:
         itvar = next(iter(filtered_candidates))
         if itvar in backedge_incremented:
@@ -650,14 +653,15 @@ def rotated_loop_find_itvar(
 
 
 def find_for_loop(
-    graph: ControlFlowRegion, guard: sd.SDFGState, entry: sd.SDFGState, itervar: Optional[str] = None
-) -> Optional[
-    Tuple[
+    graph: ControlFlowRegion, guard: sd.SDFGState, entry: sd.SDFGState, itervar: str | None = None
+) -> (
+    tuple[
         AnyStr,
-        Tuple[symbolic.SymbolicType, symbolic.SymbolicType, symbolic.SymbolicType],
-        Tuple[List[sd.SDFGState], sd.SDFGState],
+        tuple[symbolic.SymbolicType, symbolic.SymbolicType, symbolic.SymbolicType],
+        tuple[list[sd.SDFGState], sd.SDFGState],
     ]
-]:
+    | None
+):
     """
     Finds loop range from state machine.
 
@@ -706,16 +710,15 @@ def find_for_loop(
                 # More than one edge with the iteration variable as a free
                 # symbol, which is not legal. Invalid for loop.
                 return None
+        elif init_assignment is None:
+            init_assignment = assignment
+            init_edges.append(iedge)
+        elif init_assignment != assignment:
+            # More than one init assignment variations mean that this for
+            # loop is not valid.
+            return None
         else:
-            if init_assignment is None:
-                init_assignment = assignment
-                init_edges.append(iedge)
-            elif init_assignment != assignment:
-                # More than one init assignment variations mean that this for
-                # loop is not valid.
-                return None
-            else:
-                init_edges.append(iedge)
+            init_edges.append(iedge)
     if step_edge is None or len(init_edges) == 0 or init_assignment is None:
         # Less than two assignment variations, can't be a valid for loop.
         return None
@@ -734,7 +737,7 @@ def find_for_loop(
     last_loop_state = step_edge.src
 
     # Find condition by matching expressions
-    end: Optional[symbolic.SymbolicType] = None
+    end: symbolic.SymbolicType | None = None
     a = sp.Wild("a")
     match = condition.match(itersym < a)
     if match:
@@ -766,15 +769,16 @@ def find_rotated_for_loop(
     graph: ControlFlowRegion,
     latch: sd.SDFGState,
     entry: sd.SDFGState,
-    itervar: Optional[str] = None,
+    itervar: str | None = None,
     separate_latch: bool = False,
-) -> Optional[
-    Tuple[
+) -> (
+    tuple[
         AnyStr,
-        Tuple[symbolic.SymbolicType, symbolic.SymbolicType, symbolic.SymbolicType],
-        Tuple[List[sd.SDFGState], sd.SDFGState],
+        tuple[symbolic.SymbolicType, symbolic.SymbolicType, symbolic.SymbolicType],
+        tuple[list[sd.SDFGState], sd.SDFGState],
     ]
-]:
+    | None
+):
     """
     Finds rotated loop range from state machine.
 
@@ -830,9 +834,8 @@ def find_rotated_for_loop(
 
     if self_loop:
         step_edge = condition_edge
-    else:
-        if step_edge is None:
-            return None
+    elif step_edge is None:
+        return None
 
     # Get the init expression and the stride.
     start = symbolic.pystr_to_symbolic(init_assignment)
@@ -848,7 +851,7 @@ def find_rotated_for_loop(
     last_loop_state = step_edge.src
 
     # Find condition by matching expressions
-    end: Optional[symbolic.SymbolicType] = None
+    end: symbolic.SymbolicType | None = None
     a = sp.Wild("a")
     match = condition.match(itersym < a)
     if match:

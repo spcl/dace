@@ -1,18 +1,19 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
-from collections import defaultdict
-import dace
-import enum
 import copy
+import enum
 import itertools
+from collections import defaultdict
+from collections.abc import Generator, Sequence
 
-from typing import Generator, Optional, Tuple, Dict, List, Sequence, Set
 from numpy.typing import ArrayLike
 
-from dace import data as dt, SDFG, dtypes
-from dace.optimization import cutout_tuner
-from dace.transformation import helpers as xfh
-from dace.sdfg.analysis.cutout import SDFGCutout
+import dace
+from dace import SDFG, dtypes
+from dace import data as dt
 from dace.codegen.instrumentation.data import data_report
+from dace.optimization import cutout_tuner
+from dace.sdfg.analysis.cutout import SDFGCutout
+from dace.transformation import helpers as xfh
 
 try:
     from tqdm import tqdm
@@ -32,7 +33,7 @@ class DataLayoutTuner(cutout_tuner.CutoutTuner):
         super().__init__(task="DataLayout", sdfg=sdfg)
         self.instrument = measurement
 
-    def cutouts(self) -> Generator[Tuple[dace.SDFG, str], None, None]:
+    def cutouts(self) -> Generator[tuple[dace.SDFG, str], None, None]:
         for state in self._sdfg.nodes():
             for node in state.nodes():
                 if xfh.get_parent_map(state, node) is not None:
@@ -51,12 +52,12 @@ class DataLayoutTuner(cutout_tuner.CutoutTuner):
                     cutout = SDFGCutout.singlestate_cutout(state, *subgraph_nodes)
                     yield cutout, cutout_hash
 
-    def space(self, cutout: dace.SDFG, groups: List[Set[str]] = None) -> Generator[Set[str], None, None]:
+    def space(self, cutout: dace.SDFG, groups: list[set[str]] = None) -> Generator[set[str], None, None]:
         # Make a copy of the original arrays
         arrays = copy.deepcopy(cutout.arrays)
 
         # Tuning groups - if None, each array is in its own group
-        group_dims: List[int] = []
+        group_dims: list[int] = []
         if groups is None:
             groups = [{k} for k, v in arrays.items() if not v.transient]
             group_dims = [len(v.shape) for v in arrays.values() if not v.transient]
@@ -97,11 +98,11 @@ class DataLayoutTuner(cutout_tuner.CutoutTuner):
             # Yield configuration
             yield modified_arrays, new_arrays
 
-    def config_from_key(self, key: str, **kwargs) -> List[int]:
+    def config_from_key(self, key: str, **kwargs) -> list[int]:
         # TODO
         raise NotImplementedError
 
-    def apply(self, config: List[int], label: str, **kwargs) -> None:
+    def apply(self, config: list[int], label: str, **kwargs) -> None:
         # TODO
         raise NotImplementedError
 
@@ -112,12 +113,12 @@ class DataLayoutTuner(cutout_tuner.CutoutTuner):
         measurements: int,
         group_by: TuningGroups,
         **kwargs,
-    ) -> Dict:
+    ) -> dict:
         # No modification to original SDFG, best configuration needs to be determined globally
         cutout.instrument = self.instrument
 
         # Prepare original arguments to sub-SDFG from instrumented data report
-        arguments: Dict[str, ArrayLike] = {}
+        arguments: dict[str, ArrayLike] = {}
         for cstate in cutout.nodes():
             for dnode in cstate.data_nodes():
                 if cutout.arrays[dnode.data].transient:
@@ -137,7 +138,7 @@ class DataLayoutTuner(cutout_tuner.CutoutTuner):
         new_kwargs["group_by"] = group_by
         return new_kwargs
 
-    def evaluate(self, config, cutout, arguments: Dict, measurements: int, **kwargs) -> float:
+    def evaluate(self, config, cutout, arguments: dict, measurements: int, **kwargs) -> float:
         modified_arrays, new_arrays = config
 
         # Modify data layout prior to calling
@@ -147,12 +148,12 @@ class DataLayoutTuner(cutout_tuner.CutoutTuner):
 
         return self.measure(cutout, arguments, measurements)
 
-    def setup_tuning_groups(self, cutout: SDFG, group_by: TuningGroups) -> Optional[List[Set[str]]]:
+    def setup_tuning_groups(self, cutout: SDFG, group_by: TuningGroups) -> list[set[str]] | None:
         if group_by == TuningGroups.Separate:
             return None
 
         seen = set()
-        groupdict: Dict[Tuple[int, int], List[str]] = defaultdict(list)
+        groupdict: dict[tuple[int, int], list[str]] = defaultdict(list)
         for cstate in cutout.nodes():
             for dnode in cstate.data_nodes():
                 if cutout.arrays[dnode.data].transient:
@@ -175,8 +176,4 @@ class DataLayoutTuner(cutout_tuner.CutoutTuner):
                     seen.add(dnode.data)
 
         # Make list from dictionary
-        groups = []
-        for group in groupdict.values():
-            groups.append(set(group))
-
-        return groups
+        return [set(group) for group in groupdict.values()]

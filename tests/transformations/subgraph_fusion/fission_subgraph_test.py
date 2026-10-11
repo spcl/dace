@@ -1,12 +1,13 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 from copy import deepcopy as dcpy
-import dace
-from dace.transformation.dataflow import MapFission
-import numpy as np
 
-from dace.sdfg.graph import SubgraphView
-from dace.transformation.subgraph import SubgraphFusion
+import numpy as np
 from util import fusion
+
+import dace
+from dace.sdfg.graph import SubgraphView
+from dace.transformation.dataflow import MapFission
+from dace.transformation.subgraph import SubgraphFusion
 
 
 def mapfission_sdfg():

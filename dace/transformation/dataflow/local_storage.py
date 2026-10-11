@@ -6,7 +6,8 @@ import copy
 import warnings
 from abc import ABC
 
-from dace import symbolic, subsets, sdfg as sd
+from dace import sdfg as sd
+from dace import subsets, symbolic
 from dace.properties import Property, make_properties
 from dace.sdfg import dealias, nodes
 from dace.sdfg import utils as sdutil
@@ -57,7 +58,7 @@ class LocalStorage(xf.SingleStateTransformation, ABC):
     def match_to_str(self, graph):
         a = self.node_a
         b = self.node_b
-        return "%s -> %s" % (a, b)
+        return f"{a} -> {b}"
 
     def apply(self, graph: SDFGState, sdfg: SDFG):
         node_a = self.node_a
@@ -87,11 +88,11 @@ class LocalStorage(xf.SingleStateTransformation, ABC):
             for edge in graph.edges_between(node_a, node_b):
                 original_edge = edge
                 invariant_memlet = edge.data
-                warnings.warn("Array %s not found! Using array %s instead." % (array, invariant_memlet.data))
+                warnings.warn(f"Array {array} not found! Using array {invariant_memlet.data} instead.")
                 array = invariant_memlet.data
                 break
         if invariant_memlet is None:
-            raise NameError("Array %s not found!" % array)
+            raise NameError(f"Array {array} not found!")
         if self.create_array:
             # Add transient array
             new_data, _ = sdfg.add_transient(

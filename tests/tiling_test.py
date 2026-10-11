@@ -1,8 +1,9 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
-from dace.transformation.dataflow import MapTiling
 import numpy as np
 from scipy import ndimage
+
+import dace
+from dace.transformation.dataflow import MapTiling
 
 W = dace.symbol("W")
 H = dace.symbol("H")

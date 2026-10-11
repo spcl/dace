@@ -1,17 +1,13 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-from typing import List, Union
 
 import dace
 import dace.libraries.standard as stdlib
-import dace.transformation.subgraph.helpers as helpers
 from dace.sdfg.graph import SubgraphView
 from dace.transformation.dataflow import ReduceExpansion
-from dace.transformation.subgraph import MultiExpansion, SubgraphFusion
+from dace.transformation.subgraph import MultiExpansion, SubgraphFusion, helpers
 
 
-def expand_reduce(
-    sdfg: dace.SDFG, graph: dace.SDFGState, subgraph: Union[SubgraphView, List[SubgraphView]] = None, **kwargs
-):
+def expand_reduce(sdfg: dace.SDFG, graph: dace.SDFGState, subgraph: SubgraphView | list[SubgraphView] = None, **kwargs):
 
     subgraph = graph if not subgraph else subgraph
     if not isinstance(subgraph, list):
@@ -43,9 +39,7 @@ def expand_reduce(
                 sg._subgraph_nodes.update({trafo_reduce._reduce: None, trafo_reduce._outer_entry: None})
 
 
-def expand_maps(
-    sdfg: dace.SDFG, graph: dace.SDFGState, subgraph: Union[SubgraphView, List[SubgraphView]] = None, **kwargs
-):
+def expand_maps(sdfg: dace.SDFG, graph: dace.SDFGState, subgraph: SubgraphView | list[SubgraphView] = None, **kwargs):
 
     subgraph = graph if not subgraph else subgraph
     if not isinstance(subgraph, list):
@@ -61,7 +55,7 @@ def expand_maps(
         trafo_expansion.expand(sdfg, graph, map_entries)
 
 
-def fusion(sdfg: dace.SDFG, graph: dace.SDFGState, subgraph: Union[SubgraphView, List[SubgraphView]] = None, **kwargs):
+def fusion(sdfg: dace.SDFG, graph: dace.SDFGState, subgraph: SubgraphView | list[SubgraphView] = None, **kwargs):
 
     subgraph = graph if not subgraph else subgraph
     if not isinstance(subgraph, list):

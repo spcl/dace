@@ -6,8 +6,8 @@ import pytest
 
 import dace
 from dace import data, nodes
-from dace.transformation.dataflow import RedundantReadSlice, RedundantWriteSlice
 from dace.sdfg import utils as sdutil
+from dace.transformation.dataflow import RedundantReadSlice, RedundantWriteSlice
 
 
 def _count_views(sdfg: dace.SDFG) -> int:

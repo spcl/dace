@@ -22,7 +22,7 @@ patch happens at import, so no pytest hooks are needed.
 
 # ndsl refuses to be imported once gt4py's configuration has been read, so it goes first
 import ndsl.dsl  # noqa: F401
-import gt4py.cartesian.backend.dace_backend as dace_backend
+from gt4py.cartesian.backend import dace_backend
 
 from dace.sdfg import dealias
 

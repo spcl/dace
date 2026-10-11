@@ -1,10 +1,12 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
-from dace.transformation.dataflow import GPUTransformMap, Vectorization
-from dace.codegen import compiled_sdfg, common
+import subprocess
+
 import numpy as np
 import pytest
-import subprocess
+
+import dace
+from dace.codegen import common, compiled_sdfg
+from dace.transformation.dataflow import GPUTransformMap, Vectorization
 
 N = dace.symbol("N")
 

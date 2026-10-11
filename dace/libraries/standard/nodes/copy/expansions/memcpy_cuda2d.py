@@ -5,17 +5,17 @@ from typing import TYPE_CHECKING
 
 import dace
 from dace import library, nodes
-from dace.codegen.common import sym2cpp, get_gpu_backend
+from dace.codegen.common import get_gpu_backend, sym2cpp
 from dace.libraries.standard import environments
 from dace.libraries.standard.helper import CURRENT_STREAM_NAME, collapse_shape_and_strides
-from dace.libraries.standard.nodes.copy.node import CopyLibraryNode
-from dace.transformation.transformation import ExpandTransformation
 from dace.libraries.standard.nodes.copy.common import (
-    _memcpy_kind,
-    cuda2d_pitch_params,
     INPUT_CONNECTOR_NAME,
     OUTPUT_CONNECTOR_NAME,
+    _memcpy_kind,
+    cuda2d_pitch_params,
 )
+from dace.libraries.standard.nodes.copy.node import CopyLibraryNode
+from dace.transformation.transformation import ExpandTransformation
 
 if TYPE_CHECKING:
     pass

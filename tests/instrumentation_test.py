@@ -2,10 +2,11 @@
 """Tests that generate various instrumentation reports with timers and
 performance counters."""
 
-import pytest
-import numpy as np
 import re
 import sys
+
+import numpy as np
+import pytest
 
 import dace
 from dace.sdfg import nodes

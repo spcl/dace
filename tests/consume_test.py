@@ -1,7 +1,8 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+import numpy as np
+
 import dace
 import dace as dp
-import numpy as np
 
 
 def setup_sdfg() -> dp.SDFG:

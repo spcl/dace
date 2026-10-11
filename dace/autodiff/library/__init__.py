@@ -29,4 +29,4 @@ __all__ = [
 ]
 
 if TORCH_INTEGRATION_AVAILABLE:
-    __all__.extend(["torch_integration", "torch_autodiff"])
+    __all__ += ["torch_integration", "torch_autodiff"]

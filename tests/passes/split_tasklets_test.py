@@ -1,12 +1,13 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
-import typing
-import dace
-import re
+import ast
 import copy
-from dace.transformation.passes.split_tasklets import SplitTasklets
+import re
+
 import numpy
 import pytest
-import ast
+
+import dace
+from dace.transformation.passes.split_tasklets import SplitTasklets
 
 example_expressions = [
     "cfl_w_limit_out = (0.85 / dtime_0_in)",
@@ -77,7 +78,7 @@ _double_tasklet_sdfg_counter = 0
 
 
 def _generate_double_tasklet_sdfg(
-    expression_strs: typing.Tuple[str, str], direct_connection_between_tasklets: bool = False
+    expression_strs: tuple[str, str], direct_connection_between_tasklets: bool = False
 ) -> dace.SDFG:
     global _double_tasklet_sdfg_counter
     _double_tasklet_sdfg_counter += 1
@@ -94,8 +95,7 @@ def _generate_double_tasklet_sdfg(
             assert var != "tmp"
             sdfg.add_array(name=var + "_ARR", shape=(1,), dtype=dace.float64)
         if i == len(expression_strs) - 1:
-            for var in lhs_vars:
-                out_accesses.add(state.add_access(var + "_ARR"))
+            out_accesses.update(state.add_access(var + "_ARR") for var in lhs_vars)
 
         for var in rhs_vars:
             if var == "tmp":
@@ -158,17 +158,17 @@ def _generate_double_tasklet_sdfg(
                 t.add_in_connector(rhs_var)
             if not direct_connection_between_tasklets:
                 for lhs_var in lhs_vars:
-                    state.add_edge(t, lhs_var, tmp_access, None, dace.memlet.Memlet(expr=f"tmp_Scalar[0]"))
+                    state.add_edge(t, lhs_var, tmp_access, None, dace.memlet.Memlet(expr="tmp_Scalar[0]"))
                     t.add_out_connector(lhs_var)
             else:
                 for lhs_var in lhs_vars:
-                    state.add_edge(t, lhs_var, added_tasklets[i + 1], "tmp", dace.memlet.Memlet(expr=f"tmp_Scalar[0]"))
+                    state.add_edge(t, lhs_var, added_tasklets[i + 1], "tmp", dace.memlet.Memlet(expr="tmp_Scalar[0]"))
                     t.add_out_connector(lhs_var)
         elif i == 1:
             for rhs_var in rhs_vars:
                 if rhs_var == "tmp":
                     if not direct_connection_between_tasklets:
-                        state.add_edge(tmp_access, None, t, rhs_var, dace.memlet.Memlet(expr=f"tmp_Scalar[0]"))
+                        state.add_edge(tmp_access, None, t, rhs_var, dace.memlet.Memlet(expr="tmp_Scalar[0]"))
                         t.add_in_connector(rhs_var)
                     else:
                         # Handled already on the out connection
@@ -252,13 +252,13 @@ def test_single_tasklet_split(expression_str: str):
 
 
 @pytest.mark.parametrize("expression_strs", example_double_expressions)
-def test_double_tasklet_split(expression_strs: typing.Tuple[str, str]):
+def test_double_tasklet_split(expression_strs: tuple[str, str]):
     sdfg = _generate_double_tasklet_sdfg(expression_strs, False)
     _run_compile_and_comparison_test(sdfg)
 
 
 @pytest.mark.parametrize("expression_strs", example_double_expressions)
-def test_double_tasklet_split_direct_tasklet_connection(expression_strs: typing.Tuple[str, str]):
+def test_double_tasklet_split_direct_tasklet_connection(expression_strs: tuple[str, str]):
     sdfg = _generate_double_tasklet_sdfg(expression_strs, True)
     _run_compile_and_comparison_test(sdfg)
 

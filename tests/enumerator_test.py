@@ -1,14 +1,14 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-from dace.transformation.estimator.enumeration.brute_force_enumerator import BruteForceEnumerator
-from dace.transformation.estimator.enumeration.connected_enumerator import ConnectedEnumerator
-import dace
 import numpy as np
 import pytest
 
-from dace.transformation.estimator import GreedyEnumerator
-from dace.transformation.subgraph.composite import CompositeFusion
+import dace
 from dace.sdfg.graph import SubgraphView
 from dace.transformation.dataflow.reduce_expansion import ReduceExpansion
+from dace.transformation.estimator import GreedyEnumerator
+from dace.transformation.estimator.enumeration.brute_force_enumerator import BruteForceEnumerator
+from dace.transformation.estimator.enumeration.connected_enumerator import ConnectedEnumerator
+from dace.transformation.subgraph.composite import CompositeFusion
 
 W = dace.symbol("W")
 H = dace.symbol("H")

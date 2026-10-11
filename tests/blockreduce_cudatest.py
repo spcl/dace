@@ -1,9 +1,10 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import numpy as np
 import pytest
+
 import dace
-from dace.transformation.interstate import GPUTransformSDFG
 from dace.memlet import Memlet
+from dace.transformation.interstate import GPUTransformSDFG
 
 
 @pytest.mark.gpu

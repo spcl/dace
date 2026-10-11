@@ -5,19 +5,18 @@ Python scripts, modules, or existing instrumentation report files.
 """
 
 import argparse
-from contextlib import contextmanager
-import runpy
-import sys
 import os
+import runpy
 import shutil
-from typing import List, Optional, Tuple, Union
+import sys
 import warnings
+from contextlib import contextmanager
 
 import dace
-from dace.codegen.instrumentation.report import InstrumentationReport
 from dace import dtypes
+from dace.codegen.instrumentation.report import InstrumentationReport
 
-ExitCode = Union[int, str]
+ExitCode = int | str
 DEFAULT_REPETITIONS = 100
 
 
@@ -128,7 +127,7 @@ or to print an existing report:
     return parser, args
 
 
-def validate_arguments(args: argparse.Namespace) -> Optional[str]:
+def validate_arguments(args: argparse.Namespace) -> str | None:
     if not args.input and not args.file:
         return "A script or module is required"
     if args.module and args.input:
@@ -156,7 +155,7 @@ def _nop(*args, **kwargs):
     yield
 
 
-def run_script_or_module(args: argparse.Namespace) -> Tuple[Optional[InstrumentationReport], Optional[str], ExitCode]:
+def run_script_or_module(args: argparse.Namespace) -> tuple[InstrumentationReport | None, str | None, ExitCode]:
     """
     Runs the script or module and returns the report file.
 
@@ -228,7 +227,7 @@ def run_script_or_module(args: argparse.Namespace) -> Tuple[Optional[Instrumenta
     return retval, errcode
 
 
-def enable_hooks(args: argparse.Namespace) -> List[int]:
+def enable_hooks(args: argparse.Namespace) -> list[int]:
     # profile_entire_sdfg = args.type is None
     registered = []
 
@@ -278,7 +277,7 @@ def save_as_csv(args: argparse.Namespace, report: InstrumentationReport):
             print(counters)
 
 
-def print_report(args: argparse.Namespace, reportfile: Union[str, InstrumentationReport]):
+def print_report(args: argparse.Namespace, reportfile: str | InstrumentationReport):
     if isinstance(reportfile, str):
         path = os.path.abspath(reportfile)
         if not os.path.isfile(path):
@@ -315,16 +314,15 @@ def main():
         if report is None:
             if not args.save_data and not args.restore_data:
                 print("daceprof: No DaCe program calls detected or no report file generated.")
-        else:
-            if args.output:  # Save report
-                if args.csv:
-                    save_as_csv(args, report)
-                else:
-                    shutil.copyfile(report.filepath, args.output)
-            else:  # Print report
-                if report:
-                    print("daceprof: Report file saved at", os.path.abspath(report.filepath))
-                print_report(args, report)
+        elif args.output:  # Save report
+            if args.csv:
+                save_as_csv(args, report)
+            else:
+                shutil.copyfile(report.filepath, args.output)
+        else:  # Print report
+            if report:
+                print("daceprof: Report file saved at", os.path.abspath(report.filepath))
+            print_report(args, report)
 
         # Forward error code from internal application
         if errcode:

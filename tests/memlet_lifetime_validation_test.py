@@ -1,9 +1,9 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import dace as dp
-from dace.sdfg import SDFG, InvalidSDFGError
-from dace.memlet import Memlet
-
 import pytest
+
+import dace as dp
+from dace.memlet import Memlet
+from dace.sdfg import SDFG, InvalidSDFGError
 
 
 def test():

@@ -10,10 +10,9 @@ This module contains the base ``Data`` class and all core descriptor classes:
 import copy as cp
 import ctypes
 import dataclasses
-
 from collections import OrderedDict
 from numbers import Integral
-from typing import Any, Dict, List, Optional, Set, Tuple, Union
+from typing import Any, Union
 
 import numpy as np
 import sympy as sp
@@ -34,10 +33,10 @@ from dace.properties import (
 )
 from dace.utils import prod
 
-SymbolMapping = Dict[Union[str, sp.Basic], Any]
+SymbolMapping = dict[str | sp.Basic, Any]
 
 
-def _restate(expr: Any, replacements: Optional[Dict[str, sp.Basic]]) -> Any:
+def _restate(expr: Any, replacements: dict[str, sp.Basic] | None) -> Any:
     """Replaces symbols in a (possibly non-symbolic) descriptor property value, for ``is_equivalent``."""
     return symbolic.replace_symbols(expr, replacements)
 
@@ -67,7 +66,7 @@ class Data:
     def _transient_setter(self, value):
         self._transient = value
         if isinstance(self, Structure):
-            for _, v in self.members.items():
+            for v in self.members.values():
                 if isinstance(v, Data):
                     v.transient = value
 
@@ -130,7 +129,7 @@ class Data:
     def toplevel(self):
         return self.lifetime is not dtypes.AllocationLifetime.Scope
 
-    def is_equivalent(self, other: "Data", symbol_mapping: Optional[SymbolMapping] = None) -> bool:
+    def is_equivalent(self, other: "Data", symbol_mapping: SymbolMapping | None = None) -> bool:
         """
         Check for equivalence (shape and type) of two data descriptors.
 
@@ -150,6 +149,14 @@ class Data:
         # Compute hash using serialized value (i.e., with all properties included)
         return hash(serialize.dumps(self))
 
+    def __or__(self, other):
+        """Enables PEP 604 union type hints, e.g., ``dace.float64[N] | None``."""
+        # NOTE: ``self | other`` would recurse into this method
+        return Union[self, other]  # noqa: UP007
+
+    def __ror__(self, other):
+        return Union[other, self]  # noqa: UP007
+
     def as_arg(self, with_types=True, for_call=False, name=None):
         """Returns a string for a C++ function signature (e.g., `int *A`)."""
         raise NotImplementedError
@@ -158,7 +165,7 @@ class Data:
         """Returns a string for a Data-Centric Python function signature (e.g., `A: dace.int32[M]`)."""
         raise NotImplementedError
 
-    def used_symbols(self, all_symbols: bool) -> Set[symbolic.SymbolicType]:
+    def used_symbols(self, all_symbols: bool) -> set[symbolic.SymbolicType]:
         """
         Returns a set of symbols that are used by this data descriptor.
 
@@ -175,7 +182,7 @@ class Data:
         return result
 
     @property
-    def free_symbols(self) -> Set[symbolic.SymbolicType]:
+    def free_symbols(self) -> set[symbolic.SymbolicType]:
         """Returns a set of undefined symbols in this data descriptor."""
         return self.used_symbols(all_symbols=True)
 
@@ -206,7 +213,7 @@ class Data:
         *dimensions: int,
         alignment: symbolic.SymbolicType = 1,
         only_first_aligned: bool = False,
-    ) -> Tuple[Tuple[symbolic.SymbolicType], symbolic.SymbolicType]:
+    ) -> tuple[tuple[symbolic.SymbolicType], symbolic.SymbolicType]:
         """
         Returns the absolute strides and total size of this data descriptor,
         according to the given dimension ordering and alignment.
@@ -297,7 +304,7 @@ class Scalar(Data):
     ):
         self.allow_conflicts = allow_conflicts
         shape = [1]
-        super(Scalar, self).__init__(dtype, shape, transient, storage, location, lifetime, debuginfo)
+        super().__init__(dtype, shape, transient, storage, location, lifetime, debuginfo)
 
     @staticmethod
     def from_json(json_obj, context=None):
@@ -311,7 +318,7 @@ class Scalar(Data):
         return ret
 
     def __repr__(self):
-        return "Scalar (dtype=%s)" % self.dtype
+        return f"Scalar (dtype={self.dtype})"
 
     def clone(self):
         return Scalar(
@@ -353,7 +360,7 @@ class Scalar(Data):
     def may_alias(self) -> bool:
         return False
 
-    def is_equivalent(self, other: Data, symbol_mapping: Optional[SymbolMapping] = None) -> bool:
+    def is_equivalent(self, other: Data, symbol_mapping: SymbolMapping | None = None) -> bool:
         # A scalar has no symbols to map
         # Special case: array of size 1
         if isinstance(other, Array) and other.shape == (1,) and other.dtype == self.dtype:
@@ -527,7 +534,7 @@ class Array(Data):
         pool=False,
     ):
 
-        super(Array, self).__init__(dtype, shape, transient, storage, location, lifetime, debuginfo)
+        super().__init__(dtype, shape, transient, storage, location, lifetime, debuginfo)
 
         self.allow_conflicts = allow_conflicts
         self.may_alias = may_alias
@@ -562,7 +569,7 @@ class Array(Data):
         self.validate()
 
     def __repr__(self):
-        return "%s (dtype=%s, shape=%s)" % (type(self).__name__, self.dtype, self.shape)
+        return f"{type(self).__name__} (dtype={self.dtype}, shape={self.shape})"
 
     def clone(self):
         return type(self)(
@@ -611,7 +618,7 @@ class Array(Data):
         return ret
 
     def validate(self):
-        super(Array, self).validate()
+        super().validate()
         if len(self.strides) != len(self.shape):
             raise TypeError("Strides must be the same size as shape")
         if len(self.offset) != len(self.shape):
@@ -670,7 +677,7 @@ class Array(Data):
         return True
 
     # Checks for equivalent shape and type
-    def is_equivalent(self, other: Data, symbol_mapping: Optional[SymbolMapping] = None) -> bool:
+    def is_equivalent(self, other: Data, symbol_mapping: SymbolMapping | None = None) -> bool:
         replacements = symbolic.symbol_replacements(symbol_mapping)
         shape = tuple(_restate(s, replacements) for s in self.shape)
 
@@ -721,7 +728,7 @@ class Array(Data):
     def sizes(self):
         return [d.name if isinstance(d, symbolic.symbol) else str(d) for d in self.shape]
 
-    def used_symbols(self, all_symbols: bool) -> Set[symbolic.SymbolicType]:
+    def used_symbols(self, all_symbols: bool) -> set[symbolic.SymbolicType]:
         result = super().used_symbols(all_symbols)
         for s in self.strides:
             if isinstance(s, sp.Expr):
@@ -783,7 +790,7 @@ class Array(Data):
         self._set_shape_dependent_properties(new_shape, strides, total_size, offset)
         self.validate()
 
-    def _get_packed_fortran_strides(self) -> Tuple[int]:
+    def _get_packed_fortran_strides(self) -> tuple[int]:
         """Compute packed strides for Fortran-style (column-major) layout."""
         # Strides increase along the leading dimensions
         if self._packed_fortran_strides is None:
@@ -796,7 +803,7 @@ class Array(Data):
             self._packed_fortran_strides = tuple(strides)
         return self._packed_fortran_strides
 
-    def _get_packed_c_strides(self) -> Tuple[int]:
+    def _get_packed_c_strides(self) -> tuple[int]:
         """Compute packed strides for C-style (row-major) layout."""
         # Strides increase along the trailing dimensions
         if self._packed_c_strides is None:
@@ -854,7 +861,7 @@ class ContainerArray(Array):
                 dtype = dtypes.pointer(stype.dtype)
         else:
             dtype = dtypes.pointer(dtypes.typeclass(None))  # void*
-        super(ContainerArray, self).__init__(
+        super().__init__(
             dtype,
             shape,
             transient,
@@ -924,7 +931,7 @@ class Stream(Data):
         else:
             self.offset = [0] * len(shape)
 
-        super(Stream, self).__init__(dtype, shape, transient, storage, location, lifetime, debuginfo)
+        super().__init__(dtype, shape, transient, storage, location, lifetime, debuginfo)
 
     def to_json(self):
         attrs = serialize.all_properties_to_json(self)
@@ -942,7 +949,7 @@ class Stream(Data):
         return ret
 
     def __repr__(self):
-        return "%s (dtype=%s, shape=%s)" % (type(self).__name__, self.dtype, self.shape)
+        return f"{type(self).__name__} (dtype={self.dtype}, shape={self.shape})"
 
     @property
     def total_size(self):
@@ -978,7 +985,7 @@ class Stream(Data):
         )
 
     # Checks for equivalent shape and type
-    def is_equivalent(self, other: Data, symbol_mapping: Optional[SymbolMapping] = None) -> bool:
+    def is_equivalent(self, other: Data, symbol_mapping: SymbolMapping | None = None) -> bool:
         if not isinstance(other, type(self)):
             return False
 
@@ -1006,13 +1013,13 @@ class Stream(Data):
         if not with_types or for_call:
             return name
         if self.storage in [dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared]:
-            return "dace::GPUStream<%s, %s> %s" % (
+            return "dace::GPUStream<{}, {}> {}".format(
                 str(self.dtype.ctype),
                 "true" if sp.log(self.buffer_size, 2).is_Integer else "false",
                 name,
             )
 
-        return "dace::Stream<%s> %s" % (str(self.dtype.ctype), name)
+        return f"dace::Stream<{str(self.dtype.ctype)}> {name}"
 
     def sizes(self):
         return [d.name if isinstance(d, symbolic.symbol) else str(d) for d in self.shape]
@@ -1056,7 +1063,7 @@ class Stream(Data):
 
         return True
 
-    def used_symbols(self, all_symbols: bool) -> Set[symbolic.SymbolicType]:
+    def used_symbols(self, all_symbols: bool) -> set[symbolic.SymbolicType]:
         result = super().used_symbols(all_symbols)
         if (self.transient or all_symbols) and isinstance(self.buffer_size, sp.Expr):
             result |= set(self.buffer_size.free_symbols)
@@ -1086,11 +1093,11 @@ class Structure(Data):
 
     def __init__(
         self,
-        members: Union[Dict[str, Data], List[Tuple[str, Data]]],
+        members: dict[str, Data] | list[tuple[str, Data]],
         name: str = "Structure",
         transient: bool = False,
         storage: dtypes.StorageType = dtypes.StorageType.Default,
-        location: Dict[str, str] = None,
+        location: dict[str, str] = None,
         lifetime: dtypes.AllocationLifetime = dtypes.AllocationLifetime.Scope,
         debuginfo: dtypes.DebugInfo = None,
     ):
@@ -1138,7 +1145,7 @@ class Structure(Data):
         dtype = dtypes.pointer(dtypes.struct(name, **fields_and_types))
         dtype.base_type.__descriptor__ = self
         shape = (1,)
-        super(Structure, self).__init__(dtype, shape, transient, storage, location, lifetime, debuginfo)
+        super().__init__(dtype, shape, transient, storage, location, lifetime, debuginfo)
 
     @staticmethod
     def from_json(json_obj, context=None):
@@ -1188,10 +1195,10 @@ class Structure(Data):
         return [1]
 
     @property
-    def free_symbols(self) -> Set[symbolic.SymbolicType]:
+    def free_symbols(self) -> set[symbolic.SymbolicType]:
         """Returns a set of undefined symbols in this data descriptor."""
         result = set()
-        for k, v in self.members.items():
+        for v in self.members.values():
             result |= v.free_symbols
         return result
 
@@ -1224,7 +1231,7 @@ class Structure(Data):
     def optional(self) -> bool:
         return False
 
-    def is_equivalent(self, other: Data, symbol_mapping: Optional[SymbolMapping] = None) -> bool:
+    def is_equivalent(self, other: Data, symbol_mapping: SymbolMapping | None = None) -> bool:
         """
         Checks whether two structures describe the same data.
 
@@ -1251,7 +1258,7 @@ class Structure(Data):
         result = self.members.keys()
         for k, v in self.members.items():
             if isinstance(v, Structure):
-                result |= set(map(lambda x: f"{k}.{x}", v.keys()))
+                result |= {f"{k}.{x}" for x in v.keys()}
         return result
 
     def clone(self):

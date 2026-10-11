@@ -1,11 +1,12 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 
-import dace
-from dace.sdfg.nodes import MapEntry, Tasklet
-from dace.sdfg.graph import NodeNotFoundError, SubgraphView
-from dace.transformation.helpers import nest_state_subgraph
-from dace.transformation.dataflow import tiling
 import pytest
+
+import dace
+from dace.sdfg.graph import NodeNotFoundError, SubgraphView
+from dace.sdfg.nodes import MapEntry, Tasklet
+from dace.transformation.dataflow import tiling
+from dace.transformation.helpers import nest_state_subgraph
 
 N = dace.symbol("N")
 

@@ -2,9 +2,11 @@
 """A code sample that uses a data-centric map to compute the Mandelbrot set in parallel."""
 
 import argparse
-import dace
-import numpy as np
 import sys
+
+import numpy as np
+
+import dace
 
 # Define symbols for output size
 W = dace.symbol("W")

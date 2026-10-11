@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 
 import dace
 from dace import library, nodes
-from dace.codegen.common import sym2cpp, get_gpu_backend
+from dace.codegen.common import get_gpu_backend, sym2cpp
 from dace.libraries.standard import environments
 from dace.libraries.standard.helper import CURRENT_STREAM_NAME
 from dace.libraries.standard.nodes.fill.common import OUTPUT_CONNECTOR_NAME, VALUE_CONNECTOR_NAME, byte_pattern

@@ -2,12 +2,12 @@
 
 import itertools
 from dataclasses import dataclass
-from typing import Optional, Set, Tuple
 
 from dace import SDFG, dtypes, properties, symbolic
 from dace.sdfg import nodes
 from dace.sdfg.state import SDFGState
-from dace.transformation import pass_pipeline as ppl, transformation
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation import transformation
 
 
 @dataclass(unsafe_hash=True)
@@ -34,7 +34,7 @@ class RemoveUnusedSymbols(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return modified & (ppl.Modifies.States | ppl.Modifies.Edges | ppl.Modifies.Descriptors | ppl.Modifies.Tasklets)
 
-    def apply_pass(self, sdfg: SDFG, _) -> Optional[Set[Tuple[int, str]]]:
+    def apply_pass(self, sdfg: SDFG, _) -> set[tuple[int, str]] | None:
         """
         Removes unused symbols from the SDFG.
 
@@ -45,7 +45,7 @@ class RemoveUnusedSymbols(ppl.Pass):
         :param initial_symbols: If not None, sets values of initial symbols.
         :return: A set of propagated constants, or None if nothing was changed.
         """
-        result: Set[str] = set()
+        result: set[str] = set()
 
         repository_symbols_to_consider = self.symbols or set(sdfg.symbols.keys())
 
@@ -67,7 +67,7 @@ class RemoveUnusedSymbols(ppl.Pass):
         if self.recursive:
             # Prune nested SDFGs recursively
             sid = sdfg.cfg_id
-            result = set((sid, sym) for sym in result)
+            result = {(sid, sym) for sym in result}
 
             for state in sdfg.states():
                 for node in state.nodes():
@@ -82,10 +82,10 @@ class RemoveUnusedSymbols(ppl.Pass):
         # Return result
         return result or None
 
-    def report(self, pass_retval: Set[str]) -> str:
+    def report(self, pass_retval: set[str]) -> str:
         return f"Removed {len(pass_retval)} unused symbols: {pass_retval}."
 
-    def used_symbols(self, sdfg: SDFG) -> Set[str]:
+    def used_symbols(self, sdfg: SDFG) -> set[str]:
         result = set()
 
         # Add symbols in global/init/exit code

@@ -1,8 +1,9 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
 import collections
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple, Union
+from typing import Any, Optional
 
 from dace import data
 from dace.sdfg.sdfg import SDFG
@@ -31,7 +32,7 @@ class DaceSyntaxError(Exception):
             return self.message + f"\n  encountered in line {line}{col_suffix}"
 
 
-def inverse_dict_lookup(dict: Dict[str, Any], value: Any):
+def inverse_dict_lookup(dict: dict[str, Any], value: Any):
     """Finds the first key in a dictionary with the input value."""
     for k, v in dict.items():
         if v == value:
@@ -43,7 +44,7 @@ def inverse_dict_lookup(dict: Dict[str, Any], value: Any):
 class StringLiteral:
     """A string literal found in a parsed DaCe program."""
 
-    value: Union[str, bytes]
+    value: str | bytes
 
     def __str__(self) -> str:
         return self.value
@@ -58,7 +59,7 @@ class StringLiteral:
         return self.value > str(other)
 
 
-class SDFGConvertible(object):
+class SDFGConvertible:
     """
     A mixin that defines the interface to annotate SDFG-convertible objects.
     """
@@ -74,7 +75,7 @@ class SDFGConvertible(object):
         """
         raise NotImplementedError
 
-    def __sdfg_closure__(self, reevaluate: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+    def __sdfg_closure__(self, reevaluate: dict[str, str] | None = None) -> dict[str, Any]:
         """
         Returns the closure arrays of the SDFG represented by this object
         as a mapping between array name and the corresponding value.
@@ -88,7 +89,7 @@ class SDFGConvertible(object):
         """
         raise NotImplementedError
 
-    def __sdfg_signature__(self) -> Tuple[Sequence[str], Sequence[str]]:
+    def __sdfg_signature__(self) -> tuple[Sequence[str], Sequence[str]]:
         """
         Returns the SDFG signature represented by this object, as a sequence
         of all argument names that will be found in a call to this object
@@ -101,7 +102,7 @@ class SDFGConvertible(object):
         raise NotImplementedError
 
     def closure_resolver(
-        self, constant_args: Dict[str, Any], given_args: Set[str], parent_closure: Optional["SDFGClosure"] = None
+        self, constant_args: dict[str, Any], given_args: set[str], parent_closure: Optional["SDFGClosure"] = None
     ) -> "SDFGClosure":
         """
         Returns an SDFGClosure object representing the closure of the
@@ -127,30 +128,30 @@ class SDFGClosure:
     """
 
     # Constants that are part of the closure (mapping from name to value)
-    closure_constants: Dict[str, Any]
+    closure_constants: dict[str, Any]
 
     # Mutable arrays that are part of the closure, mapping from data descriptor
     # names to a 4-tuple of (python name, descriptor, callable that returns
     # array, does the array belong to a nested SDFG).
-    closure_arrays: Dict[str, Tuple[str, data.Data, Callable[[], Any], bool]]
+    closure_arrays: dict[str, tuple[str, data.Data, Callable[[], Any], bool]]
 
     # Nested SDFGs and SDFG-convertible objects that are used in the program
     # (mapping from object id to (name, object))
-    closure_sdfgs: Dict[int, Tuple[str, Union[SDFG, SDFGConvertible]]]
+    closure_sdfgs: dict[int, tuple[str, SDFG | SDFGConvertible]]
 
     # Callbacks to Python callables that are used in the program
     # Mapping from unique names to a 3-tuple of (python name, callable,
     # does the callback belong to a nested SDFG).
-    callbacks: Dict[str, Tuple[str, Callable[..., Any], bool]]
+    callbacks: dict[str, tuple[str, Callable[..., Any], bool]]
 
     # List of nested SDFG-convertible closure objects and their names
-    nested_closures: List[Tuple[str, "SDFGClosure"]]
+    nested_closures: list[tuple[str, "SDFGClosure"]]
 
     # Maps same array objects (checked via python id) to the same name
-    array_mapping: Dict[int, str]
+    array_mapping: dict[int, str]
 
     # Trace of called functions (as their `id`) until this point
-    callstack: List[int]
+    callstack: list[int]
 
     def __init__(self):
         self.closure_constants = {}

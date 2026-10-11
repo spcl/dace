@@ -1,10 +1,12 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
-import pytest
 import itertools
-import sys
-import dace
 import random
+import sys
+
 import numpy as np
+import pytest
+
+import dace
 from dace.libraries.blas import Gemm
 
 M = dace.symbol("M")

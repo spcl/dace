@@ -1,16 +1,18 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests LoopLocalMemoryReduction transformation."""
 
-import numpy as np
 import copy
+from typing import Any
+
+import numpy as np
+
 import dace
-from dace.sdfg.state import LoopRegion, CodeBlock
+from dace.sdfg.state import CodeBlock, LoopRegion
 from dace.transformation.passes import LoopLocalMemoryReduction
-from typing import Any, Dict
 
 
 # Checks if LoopLocalMemoryReduction applied at least N times and if memory footprint was reduced for a specific option
-def check_transformation_option(orig_sdfg: dace.SDFG, N: int, options: Dict[str, Any]):
+def check_transformation_option(orig_sdfg: dace.SDFG, N: int, options: dict[str, Any]):
     # Apply and validate
     orig_sdfg.validate()
     llmr_sdfg = copy.deepcopy(orig_sdfg)
@@ -43,10 +45,7 @@ def check_transformation_option(orig_sdfg: dace.SDFG, N: int, options: Dict[str,
             input_data_orig[argName] = argType.dtype.type(32)
             continue
 
-        shape = []
-        for entry in argType.shape:
-            shape.append(dace.symbolic.evaluate(entry, {**orig_sdfg.constants, **sym_data}))
-        shape = tuple(shape)
+        shape = tuple(dace.symbolic.evaluate(entry, {**orig_sdfg.constants, **sym_data}) for entry in argType.shape)
         arr = dace.ndarray(shape=shape, dtype=argType.dtype)
         arr[:] = np.random.rand(*arr.shape).astype(arr.dtype)
         input_data_orig[argName] = arr

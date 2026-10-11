@@ -3,8 +3,8 @@
 
 from typing import TYPE_CHECKING
 
-from dace import library, nodes, dtypes, properties
-from dace.libraries.standard.helper import CURRENT_STREAM_NAME, CPU_RESIDENT_STORAGES
+from dace import dtypes, library, nodes, properties
+from dace.libraries.standard.helper import CPU_RESIDENT_STORAGES, CURRENT_STREAM_NAME
 from dace.libraries.standard.nodes.copy.common import INPUT_CONNECTOR_NAME, OUTPUT_CONNECTOR_NAME
 
 if TYPE_CHECKING:

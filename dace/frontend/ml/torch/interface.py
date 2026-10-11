@@ -7,7 +7,6 @@ to DaCe-accelerated implementations.
 """
 
 from functools import wraps
-from typing import Optional, Tuple, List
 
 from dace.dtypes import paramdec
 
@@ -15,15 +14,15 @@ from dace.dtypes import paramdec
 @paramdec
 def module(
     moduleclass,
-    dummy_inputs: Optional[Tuple] = None,
-    cuda: Optional[bool] = None,
+    dummy_inputs: tuple | None = None,
+    cuda: bool | None = None,
     training: bool = False,
     backward=False,
-    inputs_to_skip: Optional[List[str]] = None,
+    inputs_to_skip: list[str] | None = None,
     onnx_simplify: bool = True,
     simplify: bool = True,
     auto_optimize: bool = True,
-    sdfg_name: Optional[str] = None,
+    sdfg_name: str | None = None,
     compile_torch_extension: bool = True,
     debug_transients: bool = False,
 ):

@@ -1,5 +1,6 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import itertools
+
 import numpy as np
 import pytest
 
@@ -50,6 +51,25 @@ def test_library_node_expand_reduce_pure():
     assert np.allclose(wantC, gotC)
 
 
+def test_pure_seq_row_sums_in_a_map():
+    """A sequential reduction per map iteration: its output is one element of the destination, so the
+    nested SDFG connects the outer containers and indexes them absolutely."""
+
+    @dace.program
+    def row_sums(A: dace.float64[10, 4], B: dace.float64[10]):
+        for i in dace.map[0:10]:
+            B[i] = np.sum(A[i, :])
+
+    sdfg = row_sums.to_sdfg()
+    rednode = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, std.Reduce))
+    rednode.implementation = "pure-seq"
+
+    A = np.random.rand(10, 4)
+    B = np.zeros(10)
+    sdfg(A=A, B=B)
+    assert np.allclose(B, A.sum(axis=1))
+
+
 _impls = ["pure", "CUDA (device)", "pure-seq", "GPUAuto"]
 _case_params = [
     ([1, 64, 60, 60], (0, 2, 3), [64], np.float32),
@@ -93,3 +113,4 @@ if __name__ == "__main__":
     for params in itertools.product(_impls, _case_params):
         test_multidim_gpu(params[0], params[1])
     test_library_node_expand_reduce_pure()
+    test_pure_seq_row_sums_in_a_map()

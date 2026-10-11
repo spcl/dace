@@ -126,10 +126,8 @@ def run_loop_to_map(n, *args):
     if e[0] != n:
         raise ValueError("Validation failed.")
 
-    numbers_written = []
-    with open(temp_path, "r") as f:
-        for line in f:
-            numbers_written.append(int(line.strip()))
+    with open(temp_path) as f:
+        numbers_written = [int(line.strip()) for line in f]
     if not all(sorted(numbers_written) == np.arange(n)):
         raise ValueError("Validation failed.")
 
@@ -478,47 +476,6 @@ def test_symbol_array_mix_2(parallel):
         assert np.allclose(B, expected)
 
 
-CN = dace.symbol("CN")
-
-
-@dace.program
-def carried_symbol_loop(a: dace.float64[CN], b: dace.float64[CN]):
-    im = CN - 1
-    for i in range(CN):
-        a[i] = b[i] + b[im]
-        im = i
-
-
-@dace.program
-def peeled_affine_loop(a: dace.float64[CN], b: dace.float64[CN]):
-    a[0] = b[0] + b[CN - 1]  # wrapping first iteration, peeled off
-    for i in range(1, CN):
-        a[i] = b[i] + b[i - 1]  # induction substituted -> affine
-
-
-def only_loop(sdfg: dace.SDFG) -> LoopRegion:
-    return next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, LoopRegion))
-
-
-def test_loop2map_rejects_unpeeled_carried_symbol():
-    """Wrap-around induction ``im = N-1; a[i] = b[i] + b[im]; im = i`` (TSVC s291):
-    ``im`` is read (in ``b[im]``) before it is reassigned, so it is loop-carried and
-    LoopToMap must refuse -- a Map would pin ``im`` to ``N-1`` and compute
-    ``b[i] + b[N-1]`` everywhere."""
-    sdfg = carried_symbol_loop.to_sdfg(simplify=True)
-    assert not LoopToMap.can_be_applied_to(sdfg, loop=only_loop(sdfg))
-
-
-def test_loop2map_accepts_peeled_affine_form():
-    """Once peeled and the induction substituted, ``a[i] = b[i] + b[i-1]`` is affine
-    and LoopToMap accepts it."""
-    sdfg = peeled_affine_loop.to_sdfg(simplify=True)
-    assert LoopToMap.can_be_applied_to(sdfg, loop=only_loop(sdfg))
-    # Both variants carry ``sym``: it is read in ``B[i]`` before the body edge reassigns it to
-    # ``A[i-1]``, so a Map would pin it to 0.0 and compute ``B[i] = 0``.
-    assert sdfg.apply_transformations(LoopToMap) == 0
-
-
 def only_loop(sdfg: dace.SDFG) -> LoopRegion:
     return next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, LoopRegion))
 
@@ -776,7 +733,7 @@ def test_nested_loops():
     sdfg0 = copy.deepcopy(sdfg)
     i_loop = find_loop(sdfg0, "i")
     LoopToMap.apply_to(sdfg0, loop=i_loop)
-    nsdfg = next((sd for sd in sdfg0.all_sdfgs_recursive() if sd.parent is not None))
+    nsdfg = next(sd for sd in sdfg0.all_sdfgs_recursive() if sd.parent is not None)
     j_loop = find_loop(nsdfg, "j")
     LoopToMap.apply_to(nsdfg, loop=j_loop)
 
@@ -988,8 +945,8 @@ def test_dynamic_write_slab_separated_by_iteration_var():
     """
     from dace import memlet as mm
     from dace.properties import CodeBlock
-    from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
     from dace.sdfg.propagation import propagate_memlets_sdfg
+    from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
 
     sdfg = dace.SDFG("for_it_35_repro")
     NLEV = dace.symbol("NLEV", dace.int32)

@@ -1,9 +1,10 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-from dace.codegen.targets.sve.util import NotSupportedError
+import pytest
+
 import dace
 import dace.dtypes
+from dace.codegen.targets.sve.util import NotSupportedError
 from tests.codegen.sve.common import get_code
-import pytest
 
 N = dace.symbol("N")
 M = dace.symbol("M")

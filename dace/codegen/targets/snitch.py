@@ -1,27 +1,27 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 
-from typing import Optional, Union
-import dace
 import itertools
+
 import numpy as np
 import sympy as sp
 
+import dace
+from dace import config, data, dtypes, registry, subsets, symbolic
+from dace.codegen.common import update_persistent_desc
+from dace.codegen.dispatcher import DefinedType
+from dace.codegen.prettycode import CodeIOStream
+from dace.codegen.target import TargetCodeGenerator
+from dace.codegen.targets import cpp
+from dace.codegen.targets.cpp import sym2cpp
+from dace.codegen.targets.framecode import DaCeCodeGenerator
 from dace.memlet import Memlet
+from dace.sdfg import nodes
+from dace.sdfg import utils as sdutils
 from dace.sdfg.graph import MultiConnectorEdge
+from dace.sdfg.scope import ScopeSubgraphView
 from dace.sdfg.sdfg import SDFG
 from dace.sdfg.state import ControlFlowRegion, SDFGState, StateSubgraphView
 from dace.transformation.dataflow.streaming_memory import _collect_map_ranges
-
-from dace import registry, data, dtypes, config, symbolic, subsets
-from dace.sdfg import nodes, utils as sdutils
-from dace.sdfg.scope import ScopeSubgraphView
-from dace.codegen.prettycode import CodeIOStream
-from dace.codegen.targets import cpp
-from dace.codegen.common import update_persistent_desc
-from dace.codegen.target import TargetCodeGenerator
-from dace.codegen.targets.framecode import DaCeCodeGenerator
-from dace.codegen.targets.cpp import sym2cpp
-from dace.codegen.dispatcher import DefinedType
 
 MAX_SSR_STREAMERS = 2
 # number of snitch cores executing parallel regions
@@ -103,7 +103,7 @@ class SnitchCodeGen(TargetCodeGenerator):
         # for SSR spanning parallel maps, load the thread id here and put the ssr setup in a
         # parallel region
         if para:
-            callsite_stream.write(f"unsigned tid = omp_get_thread_num();")
+            callsite_stream.write("unsigned tid = omp_get_thread_num();")
 
         for ssr_id, ssr in enumerate(self.ssrs):
             if not ssr:
@@ -318,7 +318,7 @@ class SnitchCodeGen(TargetCodeGenerator):
     def memlet_definition(self, sdfg, memlet, output, local_name, conntype=None, allow_shadowing=False, codegen=None):
         # TODO: Robust rule set
         if conntype is None:
-            raise ValueError('Cannot define memlet for "%s" without connector type' % local_name)
+            raise ValueError(f'Cannot define memlet for "{local_name}" without connector type')
         codegen = codegen or self
         # Convert from Data to typeclass
         if isinstance(conntype, data.Data):
@@ -346,7 +346,7 @@ class SnitchCodeGen(TargetCodeGenerator):
 
         _ptr = ptr
         if expr != _ptr:
-            expr = "%s[%s]" % (ptr, expr)
+            expr = f"{ptr}[{expr}]"
         # If there is a type mismatch, cast pointer
         expr = cpp.make_ptr_vector_cast(expr, desc.dtype, conntype, is_scalar, var_type)
 
@@ -356,22 +356,22 @@ class SnitchCodeGen(TargetCodeGenerator):
             if output:
                 if not memlet.dynamic or (memlet.dynamic and memlet.wcr is not None):
                     # Dynamic WCR memlets start uninitialized
-                    result += "{} {};".format(memlet_type, local_name)
+                    result += f"{memlet_type} {local_name};"
                     defined = DefinedType.Scalar
 
             else:
                 if not memlet.dynamic:
                     if is_scalar:
                         # We can pre-read the value
-                        result += "{} {} = {};".format(memlet_type, local_name, expr)
+                        result += f"{memlet_type} {local_name} = {expr};"
                     else:
                         # Pointer reference
-                        result += "{} {} = {};".format(ctypedef, local_name, expr)
+                        result += f"{ctypedef} {local_name} = {expr};"
                 else:
                     # Variable number of reads: get a const reference that can
                     # be read if necessary
-                    memlet_type = "%s const" % memlet_type
-                    result += "{} &{} = {};".format(memlet_type, local_name, expr)
+                    memlet_type = f"{memlet_type} const"
+                    result += f"{memlet_type} &{local_name} = {expr};"
                 defined = DefinedType.Scalar if is_scalar else DefinedType.Pointer
         elif var_type in [DefinedType.Stream, DefinedType.StreamArray]:
             if not memlet.dynamic and memlet.num_accesses == 1:
@@ -381,10 +381,10 @@ class SnitchCodeGen(TargetCodeGenerator):
             else:
                 # Just forward actions to the underlying object
                 memlet_type = ctypedef
-                result += "{} &{} = {};".format(memlet_type, local_name, expr)
+                result += f"{memlet_type} &{local_name} = {expr};"
                 defined = DefinedType.Stream
         else:
-            raise TypeError("Unknown variable type: {}".format(var_type))
+            raise TypeError(f"Unknown variable type: {var_type}")
 
         if defined is not None:
             self.dispatcher.defined_vars.add(local_name, defined, memlet_type, allow_shadowing=allow_shadowing)
@@ -418,11 +418,7 @@ class SnitchCodeGen(TargetCodeGenerator):
         arrsize = nodedesc.total_size
         arrsize_bytes = nodedesc.total_size_in_bytes
         alloc_name = self.ptr(name, nodedesc, sdfg)
-        dbg(
-            '  arrsize "{}" arrsize_bytes "{}" alloc_name "{}" nodedesc "{}"'.format(
-                arrsize, arrsize_bytes, alloc_name, nodedesc
-            )
-        )
+        dbg(f'  arrsize "{arrsize}" arrsize_bytes "{arrsize_bytes}" alloc_name "{alloc_name}" nodedesc "{nodedesc}"')
 
         if isinstance(nodedesc, data.Array):
             ctypedef = dtypes.pointer(nodedesc.dtype).ctype
@@ -433,23 +429,19 @@ class SnitchCodeGen(TargetCodeGenerator):
                 # NOTE: OpenMP threadprivate storage MUST be declared globally.
                 if not self.dispatcher.defined_vars.has(name):
                     global_stream.write(
-                        "{ctype} *{name};\n#pragma omp threadprivate({name})".format(
-                            ctype=nodedesc.dtype.ctype, name=name
-                        ),
+                        f"{nodedesc.dtype.ctype} *{name};\n#pragma omp threadprivate({name})",
                         cfg,
                         state_id,
                         node,
                     )
-                    self.dispatcher.defined_vars.add_global(name, DefinedType.Pointer, "%s *" % nodedesc.dtype.ctype)
+                    self.dispatcher.defined_vars.add_global(name, DefinedType.Pointer, f"{nodedesc.dtype.ctype} *")
                 # Allocate in each OpenMP thread
                 allocation_stream.write(
-                    """
+                    f"""
                     #pragma omp parallel
                     {{
                         #error "malloc is not threadsafe"
-                        {name} = new {ctype} [{arrsize}];""".format(
-                        ctype=nodedesc.dtype.ctype, name=alloc_name, arrsize=cpp.sym2cpp(arrsize)
-                    ),
+                        {alloc_name} = new {nodedesc.dtype.ctype} [{cpp.sym2cpp(arrsize)}];""",
                     cfg,
                     state_id,
                     node,
@@ -484,14 +476,13 @@ class SnitchCodeGen(TargetCodeGenerator):
                     node,
                 )
                 self.dispatcher.defined_vars.add(name, DefinedType.Pointer, ctypedef)
+        elif nodedesc.storage is dtypes.StorageType.CPU_Heap or nodedesc.storage is dtypes.StorageType.Snitch_TCDM:
+            ctypedef = dtypes.pointer(nodedesc.dtype).ctype
+            declaration_stream.write(f'// allocate scalar storage "{nodedesc.storage}"')
+            declaration_stream.write(f"{nodedesc.dtype.ctype} {name}[1];\n", cfg, state_id, node)
+            self.dispatcher.defined_vars.add(name, DefinedType.Pointer, ctypedef)
         else:
-            if nodedesc.storage is dtypes.StorageType.CPU_Heap or nodedesc.storage is dtypes.StorageType.Snitch_TCDM:
-                ctypedef = dtypes.pointer(nodedesc.dtype).ctype
-                declaration_stream.write(f'// allocate scalar storage "{nodedesc.storage}"')
-                declaration_stream.write(f"{nodedesc.dtype.ctype} {name}[1];\n", cfg, state_id, node)
-                self.dispatcher.defined_vars.add(name, DefinedType.Pointer, ctypedef)
-            else:
-                raise NotImplementedError("Unimplemented storage type " + str(nodedesc.storage))
+            raise NotImplementedError("Unimplemented storage type " + str(nodedesc.storage))
 
     def deallocate_array(
         self,
@@ -522,8 +513,8 @@ class SnitchCodeGen(TargetCodeGenerator):
         ):
             # free array
             if nodedesc.storage == dtypes.StorageType.Snitch_SSR:
-                dbg(f"Check deallocation of SSR datatypes!!!")
-                callsite_stream.write(f"// free of an SSR type\n", cfg, state_id, node)
+                dbg("Check deallocation of SSR datatypes!!!")
+                callsite_stream.write("// free of an SSR type\n", cfg, state_id, node)
             if not symbolic.issymbolic(arrsize, sdfg.constants):
                 # don't free static allocations
                 return
@@ -533,10 +524,10 @@ class SnitchCodeGen(TargetCodeGenerator):
         elif nodedesc.storage is dtypes.StorageType.CPU_ThreadLocal:
             # Deallocate in each OpenMP thread
             callsite_stream.write(
-                """#pragma omp parallel
+                f"""#pragma omp parallel
                 {{
-                    delete[] {name};
-                }}""".format(name=alloc_name),
+                    delete[] {alloc_name};
+                }}""",
                 cfg,
                 state_id,
                 node,
@@ -550,8 +541,8 @@ class SnitchCodeGen(TargetCodeGenerator):
         cfg: ControlFlowRegion,
         dfg: StateSubgraphView,
         state_id: int,
-        src_node: Union[nodes.Tasklet, nodes.AccessNode],
-        dst_node: Union[nodes.Tasklet, nodes.AccessNode],
+        src_node: nodes.Tasklet | nodes.AccessNode,
+        dst_node: nodes.Tasklet | nodes.AccessNode,
         edge: MultiConnectorEdge[Memlet],
         function_stream: CodeIOStream,
         callsite_stream: CodeIOStream,
@@ -616,7 +607,7 @@ class SnitchCodeGen(TargetCodeGenerator):
                 streamer = candidates[0]
                 callsite_stream.write(f"// copy into tasklet SSR{streamer}")
                 callsite_stream.write(
-                    "{} {} = __builtin_ssr_pop({});".format(dst_node.in_connectors[vconn].dtype.ctype, vconn, streamer),
+                    f"{dst_node.in_connectors[vconn].dtype.ctype} {vconn} = __builtin_ssr_pop({streamer});",
                     cfg,
                     state_id,
                     [src_node, dst_node],
@@ -680,31 +671,30 @@ class SnitchCodeGen(TargetCodeGenerator):
                 # if only a single element, perform a load
                 if isinstance(copy_shape[0], int) and copy_shape[0] == 1:
                     # if None:
-                    xfer = """*({dst}) = *({src});""".format(src=src_expr, dst=dst_expr)
+                    xfer = f"""*({dst_expr}) = *({src_expr});"""
                     callsite_stream.write(xfer, cfg, state_id, [src_node, dst_node])
                     return
-                else:
-                    if src_strides[0] == 1 and dst_strides[0] == 1:
-                        xfer = """__builtin_sdma_start_oned(
+                elif src_strides[0] == 1 and dst_strides[0] == 1:
+                    xfer = """__builtin_sdma_start_oned(
                                 (uint64_t)({src}), (uint64_t)({dst}),
                                 {size}, {cfg});""".format(
-                            src=src_expr,
-                            dst=dst_expr,
-                            size=f"sizeof({src_nodedesc.dtype.ctype})*({cpp.sym2cpp(copy_shape[0])})",
-                            cfg="0",
-                        )
-                    else:
-                        xfer = """__builtin_sdma_start_twod(
+                        src=src_expr,
+                        dst=dst_expr,
+                        size=f"sizeof({src_nodedesc.dtype.ctype})*({cpp.sym2cpp(copy_shape[0])})",
+                        cfg="0",
+                    )
+                else:
+                    xfer = """__builtin_sdma_start_twod(
                                 (uint64_t)({src}), (uint64_t)({dst}),
                                 {size}, {sstride}, {dstride}, {nrep}, {cfg});""".format(
-                            src=src_expr,
-                            dst=dst_expr,
-                            size=f"sizeof({src_nodedesc.dtype.ctype})",
-                            sstride=f"sizeof({src_nodedesc.dtype.ctype})*({cpp.sym2cpp(src_strides[0])})",
-                            dstride=f"sizeof({dst_nodedesc.dtype.ctype})*({cpp.sym2cpp(dst_strides[0])})",
-                            nrep=cpp.sym2cpp(copy_shape[0]),
-                            cfg="0",
-                        )
+                        src=src_expr,
+                        dst=dst_expr,
+                        size=f"sizeof({src_nodedesc.dtype.ctype})",
+                        sstride=f"sizeof({src_nodedesc.dtype.ctype})*({cpp.sym2cpp(src_strides[0])})",
+                        dstride=f"sizeof({dst_nodedesc.dtype.ctype})*({cpp.sym2cpp(dst_strides[0])})",
+                        nrep=cpp.sym2cpp(copy_shape[0]),
+                        cfg="0",
+                    )
 
             else:
                 raise NotImplementedError("Unsupported dimnesions")
@@ -748,8 +738,8 @@ class SnitchCodeGen(TargetCodeGenerator):
 
         # in a parallel region, emit SSR in parallel section
         if para and ssr_region:
-            callsite_stream.write(f"#pragma omp parallel")
-            callsite_stream.write(f"{{")
+            callsite_stream.write("#pragma omp parallel")
+            callsite_stream.write("{")
 
         # emit the SSR setup calls if this map is is one of the ssrs
         if ssr_region:
@@ -768,9 +758,9 @@ class SnitchCodeGen(TargetCodeGenerator):
         # decorate woth omp pragma for parallel maps
         if para:
             if ssr_region:
-                s = f"#pragma omp for schedule(static)"
+                s = "#pragma omp for schedule(static)"
             else:
-                s = f"#pragma omp parallel for schedule(static)"
+                s = "#pragma omp parallel for schedule(static)"
             # append private variables
             private_vars = [
                 var for var in sdfg.shared_transients() if sdfg.arrays[var].storage == dace.dtypes.StorageType.Register
@@ -843,7 +833,7 @@ class SnitchCodeGen(TargetCodeGenerator):
             deallocated.add(child.data)
             self.dispatcher.dispatch_deallocate(sdfg, cfg, scope, state_id, child, None, callsite_stream)
 
-        dbg(f"  after dispatch_subgraph")
+        dbg("  after dispatch_subgraph")
 
         # disable SSR in loop body if any are enabled and we are in a parallel region
         if ssr_region:
@@ -855,8 +845,8 @@ class SnitchCodeGen(TargetCodeGenerator):
         for param, rng in zip(entry_node.map.params, entry_node.map.range):
             dbg(f"  closing for parameter {param}")
             callsite_stream.write(
-                f"""// end loopy-loop
-                                    }}""",
+                """// end loopy-loop
+                                    }""",
                 cfg,
                 state_id,
                 entry_node,
@@ -866,9 +856,9 @@ class SnitchCodeGen(TargetCodeGenerator):
             # callsite_stream.write(f'// end ssr allocated: {len(self.ssr_configs)}')
             # if there is at least one SSR active, disable the region here
             if para:
-                callsite_stream.write(f"}} // omp parallel")
+                callsite_stream.write("} // omp parallel")
             else:
-                callsite_stream.write(f"__builtin_ssr_disable();")
+                callsite_stream.write("__builtin_ssr_disable();")
             # deallocate SSRs
             for i, x in enumerate([x for x in self.ssrs if x]):
                 if x["map"] == entry_node:
@@ -959,13 +949,11 @@ class SnitchCodeGen(TargetCodeGenerator):
                 for oe in out_edges:
                     # an out edge can be a tree of memlet paths,
                     # get a list of all memlet paths
-                    leafs = list(
-                        [
-                            x.edge
-                            for x in state.memlet_tree(oe).traverse_children()
-                            if isinstance(x.edge.dst, dace.sdfg.nodes.Tasklet)
-                        ]
-                    )
+                    leafs = [
+                        x.edge
+                        for x in state.memlet_tree(oe).traverse_children()
+                        if isinstance(x.edge.dst, dace.sdfg.nodes.Tasklet)
+                    ]
                     memlet_paths += [state.memlet_path(leaf) for leaf in leafs]
 
                 for memlet_path in memlet_paths:
@@ -1115,7 +1103,7 @@ class SnitchCodeGen(TargetCodeGenerator):
         defined_type, _ = self.dispatcher.defined_vars.get(memlet.data)
 
         if isinstance(indices, str):
-            ptr = "%s + %s" % (cpp.cpp_ptr_expr(sdfg, memlet, defined_type, codegen=self), indices)
+            ptr = f"{cpp.cpp_ptr_expr(sdfg, memlet, defined_type, codegen=self)} + {indices}"
         else:
             ptr = cpp.cpp_ptr_expr(sdfg, memlet, defined_type, indices=indices, codegen=self)
         if isinstance(dtype, dtypes.pointer):
@@ -1172,11 +1160,11 @@ class SnitchCodeGen(TargetCodeGenerator):
             call_params = ", " + call_params
         params = (sdfg.name, sdfg.name, call_params)
         exit_params = (sdfg.name, sdfg.name)
-        hdrs += "typedef void * %sHandle_t;\n" % sdfg.name
+        hdrs += f"typedef void * {sdfg.name}Handle_t;\n"
         hdrs += '#ifdef __cplusplus\nextern "C" {\n#endif\n'
-        hdrs += "%sHandle_t __dace_init_%s(%s);\n" % init_params
-        hdrs += "int __dace_exit_%s(%sHandle_t handle);\n" % exit_params
-        hdrs += "void __program_%s(%sHandle_t handle%s);\n" % params
+        hdrs += "{}Handle_t __dace_init_{}({});\n".format(*init_params)
+        hdrs += "int __dace_exit_{}({}Handle_t handle);\n".format(*exit_params)
+        hdrs += "void __program_{}({}Handle_t handle{});\n".format(*params)
         hdrs += "#ifdef __cplusplus\n}\n#endif\n"
 
         # Fixup some includes
@@ -1199,7 +1187,7 @@ class SnitchCodeGen(TargetCodeGenerator):
             # match all occurences, except for the one prepended by "struct "
             # dbg(f'found declaration of state struct {state_struct}')
             state_struct = state_struct[0]
-            ccode = re.sub(r"(?<!struct )({})".format(state_struct), r"struct {}".format(state_struct), ccode)
+            ccode = re.sub(rf"(?<!struct )({state_struct})", rf"struct {state_struct}", ccode)
 
         # replace stuff
         replace = [
@@ -1218,8 +1206,8 @@ class SnitchCodeGen(TargetCodeGenerator):
         name: str,
         desc: data.Data,
         sdfg: SDFG = None,
-        subset: Optional[subsets.Subset] = None,
-        is_write: Optional[bool] = None,
+        subset: subsets.Subset | None = None,
+        is_write: bool | None = None,
         ancestor: int = 0,
     ) -> str:
         """
