@@ -24,6 +24,18 @@ def capture(a: dace.float64[N], out_index: dace.int64[1], out_value: dace.float6
 
 
 @dace.program
+def capture_into_symbols(a: dace.float64[N], result: dace.float64[1]):
+    index = -2
+    value = -1.0
+    for i in range(N):
+        if a[i] > 0.9:
+            index = i
+            value = a[i]
+            break
+    result[0] = value + index
+
+
+@dace.program
 def break_then_body(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N], d: dace.float64[N]):
     for i in range(N):
         if d[i] < 0.0:
@@ -120,6 +132,19 @@ def test_the_chunked_search_stays_parallel_inside_its_chunk_loop():
     assert node.schedule != dace.ScheduleType.Sequential
 
 
+@pytest.mark.parametrize("hit", [33, None])
+def test_symbols_only_the_effect_assigns_may_be_read_after_the_loop(hit):
+    """TSVC ``s332``: the effect binds ``index`` / ``value``; with no hit they keep their pre-loop values."""
+    sdfg, result = lifted(capture_into_symbols, f"lift_ff_symbols_{hit}")
+    assert result == 1 and not has_break(sdfg)
+    a = np.random.default_rng(2).uniform(0.0, 0.5, 300)
+    if hit is not None:
+        a[hit] = 0.95
+    out = np.zeros(1)
+    sdfg(a=a, result=out, N=a.size)
+    assert out[0] == (-3.0 if hit is None else 0.95 + hit)
+
+
 if __name__ == "__main__":
     test_capture_finds_the_first_hit_and_runs_the_effect_once(17)
     test_capture_finds_the_first_hit_and_runs_the_effect_once(0)
@@ -130,3 +155,5 @@ if __name__ == "__main__":
         test_the_body_runs_exactly_below_the_hit(body_then_break, 211, size)
     test_a_test_that_reads_what_the_body_writes_is_refused()
     test_the_chunked_search_stays_parallel_inside_its_chunk_loop()
+    test_symbols_only_the_effect_assigns_may_be_read_after_the_loop(33)
+    test_symbols_only_the_effect_assigns_may_be_read_after_the_loop(None)

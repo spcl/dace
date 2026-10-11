@@ -309,13 +309,21 @@ class LiftBreakToFindFirst(ppl.Pass):
         return INDEX_NAME in match.predicate
 
     def private_to_loop(self, sdfg: SDFG, match: Match) -> bool:
-        """Whether the counter and every symbol the body assigns stay inside the loop."""
+        """Whether the counter and every symbol an iteration assigns stay inside the loop.
+
+        Those leak their last iteration's value, which the lifted form does not reproduce when nothing
+        hits. A symbol only the effect assigns may be read after the loop: the effect runs exactly once
+        at the hit in both forms, and with no hit both leave it as it was before the loop.
+        """
         use_sites, descriptor_symbols = symbol_use_sites(sdfg)
         inside = {id(match.loop)}
         inside.update(id(b) for b in match.loop.all_control_flow_blocks())
         inside.update(id(e) for e in match.loop.all_interstate_edges())
+        effect_edges = {id(e) for e in match.effect.all_interstate_edges()}
         names = {match.loop.loop_variable}
-        names.update(name for e in match.loop.all_interstate_edges() for name in e.data.assignments)
+        names.update(
+            name for e in match.loop.all_interstate_edges() if id(e) not in effect_edges for name in e.data.assignments
+        )
         return not any(symbol_used_outside(n, inside, use_sites, descriptor_symbols) for n in names)
 
     def lift(self, sdfg: SDFG, match: Match) -> None:
