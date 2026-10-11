@@ -4,6 +4,7 @@
 import abc
 import ast
 import collections
+import contextvars
 import copy
 import inspect
 import itertools
@@ -106,6 +107,13 @@ def _make_iterators(ndrange):
     map_range = sbs.Range(ranges)
 
     return params, map_range
+
+
+#: Per-state :meth:`~SDFGState.defined_symbols` for the library expansions of one
+#: :meth:`~dace.sdfg.SDFG.expand_library_nodes` sweep; ``None`` outside a sweep.
+EXPANSION_DEFINED_SYMBOLS: contextvars.ContextVar[dict["SDFGState", tuple[int, dict[str, Any]]] | None] = (
+    contextvars.ContextVar("EXPANSION_DEFINED_SYMBOLS", default=None)
+)
 
 
 class BlockGraphView:
@@ -1992,12 +2000,30 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
             s.symbol_mapping = symbol_mapping
 
             # Add new global symbols to nested SDFG
-            defined_symbols = self.defined_symbols() if self.sdfg is not None else {}
-            for sym, symval in s.symbol_mapping.items():
-                if sym not in sdfg.symbols:
+            undeclared = [(sym, symval) for sym, symval in s.symbol_mapping.items() if sym not in sdfg.symbols]
+            if undeclared:
+                defined_symbols = self._defined_symbols_for_nesting()
+                for sym, symval in undeclared:
                     sdfg.add_symbol(sym, infer_expr_type(symval, defined_symbols) or dtypes.typeclass(int))
 
         return s
+
+    def _defined_symbols_for_nesting(self) -> dict[str, dtypes.typeclass]:
+        """:meth:`defined_symbols` of this state, memoized for the library expansions of one
+        :meth:`~dace.sdfg.SDFG.expand_library_nodes` sweep.
+
+        The walk covers the whole parent SDFG, and an expansion only adds nodes inside a state, so every expansion in
+        the state would otherwise repeat it. A symbol an expansion declares in the parent SDFG asks again.
+        """
+        if self.sdfg is None:
+            return {}
+        memo = EXPANSION_DEFINED_SYMBOLS.get()
+        if memo is None:
+            return self.defined_symbols()
+        cached = memo.get(self)
+        if cached is None or cached[0] != len(self.sdfg.symbols):
+            cached = memo[self] = (len(self.sdfg.symbols), self.defined_symbols())
+        return cached[1]
 
     def add_map(
         self,
@@ -2996,9 +3022,13 @@ class AbstractControlFlowRegion(
         """
         # TODO: Refactor
         sub_cfg_list = self._cfg_list
-        for g in cfg_list:
-            if g not in sub_cfg_list:
-                sub_cfg_list.append(g)
+        # Below the root every level hands its parent the whole shared list: an identity set keeps that linear.
+        if cfg_list is not sub_cfg_list:
+            present = {id(g) for g in sub_cfg_list}
+            for g in cfg_list:
+                if id(g) not in present:
+                    present.add(id(g))
+                    sub_cfg_list.append(g)
         ptarget = None
         if isinstance(self, dace.SDFG) and self.parent_sdfg is not None:
             ptarget = self.parent_sdfg
