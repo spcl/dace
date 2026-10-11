@@ -61,9 +61,10 @@ Setting the threshold to 0 turns rule 2 off, leaving only the nested-parallelism
 lever for measuring the cost model itself.
 """
 
+import copy
 from typing import Any
 
-from dace import SDFG, dtypes, properties, symbolic
+from dace import SDFG, data, dtypes, properties, symbolic
 from dace.sdfg import nodes
 from dace.sdfg.narrowing import config_int
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
@@ -90,13 +91,49 @@ def at_most_one_trip(count: Any) -> bool:
     return upper is not None and upper <= 1
 
 
+def privatize_interior_transients(owner: SDFG, state: SDFGState, entry: nodes.MapEntry) -> bool:
+    """Give every transient the inside of ``entry``'s scope shares with another scope a descriptor of its own, so
+    a parallel schedule allocates it per iteration; ``False`` (and nothing renamed) if one of them is read there
+    before the scope writes it.
+
+    Code generation allocates a transient at the scope common to all of its access nodes. Under a sequential
+    parent, map fusion's per-element scalars may share one name across two maps of the same body, and are then
+    declared once outside both: harmless while each map runs on one thread, a data race once one is shared out
+    (``cloudsc_monolith``'s peeled level, ``__map_fusion_zmfdn_0``). A copy that every use in the scope writes
+    before reading carries no value in from the other scope, so renaming it there is exact.
+    """
+    interior = state.scope_subgraph(entry, include_entry=False, include_exit=False).nodes()
+    names: dict[str, list[nodes.AccessNode]] = {}
+    for node in interior:
+        if isinstance(node, nodes.AccessNode) and owner.arrays[node.data].transient:
+            names.setdefault(node.data, []).append(node)
+    inside = {id(node) for node in interior}
+    shared = []
+    for name, local in names.items():
+        if all(id(n) in inside for st in owner.states() for n in st.data_nodes() if n.data == name):
+            continue
+        written = [n for n in local if any(not e.data.is_empty() for e in state.in_edges(n))]
+        if isinstance(owner.arrays[name], data.View) or len(written) != len(local):
+            return False
+        shared.append((name, local))
+    for name, local in shared:
+        fresh = owner.add_datadesc(name, copy.deepcopy(owner.arrays[name]), find_new_name=True)
+        for node in local:
+            node.data = fresh
+            for edge in state.all_edges(node):
+                if edge.data.data == name:
+                    edge.data.data = fresh
+    return True
+
+
 def release_one_trip_maps(sdfg: SDFG) -> int:
     """Make every top-level CPU map of at most one iteration ``Sequential``, and the maps directly in its body
     (or at the top of a nested SDFG there) ``CPU_Multicore``, so schedule inference does not pin them under it.
 
-    Runs BEFORE inference, while canonicalization's maps are still ``Default``, and touches nothing else:
-    the peeled first vertical level of ``cloudsc_monolith`` is such a map, and inferred under it its 132
-    plane maps ran on one thread, 3.7 s of a 4 s call at 24 threads.
+    Runs BEFORE inference, while canonicalization's maps are still ``Default``: the peeled first vertical level
+    of ``cloudsc_monolith`` is such a map, and inferred under it its plane maps ran on one thread. A map whose
+    scope reads a shared transient before writing it stays under its parent's schedule
+    (:func:`privatize_interior_transients`).
 
     :param sdfg: the SDFG whose own states are rewritten.
     :returns: how many such maps were found.
@@ -111,12 +148,15 @@ def release_one_trip_maps(sdfg: SDFG) -> int:
                 continue
             wrapper.map.schedule = dtypes.ScheduleType.Sequential
             found += 1
-            body = [n for n in children[wrapper] if isinstance(n, nodes.MapEntry)]
+            body = [(sdfg, state, n) for n in children[wrapper] if isinstance(n, nodes.MapEntry)]
             for nested in [n for n in children[wrapper] if isinstance(n, nodes.NestedSDFG) and n.sdfg is not None]:
                 for inner_state in nested.sdfg.states():
-                    body += [n for n in inner_state.scope_children()[None] if isinstance(n, nodes.MapEntry)]
-            for entry in body:
-                if entry.map.schedule == dtypes.ScheduleType.Default:
+                    inner = inner_state.scope_children()[None]
+                    body += [(nested.sdfg, inner_state, n) for n in inner if isinstance(n, nodes.MapEntry)]
+            for owner, body_state, entry in body:
+                if entry.map.schedule == dtypes.ScheduleType.Default and privatize_interior_transients(
+                    owner, body_state, entry
+                ):
                     entry.map.schedule = dtypes.ScheduleType.CPU_Multicore
     return found
 

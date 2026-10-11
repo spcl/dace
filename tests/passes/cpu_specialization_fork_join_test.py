@@ -329,6 +329,80 @@ def test_one_trip_map_releases_the_maps_in_its_body():
     assert schedules(sdfg) == {"peeled": dtypes.ScheduleType.Sequential, "plane_map": dtypes.ScheduleType.CPU_Multicore}
 
 
+def staged_map_state(container, label, out):
+    """A state with one map over ``0:N`` that computes ``out[i]`` through the scalar transient ``t`` inside it."""
+    state = container.add_state(label, is_start_block=len(container.nodes()) == 0)
+    entry, exit_node = state.add_map(label, {"i": "0:N"})
+    first = state.add_tasklet(f"{label}_first", {}, {"o"}, "o = 2.0")
+    second = state.add_tasklet(f"{label}_second", {"x"}, {"o"}, "o = x + 1.0")
+    staged = state.add_access("t")
+    state.add_nedge(entry, first, dace.Memlet())
+    state.add_edge(first, "o", staged, None, dace.Memlet("t[0]"))
+    state.add_edge(staged, None, second, "x", dace.Memlet("t[0]"))
+    state.add_memlet_path(second, exit_node, state.add_write(out), src_conn="o", memlet=dace.Memlet(f"{out}[i]"))
+    return state
+
+
+def test_released_maps_get_their_own_staged_scalars():
+    """Two maps of a one-trip body stage a value through one scalar transient ``t``: code generation declares it
+    once outside both, shared by every thread once they run in parallel. Each released map gets its own copy."""
+    inner = dace.SDFG("staged_body")
+    inner.add_array("a", [N], dace.float64)
+    inner.add_array("b", [N], dace.float64)
+    inner.add_scalar("t", dace.float64, transient=True)
+    first = staged_map_state(inner, "first", "a")
+    inner.add_edge(first, staged_map_state(inner, "second", "b"), dace.InterstateEdge())
+    sdfg = dace.SDFG("staged_wrapper")
+    sdfg.add_array("a", [N], dace.float64)
+    sdfg.add_array("b", [N], dace.float64)
+    state = sdfg.add_state("peeled", is_start_block=True)
+    entry, exit_node = state.add_map("peeled", {"k": "14:Min(14, N - 1) + 1"})
+    nsdfg = state.add_nested_sdfg(inner, {}, {"a", "b"}, symbol_mapping={"N": N})
+    state.add_nedge(entry, nsdfg, dace.Memlet())
+    for name in ("a", "b"):
+        state.add_memlet_path(
+            nsdfg, exit_node, state.add_write(name), src_conn=name, memlet=dace.Memlet(f"{name}[0:N]")
+        )
+    sdfg.validate()
+    assert release_one_trip_maps(sdfg) == 1
+    sdfg.validate()
+    assert schedules(sdfg) == {
+        "peeled": dtypes.ScheduleType.Sequential,
+        "first": dtypes.ScheduleType.CPU_Multicore,
+        "second": dtypes.ScheduleType.CPU_Multicore,
+    }
+    staged = {st.label: {n.data for n in st.data_nodes() if inner.arrays[n.data].transient} for st in inner.states()}
+    assert len(staged["first"]) == len(staged["second"]) == 1 and staged["first"] != staged["second"]
+
+
+def test_a_map_reading_a_shared_scalar_first_stays_under_its_parent():
+    """A map whose scope reads the scalar ``t`` another state wrote, without writing it first, would read that
+    state's value through a private copy: it is not released."""
+    inner = dace.SDFG("carried_body")
+    inner.add_array("a", [N], dace.float64)
+    inner.add_scalar("t", dace.float64, transient=True)
+    init = inner.add_state("init", is_start_block=True)
+    init.add_edge(init.add_tasklet("seed", {}, {"o"}, "o = 3.0"), "o", init.add_write("t"), None, dace.Memlet("t[0]"))
+    use = inner.add_state("use")
+    inner.add_edge(init, use, dace.InterstateEdge())
+    reader, reader_exit = use.add_map("reader", {"i": "0:N"})
+    carried = use.add_access("t")
+    copy_out = use.add_tasklet("copy_out", {"x"}, {"o"}, "o = x")
+    use.add_nedge(reader, carried, dace.Memlet())
+    use.add_edge(carried, None, copy_out, "x", dace.Memlet("t[0]"))
+    use.add_memlet_path(copy_out, reader_exit, use.add_write("a"), src_conn="o", memlet=dace.Memlet("a[i]"))
+    inner.validate()
+    sdfg = dace.SDFG("carried_wrapper")
+    sdfg.add_array("a", [N], dace.float64)
+    state = sdfg.add_state("peeled", is_start_block=True)
+    entry, exit_node = state.add_map("peeled", {"k": "14:Min(14, N - 1) + 1"})
+    nsdfg = state.add_nested_sdfg(inner, {}, {"a"}, symbol_mapping={"N": N})
+    state.add_nedge(entry, nsdfg, dace.Memlet())
+    state.add_memlet_path(nsdfg, exit_node, state.add_write("a"), src_conn="a", memlet=dace.Memlet("a[0:N]"))
+    assert release_one_trip_maps(sdfg) == 1
+    assert reader.map.schedule == dtypes.ScheduleType.Default
+
+
 def test_triangular_map_in_loop_stays_parallel():
     """s115 exactly: ``for j in 0:N { map i in j+1:N }``. The inner map IS data-parallel -- that is
     why it is a Map -- and its extent ``N - j - 1`` is symbolic, so it is decided per call by the run-time
@@ -547,6 +621,8 @@ if __name__ == "__main__":
     test_the_runtime_guard_of_a_triangular_nest_names_no_loop_variable()
     test_parameter_extent_carries_a_runtime_guard()
     test_one_trip_map_releases_the_maps_in_its_body()
+    test_released_maps_get_their_own_staged_scalars()
+    test_a_map_reading_a_shared_scalar_first_stays_under_its_parent()
     test_triangular_map_in_loop_stays_parallel()
     test_wide_map_in_time_loop_stays_parallel()
     test_provably_short_loop_is_not_re_entry()
