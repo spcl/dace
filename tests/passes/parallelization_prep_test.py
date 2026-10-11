@@ -3,6 +3,7 @@
 
 import pytest
 
+import dace
 from dace import symbolic
 from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.transformation.passes.loop_specialization import specialize_loop_under_condition
@@ -57,3 +58,43 @@ def test_a_specialized_loop_keeps_the_cfg_list_in_place(monkeypatch, multi_state
     assert loops == ["outer_p0", "outer_p1", "outer_p2", "outer"], loops
     assert_cfg_list_as_after_a_reset(sdfg)
     sdfg.validate()
+
+
+N = dace.symbol("N")
+M = dace.symbol("M")
+
+
+@dace.program
+def guarded_recurrence(a: dace.float64[N, M], b: dace.float64[N, M]):
+    for i in range(1, N):
+        if i == 1:
+            b[i, 0] = 0.0
+        for j in range(M):
+            a[i, j] = a[i - 1, j] + b[i, j]
+
+
+def loop_labels(sdfg: dace.SDFG) -> list[str]:
+    return sorted(r.label for r in sdfg.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion))
+
+
+def test_a_split_that_only_copies_mappable_loops_is_not_taken():
+    """Splitting the carried ``i`` loop at its guard ``i == 1`` copies the mappable ``j`` loop into each segment
+    and maps nothing new: the copies are one loop, so the count does not rise and the nest is not duplicated."""
+    sdfg = guarded_recurrence.to_sdfg(simplify=True)
+    before = loop_labels(sdfg)
+    assert BestEffortLoopPeeling().apply_pass(sdfg, {}) is None
+    assert loop_labels(sdfg) == before
+
+
+if __name__ == "__main__":
+    import _pytest.monkeypatch
+
+    for multi_state in (False, True):
+        for reuse_loop in (False, True):
+            with _pytest.monkeypatch.MonkeyPatch.context() as mp:
+                test_a_split_keeps_the_cfg_list_in_place(mp, multi_state, reuse_loop)
+        with _pytest.monkeypatch.MonkeyPatch.context() as mp:
+            test_an_isolated_loop_arrives_with_its_cfg_list_in_place(mp, multi_state)
+        with _pytest.monkeypatch.MonkeyPatch.context() as mp:
+            test_a_specialized_loop_keeps_the_cfg_list_in_place(mp, multi_state)
+    test_a_split_that_only_copies_mappable_loops_is_not_taken()

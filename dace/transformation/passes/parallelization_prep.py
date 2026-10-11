@@ -59,12 +59,12 @@ def _loops(sdfg: SDFG):
 def mappable_count_upper_bound(candidate: SDFG, verdicts: dict[str, bool]) -> int:
     """An upper bound on ``BestEffortLoopPeeling._mappable_loop_count(candidate, dict(verdicts))``, without its prep.
 
-    The count scores each loop 0 or 1 -- its memoized verdict when the label is in ``verdicts``, a
+    The count scores each loop label 0 or 1 -- its memoized verdict when the label is in ``verdicts``, a
     fresh probe otherwise -- and skips provably-single-iteration loops. Its prep passes (scalar
     privatization, symbol and constant propagation, iterator renaming without post-value states)
     add, remove and relabel no ``LoopRegion``, so the loops and labels read here are the ones the
     count scores."""
-    return sum(int(verdicts.get(loop.label, True)) for loop in _loops(candidate))
+    return len({loop.label for loop in _loops(candidate) if verdicts.get(loop.label, True)})
 
 
 def _as_symbolic(expr):
@@ -1746,6 +1746,10 @@ class BestEffortLoopPeeling(ppl.Pass):
           whose name is read by a LATER block ("loop-defined symbol used after the loop") -- which
           is every segment but the last. Without the SSA rename the count misses exactly the
           segments a split exists to unblock.
+        - Count a loop once however many copies of it a split made. Every segment is a deepcopy of the
+          loop, so an inner loop that maps in the original maps again in each segment under the same
+          label; counted per copy, a split of CloudSC's level loop "unblocked" its ~30 inner loops
+          a second time while parallelizing nothing, and the whole nest was duplicated for it.
         - Skip a loop accepted only because it provably runs at most once. Such a segment is DOALL
           by construction, with no dependence proven about it, so counting it scores every split
           that merely carves out a singleton as a win -- and a split that adds a residual sequential
@@ -1764,9 +1768,9 @@ class BestEffortLoopPeeling(ppl.Pass):
         # :meth:`_loop_to_map_prober`). Nothing here APPLIES a lift, so the graph the context
         # describes never changes under it.
         prober = _UNBUILT
-        count = 0
+        mappable_labels: set[str] = set()
         for loop in _loops(candidate):
-            if loop_analysis.loop_provably_at_most_one_iteration(loop):
+            if loop.label in mappable_labels or loop_analysis.loop_provably_at_most_one_iteration(loop):
                 continue
             # Memo across the probes of ONE search. Every probe re-scores the same isolated nest --
             # CloudSC's level loop wraps ~30 inner ones -- and a split rewrites only the loop it
@@ -1774,18 +1778,19 @@ class BestEffortLoopPeeling(ppl.Pass):
             # seeds the memo from the baseline and holds back the split loop's own label, whose
             # verdict is the one the search exists to move.
             if verdicts is not None and loop.label in verdicts:
-                count += verdicts[loop.label]
-                continue
-            if prober is _UNBUILT:
-                prober = self._loop_to_map_prober(candidate)
-            try:
-                mappable = bool(prober(loop))
-            except Exception:
-                mappable = False
-            if verdicts is not None:
-                verdicts[loop.label] = mappable
-            count += mappable
-        return count
+                mappable = verdicts[loop.label]
+            else:
+                if prober is _UNBUILT:
+                    prober = self._loop_to_map_prober(candidate)
+                try:
+                    mappable = bool(prober(loop))
+                except Exception:
+                    mappable = False
+                if verdicts is not None:
+                    verdicts[loop.label] = mappable
+            if mappable:
+                mappable_labels.add(loop.label)
+        return len(mappable_labels)
 
     @staticmethod
     def _loop_to_map_prober(candidate: SDFG):
