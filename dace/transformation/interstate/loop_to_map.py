@@ -1719,9 +1719,11 @@ class LoopToMap(xf.MultiStateTransformation):
         itersym = symbolic.pystr_to_symbolic(itervar)
         a = sp.Wild("a", exclude=[itersym])
         b = sp.Wild("b", exclude=[itersym])
-        # The probe visits the writes in this order, and a write that fails refuses the loop by itself.
+        # The probe visits the writes in this order, and a write that fails refuses the loop by itself. Only the
+        # states the access index lists can hold ``name``; a state it misses only defers to the full analysis.
         writes: list[memlet.Memlet] = []
-        accesses = [(st, dn) for st in loop_states for dn in st.data_nodes() if dn.data == name]
+        holders = set(ctx.access_states.get(name, ()))
+        accesses = [(st, dn) for st in loop_states if st in holders for dn in st.data_nodes() if dn.data == name]
         for st, dn in accesses:
             for w in st.in_edges(dn):
                 if not counted_write(sdfg, st, dn, w):
