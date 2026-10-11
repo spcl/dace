@@ -74,21 +74,21 @@ _ARMS = {
 #: stale unnoticed. ``omp_parallel_for`` counts pragmas in the GENERATED CODE, and the code has two
 #: sources for them: every OUTERMOST Map, and the loop each ``Fill`` / ``Copy`` library node expands
 #: into. A Map nested inside another Map's scope correctly gets no pragma of its own. Measured at
-#: this pin: 442 Maps, all outermost, and 526 pragmas = those 442 + 84 from the expanded library nodes.
+#: this pin: 226 Maps, all outermost, and 276 pragmas = those 226 + 50 from the expanded library nodes.
 #:
 #: ``_EXPECTED_OUTERMOST_MAPS`` is therefore pinned separately. It is what keeps "a Map codegen
 #: declines to emit a pragma for is a silent serialization" a real check -- against the total Map
 #: count that check only holds while canonicalize nests no Map.
 #:
-#: The loops that stay sequential are ``for_404``, ``for_493_p0``, the two ``for_973``, ``for_1721_fis0``
-#: and the ``for_1146`` / ``for_1396`` / ``for_1456`` bodies. The unrolled families (``for_608_*``,
-#: ``for_1015_*``, ``for_1215_*``, ``for_1244_*``, ``for_767``, ``for_1327_fis*``) leave neither a loop nor a
-#: Map. Retargeting a per-iteration scratch slot as if it were a loop-carried accumulator is the mistake
-#: that would parallelize such a loop, and it is refused deliberately; see ``RetargetWCRAccumulator``'s guards.
-_EXPECTED_MAPS = 442
-_EXPECTED_OUTERMOST_MAPS = 442
-_EXPECTED_SEQUENTIAL_LOOPS = 9
-_EXPECTED_OMP_PARALLEL_FOR = 526
+#: Eight loops stay sequential, and the level nest appears once: the peeling search does not split it, as a
+#: split that maps nothing new would only copy the nest (and every count here with it). The unrolled families leave
+#: neither a loop nor a Map. Retargeting a per-iteration scratch slot as if it were a loop-carried
+#: accumulator is the mistake that would parallelize such a loop, and it is refused deliberately; see
+#: ``RetargetWCRAccumulator``'s guards.
+_EXPECTED_MAPS = 226
+_EXPECTED_OUTERMOST_MAPS = 226
+_EXPECTED_SEQUENTIAL_LOOPS = 8
+_EXPECTED_OMP_PARALLEL_FOR = 276
 
 
 def _map_entries(sdfg: dace.SDFG):
