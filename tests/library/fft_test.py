@@ -48,8 +48,15 @@ def test_ifft(norm):
     assert np.allclose(b, np.fft.ifft(a, norm=norm))
 
 
+def _gpu_fft() -> str:
+    """The FFT implementation of the configured GPU backend."""
+    from dace.codegen.common import get_gpu_backend
+
+    return {"cuda": "cuFFT", "hip": "hipFFT"}[get_gpu_backend()]
+
+
 @pytest.mark.gpu
-def test_cufft():
+def test_gpu_fft():
     import dace.libraries.fft as fftlib
 
     @dace.program
@@ -58,7 +65,7 @@ def test_cufft():
 
     sdfg = tester.to_sdfg()
     sdfg.apply_gpu_transformations()
-    fftlib.FFT.default_implementation = "cuFFT"
+    fftlib.FFT.default_implementation = _gpu_fft()
     sdfg.expand_library_nodes()
     fftlib.FFT.default_implementation = "pure"
 
@@ -68,7 +75,7 @@ def test_cufft():
 
 
 @pytest.mark.gpu
-def test_cufft_twoplans():
+def test_gpu_fft_twoplans():
     import dace.libraries.fft as fftlib
 
     @dace.program
@@ -77,8 +84,8 @@ def test_cufft_twoplans():
 
     sdfg = tester.to_sdfg()
     sdfg.apply_gpu_transformations()
-    fftlib.FFT.default_implementation = "cuFFT"
-    fftlib.IFFT.default_implementation = "cuFFT"
+    fftlib.FFT.default_implementation = _gpu_fft()
+    fftlib.IFFT.default_implementation = _gpu_fft()
     sdfg.expand_library_nodes()
     fftlib.FFT.default_implementation = "pure"
     fftlib.IFFT.default_implementation = "pure"
@@ -90,6 +97,24 @@ def test_cufft_twoplans():
     assert np.allclose(d, np.fft.ifft(b, norm="forward"), rtol=1e-3, atol=1e-5)
 
 
+@pytest.mark.gpu
+def test_gpu_fft_along_the_first_axis():
+    import dace.libraries.fft as fftlib
+
+    @dace.program
+    def tester(x: dace.complex128[16, 12]):
+        return np.fft.fft(x, axis=0)
+
+    sdfg = tester.to_sdfg()
+    sdfg.apply_gpu_transformations()
+    fftlib.FFT.default_implementation = _gpu_fft()
+    sdfg.expand_library_nodes()
+    fftlib.FFT.default_implementation = "pure"
+
+    a = np.random.rand(16, 12) + 1j * np.random.rand(16, 12)
+    assert np.allclose(sdfg(a), np.fft.fft(a, axis=0))
+
+
 if __name__ == "__main__":
     test_fft(False)
     test_fft(True)
@@ -97,5 +122,6 @@ if __name__ == "__main__":
     test_ifft("backward")
     test_ifft("forward")
     test_ifft("ortho")
-    test_cufft()
-    test_cufft_twoplans()
+    test_gpu_fft()
+    test_gpu_fft_twoplans()
+    test_gpu_fft_along_the_first_axis()

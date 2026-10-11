@@ -10,6 +10,8 @@ from dace import library
 from dace import memlet as mm
 from dace import subsets as sbs
 from dace.frontend.common import op_repository as oprepo
+from dace.libraries.blas import blas_helpers, environments
+from dace.libraries.blas.blas_helpers import operand
 from dace.properties import SymbolicProperty
 from dace.sdfg import SDFG, SDFGState, nodes
 from dace.sdfg.nodes import LibraryNode
@@ -69,6 +71,45 @@ class ExpandGerPure(ExpandTransformation):
         return nsdfg_node
 
 
+def ger_call(node, state, sdfg) -> SDFG:
+    """``_res = _A``, then ``?ger`` (``?geru`` for complex data: ``Ger`` does not conjugate) updates ``_res`` in
+    place."""
+    res, x, y = (operand(node, state, sdfg, c) for c in ("_res", "_x", "_y"))
+    layout = blas_helpers.matrix_layout(res)
+    prefix = blas_helpers.blas_prefix(res.desc.dtype)
+    if layout is None or prefix is None:
+        return ExpandGerPure.expansion(node, state, sdfg)
+    routine = f"{prefix}geru" if res.desc.dtype.is_complex() else f"{prefix}ger"
+    scalars, arg = blas_helpers.scalar_arguments(res.desc.dtype, alpha=node.alpha)
+    order = "CblasRowMajor" if layout.row_major else "CblasColMajor"
+    (m, n), (lda,) = res.shape, layout.leading
+    call = (
+        f"cblas_{routine.lower()}({order}, {m}, {n}, {arg['alpha']}, __x, {x.strides[0]}, __y, {y.strides[0]}, "
+        f"__res, {lda});"
+    )
+    return blas_helpers.in_place_call(node, state, sdfg, "_A", "_res", scalars + call)
+
+
+@library.expansion
+class ExpandGerOpenBLAS(ExpandTransformation):
+    environments = [environments.openblas.OpenBLAS]
+
+    @staticmethod
+    def expansion(node, parent_state, parent_sdfg, **kwargs):
+        node.validate(parent_sdfg, parent_state)
+        return ger_call(node, parent_state, parent_sdfg)
+
+
+@library.expansion
+class ExpandGerMKL(ExpandTransformation):
+    environments = [environments.intel_mkl.IntelMKL]
+
+    @staticmethod
+    def expansion(node, parent_state, parent_sdfg, **kwargs):
+        node.validate(parent_sdfg, parent_state)
+        return ger_call(node, parent_state, parent_sdfg)
+
+
 @library.node
 class Ger(LibraryNode):
     """
@@ -80,7 +121,7 @@ class Ger(LibraryNode):
     """
 
     # Global properties
-    implementations = {"pure": ExpandGerPure}
+    implementations = {"pure": ExpandGerPure, "OpenBLAS": ExpandGerOpenBLAS, "MKL": ExpandGerMKL}
     default_implementation = None
 
     # Object fields
