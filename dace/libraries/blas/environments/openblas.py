@@ -262,9 +262,9 @@ class OpenBLAS:
     cmake_compile_flags = []
     cmake_files = []
 
-    headers = ["cblas.h", "lapacke.h", "../include/dace_blas.h"]
+    headers = ["cblas.h", "lapacke.h", "../include/dace_blas.h", "../include/dace_openblas.h"]
     state_fields = []
-    init_code = ""
+    init_code = "dace::blas::DeferOpenBlasThreadsToOpenMP();"
     finalize_code = ""
     dependencies = []
 

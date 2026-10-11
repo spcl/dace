@@ -1223,6 +1223,10 @@ def _build_stages(
     # caller that chose the map granularity by hand run the stages after ``fuse`` without it.
     s += [("fuse_final", PatternApplyOnceEverywhere([DistributeTaskletIntoMap()]))]
     s += [("fuse_final", ppl.Pipeline([FuseMaps()]))]
+    # The terminal LoopToMap and fusion build map nests the ``reorder`` stage never saw: velocity_tendencies'
+    # level loops become ``map[jk, i, b]`` over ``A[i, jk, b]``, the level outermost at a stride of one plane row.
+    s += [("fuse_final", MinimizeStridePermutation())]
+    s += [("fuse_final", PatternApplyOnceEverywhere([MapCollapse()]))]
 
     # redundant_array (post-fuse cleanup): drop a transient that only ever gets copied wholesale into
     # its destination, so the producing map writes the destination directly. No ``SimplifyPass`` runs

@@ -14,7 +14,6 @@ import os
 import warnings
 
 import numpy as np
-import pytest
 
 import dace
 from dace.libraries.blas import Gemm
@@ -137,5 +136,28 @@ def test_gemm_compiles_and_runs_through_openblas():
         Gemm.default_implementation = prev
 
 
+def test_a_program_using_openblas_defers_its_threads_to_openmp():
+    """The program's initialization keeps a pthreads OpenBLAS on one thread, so its pool does not compete with
+    the OpenMP team for the cores; the check runs in the generated code, so a netlib link still builds."""
+    prev = Gemm.default_implementation
+    Gemm.default_implementation = "OpenBLAS"
+    try:
+
+        @dace.program
+        def deferring_gemm(A: dace.float64[32, 24], B: dace.float64[24, 16]):
+            return A @ B
+
+        sdfg = deferring_gemm.to_sdfg()
+        sdfg.expand_library_nodes()
+        code = "\n".join(obj.clean_code for obj in sdfg.generate_code())
+    finally:
+        Gemm.default_implementation = prev
+    assert "dace::blas::DeferOpenBlasThreadsToOpenMP();" in code
+
+
 if __name__ == "__main__":
-    raise SystemExit(pytest.main([__file__, "-v"]))
+    test_some_blas_environment_detected_when_a_blas_is_present()
+    test_openblas_single_library_is_detected()
+    test_openblas_threading_flavor_is_probed_and_never_fatal()
+    test_gemm_compiles_and_runs_through_openblas()
+    test_a_program_using_openblas_defers_its_threads_to_openmp()

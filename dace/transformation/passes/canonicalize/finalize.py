@@ -52,6 +52,7 @@ from dace.transformation.interstate import InlineSDFG
 from dace.transformation.passes.canonicalize.hoist_loop_range_calls import HoistLoopRangeCalls
 from dace.transformation.passes.canonicalize.pipeline import run_structural_cleanup
 from dace.transformation.passes.canonicalize.shrink_map_local_transients import ShrinkMapLocalTransients
+from dace.transformation.passes.cpu_specialization.demote_level_maps import demote_strided_level_maps
 from dace.transformation.passes.cpu_specialization.hoist_parallel_region import HoistParallelRegion
 from dace.transformation.passes.cpu_specialization.pipeline import cpu_specialize
 from dace.transformation.passes.cpu_specialization.sequentialize_unprofitable_parallel_scopes import (
@@ -773,7 +774,8 @@ def finalize_stages(sdfg: SDFG, device: dtypes.DeviceType, break_anti_dependence
     # (nested) OpenMP region per outer iteration -- the "constant parallel reductions" slowdown.
     if device == dtypes.DeviceType.CPU:
         # While canonicalization's maps are still ``Default``: inferred under a one-trip map, a map would be
-        # pinned ``Sequential`` for good.
+        # pinned ``Sequential`` for good, and a demoted level map's plane maps must be inferred top-level.
+        demote_strided_level_maps(sdfg)
         release_one_trip_maps(sdfg)
     infer_types.set_default_schedule_and_storage_types(sdfg, None)
 
