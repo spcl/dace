@@ -176,7 +176,9 @@ def shared_wcr_scopes(
                 for name, desc in node.sdfg.arrays.items()
                 if desc.transient and desc.storage == dtypes.StorageType.GPU_Shared
             }
-            for inner_state in node.sdfg.all_states():
+            for inner_state in node.sdfg.all_control_flow_blocks():
+                if not isinstance(inner_state, SDFGState):
+                    continue
                 yield from shared_wcr_scopes(inner_state, None, inner_shared)
             continue
         if isinstance(node, nodes.Tasklet):
