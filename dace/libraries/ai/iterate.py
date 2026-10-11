@@ -22,7 +22,7 @@ import hashlib
 import json
 import warnings
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Union
+from typing import Any
 
 import dace.serialize
 from dace.libraries.ai.exceptions import AIExpansionError
@@ -32,7 +32,7 @@ from dace.sdfg import utils as sdutil
 
 #: What a caller may pass to identify a slot: its name, an ``AITasklet``, or ``None`` for "the only
 #: one". A guid also works, since it is matched against the name.
-NodeSelector = Union[str, AITasklet, None]
+NodeSelector = str | AITasklet | None
 
 
 @dataclass
@@ -79,18 +79,14 @@ def code_fingerprint(tasklet: nodes.Tasklet) -> str:
     :param tasklet: The tasklet to fingerprint.
     :return: A short hexadecimal digest.
     """
-    material = "\0".join(
-        (
-            tasklet.code.as_string,
-            tasklet.code_global.as_string,
-            tasklet.code_init.as_string,
-            tasklet.code_exit.as_string,
-        )
+    material = (
+        f"{tasklet.code.as_string}\0{tasklet.code_global.as_string}\0"
+        f"{tasklet.code_init.as_string}\0{tasklet.code_exit.as_string}"
     )
     return hashlib.sha256(material.encode("utf-8")).hexdigest()[:16]
 
 
-def stamp(tasklet: AITasklet, session: str, round_number: int, node_json: Dict[str, Any]) -> None:
+def stamp(tasklet: AITasklet, session: str, round_number: int, node_json: dict[str, Any]) -> None:
     """
     Records on a tasklet how it was produced.
 
@@ -110,7 +106,7 @@ def stamp(tasklet: AITasklet, session: str, round_number: int, node_json: Dict[s
     )
 
 
-def read(tasklet: nodes.Tasklet) -> Optional[Dict[str, Any]]:
+def read(tasklet: nodes.Tasklet) -> dict[str, Any] | None:
     """
     Reads the provenance of a tasklet.
 
@@ -142,7 +138,7 @@ def _iter_slots(sdfg: SDFG):
                 yield from _iter_slots(node.sdfg)
 
 
-def sessions(sdfg: SDFG) -> List[SlotInfo]:
+def sessions(sdfg: SDFG) -> list[SlotInfo]:
     """
     Lists every slot in an SDFG that can be refined.
 
@@ -291,7 +287,7 @@ def refine(sdfg: SDFG, node: NodeSelector = None, message: str = "", **kwargs) -
     return _select(sdfg, slot.name).tasklet
 
 
-def history(sdfg: SDFG, node: NodeSelector = None) -> List[Round]:
+def history(sdfg: SDFG, node: NodeSelector = None) -> list[Round]:
     """
     Returns every round a slot has been through.
 

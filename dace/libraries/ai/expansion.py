@@ -19,12 +19,11 @@ imported inside :meth:`ExpandAI.expansion`.
 
 import functools
 import warnings
-from typing import Any, Dict, List, Optional, Type
+from typing import Any
 
 import dace.library
 from dace import dtypes
-from dace.sdfg import nodes
-from dace.sdfg import SDFG, SDFGState
+from dace.sdfg import SDFG, SDFGState, nodes
 from dace.transformation.transformation import ExpandTransformation
 
 
@@ -38,11 +37,11 @@ class ExpandAI(ExpandTransformation):
     scope?), and the compiler and architecture the code will be built for.
     """
 
-    environments: List[Any] = []
+    environments: list[Any] = []
 
     @staticmethod
-    @functools.lru_cache(maxsize=None)
-    def for_node_class(node_class: Type[nodes.LibraryNode]) -> Type["ExpandAI"]:
+    @functools.cache
+    def for_node_class(node_class: type[nodes.LibraryNode]) -> type["ExpandAI"]:
         """
         Returns the expansion class bound to a specific library node type.
 
@@ -86,7 +85,8 @@ class ExpandAI(ExpandTransformation):
         from dace.config import Config
         from dace.libraries.ai import cache as ai_cache
         from dace.libraries.ai import environments as ai_environments
-        from dace.libraries.ai import prompts, session as ai_session, verify
+        from dace.libraries.ai import prompts, verify
+        from dace.libraries.ai import session as ai_session
         from dace.libraries.ai.backend import get_provider
         from dace.libraries.ai.context import collect_context
         from dace.libraries.ai.exceptions import AIExpansionError
@@ -111,7 +111,7 @@ class ExpandAI(ExpandTransformation):
         # A round with feedback continues the conversation: the model sees the code it wrote and
         # the critique of it, rather than being asked the original question again from scratch.
         if feedback and record.conversation:
-            messages: List[Dict[str, str]] = list(record.conversation)
+            messages: list[dict[str, str]] = list(record.conversation)
             prompt = prompts.build_feedback_prompt(feedback, prompts.build_user_prompt(ctx))
         else:
             messages = []
@@ -124,7 +124,7 @@ class ExpandAI(ExpandTransformation):
         should_verify = Config.get_bool("ai", "verify")
 
         spec = None
-        environments: List[Any] = []
+        environments: list[Any] = []
         try:
             for attempt in range(attempts):
                 entry = record.begin_attempt(attempt + 1, prompt)
@@ -287,7 +287,7 @@ def _status(message: str) -> None:
         print(f"[ai] {message}", flush=True)
 
 
-def _detail(label: str, body: Optional[str]) -> None:
+def _detail(label: str, body: str | None) -> None:
     """
     Prints a block of text that a step acted on, only under ``debugprint=verbose``.
 

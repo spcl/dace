@@ -8,8 +8,8 @@ import numpy as np
 import pytest
 
 import dace
-import dace.library
 import dace.libraries.ai as ai
+import dace.library
 from dace import nodes
 from dace.transformation import transformation as xf
 

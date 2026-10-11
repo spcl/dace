@@ -16,7 +16,7 @@ Run without arguments to list the scenarios.
 """
 
 import sys
-from typing import Callable, Dict, Tuple
+from collections.abc import Callable
 
 import numpy as np
 
@@ -58,7 +58,7 @@ def _matmul_reference(a, b):
     return a @ b
 
 
-def gemm_cpu() -> Tuple[dace.SDFG, Callable]:
+def gemm_cpu() -> tuple[dace.SDFG, Callable]:
     """
     A ``Gemm`` library node on the host over CPU arrays.
 
@@ -88,7 +88,7 @@ def gemm_cpu() -> Tuple[dace.SDFG, Callable]:
     return sdfg, check
 
 
-def gemm_tile_avx() -> Tuple[dace.SDFG, Callable]:
+def gemm_tile_avx() -> tuple[dace.SDFG, Callable]:
     """
     An :class:`AINode` microkernel computing one output tile, inside a parallel map.
 
@@ -123,7 +123,7 @@ def gemm_tile_avx() -> Tuple[dace.SDFG, Callable]:
     return sdfg, check
 
 
-def transpose_avx() -> Tuple[dace.SDFG, Callable]:
+def transpose_avx() -> tuple[dace.SDFG, Callable]:
     """
     An :class:`AINode` register transpose of one tile, inside a parallel map.
 
@@ -155,7 +155,7 @@ def transpose_avx() -> Tuple[dace.SDFG, Callable]:
     return sdfg, check
 
 
-def _gemm_gpu(name: str, inside_kernel: bool) -> Tuple[dace.SDFG, Callable]:
+def _gemm_gpu(name: str, inside_kernel: bool) -> tuple[dace.SDFG, Callable]:
     """
     A ``Gemm`` over GPU arrays, either inside a kernel or on the host.
 
@@ -195,7 +195,7 @@ def _gemm_gpu(name: str, inside_kernel: bool) -> Tuple[dace.SDFG, Callable]:
     return sdfg, check
 
 
-def gemm_device() -> Tuple[dace.SDFG, Callable]:
+def gemm_device() -> tuple[dace.SDFG, Callable]:
     """
     A ``Gemm`` inside a GPU kernel.
 
@@ -204,7 +204,7 @@ def gemm_device() -> Tuple[dace.SDFG, Callable]:
     return _gemm_gpu("ai_scenario_gemm_device", inside_kernel=True)
 
 
-def gemm_host_gpu() -> Tuple[dace.SDFG, Callable]:
+def gemm_host_gpu() -> tuple[dace.SDFG, Callable]:
     """
     A ``Gemm`` on the host over GPU arrays.
 
@@ -213,7 +213,7 @@ def gemm_host_gpu() -> Tuple[dace.SDFG, Callable]:
     return _gemm_gpu("ai_scenario_gemm_host_gpu", inside_kernel=False)
 
 
-SCENARIOS: Dict[str, Callable] = {
+SCENARIOS: dict[str, Callable] = {
     "gemm_cpu": gemm_cpu,
     "gemm_tile_avx": gemm_tile_avx,
     "transpose_avx": transpose_avx,

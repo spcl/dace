@@ -2,7 +2,6 @@
 """Anthropic backend for AI-generated library node expansions."""
 
 import json
-from typing import Dict, List
 
 from dace.config import Config
 from dace.libraries.ai import backend
@@ -47,7 +46,7 @@ class AnthropicProvider:
                 "the Anthropic Console (console.anthropic.com), billed separately.",
             )
 
-    def generate(self, system: str, messages: List[Dict[str, str]]) -> backend.TaskletSpec:
+    def generate(self, system: str, messages: list[dict[str, str]]) -> backend.TaskletSpec:
         """
         Requests a tasklet from the model.
 

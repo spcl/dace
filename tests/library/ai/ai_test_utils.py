@@ -2,7 +2,7 @@
 """Helpers shared by the tests of the AI library node expansion."""
 
 import contextlib
-from typing import Callable, Dict, List, Optional
+from collections.abc import Callable
 
 from dace.libraries.ai import backend
 
@@ -15,16 +15,16 @@ class StubProvider:
     verification, tasklet construction and code generation -- be tested offline.
     """
 
-    def __init__(self, spec_factory: Callable[[str, List[Dict[str, str]]], backend.TaskletSpec]) -> None:
+    def __init__(self, spec_factory: Callable[[str, list[dict[str, str]]], backend.TaskletSpec]) -> None:
         """
         :param spec_factory: Called with the system prompt and the conversation; returns the
                              tasklet to pretend the model produced.
         """
         self._spec_factory = spec_factory
-        self.calls: List[List[Dict[str, str]]] = []
-        self.system: Optional[str] = None
+        self.calls: list[list[dict[str, str]]] = []
+        self.system: str | None = None
 
-    def generate(self, system: str, messages: List[Dict[str, str]]) -> backend.TaskletSpec:
+    def generate(self, system: str, messages: list[dict[str, str]]) -> backend.TaskletSpec:
         """
         Records the prompt and returns the canned tasklet.
 
@@ -55,7 +55,7 @@ def stub_provider(spec: backend.TaskletSpec):
 
 
 @contextlib.contextmanager
-def stub_provider_sequence(specs: List[backend.TaskletSpec]):
+def stub_provider_sequence(specs: list[backend.TaskletSpec]):
     """
     Installs a provider that returns a different tasklet on each request.
 

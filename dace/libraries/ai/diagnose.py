@@ -24,7 +24,7 @@ omits the body entirely -- which is where compile errors most often are.
 import os
 import re
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any
 
 from dace.config import Config
 from dace.libraries.ai.exceptions import AIExpansionError
@@ -45,7 +45,7 @@ _MSVC_DIAGNOSTIC = re.compile(
 )
 
 #: A location in the generated code: ``(cfg_id, state_id, node_id)``.
-Location = Tuple[int, int, int]
+Location = tuple[int, int, int]
 
 
 @dataclass
@@ -56,7 +56,7 @@ class Diagnostic:
     line: int
     severity: str
     message: str
-    column: Optional[int] = None
+    column: int | None = None
 
     def __str__(self) -> str:
         position = f"{os.path.basename(self.file)}:{self.line}"
@@ -70,15 +70,15 @@ class Attribution:
     """The result of matching a build's diagnostics against the generated tasklets."""
 
     #: Diagnostics grouped by the tasklet they belong to, keyed by its label.
-    by_slot: Dict[str, List[Diagnostic]] = field(default_factory=dict)
+    by_slot: dict[str, list[Diagnostic]] = field(default_factory=dict)
     #: Diagnostics that belong to no generated tasklet, and must not be pinned on one.
-    unattributed: List[Diagnostic] = field(default_factory=list)
+    unattributed: list[Diagnostic] = field(default_factory=list)
 
     def __bool__(self) -> bool:
         return bool(self.by_slot)
 
 
-def parse_diagnostics(text: str) -> List[Diagnostic]:
+def parse_diagnostics(text: str) -> list[Diagnostic]:
     """
     Extracts the positioned lines from compiler output.
 
@@ -89,7 +89,7 @@ def parse_diagnostics(text: str) -> List[Diagnostic]:
     :param text: The compiler's output.
     :return: One entry per diagnostic that names a file and a line, in order.
     """
-    found: List[Diagnostic] = []
+    found: list[Diagnostic] = []
     for raw in (text or "").splitlines():
         match = _POSIX_DIAGNOSTIC.match(raw) or _MSVC_DIAGNOSTIC.match(raw)
         if match is None:
@@ -107,7 +107,7 @@ def parse_diagnostics(text: str) -> List[Diagnostic]:
     return found
 
 
-def build_line_index(sdfg: SDFG) -> Dict[Tuple[str, int], Set[Location]]:
+def build_line_index(sdfg: SDFG) -> dict[tuple[str, int], set[Location]]:
     """
     Maps every generated line to the SDFG elements that produced it.
 
@@ -125,7 +125,7 @@ def build_line_index(sdfg: SDFG) -> Dict[Tuple[str, int], Set[Location]]:
             f"build diagnostics to a tasklet: {e}"
         ) from e
 
-    index: Dict[Tuple[str, int], Set[Location]] = {}
+    index: dict[tuple[str, int], set[Location]] = {}
     for obj in objects:
         # The file on disk is `clean_code`, which strips the annotations as trailing comments
         # without removing any newline, so line numbers agree with the annotated text.
@@ -156,7 +156,7 @@ def _resolve(sdfg: SDFG, location: Location):
         return None
 
 
-def attribute(sdfg: SDFG, diagnostics: List[Diagnostic]) -> Attribution:
+def attribute(sdfg: SDFG, diagnostics: list[Diagnostic]) -> Attribution:
     """
     Decides which generated tasklet each diagnostic belongs to.
 
@@ -186,7 +186,7 @@ def attribute(sdfg: SDFG, diagnostics: List[Diagnostic]) -> Attribution:
     return result
 
 
-def _message_for(name: str, diagnostics: List[Diagnostic], others: List[str]) -> str:
+def _message_for(name: str, diagnostics: list[Diagnostic], others: list[str]) -> str:
     """
     Renders the feedback sent to one tasklet.
 
@@ -215,7 +215,7 @@ def _message_for(name: str, diagnostics: List[Diagnostic], others: List[str]) ->
     return "\n".join(lines)
 
 
-def repair(sdfg: SDFG, error: Any, **kwargs) -> List[str]:
+def repair(sdfg: SDFG, error: Any, **kwargs) -> list[str]:
     """
     Refines the tasklets a failed build blames, once.
 

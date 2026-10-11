@@ -17,7 +17,6 @@ import functools
 import platform
 import shutil
 import subprocess
-from typing import Dict, List, Optional
 
 from dace.config import Config
 
@@ -25,7 +24,7 @@ from dace.config import Config
 _PROBE_TIMEOUT = 10
 
 
-def _run(args: List[str]) -> Optional[str]:
+def _run(args: list[str]) -> str | None:
     """
     Runs an external probe and returns its stripped standard output, or ``None`` on any failure.
 
@@ -44,7 +43,7 @@ def _run(args: List[str]) -> Optional[str]:
 
 
 @functools.lru_cache(maxsize=1)
-def cpu_description() -> Dict[str, str]:
+def cpu_description() -> dict[str, str]:
     """
     Describes the host CPU.
 
@@ -52,9 +51,9 @@ def cpu_description() -> Dict[str, str]:
              (the marketing name of the CPU) and ``flags`` (a space-separated list of ISA
              extensions as reported by the kernel).
     """
-    info: Dict[str, str] = {"machine": platform.machine()}
+    info: dict[str, str] = {"machine": platform.machine()}
     try:
-        with open("/proc/cpuinfo", "r") as fp:
+        with open("/proc/cpuinfo") as fp:
             for line in fp:
                 # 'Features' is the aarch64 spelling of 'flags'
                 if line.startswith("model name") and "model" not in info:
@@ -83,7 +82,7 @@ def cpu_has_feature(feature: str) -> bool:
 
 
 @functools.lru_cache(maxsize=1)
-def gpu_architectures() -> Optional[str]:
+def gpu_architectures() -> str | None:
     """
     Returns the GPU architecture code will be compiled for.
 
@@ -126,7 +125,7 @@ def gpu_architectures() -> Optional[str]:
 
 
 @functools.lru_cache(maxsize=1)
-def gpu_names() -> Optional[str]:
+def gpu_names() -> str | None:
     """
     Returns the marketing names of the local GPUs, if they can be determined.
 

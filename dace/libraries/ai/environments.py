@@ -17,7 +17,6 @@ import os
 import re
 import sys
 import warnings
-from typing import List, Optional
 
 from dace.config import Config
 from dace.libraries.ai.backend import EnvironmentSpec
@@ -153,7 +152,7 @@ def materialize(spec: EnvironmentSpec) -> type:
 
     existing = None
     if os.path.exists(path):
-        with open(path, "r") as fp:
+        with open(path) as fp:
             existing = fp.read()
     if existing != source:
         with open(path, "w") as fp:
@@ -171,7 +170,7 @@ def materialize(spec: EnvironmentSpec) -> type:
     return env
 
 
-def materialize_all(specs: List[EnvironmentSpec]) -> List[type]:
+def materialize_all(specs: list[EnvironmentSpec]) -> list[type]:
     """
     Materializes every environment requested for one expansion.
 
@@ -181,7 +180,7 @@ def materialize_all(specs: List[EnvironmentSpec]) -> List[type]:
     return [materialize(spec) for spec in specs]
 
 
-def resolve_installed(paths: List[str]) -> List[type]:
+def resolve_installed(paths: list[str]) -> list[type]:
     """
     Looks up environments the model asked to reuse rather than to define.
 
@@ -195,7 +194,7 @@ def resolve_installed(paths: List[str]) -> List[type]:
     """
     import dace.library  # Avoid a cyclic import
 
-    resolved: List[type] = []
+    resolved: list[type] = []
     for path in paths:
         name = (path or "").strip()
         if not name:
@@ -214,7 +213,7 @@ def resolve_installed(paths: List[str]) -> List[type]:
     return _deduplicate(resolved)
 
 
-def _deduplicate(environments: List[type]) -> List[type]:
+def _deduplicate(environments: list[type]) -> list[type]:
     """
     Drops repeated environments, keeping the first occurrence of each.
 
@@ -236,7 +235,7 @@ def _deduplicate(environments: List[type]) -> List[type]:
     return distinct
 
 
-def collect(spec) -> List[type]:
+def collect(spec) -> list[type]:
     """
     Resolves every environment one generated tasklet needs.
 
@@ -247,7 +246,7 @@ def collect(spec) -> List[type]:
     return _deduplicate(resolve_installed(spec.use_environments) + materialize_all(spec.environments))
 
 
-def load_generated_environments(directory: Optional[str] = None) -> List[type]:
+def load_generated_environments(directory: str | None = None) -> list[type]:
     """
     Imports every previously generated environment module so that it is registered again.
 

@@ -1,13 +1,14 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """A library node whose implementation is described in natural language."""
 
-from typing import Any, Dict, Iterable, Union
+from collections.abc import Iterable
+from typing import Any
 
 import dace.library
 from dace import properties
 from dace.sdfg import nodes
 
-ConnectorSpec = Union[Iterable[str], Dict[str, Any], None]
+ConnectorSpec = Iterable[str] | dict[str, Any] | None
 
 
 @dace.library.node

@@ -2,7 +2,6 @@
 """Copy-and-paste backend for AI-generated library node expansions."""
 
 import sys
-from typing import Dict, List
 
 from dace.libraries.ai import backend, exchange
 from dace.libraries.ai.exceptions import AIExpansionError
@@ -43,7 +42,7 @@ class ManualProvider:
     def __init__(self) -> None:
         self._directory = exchange.prompt_directory()
 
-    def generate(self, system: str, messages: List[Dict[str, str]]) -> backend.TaskletSpec:
+    def generate(self, system: str, messages: list[dict[str, str]]) -> backend.TaskletSpec:
         """
         Writes the prompt out, then reads the model's reply from the user.
 
@@ -89,7 +88,7 @@ class ManualProvider:
         return exchange.parse_response(reply, f'{node_type} "{node_name}"')
 
 
-def _describe(messages: List[Dict[str, str]]):
+def _describe(messages: list[dict[str, str]]):
     """
     Recovers the node type and name from the prompt, for the on-screen instructions.
 

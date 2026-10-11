@@ -29,7 +29,7 @@ import json
 import os
 import re
 import warnings
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from dace.config import Config
 
@@ -97,7 +97,7 @@ class Session:
     """
 
     def __init__(
-        self, session_id: str, directory: Optional[str], index: Dict[str, Any], conversation: List[Dict[str, str]]
+        self, session_id: str, directory: str | None, index: dict[str, Any], conversation: list[dict[str, str]]
     ) -> None:
         """
         :param session_id: The slot identifier.
@@ -110,17 +110,17 @@ class Session:
         self.index = index
         self.conversation = conversation
         self.index.setdefault("rounds", [])
-        self._round: Optional[Dict[str, Any]] = None
+        self._round: dict[str, Any] | None = None
 
     @property
-    def path(self) -> Optional[str]:
+    def path(self) -> str | None:
         """
         :return: The session directory, or ``None`` if nothing is being written.
         """
         return self.directory
 
     @property
-    def rounds(self) -> List[Dict[str, Any]]:
+    def rounds(self) -> list[dict[str, Any]]:
         """
         :return: The recorded rounds, oldest first.
         """
@@ -135,7 +135,7 @@ class Session:
 
     # -- writing ---------------------------------------------------------------------------------
 
-    def _round_dir(self, create: bool = False) -> Optional[str]:
+    def _round_dir(self, create: bool = False) -> str | None:
         """
         :param create: If True, the directory is created.
         :return: Directory of the open round, or ``None`` when not writing.
@@ -184,7 +184,7 @@ class Session:
         self._round = {
             "round": len(self.rounds) + 1,
             "feedback": feedback,
-            "started": datetime.datetime.now().isoformat(timespec="seconds"),
+            "started": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
             "outcome": "incomplete",
             "attempts": [],
         }
@@ -203,7 +203,7 @@ class Session:
         self._write("system_prompt.md", system)
         self.flush()
 
-    def begin_attempt(self, index: int, prompt: str) -> Dict[str, Any]:
+    def begin_attempt(self, index: int, prompt: str) -> dict[str, Any]:
         """
         Opens a generation attempt within the round.
 
@@ -213,14 +213,14 @@ class Session:
         :param prompt: The user message this attempt sends.
         :return: The attempt record, to pass back to the other methods.
         """
-        attempt: Dict[str, Any] = {"attempt": index, "prompt": prompt}
+        attempt: dict[str, Any] = {"attempt": index, "prompt": prompt}
         if self._round is not None:
             self._round["attempts"].append(attempt)
         self._write(f"attempt_{index}_prompt.md" if index > 1 else "prompt.md", prompt)
         self.flush()
         return attempt
 
-    def record_answer(self, attempt: Dict[str, Any], spec: Any, cached: bool = False) -> None:
+    def record_answer(self, attempt: dict[str, Any], spec: Any, cached: bool = False) -> None:
         """
         Records what the model returned for one attempt.
 
@@ -238,7 +238,7 @@ class Session:
         self._write(f"answer{suffix}.json", raw or json.dumps(attempt["answer"], indent=1))
         self.flush()
 
-    def record_verification(self, attempt: Dict[str, Any], result: Any, source: str, device: bool) -> None:
+    def record_verification(self, attempt: dict[str, Any], result: Any, source: str, device: bool) -> None:
         """
         Records a probe compilation.
 
@@ -265,7 +265,7 @@ class Session:
         self.flush()
 
     def record_outcome(
-        self, outcome: str, detail: str = "", spec: Any = None, environments: Optional[List[str]] = None
+        self, outcome: str, detail: str = "", spec: Any = None, environments: list[str] | None = None
     ) -> None:
         """
         Closes the open round.
@@ -285,12 +285,12 @@ class Session:
             self._round["error"] = detail
         if environments is not None:
             self._round["environments"] = list(environments)
-        self._round["finished"] = datetime.datetime.now().isoformat(timespec="seconds")
+        self._round["finished"] = datetime.datetime.now().astimezone().isoformat(timespec="seconds")
         if spec is not None:
             self._write("tasklet.json", json.dumps(dataclasses.asdict(spec), indent=1))
         self.flush()
 
-    def record_node(self, node_json: Dict[str, Any]) -> None:
+    def record_node(self, node_json: dict[str, Any]) -> None:
         """
         Stores the serialized library node this session generates for.
 
@@ -301,7 +301,7 @@ class Session:
 
     # -- reading ---------------------------------------------------------------------------------
 
-    def spec_of(self, round_number: int) -> Optional[Any]:
+    def spec_of(self, round_number: int) -> Any | None:
         """
         Returns the tasklet accepted in a given round.
 
@@ -314,13 +314,13 @@ class Session:
             return None
         path = os.path.join(self.directory, f"round_{round_number}", "tasklet.json")
         try:
-            with open(path, "r") as fp:
+            with open(path) as fp:
                 return backend.spec_from_dict(json.load(fp))
         except (OSError, ValueError, KeyError):
             return None
 
 
-def load(session_id: str) -> Optional[Session]:
+def load(session_id: str) -> Session | None:
     """
     Opens an existing session.
 
@@ -332,22 +332,22 @@ def load(session_id: str) -> Optional[Session]:
     if not os.path.exists(index_path):
         return None
     try:
-        with open(index_path, "r") as fp:
+        with open(index_path) as fp:
             index = json.load(fp)
     except (OSError, ValueError) as e:
         warnings.warn(f"Ignoring an unreadable AI session index at {index_path}: {e}")
         return None
 
-    conversation: List[Dict[str, str]] = []
+    conversation: list[dict[str, str]] = []
     try:
-        with open(os.path.join(directory, CONVERSATION_NAME), "r") as fp:
+        with open(os.path.join(directory, CONVERSATION_NAME)) as fp:
             conversation = json.load(fp)
     except (OSError, ValueError):
         pass
     return Session(session_id, directory, index, conversation)
 
 
-def begin(node: Any, state: Any, sdfg: Any, session_id: Optional[str] = None) -> Session:
+def begin(node: Any, state: Any, sdfg: Any, session_id: str | None = None) -> Session:
     """
     Opens the session for a slot, resuming it when one already exists.
 
@@ -368,7 +368,7 @@ def begin(node: Any, state: Any, sdfg: Any, session_id: Optional[str] = None) ->
         "node_name": getattr(node, "name", None),
         "provider": Config.get("ai", "provider"),
         "model": Config.get("ai", "model"),
-        "created": datetime.datetime.now().isoformat(timespec="seconds"),
+        "created": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
     }
 
     if not enabled():

@@ -25,18 +25,18 @@ so that they are predictable from the call site:
 * the output is ``_out``, or ``_out0``, ``_out1``, ... when several are written through ``out=``.
 """
 
+from collections.abc import Sequence
 from numbers import Number
-from typing import Any, Dict, Optional, Sequence, Tuple, Union
+from typing import Any
 
 # Imported for its side effect on the annotations below: ``ProgramVisitor`` is a string at run time, and
 # resolving it -- as the documentation build does -- needs ``dace`` in this module's namespace
 import dace  # noqa
-from dace import data, dtypes, symbolic
-from dace import Memlet, SDFG, SDFGState
-from dace.sdfg import nodes
+from dace import SDFG, Memlet, SDFGState, data, dtypes, symbolic
 from dace.frontend.common import op_repository as oprepo
 from dace.frontend.python.common import DaceSyntaxError, StringLiteral
 from dace.frontend.python.replacements.utils import ProgramVisitor, Shape
+from dace.sdfg import nodes
 
 
 def _is_container(sdfg: SDFG, value: Any) -> bool:
@@ -116,8 +116,8 @@ def _container_of(pv: ProgramVisitor, sdfg: SDFG, argument: Any, described: str)
 
 
 def _input_connectors(
-    pv: ProgramVisitor, sdfg: SDFG, inputs: Sequence[Any], named_inputs: Dict[str, Any]
-) -> Dict[str, str]:
+    pv: ProgramVisitor, sdfg: SDFG, inputs: Sequence[Any], named_inputs: dict[str, Any]
+) -> dict[str, str]:
     """
     Maps every input of the call to the connector it is read into.
 
@@ -128,7 +128,7 @@ def _input_connectors(
     :return: A mapping from connector name to data container name, in call order.
     :raises DaceSyntaxError: If an input is not a data container, or two inputs claim one connector.
     """
-    connectors: Dict[str, str] = {}
+    connectors: dict[str, str] = {}
     for i, argument in enumerate(inputs):
         connectors[f"_in{i}"] = _container_of(pv, sdfg, argument, f"Positional input {i}")
 
@@ -146,7 +146,7 @@ def _input_connectors(
     return connectors
 
 
-def _output_connectors(pv: ProgramVisitor, sdfg: SDFG, out: Any) -> Dict[str, str]:
+def _output_connectors(pv: ProgramVisitor, sdfg: SDFG, out: Any) -> dict[str, str]:
     """
     Maps the containers the node writes to the connectors they are written from.
 
@@ -182,10 +182,10 @@ def _output_connectors(pv: ProgramVisitor, sdfg: SDFG, out: Any) -> Dict[str, st
 def _allocate_output(
     pv: ProgramVisitor,
     sdfg: SDFG,
-    inputs: Dict[str, str],
-    shape: Optional[Shape],
-    dtype: Optional[dtypes.typeclass],
-    storage: Optional[dtypes.StorageType],
+    inputs: dict[str, str],
+    shape: Shape | None,
+    dtype: dtypes.typeclass | None,
+    storage: dtypes.StorageType | None,
 ) -> str:
     """
     Adds the transient the node writes to when the call does not name one.
@@ -202,7 +202,7 @@ def _allocate_output(
     :return: The name of the new transient.
     :raises DaceSyntaxError: If there is no input to infer the missing parts from.
     """
-    prototype: Optional[data.Data] = None
+    prototype: data.Data | None = None
     if inputs:
         prototype = sdfg.arrays[next(iter(inputs.values()))]
 
@@ -258,16 +258,16 @@ def ai_node(
     pv: ProgramVisitor,
     sdfg: SDFG,
     state: SDFGState,
-    description: Union[StringLiteral, str],
+    description: StringLiteral | str,
     *inputs: str,
-    out: Optional[Union[str, Sequence[str]]] = None,
-    shape: Optional[Shape] = None,
-    dtype: Optional[dtypes.typeclass] = None,
-    storage: Optional[dtypes.StorageType] = None,
-    name: Optional[Union[StringLiteral, str]] = None,
-    schedule: Optional[dtypes.ScheduleType] = None,
+    out: str | Sequence[str] | None = None,
+    shape: Shape | None = None,
+    dtype: dtypes.typeclass | None = None,
+    storage: dtypes.StorageType | None = None,
+    name: StringLiteral | str | None = None,
+    schedule: dtypes.ScheduleType | None = None,
     **named_inputs: str,
-) -> Union[str, Tuple[str, ...]]:
+) -> str | tuple[str, ...]:
     """
     Adds a node whose implementation is described in natural language.
 
@@ -323,8 +323,8 @@ def ai_node(
     node = AINode(
         str(name) if name is not None else _node_name(sdfg),
         text,
-        inputs={connector: None for connector in in_connectors},
-        outputs={connector: None for connector in out_connectors},
+        inputs=dict.fromkeys(in_connectors),
+        outputs=dict.fromkeys(out_connectors),
         schedule=schedule,
     )
     state.add_node(node)

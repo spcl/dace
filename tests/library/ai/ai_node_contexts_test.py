@@ -13,9 +13,9 @@ import sys
 import dace
 import dace.libraries.ai as ai
 from dace import dtypes, nodes
-from dace.libraries.blas.nodes.gemm import Gemm
 from dace.libraries.ai.context import collect_context
 from dace.libraries.ai.prompts import build_user_prompt
+from dace.libraries.blas.nodes.gemm import Gemm
 
 sys.path.insert(0, os.path.dirname(__file__))
 from ai_test_utils import stub_provider  # noqa: E402

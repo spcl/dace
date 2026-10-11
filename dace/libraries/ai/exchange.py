@@ -21,15 +21,13 @@ import json
 import os
 import tempfile
 import warnings
-from typing import Dict, List, Optional, Tuple
 
 from dace.config import Config
 from dace.libraries.ai import backend, prompts
 from dace.libraries.ai.context import collect_context
 from dace.libraries.ai.exceptions import AIExpansionError
 from dace.libraries.ai.nodes import AITasklet
-from dace.sdfg import nodes
-from dace.sdfg import SDFG, SDFGState
+from dace.sdfg import SDFG, SDFGState, nodes
 
 #: Appended to the prompt, since a chat interface has no structured-output mode to enforce it.
 JSON_INSTRUCTIONS = """
@@ -42,7 +40,7 @@ match this JSON schema exactly:
 """.strip()
 
 
-def prompt_directory(directory: Optional[str] = None) -> str:
+def prompt_directory(directory: str | None = None) -> str:
     """
     Returns the directory prompts are written to and responses are read from, creating it.
 
@@ -55,7 +53,7 @@ def prompt_directory(directory: Optional[str] = None) -> str:
     return directory
 
 
-def render_prompt(system: str, messages: List[Dict[str, str]]) -> str:
+def render_prompt(system: str, messages: list[dict[str, str]]) -> str:
     """
     Renders a conversation as one self-contained text, to be pasted into a chat interface.
 
@@ -68,7 +66,7 @@ def render_prompt(system: str, messages: List[Dict[str, str]]) -> str:
     return f"# System\n\n{system}\n\n# Conversation\n\n{conversation}\n\n" + JSON_INSTRUCTIONS.format(schema=schema)
 
 
-def exchange_paths(directory: str, prompt: str, name: str) -> Tuple[str, str]:
+def exchange_paths(directory: str, prompt: str, name: str) -> tuple[str, str]:
     """
     Returns the prompt and response file paths for one exchange.
 
@@ -95,7 +93,7 @@ def read_saved(path: str) -> str:
     :return: Its contents, or an empty string if it does not exist or is empty.
     """
     try:
-        with open(path, "r") as fp:
+        with open(path) as fp:
             return fp.read().strip()
     except OSError:
         return ""
@@ -163,7 +161,7 @@ def read_prompt_response(node: nodes.LibraryNode, state: SDFGState, response: st
     return next(n for n in state.nodes() if n not in before and isinstance(n, AITasklet))
 
 
-def _ai_nodes(sdfg: SDFG) -> List[Tuple[nodes.LibraryNode, SDFGState]]:
+def _ai_nodes(sdfg: SDFG) -> list[tuple[nodes.LibraryNode, SDFGState]]:
     """
     Lists the library nodes of an SDFG, including nested ones, that expand with ``'ai'``.
 
@@ -179,7 +177,7 @@ def _ai_nodes(sdfg: SDFG) -> List[Tuple[nodes.LibraryNode, SDFGState]]:
     return result
 
 
-def generate_prompts(sdfg: SDFG, directory: Optional[str] = None) -> List[str]:
+def generate_prompts(sdfg: SDFG, directory: str | None = None) -> list[str]:
     """
     Writes out the prompt for every library node in an SDFG that expands with ``'ai'``.
 
@@ -201,7 +199,7 @@ def generate_prompts(sdfg: SDFG, directory: Optional[str] = None) -> List[str]:
     return written
 
 
-def read_prompt_responses(sdfg: SDFG, directory: Optional[str] = None) -> List[AITasklet]:
+def read_prompt_responses(sdfg: SDFG, directory: str | None = None) -> list[AITasklet]:
     """
     Expands every library node whose response was saved next to its prompt.
 

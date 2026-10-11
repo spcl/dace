@@ -23,7 +23,6 @@ import hashlib
 import json
 import os
 import warnings
-from typing import Dict, List, Optional
 
 from dace.config import Config
 from dace.libraries.ai import backend
@@ -54,7 +53,7 @@ def cache_dir(create: bool = False) -> str:
     return path
 
 
-def key(system: str, messages: List[Dict[str, str]], salt: str = "") -> str:
+def key(system: str, messages: list[dict[str, str]], salt: str = "") -> str:
     """
     Computes the cache key of one request.
 
@@ -91,7 +90,7 @@ def _path(cache_key: str) -> str:
     return os.path.join(cache_dir(), f"{cache_key}.json")
 
 
-def lookup(cache_key: str) -> Optional[backend.TaskletSpec]:
+def lookup(cache_key: str) -> backend.TaskletSpec | None:
     """
     Returns a previously stored answer, if there is one.
 
@@ -103,7 +102,7 @@ def lookup(cache_key: str) -> Optional[backend.TaskletSpec]:
     if not enabled():
         return None
     try:
-        with open(_path(cache_key), "r") as fp:
+        with open(_path(cache_key)) as fp:
             entry = json.load(fp)
         return backend.spec_from_dict(entry["answer"], raw=entry.get("raw", ""))
     except FileNotFoundError:
@@ -113,7 +112,7 @@ def lookup(cache_key: str) -> Optional[backend.TaskletSpec]:
         return None
 
 
-def store(cache_key: str, spec: backend.TaskletSpec, system: str, messages: List[Dict[str, str]]) -> None:
+def store(cache_key: str, spec: backend.TaskletSpec, system: str, messages: list[dict[str, str]]) -> None:
     """
     Stores an answer for later reuse.
 
@@ -131,7 +130,7 @@ def store(cache_key: str, spec: backend.TaskletSpec, system: str, messages: List
         "provider": Config.get("ai", "provider"),
         "model": Config.get("ai", "model"),
         "effort": Config.get("ai", "effort"),
-        "created": datetime.datetime.now().isoformat(timespec="seconds"),
+        "created": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
         "system": system,
         "messages": messages,
         "raw": spec.raw_response,

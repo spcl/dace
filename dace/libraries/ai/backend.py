@@ -10,7 +10,7 @@ The expansion never imports a vendor SDK directly. It asks :func:`get_provider` 
 
 import os
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Protocol
+from typing import Any, Protocol
 
 from dace.config import Config
 from dace.libraries.ai.exceptions import AIExpansionError
@@ -32,15 +32,15 @@ class EnvironmentSpec:
     """
 
     name: str
-    headers: List[str] = field(default_factory=list)
-    cmake_packages: List[str] = field(default_factory=list)
-    cmake_libraries: List[str] = field(default_factory=list)
-    cmake_includes: List[str] = field(default_factory=list)
-    cmake_compile_flags: List[str] = field(default_factory=list)
-    cmake_link_flags: List[str] = field(default_factory=list)
-    cmake_variables: Dict[str, str] = field(default_factory=dict)
-    cmake_minimum_version: Optional[str] = None
-    state_fields: List[str] = field(default_factory=list)
+    headers: list[str] = field(default_factory=list)
+    cmake_packages: list[str] = field(default_factory=list)
+    cmake_libraries: list[str] = field(default_factory=list)
+    cmake_includes: list[str] = field(default_factory=list)
+    cmake_compile_flags: list[str] = field(default_factory=list)
+    cmake_link_flags: list[str] = field(default_factory=list)
+    cmake_variables: dict[str, str] = field(default_factory=dict)
+    cmake_minimum_version: str | None = None
+    state_fields: list[str] = field(default_factory=list)
     init_code: str = ""
     finalize_code: str = ""
 
@@ -54,11 +54,11 @@ class TaskletSpec:
     code_global: str = ""
     code_init: str = ""
     code_exit: str = ""
-    state_fields: List[str] = field(default_factory=list)
+    state_fields: list[str] = field(default_factory=list)
     side_effects: bool = False
-    ignored_symbols: List[str] = field(default_factory=list)
-    use_environments: List[str] = field(default_factory=list)
-    environments: List[EnvironmentSpec] = field(default_factory=list)
+    ignored_symbols: list[str] = field(default_factory=list)
+    use_environments: list[str] = field(default_factory=list)
+    environments: list[EnvironmentSpec] = field(default_factory=list)
     notes: str = ""
 
     #: The provider's answer exactly as it arrived, kept for the transcript. A response that parses
@@ -67,7 +67,7 @@ class TaskletSpec:
 
 
 #: JSON schema describing :class:`TaskletSpec`, used for structured model output.
-RESPONSE_SCHEMA: Dict[str, Any] = {
+RESPONSE_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
     "required": [
@@ -180,7 +180,7 @@ RESPONSE_SCHEMA: Dict[str, Any] = {
 class LLMProvider(Protocol):
     """Minimal interface a language model backend must implement."""
 
-    def generate(self, system: str, messages: List[Dict[str, str]]) -> TaskletSpec:
+    def generate(self, system: str, messages: list[dict[str, str]]) -> TaskletSpec:
         """
         Requests a tasklet from the model.
 
@@ -191,7 +191,7 @@ class LLMProvider(Protocol):
         ...
 
 
-def spec_from_dict(payload: Dict[str, Any], raw: str = "") -> TaskletSpec:
+def spec_from_dict(payload: dict[str, Any], raw: str = "") -> TaskletSpec:
     """
     Converts a decoded JSON response into a :class:`TaskletSpec`.
 
@@ -207,24 +207,23 @@ def spec_from_dict(payload: Dict[str, Any], raw: str = "") -> TaskletSpec:
             "suppress the generated global code and state fields."
         )
 
-    environments = []
-    for env in payload.get("environments") or []:
-        environments.append(
-            EnvironmentSpec(
-                name=env["name"],
-                headers=list(env.get("headers") or []),
-                cmake_packages=list(env.get("cmake_packages") or []),
-                cmake_libraries=list(env.get("cmake_libraries") or []),
-                cmake_includes=list(env.get("cmake_includes") or []),
-                cmake_compile_flags=list(env.get("cmake_compile_flags") or []),
-                cmake_link_flags=list(env.get("cmake_link_flags") or []),
-                cmake_variables=dict(env.get("cmake_variables") or {}),
-                cmake_minimum_version=env.get("cmake_minimum_version") or None,
-                state_fields=list(env.get("state_fields") or []),
-                init_code=env.get("init_code") or "",
-                finalize_code=env.get("finalize_code") or "",
-            )
+    environments = [
+        EnvironmentSpec(
+            name=env["name"],
+            headers=list(env.get("headers") or []),
+            cmake_packages=list(env.get("cmake_packages") or []),
+            cmake_libraries=list(env.get("cmake_libraries") or []),
+            cmake_includes=list(env.get("cmake_includes") or []),
+            cmake_compile_flags=list(env.get("cmake_compile_flags") or []),
+            cmake_link_flags=list(env.get("cmake_link_flags") or []),
+            cmake_variables=dict(env.get("cmake_variables") or {}),
+            cmake_minimum_version=env.get("cmake_minimum_version") or None,
+            state_fields=list(env.get("state_fields") or []),
+            init_code=env.get("init_code") or "",
+            finalize_code=env.get("finalize_code") or "",
         )
+        for env in payload.get("environments") or []
+    ]
 
     return TaskletSpec(
         code=code,
@@ -242,7 +241,7 @@ def spec_from_dict(payload: Dict[str, Any], raw: str = "") -> TaskletSpec:
     )
 
 
-def api_key(provider: str) -> Optional[str]:
+def api_key(provider: str) -> str | None:
     """
     Reads the API key for a provider from the configured environment variable.
 
@@ -279,7 +278,7 @@ def missing_sdk_error(provider: str, package: str, extra: str, exc: BaseExceptio
     return error
 
 
-def missing_credentials_error(provider: str, detail: Optional[str] = None) -> AIExpansionError:
+def missing_credentials_error(provider: str, detail: str | None = None) -> AIExpansionError:
     """
     Builds the error raised when a provider has no usable credentials.
 

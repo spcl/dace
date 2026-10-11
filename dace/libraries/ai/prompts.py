@@ -9,7 +9,6 @@ ExpansionContext` collected for one specific library node.
 """
 
 import textwrap
-from typing import List
 
 from dace.config import Config
 from dace.libraries.ai.context import ConnectorInfo, ExpansionContext, NestingFrame
@@ -206,7 +205,7 @@ def _render_connector(conn: ConnectorInfo) -> str:
     return "\n".join(lines)
 
 
-def _render_nesting(frames: List[NestingFrame]) -> str:
+def _render_nesting(frames: list[NestingFrame]) -> str:
     """
     Renders the nesting chain as an outermost-first indented outline.
 
@@ -243,7 +242,7 @@ def build_user_prompt(ctx: ExpansionContext) -> str:
     """
     caps = ctx.capabilities
     target = ctx.target
-    sections: List[str] = []
+    sections: list[str] = []
 
     task = ["# Task", "", f"Library node type: {ctx.node_type}", f"Node name: {ctx.node_name}"]
     if ctx.class_docstring:

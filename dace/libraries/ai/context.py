@@ -19,13 +19,12 @@ The central entry point is :func:`collect_context`, which gathers four kinds of 
 import inspect
 import platform
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from dace import data as dt
 from dace import dtypes
 from dace.config import Config
-from dace.sdfg import nodes
-from dace.sdfg import SDFG, SDFGState
+from dace.sdfg import SDFG, SDFGState, nodes
 from dace.sdfg.scope import devicelevel_block_size, get_node_schedule, is_devicelevel_gpu
 
 
@@ -40,32 +39,32 @@ class ConnectorInfo:
     element_type: str  #: The C++ type of a single element
     #: The resolved connector type, which the expansion stamps onto the generated tasklet so that
     #: what the model was told stays true through code generation. Not rendered into the prompt.
-    conntype: Optional[dtypes.typeclass] = None
-    data: Optional[str] = None  #: Name of the data container the memlet refers to
-    container_kind: Optional[str] = None  #: ``Array``, ``Scalar``, ``Stream``, ``View``, ...
-    dtype: Optional[str] = None
+    conntype: dtypes.typeclass | None = None
+    data: str | None = None  #: Name of the data container the memlet refers to
+    container_kind: str | None = None  #: ``Array``, ``Scalar``, ``Stream``, ``View``, ...
+    dtype: str | None = None
     #: C++ element type of that container. Unlike ``element_type`` this does not depend on the
     #: connector's own type having been inferable, which is what makes it usable as a fallback.
-    data_ctype: Optional[str] = None
-    shape: Optional[Tuple[str, ...]] = None
-    strides: Optional[Tuple[str, ...]] = None
-    total_size: Optional[str] = None
-    storage: Optional[str] = None
+    data_ctype: str | None = None
+    shape: tuple[str, ...] | None = None
+    strides: tuple[str, ...] | None = None
+    total_size: str | None = None
+    storage: str | None = None
     #: What the SDFG declared, when inference resolved it to something else (i.e. it said
     #: ``Default``). ``None`` when the two agree.
-    storage_declared: Optional[str] = None
-    transient: Optional[bool] = None
-    subset: Optional[str] = None
-    num_elements: Optional[str] = None
-    wcr: Optional[str] = None
+    storage_declared: str | None = None
+    transient: bool | None = None
+    subset: str | None = None
+    num_elements: str | None = None
+    wcr: str | None = None
     dynamic: bool = False
     #: Whether the generated code may dereference this pointer where it runs (set once the
     #: execution space is known; see :class:`Capabilities`).
     dereferenceable: bool = True
-    base_offset: Optional[str] = None  #: What the pointer is offset by, relative to the container
-    view_shape: Optional[Tuple[str, ...]] = None  #: Extent of the subset this connector covers
-    index_formula: Optional[str] = None  #: How to address one element of the view
-    contiguous: Optional[bool] = None  #: False when the view is strided within a larger container
+    base_offset: str | None = None  #: What the pointer is offset by, relative to the container
+    view_shape: tuple[str, ...] | None = None  #: Extent of the subset this connector covers
+    index_formula: str | None = None  #: How to address one element of the view
+    contiguous: bool | None = None  #: False when the view is strided within a larger container
 
 
 @dataclass
@@ -80,10 +79,10 @@ class NestingFrame:
     #: ``nested_sdfg`` or ``sdfg``
     label: str
     detail: str = ""  #: Human-readable description of the iteration space or condition
-    schedule: Optional[str] = None
-    unroll: Optional[bool] = None
-    block_size: Optional[str] = None
-    symbol_mapping: Optional[Dict[str, str]] = None
+    schedule: str | None = None
+    unroll: bool | None = None
+    block_size: str | None = None
+    symbol_mapping: dict[str, str] | None = None
 
 
 @dataclass
@@ -100,16 +99,16 @@ class Capabilities:
 
     device_level: bool
     effective_schedule: str
-    gpu_backend: Optional[str] = None
+    gpu_backend: str | None = None
     state_available: bool = True
     current_stream_available: bool = False
-    block_size: Optional[str] = None
+    block_size: str | None = None
     environments_allowed: str = "full"  #: ``full`` or ``device-headers-only``
     #: Per connector, whether the generated code may dereference the pointer *where it runs*. This
     #: is a match between the code's execution space and the data's storage space, not a property
     #: of the storage alone: GPU global memory is unreachable from the host and perfectly
     #: reachable from device code.
-    dereferenceable: Dict[str, bool] = field(default_factory=dict)
+    dereferenceable: dict[str, bool] = field(default_factory=dict)
 
 
 @dataclass
@@ -122,9 +121,9 @@ class ResolvedDefaults:
     """
 
     #: Node guid -> the schedule that node will actually run under.
-    schedules: Dict[str, dtypes.ScheduleType] = field(default_factory=dict)
+    schedules: dict[str, dtypes.ScheduleType] = field(default_factory=dict)
     #: (SDFG guid, container name) -> the storage that container will actually be allocated in.
-    storage: Dict[Tuple[str, str], dtypes.StorageType] = field(default_factory=dict)
+    storage: dict[tuple[str, str], dtypes.StorageType] = field(default_factory=dict)
 
 
 @dataclass
@@ -133,17 +132,17 @@ class TargetInfo:
 
     platform: str
     machine: str
-    cpu_model: Optional[str] = None
-    cpu_features: Optional[str] = None
-    host_compiler: Optional[str] = None
-    compiler_family: Optional[str] = None
-    host_flags: Optional[str] = None
-    build_type: Optional[str] = None
-    cpp_standard: Optional[str] = None
-    gpu_backend: Optional[str] = None
-    gpu_flags: Optional[str] = None
-    gpu_architectures: Optional[str] = None
-    gpu_names: Optional[str] = None
+    cpu_model: str | None = None
+    cpu_features: str | None = None
+    host_compiler: str | None = None
+    compiler_family: str | None = None
+    host_flags: str | None = None
+    build_type: str | None = None
+    cpp_standard: str | None = None
+    gpu_backend: str | None = None
+    gpu_flags: str | None = None
+    gpu_architectures: str | None = None
+    gpu_names: str | None = None
 
 
 @dataclass
@@ -154,13 +153,13 @@ class ExpansionContext:
     node_name: str
     description: str = ""
     class_docstring: str = ""
-    node_properties: Dict[str, str] = field(default_factory=dict)
-    connectors: List[ConnectorInfo] = field(default_factory=list)
-    nesting: List[NestingFrame] = field(default_factory=list)
-    capabilities: Optional[Capabilities] = None
-    symbols: Dict[str, str] = field(default_factory=dict)
-    target: Optional[TargetInfo] = None
-    available_environments: List[str] = field(default_factory=list)
+    node_properties: dict[str, str] = field(default_factory=dict)
+    connectors: list[ConnectorInfo] = field(default_factory=list)
+    nesting: list[NestingFrame] = field(default_factory=list)
+    capabilities: Capabilities | None = None
+    symbols: dict[str, str] = field(default_factory=dict)
+    target: TargetInfo | None = None
+    available_environments: list[str] = field(default_factory=list)
 
 
 def _describe_range(rng: Any) -> str:
@@ -177,7 +176,7 @@ def _describe_range(rng: Any) -> str:
 
 
 def _scope_frame(
-    entry: nodes.EntryNode, state: SDFGState, sdfg: SDFG, defaults: Optional[ResolvedDefaults] = None
+    entry: nodes.EntryNode, state: SDFGState, sdfg: SDFG, defaults: ResolvedDefaults | None = None
 ) -> NestingFrame:
     """
     Builds a nesting frame for a dataflow scope (map, consume or general scope).
@@ -244,8 +243,8 @@ def _region_frame(region: Any) -> NestingFrame:
 
 
 def collect_nesting(
-    node: nodes.Node, state: SDFGState, sdfg: SDFG, defaults: Optional[ResolvedDefaults] = None
-) -> List[NestingFrame]:
+    node: nodes.Node, state: SDFGState, sdfg: SDFG, defaults: ResolvedDefaults | None = None
+) -> list[NestingFrame]:
     """
     Walks outward from a node to the top-level SDFG, recording every enclosing scope.
 
@@ -260,7 +259,7 @@ def collect_nesting(
     :return: The enclosing scopes, ordered innermost first. The last frame is always the top-level
              SDFG.
     """
-    frames: List[NestingFrame] = []
+    frames: list[NestingFrame] = []
     cur_node: nodes.Node = node
     cur_state: SDFGState = state
     cur_sdfg: SDFG = sdfg
@@ -305,7 +304,7 @@ def collect_nesting(
     return frames
 
 
-def _descriptor_for(state: SDFGState, sdfg: SDFG, edge: Any, incoming: bool) -> Tuple[Optional[str], Optional[Any]]:
+def _descriptor_for(state: SDFGState, sdfg: SDFG, edge: Any, incoming: bool) -> tuple[str | None, Any | None]:
     """
     Resolves the data container behind a library node edge.
 
@@ -368,7 +367,7 @@ def _describe_view(info: ConnectorInfo, desc: Any, memlet: Any) -> None:
 
 def _infer_conntype(
     node: nodes.LibraryNode, name: str, direction: str, state: SDFGState, sdfg: SDFG, edge: Any
-) -> Optional[dtypes.typeclass]:
+) -> dtypes.typeclass | None:
     """
     Determines the type a connector will have in the generated code.
 
@@ -417,12 +416,12 @@ def _infer_conntype(
 
 def _connector_info(
     name: str,
-    conntype: Optional[dtypes.typeclass],
+    conntype: dtypes.typeclass | None,
     direction: str,
     state: SDFGState,
     sdfg: SDFG,
     edge: Any,
-    defaults: Optional[ResolvedDefaults] = None,
+    defaults: ResolvedDefaults | None = None,
 ) -> ConnectorInfo:
     """
     Describes a single connector of the library node.
@@ -483,8 +482,8 @@ def _connector_info(
 
 
 def collect_connectors(
-    node: nodes.LibraryNode, state: SDFGState, sdfg: SDFG, defaults: Optional[ResolvedDefaults] = None
-) -> List[ConnectorInfo]:
+    node: nodes.LibraryNode, state: SDFGState, sdfg: SDFG, defaults: ResolvedDefaults | None = None
+) -> list[ConnectorInfo]:
     """
     Describes every connector of a library node and the data behind it.
 
@@ -511,8 +510,8 @@ def collect_capabilities(
     node: nodes.LibraryNode,
     state: SDFGState,
     sdfg: SDFG,
-    connectors: List[ConnectorInfo],
-    defaults: Optional[ResolvedDefaults] = None,
+    connectors: list[ConnectorInfo],
+    defaults: ResolvedDefaults | None = None,
 ) -> Capabilities:
     """
     Determines what the generated code is allowed to do at this point in the SDFG.
@@ -742,7 +741,7 @@ def _annotate_resolved(declared: Any, inferred: Any) -> str:
     return f"{inferred.name} (resolved from {declared.name})"
 
 
-def _resolved_schedule(node: nodes.Node, defaults: Optional[ResolvedDefaults]) -> Optional[str]:
+def _resolved_schedule(node: nodes.Node, defaults: ResolvedDefaults | None) -> str | None:
     """
     Renders one node's schedule, noting when it was resolved from ``Default``.
 
@@ -756,7 +755,7 @@ def _resolved_schedule(node: nodes.Node, defaults: Optional[ResolvedDefaults]) -
     return _annotate_resolved(declared, (defaults.schedules if defaults else {}).get(node.guid))
 
 
-def collect_available_environments() -> List[str]:
+def collect_available_environments() -> list[str]:
     """
     Lists the DaCe library environments that are installed on this machine.
 
@@ -801,7 +800,7 @@ def collect_class_docstring(node: nodes.LibraryNode) -> str:
     return ""
 
 
-def collect_symbols(node: nodes.LibraryNode, state: SDFGState, sdfg: SDFG) -> Dict[str, str]:
+def collect_symbols(node: nodes.LibraryNode, state: SDFGState, sdfg: SDFG) -> dict[str, str]:
     """
     Lists the symbols that will be in scope as plain C++ variables inside the tasklet.
 
@@ -810,7 +809,7 @@ def collect_symbols(node: nodes.LibraryNode, state: SDFGState, sdfg: SDFG) -> Di
     :param sdfg: The SDFG containing the state.
     :return: A mapping from symbol name to its C++ type.
     """
-    symbols: Dict[str, str] = {}
+    symbols: dict[str, str] = {}
     for name, stype in sdfg.symbols.items():
         symbols[name] = stype.ctype if isinstance(stype, dtypes.typeclass) else str(stype)
     sdict = state.scope_dict()
@@ -856,7 +855,7 @@ def collect_context(node: nodes.LibraryNode, state: SDFGState, sdfg: SDFG) -> Ex
         "guid",
         "schedule",
     )
-    properties: Dict[str, str] = {}
+    properties: dict[str, str] = {}
     for prop, value in node.properties():
         if prop.attr_name in skipped or value is None:
             continue
