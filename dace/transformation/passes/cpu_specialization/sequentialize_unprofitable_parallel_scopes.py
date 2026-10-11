@@ -17,17 +17,20 @@ Two independent reasons to take the parallelism away, in the order they are chec
    ``canonicalize/finalize.sequentialize_nested_parallel_scopes`` implemented, and it is preserved
    exactly, transitively across nested-SDFG boundaries.
 2. **Below break-even.** The map's OWN iteration count is PROVABLY under
-   ``compiler.cpu.parallel_min_work_per_region``. Constants decide statically; a count written in
-   the SDFG's own PARAMETERS is assumed big enough and stays parallel unguarded (the same default
-   :func:`~dace.libraries.standard.helper.is_parallel_cpu_transfer_size` applies to transfers).
-3. **Unbounded at compile time.** A count naming a value the PROGRAM computes -- a scalar an
-   interstate edge assigns from data, e.g. the ``ntouch`` of a stream compaction inside a sparse
-   triple product -- cannot be ruled on either way, and guessing "big" costs a whole OpenMP region
-   per entry for a handful of elements (measured on amg_setup: three such loops, 230 ms against
-   30 ms). Those keep their Map and their parallel schedule and carry the cost model as an
-   ``if(parallel: count >= threshold)`` clause instead, decided per call. The clause names
-   ``parallel`` explicitly so a combined ``parallel for simd`` keeps its simd clause -- a BARE
-   ``if`` there devectorizes, which is why one is never emitted.
+   ``compiler.cpu.parallel_min_work_per_region`` (:func:`~dace.symbolic.ask`, which bounds ``Min``,
+   ``Max`` and the rounding heads). A map of at most one iteration -- a peeled first trip
+   ``14:Min(14, N - 1) + 1`` -- is no loop at all: :func:`release_one_trip_maps` makes it sequential
+   BEFORE schedule inference and gives the maps in its body their own regions, which inference would
+   otherwise pin ``Sequential`` under it.
+3. **Undecided at compile time.** A symbolic count that is not provably at or above break-even, and
+   is either a scalar the program computes from data or the count of a leaf map (tasklets alone, so the
+   count is the work) -- ``N - 2`` over a row of ``seidel_2d`` -- keeps its Map and its parallel schedule
+   and carries the cost model as an ``if(parallel: count >= threshold)`` clause, decided per call. A map
+   whose body loops or nests is left unguarded: its own count says nothing about its work. Guessing "big" forks for a handful of elements every time it is wrong:
+   ``seidel_2d`` at ``N = 288`` forked once per row and ran 30 times slower on 96 threads than on one;
+   amg_setup's data-sized loops, 230 ms against 30 ms. The clause names ``parallel`` explicitly so a
+   combined ``parallel for simd`` keeps its simd clause -- a BARE ``if`` there devectorizes, which is
+   why one is never emitted.
 
 The map's own iteration count, not the work of its whole subtree: a 16-iteration map wrapping a
 1M-element inner map is better served by sequentializing the outer one and letting rule 1 release
@@ -81,6 +84,43 @@ def min_work_per_region() -> int:
     return config_int("compiler", "cpu", "parallel_min_work_per_region")
 
 
+def at_most_one_trip(count: Any) -> bool:
+    """Whether a map of ``count`` iterations provably runs at most once: no loop at all, but a guard."""
+    upper = symbolic.numeric_bounds(count)[1] if symbolic.issymbolic(count) else count
+    return upper is not None and upper <= 1
+
+
+def release_one_trip_maps(sdfg: SDFG) -> int:
+    """Make every top-level CPU map of at most one iteration ``Sequential``, and the maps directly in its body
+    (or at the top of a nested SDFG there) ``CPU_Multicore``, so schedule inference does not pin them under it.
+
+    Runs BEFORE inference, while canonicalization's maps are still ``Default``, and touches nothing else:
+    the peeled first vertical level of ``cloudsc_monolith`` is such a map, and inferred under it its 132
+    plane maps ran on one thread, 3.7 s of a 4 s call at 24 threads.
+
+    :param sdfg: the SDFG to rewrite, nested SDFGs included.
+    :returns: how many such maps were found.
+    """
+    found = 0
+    for state in sdfg.states():
+        children = state.scope_children()
+        for wrapper in children[None]:
+            if not isinstance(wrapper, nodes.MapEntry) or wrapper.map.schedule != dtypes.ScheduleType.Default:
+                continue
+            if not at_most_one_trip(wrapper.map.range.num_elements()):
+                continue
+            wrapper.map.schedule = dtypes.ScheduleType.Sequential
+            found += 1
+            body = [n for n in children[wrapper] if isinstance(n, nodes.MapEntry)]
+            for nested in [n for n in children[wrapper] if isinstance(n, nodes.NestedSDFG) and n.sdfg is not None]:
+                for inner_state in nested.sdfg.states():
+                    body += [n for n in inner_state.scope_children()[None] if isinstance(n, nodes.MapEntry)]
+            for entry in body:
+                if entry.map.schedule == dtypes.ScheduleType.Default:
+                    entry.map.schedule = dtypes.ScheduleType.CPU_Multicore
+    return found
+
+
 @properties.make_properties
 class SequentializeUnprofitableParallelScopes(ppl.Pass):
     """Pin every CPU parallel scope the fork/join cost model refuses to ``Sequential``."""
@@ -93,7 +133,7 @@ class SequentializeUnprofitableParallelScopes(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self):
+    def depends_on(self) -> set[type[ppl.Pass] | ppl.Pass]:
         return set()
 
     def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> int | None:
@@ -106,10 +146,9 @@ class SequentializeUnprofitableParallelScopes(ppl.Pass):
         self.threshold = min_work_per_region()
         self.pinned = 0
         self.guarded = 0
-        # Parameter names per SDFG: what no call can change midway, so a count written in them is
-        # the one a compile-time verdict may rule on. Built once per SDFG, never rebuilt -- this
-        # pass only rewrites schedules.
-        self.params: dict[int, frozenset] = {}
+        # Parameter names per SDFG: what no call can change midway. Built once per SDFG, never rebuilt --
+        # this pass only rewrites schedules.
+        self.params: dict[int, frozenset[str]] = {}
         # One pass's worth of enclosing-loop trip-count verdicts: this pass never mutates a
         # LoopRegion's bounds, so a verdict computed under one scope stays valid for a sibling
         # transfer under the same loop.
@@ -157,7 +196,7 @@ class SequentializeUnprofitableParallelScopes(ppl.Pass):
 
         for node in children[entry]:
             if isinstance(node, nodes.MapEntry):
-                self.visit_scope(state, children, node, self.decide_map(node, state.sdfg, in_parallel))
+                self.visit_scope(state, children, node, self.decide_map(node, state, in_parallel))
             elif isinstance(node, nodes.LibraryNode):
                 if node.schedule in CPU_PARALLEL_SCHEDULES and (
                     in_parallel or is_reentered_cpu_transfer(node, state, loop_cache=self.loop_cache)
@@ -167,7 +206,7 @@ class SequentializeUnprofitableParallelScopes(ppl.Pass):
             elif isinstance(node, nodes.NestedSDFG) and node.sdfg is not None:
                 self.visit_region(node.sdfg, in_parallel)
 
-    def parameter_names(self, sdfg: SDFG) -> frozenset:
+    def parameter_names(self, sdfg: SDFG) -> frozenset[str]:
         """The names whose magnitude an extent may be read against: parameters, constants, iterators.
 
         Loop variables and map parameters are in here because an extent written in one -- a
@@ -192,7 +231,7 @@ class SequentializeUnprofitableParallelScopes(ppl.Pass):
             self.params[sdfg.cfg_id] = cached
         return cached
 
-    def fewer_than_threshold(self, count) -> bool | None:
+    def fewer_than_threshold(self, count: Any) -> bool | None:
         """Whether a trip count provably falls short of the break-even work (three-valued).
 
         :param count: the map's own iteration count, constant or symbolic.
@@ -202,33 +241,38 @@ class SequentializeUnprofitableParallelScopes(ppl.Pass):
             self.below_threshold[count] = symbolic.ask("negative", symbolic.simplify(count - self.threshold))
         return self.below_threshold[count]
 
-    def worth_forking(self, count) -> bool:
+    def worth_forking(self, count: Any) -> bool:
         """Whether a map of ``count`` iterations earns its own OpenMP region (``True`` keeps it parallel).
 
         :param count: the map's own iteration count, constant or symbolic.
         """
         return self.threshold <= 0 or self.fewer_than_threshold(count) is not True
 
-    def wants_runtime_guard(self, node: nodes.MapEntry, sdfg: SDFG) -> bool:
-        """Whether ``node``'s trip count is a value the program computes rather than a parameter.
+    def wants_runtime_guard(self, node: nodes.MapEntry, state: SDFGState) -> bool:
+        """Whether only a run-time test can rule on ``node``'s fork.
+
+        Its trip count is symbolic, not provably at or above break-even, and either names a value the program
+        computes, or the body is a leaf -- tasklets alone, so the trip count IS the work. A map whose body
+        loops or nests (a vertical-level map over CLOUDSC's column body) carries far more than one element
+        per iteration, and its own count says nothing about whether the fork pays.
 
         :param node: the map entry, already decided to stay parallel.
-        :param sdfg: the SDFG holding it.
-        :returns: ``True`` when only a run-time test can rule on the fork.
+        :param state: the state holding it.
         """
         count = node.map.range.num_elements()
-        if self.threshold <= 0 or not symbolic.issymbolic(count):
+        if self.threshold <= 0 or not symbolic.issymbolic(count) or self.fewer_than_threshold(count) is False:
             return False
-        if self.fewer_than_threshold(count) is False:
-            return False
-        params = self.parameter_names(sdfg)
-        return any(str(sym) not in params for sym in count.free_symbols)
+        params = self.parameter_names(state.sdfg)
+        if any(str(sym) not in params for sym in count.free_symbols):
+            return True
+        body = state.scope_subgraph(node, include_entry=False, include_exit=False).nodes()
+        return all(isinstance(inner, (nodes.Tasklet, nodes.AccessNode)) for inner in body)
 
-    def decide_map(self, node: nodes.MapEntry, sdfg: SDFG, in_parallel: bool) -> bool:
+    def decide_map(self, node: nodes.MapEntry, state: SDFGState, in_parallel: bool) -> bool:
         """Set ``node``'s schedule and report whether its body runs inside a parallel map.
 
         :param node: the map entry to decide.
-        :param sdfg: the SDFG holding the map.
+        :param state: the state holding the map.
         :param in_parallel: whether a device-parallel map encloses this map.
         :returns: whether the map's body is enclosed by a parallel map.
         """
@@ -240,7 +284,7 @@ class SequentializeUnprofitableParallelScopes(ppl.Pass):
                 self.pinned += 1
             return True
         if self.worth_forking(node.map.range.num_elements()):
-            if self.wants_runtime_guard(node, sdfg):
+            if self.wants_runtime_guard(node, state):
                 node.map.omp_min_parallel_iterations = self.threshold
                 self.guarded += 1
             return True

@@ -33,7 +33,10 @@ from dace.transformation.passes.cpu_specialization import (
     SequentializeUnprofitableParallelScopes,
     SpecializeCpuTransfers,
 )
-from dace.transformation.passes.cpu_specialization.sequentialize_unprofitable_parallel_scopes import min_work_per_region
+from dace.transformation.passes.cpu_specialization.sequentialize_unprofitable_parallel_scopes import (
+    min_work_per_region,
+    release_one_trip_maps,
+)
 
 N = dace.symbol("N")
 M = dace.symbol("M")
@@ -129,28 +132,28 @@ def test_map_above_break_even_stays_parallel():
     assert schedules(sdfg)["body_map"] == dtypes.ScheduleType.Default
 
 
-def test_symbolic_extent_stays_parallel():
-    """Every symbol is assumed big enough: a symbolic extent is never sequentialized on size.
-
-    This is the ``s4116`` case (a top-level reduction over ``LEN_2D - 1``): it is a measured loss
-    at LEN_2D=768, but nothing in the SDFG says so, and the ruling is to prefer the parallel form
-    over a runtime guard.
-    """
+def test_symbolic_extent_stays_parallel_behind_a_runtime_guard():
+    """A symbolic extent is never sequentialized at compile time: it keeps its map and decides the fork per
+    call. This is the ``s4116`` case (a top-level reduction over ``LEN_2D - 1``), a measured loss at
+    LEN_2D=768 when forked unconditionally."""
     sdfg = one_map_sdfg("symbolic_top_level", [N], ["0:N-1"])
-    SequentializeUnprofitableParallelScopes().apply_pass(sdfg, {})
-    assert schedules(sdfg)["body_map"] == dtypes.ScheduleType.Default
+    with pinned_break_even():
+        SequentializeUnprofitableParallelScopes().apply_pass(sdfg, {})
+    entry = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry))
+    assert entry.map.schedule == dtypes.ScheduleType.Default
+    assert entry.map.omp_min_parallel_iterations == PINNED_MIN_WORK_PER_REGION
 
 
 def test_map_re_entered_by_symbolic_loop_stays_parallel():
     """An enclosing loop is not a reason to sequentialize: a region entered ``E`` times costs
     ``E * (fork + work/P)`` against ``E * work``, so ``E`` multiplies both sides and cancels.
 
-    The extent is symbolic, hence big, so the map keeps its region -- the same ruling as
-    :func:`test_symbolic_extent_stays_parallel`, which the enclosing loop does not overturn. This
-    is npbench ``cavity_flow``'s shape, whose 1,044,484-element pressure map was pinned
-    ``Sequential`` by the old work-vs-entries comparison."""
+    The extent is symbolic, so the map keeps its region behind the run-time guard -- the same ruling
+    as :func:`test_symbolic_extent_stays_parallel_behind_a_runtime_guard`, which the enclosing loop
+    does not overturn. This is npbench ``cavity_flow``'s shape, whose 1,044,484-element pressure map
+    was pinned ``Sequential`` by the old work-vs-entries comparison."""
     sdfg = one_map_sdfg("map_in_long_loop", [N], ["0:N"], loop_end="N")
-    assert SequentializeUnprofitableParallelScopes().apply_pass(sdfg, {}) is None
+    assert SequentializeUnprofitableParallelScopes().apply_pass(sdfg, {}) == 1
     assert schedules(sdfg)["body_map"] == dtypes.ScheduleType.Default
 
 
@@ -292,26 +295,51 @@ def test_the_runtime_guard_of_a_triangular_nest_names_no_loop_variable():
     assert np.array_equal(a, expected)
 
 
-def test_parameter_extent_carries_no_runtime_guard():
-    """A count written in the SDFG's own parameters keeps today's unguarded parallel form."""
+def test_parameter_extent_carries_a_runtime_guard():
+    """A count written in the SDFG's own parameters is decided per call too: ``seidel_2d`` forks once per
+    row for ``N - 2`` points, and at ``N = 288`` every fork costs more than the row."""
     sdfg = one_map_sdfg("symbolic_param_extent", [N], ["0:N"])
     with pinned_break_even():
         SequentializeUnprofitableParallelScopes().apply_pass(sdfg, {})
     entry = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry))
-    assert entry.map.omp_min_parallel_iterations == 0
+    assert entry.map.omp_min_parallel_iterations == PINNED_MIN_WORK_PER_REGION
+
+
+def test_one_trip_map_releases_the_maps_in_its_body():
+    """A peeled first trip ``14:Min(14, N - 1) + 1`` is at most one iteration: it runs sequentially, and the
+    map in its body keeps its region through schedule inference and the cost model instead of being pinned
+    under it (``cloudsc_monolith``'s first vertical level, 3.7 s serial at 24 threads)."""
+    from dace.sdfg import infer_types
+
+    inner = dace.SDFG("one_trip_body")
+    inner.add_array("a", [N], dace.float64)
+    map_state(inner, inner, "plane", ["0:N"])
+    sdfg = dace.SDFG("one_trip_wrapper")
+    sdfg.add_array("a", [N], dace.float64)
+    state = sdfg.add_state("peeled", is_start_block=True)
+    entry, exit_node = state.add_map("peeled", {"k": "14:Min(14, N - 1) + 1"})
+    nsdfg = state.add_nested_sdfg(inner, {}, {"a"}, symbol_mapping={"N": N})
+    state.add_nedge(entry, nsdfg, dace.Memlet())
+    state.add_memlet_path(nsdfg, exit_node, state.add_write("a"), src_conn="a", memlet=dace.Memlet("a[0:N]"))
+    sdfg.validate()
+    with pinned_break_even():
+        assert release_one_trip_maps(sdfg) == 1
+        infer_types.set_default_schedule_and_storage_types(sdfg, None)
+        SequentializeUnprofitableParallelScopes().apply_pass(sdfg, {})
+    assert schedules(sdfg) == {"peeled": dtypes.ScheduleType.Sequential, "plane_map": dtypes.ScheduleType.CPU_Multicore}
 
 
 def test_triangular_map_in_loop_stays_parallel():
     """s115 exactly: ``for j in 0:N { map i in j+1:N }``. The inner map IS data-parallel -- that is
-    why it is a Map -- and its extent averages ``N/2``, which is symbolic and therefore big. Reading
-    it at the last iteration (empty) is an artifact of substituting the sweep variable with the same
-    value as ``N``, not a property of the nest, so it must not decide the schedule."""
+    why it is a Map -- and its extent ``N - j - 1`` is symbolic, so it is decided per call by the run-time
+    guard. Reading it at the last iteration (empty) is an artifact of substituting the sweep variable with
+    the same value as ``N``, not a property of the nest, so it must not pin the schedule."""
     sdfg = dace.SDFG("triangular")
     sdfg.add_array("a", [N], dace.float64)
     outer = loop(sdfg, "outer", "N", var="j")
     map_state(outer, sdfg, "body", ["j+1:N"])
     sdfg.validate()
-    assert SequentializeUnprofitableParallelScopes().apply_pass(sdfg, {}) is None
+    assert SequentializeUnprofitableParallelScopes().apply_pass(sdfg, {}) == 1
     assert schedules(sdfg)["body_map"] == dtypes.ScheduleType.Default
 
 
@@ -508,6 +536,30 @@ def test_each_distinct_trip_count_is_asked_once():
 
 
 if __name__ == "__main__":
-    import sys
-
-    sys.exit(pytest.main([__file__, "-q"]))
+    test_map_below_break_even_goes_sequential()
+    test_map_above_break_even_stays_parallel()
+    test_symbolic_extent_stays_parallel_behind_a_runtime_guard()
+    test_map_re_entered_by_symbolic_loop_stays_parallel()
+    test_map_inside_a_conditional_is_decided()
+    test_data_dependent_extent_keeps_its_map_and_carries_a_runtime_guard()
+    test_the_runtime_guard_reaches_the_pragma_and_keeps_the_simd_clause()
+    test_the_runtime_guard_tests_the_whole_nest_after_the_simd_split()
+    test_the_runtime_guard_of_a_triangular_nest_names_no_loop_variable()
+    test_parameter_extent_carries_a_runtime_guard()
+    test_one_trip_map_releases_the_maps_in_its_body()
+    test_triangular_map_in_loop_stays_parallel()
+    test_wide_map_in_time_loop_stays_parallel()
+    test_provably_short_loop_is_not_re_entry()
+    test_nested_parallel_map_is_always_sequentialized()
+    test_nested_parallel_canonical_form_is_valid()
+    test_threshold_zero_disables_the_cost_model()
+    test_library_node_in_long_loop_goes_sequential()
+    test_library_node_in_short_loop_stays_parallel()
+    for kind, implementation in [("copy", "MemcpyCPU"), ("memset", "CPU")]:
+        test_re_entered_transfer_collapses_to_libc(kind, implementation)
+    for kind in ["copy", "memset"]:
+        test_top_level_transfer_keeps_the_parallel_element_map(kind)
+    test_passes_are_idempotent()
+    test_strided_re_entered_copy_is_sequential_but_not_memcpy()
+    test_converting_re_entered_copy_is_not_memcpy()
+    test_each_distinct_trip_count_is_asked_once()

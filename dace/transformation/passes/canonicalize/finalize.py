@@ -53,6 +53,9 @@ from dace.transformation.passes.canonicalize.pipeline import run_structural_clea
 from dace.transformation.passes.canonicalize.shrink_map_local_transients import ShrinkMapLocalTransients
 from dace.transformation.passes.cpu_specialization.hoist_parallel_region import HoistParallelRegion
 from dace.transformation.passes.cpu_specialization.pipeline import cpu_specialize
+from dace.transformation.passes.cpu_specialization.sequentialize_unprofitable_parallel_scopes import (
+    release_one_trip_maps,
+)
 from dace.transformation.passes.cpu_specialization.strip_mine_interchange import StripMineInterchange
 from dace.transformation.passes.equalize_symbol_dtypes import equalized
 from dace.transformation.passes.fuse_maps import FuseMaps
@@ -718,6 +721,10 @@ def finalize_stages(sdfg: SDFG, device: dtypes.DeviceType, break_anti_dependence
     # iteration) to ``Sequential`` and a top-level one to the device default. A ``Sequential``
     # Reduce/Scan/Copy/Fill must lower to its efficient single-core expansion, NOT open its own
     # (nested) OpenMP region per outer iteration -- the "constant parallel reductions" slowdown.
+    if device == dtypes.DeviceType.CPU:
+        # While canonicalization's maps are still ``Default``: inferred under a one-trip map, a map would be
+        # pinned ``Sequential`` for good.
+        release_one_trip_maps(sdfg)
     infer_types.set_default_schedule_and_storage_types(sdfg, None)
 
     # Canonicalization stops at the maximally parallel form, so the target's specialization stage
