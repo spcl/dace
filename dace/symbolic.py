@@ -1755,6 +1755,23 @@ def _ask_by_bounds(predicate: str, expr: sympy.Basic) -> bool | None:
     return False if upper is not None and upper < 0 else None
 
 
+#: Terms a polynomial may have for :func:`_ask_factored` to factor it; factoring cost grows quickly past that.
+FACTOR_TERMS = 8
+
+
+def _ask_factored(predicate: str, expr: sympy.Basic) -> bool | None:
+    """A predicate the expression's factored form settles, or ``None``.
+
+    The assumption engine reads a sum term by term, so ``N*M - M`` over positive integers stays undecided while
+    its factored form ``M*(N - 1)`` is a product of two nonnegative factors: two strides of one array, products
+    of its extents, compare only through the factored form.
+    """
+    if not expr.is_Add or len(expr.args) > FACTOR_TERMS or not expr.is_polynomial():
+        return None
+    factored = sympy.factor(expr)
+    return None if factored == expr else _ask_direct(predicate, factored)
+
+
 def _ask_facts(symbols, facts: dict[str, frozenset[str]]) -> list[Any]:
     """`Q` predicates for what `facts` declares about `symbols`, plus each symbol's own integrality."""
     out = []
@@ -1831,8 +1848,30 @@ def ask(predicate: str, expr, facts: dict[str, frozenset[str]] | None = None) ->
         answer = _ask_direct(predicate, stamped)
         if answer is not None:
             return answer
+    answer = _ask_factored(predicate, expr if stamped is None else stamped)
+    if answer is not None:
+        return answer
     with sympy.assuming(*_ask_facts(expr.free_symbols, facts)):
         return sympy.ask(_ASK_Q[predicate](expr))
+
+
+def provably_at_most(a, b, facts: dict[str, frozenset[str]] | None = None) -> bool:
+    """Whether ``a <= b`` for every value of the symbols ``facts`` allows; ``False`` means not proven.
+
+    A ``Min`` or ``Max`` on either side is taken apart, as the assumption engine does not: ``Min(x, y) <= b``
+    holds when one argument is at most ``b``, ``a <= Min(x, y)`` when ``a`` is at most every argument, and
+    ``Max`` the other way round. What is left is asked as ``b - a >= 0`` (:func:`ask`).
+    """
+    a, b = sympy.sympify(a), sympy.sympify(b)
+    if isinstance(a, sympy.Min):
+        return any(provably_at_most(arg, b, facts) for arg in a.args)
+    if isinstance(a, sympy.Max):
+        return all(provably_at_most(arg, b, facts) for arg in a.args)
+    if isinstance(b, sympy.Min):
+        return all(provably_at_most(a, arg, facts) for arg in b.args)
+    if isinstance(b, sympy.Max):
+        return any(provably_at_most(a, arg, facts) for arg in b.args)
+    return ask("nonnegative", b - a, facts) is True
 
 
 def apply_head(name: str, *args):

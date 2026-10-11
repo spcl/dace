@@ -1,7 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Permute perfectly-nested map dimensions to minimize array access strides.
 
-This pass rewrites perfect map nests so that the innermost map parameter
+This pass rewrites perfect map nests (a level may carry several parameters) so that the innermost map parameter
 indexes the contiguous (smallest-stride) array axis with a unit coefficient.
 The transformation is purely a reordering of the loop nest: it never changes
 the iteration space, the body, or the memlets' data, so the resulting SDFG is
@@ -42,11 +42,12 @@ from dace.sdfg.state import SDFGState
 from dace.symbolic import pystr_to_symbolic
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
+from dace.transformation.dataflow.map_expansion import MapExpansion
 from dace.transformation.dataflow.map_interchange import MapInterchange
 
 #: Sentinel score for a parameter that never indexes any axis with a unit
 #: coefficient (it has no contiguous "home" and is sorted outermost).
-_NO_HOME_SCORE = sympy.oo
+NO_HOME_SCORE = sympy.oo
 
 
 def _to_float(value: object) -> float:
@@ -80,13 +81,13 @@ def score_indexed_strides(edges, sdfg, var_names) -> dict[str, tuple[object, obj
     :param sdfg: The SDFG owning the arrays (for descriptor strides).
     :param var_names: The variable names to score.
     :returns: ``{name: (min_home_stride, total_home_stride, abs_offset_sum)}``.
-              ``min_home_stride`` is :data:`_NO_HOME_SCORE` when the variable
+              ``min_home_stride`` is :data:`NO_HOME_SCORE` when the variable
               never homes on any axis; ``total_home_stride`` sums home strides
               over all accesses (repeated contiguous accesses weigh more);
               ``abs_offset_sum`` accumulates the absolute constant offsets.
     """
     var_set = set(var_names)
-    min_stride: dict[str, object] = dict.fromkeys(var_set, _NO_HOME_SCORE)
+    min_stride: dict[str, object] = dict.fromkeys(var_set, NO_HOME_SCORE)
     total_stride: dict[str, object] = dict.fromkeys(var_set, sympy.S.Zero)
     offset_sum: dict[str, object] = dict.fromkeys(var_set, sympy.S.Zero)
     for edge in edges:
@@ -119,7 +120,7 @@ def score_indexed_strides(edges, sdfg, var_names) -> dict[str, tuple[object, obj
                 if sympy.Abs(coeff) == 1:
                     total_stride[vname] = total_stride[vname] + stride_val
                     prev = min_stride[vname]
-                    min_stride[vname] = stride_val if prev is _NO_HOME_SCORE else sympy.Min(prev, stride_val)
+                    min_stride[vname] = stride_val if prev is NO_HOME_SCORE else sympy.Min(prev, stride_val)
     return {v: (min_stride[v], total_stride[v], offset_sum[v]) for v in var_set}
 
 
@@ -140,19 +141,19 @@ def stride_difference_sign(a, b) -> int:
     :class:`UndecidableStride`, which leaves the nest untouched -- the behaviour this pass had for
     every symbolic shape before.
     """
-    diff = symbolic.simplify(as_expr(pystr_to_symbolic(str(a))) - as_expr(pystr_to_symbolic(str(b))))
+    left, right = as_expr(pystr_to_symbolic(str(a))), as_expr(pystr_to_symbolic(str(b)))
+    diff = symbolic.simplify(left - right)
     if diff == 0:
         return 0
     if as_basic(diff).is_number:
         return -1 if diff < 0 else 1
-    rebuilt = diff.subs(
-        {sym: sympy.Symbol(sym.name, positive=True, integer=True) for sym in as_basic(diff).free_symbols}
-    )
+    extents = dict.fromkeys((sym.name for sym in as_basic(diff).free_symbols), frozenset({"integer", "positive"}))
     # Non-STRICT: two scores that may coincide (``1`` vs ``LEN_2D`` at ``LEN_2D == 1``) impose no
-    # order, and reporting them as tied keeps the stable sort's current-order behaviour.
-    if as_basic(rebuilt).is_nonpositive:
+    # order, and reporting them as tied keeps the stable sort's current-order behaviour. A score is the
+    # ``Min`` of a parameter's home strides, which :func:`~dace.symbolic.provably_at_most` takes apart.
+    if symbolic.provably_at_most(left, right, extents):
         return -1
-    if as_basic(rebuilt).is_nonnegative:
+    if symbolic.provably_at_most(right, left, extents):
         return 1
     raise UndecidableStride(f"{a} vs {b}")
 
@@ -198,26 +199,25 @@ class MinimizeStridePermutation(ppl.Pass):
         """
         scope_children = state.scope_children()
         applied = 0
-        for node in scope_children[None]:
-            if not isinstance(node, nodes.MapEntry):
-                continue
-            if state.entry_node(node) is not None:
-                continue
+        for node in [n for n in scope_children[None] if isinstance(n, nodes.MapEntry)]:
             nest = self._collect_perfect_nest(state, node, scope_children)
-            if len(nest) < 2:
+            if sum(len(me.map.params) for me in nest) < 2:
                 continue
-            applied += self._reorder_nest(state, sdfg, nest)
+            swaps = self._reorder_nest(state, sdfg, nest)
+            if swaps:
+                applied += swaps
+                scope_children = state.scope_children()
         return applied
 
     def _collect_perfect_nest(
         self, state: SDFGState, outer: nodes.MapEntry, scope_children: dict[nodes.Node | None, list[nodes.Node]]
     ) -> list[nodes.MapEntry]:
-        """Collect the chain of perfectly-nested single-parameter map entries.
+        """Collect the chain of perfectly-nested map entries.
 
         A level is part of the perfect nest only if its scope contains exactly
-        one child node and that node is the next map entry, and the map carries
-        a single parameter (multi-parameter maps are left untouched as they
-        cannot be split by ``MapInterchange``).
+        one child node and that node is the next map entry. A level may carry
+        several parameters: :meth:`_reorder_nest` splits it into one map per
+        parameter only when the permutation needs to.
 
         :param state: The containing state.
         :param outer: The outermost candidate map entry.
@@ -227,8 +227,6 @@ class MinimizeStridePermutation(ppl.Pass):
         nest: list[nodes.MapEntry] = []
         current: nodes.MapEntry | None = outer
         while current is not None:
-            if len(current.map.params) != 1:
-                break
             nest.append(current)
             # ``scope_children`` always lists the scope's own MapExit; the nest
             # is perfect only if the sole remaining child is the next map.
@@ -247,9 +245,9 @@ class MinimizeStridePermutation(ppl.Pass):
         :param state: The containing state.
         :param sdfg: The SDFG owning ``state``.
         :param nest: Map entries from outermost to innermost.
-        :returns: The number of adjacent interchanges applied.
+        :returns: The number of map splits and adjacent interchanges applied.
         """
-        params = [me.map.params[0] for me in nest]
+        params = [param for me in nest for param in me.map.params]
         scores = self._score_parameters(state, sdfg, nest, params)
 
         # Build a totally-ordered numeric key per parameter. Smaller indexed
@@ -277,11 +275,23 @@ class MinimizeStridePermutation(ppl.Pass):
         # ``order[k]`` is the original index that should end up at depth ``k``.
         if order == list(range(len(params))):
             return 0
+        # A multi-parameter level is split into one map per parameter, in its own order, so the permutation
+        # below runs over single-parameter levels; the collapse stage that follows this pass joins the
+        # reordered chain again. Each split counts as a rewrite even if no interchange then proves legal.
+        applied = 0
+        outer = nest[0]
+        for entry in nest:
+            if len(entry.map.params) > 1:
+                MapExpansion.apply_to(sdfg, options={"inner_schedule": None}, map_entry=entry, verify=False, save=False)
+                applied += 1
+        if applied:
+            nest = self._collect_perfect_nest(state, outer, state.scope_children())
+            if [me.map.params for me in nest] != [[param] for param in params]:
+                return applied
 
         # Bubble-sort the permutation using only adjacent transpositions, each
         # realized by a single MapInterchange (outer = depth k, inner = k+1).
         permutation = list(order)
-        applied = 0
         n = len(permutation)
         for end in range(n - 1, 0, -1):
             for k in range(end):
@@ -327,8 +337,7 @@ class MinimizeStridePermutation(ppl.Pass):
         :param state: The containing state.
         :param sdfg: The SDFG owning ``state``.
         :param nest: Map entries from outermost to innermost.
-        :param params: The single parameter of each level (parallel to
-                       ``nest``).
+        :param params: The parameters of the nest, outermost first.
         :returns: A list of ``(min_indexed_stride, accumulated_abs_offset)``
                  tuples parallel to ``params``.
         """

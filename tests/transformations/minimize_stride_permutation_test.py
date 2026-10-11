@@ -8,9 +8,10 @@ only emits ``MapInterchange`` applications, so the result is unchanged.
 Reordering is decided symbolically. An array's strides are products of its
 shape extents and an extent is at least one wherever the array exists, so
 ``1`` versus ``M`` and ``11`` versus ``11*N`` both follow from the shape
-contract and are permuted exactly like concrete strides. A pair the pass
-does not manage to decide leaves the nest untouched instead -- a safe,
-idempotent no-op rather than a guess. Each scenario therefore has an
+contract and are permuted exactly like concrete strides, and so are ``M``
+versus ``N*M``. A pair the pass does not manage to decide (``N*M`` versus
+``M + K``) leaves the nest untouched instead -- a safe, idempotent no-op
+rather than a guess. Each scenario therefore has an
 integer-dimension variant and a symbolic one, and both reorder unless the
 pass declines the comparison.
 
@@ -22,7 +23,6 @@ standard ``MapExpansion`` transformation.
 import copy
 
 import numpy as np
-import pytest
 
 import dace
 from dace.sdfg import nodes
@@ -192,27 +192,10 @@ def test_symbolic_dims_two_level_reordered():
     assert np.allclose(out, ref) and np.allclose(out, a * 2.0)
 
 
-def test_symbolic_dims_three_level_is_safe_noop():
-    """Strides ``(N*M, M, 1)``: with every extent symbolic the pass does not
-    decide ``Abs(M)`` versus ``Abs(N*M)`` and abandons the nest rather than
-    guessing. Guards the escape hatch, which is still reachable and still
-    numerically transparent (declining is conservative, not wrong).
-    """
-    rng = np.random.default_rng(42)
-    k, n, m = 5, 7, 11
-    sdfg = _expanded(transposed_3d_sym)
-    assert _nest_param_order(sdfg) == ["i", "j", "k"]
-
-    a = rng.random((k, n, m))
-    ref = np.zeros((k, n, m))
-    copy.deepcopy(sdfg)(A=a.copy(), B=ref, K=k, N=n, M=m)
-
-    assert MinimizeStridePermutation().apply_pass(sdfg, {}) is None
-    assert _nest_param_order(sdfg) == ["i", "j", "k"]
-
-    out = np.zeros((k, n, m))
-    sdfg(A=a.copy(), B=out, K=k, N=n, M=m)
-    assert np.allclose(out, ref) and np.allclose(out, a + 1.0)
+def test_symbolic_dims_three_level_reordered():
+    """Strides ``(N*M, M, 1)``: ``N*M - M`` factors to ``M*(N - 1)``, nonnegative for extents of at least one, so
+    the fully symbolic nest reaches the ``k, j, i`` order its concrete twin does."""
+    _assert_mixed_reordered(transposed_3d_sym, (5, 7, 11), dict(K=5, N=7, M=11), ["i", "j", "k"], ["k", "j", "i"], 3)
 
 
 def _assert_mixed_reordered(program, shape, symbols, order_before, order_after, interchanges):
@@ -267,8 +250,7 @@ def test_mixed_dims_3d_outer_symbolic_reordered():
 
 def test_mixed_dims_3d_two_symbolic_reordered():
     """Strides (5*M, M, 1): two symbolic strides still order, because they
-    share the symbolic factor and ``M <= 5*M`` for every M -- unlike the fully
-    symbolic ``(N*M, M, 1)`` nest, which the pass declines."""
+    share the symbolic factor and ``M <= 5*M`` for every M."""
     _assert_mixed_reordered(
         transposed_3d_mixed_inner_symbolic, (7, 5, 13), dict(M=13), ["i", "j", "k"], ["k", "j", "i"], 3
     )
@@ -291,5 +273,75 @@ def test_all_concrete_mixed_magnitudes_still_reorders():
     assert np.allclose(out, ref) and np.allclose(out, a + 1.0)
 
 
+@dace.program
+def level_map_over_plane_map(A: dace.float64[N, K, M], B: dace.float64[N, K, M]):
+    for k in dace.map[0:K]:
+        for i, j in dace.map[0:N, 0:M]:
+            B[i, k, j] = A[i, k, j] + 1.0
+
+
+def _flat_param_order(sdfg: dace.SDFG) -> list[str]:
+    """Every parameter of the first top-level map nest, outermost first, across multi-parameter levels."""
+    for state in sdfg.states():
+        children = state.scope_children()
+        for node in children[None]:
+            if isinstance(node, nodes.MapEntry):
+                order, current = [], node
+                while current is not None:
+                    order += current.map.params
+                    body = [c for c in children[current] if c is not state.exit_node(current)]
+                    current = body[0] if len(body) == 1 and isinstance(body[0], nodes.MapEntry) else None
+                return order
+    return []
+
+
+def test_multi_parameter_map_is_split_and_reordered():
+    """A two-parameter map over ``B[j, i]`` (strides ``(M, 1)``) is split into one map per parameter so ``i``, the
+    unit-stride one, can move innermost; nothing pre-expands it."""
+    rng = np.random.default_rng(42)
+    sdfg = transposed_2d_sym.to_sdfg(simplify=True)
+    assert _flat_param_order(sdfg) == ["i", "j"]
+    a = rng.random((12, 17))
+    ref = np.zeros((12, 17))
+    copy.deepcopy(sdfg)(A=a.copy(), B=ref, N=12, M=17)
+
+    assert MinimizeStridePermutation().apply_pass(sdfg, {}) is not None
+    assert _flat_param_order(sdfg) == ["j", "i"]
+    assert MinimizeStridePermutation().apply_pass(sdfg, {}) is None
+
+    out = np.zeros((12, 17))
+    sdfg(A=a.copy(), B=out, N=12, M=17)
+    assert np.allclose(out, ref)
+
+
+def test_level_map_moves_between_the_plane_axes():
+    """A map over the middle axis ``k`` around a plane map over ``(i, j)`` of ``B[i, k, j]``: ``k``'s stride ``M``
+    sits between ``i``'s ``K*M`` and ``j``'s 1, so the nest becomes ``i, k, j`` -- the plane's outer axis outside
+    the level, its contiguous axis still innermost."""
+    rng = np.random.default_rng(42)
+    sdfg = level_map_over_plane_map.to_sdfg(simplify=True)
+    assert _flat_param_order(sdfg) == ["k", "i", "j"]
+    a = rng.random((6, 5, 7))
+    ref = np.zeros((6, 5, 7))
+    copy.deepcopy(sdfg)(A=a.copy(), B=ref, N=6, K=5, M=7)
+
+    assert MinimizeStridePermutation().apply_pass(sdfg, {}) is not None
+    assert _flat_param_order(sdfg) == ["i", "k", "j"]
+
+    out = np.zeros((6, 5, 7))
+    sdfg(A=a.copy(), B=out, N=6, K=5, M=7)
+    assert np.allclose(out, ref) and np.allclose(out, a + 1.0)
+
+
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    test_integer_dims_two_level_reordered()
+    test_integer_dims_already_canonical_is_noop()
+    test_integer_dims_three_level_reordered()
+    test_symbolic_dims_two_level_reordered()
+    test_symbolic_dims_three_level_reordered()
+    test_mixed_dims_2d_one_symbolic_reordered()
+    test_mixed_dims_3d_outer_symbolic_reordered()
+    test_mixed_dims_3d_two_symbolic_reordered()
+    test_all_concrete_mixed_magnitudes_still_reorders()
+    test_multi_parameter_map_is_split_and_reordered()
+    test_level_map_moves_between_the_plane_axes()
