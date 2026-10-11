@@ -1666,6 +1666,94 @@ def _ask_direct(predicate: str, expr) -> bool | None:
     raise ValueError(f"unknown ask predicate {predicate!r}")
 
 
+def numeric_bounds(expr: sympy.Basic) -> tuple[Any, Any]:
+    """``(lower, upper)`` numeric bounds of the sympy expression ``expr``, each ``None`` where unknown.
+
+    Interval arithmetic over sums, numeric multiples, ``Min`` and ``Max``, after every rounding term is
+    split into its exact part and a bounded remainder -- ``int_ceil(a, b)`` is ``a/b + t`` with ``t`` in
+    ``[0, 1]``, ``int_floor(a, b)`` and ``floor(x)`` subtract such a ``t``, ``ceiling(x)`` adds one, and
+    ``Mod(a, b)`` lies in ``[0, b]`` -- so the exact parts cancel against the rest of the expression:
+    ``N/64 + 1 - int_ceil(N, 64)`` is ``1 - t``. sympy's assumption engine bounds none of these heads, so
+    it cannot see that a peeled first trip ``14:Min(14, N - 1) + 1`` has at most one iteration. A symbol is
+    bounded below only by its own assumptions (``positive`` integer from 1, ``nonnegative`` from 0).
+    """
+    remainders: dict[Any, tuple[Any, Any]] = {}
+
+    def remainder(lower: Any, upper: Any) -> sympy.Dummy:
+        t = sympy.Dummy("t")
+        remainders[t] = (sympy.Integer(lower), sympy.Integer(upper))
+        return t
+
+    def split(node: sympy.Basic) -> sympy.Basic:
+        args = [split(arg) for arg in node.args]
+        if isinstance(node, (int_floor, int_ceil)) and args[1].is_Number and args[1] > 0:
+            exact = args[0] / args[1]
+            return exact - remainder(0, 1) if isinstance(node, int_floor) else exact + remainder(0, 1)
+        if isinstance(node, sympy.floor):
+            return args[0] - remainder(0, 1)
+        if isinstance(node, sympy.ceiling):
+            return args[0] + remainder(0, 1)
+        if isinstance(node, sympy.Mod) and args[1].is_Number and args[1] > 0:
+            return remainder(0, args[1])
+        return node.func(*args) if args and args != list(node.args) else node
+
+    return _interval(sympy.expand(split(expr)), remainders)
+
+
+def _interval(expr: Any, remainders: dict[Any, tuple[Any, Any]]) -> tuple[Any, Any]:
+    """:func:`numeric_bounds` of an expression whose rounding terms are already ``remainders``."""
+    if expr.is_Number:
+        return expr, expr
+    if expr.is_Symbol:
+        if expr in remainders:
+            return remainders[expr]
+        if expr.is_positive and expr.is_integer:
+            return sympy.Integer(1), None
+        if expr.is_nonnegative:
+            return sympy.Integer(0), None
+        return None, None
+    if expr.is_Add:
+        parts = [_interval(arg, remainders) for arg in expr.args]
+        lower = None if any(lo is None for lo, _ in parts) else sympy.Add(*(lo for lo, _ in parts))
+        upper = None if any(hi is None for _, hi in parts) else sympy.Add(*(hi for _, hi in parts))
+        return lower, upper
+    if expr.is_Mul:
+        coefficient, rest = expr.as_coeff_Mul()
+        if coefficient == 1 or not coefficient.is_Number:
+            return None, None
+        lower, upper = _interval(rest, remainders)
+        if coefficient < 0:
+            lower, upper = upper, lower
+        return (None if lower is None else coefficient * lower), (None if upper is None else coefficient * upper)
+    if isinstance(expr, (sympy.Min, sympy.Max)):
+        parts = [_interval(arg, remainders) for arg in expr.args]
+        lowers = [lo for lo, _ in parts if lo is not None]
+        uppers = [hi for _, hi in parts if hi is not None]
+        if isinstance(expr, sympy.Min):
+            # Below every argument: at most the least known upper bound, at least the least lower one.
+            return (min(lowers) if len(lowers) == len(parts) else None), (min(uppers) if uppers else None)
+        return (max(lowers) if lowers else None), (max(uppers) if len(uppers) == len(parts) else None)
+    return None, None
+
+
+def _ask_by_bounds(predicate: str, expr: sympy.Basic) -> bool | None:
+    """A sign predicate settled by :func:`numeric_bounds`, or ``None`` if the bounds do not decide it."""
+    if predicate == "integer":
+        return None
+    lower, upper = numeric_bounds(expr)
+    if predicate == "negative":
+        if upper is not None and upper < 0:
+            return True
+        return False if lower is not None and lower >= 0 else None
+    if predicate == "positive":
+        if lower is not None and lower > 0:
+            return True
+        return False if upper is not None and upper <= 0 else None
+    if lower is not None and lower >= 0:
+        return True
+    return False if upper is not None and upper < 0 else None
+
+
 def _ask_facts(symbols, facts: dict[str, frozenset[str]]) -> list[Any]:
     """`Q` predicates for what `facts` declares about `symbols`, plus each symbol's own integrality."""
     out = []
@@ -1730,6 +1818,9 @@ def ask(predicate: str, expr, facts: dict[str, frozenset[str]] | None = None) ->
             expr = converted
     if not isinstance(expr, sympy.Basic):
         return None
+    answer = _ask_by_bounds(predicate, expr)
+    if answer is not None:
+        return answer
     expr = equalize_symbol(expr)
     facts = facts or {}
     # Symbol-level first: it is strictly stronger than the contextual engine below, which cannot
@@ -1906,6 +1997,11 @@ class int_floor(DaceFunction):
     def _eval_is_integer(self):
         return True
 
+    def _eval_is_nonnegative(self):
+        x, y = self.args
+        if x.is_nonnegative and y.is_positive:
+            return True
+
 
 class __int_floor(int_floor):
     """Operator-derived variant of ``int_floor``: the Python ``//`` parses to this so
@@ -2003,6 +2099,16 @@ class int_ceil(DaceFunction):
 
     def _eval_is_integer(self):
         return True
+
+    def _eval_is_nonnegative(self):
+        x, y = self.args
+        if x.is_nonnegative and y.is_positive:
+            return True
+
+    def _eval_is_positive(self):
+        x, y = self.args
+        if x.is_positive and y.is_positive:
+            return True
 
 
 class ipow(DaceFunction):
@@ -2712,8 +2818,6 @@ def sympy_divide_fix(expr):
     if not isinstance(expr, sympy.Basic):
         return expr
 
-    int_floor = sympy.Function("int_floor")
-
     processed = 1
     while processed > 0:
         processed = 0
@@ -2730,7 +2834,10 @@ def sympy_divide_fix(expr):
             # Only an integer quotient is a floor division: ``x / 2`` over a double ``x`` is a half.
             if not integral_index_expression(rest):
                 continue
-            nexpr = nexpr.subs(candidate, int_floor(rest, int(1 / candidate.args[ri])))
+            # DaCe's ``int_floor``, not an undefined ``Function("int_floor")``: that one carries no
+            # integrality or sign, so no later query could reason about the quotient. Unevaluated, as the
+            # loop re-scans the expression and an exact quotient would fold back to the ``Mul``.
+            nexpr = nexpr.subs(candidate, int_floor(rest, int(1 / candidate.args[ri]), evaluate=False))
             processed += 1
 
     return nexpr
