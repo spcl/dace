@@ -2,14 +2,13 @@
 """Helper functions for transformations and passes that work on GPU code."""
 
 import math
-from typing import List, Tuple
 
 from dace import config, dtypes
 from dace.sdfg import SDFG, SDFGState, nodes
 from dace.sdfg.scope import is_devicelevel_gpu
 
 
-def gpu_kernels(sdfg: SDFG) -> List[Tuple[SDFG, SDFGState, nodes.MapEntry]]:
+def gpu_kernels(sdfg: SDFG) -> list[tuple[SDFG, SDFGState, nodes.MapEntry]]:
     """
     Returns the GPU kernels of an SDFG and its nested SDFGs, i.e., the device and persistent maps that are not
     themselves in device code.
@@ -28,7 +27,7 @@ def gpu_kernels(sdfg: SDFG) -> List[Tuple[SDFG, SDFGState, nodes.MapEntry]]:
     return result
 
 
-def dynamic_map_block_dims() -> Tuple[int, ...]:
+def dynamic_map_block_dims() -> tuple[int, ...]:
     """
     Returns the thread-block dimensions of dynamic thread-block maps (``compiler.cuda.dynamic_map_block_size``).
 

@@ -1,11 +1,12 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 
 import numpy as np
+
 import dace
+import dace.serialize
 from dace.properties import CodeBlock
 from dace.sdfg.sdfg import SDFG, InterstateEdge
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
-import dace.serialize
 
 
 def test_cond_region_if():

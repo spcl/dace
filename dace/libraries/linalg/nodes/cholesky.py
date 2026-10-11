@@ -1,15 +1,14 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
+
 import dace.library
 import dace.properties
 import dace.sdfg.nodes
-
 from dace import Memlet
-from dace.libraries.lapack import Potrf
+from dace.libraries.blas import environments as blas_environments
+from dace.libraries.lapack import Potrf, environments
 from dace.libraries.linalg.nodes.transpose import Transpose
 from dace.transformation.transformation import ExpandTransformation
-from dace.libraries.lapack import environments
-from dace.libraries.blas import environments as blas_environments
 
 
 def _make_sdfg(node, parent_state, parent_sdfg, implementation):
@@ -18,7 +17,7 @@ def _make_sdfg(node, parent_state, parent_sdfg, implementation):
     dtype = inp_desc.dtype
     storage = inp_desc.storage
 
-    sdfg = dace.SDFG("{l}_sdfg".format(l=node.label))
+    sdfg = dace.SDFG(f"{node.label}_sdfg")
 
     ain_arr = sdfg.add_array("_a", inp_shape, dtype=dtype, strides=inp_desc.strides)
     bout_arr = sdfg.add_array("_b", out_shape, dtype=dtype, strides=out_desc.strides)
@@ -28,14 +27,14 @@ def _make_sdfg(node, parent_state, parent_sdfg, implementation):
     else:
         binout_arr = bout_arr
 
-    state = sdfg.add_state("{l}_state".format(l=node.label))
+    state = sdfg.add_state(f"{node.label}_state")
 
     potrf_node = Potrf("potrf", lower=node.lower)
     potrf_node.implementation = implementation
 
     _, me, mx = state.add_mapped_tasklet(
         "_uzero_",
-        dict(__i="0:%s" % out_shape[0], __j="0:%s" % out_shape[1]),
+        dict(__i=f"0:{out_shape[0]}", __j=f"0:{out_shape[1]}"),
         dict(_inp=Memlet.simple("_b", "__i, __j")),
         "_out = (__i < __j) ? 0 : _inp;",
         dict(_out=Memlet.simple("_b", "__i, __j")),

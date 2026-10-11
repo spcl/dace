@@ -1,19 +1,19 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """Implementation of the performance instrumentation report."""
 
-from dataclasses import dataclass
 import json
-import numpy as np
 import re
-from typing import Any, Dict, List, Optional, Tuple, Union
-from io import StringIO
-
 from collections import defaultdict
+from dataclasses import dataclass
+from io import StringIO
+from typing import Any
 
-UUIDType = Tuple[int, int, int]
+import numpy as np
+
+UUIDType = tuple[int, int, int]
 
 
-def _uuid_to_dict(uuid: UUIDType) -> Dict[str, int]:
+def _uuid_to_dict(uuid: UUIDType) -> dict[str, int]:
     result = {}
     if uuid[0] != -1:
         result["cfg_id"] = uuid[0]
@@ -38,9 +38,9 @@ class DurationEvent:
     duration: float  #: Duration (in microseconds)
     pid: int  #: Process ID
     tid: int = -1  #: Thread ID (or -1 if not applicable)
-    additional_info: Optional[Dict[str, Any]] = None  #: More arguments in the event
+    additional_info: dict[str, Any] | None = None  #: More arguments in the event
 
-    def save(self) -> Dict[str, Any]:
+    def save(self) -> dict[str, Any]:
         info = self.additional_info or {}
         args = {**info, **_uuid_to_dict(self.uuid)}
         return dict(
@@ -65,16 +65,16 @@ class CounterEvent:
     category: str  #: Category
     uuid: UUIDType  #: Unique locator for SDFG/state/node/edge
     timestamp: int  #: Event time (in microseconds)
-    counters: Dict[str, float]  #: Counter names and their values
+    counters: dict[str, float]  #: Counter names and their values
     pid: int  #: Process ID
     tid: int = -1  #: Thread ID (or -1 if not applicable)
 
-    def save(self) -> Dict[str, Any]:
+    def save(self) -> dict[str, Any]:
         args = {**self.counters, **_uuid_to_dict(self.uuid)}
         return dict(name=self.name, cat=self.category, ph="C", ts=self.timestamp, pid=self.pid, tid=self.tid, args=args)
 
 
-class InstrumentationReport(object):
+class InstrumentationReport:
     """
     An object that represents a DaCe program instrumentation report.
     Such reports may include runtimes of all or parts of an SDFG, as well as performance counters.
@@ -83,7 +83,7 @@ class InstrumentationReport(object):
     """
 
     @staticmethod
-    def get_event_uuid_and_other_info(event) -> Tuple[UUIDType, Dict[str, Any]]:
+    def get_event_uuid_and_other_info(event) -> tuple[UUIDType, dict[str, Any]]:
         uuid = (-1, -1, -1)
         other_info = {}
         if "args" in event:
@@ -101,16 +101,16 @@ class InstrumentationReport(object):
         self.name = None
 
         # Raw events
-        self.events: List[Union[DurationEvent, CounterEvent]] = []
+        self.events: list[DurationEvent | CounterEvent] = []
 
         # Summarized fields:
         # UUID -> Name -> Thread ID -> Times
-        self.durations: Dict[UUIDType, Dict[str, Dict[int, List[float]]]] = defaultdict(
+        self.durations: dict[UUIDType, dict[str, dict[int, list[float]]]] = defaultdict(
             lambda: defaultdict(lambda: defaultdict(list))
         )
 
         # UUID -> Name -> Counter -> Thread ID -> Values
-        self.counters: Dict[UUIDType, Dict[str, Dict[str, Dict[int, List[float]]]]] = defaultdict(dict)
+        self.counters: dict[UUIDType, dict[str, dict[str, dict[int, list[float]]]]] = defaultdict(dict)
 
         self._sortcat = None
         self._sortdesc = False
@@ -124,7 +124,7 @@ class InstrumentationReport(object):
         self.name = match.groups()[0] if match is not None else "N/A"
         self.filepath = filename
 
-        with open(filename, "r") as fp:
+        with open(filename) as fp:
             report = json.load(fp)
 
             if "traceEvents" not in report or "sdfgHash" not in report:
@@ -193,7 +193,7 @@ class InstrumentationReport(object):
                     self.counters[uuid][name][counter][tid].append(value)
 
     def __repr__(self):
-        return "InstrumentationReport(name=%s)" % self.name
+        return f"InstrumentationReport(name={self.name})"
 
     def sortby(self, column: str, ascending: bool = False):
         if column and column.lower() not in ("counter", "value", "min", "max", "mean", "median"):
@@ -246,10 +246,10 @@ class InstrumentationReport(object):
             string += row_format.format(indent + label + ":", "", "", "", "", width=colw)
             string += row_format.format(
                 indent,
-                "%.3f" % np.min(runtimes),
-                "%.3f" % np.mean(runtimes),
-                "%.3f" % np.median(runtimes),
-                "%.3f" % np.max(runtimes),
+                f"{np.min(runtimes):.3f}",
+                f"{np.mean(runtimes):.3f}",
+                f"{np.median(runtimes):.3f}",
+                f"{np.max(runtimes):.3f}",
                 width=colw,
             )
 
@@ -297,7 +297,7 @@ class InstrumentationReport(object):
 
             string += row_format.format(indent + "|" + label + ":", "", "", "", "", width=colw)
             string += row_format.format(
-                indent, np.min(values), "%.2f" % np.mean(values), "%.2f" % np.median(values), np.max(values), width=colw
+                indent, np.min(values), f"{np.mean(values):.2f}", f"{np.median(values):.2f}", np.max(values), width=colw
             )
 
         return string, sdfg, state
@@ -399,7 +399,7 @@ class InstrumentationReport(object):
 
         return string
 
-    def as_csv(self) -> Tuple[str, str]:
+    def as_csv(self) -> tuple[str, str]:
         """
         Generates a CSV version of the report.
 

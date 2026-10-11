@@ -1,8 +1,10 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
-import numpy as np
-import sys
 import os
+import sys
+
+import numpy as np
+
+import dace
 
 # Ensure files from the same directory can be imported (for pytest)
 sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))

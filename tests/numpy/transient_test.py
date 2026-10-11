@@ -1,5 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import numpy as np
+
 import dace
 
 M, N, K = (dace.symbol(name) for name in ["M", "N", "K"])

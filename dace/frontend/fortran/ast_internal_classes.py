@@ -1,35 +1,34 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
-from typing import List, Optional, Union
 
 # The node class is the base class for all nodes in the AST. It provides attributes including the line number and fields.
 # Attributes are not used when walking the tree, but are useful for debugging and for code generation.
 # The fields attribute is a list of the names of the attributes that are children of the node.
 
 
-class FNode(object):
+class FNode:
     def __init__(self, *args, **kwargs):  # real signature unknown
         self.integrity_exceptions = []
         self.read_vars = []
         self.written_vars = []
-        self.parent: Optional[
-            Union[Subroutine_Subprogram_Node, Function_Subprogram_Node, Main_Program_Node, Module_Node]
-        ] = None
+        self.parent: Subroutine_Subprogram_Node | Function_Subprogram_Node | Main_Program_Node | Module_Node | None = (
+            None
+        )
         for k, v in kwargs.items():
             setattr(self, k, v)
 
     _attributes = ("line_number",)
     _fields = ()
-    integrity_exceptions: List
-    read_vars: List
-    written_vars: List
+    integrity_exceptions: list
+    read_vars: list
+    written_vars: list
 
     def __eq__(self, o: object) -> bool:
         if type(self) is type(o):
             # check that all fields and attributes match
-            self_field_vals = list(map(lambda name: getattr(self, name, None), self._fields))
-            self_attr_vals = list(map(lambda name: getattr(self, name, None), self._attributes))
-            o_field_vals = list(map(lambda name: getattr(o, name, None), o._fields))
-            o_attr_vals = list(map(lambda name: getattr(o, name, None), o._attributes))
+            self_field_vals = [getattr(self, name, None) for name in self._fields]
+            self_attr_vals = [getattr(self, name, None) for name in self._attributes]
+            o_field_vals = [getattr(o, name, None) for name in o._fields]
+            o_attr_vals = [getattr(o, name, None) for name in o._attributes]
 
             return self_field_vals == o_field_vals and self_attr_vals == o_attr_vals
         return False

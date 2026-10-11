@@ -1,7 +1,8 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """``Broadcast`` library node: Fortran ``SPREAD`` and NumPy ``broadcast_to``."""
 
-from dace import SDFG, SDFGState, library, memlet as mm, nodes, properties
+from dace import SDFG, SDFGState, library, nodes, properties
+from dace import memlet as mm
 from dace.frontend.common import op_repository as oprepo
 from dace.libraries.standard.helper import broadcast_indices, broadcast_map_expansion
 from dace.transformation.transformation import ExpandTransformation

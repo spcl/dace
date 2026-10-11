@@ -1,15 +1,16 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import contextlib
 import inspect
-from copy import deepcopy as dc
+import itertools
 from collections import OrderedDict
-from typing import Callable
+from collections.abc import Callable
+from copy import deepcopy as dc
 
-import dace
 import numpy as np
 import pytest
-
 from numpy.random import default_rng
+
+import dace
 
 rng = default_rng(42)
 
@@ -95,7 +96,7 @@ def compare_numpy_output(
                     if non_zero:
                         res[res == 0] = 1 + 1j
                 else:
-                    raise ValueError("unsupported dtype {}".format(ddesc.dtype))
+                    raise ValueError(f"unsupported dtype {ddesc.dtype}")
 
                 if type(ddesc) is dace.data.Scalar:
                     return res[0]
@@ -122,10 +123,8 @@ def compare_numpy_output(
             try:
                 if validation_func:
                     # Works only with 1D inputs of the same size!
-                    reference_result = []
                     reference_input = [arr.tolist() for arr in inputs.values()]
-                    for inp_args in zip(*reference_input):
-                        reference_result.append(validation_func(*inp_args))
+                    reference_result = list(itertools.starmap(validation_func, zip(*reference_input)))
                 else:
                     with contextmgr:
                         reference_result = func(**reference_input)
@@ -147,21 +146,18 @@ def compare_numpy_output(
                 if dace_thrown is None or numpy_thrown is None:
                     raise_from = dace_thrown if dace_thrown is not None else numpy_thrown
                     raise AssertionError(
-                        "dace threw {}: {}, but numpy threw {}: {}".format(
-                            type(dace_thrown).__name__, dace_thrown, type(numpy_thrown).__name__, numpy_thrown
-                        )
+                        f"dace threw {type(dace_thrown).__name__}: {dace_thrown}, but numpy threw {type(numpy_thrown).__name__}: {numpy_thrown}"
                     ) from raise_from
-            else:
-                if not isinstance(reference_result, (tuple, list)):
-                    reference_result = [reference_result]
-                    dace_result = [dace_result]
-                    for ref, val in zip(reference_result, dace_result):
-                        if ref.dtype == np.float32:
-                            assert np.allclose(ref, val, equal_nan=True, rtol=1e-3, atol=1e-5)
-                        else:
-                            assert np.allclose(ref, val, equal_nan=True)
-                        if check_dtype and not validation_func:
-                            assert ref.dtype == val.dtype
+            elif not isinstance(reference_result, (tuple, list)):
+                reference_result = [reference_result]
+                dace_result = [dace_result]
+                for ref, val in zip(reference_result, dace_result):
+                    if ref.dtype == np.float32:
+                        assert np.allclose(ref, val, equal_nan=True, rtol=1e-3, atol=1e-5)
+                    else:
+                        assert np.allclose(ref, val, equal_nan=True)
+                    if check_dtype and not validation_func:
+                        assert ref.dtype == val.dtype
 
         return test
 

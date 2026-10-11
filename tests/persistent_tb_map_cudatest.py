@@ -2,6 +2,7 @@
 
 import numpy as np
 import pytest
+
 import dace
 from dace import nodes
 from dace.dtypes import ScheduleType
@@ -40,7 +41,7 @@ def test_persistent_thread_block():
 
     N = 1050
 
-    print("Dot product (N = {})".format(N))
+    print(f"Dot product (N = {N})")
 
     A = np.random.rand(N).astype(np.float32)
     B = np.random.rand(N).astype(np.float32)

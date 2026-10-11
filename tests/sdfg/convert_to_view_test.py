@@ -4,8 +4,10 @@
 import numpy as np
 
 import dace
-from dace import data as dt, subsets
-from dace.sdfg import nodes, utils as sdutil
+from dace import data as dt
+from dace import subsets
+from dace.sdfg import nodes
+from dace.sdfg import utils as sdutil
 
 N = 16
 

@@ -1,6 +1,6 @@
 import nbformat
 import pytest
-from nbconvert.preprocessors import ExecutePreprocessor, CellExecutionError
+from nbconvert.preprocessors import CellExecutionError, ExecutePreprocessor
 
 BASE_PATH = "tutorials/"
 NOTEBOOK_PATHS = [
@@ -18,7 +18,7 @@ def test_notebook_exec(notebook):
             out = ep.preprocess(nb)
         except CellExecutionError:
             out = None
-            msg = 'Error executing the notebook "%s".\n\n' % notebook
+            msg = f'Error executing the notebook "{notebook}".\n\n'
             print(msg)
             raise
 

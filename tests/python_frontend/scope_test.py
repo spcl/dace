@@ -1,9 +1,10 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests related to scopes and variable lifetime."""
 
-import dace
 import numpy as np
 import pytest
+
+import dace
 from dace.frontend.python.common import DaceSyntaxError
 
 rng = np.random.default_rng(42)

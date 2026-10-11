@@ -1,13 +1,14 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import builtins
-import numpy as np
-import pytest
-import uuid
-import pathlib
 import copy
+import pathlib
 import re
 import tempfile
+import uuid
 from unittest import mock
+
+import numpy as np
+import pytest
 
 import dace
 from dace.codegen import compiler as sdfg_compiler

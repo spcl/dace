@@ -1,5 +1,6 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 from copy import deepcopy
+
 import dace
 from dace import subsets as sbs
 from dace.sdfg import utils as sdutil

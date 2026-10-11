@@ -1,4 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+import dataclasses
 from dataclasses import is_dataclass
 from enum import Enum, EnumMeta
 from typing import Any
@@ -192,6 +193,10 @@ class ExtensibleAttributeEnum(Enum, metaclass=_ExtensibleAttributeEnumMeta):
             raise AttributeError(name)
         if self._dataclass_type is not None and not isinstance(self._value_, type):
             return getattr(self._value_, name)
+        # A template reads as its dataclass defaults
+        field = self._dataclass_type.__dataclass_fields__.get(name) if self._is_template else None
+        if field is not None and field.default is not dataclasses.MISSING:
+            return field.default
         raise AttributeError(f"'{self.__class__.__name__}' has no attribute '{name}'")
 
     def __eq__(self, other):
@@ -207,6 +212,13 @@ class ExtensibleAttributeEnum(Enum, metaclass=_ExtensibleAttributeEnumMeta):
             return True
         # Two instances compare by their dataclass values
         return self._value_ == other._value_
+
+    def __reduce_ex__(self, protocol):
+        # By name, not by value: a template's value is its dataclass, which pickles as a class nested in the enum
+        # that its own name no longer resolves to; an instance is rebuilt by calling its template.
+        if self._is_template or self._dataclass_type is None:
+            return getattr, (self.__class__, self._name_)
+        return instantiate_template, (self.__class__, self._name_, dataclasses.asdict(self._value_))
 
     def __hash__(self):
         return hash(self._name_)
@@ -312,3 +324,8 @@ class ExtensibleAttributeEnum(Enum, metaclass=_ExtensibleAttributeEnumMeta):
             return member  # Uninstantiated template
         else:
             return member
+
+
+def instantiate_template(cls: type, name: str, fields: dict) -> ExtensibleAttributeEnum:
+    """The instance of template ``name`` of ``cls`` with ``fields``; the counterpart of ``__reduce_ex__``."""
+    return getattr(cls, name)(**fields)

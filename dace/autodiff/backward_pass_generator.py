@@ -1,17 +1,20 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
-from typing import List, Tuple, Set, Dict, Union, Optional, Sequence
+from collections.abc import Sequence
+
 import sympy as sp
 
 # DaCe imports
 import dace
-from dace.properties import CodeBlock
-import dace.sdfg.nodes as nodes
 import dace.transformation.transformation as xf
-from dace import dtypes, data as dt, symbolic
-from dace.sdfg import dealias, SDFG, SDFGState, state as dstate, utils as dace_utils
-from dace.sdfg.state import LoopRegion
+from dace import data as dt
+from dace import dtypes, symbolic
 from dace.memlet import Memlet
+from dace.properties import CodeBlock
+from dace.sdfg import SDFG, SDFGState, dealias, nodes
+from dace.sdfg import state as dstate
+from dace.sdfg import utils as dace_utils
+from dace.sdfg.state import LoopRegion
 
 try:
     from dace.libraries.onnx.forward_implementation_abc import ONNXForward
@@ -24,17 +27,17 @@ except ImportError:
     ONNX_AVAILABLE = False
 
 # Autodiff imports
+import dace.autodiff.utils as ad_utils
 from dace.autodiff.base_abc import (
+    AutoDiffException,
     BackwardContext,
     BackwardResult,
-    AutoDiffException,
-    find_backward_implementation,
     ExpansionTemplate,
+    find_backward_implementation,
 )
-import dace.autodiff.utils as ad_utils
-from dace.transformation.passes.analysis import loop_analysis
-from dace.autodiff.implementations.dace_nodes import DaceNodeBackwardImplementations
 from dace.autodiff.data_forwarding.manager import DataForwardingManager
+from dace.autodiff.implementations.dace_nodes import DaceNodeBackwardImplementations
+from dace.transformation.passes.analysis import loop_analysis
 
 
 class BackwardPassGenerator:
@@ -68,13 +71,13 @@ class BackwardPassGenerator:
         self,
         *,
         sdfg: SDFG,
-        given_gradients: Sequence[Union[nodes.AccessNode, str]],
-        required_gradients: Sequence[Union[nodes.AccessNode, str]],
+        given_gradients: Sequence[nodes.AccessNode | str],
+        required_gradients: Sequence[nodes.AccessNode | str],
         backward_sdfg: SDFG,  # This can be the same as sdfg
-        array_grad_map: Optional[Dict[str, str]] = None,
-        conflicted_gradient_buffers: Optional[Set[str]] = None,
+        array_grad_map: dict[str, str] | None = None,
+        conflicted_gradient_buffers: set[str] | None = None,
         data_forwarding_strategy: str = "store_all",
-        data_to_recompute: Optional[List[str]] = None,
+        data_to_recompute: list[str] | None = None,
     ):
 
         self.sdfg: SDFG = sdfg
@@ -96,47 +99,47 @@ class BackwardPassGenerator:
         self.output_names = {n.data for n in given_gradients}
 
         #: Arrays descriptors for the gradients
-        self.backward_grad_arrays: Dict[str, dt.Array] = {}
+        self.backward_grad_arrays: dict[str, dt.Array] = {}
 
         #: Arrays descriptors for inputs that are required from the forward pass
-        self.backward_input_arrays: Dict[str, dt.Array] = {}
+        self.backward_input_arrays: dict[str, dt.Array] = {}
 
         #: Mapping from forward node -> backward node, and forward map -> backward map
-        self.reverse_map: Dict[nodes.Node, Union[nodes.Node, nodes.Map]] = {}
+        self.reverse_map: dict[nodes.Node, nodes.Node | nodes.Map] = {}
 
         #: Mapping from forward state -> backward state
-        self.reversed_states_map: Dict[SDFGState, SDFGState] = {}
+        self.reversed_states_map: dict[SDFGState, SDFGState] = {}
 
         #: Mapping from forward LoopRegion -> backward LoopRegion
-        self.reversed_loops_map: Dict[LoopRegion, LoopRegion] = {}
+        self.reversed_loops_map: dict[LoopRegion, LoopRegion] = {}
 
         #: Mapping from forward state -> backward state for loop states
-        self.reversed_loop_states_map: Dict[nodes.Node, nodes.Node] = {}
+        self.reversed_loop_states_map: dict[nodes.Node, nodes.Node] = {}
 
         #: Mapping between states and their subgraph views for AD processing
-        self.states_view_map: Dict[SDFGState, dstate.StateSubgraphView] = {}
+        self.states_view_map: dict[SDFGState, dstate.StateSubgraphView] = {}
 
         #: Mapping between loop states and their subgraph views for AD processing
-        self.loop_states_view_map: Dict[SDFGState, dstate.StateSubgraphView] = {}
+        self.loop_states_view_map: dict[SDFGState, dstate.StateSubgraphView] = {}
 
         #: Mapping between the map entry of a conditional assignment block and its zero-out AN
-        self.conditional_block_entry: Dict[nodes.MapEntry, nodes.AccessNode] = {}
+        self.conditional_block_entry: dict[nodes.MapEntry, nodes.AccessNode] = {}
 
         #: Mapping from forward_node -> BackwardResult for that node
-        self.result_map: Dict[nodes.Node, BackwardResult] = {}
+        self.result_map: dict[nodes.Node, BackwardResult] = {}
 
         #: Mapping from forward name to gradient name for arrays
-        self.array_grad_map: Dict[str, str] = array_grad_map or {}
+        self.array_grad_map: dict[str, str] = array_grad_map or {}
 
         #: Mapping from the backward access nodes that will be zeroed out
         # to the transients that contain the values before they are zeroed out
-        self.zeroed_out: Dict[nodes.AccessNode, List[nodes.AccessNode]] = {}
+        self.zeroed_out: dict[nodes.AccessNode, list[nodes.AccessNode]] = {}
 
         #: The read-only arrays of the forward SDFG. Used in data forwarding decisions
-        self.read_only_arrays: Set[str] = ad_utils.get_read_only_arrays(self.sdfg)
+        self.read_only_arrays: set[str] = ad_utils.get_read_only_arrays(self.sdfg)
 
         #: Mapping from overwritten input name to storing AccessNode
-        self.stored_inputs: Dict[str, nodes.AccessNode] = {}
+        self.stored_inputs: dict[str, nodes.AccessNode] = {}
 
         # Variable to check if backward has already been applied
         self._applied = False
@@ -145,9 +148,9 @@ class BackwardPassGenerator:
 
         # Topological ordering of the states
         self.state_order = ad_utils.get_state_topological_order(self.sdfg)
-        self.conflicted_gradient_buffers: Set[str] = conflicted_gradient_buffers or set()
+        self.conflicted_gradient_buffers: set[str] = conflicted_gradient_buffers or set()
 
-        self.interstate_symbols: Dict[str, str] = {}
+        self.interstate_symbols: dict[str, str] = {}
         for edge in self.sdfg.all_interstate_edges():
             for assign_symbol, assignment in edge.data.assignments.items():
                 self.interstate_symbols[assign_symbol] = assignment
@@ -160,8 +163,8 @@ class BackwardPassGenerator:
         self.dace_node_impl = DaceNodeBackwardImplementations(self)
 
         #: List containing information about all the data to be forwarded to the backward pass
-        self.data_to_forward: List[
-            Tuple[SDFGState, SDFGState, nodes.AccessNode, nodes.Node, dstate.MultiConnectorEdge]
+        self.data_to_forward: list[
+            tuple[SDFGState, SDFGState, nodes.AccessNode, nodes.Node, dstate.MultiConnectorEdge]
         ] = []
 
         # Data forwarding manager
@@ -184,7 +187,7 @@ class BackwardPassGenerator:
                 raise AutoDiffException(f"Could not find input '{inp}' in SDFG array descriptors")
 
     def _setup_sdfg_configuration(
-        self, sdfg: SDFG, backward_sdfg: SDFG, given_gradients: List[nodes.AccessNode]
+        self, sdfg: SDFG, backward_sdfg: SDFG, given_gradients: list[nodes.AccessNode]
     ) -> None:
         """Setup SDFG configuration for separate or combined forward/backward passes.
 
@@ -226,11 +229,11 @@ class BackwardPassGenerator:
         defaults.update(kwargs)
         return BackwardPassGenerator(**defaults)
 
-    def backward(self) -> Tuple[BackwardResult, Dict[str, dt.Array], Dict[str, dt.Array]]:
+    def backward(self) -> tuple[BackwardResult, dict[str, dt.Array], dict[str, dt.Array]]:
         """Generate the backward pass in backward_sdfg."""
         return self.reverse_sdfg()
 
-    def reverse_sdfg(self) -> Tuple[BackwardResult, Dict[str, dt.Array], Dict[str, dt.Array]]:
+    def reverse_sdfg(self) -> tuple[BackwardResult, dict[str, dt.Array], dict[str, dt.Array]]:
         """Generate the backward pass by reversing all SDFG states.
 
         Processes all states in the SDFG and creates their backward counterparts,
@@ -280,7 +283,7 @@ class BackwardPassGenerator:
         given_grad_names = {name: self.array_grad_name(name) for name in self.given_gradients_data}
 
         # Set mapping from gradient name to whether it should be zeroed out on initialization
-        zero_init: Dict[str, bool] = {}
+        zero_init: dict[str, bool] = {}
         for node, bres in self.result_map.items():
             forward_state = self._get_node_state(node=node)
             for zname, zinit in bres.zero_init.items():
@@ -434,7 +437,7 @@ class BackwardPassGenerator:
 
                 bwd_parent_graph.add_edge(src=reversed_loop, dst=bwd_src, data=dace.InterstateEdge())
 
-    def _fill_interstate_edge_conditions_in_scope(self, graph: Union[SDFG, LoopRegion]) -> None:
+    def _fill_interstate_edge_conditions_in_scope(self, graph: SDFG | LoopRegion) -> None:
         """
         Get all the nodes within this graph in topological order,
         Connect the states and call the function recursively on the nested scopes.
@@ -458,7 +461,7 @@ class BackwardPassGenerator:
                     continue
 
             # A list of the conditions on all the in edges for this block, and whether one of them is unconditional
-            in_edges_conditions: List[str] = []
+            in_edges_conditions: list[str] = []
             unconditional = False
             for edge in node.parent_graph.in_edges(node):
                 # Get the condition to get to the source block in the forward pass
@@ -587,7 +590,7 @@ class BackwardPassGenerator:
 
                 # We need to check if any data needs to be used in these assignment
                 # This is important in the case of a NSDFG where data will need to be forwarded
-                for _, rhs in edge.data.assignments.items():
+                for rhs in edge.data.assignments.values():
                     # If any of the sdfg arrays are in the rhs assignment
                     assignment_arrays = [array for array in self.sdfg.arrays.keys() if array in rhs]
                     if assignment_arrays and self.separate_sdfgs:
@@ -717,7 +720,7 @@ class BackwardPassGenerator:
                 "_clear_" + backward_node.data + "_",
                 indices,
                 {},
-                f"__out = 0",
+                "__out = 0",
                 {
                     "__out": tasklet_memlet,
                 },
@@ -778,9 +781,9 @@ class BackwardPassGenerator:
             else:
                 self.zeroed_out[backward_node].append(transient_node)
         else:
-            raise AutoDiffException("Unsupported data descriptor {}".format(array_desc))
+            raise AutoDiffException(f"Unsupported data descriptor {array_desc}")
 
-    def _remove_onnx_attribute_accessnodes(self, nodes_list: List[nodes.Node], state: SDFGState) -> None:
+    def _remove_onnx_attribute_accessnodes(self, nodes_list: list[nodes.Node], state: SDFGState) -> None:
         """Remove ONNX attribute AccessNodes that don't need gradient tracking.
 
         For some ONNX operators, nodes have attributes as input connectors even if the inputs are actually constant.
@@ -788,7 +791,7 @@ class BackwardPassGenerator:
         Gradients for these attributes should not be tracked since they represent control flow and not data flow.
         """
         attribute_to_remove = {"axis", "keepdims", "axes", "p", "dilations", "kernel_shape", "strides"}
-        for node in nodes_list[:]:  # Iterate over a copy of the list to avoid modification issues
+        for node in nodes_list.copy():  # Iterate over a copy of the list to avoid modification issues
             if isinstance(node, nodes.AccessNode):
                 out_edges = state.out_edges(node)
                 if out_edges and all(
@@ -797,7 +800,7 @@ class BackwardPassGenerator:
                 ):
                     nodes_list.remove(node)
 
-    def _remove_maps_without_input_connectors(self, nodes_list: List[nodes.Node], state: SDFGState) -> None:
+    def _remove_maps_without_input_connectors(self, nodes_list: list[nodes.Node], state: SDFGState) -> None:
         """Remove maps that don't have any input connectors from the nodes_list.
 
         These are maps that won't have an output in the backward pass and thus can be skipped from the reversal process.
@@ -805,7 +808,7 @@ class BackwardPassGenerator:
         This is because we might need to zero out the gradient of this node.
         If no zeroing out is necessary, the node will be removed in the reverse_subgraph function cleanup at the end.
         """
-        for node in nodes_list[:]:  # Iterate over a copy of the list to avoid modification issues
+        for node in nodes_list.copy():  # Iterate over a copy of the list to avoid modification issues
             if isinstance(node, nodes.MapEntry) and len(node.in_connectors) == 0:
                 nodes_list.remove(node)
                 # Remove the MapExit and everything in between
@@ -836,7 +839,7 @@ class BackwardPassGenerator:
         backward_nodes: set[nodes.Node] = set()
         given_gradients_all_states = set(self.given_gradients_data)
 
-        required_gradients_all_states = {n for n in self.required_gradients_data}
+        required_gradients_all_states = set(self.required_gradients_data)
         given_gradients_all_states = given_gradients_all_states | required_gradients_all_states
 
         # Do the backward BFS iteratively. In a loop, a state may need the gradient of data that a state before it
@@ -846,11 +849,11 @@ class BackwardPassGenerator:
             known_gradients = len(given_gradients_all_states)
             self.loop_states_view_map.clear()
             for state in reversed(self.state_order):
-                state_given_gradients: List[nodes.AccessNode] = []
-
-                for node in state:
-                    if isinstance(node, nodes.AccessNode) and node.data in given_gradients_all_states:
-                        state_given_gradients.append(node)
+                state_given_gradients: list[nodes.AccessNode] = [
+                    node
+                    for node in state
+                    if isinstance(node, nodes.AccessNode) and node.data in given_gradients_all_states
+                ]
 
                 backward_nodes = {
                     n for e in state.edge_bfs(state_given_gradients, reverse=True) for n in [e.src, e.dst]
@@ -880,9 +883,11 @@ class BackwardPassGenerator:
                     subgraph_an = [node.data for node in state_subgraph.nodes() if isinstance(node, nodes.AccessNode)]
 
                     # For each access node in this view
-                    for state_node in state:
-                        if isinstance(state_node, nodes.AccessNode) and state_node.data in subgraph_an:
-                            state_given_gradients.append(state_node)
+                    state_given_gradients.extend(
+                        state_node
+                        for state_node in state
+                        if isinstance(state_node, nodes.AccessNode) and state_node.data in subgraph_an
+                    )
 
                     # Do reverse BFS starting from this new set of nodes
                     backward_nodes = {
@@ -959,7 +964,7 @@ class BackwardPassGenerator:
         array = self.sdfg.arrays[data_name]
 
         if not isinstance(array, (dt.Scalar, dt.Array, dt.View)):
-            raise AutoDiffException("Unsupported data descriptor {}".format(array))
+            raise AutoDiffException(f"Unsupported data descriptor {array}")
 
         cloned_datadesc = copy.deepcopy(array)
 
@@ -1107,7 +1112,7 @@ class BackwardPassGenerator:
                     bwd_node = self.reversed_loop_states_map[node]
 
     def _add_missing_nested_sdfg_connectors_to_view(
-        self, state: SDFGState, state_subgraph: dstate.StateSubgraphView, view_nodes: List[nodes.Node]
+        self, state: SDFGState, state_subgraph: dstate.StateSubgraphView, view_nodes: list[nodes.Node]
     ):
         """Add missing NestedSDFG connectors to the view for correctness.
 
@@ -1374,10 +1379,7 @@ class BackwardPassGenerator:
 
     def _get_node_state(self, node: nodes.Node) -> SDFGState:
         """Return the SDFG state that contains this node."""
-        matches = []
-        for state in self.sdfg.states():
-            if node in state.nodes():
-                matches.append(state)
+        matches = [state for state in self.sdfg.states() if node in state.nodes()]
 
         if len(matches) != 1:
             raise AutoDiffException(f"Expected exactly one match, got {len(matches)}")
@@ -1559,14 +1561,14 @@ class BackwardPassGenerator:
         except Exception as e:
             # if this is not the structure we are expecting, fail
             raise AutoDiffException(
-                f"The boolean datatype in edges is limited to conditional array assingements."
-                f" This stucture is not supported."
+                "The boolean datatype in edges is limited to conditional array assingements."
+                " This stucture is not supported."
             ) from e
 
         return conditional_assingement_block_nodes
 
     def _get_gradient_nodes_to_track(
-        self, forward_state: SDFGState, block_nodes: List[nodes.Node], subgraph: dstate.SubgraphView
+        self, forward_state: SDFGState, block_nodes: list[nodes.Node], subgraph: dstate.SubgraphView
     ):
         """Get gradient nodes that need tracking in conditional assignments.
 
@@ -1575,9 +1577,9 @@ class BackwardPassGenerator:
         This function checks all the required access nodes that are in the conditional block.
         At the moment this is just the target access node.
         """
-        nodes_to_track: List[nodes.AccessNode] = []
-        gradient_nodes = [n for n in self.required_gradients_data]
-        gradient_nodes += [n for n in self.given_gradients_data]
+        nodes_to_track: list[nodes.AccessNode] = []
+        gradient_nodes = list(self.required_gradients_data)
+        gradient_nodes += list(self.given_gradients_data)
 
         # get the subgraph difference
         difference = set(subgraph.nodes()).difference(set(block_nodes))
@@ -1595,9 +1597,7 @@ class BackwardPassGenerator:
 
             node_out_edges = forward_state.out_edges(node)
             if len(node_out_edges) > 1:
-                for edge in node_out_edges:
-                    if edge.dst in difference:
-                        nodes_to_track.append(node)
+                nodes_to_track.extend(node for edge in node_out_edges if edge.dst in difference)
             data = node.data
 
             # search for this array in the graph difference
@@ -1619,7 +1619,7 @@ class BackwardPassGenerator:
         """
 
         # Conditional assignment nodes
-        conditional_assignment_nodes: List[nodes.Node] = []
+        conditional_assignment_nodes: list[nodes.Node] = []
 
         # A reversed topological sort is a topological sort on the reverse graph
         for node in reversed(list(dace_utils.dfs_topological_sort(subgraph, subgraph.source_nodes()))):
@@ -1736,7 +1736,7 @@ class BackwardPassGenerator:
                         backward_state.remove_node(reversed_node)
 
             except AutoDiffException as e:
-                raise AutoDiffException("Failed at node {}: {}".format(node, str(e))) from e
+                raise AutoDiffException(f"Failed at node {node}: {str(e)}") from e
 
     def _set_wcr_if_needed(
         self, backward_state: SDFGState, backward_node: nodes.Node, edge: dstate.MultiConnectorEdge
@@ -1765,7 +1765,7 @@ class BackwardPassGenerator:
         backward_state: SDFGState,
         subgraph: dstate.StateSubgraphView,
         forward_node: nodes.Node,
-    ) -> Optional[SDFGState]:
+    ) -> SDFGState | None:
         """Connect output gradients of forward_node as inputs to the corresponding reverse node.
 
         :param forward_state: The forward state containing the node.
@@ -1952,7 +1952,7 @@ class BackwardPassGenerator:
         backward_state: SDFGState,
         forward_node: nodes.Node,
         backward_node: nodes.Node,
-        required_inputs: Dict[str, str],
+        required_inputs: dict[str, str],
     ) -> None:
         """Connect the reversed node to all required non-gradient inputs.
 
@@ -1989,7 +1989,7 @@ class BackwardPassGenerator:
             # This is set to False if the connection has already been established
             connect_replicated_node = True
             edge_src = edge.src
-            next_required_inputs: Dict[Optional[str], Optional[str]]
+            next_required_inputs: dict[str | None, str | None]
             replicated_edge_src: nodes.Node
             replicated_edge_src_conn: str
 
@@ -2153,9 +2153,9 @@ class BackwardPassGenerator:
         state: SDFGState,
         backward_state: SDFGState,
         node: nodes.Node,
-        given_gradients: List[str],
-        required_gradients: List[str],
-    ) -> Tuple[nodes.Node, BackwardResult]:
+        given_gradients: list[str],
+        required_gradients: list[str],
+    ) -> tuple[nodes.Node, BackwardResult]:
         """Add the reverse node for a node from the forward pass to the backward pass.
 
         Resolution order:

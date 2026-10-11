@@ -1,6 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import dace as dp
 import numpy as np
+
+import dace as dp
 
 
 def test():

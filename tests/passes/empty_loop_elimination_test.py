@@ -1,7 +1,7 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
-from dace.transformation.passes.empty_loop_elimination import EmptyLoopElimination
 from dace.sdfg.state import LoopRegion
+from dace.transformation.passes.empty_loop_elimination import EmptyLoopElimination
 
 
 def test_regular_loop():

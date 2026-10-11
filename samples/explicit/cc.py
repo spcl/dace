@@ -5,9 +5,11 @@ It showcases write-conflicting accesses, location constraints, and explicit data
 """
 
 import argparse
-import dace
-import numpy as np
+
 import networkx as nx
+import numpy as np
+
+import dace
 
 E = dace.symbol("E")
 V = dace.symbol("V")

@@ -1,29 +1,29 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
 import dataclasses
-from typing import Dict, Iterable, List, Optional, Set, Tuple, Union
+from collections.abc import Iterable
 
-from dace import InterstateEdge, Memlet, data as dt, dtypes, properties
-from dace.autodiff.backward_pass_generator import BackwardPassGenerator
+from dace import InterstateEdge, Memlet, dtypes, properties
+from dace import data as dt
 from dace.autodiff import utils as ad_utils
+from dace.autodiff.backward_pass_generator import BackwardPassGenerator
 from dace.autodiff.base_abc import AutoDiffException
 from dace.libraries.standard import Reduce
-
 from dace.sdfg import SDFG, SDFGState, nodes
-from dace.sdfg.utils import inline_control_flow_regions
 from dace.sdfg.state import ControlFlowBlock, LoopRegion
+from dace.sdfg.utils import inline_control_flow_regions
 from dace.transformation.passes.while_to_for_loop import WhileToForLoop
 
 
 def add_backward_pass(
     sdfg: SDFG,
-    outputs: List[Union[nodes.AccessNode, str]],
-    inputs: List[Union[nodes.AccessNode, str]],
+    outputs: list[nodes.AccessNode | str],
+    inputs: list[nodes.AccessNode | str],
     data_forwarding_strategy: str = "store_all",
-    data_to_recompute: Optional[List[str]] = None,
+    data_to_recompute: list[str] | None = None,
     simplify: bool = True,
     separate_sdfgs: bool = False,
-) -> Optional[SDFG]:
+) -> SDFG | None:
     """Experimental: Add a backward pass to `state` using reverse-mode automatic differentiation.
 
     ``inputs``, ``outputs`` and ``grads`` can be provided either as ``AccessNode`` nodes, or as ``str``, in which
@@ -104,19 +104,19 @@ class BackwardPass:
     backward: SDFG
     #: Data of the forward pass that the backward pass reads: forward SDFG argument -> backward SDFG argument. The
     #: caller passes what the forward SDFG wrote into the former to the backward SDFG as the latter.
-    forwarded: Dict[str, str]
+    forwarded: dict[str, str]
     #: The gradient arrays (arguments of the backward SDFG) of the differentiated inputs, by input
-    input_gradients: Dict[str, str]
+    input_gradients: dict[str, str]
     #: The gradient arrays (arguments of the backward SDFG) the caller provides, by forward output
-    output_gradients: Dict[str, str]
+    output_gradients: dict[str, str]
 
 
 def make_backward_pass(
     sdfg: SDFG,
-    outputs: List[Union[nodes.AccessNode, str]],
-    inputs: List[Union[nodes.AccessNode, str]],
+    outputs: list[nodes.AccessNode | str],
+    inputs: list[nodes.AccessNode | str],
     data_forwarding_strategy: str = "store_all",
-    data_to_recompute: Optional[List[str]] = None,
+    data_to_recompute: list[str] | None = None,
     simplify: bool = True,
     simplified: bool = False,
     recompute_forward: bool = False,
@@ -216,20 +216,20 @@ class TwoPhaseBackwardPass:
     phase: str
     #: Arrays that the forward phase writes and the backward phase reads (intermediate values, control-flow decisions,
     #: and symbols); arguments of both calls
-    tape: List[str]
+    tape: list[str]
     #: The gradient arrays (arguments of the backward phase) of the differentiated inputs, by input
-    input_gradients: Dict[str, str]
+    input_gradients: dict[str, str]
     #: The gradient arrays (arguments of the backward phase) the caller provides, by forward output
-    output_gradients: Dict[str, str]
+    output_gradients: dict[str, str]
     #: Arguments (containers and symbols) that each phase uses; the others may be given as None (arrays) or any value
-    forward_arguments: Set[str]
-    backward_arguments: Set[str]
+    forward_arguments: set[str]
+    backward_arguments: set[str]
 
 
 def make_two_phase_backward_pass(
     sdfg: SDFG,
-    outputs: List[Union[nodes.AccessNode, str]],
-    inputs: List[Union[nodes.AccessNode, str]],
+    outputs: list[nodes.AccessNode | str],
+    inputs: list[nodes.AccessNode | str],
     phase: str = "autodiff_phase",
     simplify: bool = True,
     simplified: bool = False,
@@ -358,7 +358,7 @@ def make_two_phase_backward_pass(
     )
 
 
-def _reachable(sdfg: SDFG, start: ControlFlowBlock) -> Set[ControlFlowBlock]:
+def _reachable(sdfg: SDFG, start: ControlFlowBlock) -> set[ControlFlowBlock]:
     result = set()
     stack = [start]
     while stack:
@@ -377,7 +377,7 @@ def _states(blocks: Iterable[ControlFlowBlock]) -> Iterable[SDFGState]:
             yield from block.all_states()
 
 
-def _interstate_edges(sdfg: SDFG, blocks: Set[ControlFlowBlock]) -> Iterable[InterstateEdge]:
+def _interstate_edges(sdfg: SDFG, blocks: set[ControlFlowBlock]) -> Iterable[InterstateEdge]:
     for edge in sdfg.edges():
         if edge.src in blocks:
             yield edge.data
@@ -387,7 +387,7 @@ def _interstate_edges(sdfg: SDFG, blocks: Set[ControlFlowBlock]) -> Iterable[Int
                 yield edge.data
 
 
-def _accessed_data(sdfg: SDFG, blocks: Set[ControlFlowBlock]) -> Tuple[Set[str], Set[str]]:
+def _accessed_data(sdfg: SDFG, blocks: set[ControlFlowBlock]) -> tuple[set[str], set[str]]:
     """The data that ``blocks`` access (including in conditions and assignments), and the data they write."""
     accessed, written = set(), set()
     for state in _states(blocks):
@@ -403,7 +403,7 @@ def _accessed_data(sdfg: SDFG, blocks: Set[ControlFlowBlock]) -> Tuple[Set[str],
     return accessed, written
 
 
-def _assigned_symbols(sdfg: SDFG, blocks: Set[ControlFlowBlock]) -> Set[str]:
+def _assigned_symbols(sdfg: SDFG, blocks: set[ControlFlowBlock]) -> set[str]:
     assigned = set()
     for edge in _interstate_edges(sdfg, blocks):
         assigned |= edge.assignments.keys()
@@ -415,7 +415,7 @@ def _assigned_symbols(sdfg: SDFG, blocks: Set[ControlFlowBlock]) -> Set[str]:
     return assigned
 
 
-def _used_symbols(sdfg: SDFG, blocks: Set[ControlFlowBlock]) -> Set[str]:
+def _used_symbols(sdfg: SDFG, blocks: set[ControlFlowBlock]) -> set[str]:
     used = set()
     for block in blocks:
         used |= block.used_symbols(all_symbols=True)
@@ -452,7 +452,7 @@ def _prepare_control_flow(sdfg: SDFG):
             )
 
 
-def _add_vector_jacobian_product(sdfg: SDFG, outputs: List[str]):
+def _add_vector_jacobian_product(sdfg: SDFG, outputs: list[str]):
     """Adds ``sum_i sum(output_i * cotangent_i)`` at the end of ``sdfg``, with a new input array per cotangent.
 
     :return: the state that computes the product, the name of the (transient, shape ``(1,)``) product, and the
@@ -464,7 +464,7 @@ def _add_vector_jacobian_product(sdfg: SDFG, outputs: List[str]):
     state = sdfg.add_state_after(sinks[0], label="vector_jacobian_product")
     dtype = sdfg.arrays[outputs[0]].dtype
     product, _ = sdfg.add_array("vjp", [1], dtype, transient=True, find_new_name=True)
-    cotangents: Dict[str, str] = {}
+    cotangents: dict[str, str] = {}
     partials = []
     for output in outputs:
         desc = sdfg.arrays[output]
@@ -497,12 +497,12 @@ def _add_vector_jacobian_product(sdfg: SDFG, outputs: List[str]):
     return state, product, cotangents
 
 
-def _forward_data(forward: SDFG, backward: SDFG, backward_inputs: Dict[str, dt.Data]) -> Dict[str, str]:
+def _forward_data(forward: SDFG, backward: SDFG, backward_inputs: dict[str, dt.Data]) -> dict[str, str]:
     """Makes the forward-pass data the backward SDFG reads available to it (see :func:`make_backward_pass`).
 
     :return: forward SDFG argument -> backward SDFG argument.
     """
-    forwarded: Dict[str, str] = {}
+    forwarded: dict[str, str] = {}
     copies = []
     for name in backward_inputs:
         if name not in forward.arrays:

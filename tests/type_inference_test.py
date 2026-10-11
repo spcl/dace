@@ -1,11 +1,13 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+import ast
 import unittest
+
 import numpy as np
 import sympy as sp
+
+from dace import dtypes
 from dace.config import Config
 from dace.sdfg import type_inference
-from dace import dtypes
-import ast
 
 
 class TestTypeInference(unittest.TestCase):

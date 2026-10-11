@@ -3,33 +3,27 @@
 Code generation: This module is responsible for converting an SDFG into SVE code.
 """
 
-from dace.sdfg.scope import ScopeSubgraphView
-from dace.codegen.prettycode import CodeIOStream
-from dace.codegen.target import TargetCodeGenerator
-from dace.codegen.targets.framecode import DaCeCodeGenerator
-from dace.sdfg import nodes, SDFG, SDFGState, ScopeSubgraphView, graph as gr
-from dace.codegen.prettycode import CodeIOStream
-from dace.codegen.targets.cpp import sym2cpp
-from dace import dtypes, memlet as mm
-from dace.sdfg import graph, state
-from dace.sdfg.scope import is_in_scope
-from dace.codegen.targets.sve import util as util
-from typing import Optional
 import copy
 from io import StringIO
-import dace.codegen.targets.sve.unparse
-from dace import dtypes
-from dace.codegen.targets import cpp as cpp
-from dace.frontend.operations import detect_reduction_type
-import dace.symbolic
-from dace.codegen.targets.cpp import sym2cpp
-from dace.codegen.dispatcher import DefinedType
-import copy
+
 import numpy as np
-from dace.codegen.targets.cpp import is_write_conflicted
-from dace import data, subsets
-from dace.frontend.operations import detect_reduction_type
+
 import dace.codegen.targets
+import dace.codegen.targets.sve.unparse
+import dace.symbolic
+from dace import data, dtypes, subsets
+from dace import memlet as mm
+from dace.codegen.dispatcher import DefinedType
+from dace.codegen.prettycode import CodeIOStream
+from dace.codegen.target import TargetCodeGenerator
+from dace.codegen.targets import cpp as cpp
+from dace.codegen.targets.cpp import is_write_conflicted, sym2cpp
+from dace.codegen.targets.framecode import DaCeCodeGenerator
+from dace.codegen.targets.sve import util as util
+from dace.frontend.operations import detect_reduction_type
+from dace.sdfg import SDFG, ScopeSubgraphView, SDFGState, graph, nodes, state
+from dace.sdfg import graph as gr
+from dace.sdfg.scope import is_in_scope
 
 
 @dace.registry.autoregister_params(name="sve")
@@ -115,7 +109,7 @@ class SVECodeGen(TargetCodeGenerator):
         else:
             ######################
             # Horizontal non-atomic reduction
-            raise NotImplementedError()
+            raise NotImplementedError
 
         return super().copy_memory(sdfg, dfg, state_id, src_node, dst_node, edge, function_stream, callsite_stream)
 
@@ -155,7 +149,7 @@ class SVECodeGen(TargetCodeGenerator):
         # Temporary output registers
         for edge in state.out_edges(node):
             if self.generate_out_register(sdfg, state, edge, callsite_stream):
-                requires_wb.append(edge)
+                requires_wb.append(edge)  # noqa: PERF401
 
         # Tasklet code
         self.unparse_tasklet(sdfg, cfg, state, state_id, node, function_stream, callsite_stream)
@@ -219,7 +213,7 @@ class SVECodeGen(TargetCodeGenerator):
                     stride = edge.data.get_stride(sdfg, map)
 
                     # First part of the declaration is `type name`
-                    load_lhs = "{} {}".format(util.TYPE_TO_SVE[dst_type.type], dst_name)
+                    load_lhs = f"{util.TYPE_TO_SVE[dst_type.type]} {dst_name}"
 
                     # long long issue casting
                     ptr_cast = ""
@@ -229,18 +223,13 @@ class SVECodeGen(TargetCodeGenerator):
                         ptr_cast = "(uint64_t*) "
 
                     # Regular load and gather share the first arguments
-                    load_args = "{}, {}".format(
-                        util.get_loop_predicate(sdfg, state, edge.dst),
-                        ptr_cast + cpp.cpp_ptr_expr(sdfg, edge.data, DefinedType.Pointer, codegen=self.cpu_codegen),
-                    )
+                    load_args = f"{util.get_loop_predicate(sdfg, state, edge.dst)}, {ptr_cast + cpp.cpp_ptr_expr(sdfg, edge.data, DefinedType.Pointer, codegen=self.cpu_codegen)}"
 
                     if stride == 1:
-                        code.write("{} = svld1({});".format(load_lhs, load_args))
+                        code.write(f"{load_lhs} = svld1({load_args});")
                     else:
                         code.write(
-                            "{} = svld1_gather_index({}, svindex_s{}(0, {}));".format(
-                                load_lhs, load_args, util.get_base_type(dst_type).bytes * 8, sym2cpp(stride)
-                            )
+                            f"{load_lhs} = svld1_gather_index({load_args}, svindex_s{util.get_base_type(dst_type).bytes * 8}(0, {sym2cpp(stride)}));"
                         )
                 else:
                     ##################
@@ -368,10 +357,7 @@ class SVECodeGen(TargetCodeGenerator):
                     elif src_type.type == np.uint64:
                         ptr_cast = "(uint64_t*) "
 
-                    store_args = "{}, {}".format(
-                        util.get_loop_predicate(sdfg, state, edge.src),
-                        ptr_cast + cpp.cpp_ptr_expr(sdfg, edge.data, DefinedType.Pointer, codegen=self.cpu_codegen),
-                    )
+                    store_args = f"{util.get_loop_predicate(sdfg, state, edge.src)}, {ptr_cast + cpp.cpp_ptr_expr(sdfg, edge.data, DefinedType.Pointer, codegen=self.cpu_codegen)}"
 
                     if stride == 1:
                         code.write(f"svst1({store_args}, {src_name});")
@@ -395,15 +381,14 @@ class SVECodeGen(TargetCodeGenerator):
                         code.write(f"{edge.data.data} = {src_name};")
                     else:
                         raise util.NotSupportedError("Unsupported writeback")
+                elif util.is_vector(desc.dtype):
+                    ##################
+                    # Broadcast into scalar AccessNode
+                    code.write(f"{edge.data.data} = svdup_{util.TYPE_TO_SVE_SUFFIX[src_type]}({src_name});")
                 else:
-                    if util.is_vector(desc.dtype):
-                        ##################
-                        # Broadcast into scalar AccessNode
-                        code.write(f"{edge.data.data} = svdup_{util.TYPE_TO_SVE_SUFFIX[src_type]}({src_name});")
-                    else:
-                        ##################
-                        # Scalar write into scalar AccessNode
-                        code.write(f"{edge.data.data} = {src_name};")
+                    ##################
+                    # Scalar write into scalar AccessNode
+                    code.write(f"{edge.data.data} = {src_name};")
 
         else:
             raise util.NotSupportedError("Only writeback to Tasklets and AccessNodes is supported")
@@ -487,7 +472,7 @@ class SVECodeGen(TargetCodeGenerator):
         if len(current_map.params) > 1:
             raise util.NotSupportedError("SVE map must be one dimensional")
 
-        loop_types = list(set([util.get_base_type(sdfg.arrays[a].dtype) for a in sdfg.arrays]))
+        loop_types = list({util.get_base_type(sdfg.arrays[a].dtype) for a in sdfg.arrays})
 
         # Edge case if no arrays are used
         loop_type = loop_types[0] if len(loop_types) > 0 else dace.int64
@@ -619,8 +604,8 @@ class SVECodeGen(TargetCodeGenerator):
         name: str,
         desc: data.Data,
         sdfg: SDFG = None,
-        subset: Optional[subsets.Subset] = None,
-        is_write: Optional[bool] = None,
+        subset: subsets.Subset | None = None,
+        is_write: bool | None = None,
         ancestor: int = 0,
     ) -> str:
         """

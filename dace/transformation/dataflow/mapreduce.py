@@ -2,14 +2,11 @@
 """Contains classes and functions that implement the map-reduce-fusion
 transformation."""
 
-from dace.sdfg import SDFG, SDFGState
 from dace.memlet import Memlet
-from dace.sdfg import nodes
 from dace.properties import Property, make_properties
-from dace.sdfg import SDFG
+from dace.sdfg import SDFG, SDFGState, nodes
 from dace.sdfg import utils as sdutil
 from dace.transformation import transformation as pm
-
 from dace.transformation.dataflow.map_collapse import MapCollapse
 from dace.transformation.dataflow.map_fusion_vertical import MapFusionVertical
 
@@ -49,9 +46,9 @@ class MapReduceFusion(pm.SingleStateTransformation):
         tasklet = self.tasklet
 
         # Make sure that the array is only accessed by the map and the reduce
-        if any([src != tmap_exit for src, _, _, _, memlet in graph.in_edges(in_array)]):
+        if any(src != tmap_exit for src, _, _, _, memlet in graph.in_edges(in_array)):
             return False
-        if any([dest != reduce_node for _, _, dest, _, memlet in graph.out_edges(in_array)]):
+        if any(dest != reduce_node for _, _, dest, _, memlet in graph.out_edges(in_array)):
             return False
 
         tmem = next(e for e in graph.edges_between(tasklet, tmap_exit) if e.data.data == in_array.data).data
@@ -145,9 +142,9 @@ class MapReduceFusion(pm.SingleStateTransformation):
             init_state = graph.parent_graph.add_state_before(graph)
             init_state.add_mapped_tasklet(
                 "freduce_init",
-                [("o%d" % i, "%s:%s:%s" % (r[0], r[1] + 1, r[2])) for i, r in enumerate(array_edge.data.subset)],
+                [("o%d" % i, f"{r[0]}:{r[1] + 1}:{r[2]}") for i, r in enumerate(array_edge.data.subset)],
                 {},
-                "__out = %s" % reduce_node.identity,
+                f"__out = {reduce_node.identity}",
                 {
                     "__out": Memlet.simple(
                         array_edge.data.data, ",".join(["o%d" % i for i in range(len(array_edge.data.subset))])
@@ -197,9 +194,9 @@ class MapWCRFusion(pm.SingleStateTransformation):
         rmap_entry = self.rmap_out_entry
 
         # Make sure that the array is only accessed by the map and the reduce
-        if any([src != tmap_exit for src, _, _, _, memlet in graph.in_edges(in_array)]):
+        if any(src != tmap_exit for src, _, _, _, memlet in graph.in_edges(in_array)):
             return False
-        if any([dest != rmap_entry for _, _, dest, _, memlet in graph.out_edges(in_array)]):
+        if any(dest != rmap_entry for _, _, dest, _, memlet in graph.out_edges(in_array)):
             return False
 
         # Make sure that there is a reduction in the second map

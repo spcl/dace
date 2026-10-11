@@ -2,8 +2,8 @@
 import numpy as np
 
 import dace
-from dace.sdfg import propagation as prop
 import dace.library
+from dace.sdfg import propagation as prop
 
 
 def test_unsqueeze():

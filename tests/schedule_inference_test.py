@@ -1,6 +1,6 @@
 import dace
-from dace.transformation.interstate import StateFusion
 from dace.sdfg import infer_types
+from dace.transformation.interstate import StateFusion
 
 
 def test_schedule_inference_simple():

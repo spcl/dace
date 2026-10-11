@@ -1,8 +1,8 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+import dace
+
 from .ast_node import AST_Node
 from .ast_values import AST_Ident
-
-import dace
 
 
 class AST_Assign(AST_Node):
@@ -51,8 +51,8 @@ class AST_Assign(AST_Node):
 
     def generate_code(self, sdfg, state):
         from .ast_arrayaccess import AST_ArrayAccess
-        from .ast_values import AST_Constant
         from .ast_loop import AST_ForLoop
+        from .ast_values import AST_Constant
 
         self.rhs.generate_code(sdfg, state)
         s = sdfg.nodes()[state]

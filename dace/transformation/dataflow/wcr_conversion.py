@@ -4,13 +4,12 @@
 import ast
 import copy
 import re
-import copy
-from dace import nodes, dtypes, Memlet, data
+
+from dace import SDFG, Memlet, SDFGState, data, dtypes, nodes
 from dace.frontend.python import astutils
-from dace.transformation import transformation
 from dace.sdfg import utils as sdutil
-from dace import Memlet, SDFG, SDFGState
 from dace.sdfg.propagation import propagate_memlets_state
+from dace.transformation import transformation
 
 
 class AugAssignToWCR(transformation.SingleStateTransformation):
@@ -87,7 +86,7 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
         # Get relevant output connector
         outconn = outedge.src_conn
 
-        ops = "[%s]" % "".join(re.escape(o) for o in AugAssignToWCR._EXPRESSIONS)
+        ops = "[{}]".format("".join(re.escape(o) for o in AugAssignToWCR._EXPRESSIONS))
         funcs = "|".join(re.escape(o) for o in AugAssignToWCR._FUNCTIONS)
 
         if tasklet.language is dtypes.Language.Python:
@@ -118,11 +117,11 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
             for edge in inedges:
                 # Try to match a single C assignment that can be converted to WCR
                 inconn = edge.dst_conn
-                lhs = r"^\s*%s\s*=\s*%s\s*%s.*;$" % (re.escape(outconn), re.escape(inconn), ops)
+                lhs = rf"^\s*{re.escape(outconn)}\s*=\s*{re.escape(inconn)}\s*{ops}.*;$"
                 # rhs: a = (...) op b
-                rhs = r"^\s*%s\s*=\s*\(.*\)\s*%s\s*%s;$" % (re.escape(outconn), ops, re.escape(inconn))
-                func_lhs = r"^\s*%s\s*=\s*(%s)\(\s*%s\s*,.*\)\s*;$" % (re.escape(outconn), funcs, re.escape(inconn))
-                func_rhs = r"^\s*%s\s*=\s*(%s)\(.*,\s*%s\s*\)\s*;$" % (re.escape(outconn), funcs, re.escape(inconn))
+                rhs = rf"^\s*{re.escape(outconn)}\s*=\s*\(.*\)\s*{ops}\s*{re.escape(inconn)};$"
+                func_lhs = rf"^\s*{re.escape(outconn)}\s*=\s*({funcs})\(\s*{re.escape(inconn)}\s*,.*\)\s*;$"
+                func_rhs = rf"^\s*{re.escape(outconn)}\s*=\s*({funcs})\(.*,\s*{re.escape(inconn)}\s*\)\s*;$"
                 if re.match(lhs, cstr) is None and re.match(rhs, cstr) is None:
                     if re.match(func_lhs, cstr) is None and re.match(func_rhs, cstr) is None:
                         inconns = list(self.tasklet.in_connectors)
@@ -131,11 +130,8 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
 
                         # Special case: a = <other> op b
                         other_inconn = inconns[0] if inconns[0] != inconn else inconns[1]
-                        rhs2 = r"^\s*%s\s*=\s*%s\s*%s\s*%s;$" % (
-                            re.escape(outconn),
-                            re.escape(other_inconn),
-                            ops,
-                            re.escape(inconn),
+                        rhs2 = (
+                            rf"^\s*{re.escape(outconn)}\s*=\s*{re.escape(other_inconn)}\s*{ops}\s*{re.escape(inconn)};$"
                         )
                         if re.match(rhs2, cstr) is None:
                             continue
@@ -172,7 +168,7 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
         # Get relevant output connector
         outconn = outedge.src_conn
 
-        ops = "[%s]" % "".join(re.escape(o) for o in AugAssignToWCR._EXPRESSIONS)
+        ops = "[{}]".format("".join(re.escape(o) for o in AugAssignToWCR._EXPRESSIONS))
         funcs = "|".join(re.escape(o) for o in AugAssignToWCR._FUNCTIONS)
 
         # Change tasklet code
@@ -182,7 +178,7 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
             lhs: ast.Name = ast_node.targets[0]
             rhs: ast.BinOp = ast_node.value
             op = AugAssignToWCR._PYOP_MAP[type(rhs.op)]
-            inconns = list(edge.dst_conn for edge in inedges)
+            inconns = [edge.dst_conn for edge in inedges]
             if isinstance(rhs.left, ast.Name) and rhs.left.id in inconns:
                 inedge = inedges[inconns.index(rhs.left.id)]
                 new_rhs = rhs.right
@@ -197,23 +193,17 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
             cstr = tasklet.code.as_string.strip()
             for edge in inedges:
                 inconn = edge.dst_conn
-                match = re.match(r"^\s*%s\s*=\s*%s\s*(%s)(.*);$" % (re.escape(outconn), re.escape(inconn), ops), cstr)
+                match = re.match(rf"^\s*{re.escape(outconn)}\s*=\s*{re.escape(inconn)}\s*({ops})(.*);$", cstr)
                 if match is None:
                     match = re.match(
-                        r"^\s*%s\s*=\s*\((.*)\)\s*(%s)\s*%s;$" % (re.escape(outconn), ops, re.escape(inconn)), cstr
+                        rf"^\s*{re.escape(outconn)}\s*=\s*\((.*)\)\s*({ops})\s*{re.escape(inconn)};$", cstr
                     )
                     if match is None:
-                        func_rhs = r"^\s*%s\s*=\s*(%s)\((.*),\s*%s\s*\)\s*;$" % (
-                            re.escape(outconn),
-                            funcs,
-                            re.escape(inconn),
-                        )
+                        func_rhs = rf"^\s*{re.escape(outconn)}\s*=\s*({funcs})\((.*),\s*{re.escape(inconn)}\s*\)\s*;$"
                         match = re.match(func_rhs, cstr)
                         if match is None:
-                            func_lhs = r"^\s*%s\s*=\s*(%s)\(\s*%s\s*,(.*)\)\s*;$" % (
-                                re.escape(outconn),
-                                funcs,
-                                re.escape(inconn),
+                            func_lhs = (
+                                rf"^\s*{re.escape(outconn)}\s*=\s*({funcs})\(\s*{re.escape(inconn)}\s*,(.*)\)\s*;$"
                             )
                             match = re.match(func_lhs, cstr)
                             if match is None:
@@ -223,12 +213,7 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
 
                                 # Special case: a = <other> op b
                                 other_inconn = inconns[0] if inconns[0] != inconn else inconns[1]
-                                rhs2 = r"^\s*%s\s*=\s*(%s)\s*(%s)\s*%s;$" % (
-                                    re.escape(outconn),
-                                    re.escape(other_inconn),
-                                    ops,
-                                    re.escape(inconn),
-                                )
+                                rhs2 = rf"^\s*{re.escape(outconn)}\s*=\s*({re.escape(other_inconn)})\s*({ops})\s*{re.escape(inconn)};$"
                                 match = re.match(rhs2, cstr)
                                 if match is None:
                                     continue
@@ -256,7 +241,7 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
                     op, newexpr = AugAssignToWCR._EXPR_MAP[op]
                     expr = newexpr.format(expr=expr)
 
-                tasklet.code.code = "%s = %s;" % (outconn, expr)
+                tasklet.code.code = f"{outconn} = {expr};"
                 inedge = edge
                 break
         else:
@@ -296,7 +281,7 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
         newstate = state.parent_graph.add_state_after(state)
 
         # Bookkeeping
-        nodes_to_move = set([tlet])
+        nodes_to_move = {tlet}
         boundary_nodes = set()
         orig_edges = set()
 

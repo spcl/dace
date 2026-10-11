@@ -1,12 +1,12 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
-import numpy as np
-import dace
 import math
 
+import numpy as np
 from scipy.signal import convolve2d
 
+import dace
 from dace.sdfg.state import StateSubgraphView
-from dace.transformation.dataflow import OTFMapFusion, MapExpansion, MapCollapse
+from dace.transformation.dataflow import MapCollapse, MapExpansion, OTFMapFusion
 from dace.transformation.dataflow.otf_map_fusion import advanced_replace
 
 N = dace.symbol("N")

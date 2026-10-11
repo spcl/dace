@@ -1,7 +1,8 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+import numpy as np
+
 import dace
 from dace.libraries.stencil import Stencil
-import numpy as np
 
 SIZE = dace.symbol("size")
 ROWS = dace.symbol("rows")
@@ -74,7 +75,7 @@ def make_sdfg_2d(implementation: str, vector_length: int):
 
 def run_stencil_1d(sdfg, size):
     a = np.zeros((size,), dtype=DTYPE)
-    a[1:-1] = np.arange(1, size - 1, dtype=DTYPE).reshape((size - 2))
+    a[1:-1] = np.arange(1, size - 1, dtype=DTYPE).reshape(size - 2)
     res = np.zeros((size,), dtype=DTYPE)
     sdfg.expand_library_nodes()
     sdfg(a=a, res=res, size=size)

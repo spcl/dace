@@ -9,8 +9,8 @@ constant, an integer-valued float literal, or a symbolic integer proven ``>= 0``
 enclosing iterator ranges (``K - i - 1`` with ``for i in range(K)``).
 """
 
-from dataclasses import dataclass
 from collections.abc import Iterable
+from dataclasses import dataclass
 from typing import Any
 
 import sympy
@@ -20,7 +20,8 @@ from dace.properties import CodeBlock
 from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
 from dace.symbolic import equalize_symbol, ipow
-from dace.transformation import pass_pipeline as ppl, transformation
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation import transformation
 from dace.transformation.passes.analysis import loop_analysis
 
 #: Inclusive ``(low, high)`` of an iterator.
@@ -149,8 +150,6 @@ class PowerRelaxer:
     def relax_subset(self, sub: subsets.Subset, ranges: Ranges, facts: SignFacts) -> None:
         if isinstance(sub, subsets.Range):
             sub.ranges = [tuple(self.relax(component, ranges, facts) for component in rng) for rng in sub.ranges]
-        elif isinstance(sub, subsets.Indices):
-            sub.indices = [self.relax(idx, ranges, facts) for idx in sub.indices]
 
     def relax_descriptor(self, desc: data.Array, ranges: Ranges, facts: SignFacts) -> None:
         desc.shape = tuple(self.relax(item, ranges, facts) for item in desc.shape)

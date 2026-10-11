@@ -2,9 +2,9 @@
 import dace.library
 import dace.properties
 import dace.sdfg.nodes
-from dace.transformation.transformation import ExpandTransformation
-from dace.libraries.pblas import environments
 from dace import dtypes
+from dace.libraries.pblas import environments
+from dace.transformation.transformation import ExpandTransformation
 
 
 @dace.library.expansion

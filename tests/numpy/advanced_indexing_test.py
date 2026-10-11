@@ -4,10 +4,11 @@ Tests for numpy advanced indexing syntax. See also:
 https://numpy.org/devdocs/reference/arrays.indexing.html
 """
 
-import dace
-from dace.frontend.python.common import DaceSyntaxError
 import numpy as np
 import pytest
+
+import dace
+from dace.frontend.python.common import DaceSyntaxError
 
 N = dace.symbol("N")
 M = dace.symbol("M")

@@ -1,14 +1,14 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests the scalar to symbol promotion functionality."""
 
-import dace
-from dace.sdfg.state import ConditionalBlock, LoopRegion
-from dace.transformation.passes import scalar_to_symbol
-from dace.transformation import interstate as isxf
-
-from sympy import core as sympy_core
 import numpy as np
 import pytest
+from sympy import core as sympy_core
+
+import dace
+from dace.sdfg.state import ConditionalBlock, LoopRegion
+from dace.transformation import interstate as isxf
+from dace.transformation.passes import scalar_to_symbol
 
 
 def test_find_promotable():
@@ -439,7 +439,7 @@ def test_nested_promotion_connector(with_subscript):
     postfix = "a"
     if with_subscript:
         postfix = "b"
-    sdfg = dace.SDFG("testprog14{}".format(postfix))
+    sdfg = dace.SDFG(f"testprog14{postfix}")
     sdfg.add_array("A", [20, 20], dace.float64)
     sdfg.add_array("B", [1], dace.float64)
     sdfg.add_transient("scal", [1], dace.int32)
@@ -498,7 +498,7 @@ def test_indirection_with_reindex(language):
     N = dace.symbol("N")
     S = dace.symbol("S")
 
-    sdfg = dace.SDFG(f"test_indirection_with_reindex")
+    sdfg = dace.SDFG("test_indirection_with_reindex")
     sdfg.add_array("A", shape=[N], dtype=dace.float32, transient=False)
     sdfg.add_array("index_0", shape=[1], dtype=dace.int32, transient=True)
     sdfg.add_array("index_1", shape=[1], dtype=dace.int32, transient=True)

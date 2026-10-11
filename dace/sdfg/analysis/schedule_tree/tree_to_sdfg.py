@@ -1,15 +1,18 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
-
 from collections import defaultdict
+from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import Enum, auto
 from types import TracebackType
-from typing import Final, Sequence
+from typing import Final
 
 from dace import data, subsets, symbolic
 from dace.memlet import Memlet
-from dace.sdfg import nodes, memlet_utils as mmu
+from dace.sdfg import memlet_utils as mmu
+from dace.sdfg import nodes, propagation
+from dace.sdfg.analysis.schedule_tree import passes as stpasses
+from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.sdfg.sdfg import SDFG, ControlFlowRegion, InterstateEdge
 from dace.sdfg.state import (
     BreakBlock,
@@ -22,8 +25,6 @@ from dace.sdfg.state import (
     SDFGState,
     UnstructuredControlFlow,
 )
-from dace.sdfg.analysis.schedule_tree import passes as stpasses, treenodes as tn
-from dace.sdfg import propagation
 
 
 class StateBoundaryBehavior(Enum):
@@ -610,8 +611,8 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         # insert nested SDFG
         nsdfg = self._current_state.add_nested_sdfg(
             sdfg=inner_sdfg,
-            inputs={name: None for name in connectors["inputs"]},
-            outputs={name: None for name in connectors["outputs"]},
+            inputs=dict.fromkeys(connectors["inputs"]),
+            outputs=dict.fromkeys(connectors["outputs"]),
         )
         if scope_body:
             self._connect_nested_sdfg_in_map(nsdfg, inner_sdfg)
@@ -815,7 +816,7 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
             # tmp: use this - for now - to "backprop-insert" extra state boundaries for nested SDFGs
             with _TreeScope(node, self._ctx, self._current_state):
                 self.visit(node.children[-1], sdfg=sdfg)
-        elif any([isinstance(child, tn.StateBoundaryNode) for child in node.children]):
+        elif any(isinstance(child, tn.StateBoundaryNode) for child in node.children):
             self._insert_nested_sdfg(node, sdfg, scope_body=True)
         else:
             with _TreeScope(node, self._ctx, self._current_state):
@@ -1650,7 +1651,7 @@ def _insert_state_boundaries_to_tree(
     class NestedSDFGStateBoundaryInserter(tn.ScheduleNodeTransformer):
         def visit_MapScope(self, scope: tn.DataflowScope):
             visited = self.generic_visit(scope)
-            if any([isinstance(child, tn.StateBoundaryNode) for child in scope.children]):
+            if any(isinstance(child, tn.StateBoundaryNode) for child in scope.children):
                 # We can assume that map nodes are at least contained in the root scope.
                 assert scope.parent is not None
 

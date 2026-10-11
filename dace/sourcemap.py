@@ -1,13 +1,13 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import collections
-import re
 import json
 import os
+import re
 import socket
-from typing import Optional, TypedDict
+from typing import TypedDict
+
 from dace import Config, dtypes
-from dace.sdfg import state
-from dace.sdfg import nodes
+from dace.sdfg import nodes, state
 
 
 class NodeInfo(TypedDict):
@@ -24,7 +24,7 @@ class SdfgLocation:
         self.node_ids = node_ids
 
     def printer(self):
-        print("SDFG {}:{}:{}".format(self.cfg_id, self.state_id, self.node_ids))
+        print(f"SDFG {self.cfg_id}:{self.state_id}:{self.node_ids}")
 
 
 def create_folder(path_str: str):
@@ -309,7 +309,7 @@ class MapPython:
 
         for nested_sdfg in sdfg.all_sdfgs_recursive():
             # NOTE: SDFGs created with the API may not have debuginfo
-            debuginfo: Optional[dtypes.DebugInfo] = nested_sdfg.debuginfo
+            debuginfo: dtypes.DebugInfo | None = nested_sdfg.debuginfo
             if debuginfo and debuginfo.filename:
                 range_dict[debuginfo.filename].append((debuginfo.start_line, debuginfo.end_line))
 
@@ -336,20 +336,18 @@ class MapPython:
 
     def sorter(self):
         """Prioritizes smaller ranges over larger ones"""
-        db_sorted = []
-        for dbinfo_source in self.debuginfo:
-            db_sorted.append(
-                sorted(
-                    dbinfo_source,
-                    key=lambda n: (
-                        n["debuginfo"].get("start_line", 0),
-                        n["debuginfo"].get("start_column", 0),
-                        n["debuginfo"].get("end_line", 0),
-                        n["debuginfo"].get("end_column", 0),
-                    ),
-                )
+        return [
+            sorted(
+                dbinfo_source,
+                key=lambda n: (
+                    n["debuginfo"].get("start_line", 0),
+                    n["debuginfo"].get("start_column", 0),
+                    n["debuginfo"].get("end_line", 0),
+                    n["debuginfo"].get("end_column", 0),
+                ),
             )
-        return db_sorted
+            for dbinfo_source in self.debuginfo
+        ]
 
     def make_info(self, debuginfo, node_id: int, state_id: int, cfg_id: int) -> NodeInfo:
         """Creates an object for the current node with

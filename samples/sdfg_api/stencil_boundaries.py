@@ -1,9 +1,10 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 """Example of a 7x7 stencil that dynamically generates custom boundary conditions executed in parallel."""
 
+import numpy as np
+
 import dace
 from dace import subsets
-import numpy as np
 
 H = dace.symbol("H")
 W = dace.symbol("W")
@@ -18,9 +19,9 @@ def dirichlet_tasklet(state, B, x0, y0, width, height, initval=0):
     # entry to the tasklet automatically
     _, me, mx = state.add_mapped_tasklet(
         "boundary",
-        dict(i="%s:%s" % (y0, y0 + height), j="%s:%s" % (x0, x0 + width)),
+        dict(i=f"{y0}:{y0 + height}", j=f"{x0}:{x0 + width}"),
         {},
-        """b = %f""" % initval,
+        f"""b = {initval:f}""",
         dict(b=dace.Memlet(data=B.data, subset="i,j")),
         external_edges=False,
     )
