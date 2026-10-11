@@ -56,6 +56,14 @@ def _loops(sdfg: SDFG):
     return [r for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion) and r.loop_variable]
 
 
+#: Largest loop nest, in control-flow blocks, the split search probes. The search isolates the nest and
+#: deep-copies it per candidate, and a split it takes duplicates the nest in the program: CLOUDSC's level loop
+#: (3475 blocks; the next largest loop has 79) cost 170 s of search per canonicalization, and its split, before
+#: the count stopped scoring copies, doubled the 8000-line function g++ spends minutes on. The kernels a split
+#: unblocks (TSVC's boundary conflicts) are a few dozen blocks.
+SPLIT_SEARCH_MAX_BLOCKS = 1024
+
+
 def mappable_count_upper_bound(candidate: SDFG, verdicts: dict[str, bool]) -> int:
     """An upper bound on ``BestEffortLoopPeeling._mappable_loop_count(candidate, dict(verdicts))``, without its prep.
 
@@ -1199,7 +1207,7 @@ class BestEffortLoopPeeling(ppl.Pass):
         # unconv[j]`` solves to ``x = idx``, and the segments then skip or repeat iterations).
         varying = loop_varying_symbols(loop)
         candidates = [x for x in candidates if varying.isdisjoint(str(s) for s in x.free_symbols)]
-        if not candidates:
+        if not candidates or sum(1 for _ in loop.all_control_flow_blocks(recursive=True)) > SPLIT_SEARCH_MAX_BLOCKS:
             return None
         try:
             if LoopToMap.can_be_applied_to(sdfg, loop=loop):
