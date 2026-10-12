@@ -12,7 +12,7 @@ import re
 import shutil
 import sys
 import warnings
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from functools import lru_cache
 from hashlib import md5, sha256
 from numbers import Integral
@@ -50,7 +50,14 @@ from dace.properties import (
     make_properties,
 )
 from dace.sdfg import nodes as nd
-from dace.sdfg.graph import SubgraphView, copy_edge_index, copy_graph_field, copy_node_index, generate_element_id
+from dace.sdfg.graph import (
+    SubgraphView,
+    copy_edge_index,
+    copy_graph_field,
+    copy_node_index,
+    frozen_node_ids,
+    generate_element_id,
+)
 from dace.sdfg.replace import replace_properties_dict, symbolic_replacements
 from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState
 from dace.sdfg.type_inference import infer_expr_type
@@ -953,7 +960,7 @@ class SDFG(ControlFlowRegion):
         # (e.g. interstate-edge conditions/assignments) emit a deterministic dtype.
         # Each nested SDFG re-pushes its own symbols, and the previous authority is
         # restored on exit.
-        with symbolic.serialization_symbol_dtypes(self.symbols):
+        with symbolic.serialization_symbol_dtypes(self.symbols), frozen_node_ids():
             tmp = super().to_json()
         if is_root:
             tmp["source_files"] = source_files
@@ -3485,6 +3492,16 @@ class SDFG(ControlFlowRegion):
                           stage). Nested SDFGs are still descended into either way.
         """
 
+        from dace.sdfg.state import EXPANSION_DEFINED_SYMBOLS
+
+        token = EXPANSION_DEFINED_SYMBOLS.set({}) if EXPANSION_DEFINED_SYMBOLS.get() is None else None
+        try:
+            self._expand_library_nodes(recursive, predicate)
+        finally:
+            if token is not None:
+                EXPANSION_DEFINED_SYMBOLS.reset(token)
+
+    def _expand_library_nodes(self, recursive: bool, predicate: Callable[[nd.LibraryNode], bool] | None) -> None:
         states = list(self.states())
         while len(states) > 0:
             state = states.pop()

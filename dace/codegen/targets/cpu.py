@@ -726,6 +726,8 @@ class CPUCodeGen(TargetCodeGenerator):
         self._global_sdfg: SDFG = sdfg
         # Containers the calling code generator passes to nested SDFGs in addition to their connectors
         self.extra_nsdfg_args = []
+        # Nested SDFG -> the symbols its header and call pass; see nsdfg_argument_symbols
+        self.nsdfg_argument_symbol_cache: dict[SDFG, frozenset[str]] = {}
         dispatcher = self._dispatcher
 
         self._locals = cppunparse.CPPLocals()
@@ -759,8 +761,6 @@ class CPUCodeGen(TargetCodeGenerator):
 
         # Keep track of generated NestedSDG, and the name of the assigned function
         self._generated_nested_sdfg = dict()
-        # Nested SDFG -> the symbols its header and call pass; see nsdfg_argument_symbols.
-        self.nsdfg_argument_symbol_cache: dict[SDFG, frozenset[str]] = {}
         # Fingerprint -> how many nests of the emitted tree carry it; see nested_sdfg_may_repeat.
         self.nested_sdfg_fingerprint_counts: dict[tuple, int] = {}
         self.nested_sdfg_fingerprints_counted = False

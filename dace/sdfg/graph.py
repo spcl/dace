@@ -6,6 +6,8 @@ import itertools
 import uuid
 from collections import OrderedDict, deque
 from collections.abc import Callable, Iterable, Iterator, Sequence
+from contextlib import contextmanager
+from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
 import networkx as nx
@@ -27,6 +29,23 @@ class EdgeNotFoundError(Exception):
 T = TypeVar("T")
 NodeT = TypeVar("NodeT")
 EdgeT = TypeVar("EdgeT")
+
+# ``id(graph) -> (graph, {id(node): index})`` while the graphs are frozen; the graph is kept to pin its id.
+_frozen_node_ids: ContextVar[dict[int, tuple[Any, dict[int, int]]] | None] = ContextVar(
+    "_frozen_node_ids", default=None
+)
+
+
+@contextmanager
+def frozen_node_ids() -> Iterator[None]:
+    """Answers ``OrderedDiGraph.node_id`` from an index built once per graph. Only for spans that add or
+    remove no nodes, e.g. serialization, where a linear scan per edge endpoint is quadratic."""
+    token = _frozen_node_ids.set({}) if _frozen_node_ids.get() is None else None
+    try:
+        yield
+    finally:
+        if token is not None:
+            _frozen_node_ids.reset(token)
 
 
 @dace.serialize.serializable
@@ -685,8 +704,15 @@ class OrderedDiGraph(Graph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
     _frozen_node_ids: dict[NodeT, int] | None = None
 
     def node_id(self, node: NodeT) -> int:
-        if self._frozen_node_ids is not None and node in self._frozen_node_ids:
-            return self._frozen_node_ids[node]
+        frozen = _frozen_node_ids.get()
+        if frozen is not None:
+            entry = frozen.get(id(self))
+            if entry is None:
+                entry = frozen[id(self)] = (self, {id(n): i for i, n in enumerate(self._nodes.keys())})
+            try:
+                return entry[1][id(node)]
+            except KeyError:
+                raise NodeNotFoundError(node)
         try:
             return next(i for i, n in enumerate(self._nodes.keys()) if n is node)
         except StopIteration:

@@ -3,7 +3,9 @@
 
 import abc
 import ast
+import collections
 import collections.abc
+import contextvars
 import copy
 import inspect
 import itertools
@@ -84,8 +86,7 @@ def _get_debug_info(explicit_lineinfo: dtypes.DebugInfo | None) -> dtypes.DebugI
         return explicit_lineinfo
 
     if dace.Config.get("compiler", "lineinfo") == "inspect":
-        # ``inspect.stack()`` builds a FrameInfo, with source lookups, for every frame up to the root just to
-        # read one: two frames up is this function's caller's caller.
+        # Two frames up is this function's caller's caller; ``inspect.stack()`` would resolve every frame to the root
         lineno, filename = caller_position(sys._getframe(2))
         return dtypes.DebugInfo(lineno, 0, lineno, 0, filename)
 
@@ -137,6 +138,13 @@ def _make_iterators(ndrange: MapRanges):
     map_range = sbs.Range(ranges)
 
     return params, map_range
+
+
+#: Per-state :meth:`~SDFGState.defined_symbols` for the library expansions of one
+#: :meth:`~dace.sdfg.SDFG.expand_library_nodes` sweep; ``None`` outside a sweep.
+EXPANSION_DEFINED_SYMBOLS: contextvars.ContextVar[dict["SDFGState", tuple[int, dict[str, dt.Data]]] | None] = (
+    contextvars.ContextVar("EXPANSION_DEFINED_SYMBOLS", default=None)
+)
 
 
 class BlockGraphView:
@@ -873,9 +881,8 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
             start_block = None
         if isinstance(start_block, AbstractControlFlowRegion):
             update_if_not_none(defined_syms, start_block.new_symbols(defined_syms))
-        # ``new_symbols(sdfg, ...)`` rebuilds its type environment -- the symbols overridden by every
-        # array's dtype -- per edge. Keep that environment alongside ``defined_syms`` instead: once
-        # per SDFG rather than once per assigning edge (2.4 s per call on warpx_field_gather).
+        # ``new_symbols(sdfg, ...)`` rebuilds this type environment (the symbols overridden by every array's dtype)
+        # per edge; keep it alongside ``defined_syms`` instead.
         array_types = {k: v.dtype for k, v in sdfg.arrays.items()}
         environment = {**defined_syms, **array_types}
         for edge in sdfg.all_interstate_edges():
@@ -2241,15 +2248,31 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
                 symbol_mapping.setdefault(fs, fs)
             s.symbol_mapping = symbol_mapping
 
-            # Add new global symbols to nested SDFG. Their types come from the symbols defined here, a walk
-            # over the whole parent graph, so it is made only when a symbol is actually missing.
-            missing = [(sym, symval) for sym, symval in s.symbol_mapping.items() if sym not in sdfg.symbols]
-            if missing:
-                defined_symbols = self.defined_symbols() if self.sdfg is not None else {}
-                for sym, symval in missing:
+            # Add new global symbols to nested SDFG
+            undeclared = [(sym, symval) for sym, symval in s.symbol_mapping.items() if sym not in sdfg.symbols]
+            if undeclared:
+                defined_symbols = self._defined_symbols_for_nesting()
+                for sym, symval in undeclared:
                     sdfg.add_symbol(sym, infer_expr_type(symval, defined_symbols) or dtypes.typeclass(int))
 
         return s
+
+    def _defined_symbols_for_nesting(self) -> dict[str, dt.Data]:
+        """:meth:`defined_symbols` of this state, memoized for the library expansions of one
+        :meth:`~dace.sdfg.SDFG.expand_library_nodes` sweep.
+
+        The walk covers the whole parent SDFG, and an expansion only adds nodes inside a state, so every expansion in
+        the state would otherwise repeat it. A symbol an expansion declares in the parent SDFG asks again.
+        """
+        if self.sdfg is None:
+            return {}
+        memo = EXPANSION_DEFINED_SYMBOLS.get()
+        if memo is None:
+            return self.defined_symbols()
+        cached = memo.get(self)
+        if cached is None or cached[0] != len(self.sdfg.symbols):
+            cached = memo[self] = (len(self.sdfg.symbols), self.defined_symbols())
+        return cached[1]
 
     def add_map(
         self,
@@ -3446,13 +3469,13 @@ class AbstractControlFlowRegion(
         """
         # TODO: Refactor
         sub_cfg_list = self._cfg_list
-        # By identity through a set: ``g not in sub_cfg_list`` scanned the whole list per CFG, quadratic
-        # when a nested SDFG joins a tree of thousands of regions (warpx_field_gather, once per lift).
-        present = {id(g) for g in sub_cfg_list}
-        for g in cfg_list:
-            if id(g) not in present:
-                present.add(id(g))
-                sub_cfg_list.append(g)
+        # Below the root every level hands its parent the whole shared list: an identity set keeps that linear.
+        if cfg_list is not sub_cfg_list:
+            present = {id(g) for g in sub_cfg_list}
+            for g in cfg_list:
+                if id(g) not in present:
+                    present.add(id(g))
+                    sub_cfg_list.append(g)
         ptarget = None
         if isinstance(self, dace.SDFG) and self.parent_sdfg is not None:
             ptarget = self.parent_sdfg
@@ -3573,11 +3596,8 @@ class AbstractControlFlowRegion(
         return super().add_edge(src, dst, data)
 
     def _ensure_unique_block_name(self, proposed: str | None = None) -> str:
-        # Ledger of every name ever issued here, held INCREMENTALLY: ``add_node`` records the label a
-        # block arrives with and the ``label`` setter records a rename in place, so the live labels are
-        # always a subset of it and no walk over the nodes can add anything. A removal deliberately
-        # leaves its name behind -- an inlined reference may still point at it, and reissuing it would
-        # alias. Membership only: the set is never iterated, so no order-dependent behavior rides on it.
+        # Every name ever issued here: ``add_node`` and the ``label`` setter record them. A removed block keeps its
+        # name reserved, as an inlined reference may still point at it.
         return dt.find_new_name(proposed or "block", self._labels)
 
     def add_node(
@@ -3746,12 +3766,8 @@ class AbstractControlFlowRegion(
             yield self
 
     def control_flow_regions_preorder(self, recursive: bool, load_ext: bool) -> Iterator["AbstractControlFlowRegion"]:
-        """``all_control_flow_regions(parent_first=True)`` walked with an explicit stack.
-
-        Same regions, same order, and each ``nodes()`` list is taken when its owner is reached, as in
-        the recursive form; a generator per nesting level made every region cost its depth in resumes,
-        and ``reset_cfg_list`` runs this walk after most graph edits.
-        """
+        """``all_control_flow_regions(parent_first=True)`` with an explicit stack: a generator per nesting level costs
+        every region its depth in resumes. Each ``nodes()`` list is taken when its owner is reached."""
         yield self
         # (remaining items, the state they belong to or None for a region's blocks)
         stack: list[tuple[Iterator[Any], SDFGState | None]] = [(iter(self.nodes()), None)]
