@@ -1,4 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+import itertools
+
 import numpy as np
 import sympy
 
@@ -80,7 +82,7 @@ def test_nsdfg_memlet_propagation_with_one_sparse_dimension():
     propagate_memlets_sdfg(sdfg)
 
     # Verify all memlet subsets and volumes in the main state of the program, i.e. around the NSDFG.
-    map_state = sdfg.states()[1]
+    map_state = next(itertools.islice(sdfg.states(), 1, None))
     i = dace.symbol("i")
     j = dace.symbol("j")
 
@@ -173,7 +175,7 @@ def test_union_around_loop_does_not_assume_it_runs():
     propagate_memlets_sdfg(sdfg)
 
     state, nsdfg_node = next(
-        (s, n) for s in sdfg.all_states() for n in s.nodes() if isinstance(n, dace.nodes.NestedSDFG)
+        (s, n) for s in sdfg.states() for n in s.nodes() if isinstance(n, dace.nodes.NestedSDFG)
     )
     (edge,) = [e for e in state.in_edges(nsdfg_node) if e.data.data == "A"]
     assert edge.data.subset.ranges == [(1, sympy.Max(1, N - 1), 1)], edge.data.subset

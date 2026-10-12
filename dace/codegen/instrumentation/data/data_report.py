@@ -120,7 +120,7 @@ class InstrumentedDataReport:
                 results.append(view)
         else:
             # The dump saves the symbols each state defines, which include loop variables and map parameters
-            types = {name: dtype for state in self.sdfg.all_states() for name, dtype in state.defined_symbols().items()}
+            types = {name: dtype for state in self.sdfg.states() for name, dtype in state.defined_symbols().items()}
             if item not in types:
                 raise KeyError(f"Item {item} not found in report")
             npdtype = types[item].as_numpy_dtype()

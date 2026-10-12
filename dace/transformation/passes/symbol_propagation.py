@@ -61,7 +61,7 @@ def opaque_scalar_names(sdfg: SDFG) -> set[str]:
     ``ScalarToSymbolPromotion`` that put the symbol there; only a never-written argument of the
     top-level SDFG is a read-only parameter."""
     opaque: set[str] = set()
-    for state in sdfg.all_states():
+    for state in sdfg.states():
         for n in state.data_nodes():
             if state.in_degree(n) == 0:
                 continue

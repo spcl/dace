@@ -173,7 +173,7 @@ def scope_bound_names(sdfg: "SDFG") -> set[str]:
         for region in sdfg.all_control_flow_regions()
         if isinstance(region, LoopRegion) and region.loop_variable and region.init_statement is not None
     }
-    for state in sdfg.all_states():
+    for state in sdfg.states():
         for node in state.nodes():
             if isinstance(node, nd.MapEntry):
                 names.update(node.map.params)
@@ -1655,10 +1655,6 @@ class SDFG(ControlFlowRegion):
         if node is self._cached_start_block:
             self._cached_start_block = None
         return super().remove_node(node)
-
-    def states(self):
-        """Returns the states in this SDFG, recursing into state scope blocks."""
-        return list(self.all_states())
 
     def arrays_recursive(self, include_nested_data: bool = False):
         """Iterate over all arrays in this SDFG, including arrays within

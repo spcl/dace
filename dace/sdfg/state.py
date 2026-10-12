@@ -3349,13 +3349,18 @@ class AbstractControlFlowRegion(
             if isinstance(cfg, dace.SDFG):
                 yield cfg
 
-    def all_states(self) -> Iterator[SDFGState]:
-        """Iterate over all states in this control flow graph."""
+    def states(self) -> Iterator[SDFGState]:
+        """Iterate over all states in this control flow graph, recursing into nested control flow regions."""
         for block in self.nodes():
             if isinstance(block, SDFGState):
                 yield block
             elif isinstance(block, AbstractControlFlowRegion):
-                yield from block.all_states()
+                yield from block.states()
+
+    def num_states(self) -> int:
+        """The number of states in this control flow graph, nested control flow regions included."""
+        # ``len(list(self.states()))`` would build a list of every state only to count it
+        return sum(1 for _ in self.states())
 
     def all_control_flow_blocks(self, recursive=False) -> Iterator[ControlFlowBlock]:
         """Iterate over all control flow blocks in this control flow graph."""
@@ -4405,9 +4410,10 @@ class ConditionalBlock(AbstractControlFlowRegion):
                 replace_in_codeblock(cond, repl)
 
     def to_json(self, parent=None):
-        json = super().to_json(parent)
-        del json["nodes"]
-        del json["edges"]
+        # Not ``super().to_json``: its nodes are the branches, so every nested conditional would serialize them twice
+        json = {"type": type(self).__name__, "attributes": None, **ControlFlowBlock.to_json(self, parent)}
+        json["cfg_list_id"] = int(self.cfg_id)
+        json["start_block"] = self._start_block
         json["branches"] = [
             (condition.to_json() if condition is not None else None, cfg.to_json()) for condition, cfg in self._branches
         ]
