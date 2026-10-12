@@ -520,6 +520,33 @@ def _is_scalar(edge: "gr.MultiConnectorEdge[Memlet]", memlet_path: list["gr.Mult
     return True
 
 
+def _validate_memlet_tree_roots(state: "dace.sdfg.SDFGState", state_id: int):
+    """Data moves through AccessNodes: every non-empty memlet tree is rooted at one. A tree into scopes is rooted at
+    the edge entering its outermost entry, one out of scopes at the edge leaving its outermost exit, and an edge
+    through no scope may be rooted at either end; all other edges are inner tree edges and are skipped."""
+    from dace.sdfg import nodes as nd
+
+    for eid, e in enumerate(state.edges()):
+        if e.data.is_empty():
+            continue
+        if isinstance(e.dst, nd.EntryNode) and not isinstance(e.src, nd.EntryNode):
+            ends = (e.src,)
+        elif isinstance(e.src, nd.ExitNode) and not isinstance(e.dst, nd.ExitNode):
+            ends = (e.dst,)
+        elif not isinstance(e.src, nd.EntryNode) and not isinstance(e.dst, nd.ExitNode):
+            ends = (e.src, e.dst)
+        else:
+            continue
+        if not any(isinstance(n, nd.AccessNode) for n in ends):
+            raise InvalidSDFGEdgeError(
+                f'The memlet tree of "{e.data.data}" from "{e.src}" to "{e.dst}" must be rooted at an AccessNode; '
+                f"route the data through an AccessNode",
+                state.parent_graph,
+                state_id,
+                eid,
+            )
+
+
 def validate_state(
     state: "dace.sdfg.SDFGState",
     state_id: int = None,
@@ -817,6 +844,8 @@ def validate_state(
                 )
         ########################################
 
+    _validate_memlet_tree_roots(state, state_id)
+
     for eid, e in enumerate(state.edges()):
         # Reference check
         if id(e) in references:
@@ -892,25 +921,6 @@ def validate_state(
         path = state.memlet_path(e)
         src_node = path[0].src
         dst_node = path[-1].dst
-
-        # Data moves through AccessNodes: the root of a memlet tree, the end of its path outside every scope it passes,
-        # is one. A path into scopes is rooted at its source, one out of scopes at its destination, and an edge through
-        # no scope at either end.
-        if not e.data.is_empty():
-            if isinstance(path[0].dst, nd.EntryNode):
-                ends = [src_node]
-            elif isinstance(path[-1].src, nd.ExitNode):
-                ends = [dst_node]
-            else:
-                ends = [src_node, dst_node]
-            if not any(isinstance(end, nd.AccessNode) for end in ends):
-                raise InvalidSDFGEdgeError(
-                    f'The memlet tree of "{e.data.data}" from "{src_node}" to "{dst_node}" must be rooted at an '
-                    f"AccessNode; route the data through an AccessNode",
-                    state.parent_graph,
-                    state_id,
-                    eid,
-                )
 
         # Set up memlet-specific SDFG context
         memlet_context = copy.copy(context)
