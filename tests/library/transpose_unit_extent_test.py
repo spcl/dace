@@ -13,6 +13,8 @@ the wrong memory and answers plausible wrong numbers instead of failing (npbench
 ``pos[:, 0:1]`` is an ``(N, 1)`` view of an ``(N, 3)`` array).
 """
 
+import re
+
 import numpy as np
 import pytest
 
@@ -105,17 +107,20 @@ def test_a_genuine_matrix_still_reaches_the_blas_call(implementation):
 
 
 @pytest.mark.parametrize("implementation", ["MKL", "OpenBLAS", "cuBLAS"])
-def test_a_strided_operand_never_reaches_a_blas_call(implementation):
-    """Every BLAS call here states the leading dimension as the operand's own extent, so a column of
-    a wider array walks the wrong memory and answers plausible wrong numbers rather than failing.
-    Expanding to an SDFG rather than a CPP tasklet is what says the interception happened."""
-    from dace.sdfg.nodes import NestedSDFG
+def test_a_strided_operand_reaches_the_blas_call_with_its_row_stride(implementation):
+    """A column of a wider array has contiguous rows, so it is a BLAS operand whose leading dimension is the wider
+    array's row stride, not its own extent: stating the extent would walk the wrong memory and answer plausible
+    wrong numbers."""
+    from dace.sdfg.nodes import Tasklet
 
     sdfg = build_strided(implementation)
     sdfg.expand_library_nodes()
-    assert any(isinstance(n, NestedSDFG) for n, _ in sdfg.all_nodes_recursive()), (
-        f"{implementation} emitted a library call for a strided operand"
-    )
+    calls = [
+        n.code.as_string
+        for n, _ in sdfg.all_nodes_recursive()
+        if isinstance(n, Tasklet) and n.language == dace.dtypes.Language.CPP
+    ]
+    assert len(calls) == 1 and re.search(rf"_inp, {COLUMNS}\b", calls[0]), calls
 
 
 @pytest.mark.parametrize("implementation", ["pure", "OpenBLAS"])
@@ -174,7 +179,7 @@ if __name__ == "__main__":
     for impl in ("MKL", "OpenBLAS", "cuBLAS"):
         test_a_one_element_operand_never_reaches_a_blas_call(impl)
         test_a_genuine_matrix_still_reaches_the_blas_call(impl)
-        test_a_strided_operand_never_reaches_a_blas_call(impl)
+        test_a_strided_operand_reaches_the_blas_call_with_its_row_stride(impl)
     for impl in ("pure", "OpenBLAS"):
         test_a_strided_operand_transposes_correctly(impl)
     test_a_device_resident_operand_expands_to_a_device_map()
