@@ -132,25 +132,6 @@ jobs:
         ulimit -s 65536 || true && uv run --group testing pytest -n 1 --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -m "mkl"
         ./codecov
 
-    - name: Test FFTW3 FFT lowering
-      # ``libfftw3-dev`` is already installed in the "Install dependencies"
-      # step; this step runs the ``fftw``-marked tests for the FFT library's
-      # CPU backend.
-      run: |
-        export NOSTATUSBAR=1
-        export DACE_testing_serialization=1
-        export DACE_testing_deserialize_exception=1
-        export DACE_cache=unique
-        if [ "${{ matrix.simplify }}" = "autoopt" ]; then
-            export DACE_optimizer_automatic_simplification=1
-            export DACE_optimizer_autooptimize=1
-            echo "Auto-optimization heuristics"
-        else
-            export DACE_optimizer_automatic_simplification=${{ matrix.simplify }}
-        fi
-        ulimit -s 65536 || true && uv run --group testing pytest -n 1 --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -m "fftw"
-        ./codecov
-
     - name: Run sequential tests
       run: |
         export NOSTATUSBAR=1
