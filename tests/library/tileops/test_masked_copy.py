@@ -173,13 +173,13 @@ def test_a_masked_load_reads_a_lane_only_where_the_mask_is_on():
     assert "_mask[__l0] ? _cpy_in[(__l0 * (1))] : double(0)" in code, code
 
 
-def test_a_masked_load_selects_the_header_call_with_the_stride_of_its_window():
-    sdfg = build_load("header", (40,), "3:35:4", (8,), dace.float64, "scalar")
+def test_a_masked_load_calls_the_tile_function_with_the_stride_of_its_window():
+    sdfg = build_load("function", (40,), "3:35:4", (8,), dace.float64, "scalar")
     sdfg.expand_library_nodes()
     code = next(
         node for node, state in sdfg.all_nodes_recursive() if isinstance(node, dace.nodes.Tasklet)
     ).code.as_string
-    assert "dace::tileops::tile_load<double, 8, true>(_cpy_out, _cpy_in, _mask, 4);" in code, code
+    assert "tile_load_f64x8_m_scalar(_cpy_out, _cpy_in, _mask, 4);" in code, code
 
 
 @pytest.mark.parametrize("window,alignment", [("0:8", "16"), ("3:11", "4, 1"), ("4:12", "8")])
@@ -316,7 +316,7 @@ if __name__ == "__main__":
     for tile_window in ("contiguous", "strided"):
         test_a_masked_load_equals_the_tile_load_it_replaces(tile_window)
     test_a_masked_load_reads_a_lane_only_where_the_mask_is_on()
-    test_a_masked_load_selects_the_header_call_with_the_stride_of_its_window()
+    test_a_masked_load_calls_the_tile_function_with_the_stride_of_its_window()
     for tile_masked in (False, True):
         test_a_half_precision_tile_is_loaded_with_the_alignment_its_window_proves("0:8", "16", tile_masked)
         test_a_half_precision_tile_is_loaded_with_the_alignment_its_window_proves("3:11", "4, 1", tile_masked)

@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import dace
-from dace import dtypes, library, properties
+from dace import dtypes, library, properties, tile_functions
 from dace.libraries.standard.helper import collapse_shape_and_strides
 from dace.libraries.standard.nodes.copy.common import INPUT_CONNECTOR_NAME, OUTPUT_CONNECTOR_NAME
 from dace.libraries.standard.nodes.copy.node import CopyLibraryNode
@@ -19,13 +19,14 @@ from dace.libraries.tileops.environments import (
     TileOpsSVE,
 )
 from dace.libraries.tileops.expansions import ExpandTileIsa, ExpandTilePure
-from dace.libraries.tileops.isa import require_k1
+from dace.libraries.tileops.isa import call_text, element_code, pointer, require_k1
 from dace.libraries.tileops.lanes import nested_loops, tile_offset
 from dace.libraries.tileops.nodes.tile_op import TileOp
 from dace.libraries.tileops.validation import validate_mask_descriptor_lock
 from dace.optionals import required
 from dace.sdfg import nodes
 from dace.symbolic import symstr
+from dace.tile_functions import TileFunction
 
 MASK_CONNECTOR_NAME = "_mask"
 
@@ -280,14 +281,25 @@ class MaskedCopyLibraryNode(CopyLibraryNode, TileOp):
         out_edge = next(state.out_edges_by_connector(self, OUTPUT_CONNECTOR_NAME))
         array_edge = in_edge if lanes.loads else out_edge
         stride = (lanes.in_strides if lanes.loads else lanes.out_strides)[0]
-        masked = "true" if self.has_mask else "false"
-        mask_argument = MASK_CONNECTOR_NAME if self.has_mask else "nullptr"
-        align = align_template_arg(self, state, sdfg, array_edge, backend, vlen, allow_shift=lanes.loads)
-        function = "tile_load" if lanes.loads else "tile_store"
-        code = (
-            f"dace::tileops::{function}<{lanes.ctype}, {vlen}, {masked}{align}>"
-            f"({OUTPUT_CONNECTOR_NAME}, {INPUT_CONNECTOR_NAME}, {mask_argument}, {symstr(stride)});"
-        )
+        kind = "load" if lanes.loads else "store"
+        if backend in tile_functions.ISAS:
+            function = TileFunction(kind, backend, element_code(lanes.ctype), vlen, masked=self.has_mask)
+            mask_edges = state.in_edges_by_connector(self, MASK_CONNECTOR_NAME)
+            arguments = [
+                pointer(OUTPUT_CONNECTOR_NAME, out_edge),
+                pointer(INPUT_CONNECTOR_NAME, in_edge),
+                *(pointer(MASK_CONNECTOR_NAME, edge) for edge in mask_edges),
+                symstr(stride),
+            ]
+            code = call_text(function.name, arguments)
+        else:
+            masked = "true" if self.has_mask else "false"
+            mask_argument = MASK_CONNECTOR_NAME if self.has_mask else "nullptr"
+            align = align_template_arg(self, state, sdfg, array_edge, backend, vlen, allow_shift=lanes.loads)
+            code = (
+                f"dace::tileops::tile_{kind}<{lanes.ctype}, {vlen}, {masked}{align}>"
+                f"({OUTPUT_CONNECTOR_NAME}, {INPUT_CONNECTOR_NAME}, {mask_argument}, {symstr(stride)});"
+            )
         return nodes.Tasklet(
             label=f"{self.label}_{backend}",
             inputs=dict.fromkeys(self.input_names()),

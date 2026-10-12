@@ -100,7 +100,7 @@ def shared_ctype(
 def operands_share_output_type(
     node: nodes.LibraryNode, state: dace.SDFGState, sdfg: dace.SDFG, operands: Sequence[Operand], out_conn: str
 ) -> bool:
-    """Whether the operands and the output have one type, which is all the ISA headers' single ``T`` carries.
+    """Whether the operands and the output have one type, which is all the ISA backends' single element type carries.
 
     An op over operands of another type than its output (a comparison of ``double`` operands into ``bool``) would need
     its operands cast to the output type, and a C cast of a value truncates it.

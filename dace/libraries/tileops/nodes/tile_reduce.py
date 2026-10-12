@@ -2,7 +2,7 @@
 """``TileReduce``: a reduction inside a tile, along one axis or over all of it."""
 
 import dace
-from dace import cpf_lowering, library, properties
+from dace import cpf_lowering, library, properties, tile_functions
 from dace.libraries.tileops.dispatch import TileGroup
 from dace.libraries.tileops.environments import (
     TileOpsAVX2,
@@ -14,12 +14,13 @@ from dace.libraries.tileops.environments import (
     TileOpsSVE,
 )
 from dace.libraries.tileops.expansions import THREAD_INDEX, ExpandTileIsa, ExpandTilePure
-from dace.libraries.tileops.isa import require_k1
+from dace.libraries.tileops.isa import element_code, pointer, require_k1
 from dace.libraries.tileops.lanes import LaneDistribution, distributed_lanes, nested_loops, tile_offset
 from dace.libraries.tileops.nodes.tile_op import TileOp
 from dace.libraries.tileops.operands import connected_edges, edge_ctype, output_edge
 from dace.libraries.tileops.ops import BINARY_OPS, REDUCE_OPS
 from dace.sdfg import nodes
+from dace.tile_functions import TileFunction
 
 
 def identity_literal(op: str, ctype: str) -> str:
@@ -103,9 +104,8 @@ class TileReduce(TileOp):
     is false contribute the identity of ``op``. Accumulating across tiles is the caller's job, typically a WCR memlet
     on the output edge.
 
-    Only the unmasked full reduction of a K=1 tile has a header lowering. Each backend header implements it its own
-    way: AVX-512 collapses with ``_mm512_reduce_<op>``, the other CPU backends with a balanced tree over the lanes, and
-    CUDA folds ``half2`` pairs.
+    Only the unmasked full reduction of a K=1 tile has an ISA lowering: the CPU backends fold a balanced tree over the
+    lanes, CUDA folds ``half2`` pairs.
     """
 
     implementations = {
@@ -251,7 +251,13 @@ class TileReduce(TileOp):
         out_edge = output_edge(state, self, "_dst")
         scalar_destination = out_edge.data.subset is None or out_edge.data.subset.num_elements() == 1
         destination = "_dst" if scalar_destination else "_dst[0]"
-        code = f"{destination} = dace::tileops::tile_reduce<{ctype}, {vlen}, '{BINARY_OPS[self.op].isa_code}'>(_src);"
+        op = BINARY_OPS[self.op].isa_code
+        if backend in tile_functions.ISAS:
+            source = pointer("_src", connected_edges(state, self)["_src"])
+            call = f"{TileFunction('reduce', backend, element_code(ctype), vlen, op).name}({source})"
+        else:
+            call = f"dace::tileops::tile_reduce<{ctype}, {vlen}, '{op}'>(_src)"
+        code = f"{destination} = {call};"
         return nodes.Tasklet(
             label=f"{self.label}_{backend}",
             inputs={"_src": None},

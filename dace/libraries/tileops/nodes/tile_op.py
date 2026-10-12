@@ -17,7 +17,7 @@ class TileOp(nodes.LibraryNode):
 
     The implementation is chosen from the vectorizer's ``target_isa`` (see :mod:`dace.libraries.tileops.dispatch`),
     not from the schedule, so device auto-selection must leave it alone. A node lowers either ``pure``, as a loop over
-    the lanes, or, for K=1 and where :meth:`can_lower_to_isa` allows it, as a call into the header of a backend. A
+    the lanes, or, for K=1 and where :meth:`can_lower_to_isa` allows it, as a call into an ISA backend. A
     ``WARP`` or ``BLOCK`` node in a GPU kernel lowers ``block``: the lanes spread over the threads of its ``group``.
     """
 
@@ -64,7 +64,7 @@ class TileOp(nodes.LibraryNode):
     )
 
     def can_lower_to_isa(self, state: dace.SDFGState, sdfg: dace.SDFG) -> bool:
-        """Whether a backend header has a lowering for this configuration of the node."""
+        """Whether the ISA backends have a lowering for this configuration of the node."""
         return True
 
     def pure_tasklet(self, state: dace.SDFGState, sdfg: dace.SDFG) -> nodes.Tasklet:

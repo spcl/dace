@@ -47,15 +47,18 @@ from collections import Counter
 from collections.abc import Callable, Sequence
 from typing import NamedTuple
 
-from dace import cpf_lowering, dtypes, symbolic
+from dace import cpf_lowering, dtypes, symbolic, tile_functions
 from dace import data as dt
 from dace.codegen import codegen
 from dace.codegen.codeobject import CodeObject
 from dace.config import Config, set_temporary
+from dace.libraries.tileops.dispatch import FUNCTION_ISAS, ISA, isa_implementation, widest_function_isa
+from dace.libraries.tileops.nodes.tile_op import TileOp
 from dace.library import get_environment
 from dace.optionals import required
 from dace.ordered import OrderedSet
 from dace.sdfg import SDFG, SDFGState, nodes
+from dace.sdfg.scope import is_devicelevel_gpu
 from dace.transformation.passes.canonicalize.annotate_loop_kinds import AnnotateLoopKinds
 from dace.transformation.passes.canonicalize.finalize import explicit_accumulating_copies
 from dace.transformation.passes.scalar_promotion import PromoteScalarOutputsToArrays
@@ -401,10 +404,35 @@ def renderable_implementations(node: nodes.LibraryNode, state: SDFGState) -> tup
     :seealso: :data:`RENDERABLE_BY_NODE_DEVICE`, :data:`RENDERABLE_BY_NODE`,
               :data:`RENDERABLE_IMPLEMENTATIONS`.
     """
+    if isinstance(node, TileOp) and node.implementation in tile_functions.ISAS:
+        # Its tile functions are inline definitions of the unit, as :func:`target_tile_functions` chose them.
+        return (node.implementation,)
     preferred = RENDERABLE_BY_NODE.get(type(node).__name__, ())
     if cpf_lowering.device() and on_device_at_host_level(node, state):
         preferred = RENDERABLE_BY_NODE_DEVICE.get(type(node).__name__, ()) + preferred
     return preferred + RENDERABLE_IMPLEMENTATIONS
+
+
+def target_tile_functions(sdfg: SDFG, isa: ISA) -> None:
+    """Lower every host tile node through the tile functions of ONE ISA, in place.
+
+    ``AUTO`` is the widest ISA with tile functions the host executes (AVX-512, AVX2, NEON), else the
+    scalar ``omp simd`` lane loop. A node those functions cannot express lowers ``pure``; a node in a
+    GPU kernel keeps its device lowering.
+
+    :raises ValueError: if ``isa`` has no tile functions (SVE, CUDA).
+    """
+    resolved = widest_function_isa() if isa is ISA.AUTO else isa
+    if resolved not in FUNCTION_ISAS:
+        raise ValueError(f"CPF renders tile nodes for {[isa.name for isa in FUNCTION_ISAS]} or AUTO, not {isa.name}")
+    for node, state in sdfg.all_nodes_recursive():
+        if (
+            isinstance(node, TileOp)
+            and node.target_isa is not ISA.CUDA
+            and not is_devicelevel_gpu(state.sdfg, state, node)
+        ):
+            node.target_isa = resolved
+            node.implementation = isa_implementation(node, state, resolved)
 
 
 def schedule_host_level_device_node(node: nodes.LibraryNode, state: SDFGState) -> None:
@@ -1229,6 +1257,7 @@ def render(
     language: str = "c++",
     signature: EntrySignature | None = None,
     check_compiles: bool = True,
+    isa: ISA = ISA.AUTO,
 ) -> Rendering:
     """Render ``sdfg`` and return the text together with the SDFG it describes.
 
@@ -1249,6 +1278,8 @@ def render(
                            served as good and read as good, which is the one failure CPF has no
                            other gate for. Pass ``False`` only where the caller compiles the
                            result itself.
+    :param isa: the ISA whose tile functions the tile nodes call (:func:`target_tile_functions`);
+                ``AUTO`` is the widest one the host executes.
     :returns: the :class:`Rendering`.
     :raises NotImplementedError: if the SDFG needs anything the dialect's units cannot hold; the
                                  message names the construct.
@@ -1260,6 +1291,7 @@ def render(
     prepared = copy.deepcopy(sdfg)
     if signature is not None and signature.workspace is not None and signature.workspace_size is not None:
         add_workspace(prepared, signature.workspace, signature.workspace_size)
+    target_tile_functions(prepared, isa)
     provenance: dict[str, tuple[str, str]] = {}
     # Under the dialect, because ``prepare`` EXPANDS library nodes and an expansion bakes its
     # tasklet text once and for good. A node that spells its own element transform -- ArgReduce
@@ -1345,6 +1377,7 @@ def cpf(
     language: str = "c++",
     signature: EntrySignature | None = None,
     check_compiles: bool = True,
+    isa: ISA = ISA.AUTO,
 ) -> str:
     """Render ``sdfg`` as one self-contained host translation unit.
 
@@ -1361,6 +1394,7 @@ def cpf(
     :param signature: the entry point's parameter order and workspace pair; ``None`` keeps CPF's
                       (see :func:`render`).
     :param check_compiles: compile the finished unit before returning it (see :func:`render`).
+    :param isa: the ISA of the tile functions (see :func:`render`).
     :returns: the translation unit, defining ``extern "C" void <sdfg.name>(<arglist>)`` in C++ and
               ``void <sdfg.name>(<arglist>)`` in C, whose ABI is the same.
     :raises NotImplementedError: if the SDFG needs anything a single host unit cannot hold; the
@@ -1370,4 +1404,7 @@ def cpf(
     """
     if dialect_for(language) in cpf_lowering.DEVICE_DIALECTS:
         raise ValueError(f"CPF renders {language!r} as a host and a device unit: call render(), not cpf()")
-    return render(sdfg, validate=validate, language=language, signature=signature, check_compiles=check_compiles).code
+    rendering = render(
+        sdfg, validate=validate, language=language, signature=signature, check_compiles=check_compiles, isa=isa
+    )
+    return rendering.code

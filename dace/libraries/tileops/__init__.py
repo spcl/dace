@@ -3,7 +3,7 @@
 
 A node carries the ``widths`` of its tile, innermost last. Elementwise nodes read each operand as a ``Tile``, a
 ``Scalar`` or an inline ``Symbol`` (:mod:`~dace.libraries.tileops.kinds`), and the ones that can be gated take a
-``_mask`` connector. Every node lowers as a loop over the lanes, and for K=1 most also as a call into the header of an
+``_mask`` connector. Every node lowers as a loop over the lanes, and for K=1 most also as a call into an
 ISA backend; :mod:`~dace.libraries.tileops.dispatch` selects between them.
 
 Layout mirrors :mod:`dace.libraries.standard`: ``nodes`` holds the library nodes and ``environments`` the toolchain

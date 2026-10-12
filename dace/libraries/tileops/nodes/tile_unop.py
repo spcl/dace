@@ -13,7 +13,7 @@ from dace.libraries.tileops.environments import (
     TileOpsSVE,
 )
 from dace.libraries.tileops.expansions import ExpandTileIsa, ExpandTilePure
-from dace.libraries.tileops.isa import IsaCall
+from dace.libraries.tileops.isa import IsaCall, call_text, template_flag
 from dace.libraries.tileops.kinds import SYMBOL, TILE
 from dace.libraries.tileops.lanes import half_disambiguated, tile_offset
 from dace.libraries.tileops.nodes.tile_op import TileOp
@@ -34,6 +34,7 @@ from dace.libraries.tileops.ops import CAST_OPS, UNARY_OPS
 from dace.libraries.tileops.validation import promotion_ok
 from dace.optionals import required
 from dace.sdfg import nodes
+from dace.tile_functions import TileFunction
 
 
 @library.expansion
@@ -205,12 +206,13 @@ class TileUnop(TileOp):
     def isa_tasklet(self, state: dace.SDFGState, sdfg: dace.SDFG, backend: str) -> nodes.Tasklet:
         self.validate(sdfg, state)
         operands = self.operands()
-        call = IsaCall.of(self, state, sdfg, "_c")
+        call = IsaCall.of(self, state, sdfg, "_c", backend)
         broadcast, pointer = call.operand(operands[0])
-        masked = "true" if self.has_mask else "false"
-        mask_argument = "_mask" if self.has_mask else "nullptr"
-        text = (
-            f"dace::tileops::tile_unop<{call.ctype}, {call.vlen}, '{UNARY_OPS[self.op].isa_code}', "
-            f"{broadcast}, {masked}>(_c, {pointer}, {mask_argument});"
-        )
+        op = UNARY_OPS[self.op].isa_code
+        if call.functions:
+            name = TileFunction("unop", backend, call.element, call.vlen, op, broadcast, self.has_mask).name
+        else:
+            masked = "true" if self.has_mask else "false"
+            name = f"dace::tileops::tile_unop<{call.ctype}, {call.vlen}, '{op}', {template_flag(broadcast)}, {masked}>"
+        text = call_text(name, [call.output("_c"), pointer, *call.mask(self.has_mask)])
         return call.tasklet(self, backend, operands, "_c", text, self.has_mask)

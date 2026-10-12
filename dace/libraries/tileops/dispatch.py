@@ -11,6 +11,7 @@ import functools
 import platform
 
 import dace
+from dace import tile_functions
 from dace.sdfg import nodes
 from dace.sdfg.scope import is_devicelevel_gpu
 
@@ -94,25 +95,27 @@ def detect_host_isa() -> ISA:
     return next((isa for isa in ISA_PREFERENCE if isa in supported), ISA.SCALAR)
 
 
+def operand_dtypes(node: nodes.LibraryNode, parent_state: dace.SDFGState) -> list[dace.typeclass]:
+    """The element types of the connected operands and outputs of the tile op."""
+    sdfg = parent_state.sdfg
+    edges = (*parent_state.in_edges(node), *parent_state.out_edges(node))
+    descs = [sdfg.arrays.get(edge.data.data) for edge in edges if edge.data is not None and edge.data.data is not None]
+    return [desc.dtype for desc in descs if desc is not None]
+
+
 def has_complex_operand(node: nodes.LibraryNode, parent_state: dace.SDFGState) -> bool:
     """Whether any connected operand or output of the tile op is complex."""
-    sdfg = parent_state.sdfg
-    for edge in (*parent_state.in_edges(node), *parent_state.out_edges(node)):
-        if edge.data is None or edge.data.data is None:
-            continue
-        desc = sdfg.arrays.get(edge.data.data)
-        if desc is not None and desc.dtype in (dace.dtypes.complex64, dace.dtypes.complex128):
-            return True
-    return False
+    return any(dtype in (dace.dtypes.complex64, dace.dtypes.complex128) for dtype in operand_dtypes(node, parent_state))
 
 
 def select_tile_implementation(node: nodes.LibraryNode, parent_state: dace.SDFGState) -> str:
     """The implementation of ``node`` for the target ISA it carries.
 
-    A tile of more than one dim lowers ``pure``, and so does every node the backend headers cannot express
-    (:meth:`~dace.libraries.tileops.nodes.tile_op.TileOp.can_lower_to_isa`) and a node with a complex operand on a CPU
-    ISA: a packed multiply has no SIMD form, so the scalar loop over ``std::complex`` is the correct lowering
-    everywhere. CUDA carries complex natively and keeps its path. The rest take the implementation of their ISA.
+    A tile of more than one dim lowers ``pure``, and so does every node the backends cannot express
+    (:meth:`~dace.libraries.tileops.nodes.tile_op.TileOp.can_lower_to_isa`), a node with a complex operand on a CPU
+    ISA (a packed multiply has no SIMD form, so the scalar loop over ``std::complex`` is the correct lowering
+    everywhere; CUDA carries complex natively and keeps its path) and a node over an element type no CPU tile function
+    takes (``float16``). The rest take the implementation of their ISA.
 
     A ``WARP`` or ``BLOCK`` node in a GPU kernel lowers ``block``, spread over the threads of its group.
 
@@ -132,6 +135,19 @@ def lane_implementation(node: nodes.LibraryNode, parent_state: dace.SDFGState) -
     target_isa = node.target_isa
     if target_isa is ISA.AUTO:
         target_isa = detect_host_isa()
+    implementation = isa_implementation(node, parent_state, target_isa)
+    if implementation != "pure" and target_isa in CPU_SIMD_ISAS and target_isa not in host_supported_isas():
+        raise ValueError(
+            f"tile-op target_isa={target_isa.name} is not executable on this host "
+            f"(supported: {sorted(isa.name for isa in host_supported_isas())}). Vectorization enforces "
+            f"arch-native: use ISA.AUTO to target the host, or pick a supported ISA."
+        )
+    return implementation
+
+
+def isa_implementation(node: nodes.LibraryNode, parent_state: dace.SDFGState, target_isa: ISA) -> str:
+    """The backend of ``target_isa`` for ``node``, or ``pure`` where that backend cannot express it; whether the host
+    executes it is the caller's question."""
     implementation = ISA_TO_IMPL.get(target_isa)
     if len(node.widths) != 1 or implementation not in node.implementations:
         return "pure"
@@ -139,10 +155,21 @@ def lane_implementation(node: nodes.LibraryNode, parent_state: dace.SDFGState) -
         parent_state, parent_state.sdfg
     ):
         return "pure"
-    if target_isa in CPU_SIMD_ISAS and target_isa not in host_supported_isas():
-        raise ValueError(
-            f"tile-op target_isa={target_isa.name} is not executable on this host "
-            f"(supported: {sorted(isa.name for isa in host_supported_isas())}). Vectorization enforces "
-            f"arch-native: use ISA.AUTO to target the host, or pick a supported ISA."
-        )
+    if implementation in tile_functions.ISAS and any(
+        dtype.ctype not in tile_functions.ELEMENT_TYPES for dtype in operand_dtypes(node, parent_state)
+    ):
+        return "pure"
     return implementation
+
+
+#: The host ISAs with tile functions (:mod:`dace.tile_functions`), widest first.
+FUNCTION_ISA_PREFERENCE = (ISA.AVX512, ISA.AVX2, ISA.ARM_NEON)
+
+#: The ISAs whose tile nodes lower to tile functions.
+FUNCTION_ISAS = (*FUNCTION_ISA_PREFERENCE, ISA.SCALAR)
+
+
+def widest_function_isa() -> ISA:
+    """The widest ISA with tile functions the host executes, ``SCALAR`` (the ``omp simd`` lane loop) on any other."""
+    supported = host_supported_isas()
+    return next((isa for isa in FUNCTION_ISA_PREFERENCE if isa in supported), ISA.SCALAR)

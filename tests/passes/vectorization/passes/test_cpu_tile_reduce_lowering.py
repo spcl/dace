@@ -3,7 +3,7 @@
 K=1 ``TileReduce`` backend.
 
 The in-map / per-tile reduction (``acc = sum/prod/min/max over the tile``) lowers
-to ``dace::tileops::tile_reduce<T, VLEN, Op>`` (``dace/tile_ops/<isa>.h``), which
+to the ``tile_reduce_<T>x<VLEN>_<op>_<isa>`` tile function (:mod:`dace.tile_functions`), which
 delegates to the shared ``horizontal_reduce_<op>`` primitive -- the ISA one-shot
 reduce where the hardware has it, the portable log-depth tree otherwise. These
 assert the lowering SELECTION, the EMITTED intrinsic call, and (on the host ISA)
@@ -78,18 +78,13 @@ def _reduce_sdfg(dtype, W, op="+", axis=None, mask=False):
 
 
 def test_reduce_cpu_emits_intrinsic_for_full_k1():
-    # A full (axis=None), unmasked, K=1 reduce lowers to the tile_reduce intrinsic
-    # on every CPU ISA (the header delegates to horizontal_reduce_<op>).
+    # A full (axis=None), unmasked, K=1 reduce lowers to the tile reduce function of every CPU ISA.
     sdfg, st, n = _reduce_sdfg(dace.float64, 8, "+")
-    assert (
-        "dace::tileops::tile_reduce<double, 8, '+'>(_src)"
-        in ExpandTileReduceScalar.expansion(n, st, sdfg).code.as_string
-    )
+    assert "tile_reduce_f64x8_add_scalar(_src)" in ExpandTileReduceScalar.expansion(n, st, sdfg).code.as_string
     sdfg, st, n = _reduce_sdfg(dace.float32, 16, "+")
-    assert "tile_reduce<float, 16, '+'>" in ExpandTileReduceAVX512.expansion(n, st, sdfg).code.as_string
-    # ``max`` maps to the 'M' op char (same legend as tile_binop).
+    assert "tile_reduce_f32x16_add_avx512(_src)" in ExpandTileReduceAVX512.expansion(n, st, sdfg).code.as_string
     sdfg, st, n = _reduce_sdfg(dace.float64, 8, "max")
-    assert "tile_reduce<double, 8, 'M'>" in ExpandTileReduceAVX512.expansion(n, st, sdfg).code.as_string
+    assert "tile_reduce_f64x8_max_avx512(_src)" in ExpandTileReduceAVX512.expansion(n, st, sdfg).code.as_string
 
 
 def test_reduce_cpu_selects_pure_for_masked_and_axis():
@@ -166,7 +161,7 @@ if __name__ == "__main__":
         test_reduce_selects_isa_for_full_k1(isa)
     test_reduce_kge2_falls_back_to_pure_on_cpu()
     test_reduce_cpu_emits_intrinsic_for_full_k1()
-    test_reduce_cpu_falls_back_to_pure_for_masked_and_axis()
+    test_reduce_cpu_selects_pure_for_masked_and_axis()
     for op, ref in [("+", np.sum), ("*", np.prod), ("min", np.min), ("max", np.max)]:
         for W in [8, 16, 17]:
             test_reduce_cpu_end_to_end_numeric(op, ref, W)

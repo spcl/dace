@@ -26,7 +26,8 @@ therefore has to be re-expressed, and there are four ways to do it:
     C++ helper whose C answer is a rewrite rather than a definition, which is what lets the anti-rot
     tests still demand an answer for each one.
 
-This module is deliberately a LEAF: it imports nothing from ``dace``. ``dace.symbolic`` (which
+This module is deliberately a LEAF: it imports nothing from ``dace`` but the leaves :mod:`dace.optionals`,
+:mod:`dace.ordered` and :mod:`dace.tile_functions`. ``dace.symbolic`` (which
 imports no code generator) and ``dace.codegen.cppunparse`` both consume it, and a shared table is
 what keeps the two printers from drifting -- the same expression reaching C++ through a memlet
 subset and through a tasklet body must produce the same text.
@@ -41,6 +42,7 @@ import re
 from collections.abc import Callable
 from typing import NamedTuple
 
+from dace import tile_functions
 from dace.optionals import required
 from dace.ordered import OrderedSet
 
@@ -2523,6 +2525,11 @@ def c_instance(name: str) -> tuple[str, tuple[str, ...]] | None:
     return None
 
 
+def c_or_tile_instance(name: str) -> tuple[str, tuple[str, ...]] | None:
+    """A typed C instantiation, or a tile function (:mod:`dace.tile_functions`), whose text is C already."""
+    return c_instance(name) or tile_functions.definition(name)
+
+
 def no_instances(name: str) -> tuple[str, tuple[str, ...]] | None:
     """The C++ dialects name no typed instantiation: their templates instantiate themselves."""
     return None
@@ -3047,6 +3054,8 @@ TABLES: dict[Dialect, Tables] = {
         BASE_HEADERS,
         DEFINITION_DEPENDENCIES,
         DEFINITION_HEADERS,
+        instances=tile_functions.definition,
+        instance_names=tile_functions.CALL_NAMES,
     ),
     Dialect.STANDALONE_C: _tables(
         C_STD_RENAMES,
@@ -3059,8 +3068,8 @@ TABLES: dict[Dialect, Tables] = {
         C_DEFINITION_DEPENDENCIES,
         {},
         frozenset(C_TYPED_MATH) | frozenset(C_TYPED_HELPER_SPECS) | {"iround", "heaviside"},
-        c_instance,
-        C_INSTANCE_NAMES,
+        c_or_tile_instance,
+        f"{C_INSTANCE_NAMES}|{tile_functions.CALL_NAMES}",
     ),
     # The HIP unit is C++, so it takes the C++ vocabulary and adds to it: the ROCm toolkit's own
     # headers, which ship with the compiler that builds the unit, and the device counterparts of

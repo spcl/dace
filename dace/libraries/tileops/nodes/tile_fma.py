@@ -16,7 +16,7 @@ from dace.libraries.tileops.environments import (
     TileOpsSVE,
 )
 from dace.libraries.tileops.expansions import ExpandTileIsa, ExpandTilePure
-from dace.libraries.tileops.isa import IsaCall
+from dace.libraries.tileops.isa import IsaCall, call_text, template_flag
 from dace.libraries.tileops.kinds import TILE
 from dace.libraries.tileops.nodes.tile_op import TileOp
 from dace.libraries.tileops.operands import (
@@ -32,6 +32,7 @@ from dace.libraries.tileops.operands import (
     validate_elementwise,
 )
 from dace.sdfg import nodes
+from dace.tile_functions import TileFunction
 
 #: The registered dtypes narrower than ``float``, which take the ``double``-widened spelling of the fma; every other
 #: operand type calls ``std::fma`` as it is. Read off the dtype registry, which includes the fp8 types, whose CUDA
@@ -220,14 +221,16 @@ class TileFMA(TileOp):
     def isa_tasklet(self, state: dace.SDFGState, sdfg: dace.SDFG, backend: str) -> nodes.Tasklet:
         self.validate(sdfg, state)
         operands = self.operands()
-        call = IsaCall.of(self, state, sdfg, "_o")
+        call = IsaCall.of(self, state, sdfg, "_o", backend)
         (a_broadcast, a_pointer), (b_broadcast, b_pointer), (c_broadcast, c_pointer) = (
             call.operand(operand) for operand in operands
         )
-        masked = "true" if self.has_mask else "false"
-        mask_argument = "_mask" if self.has_mask else "nullptr"
-        text = (
-            f"dace::tileops::tile_fma<{call.ctype}, {call.vlen}, {a_broadcast}, {b_broadcast}, {c_broadcast}, "
-            f"{masked}>(_o, {a_pointer}, {b_pointer}, {c_pointer}, {mask_argument});"
-        )
+        flags = a_broadcast + b_broadcast + c_broadcast
+        if call.functions:
+            name = TileFunction("fma", backend, call.element, call.vlen, "", flags, self.has_mask).name
+        else:
+            masked = "true" if self.has_mask else "false"
+            template_flags = ", ".join(template_flag(flag) for flag in flags)
+            name = f"dace::tileops::tile_fma<{call.ctype}, {call.vlen}, {template_flags}, {masked}>"
+        text = call_text(name, [call.output("_o"), a_pointer, b_pointer, c_pointer, *call.mask(self.has_mask)])
         return call.tasklet(self, backend, operands, "_o", text, self.has_mask)

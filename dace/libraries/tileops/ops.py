@@ -1,9 +1,9 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """The elementwise ops of the tile library, each described once.
 
-An op is rendered two ways: as a per-lane C++ expression by the ``pure`` expansions, and as one op code the ISA headers
-(``dace/tile_ops/<backend>.h``) take as the ``Op`` template argument of ``tile_binop`` / ``tile_unop`` /
-``tile_reduce``. An op with no ISA code has no vector form and lowers through the pure loop, where the compiler's
+An op is rendered two ways: as a per-lane C++ expression by the ``pure`` expansions, and as one op code the ISA backends
+take: the CPU tile functions (:mod:`dace.tile_functions`) name it, the SVE and CUDA headers take it as the ``Op``
+template argument of ``tile_binop`` / ``tile_unop`` / ``tile_reduce``. An op with no ISA code has no vector form and lowers through the pure loop, where the compiler's
 vector-math library can still vectorize its ``std::`` call.
 
 The codes are single characters because that is what the headers switch on. The binary and the unary table are
@@ -17,7 +17,7 @@ import dace
 
 @dataclass(frozen=True, slots=True)
 class BinaryOp:
-    """Per-lane C++ ``prefix lhs infix rhs suffix`` and the op code of the ISA headers."""
+    """Per-lane C++ ``prefix lhs infix rhs suffix`` and the op code of the ISA backends."""
 
     prefix: str
     infix: str
@@ -31,7 +31,7 @@ class BinaryOp:
 
 @dataclass(frozen=True, slots=True)
 class UnaryOp:
-    """Per-lane C++ ``prefix operand suffix`` and the op code of the ISA headers."""
+    """Per-lane C++ ``prefix operand suffix`` and the op code of the ISA backends."""
 
     prefix: str
     suffix: str
@@ -53,7 +53,7 @@ def std_call(function: str, isa_code: str | None = None) -> UnaryOp:
     return UnaryOp(f"std::{function}(", ")", isa_code)
 
 
-#: ``std::`` spells the elemental functions because the ISA headers call ``std::min`` / ``std::max`` too.
+#: ``std::`` spells the elemental functions, whose semantics the ISA backends reproduce.
 BINARY_OPS = {
     "+": infix_op("+", "+"),
     "-": infix_op("-", "-"),
@@ -114,7 +114,7 @@ UNARY_OPS = {
 #: the C++ codegen lowers a bare ``float64(x)`` to. It is the one op that may narrow.
 CAST_OPS = {dtype_name.split("::")[-1]: dtype_name for dtype_name in dace.dtypes.TYPECLASS_TO_STRING.values()}
 
-#: The reductions the ISA headers implement; their codes are the binary ops' ``+``, ``*``, ``m`` and ``M``.
+#: The reductions the ISA backends implement; their codes are the binary ops' ``+``, ``*``, ``m`` and ``M``.
 REDUCE_OPS = ("+", "*", "min", "max")
 
 #: The op codes of the ops that have one.

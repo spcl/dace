@@ -1,9 +1,10 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""One environment per ISA backend of the tile-op headers (``dace/tile_ops/<backend>.h``).
+"""One environment per ISA backend of the tile nodes.
 
-An ISA expansion of a tile node declares its backend's environment, so expanding the node includes that one header.
-The backends expose the same ``dace::tileops`` signatures and differ in the instructions behind them; a backend is
-selected only for a target that supports it, so its compile flag is safe to add.
+The CPU backends (scalar, AVX2, AVX-512, NEON) call per-signature functions the code generator writes into the unit
+(:mod:`dace.tile_functions`), so their environments only add the compile flag that lets those functions
+inline; SVE and CUDA include their ``dace/tile_ops/<backend>.h`` header. A backend is selected only for a target that
+supports it, so its compile flag is safe to add.
 """
 
 import dace.library
@@ -32,30 +33,24 @@ class TileOpsHeaderOnly:
 class TileOpsScalar(TileOpsHeaderOnly):
     """The portable scalar backend: the reference every other backend is checked against."""
 
-    headers = {"frame": ["dace/tile_ops/scalar.h"]}
-
 
 @dace.library.environment
 class TileOpsAVX512(TileOpsHeaderOnly):
-    """AVX-512; ``-mavx512f`` enables the ``_mm512`` paths."""
+    """AVX-512; ``-mavx512f`` lets the ``_mm512`` functions inline into the kernel."""
 
     cmake_compile_flags = ["-mavx512f"]
-    headers = {"frame": ["dace/tile_ops/avx512.h"]}
 
 
 @dace.library.environment
 class TileOpsAVX2(TileOpsHeaderOnly):
-    """AVX2; the header refuses to compile without ``-mavx2``."""
+    """AVX2; ``-mavx2`` lets the ``_mm256`` functions inline into the kernel."""
 
     cmake_compile_flags = ["-mavx2"]
-    headers = {"frame": ["dace/tile_ops/avx2.h"]}
 
 
 @dace.library.environment
 class TileOpsNeon(TileOpsHeaderOnly):
     """AArch64 Advanced SIMD, which is baseline there and needs no flag."""
-
-    headers = {"frame": ["dace/tile_ops/arm_neon.h"]}
 
 
 @dace.library.environment

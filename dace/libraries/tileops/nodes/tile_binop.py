@@ -12,7 +12,7 @@ from dace.libraries.tileops.environments import (
     TileOpsSVE,
 )
 from dace.libraries.tileops.expansions import ExpandTileIsa, ExpandTilePure
-from dace.libraries.tileops.isa import IsaCall
+from dace.libraries.tileops.isa import IsaCall, call_text, template_flag
 from dace.libraries.tileops.kinds import TILE
 from dace.libraries.tileops.nodes.tile_op import TileOp
 from dace.libraries.tileops.operands import (
@@ -30,6 +30,7 @@ from dace.libraries.tileops.operands import (
 from dace.libraries.tileops.ops import BINARY_OPS
 from dace.libraries.tileops.validation import promotion_ok
 from dace.sdfg import nodes
+from dace.tile_functions import TileFunction
 
 
 @library.expansion
@@ -199,12 +200,17 @@ class TileBinop(TileOp):
     def isa_tasklet(self, state: dace.SDFGState, sdfg: dace.SDFG, backend: str) -> nodes.Tasklet:
         self.validate(sdfg, state)
         operands = self.operands()
-        call = IsaCall.of(self, state, sdfg, "_c")
+        call = IsaCall.of(self, state, sdfg, "_c", backend)
         (a_broadcast, a_pointer), (b_broadcast, b_pointer) = (call.operand(operand) for operand in operands)
-        masked = "true" if self.has_mask else "false"
-        mask_argument = "_mask" if self.has_mask else "nullptr"
-        text = (
-            f"dace::tileops::tile_binop<{call.ctype}, {call.vlen}, '{BINARY_OPS[self.op].isa_code}', "
-            f"{a_broadcast}, {b_broadcast}, {masked}>(_c, {a_pointer}, {b_pointer}, {mask_argument});"
-        )
+        op = BINARY_OPS[self.op].isa_code
+        if call.functions:
+            function = TileFunction(
+                "binop", backend, call.element, call.vlen, op, a_broadcast + b_broadcast, self.has_mask
+            )
+            name = function.name
+        else:
+            masked = "true" if self.has_mask else "false"
+            flags = f"{template_flag(a_broadcast)}, {template_flag(b_broadcast)}"
+            name = f"dace::tileops::tile_binop<{call.ctype}, {call.vlen}, '{op}', {flags}, {masked}>"
+        text = call_text(name, [call.output("_c"), a_pointer, b_pointer, *call.mask(self.has_mask)])
         return call.tasklet(self, backend, operands, "_c", text, self.has_mask)

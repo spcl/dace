@@ -39,7 +39,8 @@ class ExpandTilePure(ExpandTransformation):
 
 
 class ExpandTileIsa(ExpandTransformation):
-    """A call into the header of one ISA backend; a subclass names the backend and its environment."""
+    """A call into one ISA backend (a CPU tile function, or the SVE or CUDA header); a subclass names the backend and
+    its environment."""
 
     runs_inside_kernel = True
 
@@ -206,7 +207,7 @@ def chunked_isa_tasklet(
         code=code,
         language=dtypes.Language.CPP,
     )
-    # The ISA header comes with the environment of the backend
+    # The flag or header of the backend comes with its environment
     tasklet.environments = {env.full_class_path() for env in expansion.environments}
     return tasklet
 

@@ -2,7 +2,7 @@
 """``TileMaskGen``: the iteration mask of a tile."""
 
 import dace
-from dace import library, properties
+from dace import library, properties, tile_functions
 from dace.libraries.tileops.environments import (
     TileOpsAVX2,
     TileOpsAVX512,
@@ -12,12 +12,13 @@ from dace.libraries.tileops.environments import (
     TileOpsSVE,
 )
 from dace.libraries.tileops.expansions import ExpandTileIsa, ExpandTilePure
-from dace.libraries.tileops.isa import lane_start, require_k1
+from dace.libraries.tileops.isa import call_text, lane_start, pointer, require_k1
 from dace.libraries.tileops.lanes import nested_loops, tile_offset
 from dace.libraries.tileops.nodes.tile_op import TileOp
 from dace.libraries.tileops.validation import validate_mask_descriptor_lock
 from dace.optionals import required
 from dace.sdfg import nodes
+from dace.tile_functions import TileFunction
 
 
 @library.expansion
@@ -155,7 +156,12 @@ class TileMaskGen(TileOp):
         self.validate(sdfg, state)
         vlen = require_k1(self)
         start = lane_start(self.iter_vars[0])
-        code = f"dace::tileops::tile_mask_gen<int64_t, {vlen}>(_o, ({start}), ({self.global_ubs[0]}));"
+        bounds = [f"({start})", f"({self.global_ubs[0]})"]
+        if backend in tile_functions.ISAS:
+            out = pointer("_o", next(edge for edge in state.out_edges(self) if edge.src_conn == "_o"))
+            code = call_text(TileFunction("maskgen", backend, "i64", vlen).name, [out, *bounds])
+        else:
+            code = call_text(f"dace::tileops::tile_mask_gen<int64_t, {vlen}>", ["_o", *bounds])
         return nodes.Tasklet(
             label=f"{self.label}_{backend}",
             inputs={},

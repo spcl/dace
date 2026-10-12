@@ -10,7 +10,7 @@ from collections.abc import Sequence
 import sympy
 
 import dace
-from dace import library, properties
+from dace import library, properties, tile_functions
 from dace.codegen.cppunparse import pyexpr2cpp
 from dace.libraries.tileops.environments import (
     TileOpsAVX2,
@@ -21,7 +21,7 @@ from dace.libraries.tileops.environments import (
     TileOpsSVE,
 )
 from dace.libraries.tileops.expansions import ExpandTileIsa, ExpandTilePure
-from dace.libraries.tileops.isa import require_k1
+from dace.libraries.tileops.isa import call_text, element_code, pointer, require_k1
 from dace.libraries.tileops.kinds import SCALAR, SYMBOL, TILE, VALID_KINDS
 from dace.libraries.tileops.lanes import (
     GATHER_INDEX_DTYPES,
@@ -37,6 +37,7 @@ from dace.libraries.tileops.validation import validate_mask_descriptor_lock, val
 from dace.optionals import required
 from dace.sdfg import graph, nodes
 from dace.sdfg.narrowing import as_basic, as_expr, as_range
+from dace.tile_functions import TileFunction
 
 
 def enclosing_map_params(parent_state: dace.SDFGState, node: nodes.Node) -> list[str]:
@@ -579,12 +580,27 @@ class TileGather(TileOp):
         vlen = require_k1(self)
         destination_ctype = edge_ctype(sdfg, output_edge(state, self, "_dst"))
         index_ctype = edge_ctype(sdfg, in_edges["_idx_0"])
-        masked = "true" if self.has_mask else "false"
-        mask_argument = "_mask" if self.has_mask else "nullptr"
-        code = (
-            f"dace::tileops::tile_gather<{destination_ctype}, {index_ctype}, {vlen}, {masked}>"
-            f"(_dst, _src, _idx_0, {mask_argument});"
-        )
+        if backend in tile_functions.ISAS:
+            function = TileFunction(
+                "gather",
+                backend,
+                element_code(destination_ctype),
+                vlen,
+                "",
+                "",
+                self.has_mask,
+                element_code(index_ctype),
+            )
+            mask = [pointer("_mask", in_edges["_mask"])] if self.has_mask else []
+            destination = pointer("_dst", output_edge(state, self, "_dst"))
+            code = call_text(function.name, [destination, "_src", pointer("_idx_0", in_edges["_idx_0"]), *mask])
+        else:
+            masked = "true" if self.has_mask else "false"
+            mask_argument = "_mask" if self.has_mask else "nullptr"
+            code = (
+                f"dace::tileops::tile_gather<{destination_ctype}, {index_ctype}, {vlen}, {masked}>"
+                f"(_dst, _src, _idx_0, {mask_argument});"
+            )
         return nodes.Tasklet(
             label=f"{self.label}_{backend}",
             inputs=dict.fromkeys(["_src", *(["_mask"] if self.has_mask else []), "_idx_0"]),

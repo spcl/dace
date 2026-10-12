@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Optional
 
 import numpy as np
 
-from dace import Config, cpf_lowering, data, dtypes, registry, subsets, symbolic
+from dace import Config, cpf_lowering, data, dtypes, registry, subsets, symbolic, tile_functions
 from dace import memlet as mmlt
 from dace.codegen import compiler_family, cppunparse
 from dace.codegen import exceptions as cgx
@@ -881,6 +881,7 @@ class CPUCodeGen(TargetCodeGenerator):
                     "/* DaCe AUTO-GENERATED FILE. DO NOT MODIFY */\n#include <dace/dace.h>\n"
                     + fileheader.getvalue()
                     + "\n"
+                    + tile_functions.definitions_in(code)
                     + code,
                     "cpp",
                     CPUCodeGen,

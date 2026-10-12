@@ -6,7 +6,7 @@ left it a scalar tasklet with widened operands -- which the orchestrator can onl
 the whole SDFG. The op label is the runtime's own function name, which is what the frontend writes
 into the tasklet body, so the call-form matcher finds it with no alias table.
 
-The ISA path had a second hole behind it: ``dace::tileops::tile_unop`` templates on a single op
+The ISA path had a second hole behind it: the ``tile_unop`` functions are named for a single op
 character and only twelve of the seventeen lowered ops have one, while the lookup was a bare
 subscript. Any of the other five reached codegen as a KeyError instead of a refusal or a fallback.
 """

@@ -7,7 +7,7 @@ from collections.abc import Set as AbstractSet
 from typing import Any
 
 import dace
-from dace import config, cpf_lowering, data, dtypes, symbolic
+from dace import config, cpf_lowering, data, dtypes, symbolic, tile_functions
 from dace.cli import progress
 from dace.codegen import control_flow as cflow
 from dace.codegen import dispatcher as disp
@@ -1465,6 +1465,11 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             self.environments = dace.library.get_environments_and_dependencies(self._dispatcher.used_environments)
 
             self.generate_header(sdfg, header_global_stream, header_stream)
+            if not cpf_lowering.standalone():
+                # CPF places the tile functions in its preamble with the rest of its inline definitions.
+                header_global_stream.write(
+                    tile_functions.definitions_in(global_stream.getvalue() + callsite_stream.getvalue()), sdfg
+                )
 
             # Open program function
             params = sdfg.signature(arglist=self.arglist)

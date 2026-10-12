@@ -13,6 +13,7 @@ lane is 0, not that element.
 """
 
 import os
+import re
 
 import numpy as np
 import pytest
@@ -37,16 +38,25 @@ def _host_flags():
 
 
 FLAGS = _host_flags()
-# (implementation, required cpuinfo flag (None = always run), backend header).
-# The intrinsic itself (``_mm512_i64gather_pd`` / ``_mm512_loadu_pd``) lives in
-# the header, not the generated .cpp; the .cpp carries the ``tile_<op><...>``
-# call + the header include. Asserting the include proves the intrinsic backend
-# was selected; the numpy comparison proves it computes correctly.
+# (implementation, required cpuinfo flag (None = always run), intrinsic its function holds, if any).
+# The .cpp carries the tile function's definition with the intrinsic and its call: asserting both
+# proves the intrinsic backend was selected; the numpy comparison proves it computes correctly.
 CASES = [
-    ("scalar", None, "dace/tile_ops/scalar.h"),
-    ("avx2", "avx2", "dace/tile_ops/avx2.h"),
-    ("avx512", "avx512f", "dace/tile_ops/avx512.h"),
+    ("scalar", None, None),
+    ("avx2", "avx2", "_mm256_"),
+    ("avx512", "avx512f", "_mm512_"),
 ]
+
+
+def assert_calls(code: str, kind: str, impl: str, intrinsic: str | None) -> None:
+    """``code`` defines one ``kind`` tile function of ``impl``, holding ``intrinsic``, and calls it."""
+    definitions = re.findall(
+        rf"static inline [^\n]*void (tile_{kind}_\w+_{impl})\([^)]*\) {{\n(.*?)\n}}", code, re.DOTALL
+    )
+    assert definitions, f"{impl}: no tile_{kind} function defined"
+    name, body = definitions[0]
+    assert code.count(f"{name}(") >= 2, f"{impl}: {name} not called"
+    assert intrinsic is None or intrinsic in body, f"{impl}: {name} holds no {intrinsic} intrinsic"
 
 
 def _wire_mask(sdfg, state, node):
@@ -113,9 +123,9 @@ def _compiled_code(sdfg):
         return f.read()
 
 
-@pytest.mark.parametrize("impl,flag,header", CASES)
+@pytest.mark.parametrize("impl,flag,intrinsic", CASES)
 @pytest.mark.parametrize("masked", [False, True])
-def test_k1_gather_intrinsic(impl, flag, header, masked):
+def test_k1_gather_intrinsic(impl, flag, intrinsic, masked):
     """``a[idx[i]]`` lowers to ``tile_gather`` and matches numpy; masked lanes
     zero-fill without reading their index."""
     if flag is not None and flag not in FLAGS:
@@ -123,8 +133,7 @@ def test_k1_gather_intrinsic(impl, flag, header, masked):
     sdfg = _gather_sdfg(f"tg_{impl}_{int(masked)}", impl, masked)
     csdfg = sdfg.compile()
     code = _compiled_code(sdfg)
-    assert "dace::tileops::tile_gather<" in code, f"{impl}: tile_gather not emitted"
-    assert header in code, f"{impl}: backend header {header} not included"
+    assert_calls(code, "gather", impl, intrinsic)
 
     rng = np.random.default_rng(seed=0xA17 + int(masked))
     src = rng.random(256)
@@ -144,10 +153,10 @@ def test_k1_gather_intrinsic(impl, flag, header, masked):
     np.testing.assert_allclose(dst, expected, rtol=0, atol=0)
 
 
-@pytest.mark.parametrize("impl,flag,header", CASES)
+@pytest.mark.parametrize("impl,flag,intrinsic", CASES)
 @pytest.mark.parametrize("masked", [False, True])
 @pytest.mark.parametrize("stride", [1, 2, 3])
-def test_k1_strided_load_intrinsic(impl, flag, header, masked, stride):
+def test_k1_strided_load_intrinsic(impl, flag, intrinsic, masked, stride):
     """``src[l * stride]`` lowers to ``tile_load`` (loadu when stride==1, gather
     when stride!=1) and matches numpy; masked lanes zero-fill."""
     if flag is not None and flag not in FLAGS:
@@ -155,8 +164,7 @@ def test_k1_strided_load_intrinsic(impl, flag, header, masked, stride):
     sdfg = _strided_sdfg(f"tl_{impl}_{stride}_{int(masked)}", impl, stride, masked)
     csdfg = sdfg.compile()
     code = _compiled_code(sdfg)
-    assert "dace::tileops::tile_load<" in code, f"{impl}: tile_load not emitted"
-    assert header in code, f"{impl}: backend header {header} not included"
+    assert_calls(code, "load", impl, intrinsic)
 
     rng = np.random.default_rng(seed=0xB22 + stride + int(masked))
     src = rng.random(W * stride + 8)
@@ -174,8 +182,8 @@ def test_k1_strided_load_intrinsic(impl, flag, header, masked, stride):
 
 
 if __name__ == "__main__":
-    for case_impl, case_flag, case_header in CASES:
+    for case_impl, case_flag, case_intrinsic in CASES:
         for case_masked in (False, True):
-            test_k1_gather_intrinsic(case_impl, case_flag, case_header, case_masked)
+            test_k1_gather_intrinsic(case_impl, case_flag, case_intrinsic, case_masked)
             for case_stride in (1, 2, 3):
-                test_k1_strided_load_intrinsic(case_impl, case_flag, case_header, case_masked, case_stride)
+                test_k1_strided_load_intrinsic(case_impl, case_flag, case_intrinsic, case_masked, case_stride)

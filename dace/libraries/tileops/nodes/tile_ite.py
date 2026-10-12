@@ -13,7 +13,7 @@ from dace.libraries.tileops.environments import (
     TileOpsSVE,
 )
 from dace.libraries.tileops.expansions import ExpandTileIsa, ExpandTilePure
-from dace.libraries.tileops.isa import IsaCall, broadcast_ref
+from dace.libraries.tileops.isa import IsaCall, broadcast_ref, call_text, element_code, template_flag
 from dace.libraries.tileops.kinds import SYMBOL, TILE
 from dace.libraries.tileops.lanes import nested_loops, tile_offset
 from dace.libraries.tileops.nodes.tile_op import TileOp
@@ -29,6 +29,7 @@ from dace.libraries.tileops.operands import (
 )
 from dace.optionals import required
 from dace.sdfg import nodes
+from dace.tile_functions import TileFunction
 
 
 @library.expansion
@@ -211,11 +212,11 @@ class TileITE(TileOp):
         self.validate(sdfg, state)
         operands = self.operands()
         condition, then, otherwise = operands
-        call = IsaCall.of(self, state, sdfg, "_o")
-        # The headers read the condition per lane, so a loop-invariant one is splatted across the tile.
+        call = IsaCall.of(self, state, sdfg, "_o", backend)
+        # The function reads the condition per lane, so a loop-invariant one is splatted across the tile.
         if condition.kind == TILE:
             condition_ctype = edge_ctype(sdfg, call.in_edges["_mask"])
-            condition_pointer = "_mask"
+            condition_pointer = call.input("_mask")
         else:
             condition_ctype = dace.bool_.ctype
             if condition.kind == SYMBOL:
@@ -230,8 +231,13 @@ class TileITE(TileOp):
         (then_broadcast, then_pointer), (else_broadcast, else_pointer) = (
             call.operand(arm, promote_tile=False) for arm in (then, otherwise)
         )
-        text = (
-            f"dace::tileops::tile_ite<{call.ctype}, {condition_ctype}, {call.vlen}, {then_broadcast}, "
-            f"{else_broadcast}, false>(_o, {condition_pointer}, {then_pointer}, {else_pointer}, nullptr);"
-        )
-        return call.tasklet(self, backend, operands, "_o", text, False)
+        if call.functions:
+            flags = then_broadcast + else_broadcast
+            name = TileFunction(
+                "ite", backend, call.element, call.vlen, "", flags, False, element_code(condition_ctype)
+            ).name
+        else:
+            flags = f"{template_flag(then_broadcast)}, {template_flag(else_broadcast)}"
+            name = f"dace::tileops::tile_ite<{call.ctype}, {condition_ctype}, {call.vlen}, {flags}, false>"
+        arguments = [call.output("_o"), condition_pointer, then_pointer, else_pointer, *call.mask(False)]
+        return call.tasklet(self, backend, operands, "_o", call_text(name, arguments), False)

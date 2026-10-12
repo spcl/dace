@@ -1,9 +1,9 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """A cast-of-constant scalar (``dace.float16(0.125)``) is a narrowed compile-time constant.
 
-The vectorizer must feed it to the tile intrinsic as a SINGLE-ELEMENT broadcast operand
-(``_bc[1] = {(T)(const)}`` + ``tile_binop<..., true, ...>``), NOT widen it into a W-element
-tile materialised by a preceding per-lane fill loop. So ``dace.float16(0.125) * b`` must
+The vectorizer must feed it to the tile op as a SINGLE-ELEMENT broadcast operand, which every
+lane of the binop reads unindexed (float16 has no CPU tile function, so its binop is the lane
+loop), NOT widen it into a W-element tile materialised by a preceding per-lane fill loop. So ``dace.float16(0.125) * b`` must
 vectorize to the same broadcast shape as the un-cast literal ``0.125 * b``, including the
 separate-statement form ``k = 0.125; b * dace.float16(k)`` that previously widened the
 constant into a fill tile.
@@ -35,8 +35,9 @@ M = 64  # exact multiple of width 2
 #: A per-lane constant fill loop ``X[__l0] = <numeric-or-cast const>;`` -- the SLOW path this
 #: fix removes for a same-domain constant broadcast.
 CONST_FILL_RE = re.compile(r"\[__l\d+\]\s*=\s*(?:dace::\w+\(\(?\s*[-+0-9.]|\(?\s*[-+0-9.]+\s*\)?\s*;)")
-#: ``tile_binop<T, W, 'op', bA, bB, bC>`` -- capture the three operand broadcast flags.
-BINOP_FLAGS_RE = re.compile(r"tile_binop<[^>]*'.'\s*,\s*(true|false)\s*,\s*(true|false)\s*,\s*(true|false)\s*>")
+#: A binop lane ``_c[__l0] = ... op ...``, and in it an operand read unindexed: the broadcast.
+BINOP_LANE_RE = re.compile(r"_c\[__l\d+\]\s*=\s*(.*);")
+BROADCAST_READ_RE = re.compile(r"\b_[ab]\b(?!\s*\[)")
 
 
 def _config(expand: bool) -> VectorizeConfig:
@@ -65,8 +66,8 @@ def _has_const_fill_loop(code: str) -> bool:
     return any(CONST_FILL_RE.search(ln) for ln in code.splitlines())
 
 
-def _binop_broadcast_flags(code: str):
-    return [tuple(f == "true" for f in m) for m in BINOP_FLAGS_RE.findall(code)]
+def _binop_broadcast_reads(code: str) -> list[bool]:
+    return [bool(BROADCAST_READ_RE.search(lane)) for lane in BINOP_LANE_RE.findall(code)]
 
 
 # kernels (module scope)
@@ -97,13 +98,13 @@ def _const_store64(C: dace.float64[N]):
 # emitted-shape tests
 @pytest.mark.parametrize("prog", [_cast_inline16, _cast_separate16])
 def test_cast_constant_broadcasts_no_fill(prog):
-    """The cast-of-constant vectorizes to a broadcast operand (a ``true`` flag on the
-    ``tile_binop``) with NO per-lane constant fill loop."""
+    """The cast-of-constant vectorizes to a broadcast operand (read unindexed by every binop lane)
+    with NO per-lane constant fill loop."""
     code = _emitted_code(_vectorize(prog))
     assert not _has_const_fill_loop(code), "same-domain constant must not widen into a per-lane fill tile"
-    flags = _binop_broadcast_flags(code)
-    assert flags, "expected a tile_binop in the emitted code"
-    assert any(any(f) for f in flags), "the constant operand must feed the intrinsic as a broadcast (true flag)"
+    reads = _binop_broadcast_reads(code)
+    assert reads, "expected a binop lane in the emitted code"
+    assert any(reads), "the constant operand must feed the binop as a broadcast"
 
 
 def test_cast_and_separate_forms_emit_equivalent_shape():

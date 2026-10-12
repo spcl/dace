@@ -1,13 +1,14 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""End-to-end checks that K=1 tile ops lower through the per-ISA backend
-headers (``dace/tile_ops/<backend>.h``), not just the scalar reference.
+"""End-to-end checks that K=1 tile ops lower through the per-ISA tile functions
+(:mod:`dace.tile_functions`), not just the scalar reference.
 
 For each host-supported ISA the K=1 axpy must (a) compile + run + match numpy,
-and (b) actually ``#include`` the chosen backend header — proving the ISA
+and (b) actually define and call the chosen backend's function -- proving the ISA
 expansion was selected, rather than silently falling back to ``pure``.
 """
 
 import os
+import re
 
 import numpy as np
 import pytest
@@ -35,11 +36,18 @@ def _host_flags():
 
 
 FLAGS = _host_flags()
-# (target_isa, required cpuinfo flag, expected backend header).
+# (target_isa, required cpuinfo flag, expected backend).
 ISA_CASES = [
-    (ISA.AVX512, "avx512f", "dace/tile_ops/avx512.h"),
-    (ISA.AVX2, "avx2", "dace/tile_ops/avx2.h"),
+    (ISA.AVX512, "avx512f", "avx512"),
+    (ISA.AVX2, "avx2", "avx2"),
 ]
+
+
+def assert_calls_backend(code: str, kind: str, backend: str) -> None:
+    """``code`` defines and calls a ``kind`` tile function of ``backend``."""
+    definition = re.search(rf"static inline [^\n]*void (tile_{kind}_\w+_{backend})\(", code)
+    assert definition is not None, f"no {kind} function of {backend} defined"
+    assert code.count(f"{definition.group(1)}(") >= 2, f"{definition.group(1)} defined but not called"
 
 
 def _k1_axpy_sdfg(name):
@@ -61,9 +69,9 @@ def _k1_axpy_sdfg(name):
     return sdfg
 
 
-@pytest.mark.parametrize("isa,flag,header", ISA_CASES)
-def test_k1_axpy_isa_backend(isa, flag, header):
-    """K=1 axpy under ``target_isa=<ISA>`` includes the ISA header and matches numpy."""
+@pytest.mark.parametrize("isa,flag,backend", ISA_CASES)
+def test_k1_axpy_isa_backend(isa, flag, backend):
+    """K=1 axpy under ``target_isa=<ISA>`` calls the ISA tile function and matches numpy."""
     if flag not in FLAGS:
         pytest.skip(f"host lacks {flag}")
     sdfg = _k1_axpy_sdfg(f"e2e_k1_axpy_{isa.name.lower()}")
@@ -73,8 +81,7 @@ def test_k1_axpy_isa_backend(isa, flag, header):
     cpp = os.path.join(sdfg.build_folder, "src", "cpu", sdfg.name + ".cpp")
     with open(cpp) as f:
         code = f.read()
-    assert header in code, f"{isa}: expected {header} include, backend not selected"
-    assert "dace::tileops::tile_binop<" in code, f"{isa}: tile_binop call not emitted"
+    assert_calls_backend(code, "binop", backend)
 
     rng = np.random.default_rng(seed=tsvc.stable_seed(isa))
     for n in (8, 50, 64, 70):  # aligned, tail, multi-chunk, tail
@@ -85,16 +92,16 @@ def test_k1_axpy_isa_backend(isa, flag, header):
         np.testing.assert_allclose(C, A + B, rtol=0, atol=0)
 
 
-# (target_isa, required cpuinfo flag (None = always available), backend header).
+# (target_isa, required cpuinfo flag (None = always available), backend).
 # SCALAR is always exercised; the SIMD cases skip when the host lacks the flag.
-MASKGEN_CASES = [(ISA.SCALAR, None, "dace/tile_ops/scalar.h")] + ISA_CASES
+MASKGEN_CASES = [(ISA.SCALAR, None, "scalar")] + ISA_CASES
 
 
-@pytest.mark.parametrize("isa,flag,header", MASKGEN_CASES)
-def test_k1_mask_gen_isa_backend(isa, flag, header):
+@pytest.mark.parametrize("isa,flag,backend", MASKGEN_CASES)
+def test_k1_mask_gen_isa_backend(isa, flag, backend):
     """A non-divisible masked-remainder axpy lowers ``TileMaskGen`` through the
-    per-ISA backend header: the iteration mask's ``base + l < ub`` compare becomes
-    the ``dace::tileops::tile_mask_gen`` intrinsic (not the scalar pure loop), and
+    per-ISA tile function: the iteration mask's ``base + l < ub`` compare becomes
+    the ``tile_maskgen`` function (not the scalar pure loop), and
     the masked load/store read it. Verified against numpy over aligned + non-
     divisible (masked-remainder) sizes."""
     if flag is not None and flag not in FLAGS:
@@ -108,8 +115,7 @@ def test_k1_mask_gen_isa_backend(isa, flag, header):
     cpp = os.path.join(sdfg.build_folder, "src", "cpu", sdfg.name + ".cpp")
     with open(cpp) as f:
         code = f.read()
-    assert header in code, f"{isa}: expected {header} include, backend not selected"
-    assert "dace::tileops::tile_mask_gen<" in code, f"{isa}: tile_mask_gen call not emitted"
+    assert_calls_backend(code, "maskgen", backend)
     rng = np.random.default_rng(seed=tsvc.stable_seed(("maskgen", isa)))
     for n in (8, 22, 64, 70):  # aligned + non-divisible tails (masked remainder fires)
         A = rng.random(n)
@@ -137,10 +143,10 @@ def _k1_masked_ite_sdfg(name):
     return sdfg
 
 
-@pytest.mark.parametrize("isa,flag,header", MASKGEN_CASES)
-def test_k1_masked_ite_isa_backend(isa, flag, header):
+@pytest.mark.parametrize("isa,flag,backend", MASKGEN_CASES)
+def test_k1_masked_ite_isa_backend(isa, flag, backend):
     """A data-dependent ``if`` (-> ``TileITE``) under a masked remainder lowers
-    ``TileMaskGen`` through the per-ISA header AND reads the iteration mask from a
+    ``TileMaskGen`` through the per-ISA function AND reads the iteration mask from a
     state that dominates every then/else/apply-ITE branch.
 
     Regression guard for the masked-tail + ITE uninitialized-``_tile_iter_mask`` bug:
@@ -161,8 +167,7 @@ def test_k1_masked_ite_isa_backend(isa, flag, header):
     cpp = os.path.join(sdfg.build_folder, "src", "cpu", sdfg.name + ".cpp")
     with open(cpp) as f:
         code = f.read()
-    assert header in code, f"{isa}: expected {header} include, backend not selected"
-    assert "dace::tileops::tile_mask_gen<" in code, f"{isa}: tile_mask_gen call not emitted"
+    assert_calls_backend(code, "maskgen", backend)
     rng = np.random.default_rng(seed=tsvc.stable_seed(("maskite", isa)))
     for n in (8, 22, 64, 70):  # aligned + non-divisible tails (masked remainder fires)
         A = rng.random(n)

@@ -2,7 +2,7 @@
 """CPU OpenMP reduction for the tile-op vectorizer's map-exit WCR.
 
 Scalar reduction (``acc += A[i]``, ``max``, ``min``, ``acc = acc * A[i]``) on CPU:
-tile folds with ``dace::tileops::tile_reduce`` (within-tile horizontal fold); map-exit
+tile folds with the ``tile_reduce`` tile function (within-tile horizontal fold); map-exit
 WCR lifts to OpenMP ``reduction(op:var)`` on ``#pragma omp parallel for`` (per-thread
 privatized accumulator + end tree-reduce), not a contended per-iteration atomic.
 Partial ``_nmr_out`` = single-element register; the accumulator the clause names
