@@ -132,55 +132,25 @@ def test_map_above_break_even_stays_parallel():
     assert schedules(sdfg)["body_map"] == dtypes.ScheduleType.Default
 
 
-def test_symbolic_extent_stays_parallel_behind_a_runtime_guard():
-    """A symbolic extent is never sequentialized at compile time: it keeps its map and decides the fork per
-    call. This is the ``s4116`` case (a top-level reduction over ``LEN_2D - 1``), a measured loss at
-    LEN_2D=768 when forked unconditionally."""
+def test_symbolic_extent_stays_parallel():
+    """A symbolic extent not provably below break-even keeps its parallel map: a symbol is assumed big."""
     sdfg = one_map_sdfg("symbolic_top_level", [N], ["0:N-1"])
     with pinned_break_even():
         SequentializeUnprofitableParallelScopes().apply_pass(sdfg, {})
     entry = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry))
     assert entry.map.schedule == dtypes.ScheduleType.Default
-    assert entry.map.omp_min_parallel_iterations == PINNED_MIN_WORK_PER_REGION
 
 
 def test_map_re_entered_by_symbolic_loop_stays_parallel():
     """An enclosing loop is not a reason to sequentialize: a region entered ``E`` times costs
     ``E * (fork + work/P)`` against ``E * work``, so ``E`` multiplies both sides and cancels.
 
-    The extent is symbolic, so the map keeps its region behind the run-time guard -- the same ruling
-    as :func:`test_symbolic_extent_stays_parallel_behind_a_runtime_guard`, which the enclosing loop
-    does not overturn. This is npbench ``cavity_flow``'s shape, whose 1,044,484-element pressure map
+    The extent is symbolic, so the map keeps its region -- the same ruling as
+    :func:`test_symbolic_extent_stays_parallel`, which the enclosing loop does not overturn. This is npbench ``cavity_flow``'s shape, whose 1,044,484-element pressure map
     was pinned ``Sequential`` by the old work-vs-entries comparison."""
     sdfg = one_map_sdfg("map_in_long_loop", [N], ["0:N"], loop_end="N")
-    assert SequentializeUnprofitableParallelScopes().apply_pass(sdfg, {}) == 1
+    assert SequentializeUnprofitableParallelScopes().apply_pass(sdfg, {}) is None
     assert schedules(sdfg)["body_map"] == dtypes.ScheduleType.Default
-
-
-def guarded_sdfg(name, extent, in_conditional):
-    """One map over ``0:extent``, optionally inside an ``if``; ``k`` is assigned FROM DATA.
-
-    A symbol an interstate edge reads out of an array is not an SDFG parameter, so nothing about
-    the trip count is known before the call -- the shape the cost model has to decide at run time.
-    """
-    sdfg = dace.SDFG(name)
-    sdfg.add_array("a", [N], dace.float64)
-    sdfg.add_array("counts", [1], dace.int64)
-    entry = sdfg.add_state("entry", is_start_block=True)
-
-    body = ControlFlowRegion("body", sdfg=sdfg)
-    map_state(body, sdfg, "body", [f"0:{extent}"])
-    if in_conditional:
-        branch = ConditionalBlock("guard")
-        branch.add_branch(CodeBlock("k > 0"), body)
-        sdfg.add_node(branch)
-        target = branch
-    else:
-        sdfg.add_node(body)
-        target = body
-    sdfg.add_edge(entry, target, dace.InterstateEdge(assignments={"k": "counts[0]"}))
-    sdfg.validate()
-    return sdfg
 
 
 def test_map_inside_a_conditional_is_decided():
@@ -201,108 +171,6 @@ def test_map_inside_a_conditional_is_decided():
     with pinned_break_even():
         SequentializeUnprofitableParallelScopes().apply_pass(sdfg, {})
     assert schedules(sdfg)["body_map"] == dtypes.ScheduleType.Sequential
-
-
-def test_data_dependent_extent_keeps_its_map_and_carries_a_runtime_guard():
-    """A count the program computes is decided per call, not guessed at compile time."""
-    sdfg = guarded_sdfg("data_dependent_extent", "k", in_conditional=False)
-    with pinned_break_even():
-        assert SequentializeUnprofitableParallelScopes().apply_pass(sdfg, {}) == 1
-    entry = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry))
-    assert entry.map.schedule == dtypes.ScheduleType.Default
-    assert entry.map.omp_min_parallel_iterations == PINNED_MIN_WORK_PER_REGION
-
-
-def test_the_runtime_guard_reaches_the_pragma_and_keeps_the_simd_clause():
-    """The clause names ``parallel``, so the single-thread side still vectorizes."""
-    sdfg = guarded_sdfg("guard_in_pragma", "k", in_conditional=True)
-    with pinned_break_even():
-        SequentializeUnprofitableParallelScopes().apply_pass(sdfg, {})
-        code = sdfg.generate_code()[0].clean_code
-    assert f"if(parallel: ((k)) >= {PINNED_MIN_WORK_PER_REGION})" in code or (
-        f"if(parallel: (k) >= {PINNED_MIN_WORK_PER_REGION})" in code
-    )
-    assert "omp parallel for" in code
-
-
-def test_the_runtime_guard_tests_the_whole_nest_after_the_simd_split():
-    """The guard is decided on the map's whole trip count, and still tests it once the map is split.
-
-    ``MarkSIMDMaps`` splits a multidimensional map at codegen so its innermost dimension can carry
-    ``simd``; the outer map keeps the guard while its own range shrinks to the leading dimension.
-    Testing that range alone serialized lavamd's interaction map: guarded on
-    ``particles_per_box * particles_per_box * (count + 1)`` iterations, it then tested
-    ``particles_per_box >= 2048``, which never holds, and the whole interaction ran on one thread.
-    """
-    sdfg = dace.SDFG("guarded_nest")
-    sdfg.add_array("a", [N, M], dace.float64)
-    sdfg.add_array("counts", [1], dace.int64)
-    entry = sdfg.add_state("entry", is_start_block=True)
-    body = ControlFlowRegion("body", sdfg=sdfg)
-    map_state(body, sdfg, "body", ["0:N", "0:k"])
-    sdfg.add_node(body)
-    sdfg.add_edge(entry, body, dace.InterstateEdge(assignments={"k": "counts[0]"}))
-    sdfg.validate()
-    with pinned_break_even():
-        SequentializeUnprofitableParallelScopes().apply_pass(sdfg, {})
-        guarded = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry))
-        assert guarded.map.omp_min_parallel_iterations == PINNED_MIN_WORK_PER_REGION
-        code = sdfg.generate_code()[0].clean_code
-    assert "omp parallel for" in code and "omp simd" in code, "the map was not split for simd"
-    assert f"if(parallel: ((N * k)) >= {PINNED_MIN_WORK_PER_REGION})" in code
-    assert f"if(parallel: (N) >= {PINNED_MIN_WORK_PER_REGION})" not in code
-
-    counts = np.array([5], dtype=np.int64)
-    a = np.zeros((7, 9))
-    with pinned_break_even():
-        sdfg(a=a, counts=counts, N=7, M=9)
-    expected = np.zeros((7, 9))
-    expected[:, :5] = 1.0
-    assert np.array_equal(a, expected)
-
-
-def test_the_runtime_guard_of_a_triangular_nest_names_no_loop_variable():
-    """A nested count that reads the parallel map's own parameter is not part of the guard.
-
-    The guard is evaluated at the pragma, ahead of the loop that declares the parameter. cegterg's
-    triangular nest (inner range ``Max(nb1, i + 1):nbase`` under the parallel ``i``) put ``i`` in
-    the clause, and the generated C++ failed with "'i' was not declared in this scope".
-    """
-    sdfg = dace.SDFG("guarded_triangle")
-    sdfg.add_array("a", [N, M], dace.float64)
-    sdfg.add_array("counts", [1], dace.int64)
-    entry = sdfg.add_state("entry", is_start_block=True)
-    body = ControlFlowRegion("body", sdfg=sdfg)
-    map_state(body, sdfg, "body", ["0:N", "__i0:k"])
-    sdfg.add_node(body)
-    sdfg.add_edge(entry, body, dace.InterstateEdge(assignments={"k": "counts[0]"}))
-    sdfg.validate()
-    with pinned_break_even():
-        SequentializeUnprofitableParallelScopes().apply_pass(sdfg, {})
-        guarded = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry))
-        assert guarded.map.omp_min_parallel_iterations == PINNED_MIN_WORK_PER_REGION
-        code = sdfg.generate_code()[0].clean_code
-    clause = next(line for line in code.splitlines() if "if(parallel:" in line)
-    assert "__i0" not in clause, clause
-
-    counts = np.array([5], dtype=np.int64)
-    a = np.zeros((7, 9))
-    with pinned_break_even():
-        sdfg(a=a, counts=counts, N=7, M=9)
-    expected = np.zeros((7, 9))
-    for i in range(7):
-        expected[i, i:5] = 1.0
-    assert np.array_equal(a, expected)
-
-
-def test_parameter_extent_carries_a_runtime_guard():
-    """A count written in the SDFG's own parameters is decided per call too: ``seidel_2d`` forks once per
-    row for ``N - 2`` points, and at ``N = 288`` every fork costs more than the row."""
-    sdfg = one_map_sdfg("symbolic_param_extent", [N], ["0:N"])
-    with pinned_break_even():
-        SequentializeUnprofitableParallelScopes().apply_pass(sdfg, {})
-    entry = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry))
-    assert entry.map.omp_min_parallel_iterations == PINNED_MIN_WORK_PER_REGION
 
 
 def test_one_trip_map_releases_the_maps_in_its_body():
@@ -405,15 +273,14 @@ def test_a_map_reading_a_shared_scalar_first_stays_under_its_parent():
 
 def test_triangular_map_in_loop_stays_parallel():
     """s115 exactly: ``for j in 0:N { map i in j+1:N }``. The inner map IS data-parallel -- that is
-    why it is a Map -- and its extent ``N - j - 1`` is symbolic, so it is decided per call by the run-time
-    guard. Reading it at the last iteration (empty) is an artifact of substituting the sweep variable with
+    why it is a Map -- and its extent ``N - j - 1`` is symbolic, so it keeps its region. Reading it at the last iteration (empty) is an artifact of substituting the sweep variable with
     the same value as ``N``, not a property of the nest, so it must not pin the schedule."""
     sdfg = dace.SDFG("triangular")
     sdfg.add_array("a", [N], dace.float64)
     outer = loop(sdfg, "outer", "N", var="j")
     map_state(outer, sdfg, "body", ["j+1:N"])
     sdfg.validate()
-    assert SequentializeUnprofitableParallelScopes().apply_pass(sdfg, {}) == 1
+    assert SequentializeUnprofitableParallelScopes().apply_pass(sdfg, {}) is None
     assert schedules(sdfg)["body_map"] == dtypes.ScheduleType.Default
 
 
@@ -612,14 +479,9 @@ def test_each_distinct_trip_count_is_asked_once():
 if __name__ == "__main__":
     test_map_below_break_even_goes_sequential()
     test_map_above_break_even_stays_parallel()
-    test_symbolic_extent_stays_parallel_behind_a_runtime_guard()
+    test_symbolic_extent_stays_parallel()
     test_map_re_entered_by_symbolic_loop_stays_parallel()
     test_map_inside_a_conditional_is_decided()
-    test_data_dependent_extent_keeps_its_map_and_carries_a_runtime_guard()
-    test_the_runtime_guard_reaches_the_pragma_and_keeps_the_simd_clause()
-    test_the_runtime_guard_tests_the_whole_nest_after_the_simd_split()
-    test_the_runtime_guard_of_a_triangular_nest_names_no_loop_variable()
-    test_parameter_extent_carries_a_runtime_guard()
     test_one_trip_map_releases_the_maps_in_its_body()
     test_released_maps_get_their_own_staged_scalars()
     test_a_map_reading_a_shared_scalar_first_stays_under_its_parent()

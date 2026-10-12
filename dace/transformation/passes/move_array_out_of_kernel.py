@@ -76,14 +76,17 @@ def is_register_demotable(desc: dt.Data, max_elements: int) -> bool:
 DEVICE_LOCAL_STORAGE = (dtypes.StorageType.Register, dtypes.StorageType.Default)
 
 
-def needs_global_memory(desc: dt.Data) -> bool:
-    """A kernel-internal transient that can only live in device-global memory: ``GPU_Global``, or device-local
-    with a symbolic extent, which would be a variable-length array that nvcc rejects."""
+def needs_global_memory(desc: dt.Data, max_register_elements: int) -> bool:
+    """A kernel-internal transient that belongs in device-global memory: ``GPU_Global``, or device-local with a
+    symbolic extent (a variable-length array nvcc rejects) or more than ``max_register_elements`` elements (more
+    per-thread registers than an intermediate should take; it spills to local memory anyway)."""
     if not isinstance(desc, dt.Array) or isinstance(desc, dt.View) or not desc.transient:
         return False
     if desc.storage is dtypes.StorageType.GPU_Global:
         return True
-    return desc.storage in DEVICE_LOCAL_STORAGE and any(symbolic.issymbolic(dim) for dim in desc.shape)
+    if desc.storage not in DEVICE_LOCAL_STORAGE:
+        return False
+    return any(symbolic.issymbolic(dim) for dim in desc.shape) or utils.prod(desc.shape) > max_register_elements
 
 
 def gpu_levels(state: SDFGState, node: nodes.Node) -> list[Scope] | None:
@@ -205,17 +208,19 @@ class LiftPlan:
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class MoveArrayOutOfKernel(ppl.Pass):
-    """Lift transient ``GPU_Global`` arrays out of ``GPU_Device`` maps (kernels).
+    """Lift kernel-internal transients out of ``GPU_Device`` maps (kernels): ``GPU_Global`` ones, and per-thread
+    register arrays of symbolic shape or more than ``register_demotion_max_elements`` elements.
 
-    Each array is replicated per map iteration into a disjoint outer array. GPUs have no per-thread
-    ``GPU_Device`` memory, so this exists for backward compatibility and is discouraged.
+    Each array is replicated per map iteration into a disjoint outer array. A small literal-shape ``GPU_Global``
+    one is demoted to registers instead.
     """
 
     register_demotion_max_elements = properties.Property(
         dtype=int,
-        default=64,
-        desc="Max ``prod(shape)`` for a literal-shape kernel-internal transient to be demoted "
-        "from GPU_Global to per-thread Register storage. Larger transients are hoisted.",
+        default=16,
+        desc="Max ``prod(shape)`` of a kernel-internal transient kept in per-thread Register storage: a "
+        "literal-shape GPU_Global one at most this size is demoted to it, and a device-local one larger "
+        "than this (or of symbolic shape) is hoisted out of the kernel.",
     )
 
     def modifies(self) -> ppl.Modifies:
@@ -239,7 +244,9 @@ class MoveArrayOutOfKernel(ppl.Pass):
             if e.data.wcr is not None
         )
         handled = 0
-        for name, desc, owner, kernel, kernel_state in self.kernel_internal_gpu_global_transients(sdfg):
+        for name, desc, owner, kernel, kernel_state in self.kernel_internal_gpu_global_transients(
+            sdfg, self.register_demotion_max_elements
+        ):
             if name not in accumulated and is_register_demotable(desc, self.register_demotion_max_elements):
                 desc.storage = dtypes.StorageType.Register
                 handled += 1
@@ -250,11 +257,11 @@ class MoveArrayOutOfKernel(ppl.Pass):
             reason = (
                 "with storage type GPU_Global"
                 if desc.storage is dtypes.StorageType.GPU_Global
-                else f"of symbolic shape {list(desc.shape)}"
+                else f"of shape {list(desc.shape)} (symbolic, or over {self.register_demotion_max_elements} elements)"
             )
             warnings.warn(
                 f"Transient array '{name}' {reason} detected inside kernel {kernel}. Neither GPU_Global "
-                f"memory nor a variable-length local array can be allocated within a GPU kernel; the "
+                f"memory nor a variable-length or oversized local array belongs within a GPU kernel; the "
                 f"array will be lifted outside the kernel as a non-transient GPU_Global array.",
                 stacklevel=2,
             )
@@ -266,14 +273,14 @@ class MoveArrayOutOfKernel(ppl.Pass):
 
     @staticmethod
     def kernel_internal_gpu_global_transients(
-        sdfg: SDFG,
+        sdfg: SDFG, max_register_elements: int
     ) -> list[tuple[str, dt.Array, SDFG, nodes.MapEntry, SDFGState]]:
         """Transients that :func:`needs_global_memory`, accessed only inside one ``GPU_Device`` map."""
         users: dict[tuple[SDFG, str], OrderedSet[Scope | None]] = {}
         for owner in sdfg.all_sdfgs_recursive():
             for state in owner.states():
                 for node in state.data_nodes():
-                    if needs_global_memory(owner.arrays[node.data]):
+                    if needs_global_memory(owner.arrays[node.data], max_register_elements):
                         kernel = next(
                             (
                                 scope

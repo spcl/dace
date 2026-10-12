@@ -271,7 +271,8 @@ def nested_bindings(
     """The arrays and symbols ``node``'s body sees, rebound to the loop's names.
 
     An inner array binds only when its connector's outer subset has the inner rank; its element
-    ``k`` is then outer element ``begin + k``. Anything else stays unbound and is ignored.
+    ``k`` is then outer element ``begin + k``, or ``k`` itself when the connector is the whole container
+    (No-View). Anything else stays unbound and is ignored.
     """
     inner_arrays: ArrayBindings = {}
     for edge in list(state.in_edges(node)) + list(state.out_edges(node)):
@@ -281,6 +282,9 @@ def nested_bindings(
         outer, outer_offset = arrays[edge.data.data]
         desc = node.sdfg.arrays.get(conn)
         begins = [as_loop_names(begin, mapping) for begin, _, _ in required(edge.data.subset).ndrange()]
+        # A connector that is the whole container (No-View) is indexed in the container's own coordinates.
+        if desc is not None and desc.is_equivalent(state.sdfg.arrays[edge.data.data], node.symbol_mapping):
+            begins = [sympy.Integer(0)] * len(begins)
         if desc is None or len(desc.shape) != len(begins) or (outer_offset and len(outer_offset) != len(begins)):
             continue
         inner_arrays[conn] = (outer, tuple(b + outer_offset[d] if outer_offset else b for d, b in enumerate(begins)))

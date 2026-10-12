@@ -258,50 +258,6 @@ def map_schedule_is_sequential(node: nodes.MapEntry) -> bool:
     return node.map.schedule not in (dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.CPU_Persistent)
 
 
-def parallel_region_trip_count(state: SDFGState, map_entry: nodes.MapEntry) -> symbolic.SymbolicType:
-    """Iterations one team runs when ``map_entry`` opens its parallel region: the map's own count
-    times the count of every ``Sequential`` map nested perfectly inside it.
-
-    This is the count the run-time fork/join guard (``omp_min_parallel_iterations``) tests. The cost
-    model rules on a map in the ``cpu_specialize`` band. Testing the outer range alone asks a
-    different question than the one the guard was set for: the sequential inner nest is part of the
-    region's work, and the guard only ever chooses between forking this region and running all of it
-    on one thread, so the product is the region's work.
-
-    The guard is evaluated at the pragma, before the region's loops open, so a nested count that
-    reads a name bound inside the nest (a parameter of a map in it, or a dynamic range connector of
-    one, or an earlier dim of the map itself) is not available there. The product stops at that level: cegterg's triangular nest, an
-    inner range ``Max(nb1, i + 1):nbase`` under the parallel ``i``, emitted a clause naming ``i``
-    ahead of the loop that declares it, and the kernel no longer compiled.
-
-    :param state: the state holding the map.
-    :param map_entry: the entry of the map that opens the region.
-    :returns: the product of the trip counts of the perfect nest rooted at ``map_entry``, up to the
-              first nested map whose count depends on a name bound inside the nest.
-    """
-    children = state.scope_children()
-    trip = 1
-    bound_in_nest = set()
-    for param, extent, dim_range in zip(map_entry.map.params, map_entry.map.range.size(), map_entry.map.range.ranges):
-        if subsets.Range([dim_range]).free_symbols & bound_in_nest:
-            return trip
-        trip = trip * extent
-        bound_in_nest.add(param)
-    entry = map_entry
-    while True:
-        body = [n for n in children[entry] if not isinstance(n, nodes.MapExit)]
-        if len(body) != 1 or not isinstance(body[0], nodes.MapEntry):
-            return trip
-        entry = body[0]
-        if entry.map.schedule != dtypes.ScheduleType.Sequential:
-            return trip
-        bound_in_nest |= set(entry.in_connectors)
-        if entry.map.range.free_symbols & bound_in_nest:
-            return trip
-        bound_in_nest |= set(entry.map.params)
-        trip = trip * entry.map.range.num_elements()
-
-
 def gpu_block_reduction_write_slot(subset, base, length):
     """Register-partial slot for a write to a GPU thread-block tree-reduction accumulator.
 
@@ -3960,18 +3916,6 @@ class CPUCodeGen(TargetCodeGenerator):
             if node.map.schedule == dtypes.ScheduleType.CPU_Multicore and self.renders_simd(sdfg, state_dfg, node):
                 head, sep, rest = map_header.partition(" for")
                 map_header = f"{head}{sep} simd{rest}"
-
-            # The fork/join cost model, evaluated at run time. The modifier scopes the clause to
-            # ``parallel`` alone, so a combined ``parallel for simd`` keeps vectorizing on the
-            # single-thread side instead of losing its simd clause with the team. The count tested is
-            # the whole region's, which the SIMD split may have spread over a perfect nest.
-            if (
-                node.map.schedule == dtypes.ScheduleType.CPU_Multicore
-                and not in_persistent
-                and node.map.omp_min_parallel_iterations > 0
-            ):
-                trip = sym2cpp(parallel_region_trip_count(state_dfg, node))
-                map_header += f" if(parallel: ({trip}) >= {node.map.omp_min_parallel_iterations})"
 
             # Push scope frame even if empty -- ``_generate_MapExit`` always pops. Keyed by
             # target data name so the nested WCR write's covered-check (``memlet.data in

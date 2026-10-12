@@ -1627,10 +1627,14 @@ class WCRToAugAssign(transformation.SingleStateTransformation):
             # Mirror expr 1 but read incoming operand from ``inp`` (AccessNode) not a tasklet:
             # ``output = output <op> inp``, reading dest back through the map entry, dropping WCR.
             edge = state.edges_between(self.inp, self.map_exit)[0]
-            # Outermost first: the read-back enters through every map the write leaves through.
-            entries = [
-                state.entry_node(e.dst) for e in reversed(state.memlet_path(edge)) if isinstance(e.dst, nodes.MapExit)
-            ]
+            # Outermost first: the read-back enters through every map enclosing ``inp``, not only the ones the write
+            # leaves through -- an output that sits inside an outer map (a nested loop body inlined into a map nest)
+            # is still reached only through that outer map's entry.
+            entries = []
+            scope = state.entry_node(self.inp)
+            while scope is not None:
+                entries.insert(0, scope)
+                scope = state.entry_node(scope)
             code = _wcr_augassign_body(edge.data.wcr)
             for e in state.memlet_path(edge):
                 e.data.wcr = None

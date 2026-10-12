@@ -1342,17 +1342,6 @@ class Map:
         "baking one machine's constant into the graph",
         serialize_if=lambda m: m.schedule in dtypes.CPU_SCHEDULES,
     )
-    omp_min_parallel_iterations = Property(
-        dtype=int,
-        default=0,
-        category="Scheduling",
-        desc="Trip count below which the Map runs on ONE thread, emitted as "
-        "an OpenMP ``if(parallel: ...)`` clause. 0 emits no clause. For a "
-        "count the compiler cannot bound -- a loop whose extent is a value "
-        "the program computes -- this is the fork/join cost model evaluated "
-        "at run time instead of guessed at compile time",
-        serialize_if=lambda m: m.omp_min_parallel_iterations > 0,
-    )
     omp_simd = Property(
         dtype=bool,
         default=False,

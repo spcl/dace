@@ -142,6 +142,12 @@ class ExpandTransposeMKL(ExpandTransformation):
         if _is_single_element(node, state, sdfg):
             return ExpandTransposePure.make_sdfg(node, state, sdfg)
 
+        # A row that is not contiguous has no leading dimension (see :func:`_leading_dimensions`).
+        leading = _leading_dimensions(node, state, sdfg)
+        if leading is None:
+            return ExpandTransposePure.make_sdfg(node, state, sdfg)
+        lda, ldb = leading
+
         # Fall back to native implementation if input and output types are not the same
         if (
             sdfg.arrays[list(state.in_edges_by_connector(node, "_inp"))[0].data.data].dtype
@@ -170,10 +176,6 @@ class ExpandTransposeMKL(ExpandTransformation):
             warnings.warn("Unsupported type for MKL omatcopy extension: " + str(dtype) + ", falling back to pure")
             return ExpandTransposePure.expansion(node, state, sdfg)
 
-        leading = _leading_dimensions(node, state, sdfg)
-        if leading is None:
-            return ExpandTransposePure.expansion(node, state, sdfg)
-        lda, ldb = leading
         _, _, (m, n), _ = _get_transpose_input(node, state, sdfg)
         code = f"mkl_{func}('R', 'T', {m}, {n}, {alpha}, {cast}_inp, {lda}, {cast}_out, {ldb});"
         tasklet = dace.sdfg.nodes.Tasklet(
@@ -193,6 +195,12 @@ class ExpandTransposeOpenBLAS(ExpandTransformation):
         # A one-element operand is a copy, not a BLAS call (see :func:`_is_single_element`).
         if _is_single_element(node, state, sdfg):
             return ExpandTransposePure.make_sdfg(node, state, sdfg)
+
+        # A row that is not contiguous has no leading dimension (see :func:`_leading_dimensions`).
+        leading = _leading_dimensions(node, state, sdfg)
+        if leading is None:
+            return ExpandTransposePure.make_sdfg(node, state, sdfg)
+        lda, ldb = leading
 
         # Fall back to native implementation if input and output types are not the same
         if (
@@ -232,10 +240,6 @@ class ExpandTransposeOpenBLAS(ExpandTransformation):
         if openblas.exports_symbol("cblas_" + func) is False:
             return ExpandTransposePure.make_sdfg(node, state, sdfg)
 
-        leading = _leading_dimensions(node, state, sdfg)
-        if leading is None:
-            return ExpandTransposePure.expansion(node, state, sdfg)
-        lda, ldb = leading
         _, _, (m, n), _ = _get_transpose_input(node, state, sdfg)
         # Adaptations for BLAS API
         order = "CblasRowMajor"
@@ -267,6 +271,12 @@ class ExpandTransposeGPUBLAS(ExpandTransformation):
         if _is_single_element(node, state, sdfg):
             return ExpandTransposePure.make_sdfg(node, state, sdfg)
 
+        # A row that is not contiguous has no leading dimension (see :func:`_leading_dimensions`).
+        leading = _leading_dimensions(node, state, sdfg)
+        if leading is None:
+            return ExpandTransposePure.make_sdfg(node, state, sdfg)
+        lda, ldb = leading
+
         # Fall back to native implementation if input and output types are not the same
         if (
             sdfg.arrays[list(state.in_edges_by_connector(node, "_inp"))[0].data.data].dtype
@@ -288,17 +298,13 @@ class ExpandTransposeGPUBLAS(ExpandTransformation):
 
         alpha = f"__state->{cls.handle_field}.Constants().{factort}Pone()"
         beta = f"__state->{cls.handle_field}.Constants().{factort}Zero()"
-        leading = _leading_dimensions(node, state, sdfg)
-        if leading is None:
-            return ExpandTransposePure.expansion(node, state, sdfg)
-        lda, ldc = leading
         _, _, (m, n), _ = _get_transpose_input(node, state, sdfg)
 
         code = (
             cls.environments[0].handle_setup_code(node)
             + f"""{cls.check_error}({cls.funcname(func)}(
                     {cls.handle}, {cls.op("T")}, {cls.op("N")},
-                    {m}, {n}, {alpha}, ({cdtype}*)_inp, {lda}, {beta}, ({cdtype}*)_inp, {m}, ({cdtype}*)_out, {ldc}));
+                    {m}, {n}, {alpha}, ({cdtype}*)_inp, {lda}, {beta}, ({cdtype}*)_inp, {m}, ({cdtype}*)_out, {ldb}));
                 """
         )
 

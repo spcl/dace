@@ -367,7 +367,7 @@ def _coalesce() -> list[tuple[str, ppl.Pass]]:
     s += [("coalesce", MinimizeStridePermutation())]
     s += [("coalesce", PatternApplyOnceEverywhere([MapCollapse()]))]
     s += [("coalesce", PatternApplyOnceEverywhere([DistributeTaskletIntoMap()]))]
-    s += [("coalesce", ppl.Pipeline([FuseMaps()]))]
+    s += [("coalesce", ppl.Pipeline([FuseMaps(allow_intermediates_with_symbolic_size=True)]))]
     s += [("coalesce", PatternApplyOnceEverywhere([MapCollapse()]))]
     # 10. structural cleanup AGAIN -- map fusion rebuilds map bodies as fresh single-state
     #     NestedSDFGs, and an un-inlined body hides its precise per-element memlets behind a
@@ -1112,7 +1112,7 @@ def _build_stages(
     s += _inline_single_state("fuse")
     s += _structural_cleanup("fuse")
     s += [("fuse", PatternApplyOnceEverywhere([DistributeTaskletIntoMap()]))]
-    s += [("fuse", ppl.Pipeline([FuseMaps()]))]
+    s += [("fuse", ppl.Pipeline([FuseMaps(allow_intermediates_with_symbolic_size=True)]))]
 
     # A map that only fills a transient for a following reduction is that reduction; fusing drops the
     # buffer (s3113: 4.166 GB at XL). After MapFusion so multi-map producers match whole.
@@ -1222,7 +1222,7 @@ def _build_stages(
     # following SymbolDedup cleans up the duplicate index symbols fusion introduces. Its own label lets a
     # caller that chose the map granularity by hand run the stages after ``fuse`` without it.
     s += [("fuse_final", PatternApplyOnceEverywhere([DistributeTaskletIntoMap()]))]
-    s += [("fuse_final", ppl.Pipeline([FuseMaps()]))]
+    s += [("fuse_final", ppl.Pipeline([FuseMaps(allow_intermediates_with_symbolic_size=True)]))]
     # The terminal LoopToMap and fusion build map nests the ``reorder`` stage never saw: velocity_tendencies'
     # level loops become ``map[jk, i, b]`` over ``A[i, jk, b]``, the level outermost at a stride of one plane row.
     s += [("fuse_final", MinimizeStridePermutation())]

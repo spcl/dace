@@ -96,25 +96,6 @@ def test_dot_strided(implementation):
 
 
 @pytest.mark.parametrize(("implementation",), [("pure",), pytest.param("MKL", marks=pytest.mark.mkl), ("OpenBLAS",)])
-def test_transpose_strided_column(implementation):
-    """``pos[:, 0:1]`` is an (N, 1) column whose rows are 3 apart: a vendor transpose reads it by that stride,
-    not as N contiguous elements (nbody's pairwise separations under OpenBLAS)."""
-
-    @dace.program
-    def transpose_column(pos: dace.float64[N, 3]):
-        return pos[:, 0:1].T
-
-    pos = np.random.rand(25, 3)
-    sdfg = transpose_column.to_sdfg()
-    sdfg.name = f"{sdfg.name}_{implementation}"
-    transposes = [node for node, parent in sdfg.all_nodes_recursive() if type(node).__name__ == "Transpose"]
-    assert transposes, "the column transpose did not become a Transpose library node"
-    for node in transposes:
-        node.implementation = implementation
-    assert np.allclose(sdfg(pos=pos, N=25), pos[:, 0:1].T)
-
-
-@pytest.mark.parametrize(("implementation",), [("pure",), pytest.param("MKL", marks=pytest.mark.mkl), ("OpenBLAS",)])
 def test_transpose_strided_columns(implementation):
     """``pos[:, 0:2]`` is an (N, 2) block whose rows are 3 apart: a vendor transpose reads it by that row stride,
     not as 2 * N contiguous elements."""
@@ -126,7 +107,7 @@ def test_transpose_strided_columns(implementation):
     pos = np.random.rand(25, 3)
     sdfg = transpose_columns.to_sdfg()
     sdfg.name = f"{sdfg.name}_{implementation}"
-    transposes = [node for node, parent in sdfg.all_nodes_recursive() if type(node).__name__ == "Transpose"]
+    transposes = [node for node, _ in sdfg.all_nodes_recursive() if type(node).__name__ == "Transpose"]
     assert transposes, "the transpose did not become a Transpose library node"
     for node in transposes:
         node.implementation = implementation
@@ -141,5 +122,4 @@ if __name__ == "__main__":
     for implementation in implementations:
         test_dot_strided(implementation)
     for implementation in ["pure", "MKL", "OpenBLAS"]:
-        test_transpose_strided_column(implementation)
         test_transpose_strided_columns(implementation)

@@ -85,10 +85,11 @@ def wire_element_reads(
     element_reads: list[tuple[str, str | None, str]],
     subset_str: str,
 ) -> None:
-    """Feed each element read into ``tasklet``: length-1 sources as ``[0]``, bare reads at ``subset_str``."""
+    """Feed each element read into ``tasklet``: one-element sources at their origin, bare reads at ``subset_str``."""
     for name, element, connector in element_reads:
-        if sdfg.arrays[name].total_size == 1:
-            subset = "0"
+        desc = sdfg.arrays[name]
+        if desc.total_size == 1:
+            subset = ", ".join(["0"] * len(desc.shape))
         elif element:
             subset = element
         else:
