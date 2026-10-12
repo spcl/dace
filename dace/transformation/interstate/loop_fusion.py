@@ -169,7 +169,7 @@ class LoopFusion(transformation.MultiStateTransformation):
     def _accesses(block: ControlFlowBlock) -> tuple[dict[str, list], dict[str, list]]:
         """``(reads, writes)`` -- per data container, the list of accessed subsets into that container,
         across every ``SDFGState`` of ``block`` (a plain state, or a region such as ``ConditionalBlock``
-        whose ``all_states()`` walks its nested states). In-edges of an AccessNode write it (its ``dst``
+        whose ``states()`` walks its nested states). In-edges of an AccessNode write it (its ``dst``
         side), out-edges read it (its ``src`` side). A subset that cannot be resolved is recorded as
         ``None`` so the legality check can refuse conservatively rather than silently drop a dependence.
         """

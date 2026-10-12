@@ -291,7 +291,7 @@ class AccessSets(ppl.Pass):
     ) -> tuple[OrderedSet[str], OrderedSet[str]]:
         """Fill ``result`` for every block under ``region``; return ``region``'s own data-node sets.
 
-        Rolled up from the children rather than re-walking ``all_states()`` per level: that walk is
+        Rolled up from the children rather than re-walking ``states()`` per level: that walk is
         exactly the children's states in ``nodes()`` order, so same set, same order, one visit per
         state instead of 1+D. A region's own extras land on the stored set only after the rollup.
         """
