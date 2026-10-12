@@ -119,6 +119,37 @@ def test_ger_pure():
     run_ger("pure", 256, 512, 16, 32)
 
 
+@pytest.mark.gpu
+@pytest.mark.parametrize("order", ["C", "F"])
+def test_complex_ger_on_the_gpu_does_not_conjugate(order):
+    """``Ger`` is ``A + alpha x y^T``: the complex vendor routine is ``?geru``, not the conjugating ``?gerc``, and a
+    row-major ``A`` reaches the column-major library transposed."""
+    cupy = pytest.importorskip("cupy")
+    m, n = 5, 4
+    rng = np.random.default_rng(0)
+    a = np.asarray(rng.random((m, n)) + 1j * rng.random((m, n)), order=order)
+    x, y = rng.random(m) + 1j * rng.random(m), rng.random(n) + 1j * rng.random(n)
+
+    sdfg = dace.SDFG(f"complex_ger_gpu_{order}")
+    gpu = dace.StorageType.GPU_Global
+    strides = [s // a.itemsize for s in a.strides]
+    sdfg.add_array("A", [m, n], dace.complex128, gpu, strides=strides)
+    sdfg.add_array("res", [m, n], dace.complex128, gpu, strides=strides)
+    sdfg.add_array("x", [m], dace.complex128, gpu)
+    sdfg.add_array("y", [n], dace.complex128, gpu)
+    state = sdfg.add_state()
+    node = blas.Ger("ger", m=m, n=n, alpha=1.5)
+    node.implementation = "cuBLAS"
+    for connector, name in (("_A", "A"), ("_x", "x"), ("_y", "y")):
+        state.add_edge(state.add_read(name), None, node, connector, Memlet.from_array(name, sdfg.arrays[name]))
+    state.add_edge(node, "_res", state.add_write("res"), None, Memlet.from_array("res", sdfg.arrays["res"]))
+
+    device = {name: cupy.asarray(v, order=order) for name, v in (("A", a), ("x", x), ("y", y))}
+    device["res"] = cupy.zeros((m, n), complex, order=order)
+    sdfg(**device)
+    assert np.allclose(device["res"].get(), a + 1.5 * np.outer(x, y))
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("N", type=int, nargs="?", default=256)

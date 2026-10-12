@@ -17,6 +17,7 @@ rocBLAS is snake_case throughout with lower-case enum values (``rocblas_dgemv``,
 from collections.abc import Callable
 from typing import NamedTuple
 
+from dace import dtypes
 from dace.libraries.blas import blas_helpers
 
 
@@ -106,4 +107,44 @@ def host_scalar_mode(dialect: GpuBlasDialect, body: str) -> str:
         f"{dialect.check_error}({dialect.set_pointer_mode}({dialect.handle}, {dialect.pointer_host}));\n"
         f"{body}\n"
         f"{dialect.check_error}({dialect.set_pointer_mode}({dialect.handle}, {dialect.pointer_device}));\n"
+    )
+
+
+class GpuCall(NamedTuple):
+    """The pieces a node's GPU call is written from, for one dialect and data type."""
+
+    dialect: GpuBlasDialect
+    #: The BLAS letter of the data type (``D`` for ``double``).
+    letter: str
+    #: Cast for a pointer operand, empty for a real type: rocBLAS declares complex parameters as its own type.
+    cast: str
+
+    def routine(self, name: str) -> str:
+        return self.dialect.func(self.letter, name)
+
+    def pointer(self, connector: str) -> str:
+        return f"{self.cast}{connector}"
+
+
+def gpu_call(dialect: GpuBlasDialect, dtype: dtypes.typeclass) -> GpuCall | None:
+    """The call pieces for ``dtype``, or None if the vendor library has no routines for it."""
+    letter = blas_helpers.blas_prefix(dtype)
+    if letter is None:
+        return None
+    cuda_type = blas_helpers.cublas_type_metadata(dtype)[1]
+    cast = f"({dialect.ctype(cuda_type)}*)" if dtype.is_complex() else ""
+    return GpuCall(dialect, letter, cast)
+
+
+def scalar_pointers(call: GpuCall, dtype: dtypes.typeclass, **values) -> tuple[str, dict[str, str]]:
+    """Declares each of ``values`` as a host scalar of ``dtype``; returns the declarations and, per name, the pointer
+    argument passing it to the vendor routine, which takes every scalar by address."""
+    declarations = "".join(f"{dtype.ctype} __{name} = {dtype.ctype}({value});\n" for name, value in values.items())
+    return declarations, {name: call.pointer(f"&__{name}") for name in values}
+
+
+def call_code(call: GpuCall, environment: type, node, scalars: str, routine_call: str) -> str:
+    """The tasklet body running ``routine_call``: handle setup, then the call with its scalars read from the host."""
+    return environment.handle_setup_code(node) + host_scalar_mode(
+        call.dialect, f"{scalars}{call.dialect.check_error}({routine_call});"
     )
