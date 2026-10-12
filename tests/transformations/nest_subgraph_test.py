@@ -631,7 +631,7 @@ def test_a_folded_input_keeps_the_moved_tasklets_connectors():
     sdfg.add_array("out", [1], dace.float64)
     state = sdfg.add_state()
     read = state.add_read("scale")
-    tasklet = state.add_tasklet("add", {"__in1", "__in2"}, {"__out"}, "__out = __in1 + __in2")
+    tasklet = state.add_tasklet("add", ["__in1", "__in2"], ["__out"], "__out = __in1 + __in2")
     state.add_edge(read, None, tasklet, "__in1", dace.Memlet("scale[0]"))
     state.add_edge(read, None, tasklet, "__in2", dace.Memlet("scale[0]"))
     state.add_edge(tasklet, "__out", state.add_write("out"), None, dace.Memlet("out[0]"))

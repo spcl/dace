@@ -5176,8 +5176,8 @@ class ProgramVisitor(ExtNodeVisitor):
             call_args = ", ".join(str(s) for s in allargs[:-1])
             tasklet = self.last_block.add_tasklet(
                 f"callback_{node.lineno}",
-                {f"__in_{name}" for name in args} | {"__istate"},
-                {f"__out_{name}" for name in outargs} | {"__ostate"},
+                [*(f"__in_{name}" for name in args), "__istate"],
+                [*(f"__out_{name}" for name in outargs), "__ostate"],
                 f"__out_{return_names[0]} = {funcname}({call_args})",
                 side_effects=True,
             )
@@ -5185,8 +5185,8 @@ class ProgramVisitor(ExtNodeVisitor):
             call_args = ", ".join(str(s) for s in allargs)
             tasklet = self.last_block.add_tasklet(
                 f"callback_{node.lineno}",
-                {f"__in_{name}" for name in args} | {"__istate"},
-                {f"__out_{name}" for name in outargs} | {"__ostate"},
+                [*(f"__in_{name}" for name in args), "__istate"],
+                [*(f"__out_{name}" for name in outargs), "__ostate"],
                 f"{funcname}({call_args})",
                 side_effects=True,
             )
