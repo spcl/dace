@@ -138,15 +138,6 @@ def make_ctypes_argument(
         if isinstance(argtype.dtype, dtypes.vector) and argtype.dtype.vtype.as_numpy_dtype() == arg.dtype:
             pass
         else:
-            # Warn and reinterpret-cast.  Auto-casting here is unsafe
-            # for intent(inout) / intent(out) args because the cast
-            # would allocate a fresh buffer that the SDFG writes into,
-            # losing the caller's writeback semantics.  ``ctypes_interop``
-            # cannot see Fortran intents at this layer.  Callers are
-            # expected to match the declared dtype (e.g. ``np.bool_``
-            # for ``bool *`` args).  HLFIR Fortran callers go through
-            # the bindings wrapper which does the cast at a layer that
-            # knows intent and does proper copy-in/copy-out.
             print(f'WARNING: Passing {arg.dtype} array argument "{a}" to a {argtype.dtype.type.__name__} array')
     elif (
         is_dtArray

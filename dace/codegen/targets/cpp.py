@@ -1633,7 +1633,8 @@ class DaCeKeywordRemover(ExtNodeTransformer):
         return ast.copy_location(newnode, node)
 
     def visit_Call(self, node: ast.Call):
-        funcname = rname(node.func)
+        # A callback is a symbol, so only a bare name can be one; ``(a * b).real()`` calls a method of an expression
+        funcname = node.func.id if isinstance(node.func, ast.Name) else None
         if funcname in self.sdfg.symbols and isinstance(self.sdfg.symbols[funcname], dtypes.callback):
             # Visit arguments without changing their types
             self.allow_casts = False
@@ -1706,6 +1707,12 @@ class DaCeKeywordRemover(ExtNodeTransformer):
 
     # Replace default modules (e.g., math) with dace::math::
     def visit_Attribute(self, node):
+        # Only a dotted name names a module; ``(a * b).real`` is an attribute of an expression
+        base = node.value
+        while isinstance(base, ast.Attribute):
+            base = base.value
+        if not isinstance(base, ast.Name):
+            return self.generic_visit(node)
         attrname = rname(node)
         module_name = attrname[: attrname.rfind(".")]
         func_name = attrname[attrname.rfind(".") + 1 :]

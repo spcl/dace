@@ -10,6 +10,7 @@ from .gpu_block_size_selection import SelectGPUDeviceBlockSize, pick_gpu_block_s
 from .instrument_with_timer import InstrumentWithTimer
 from .loop_local_memory_reduction import LoopLocalMemoryReduction
 from .optional_arrays import OptionalArrayInference
+from .persistent_transients import MakeTransientsPersistent
 from .pattern_matching import PatternMatchAndApply, PatternMatchAndApplyRepeated, PatternApplyOnceEverywhere
 from .prune_symbols import RemoveUnusedSymbols
 from .scalar_fission import ArrayFission, PrivatizeArrays, PrivatizeScalars, ScalarFission
