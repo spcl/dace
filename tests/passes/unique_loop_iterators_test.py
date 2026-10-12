@@ -890,6 +890,59 @@ def test_the_renamed_iterator_keeps_the_dtype_its_loop_declares():
     sdfg.validate()
 
 
+@dace.program
+def shadowing_inner_step(A: dace.float64[4]):
+    for _ in range(3):
+        A[:] = A + 1.0
+
+
+@dace.program
+def shadowing_outer(A: dace.float64[4]):
+    for _ in range(2):
+        shadowing_inner_step(A)
+
+
+@dace.program
+def shadowing_same_sdfg(A: dace.float64[4]):
+    for i in range(2):
+        for i in range(3):
+            A[:] = A + 1.0
+
+
+def loop_variables(sdfg: dace.SDFG) -> list[str]:
+    return [r.loop_variable for r in sdfg.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion)]
+
+
+def test_a_nested_sdfg_loop_reusing_the_outer_iterator_name_keeps_its_own_iterator():
+    """Renaming the outer ``_`` must not reach a nested SDFG's own, unmapped ``_`` (cavity_flow hung on it)."""
+    sdfg = shadowing_outer.to_sdfg(simplify=False)
+    assert loop_variables(sdfg) == ["_", "_"]
+
+    UniqueLoopIterators(assign_loop_iterator_post_value=False).apply_pass(sdfg, None)
+    sdfg.validate()
+    assert len(set(loop_variables(sdfg))) == 2, loop_variables(sdfg)
+
+    sdfg.simplify()
+    assert len(set(loop_variables(sdfg))) == 2, loop_variables(sdfg)
+    A = np.zeros(4)
+    sdfg.compile()(A=A)
+    assert np.allclose(A, 6.0)
+
+
+def test_an_inner_loop_shadowing_the_outer_iterator_keeps_its_own_iterator():
+    """An inner loop rebinding the outer loop's name is a different variable after the rename."""
+    sdfg = shadowing_same_sdfg.to_sdfg(simplify=False)
+    assert loop_variables(sdfg) == ["i", "i"]
+
+    UniqueLoopIterators(assign_loop_iterator_post_value=False).apply_pass(sdfg, None)
+    sdfg.validate()
+    assert len(set(loop_variables(sdfg))) == 2, loop_variables(sdfg)
+
+    A = np.zeros(4)
+    sdfg.compile()(A=A)
+    assert np.allclose(A, 6.0)
+
+
 if __name__ == "__main__":
     test_nested_sdfg_symbol_mapping()
     test_loop_var_reconstruction()
@@ -912,3 +965,5 @@ if __name__ == "__main__":
     test_loop_and_map_coexist_no_collision_value_preserving()
     test_no_postamble_still_gives_an_iterator_read_after_its_loop_its_exit_value()
     test_the_renamed_iterator_keeps_the_dtype_its_loop_declares()
+    test_a_nested_sdfg_loop_reusing_the_outer_iterator_name_keeps_its_own_iterator()
+    test_an_inner_loop_shadowing_the_outer_iterator_keeps_its_own_iterator()

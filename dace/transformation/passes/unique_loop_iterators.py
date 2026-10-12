@@ -107,10 +107,12 @@ class UniqueLoopIterators(ppl.Pass):
             for node in state.nodes():
                 if not isinstance(node, dace.nodes.NestedSDFG):
                     continue
-                if old_name in node.symbol_mapping:
-                    # ``replace_dict`` already rewrote the mapped value;
-                    # only the key (inner symbol name) needs re-keying.
-                    node.symbol_mapping[new_name] = node.symbol_mapping.pop(old_name)
+                # ``replace_dict`` already rewrote the mapped value. A nested SDFG that does not import the
+                # iterator under its own name owns any ``old_name`` it declares (its own loop's ``_``), so it is
+                # left alone; renaming it too gives both loops one iterator.
+                if str(node.symbol_mapping.get(old_name)) != new_name:
+                    continue
+                node.symbol_mapping[new_name] = node.symbol_mapping.pop(old_name)
                 if old_name in node.sdfg.symbols:
                     self._rename_one_loop_var(node.sdfg, old_name, new_name)
 
@@ -235,6 +237,7 @@ class UniqueLoopIterators(ppl.Pass):
         # Names to re-check for dead-declaration removal once every loop below is renamed
         # (only populated when ``assign_loop_iterator_post_value`` is off, see below).
         dead_symbol_candidates: list[tuple[LoopRegion, str]] = []
+        plan: list[tuple[LoopRegion, str, int]] = []
         for cfg in sdfg.all_control_flow_regions():
             if not isinstance(cfg, LoopRegion):
                 continue
@@ -252,7 +255,13 @@ class UniqueLoopIterators(ppl.Pass):
                 # Skipping unique names keeps the pass idempotent; duplicated
                 # names (from fission) still fall through to be disambiguated.
                 continue
-            new_name = f"{_LOOP_ITER_NAME_PREFIX}_{self._next_id}"
+            plan.append((cfg, old_name, self._next_id))
+            self._next_id += 1
+
+        # Innermost first: the rename replaces ``old_name`` in the loop's whole subtree, so an inner loop that rebinds
+        # the same name must already carry its own iterator when the enclosing loop is renamed.
+        for cfg, old_name, ident in reversed(plan):
+            new_name = f"{_LOOP_ITER_NAME_PREFIX}_{ident}"
             # The rename parses ``new_name`` from text, so it is typed as the loop declares ``old_name``, and later
             # passes that parse the loop variable find the dtype the loop now has.
             declared = cfg.new_symbols(base).get(old_name)
@@ -261,6 +270,8 @@ class UniqueLoopIterators(ppl.Pass):
                 self._rename_one_loop_var(cfg, old_name, new_name)
             renamed.add(new_name)
 
+        # After every rename, so no rename rewrites an exit-value assignment.
+        for cfg, old_name, ident in plan:
             if self.assign_loop_iterator_post_value:
                 # Only materialise the post-value write when the original
                 # iterator name is actually read after its loop. Emitting it
@@ -275,7 +286,7 @@ class UniqueLoopIterators(ppl.Pass):
                         if post_value_str:
                             cfg.parent_graph.add_state_after(
                                 cfg,
-                                f"{_POST_VALUE_STATE_PREFIX}_{self._next_id}",
+                                f"{_POST_VALUE_STATE_PREFIX}_{ident}",
                                 assignments={old_name: f"({post_value_str})"},
                             )
             else:
@@ -287,8 +298,6 @@ class UniqueLoopIterators(ppl.Pass):
                 # would -- including the duplicated-name case, where the walk must wait for
                 # every sibling sharing that name to be renamed before the name reads as dead.
                 dead_symbol_candidates.append((cfg, old_name))
-
-            self._next_id += 1
 
         if dead_symbol_candidates:
             used = sdfg.used_symbols(all_symbols=False)
