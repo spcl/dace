@@ -174,9 +174,7 @@ def test_union_around_loop_does_not_assume_it_runs():
     sdfg = read_before_loop.to_sdfg(simplify=True)
     propagate_memlets_sdfg(sdfg)
 
-    state, nsdfg_node = next(
-        (s, n) for s in sdfg.states() for n in s.nodes() if isinstance(n, dace.nodes.NestedSDFG)
-    )
+    state, nsdfg_node = next((s, n) for s in sdfg.states() for n in s.nodes() if isinstance(n, dace.nodes.NestedSDFG))
     (edge,) = [e for e in state.in_edges(nsdfg_node) if e.data.data == "A"]
     assert edge.data.subset.ranges == [(1, sympy.Max(1, N - 1), 1)], edge.data.subset
 

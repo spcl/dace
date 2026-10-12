@@ -411,7 +411,7 @@ def program_assumptions(sdfg: "SDFG") -> list[Relation]:
     """The runtime assumptions of ``sdfg`` and of the SDFGs nested in it, over the symbols of ``sdfg``, in a fixed
     order: nested ones are translated through each nesting node's symbol mapping, and constants are substituted."""
     assumptions = OrderedSet(sdfg.symbol_repo.runtime_assumptions)
-    for state in sdfg.all_states():
+    for state in sdfg.states():
         for node in state.nodes():
             if not isinstance(node, nodes.NestedSDFG):
                 continue
