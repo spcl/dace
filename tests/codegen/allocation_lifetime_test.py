@@ -832,16 +832,10 @@ def test_deferred_scalar_still_applies():
 
 
 def test_a_view_does_not_reallocate_the_array_it_views():
-    """Viewing a transient in a LATER state must not allocate it a second time.
+    """A view in a later state reads the transient the frame allocated in an earlier state, not a fresh buffer.
 
-    ``allocate_view`` allocates the viewed data "if necessary", and the necessity test lives in
-    ``allocate_array``: it returns early when the name is in ``defined_vars``. That set is SCOPED,
-    so once the allocating state's scope has been popped the guard cannot see the earlier
-    allocation, and the view gets a fresh buffer -- silently discarding everything the earlier state
-    wrote. It only bites a transient the frame allocates in ONE state rather than at SDFG entry,
-    i.e. one whose size depends on a loop variable. stockham_fft and velocity_tendencies both read
-    zeros out of transients for this; the frame's own DECLARATION is the marker that it already owns
-    the allocation.
+    A transient sized by a loop variable is allocated in the state that first uses it. ``defined_vars`` is scoped,
+    so it no longer knows that allocation when a later state views the transient; the frame's declaration does.
     """
     N = dace.symbol("N", dtype=dace.int64)
     i = dace.symbol("i", dtype=dace.int64)
@@ -871,9 +865,9 @@ def test_a_view_does_not_reallocate_the_array_it_views():
     use.add_edge(vnode, None, use.add_access("out"), None, dace.Memlet("tv[0] -> [i]"))
 
     code = sdfg.generate_code()[0].clean_code
-    allocations = re.findall(r"\bt = (?:new\b|dace::aligned_new_array\b)", code)
-    assert len(allocations) == 1, (
-        f"'t' is allocated {len(allocations)} times; the second one is the view's, "
+    allocations = _count_heap_allocs(code, "double")  # ``t`` is the only heap-allocated array
+    assert allocations == 1, (
+        f"'t' is allocated {allocations} times; the second one is the view's, "
         "and it throws away what the fill state wrote"
     )
 
