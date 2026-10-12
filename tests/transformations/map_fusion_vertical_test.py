@@ -3339,36 +3339,20 @@ def test_map_fusion_symbolic_intermediate(allow_intermediates_with_symbolic_size
     ref, res = make_sdfg_args(sdfg, dict(N=10))
     compile_and_run_sdfg(sdfg, **ref)
 
+    apply_fusion(
+        sdfg,
+        removed_maps=(1 if allow_intermediates_with_symbolic_size else 0),
+        apply_once=True,
+        strict_dataflow=True,
+        allow_intermediates_with_symbolic_size=allow_intermediates_with_symbolic_size,
+    )
+
     if allow_intermediates_with_symbolic_size:
-        apply_fusion(
-            sdfg,
-            removed_maps=1,
-            apply_once=True,
-            strict_dataflow=True,
-            allow_intermediates_with_symbolic_size=True,
-            where={
-                "first_map_exit": mx1,
-                "array": tmp,
-                "second_map_entry": me2,
-            },
-        )
         assert count_nodes(state, nodes.MapEntry) == 1
 
         compile_and_run_sdfg(sdfg, **res)
         assert all(np.allclose(ref[k], res[k]) for k in ref)
     else:
-        # When symbolic intermediates are disallowed the transformation must not apply.
-        would_apply = MapFusionVertical.can_be_applied_to(
-            sdfg,
-            options={
-                "strict_dataflow": True,
-                "allow_intermediates_with_symbolic_size": False,
-            },
-            first_map_exit=mx1,
-            array=tmp,
-            second_map_entry=me2,
-        )
-        assert not would_apply
         assert count_nodes(state, nodes.MapEntry) == 2
 
 
