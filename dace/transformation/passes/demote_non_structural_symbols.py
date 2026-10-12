@@ -8,9 +8,10 @@ merely updates it reads as carrying a symbol and stays sequential; as a scalar i
 and privatization passes handle.
 
 A boolean stays a symbol: it is almost always a branch guard, i.e. control flow, and as a scalar every condition that
-tests it becomes a data read the control-flow passes must carry along. So does a value only conditions read
-(``g = aa[0, i]; if g > 0``): as a scalar its read joins the dataflow of the region it guards, where it blurs that
-region's dependences.
+tests it becomes a data read the control-flow passes must carry along. So does a value only conditions read when it
+is read from data the SDFG also writes (s275's ``g = aa[0, i]; if g > 0`` over the ``aa`` recurrence): as a scalar its
+read joins the dataflow of those writes and blurs their dependences. A guard read from data nothing writes (CloudSC's
+``iphase[jm]``) demotes, so the loops it guards still fuse.
 """
 
 import ast
@@ -118,10 +119,12 @@ def is_boolean_symbol(sd: SDFG, name: str) -> bool:
 
 
 def guard_symbols(sd: SDFG) -> set[str]:
-    """The symbols ``sd`` reads only in conditions (a branch, a loop condition, an interstate edge's condition): no
-    interstate assignment and no tasklet reads them, so none is a counter updated from itself."""
+    """The symbols ``sd`` reads only in conditions (a branch, a loop condition, an interstate edge's condition) and
+    assigns from a container ``sd`` also writes. No interstate assignment and no tasklet reads them, so none is a
+    counter updated from itself."""
     in_condition: set[str] = set()
     elsewhere: set[str] = set()
+    sources: dict[str, set[str]] = {}
     for region in sd.all_control_flow_regions():
         if isinstance(region, ConditionalBlock):
             for code in region.get_meta_codeblocks():
@@ -130,13 +133,18 @@ def guard_symbols(sd: SDFG) -> set[str]:
             in_condition.update(region.loop_condition.get_free_symbols())
     for edge in sd.all_interstate_edges():
         in_condition.update(edge.data.condition.get_free_symbols())
-        for value in edge.data.assignments.values():
-            elsewhere.update(node.id for node in ast.walk(ast.parse(value)) if isinstance(node, ast.Name))
+        for name, value in edge.data.assignments.items():
+            read = {node.id for node in ast.walk(ast.parse(value)) if isinstance(node, ast.Name)}
+            elsewhere |= read
+            sources.setdefault(name, set()).update(read & sd.arrays.keys())
+    written: set[str] = set()
     for state in sd.states():
         for node in state.nodes():
             if isinstance(node, nodes.Tasklet):
                 elsewhere.update(node.free_symbols)
-    return in_condition - elsewhere
+            elif isinstance(node, nodes.AccessNode) and state.in_degree(node) > 0:
+                written.add(node.data)
+    return {name for name in in_condition - elsewhere if sources.get(name, set()) & written}
 
 
 def demote_symbols(sdfg: SDFG, candidates: Callable[[SDFG], Iterable[str]]) -> int:
