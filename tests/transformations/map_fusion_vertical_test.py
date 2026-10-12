@@ -119,6 +119,7 @@ def apply_fusion(
     unspecific: bool = False,
     apply_once: bool = False,
     strict_dataflow: bool = True,
+    allow_intermediates_with_symbolic_size: bool | None = None,
     map_fusion_opt: dict[str, Any] = dict(),
     where: dict[str, dace.nodes.Node] | None = None,
 ) -> SDFG:
@@ -141,12 +142,14 @@ def apply_fusion(
 
             if where is not None:
                 assert apply_once
+                options = {"strict_dataflow": strict_dataflow}
+                if allow_intermediates_with_symbolic_size is not None:
+                    options = options | {
+                        "allow_intermediates_with_symbolic_size": allow_intermediates_with_symbolic_size
+                    }
                 MapFusionVertical.apply_to(
                     sdfg=sdfg,
-                    options={
-                        "strict_dataflow": strict_dataflow,
-                    }
-                    | map_fusion_opt,
+                    options=options | map_fusion_opt,
                     expr_index=0,
                     verify=True,
                     **where,
@@ -156,6 +159,7 @@ def apply_fusion(
             else:
                 map_fusion = MapFusionVertical(
                     strict_dataflow=strict_dataflow,
+                    allow_intermediates_with_symbolic_size=allow_intermediates_with_symbolic_size,
                     **map_fusion_opt,
                 )
                 apply_function = sdfg.apply_transformations if apply_once else sdfg.apply_transformations_repeated
@@ -2542,6 +2546,7 @@ def test_map_fusion_nested_sdfg_slicing(symbolic_size: bool, strict_dataflow: bo
         final_maps=1,
         apply_once=True,
         strict_dataflow=strict_dataflow,
+        allow_intermediates_with_symbolic_size=symbolic_size,
         where={
             "first_map_exit": mx1,
             "array": intermediate,
