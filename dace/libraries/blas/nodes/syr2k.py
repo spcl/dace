@@ -19,7 +19,7 @@ import dace.sdfg.nodes
 from dace import SDFG, SDFGState, properties, symbolic
 from dace import memlet as mm
 from dace.frontend.common import op_repository as oprepo
-from dace.libraries.blas import environments, gpu_dialect
+from dace.libraries.blas import blas_helpers, environments, gpu_dialect
 from dace.libraries.blas.blas_helpers import to_blastype
 from dace.libraries.blas.nodes.rank_k_helpers import (
     add_coeff_arrays,
@@ -110,27 +110,31 @@ class ExpandSyr2kPure(ExpandTransformation):
 
 
 class ExpandSyr2kCBLAS(ExpandTransformation):
-    """CBLAS ``cblas_?syr2k`` (row-major): handles the DaCe row-major layout directly,
-    so no operand transpose trick is needed (unlike the GPU path)."""
+    """CBLAS ``cblas_?syr2k`` in the operands' common order, row- or column-major; the pure
+    expansion when they share none."""
 
     environments: list[type] = []
 
     @staticmethod
     def expansion(node: "Syr2k", state: SDFGState, sdfg: SDFG):
         info = operand_info(node, state, sdfg, OPERANDS)
-        (_, ashape, astrides), (_, _, bstrides), (cd, cshape, cstrides) = info["_a"], info["_b"], info["_c"]
+        layout = blas_helpers.matrix_layout(*(blas_helpers.Operand(*info[c]) for c in ("_a", "_b", "_c")))
+        if layout is None:
+            return ExpandSyr2kPure.expansion(node, state, sdfg)
+        (_, ashape, _), (cd, cshape, _) = info["_a"], info["_c"]
         dtype = cd.dtype.base_type
         func = to_blastype(dtype.type).lower() + "syr2k"
         n, k = syr2k_dims(node, ashape, cshape)
         uplo = "CblasLower" if node.uplo == "L" else "CblasUpper"
         trans = "CblasNoTrans" if node.trans == "N" else "CblasTrans"
-        lda, ldb, ldc = symstr(astrides[0]), symstr(bstrides[0]), symstr(cstrides[0])
+        order = "CblasRowMajor" if layout.row_major else "CblasColMajor"
+        lda, ldb, ldc = (symstr(ld) for ld in layout.leading)
 
         def code_fn(ptrs, pa, pb):
             return (
                 f"{coeff_decl('__alpha', node.alpha, dtype, pa)}\n"
                 f"{coeff_decl('__beta', node.beta, dtype, pb)}\n"
-                f"cblas_{func}(CblasRowMajor, {uplo}, {trans}, {symstr(n)}, {symstr(k)}, __alpha, "
+                f"cblas_{func}({order}, {uplo}, {trans}, {symstr(n)}, {symstr(k)}, __alpha, "
                 f"{ptrs['_a']}, {lda}, {ptrs['_b']}, {ldb}, __beta, {ptrs['_c']}, {ldc});"
             )
 
@@ -148,12 +152,9 @@ class ExpandSyr2kMKL(ExpandSyr2kCBLAS):
 
 
 class ExpandSyr2kGPUBLAS(ExpandTransformation):
-    """cuBLAS / rocBLAS ``?syr2k`` (column-major). The library is column-major only, so
-    the row-major DaCe arrays are handled by the transpose identity: a row-major
-    ``N x N`` ``C`` is the column-major ``C^T``, and ``A B^T + B A^T`` is symmetric, so
-    the row-major update is the same memory as
-    ``C_cm := alpha*A_cm^T*B_cm + alpha*B_cm^T*A_cm + beta*C_cm`` (column-major). That
-    is a ``trans`` flip and a ``uplo`` flip, with ``n`` / ``k`` unchanged."""
+    """cuBLAS / rocBLAS ``?syr2k``, column-major only. A row-major ``N x N`` ``C`` is the column-major ``C^T``, and
+    the update is symmetric, so row-major operands are the same memory as the column-major update with ``trans`` and
+    ``uplo`` flipped, ``n`` / ``k`` unchanged. Any other layout is an error."""
 
     dialect: gpu_dialect.GpuBlasDialect
 
@@ -171,13 +172,15 @@ class ExpandSyr2kGPUBLAS(ExpandTransformation):
     @classmethod
     def expansion(cls, node: "Syr2k", state: SDFGState, sdfg: SDFG):
         info = operand_info(node, state, sdfg, OPERANDS)
-        (_, ashape, astrides), (_, _, bstrides), (cd, cshape, cstrides) = info["_a"], info["_b"], info["_c"]
+        layout = gpu_dialect.required_layout(node, *(blas_helpers.Operand(*info[c]) for c in ("_a", "_b", "_c")))
+        (_, ashape, _), (cd, cshape, _) = info["_a"], info["_c"]
         dtype = cd.dtype.base_type
         func = cls.dialect.func(to_blastype(dtype.type), "syr2k")
         n, k = syr2k_dims(node, ashape, cshape)
-        flip_uplo = "U" if node.uplo == "L" else "L"
-        flip_trans = "T" if node.trans == "N" else "N"
-        lda, ldb, ldc = symstr(astrides[0]), symstr(bstrides[0]), symstr(cstrides[0])
+        uplo, trans = node.uplo, node.trans
+        if layout.row_major:
+            uplo, trans = ("U" if uplo == "L" else "L"), ("T" if trans == "N" else "N")
+        lda, ldb, ldc = (symstr(ld) for ld in layout.leading)
         setup = cls.environments[0].handle_setup_code(node)
         handle = f"__dace_{cls.backend}blas_handle"
 
@@ -188,7 +191,7 @@ class ExpandSyr2kGPUBLAS(ExpandTransformation):
             return (
                 f"{setup}"
                 f"{prologue}"
-                f"{func}({handle}, {cls.fill_enum(flip_uplo)}, {cls.op_enum(flip_trans)}, {symstr(n)}, "
+                f"{func}({handle}, {cls.fill_enum(uplo)}, {cls.op_enum(trans)}, {symstr(n)}, "
                 f"{symstr(k)}, {alpha}, ({dtype.ctype}*){ptrs['_a']}, {lda}, "
                 f"({dtype.ctype}*){ptrs['_b']}, {ldb}, {beta}, "
                 f"({dtype.ctype}*){ptrs['_c']}, {ldc});\n"

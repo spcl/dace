@@ -22,6 +22,7 @@ import numpy
 import pytest
 
 import dace
+from dace.codegen.common import get_gpu_backend
 from dace.libraries.blas import Symm, Syr2k, Syrk
 from dace.libraries.blas.nodes.matmul import MatMul
 from dace.libraries.linalg.nodes.tensordot import TensorDot
@@ -111,11 +112,11 @@ def test_atax_permute_flips_flags_gpu():
         for state in sdfg.states():
             for node in list(state.nodes()):
                 if isinstance(node, MatMul):
-                    node.expand(sdfg, state)  # specialize to Gemv before pinning cuBLAS
+                    node.expand(sdfg, state)  # specialize to Gemv before pinning the vendor library
         for state in sdfg.states():
             for node in state.nodes():
                 if isinstance(node, dace.sdfg.nodes.LibraryNode):
-                    node.implementation = "cuBLAS"
+                    node.implementation = "rocBLAS" if get_gpu_backend() == "hip" else "cuBLAS"
         sdfg.apply_gpu_transformations()
 
         Ain = numpy.asarray(A.T, order="C").copy() if perm else A.copy()

@@ -10,7 +10,7 @@ the reference seeds that triangle with a sentinel and asserts it survives.
 The two nodes are siblings sharing one expansion helper module, so they are exercised
 together here. ``alpha`` / ``beta`` are covered both as compile-time properties and as
 runtime scalar connectors (``_alpha`` / ``_beta``); the vendor path is exercised on the
-CPU (OpenBLAS / MKL) and, with device-resident operands, on the GPU (cuBLAS).
+CPU (OpenBLAS / MKL) and, with device-resident operands, on the GPU (cuBLAS or rocBLAS).
 """
 
 import os
@@ -21,6 +21,7 @@ import numpy as np
 import pytest
 
 import dace
+from dace.codegen.common import get_gpu_backend
 from dace.libraries.blas import Syr2k, Syrk
 from dace.memlet import Memlet
 
@@ -116,7 +117,9 @@ def make_sdfg(kind, dtype, n, k, alpha, beta, uplo, trans, impl, alpha_rt=False,
     """Build a Syrk / Syr2k SDFG. ``alpha``/``beta`` are compile-time unless ``alpha_rt``
     / ``beta_rt`` request a runtime ``_alpha`` / ``_beta`` scalar connector. cuBLAS
     operands are device-resident (host mirrors copied in/out)."""
-    gpu = impl == "cuBLAS"
+    gpu = impl == "gpu"
+    if gpu:
+        impl = "rocBLAS" if get_gpu_backend() == "hip" else "cuBLAS"
     ashape = [n, k] if trans == "N" else [k, n]
     sdfg = dace.SDFG(sdfg_name(kind, dtype, alpha, beta, uplo, trans, impl, alpha_rt, beta_rt, variant))
     sdfg.add_array("A", ashape, dtype)
@@ -163,7 +166,7 @@ def make_sdfg(kind, dtype, n, k, alpha, beta, uplo, trans, impl, alpha_rt=False,
     return sdfg
 
 
-IMPLS = ["pure", "OpenBLAS", pytest.param("MKL", marks=pytest.mark.mkl), pytest.param("cuBLAS", marks=pytest.mark.gpu)]
+IMPLS = ["pure", "OpenBLAS", pytest.param("MKL", marks=pytest.mark.mkl), pytest.param("gpu", marks=pytest.mark.gpu)]
 DTYPES = [(dace.float64, np.float64, 1e-12), (dace.float32, np.float32, 1e-4)]
 
 

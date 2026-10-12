@@ -1,21 +1,27 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Scal, Ger, Symv, Symm and Syrk against numpy, in C and Fortran layout. The triangle of a symmetric operand that
-the node must not read holds junk."""
+"""Scal, Ger, Symv, Symm, Syrk and Syr2k against numpy, in C and Fortran layout, on the CPU and through the GPU
+vendor library. The triangle of a symmetric operand that the node must not read holds junk."""
 
 import numpy as np
 import pytest
 
 import dace
-from dace.libraries.blas.nodes import Ger, Scal, Symm, Symv, Syrk
+from dace.codegen.common import get_gpu_backend
+from dace.libraries.blas.nodes import Ger, Scal, Symm, Symv, Syr2k, Syrk
 
-IMPLEMENTATIONS = ["pure", pytest.param("OpenBLAS", marks=pytest.mark.lapack)]
+#: ``gpu`` stands for the vendor library of this build's GPU backend, resolved only when a GPU test runs.
+IMPLEMENTATIONS = [
+    "pure",
+    pytest.param("OpenBLAS", marks=pytest.mark.lapack),
+    pytest.param("gpu", marks=pytest.mark.gpu),
+]
 rng = np.random.default_rng(42)
 
 
-def array(sdfg: dace.SDFG, name: str, value: np.ndarray):
+def array(sdfg: dace.SDFG, name: str, value: np.ndarray, storage: dace.StorageType):
     """Adds ``value``'s container to ``sdfg`` with ``value``'s layout."""
     strides = [s // value.itemsize for s in value.strides]
-    sdfg.add_array(name, list(value.shape), dace.float64, strides=strides)
+    sdfg.add_array(name, list(value.shape), dace.float64, storage, strides=strides)
 
 
 def run(
@@ -25,14 +31,20 @@ def run(
     inputs: dict[str, tuple[str, np.ndarray]],
     outputs: dict[str, tuple[str, np.ndarray]],
 ):
-    """Connects ``node`` to one array per connector and runs it; returns the outputs."""
+    """Connects ``node`` to one array per connector and runs it, in GPU memory for ``gpu``; writes the results back
+    into the ``outputs`` arrays."""
+    gpu = implementation == "gpu"
+    if gpu:
+        cupy = pytest.importorskip("cupy")
+        implementation = "rocBLAS" if get_gpu_backend() == "hip" else "cuBLAS"
     sdfg = dace.SDFG(f"{name}_{implementation}")
     state = sdfg.add_state()
     node.implementation = implementation
     # A list, not a merged dict: an in-place node reads and writes one connector name
-    operands = [*inputs.values(), *outputs.values()]
-    for array_name, value in dict(operands).items():
-        array(sdfg, array_name, value)
+    operands = dict([*inputs.values(), *outputs.values()])
+    storage = dace.StorageType.GPU_Global if gpu else dace.StorageType.Default
+    for array_name, value in operands.items():
+        array(sdfg, array_name, value, storage)
     for connector, (array_name, _) in inputs.items():
         state.add_edge(
             state.add_read(array_name),
@@ -49,7 +61,16 @@ def run(
             None,
             dace.Memlet.from_array(array_name, sdfg.arrays[array_name]),
         )
-    sdfg(**dict(operands))
+    if not gpu:
+        sdfg(**operands)
+        return
+    device = {
+        array_name: cupy.asarray(value, order="F" if value.ndim > 1 and value.flags.f_contiguous else "C")
+        for array_name, value in operands.items()
+    }
+    sdfg(**device)
+    for array_name, value in outputs.values():
+        value[...] = device[array_name].get()
 
 
 def matrix(shape, order: str) -> np.ndarray:
@@ -141,6 +162,46 @@ def test_syrk(implementation, order, transposed, upper):
     np.testing.assert_allclose(c, np.where(referenced, full, c_in))
 
 
+@pytest.mark.parametrize("implementation", IMPLEMENTATIONS)
+@pytest.mark.parametrize("order", ["C", "F"])
+@pytest.mark.parametrize("transposed,upper", [(False, False), (True, True)])
+def test_syr2k(implementation, order, transposed, upper):
+    n, k = 5, 3
+    shape = (k, n) if transposed else (n, k)
+    a, b, c = matrix(shape, order), matrix(shape, order), matrix((n, n), order)
+    c_in = c.copy(order="K")
+    node = Syr2k("syr2k", uplo="U" if upper else "L", trans="T" if transposed else "N", alpha=2.0, beta=0.5)
+    run(
+        f"syr2k_{order}_{transposed}_{upper}",
+        node,
+        implementation,
+        {"_a": ("A", a), "_b": ("B", b), "_c": ("C", c)},
+        {"_c": ("C", c)},
+    )
+    full = 2.0 * (a.T @ b + b.T @ a if transposed else a @ b.T + b @ a.T) + 0.5 * c_in
+    referenced = np.triu(np.ones((n, n), bool)) if upper else np.tril(np.ones((n, n), bool))
+    np.testing.assert_allclose(c, np.where(referenced, full, c_in))
+
+
+@pytest.mark.parametrize("implementation", ["cuBLAS", "rocBLAS"])
+def test_gpu_library_rejects_a_matrix_without_a_contiguous_dimension(implementation):
+    """The vendor libraries take row- or column-major matrices only; a matrix strided in both dimensions is an error
+    at expansion, not a call that reads the wrong elements. Expanding needs no device."""
+    sdfg = dace.SDFG(f"symm_strided_{implementation}")
+    state = sdfg.add_state()
+    gpu = dace.StorageType.GPU_Global
+    sdfg.add_array("A", [4, 4], dace.float64, gpu, strides=[8, 2])
+    sdfg.add_array("B", [4, 3], dace.float64, gpu)
+    sdfg.add_array("C", [4, 3], dace.float64, gpu)
+    node = Symm("symm")
+    node.implementation = implementation
+    for connector, name in (("_a", "A"), ("_b", "B")):
+        state.add_edge(state.add_read(name), None, node, connector, dace.Memlet.from_array(name, sdfg.arrays[name]))
+    state.add_edge(node, "_c", state.add_write("C"), None, dace.Memlet.from_array("C", sdfg.arrays["C"]))
+    with pytest.raises(ValueError, match="row- or column-major"):
+        sdfg.expand_library_nodes()
+
+
 if __name__ == "__main__":
     for implementation in ("pure", "OpenBLAS"):
         test_scal(implementation)
@@ -151,3 +212,6 @@ if __name__ == "__main__":
             for flag, upper in ((False, False), (True, True)):
                 test_symm(implementation, order, flag, upper)
                 test_syrk(implementation, order, flag, upper)
+                test_syr2k(implementation, order, flag, upper)
+    test_gpu_library_rejects_a_matrix_without_a_contiguous_dimension("cuBLAS")
+    test_gpu_library_rejects_a_matrix_without_a_contiguous_dimension("rocBLAS")

@@ -61,11 +61,23 @@ class ExpandSymvPure(ExpandTransformation):
         return sdfg
 
 
-def symv_call(node, state, sdfg) -> SDFG:
-    """``_yout = _yin``, then ``?symv`` updates ``_yout`` in place."""
+def symv_call(node, state, sdfg, dialect: gpu_dialect.GpuBlasDialect | None = None, environment=None) -> SDFG:
+    """``_yout = _yin``, then ``?symv`` updates ``_yout`` in place, through CBLAS or the GPU library of ``dialect``."""
     a, x, yout = (operand(node, state, sdfg, c) for c in ("_A", "_x", "_yout"))
-    layout = blas_helpers.matrix_layout(a)
     prefix = blas_helpers.blas_prefix(a.desc.dtype)
+    if dialect is not None and prefix is not None:
+        # A row-major symmetric matrix is its own transpose in column-major order, with the other triangle stored
+        layout = gpu_dialect.required_layout(node, a)
+        gpu = gpu_dialect.gpu_call(dialect, a.desc.dtype)
+        scalars, arg = gpu_dialect.scalar_pointers(gpu, a.desc.dtype, alpha=node.alpha, beta=node.beta)
+        call = (
+            f"{gpu.routine('symv')}({dialect.handle}, {dialect.fill(node.uplo != layout.row_major)}, {x.shape[0]}, "
+            f"{arg['alpha']}, {gpu.pointer('__A')}, {layout.leading[0]}, {gpu.pointer('__x')}, {x.strides[0]}, "
+            f"{arg['beta']}, {gpu.pointer('__yout')}, {yout.strides[0]})"
+        )
+        code = gpu_dialect.call_code(gpu, environment, node, scalars, call)
+        return blas_helpers.in_place_call(node, state, sdfg, "_yin", "_yout", code)
+    layout = blas_helpers.matrix_layout(a)
     # CBLAS has no complex symv
     if layout is None or prefix is None or a.desc.dtype.is_complex():
         return ExpandSymvPure.expansion(node, state, sdfg)
@@ -106,23 +118,8 @@ class ExpandSymvGPUBLAS(ExpandTransformation):
 
     @classmethod
     def expansion(cls, node, parent_state, parent_sdfg, **kwargs):
-        (desc_A, lda), (_, sx), (_, syi), syo, n = node.validate(parent_sdfg, parent_state)
-        dt = desc_A.dtype.base_type
-        func, _, _ = blas_helpers.cublas_type_metadata(dt)
-        uplo = cls.dialect.fill(not node.uplo)
-        a, b = node.alpha, node.beta
-        code = cls.environments[0].handle_setup_code(node)
-        code += gpu_dialect.host_scalar_mode(
-            cls.dialect,
-            f"""
-        {dt.ctype} __alpha = ({dt.ctype})({a}); {dt.ctype} __beta = ({dt.ctype})({b});
-        {cls.dialect.func(func, "copy")}({cls.dialect.handle}, {n}, _yin, {syi}, _yout, {syo});
-        {cls.dialect.func(func, "symv")}({cls.dialect.handle}, {uplo}, {n}, &__alpha, _A, {lda}, _x, {sx}, &__beta, _yout, {syo});
-        """,
-        )
-        return dace.sdfg.nodes.Tasklet(
-            node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
-        )
+        node.validate(parent_sdfg, parent_state)
+        return symv_call(node, parent_state, parent_sdfg, cls.dialect, cls.environments[0])
 
 
 @dace.library.expansion

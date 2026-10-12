@@ -145,12 +145,9 @@ class ExpandSyrkMKL(ExpandSyrkCBLAS):
 
 
 class ExpandSyrkGPUBLAS(ExpandTransformation):
-    """cuBLAS / rocBLAS ``?syrk`` (column-major). The library is column-major only, so
-    the row-major DaCe arrays are handled by the transpose identity: a row-major
-    ``N x N`` ``C`` is the column-major ``C^T``, and ``A A^T`` is symmetric, so
-    ``C := alpha*A*A^T + beta*C`` (row-major) is the same memory as
-    ``C_cm := alpha*A_cm^T*A_cm + beta*C_cm`` (column-major). That is a ``trans`` flip
-    and a ``uplo`` flip, with ``n`` / ``k`` unchanged."""
+    """cuBLAS / rocBLAS ``?syrk``, column-major only. A row-major ``N x N`` ``C`` is the column-major ``C^T``, and
+    the update is symmetric, so row-major operands are the same memory as the column-major update with ``trans`` and
+    ``uplo`` flipped, ``n`` / ``k`` unchanged. Any other layout is an error."""
 
     dialect: gpu_dialect.GpuBlasDialect
 
@@ -168,13 +165,15 @@ class ExpandSyrkGPUBLAS(ExpandTransformation):
     @classmethod
     def expansion(cls, node: "Syrk", state: SDFGState, sdfg: SDFG):
         info = operand_info(node, state, sdfg, OPERANDS)
-        (_, ashape, astrides), (cd, cshape, cstrides) = info["_a"], info["_c"]
+        layout = gpu_dialect.required_layout(node, *(blas_helpers.Operand(*info[c]) for c in ("_a", "_c")))
+        (_, ashape, _), (cd, cshape, _) = info["_a"], info["_c"]
         dtype = cd.dtype.base_type
         func = cls.dialect.func(to_blastype(dtype.type), "syrk")
         n, k = syrk_dims(node, ashape, cshape)
-        flip_uplo = "U" if node.uplo == "L" else "L"
-        flip_trans = "T" if node.trans == "N" else "N"
-        lda, ldc = symstr(astrides[0]), symstr(cstrides[0])
+        uplo, trans = node.uplo, node.trans
+        if layout.row_major:
+            uplo, trans = ("U" if uplo == "L" else "L"), ("T" if trans == "N" else "N")
+        lda, ldc = (symstr(ld) for ld in layout.leading)
         setup = cls.environments[0].handle_setup_code(node)
         handle = f"__dace_{cls.backend}blas_handle"
 
@@ -185,7 +184,7 @@ class ExpandSyrkGPUBLAS(ExpandTransformation):
             return (
                 f"{setup}"
                 f"{prologue}"
-                f"{func}({handle}, {cls.fill_enum(flip_uplo)}, {cls.op_enum(flip_trans)}, {symstr(n)}, "
+                f"{func}({handle}, {cls.fill_enum(uplo)}, {cls.op_enum(trans)}, {symstr(n)}, "
                 f"{symstr(k)}, {alpha}, ({dtype.ctype}*){ptrs['_a']}, {lda}, "
                 f"{beta}, ({dtype.ctype}*){ptrs['_c']}, {ldc});\n"
             )
