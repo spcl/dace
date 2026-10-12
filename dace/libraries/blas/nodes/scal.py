@@ -3,7 +3,7 @@ import dace
 from dace import SDFG, SDFGState, library, properties
 from dace import memlet as mm
 from dace.frontend.common import op_repository as oprepo
-from dace.libraries.blas import blas_helpers, environments
+from dace.libraries.blas import blas_helpers, environments, gpu_dialect
 from dace.libraries.blas.blas_helpers import operand
 from dace.sdfg import nodes
 from dace.transformation.transformation import ExpandTransformation
@@ -28,13 +28,22 @@ class ExpandScalPure(ExpandTransformation):
         return sdfg
 
 
-def scal_call(node, state, sdfg) -> SDFG:
-    """``_res = _x``, then ``?scal`` scales ``_res`` in place."""
+def scal_call(node, state, sdfg, dialect: gpu_dialect.GpuBlasDialect | None = None, environment=None) -> SDFG:
+    """``_res = _x``, then ``?scal`` scales ``_res`` in place, through CBLAS or the GPU library of ``dialect``."""
     x, res = operand(node, state, sdfg, "_x"), operand(node, state, sdfg, "_res")
-    prefix = blas_helpers.blas_prefix(x.desc.dtype)
+    dtype = x.desc.dtype
+    if dialect is not None:
+        gpu = gpu_dialect.gpu_call(dialect, dtype)
+        if gpu is None:
+            return ExpandScalPure.expansion(node, state, sdfg)
+        scalars, arg = gpu_dialect.scalar_pointers(gpu, dtype, a=node.a)
+        call = f"{gpu.routine('scal')}({dialect.handle}, {x.shape[0]}, {arg['a']}, {gpu.pointer('__res')}, {res.strides[0]})"
+        code = gpu_dialect.call_code(gpu, environment, node, scalars, call)
+        return blas_helpers.in_place_call(node, state, sdfg, "_x", "_res", code)
+    prefix = blas_helpers.blas_prefix(dtype)
     if prefix is None:
         return ExpandScalPure.expansion(node, state, sdfg)
-    scalars, arg = blas_helpers.scalar_arguments(x.desc.dtype, a=node.a)
+    scalars, arg = blas_helpers.scalar_arguments(dtype, a=node.a)
     call = f"cblas_{prefix.lower()}scal({x.shape[0]}, {arg['a']}, __res, {res.strides[0]});"
     return blas_helpers.in_place_call(node, state, sdfg, "_x", "_res", scalars + call)
 
@@ -59,17 +68,43 @@ class ExpandScalMKL(ExpandTransformation):
         return scal_call(node, parent_state, parent_sdfg)
 
 
+@library.expansion
+class ExpandScalCuBLAS(ExpandTransformation):
+    environments = [environments.cublas.cuBLAS]
+
+    @staticmethod
+    def expansion(node, parent_state, parent_sdfg, **kwargs):
+        node.validate(parent_sdfg, parent_state)
+        return scal_call(node, parent_state, parent_sdfg, gpu_dialect.CUBLAS, environments.cublas.cuBLAS)
+
+
+@library.expansion
+class ExpandScalRocBLAS(ExpandTransformation):
+    environments = [environments.rocblas.rocBLAS]
+
+    @staticmethod
+    def expansion(node, parent_state, parent_sdfg, **kwargs):
+        node.validate(parent_sdfg, parent_state)
+        return scal_call(node, parent_state, parent_sdfg, gpu_dialect.ROCBLAS, environments.rocblas.rocBLAS)
+
+
 @library.node
 class Scal(nodes.LibraryNode):
     """BLAS ``?scal``: ``_res = a * _x`` for vectors."""
 
-    implementations = {"pure": ExpandScalPure, "OpenBLAS": ExpandScalOpenBLAS, "MKL": ExpandScalMKL}
+    implementations = {
+        "pure": ExpandScalPure,
+        "OpenBLAS": ExpandScalOpenBLAS,
+        "MKL": ExpandScalMKL,
+        "cuBLAS": ExpandScalCuBLAS,
+        "rocBLAS": ExpandScalRocBLAS,
+    }
     default_implementation = None
 
     a = properties.SymbolicProperty(allow_none=False, default=1, desc="The scaling factor.")
 
     def __init__(self, name, a=1, **kwargs):
-        super().__init__(name, inputs={"_x"}, outputs={"_res"}, **kwargs)
+        super().__init__(name, inputs=["_x"], outputs=["_res"], **kwargs)
         self.a = a
 
     def validate(self, sdfg, state):

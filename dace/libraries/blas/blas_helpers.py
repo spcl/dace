@@ -49,6 +49,11 @@ def cublas_type_metadata(dtype: dtypes.typeclass) -> tuple[str, str, str]:
         raise TypeError(f"Type {str(dtype)} not supported in BLAS operations")
 
 
+def rocblas_type(ctype: str) -> str:
+    """The rocBLAS spelling of a CUDA C type from :func:`cublas_type_metadata`; only the complex types differ."""
+    return {"cuComplex": "rocblas_float_complex", "cuDoubleComplex": "rocblas_double_complex"}.get(ctype, ctype)
+
+
 def dtype_to_cudadatatype(dtype: dtypes.typeclass) -> str:
     types = {
         dtypes.float16: "CUDA_R_16F",
@@ -255,7 +260,7 @@ def in_place_call(
     inputs = [c for c in node.in_connectors if c != source]
     # The call reads ``target`` too, so the copy into it is not dead
     reads = {f"_{c}": c for c in inputs} | {f"_{target}_before": target}
-    tasklet = call_state.add_tasklet(node.label, set(reads), {f"_{target}"}, code, language=dtypes.Language.CPP)
+    tasklet = call_state.add_tasklet(node.label, list(reads), [f"_{target}"], code, language=dtypes.Language.CPP)
     for connector, name in reads.items():
         call_state.add_edge(
             call_state.add_read(name), None, tasklet, connector, dace.Memlet.from_array(name, nsdfg.arrays[name])
