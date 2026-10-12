@@ -11,6 +11,7 @@ from dace.memlet import Memlet
 from dace.properties import CodeBlock
 from dace.sdfg import nodes
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
+from dace.sdfg.analysis.schedule_tree.dataflow import ReachingAnalysis
 from dace.sdfg.analysis.schedule_tree.passes.common import (
     AccessIndex,
     ReplaceAccesses,
@@ -390,18 +391,48 @@ def _memlet_uses(root: tn.ScheduleTreeRoot) -> dict[str, list[Use]]:
     return uses
 
 
+def _read_memlets(read: _Read, name: str) -> list[Memlet] | None:
+    """The accesses of ``name`` by a read (``None`` if some element is not known)."""
+    if isinstance(read.node, tn.TaskletNode):
+        return [m for m in read.node.in_memlets.values() if m.data == name]
+    if any(element is None for element in read.elements):  # In a condition
+        return None
+    return [Memlet(f"{name}[{', '.join(element)}]") for element in read.elements]
+
+
+def _reached(
+    statement: tn.TaskletNode,
+    name: str,
+    read: _Read,
+    reaching: ReachingAnalysis,
+    later_in: tn.ScheduleTreeScope | None = None,
+) -> bool:
+    """Whether a value ``statement`` writes to ``name`` may be what ``read`` reads (with ``later_in``: in a later
+    execution of that scope than the one that wrote it)."""
+    read_memlets = _read_memlets(read, name)
+    if read_memlets is None:
+        return True
+    writes = [w for w in statement.out_memlets.values() if w.data == name]
+    if later_in is not None:
+        return any(reaching.may_reach_later(statement, w, read.node, r, later_in) for w in writes for r in read_memlets)
+    return any(reaching.may_reach(statement, w, read.node, r) for w in writes for r in read_memlets)
+
+
 def _value_reads(
     statement: tn.TaskletNode,
     name: str,
     reads: list[_Read],
     liveness: Liveness,
+    reaching: ReachingAnalysis,
     memlet_uses: dict[str, list[Use]],
     cache: dict[str, tuple],
 ) -> tuple[list[_Read], tn.ScheduleTreeScope | None]:
-    """The reads that may see a value ``statement`` writes to ``name`` (those in its live segment), and the lowest
-    scope above the statement that contains every access in the segment and, if the statement reads ``name`` too (as
-    an accumulation does), in which ``name`` is written before it is read: no value flows into one execution of the
-    scope from outside or from a previous one. ``(reads, None)`` if there is no such scope."""
+    """The reads that may see a value ``statement`` writes to ``name`` (those in its live segment that the value may
+    reach: a segment may span unrelated values of a container that several temporaries share), and the lowest scope
+    above the statement that contains those reads, in which no value of the statement is read in a later execution
+    than the one that wrote it and, if the statement reads ``name`` too (as an accumulation does), in which ``name`` is
+    written before it is read: no value flows into one execution of the scope from outside or from a previous one.
+    ``(reads, None)`` if there is no such scope."""
     uses = list(memlet_uses.get(name, []))
     for read in reads:
         if not isinstance(read.node, tn.TaskletNode):  # Reads in conditions
@@ -419,12 +450,15 @@ def _value_reads(
     def in_segment(node: tn.ScheduleTreeNode) -> bool:
         return segment[0] <= liveness.position[id(node)] <= segment[1]
 
-    found = [r for r in reads if r.node is not statement and in_segment(r.node)]
-    segment_uses = [u for u in uses if in_segment(u.node)]
+    found = [
+        r for r in reads if r.node is not statement and in_segment(r.node) and _reached(statement, name, r, reaching)
+    ]
     accumulates = any(m.data == name for m in statement.in_memlets.values())
     scope = statement.parent
     while scope is not None:
-        if all(_inside(u.node, scope) for u in segment_uses):
+        if all(_inside(r.node, scope) for r in found) and not any(
+            _reached(statement, name, r, reaching, later_in=scope) for r in found
+        ):
             if not accumulates or not liveness.exposed_in(scope, [u for u in uses if _inside(u.node, scope)]):
                 return found, scope
         scope = scope.parent
@@ -482,6 +516,7 @@ def _sinking_guard(
     other: set[str],
     containers: dict[str, data.Data],
     liveness: Liveness,
+    reaching: ReachingAnalysis,
     memlet_uses: dict[str, list[Use]],
     cache: dict[str, tuple],
 ) -> ast.expr | None:
@@ -517,7 +552,7 @@ def _sinking_guard(
     uses: dict[str, list[_Read]] = {}
     scopes: dict[str, tn.ScheduleTreeScope] = {}
     for name in outputs:
-        uses[name], scope = _value_reads(statement, name, reads.get(name, []), liveness, memlet_uses, cache)
+        uses[name], scope = _value_reads(statement, name, reads.get(name, []), liveness, reaching, memlet_uses, cache)
         if scope is None:
             return None
         scopes[name] = scope
@@ -591,12 +626,13 @@ def sink_into_guards(stree: tn.ScheduleTreeScope) -> int:
     while True:
         reads, other = _reads(root)
         liveness = Liveness(root, trust_reads=False)
+        reaching = ReachingAnalysis(root)
         memlet_uses = _memlet_uses(root)
         cache: dict[str, tuple] = {}
         for node in stree.preorder_traversal():
             if not isinstance(node, tn.TaskletNode):
                 continue
-            guard = _sinking_guard(node, reads, other, containers, liveness, memlet_uses, cache)
+            guard = _sinking_guard(node, reads, other, containers, liveness, reaching, memlet_uses, cache)
             if guard is None:
                 continue
             parent = node.parent
@@ -680,11 +716,12 @@ def move_statements_to_readers(stree: tn.ScheduleTreeScope) -> int:
     while True:
         reads, other = _reads(root)
         liveness = Liveness(root, trust_reads=False)
+        reaching = ReachingAnalysis(root)
         memlet_uses = _memlet_uses(root)
         cache: dict[str, tuple] = {}
         for node in stree.preorder_traversal():
             if isinstance(node, tn.TaskletNode):
-                plan = _move_plan(node, reads, other, containers, liveness, memlet_uses, repository, cache)
+                plan = _move_plan(node, reads, other, containers, liveness, reaching, memlet_uses, repository, cache)
                 if plan is not None:
                     _apply_move(node, *plan, lrr)
                     moved += 1
@@ -699,6 +736,7 @@ def _move_plan(
     other: set[str],
     containers: dict[str, data.Data],
     liveness: Liveness,
+    reaching: ReachingAnalysis,
     memlet_uses: dict[str, list[Use]],
     repository,
     cache: dict[str, tuple],
@@ -744,7 +782,7 @@ def _move_plan(
     position = next(k for k, c in enumerate(siblings) if c is nest[0])
     target = None
     for name in outputs:
-        found, _ = _value_reads(statement, name, reads.get(name, []), liveness, memlet_uses, cache)
+        found, _ = _value_reads(statement, name, reads.get(name, []), liveness, reaching, memlet_uses, cache)
         for read in found:
             if not _guarded_anywhere(read) or not _inside(read.node, scope) or _inside(read.node, nest[0]):
                 return None
@@ -757,7 +795,7 @@ def _move_plan(
     # Move only past the nests that assign what the readers' guards read, i.e., that prevent sinking it, and no further
     guard_names = set()
     for name in outputs:
-        for read in _value_reads(statement, name, reads.get(name, []), liveness, memlet_uses, cache)[0]:
+        for read in _value_reads(statement, name, reads.get(name, []), liveness, reaching, memlet_uses, cache)[0]:
             guard_names |= set().union(*(_symbols(c) for c in _guard_candidates(read, scope)))
     readers_position = next(k for k, c in enumerate(siblings) if c is target)
     blockers = [k for k in range(position + 1, readers_position) if _assigned_in([siblings[k]]) & guard_names]

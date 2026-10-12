@@ -529,7 +529,7 @@ class ForScope(LoopScope):
         result.update(self.loop.get_meta_read_memlets(arrays=root.containers))
 
         # If loop range is well-formed, use it in propagation
-        range = _loop_range(self.loop)
+        range = loop_range(self.loop)
         if range is not None:
             propagate = {self.loop.loop_variable: range}
         else:
@@ -548,7 +548,7 @@ class ForScope(LoopScope):
     ) -> MemletSet:
 
         # If loop range is well-formed, use it in propagation
-        range = _loop_range(self.loop)
+        range = loop_range(self.loop)
         if range is not None:
             propagate = {self.loop.loop_variable: range}
         else:
@@ -1078,7 +1078,7 @@ def loop_variant(
     return "while"
 
 
-def _loop_range(loop: LoopRegion) -> tuple[symbolic.SymbolicType, symbolic.SymbolicType, symbolic.SymbolicType] | None:
+def loop_range(loop: LoopRegion) -> tuple[symbolic.SymbolicType, symbolic.SymbolicType, symbolic.SymbolicType] | None:
     """
     Derive loop range for well-formed `for`-loops.
 

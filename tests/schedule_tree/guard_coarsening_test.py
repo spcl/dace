@@ -305,6 +305,50 @@ def test_sink_shared_container_reused_elsewhere():
     )
 
 
+def _shared_temporary_tree() -> tn.ScheduleTreeRoot:
+    """``for t: Z = A[t, 0] < 0; T = 2 * A[t]; if Z[i] > 0: out[t] = T`` followed, in the same iteration, by an
+    unrelated value in rows 1..7 of ``T`` read without a guard; after the loop, a write to ``T`` that only sometimes
+    happens keeps the container live across the whole loop."""
+    stree = _root(
+        "sink_shared_temporary",
+        {"A": ([4, 8, 4], dace.float64), "out": ([4, 8, 4], dace.float64), "other": ([4, 8, 4], dace.float64)},
+        {"T": ([8, 4], dace.float64), "Z": ([4], dace.int32)},
+    )
+    flag = _loop("i", 0, 4, [_tasklet("z = 1 if a < 0 else 0", {"a": "A[t, 0, i]"}, {"z": "Z[i]"})])
+    value = _loop("k", 0, 8, [_loop("i", 0, 4, [_tasklet("o = 2 * a", {"a": "A[t, k, i]"}, {"o": "T[k, i]"})])])
+    use = _loop(
+        "k", 0, 8, [_loop("i", 0, 4, [_if("Z[i] > 0", [_tasklet("o = x", {"x": "T[k, i]"}, {"o": "out[t, k, i]"})])])]
+    )
+    unrelated = _loop(
+        "k",
+        1,
+        8,
+        [
+            _loop("i", 0, 4, [_tasklet("o = a + 1", {"a": "A[t, k, i]"}, {"o": "T[k, i]"})]),
+            _loop("i", 0, 4, [_tasklet("o = x", {"x": "T[k, i]"}, {"o": "other[t, k, i]"})]),
+        ],
+    )
+    sometimes = _loop("i", 0, 4, [_if("i > 1", [_tasklet("o = 5", {}, {"o": "T[0, i]"})])])
+    stree.add_children([_loop("t", 0, 4, [flag, value, use, unrelated]), sometimes])
+    return stree
+
+
+def test_sink_with_temporary_shared_by_unrelated_values():
+    """Only the guarded reads see the value (the unrelated reads see what the unrelated chain wrote before), and they
+    do in the same iteration of ``t`` that wrote it, so the guard need not hold across iterations."""
+
+    def transform(stree):
+        assert sink_into_guards(stree) == 1
+        value = next(n for n in _nodes(stree, tn.TaskletNode) if "2 * a" in n.node.code.as_string)
+        assert any(type(a) is tn.IfScope and a.condition.as_string.startswith("(Z") for a in _ancestors(value))
+
+    rng = np.random.default_rng(5)
+    a = rng.random((4, 8, 4)) - 0.3
+    _same_results(
+        _shared_temporary_tree, transform, [{"A": a, "out": np.zeros((4, 8, 4)), "other": np.zeros((4, 8, 4))}]
+    )
+
+
 # ----------------------------------------------------------------------------------------------------------------------
 # Moving statements to their readers
 # ----------------------------------------------------------------------------------------------------------------------
@@ -415,6 +459,7 @@ if __name__ == "__main__":
     test_sink_not_if_read_unguarded()
     test_sink_not_if_guard_changes_while_value_accumulates()
     test_sink_shared_container_reused_elsewhere()
+    test_sink_with_temporary_shared_by_unrelated_values()
     test_move_past_guard_assignment_then_sink()
     test_move_keeps_conflicting_iterations()
     test_move_not_past_writes_of_every_iteration()
