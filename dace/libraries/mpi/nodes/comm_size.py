@@ -24,7 +24,7 @@ class CommSize(MPINode):
     default_implementation = "MPI"
 
     def __init__(self, name, *args, **kwargs):
-        super().__init__(name, *args, inputs=set(), outputs={"_size"}, **kwargs)
+        super().__init__(name, *args, inputs=set(), outputs=["_size"], **kwargs)
 
     def validate(self, sdfg, state):
         integer_output(self, state, sdfg, "_size")

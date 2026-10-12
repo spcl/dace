@@ -62,7 +62,7 @@ class Send(MPINode):
     n = dace.properties.SymbolicProperty(allow_none=True, default=None, category="Semantics")
 
     def __init__(self, name, *args, **kwargs):
-        super().__init__(name, *args, inputs={"_buffer", "_dest", "_tag"}, outputs={}, **kwargs)
+        super().__init__(name, *args, inputs=["_buffer", "_dest", "_tag"], outputs={}, **kwargs)
 
     def validate(self, sdfg, state):
         """

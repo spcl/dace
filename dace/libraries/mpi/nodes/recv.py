@@ -55,7 +55,7 @@ class Recv(MPINode):
     default_implementation = "MPI"
 
     def __init__(self, name, *args, **kwargs):
-        super().__init__(name, *args, inputs={"_src", "_tag"}, outputs={"_buffer"}, **kwargs)
+        super().__init__(name, *args, inputs=["_src", "_tag"], outputs=["_buffer"], **kwargs)
 
     def validate(self, sdfg, state):
         """

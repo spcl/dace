@@ -61,7 +61,7 @@ class Irecv(MPINode):
     default_implementation = "MPI"
 
     def __init__(self, name, *args, **kwargs):
-        super().__init__(name, *args, inputs={"_src", "_tag"}, outputs={"_buffer", "_request"}, **kwargs)
+        super().__init__(name, *args, inputs=["_src", "_tag"], outputs=["_buffer", "_request"], **kwargs)
 
     def validate(self, sdfg, state):
         """

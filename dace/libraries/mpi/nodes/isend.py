@@ -76,7 +76,7 @@ class Isend(MPINode):
     )
 
     def __init__(self, name, *args, **kwargs):
-        super().__init__(name, *args, inputs={"_buffer", "_dest", "_tag"}, outputs={"_request"}, **kwargs)
+        super().__init__(name, *args, inputs=["_buffer", "_dest", "_tag"], outputs=["_request"], **kwargs)
 
     def validate(self, sdfg, state):
         """

@@ -101,7 +101,7 @@ class Redistribute(MPINode):
     redistr = properties.DataProperty(default="tmp", category="General")
 
     def __init__(self, name, redistr="tmp", *args, **kwargs):
-        super().__init__(name, *args, inputs={"_inp_buffer"}, outputs={"_out_buffer"}, **kwargs)
+        super().__init__(name, *args, inputs=["_inp_buffer"], outputs=["_out_buffer"], **kwargs)
         self.redistr = redistr
 
     def validate(self, sdfg, state):

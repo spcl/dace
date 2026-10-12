@@ -39,7 +39,11 @@ class Gatherv(MPINode):
 
     def __init__(self, name, *args, **kwargs):
         super().__init__(
-            name, *args, inputs={"_inbuffer", "_recvcounts", "_displs", "_root"}, outputs={"_outbuffer"}, **kwargs
+            name,
+            *args,
+            inputs=["_inbuffer", "_recvcounts", "_displs", "_root"],
+            outputs=["_outbuffer"],
+            **kwargs,
         )
 
     def validate(self, sdfg, state):
