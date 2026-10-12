@@ -982,9 +982,13 @@ def test_wcr_np_sum_small_n_auto_staging():
     set_block_sizes(sdfg)
     # auto_optimize leaves the sum a GPU ``Reduce`` node; nothing in it is a kernel-internal array to move.
     assert any(type(node).__name__ == "Reduce" for node, _ in sdfg.all_nodes_recursive())
-    before = {(owner.name, name): desc.storage for owner in sdfg.all_sdfgs_recursive() for name, desc in owner.arrays.items()}
+    before = {
+        (owner.name, name): desc.storage for owner in sdfg.all_sdfgs_recursive() for name, desc in owner.arrays.items()
+    }
     assert MoveArrayOutOfKernel().apply_pass(sdfg, {}) is None
-    after = {(owner.name, name): desc.storage for owner in sdfg.all_sdfgs_recursive() for name, desc in owner.arrays.items()}
+    after = {
+        (owner.name, name): desc.storage for owner in sdfg.all_sdfgs_recursive() for name, desc in owner.arrays.items()
+    }
     assert after == before, (before, after)
 
     A = np.arange(64, dtype=np.float64)
