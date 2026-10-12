@@ -71,6 +71,21 @@ def register_array_on_stack(sdfg: SDFG, nodedesc: data.Data, arrsize, lifetime, 
     return int(arrsize) * nodedesc.dtype.bytes <= Config.get("compiler", "max_stack_array_size")
 
 
+def restrict_qualifier(desc: data.Data, ctype: str) -> str:
+    """``__restrict__ `` for a pointer no other name in the same scope reaches, otherwise ``''``.
+
+    ``may_alias`` marks a descriptor deliberately reachable through a second pointer, so qualifying it promises the
+    compiler something the SDFG denies. An opaque handle is not a pointer type to qualify: ``MPI_Comm`` is a struct
+    pointer under OpenMPI but an int under MPICH, where the qualifier does not compile. A ctype that already carries
+    the qualifier must not get a second one.
+    """
+    if "__restrict__" in ctype or isinstance(desc.dtype, dtypes.opaque):
+        return ""
+    if isinstance(desc, data.Array) and desc.may_alias:
+        return ""
+    return "__restrict__ "
+
+
 def use_aligned_operator_new(desc: data.Data) -> bool:
     """Whether heap arrays are allocated with aligned ``operator new``.
 
@@ -2481,7 +2496,7 @@ class CPUCodeGen(TargetCodeGenerator):
                             # so don't append a second one — gcc rejects duplicate
                             # cv-qualifiers.
                             pruned_expr = replace_float_literals(expr)
-                            _restrict = "" if "__restrict__" in ctypedef else "__restrict__ "
+                            _restrict = restrict_qualifier(desc, ctypedef)
                             # A standalone unit gives its read-only parameters ``const`` pointees, so
                             # an alias of one has to carry it too: gcc rejects the assignment as
                             # ``discarded-qualifiers`` and g++ as an invalid conversion. Only
@@ -2497,7 +2512,7 @@ class CPUCodeGen(TargetCodeGenerator):
                     # be read if necessary.
                     memlet_type = "const %s" % memlet_type
                     if is_pointer:
-                        _restrict = "" if "__restrict__" in memlet_type else "__restrict__ "
+                        _restrict = restrict_qualifier(desc, memlet_type)
                         result += f"{memlet_type} {_restrict}{local_name} = {expr};"
                     elif cpf_lowering.standalone_c():
                         # C has no references. shortcut: the element is read even on a path that skips it; bind a
