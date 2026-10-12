@@ -489,7 +489,7 @@ def test_lift_einsum_leaves_a_copy_map_alone():
         external_edges=True,
     )
     assert sdfg.apply_transformations(LiftEinsum) == 0
-    assert not any(isinstance(n, Einsum) for n, _ in sdfg.all_nodes_recursive())
+    assert not any(isinstance(n, Einsum) for n, parent in sdfg.all_nodes_recursive())
 
 
 def test_matrix_vector_einsum_scratch_lives_where_its_output_lives():
