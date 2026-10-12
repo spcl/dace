@@ -3,7 +3,6 @@ from .argminmax import ArgMax, ArgMin
 from .broadcast import Broadcast
 from .code import CodeLibraryNode
 from .copy import CopyLibraryNode
-from .cshift import CShift
 from .fill import FillLibraryNode
 from .gearbox import Gearbox
 from .mask_reduction import AllNode, AnyNode, CountLibraryNode
