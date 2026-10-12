@@ -158,9 +158,54 @@ def test_a_boolean_guard_stays_a_symbol():
     assert R[0] == 1.0
 
 
+def float_guard_sdfg(also_store: bool) -> dace.SDFG:
+    """``g = A[0]; if g > 0.5: R[0] = 1`` (s275's ``if aa[0, i] > 0``), the branch also storing ``g`` if ``also_store``."""
+    sdfg = dace.SDFG(f"float_guard_{also_store}")
+    sdfg.add_symbol("g", dace.float64)
+    sdfg.add_array("A", [1], dace.float64)
+    sdfg.add_array("R", [1], dace.float64)
+    start = sdfg.add_state("start", is_start_block=True)
+    cond = ConditionalBlock("guarded")
+    branch = ControlFlowRegion("store")
+    body = branch.add_state(is_start_block=True)
+    write = body.add_tasklet("store", {}, {"o"}, "o = g" if also_store else "o = 1.0")
+    body.add_edge(write, "o", body.add_write("R"), None, dace.Memlet("R[0]"))
+    cond.add_branch(dace.properties.CodeBlock("g > 0.5"), branch)
+    sdfg.add_node(cond)
+    sdfg.add_edge(start, cond, dace.InterstateEdge(assignments={"g": "A[0]"}))
+    return sdfg
+
+
+def test_a_value_only_a_condition_reads_stays_a_symbol():
+    """A float that only selects a branch is control flow, as a boolean guard is: as a scalar, its read would join the
+    dataflow of the region it guards."""
+    sdfg = float_guard_sdfg(also_store=False)
+    sdfg.validate()
+    assert DemoteNonStructuralSymbols().apply_pass(sdfg, {}) is None
+    assert "g" in sdfg.symbols and "g" not in sdfg.arrays
+
+    R = np.zeros(1)
+    sdfg(A=np.array([0.9]), R=R)
+    assert R[0] == 1.0
+
+
+def test_a_condition_value_a_tasklet_also_reads_is_demoted():
+    """Read as data too, the same value is no longer only a guard and becomes a scalar."""
+    sdfg = float_guard_sdfg(also_store=True)
+    sdfg.validate()
+    assert DemoteNonStructuralSymbols().apply_pass(sdfg, {}) == 1
+    assert "g" in sdfg.arrays and "g" not in sdfg.symbols
+
+    R = np.zeros(1)
+    sdfg(A=np.array([0.9]), R=R)
+    assert R[0] == 0.9
+
+
 if __name__ == "__main__":
     test_a_counter_becomes_a_scalar_and_its_loop_maps()
     test_a_demoted_value_keeps_its_arithmetic_as_written()
     test_a_tasklet_reading_a_demoted_symbol_keeps_its_expression()
     test_an_index_read_inside_a_branch_condition_stays_a_symbol()
     test_a_boolean_guard_stays_a_symbol()
+    test_a_value_only_a_condition_reads_stays_a_symbol()
+    test_a_condition_value_a_tasklet_also_reads_is_demoted()

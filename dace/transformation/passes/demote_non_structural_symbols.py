@@ -8,7 +8,9 @@ merely updates it reads as carrying a symbol and stays sequential; as a scalar i
 and privatization passes handle.
 
 A boolean stays a symbol: it is almost always a branch guard, i.e. control flow, and as a scalar every condition that
-tests it becomes a data read the control-flow passes must carry along.
+tests it becomes a data read the control-flow passes must carry along. So does a value only conditions read
+(``g = aa[0, i]; if g > 0``): as a scalar its read joins the dataflow of the region it guards, where it blurs that
+region's dependences.
 """
 
 import ast
@@ -115,8 +117,30 @@ def is_boolean_symbol(sd: SDFG, name: str) -> bool:
     return bool(values) and all(boolean(value) for value in values)
 
 
+def guard_symbols(sd: SDFG) -> set[str]:
+    """The symbols ``sd`` reads only in conditions (a branch, a loop condition, an interstate edge's condition): no
+    interstate assignment and no tasklet reads them, so none is a counter updated from itself."""
+    in_condition: set[str] = set()
+    elsewhere: set[str] = set()
+    for region in sd.all_control_flow_regions():
+        if isinstance(region, ConditionalBlock):
+            for code in region.get_meta_codeblocks():
+                in_condition.update(code.get_free_symbols())
+        elif isinstance(region, LoopRegion) and region.loop_condition is not None:
+            in_condition.update(region.loop_condition.get_free_symbols())
+    for edge in sd.all_interstate_edges():
+        in_condition.update(edge.data.condition.get_free_symbols())
+        for value in edge.data.assignments.values():
+            elsewhere.update(node.id for node in ast.walk(ast.parse(value)) if isinstance(node, ast.Name))
+    for state in sd.states():
+        for node in state.nodes():
+            if isinstance(node, nodes.Tasklet):
+                elsewhere.update(node.free_symbols)
+    return in_condition - elsewhere
+
+
 def demote_symbols(sdfg: SDFG, candidates: Callable[[SDFG], Iterable[str]]) -> int:
-    """Demote to a transient scalar each non-boolean symbol ``candidates`` names in an SDFG of ``sdfg``, unless the graph's
+    """Demote to a transient scalar each non-boolean, non-guard symbol ``candidates`` names in an SDFG of ``sdfg``, unless the graph's
     structure is built from it (an array shape, a memlet subset, a map range, a loop's iteration domain, a nested
     SDFG's mapping) or it cannot become a transient.
 
@@ -131,8 +155,14 @@ def demote_symbols(sdfg: SDFG, candidates: Callable[[SDFG], Iterable[str]]) -> i
         structural: StructuralSymbols | None = None
         structural_stale = False
         free_syms: set[str] | None = None
+        guards: set[str] | None = None
         for name in candidates(sd):
             if name not in sd.symbols or is_boolean_symbol(sd, name):
+                continue
+            if guards is None:
+                # Demoting another name rewrites only that name's reads, so the set holds for the whole span
+                guards = guard_symbols(sd)
+            if name in guards:
                 continue
             if structural is None:
                 structural = StructuralSymbols()
