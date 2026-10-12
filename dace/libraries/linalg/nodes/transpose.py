@@ -6,7 +6,7 @@ import dace.library
 import dace.properties
 import dace.sdfg.nodes
 from dace import symbolic
-from dace.codegen.common import global_code_id
+from dace.codegen.common import global_code_id, sym2cpp
 from dace.libraries.blas import blas_helpers
 from dace.libraries.blas import environments as blas_environments
 from dace.libraries.blas.environments import openblas
@@ -51,24 +51,14 @@ def _is_single_element(node, state, sdfg) -> bool:
     return symbolic.equal(m * n, 1) is True
 
 
-def _is_blas_packed(node, state, sdfg) -> bool:
-    """``True`` when both operands have the packed layout the omatcopy / geam calls below assume.
-
-    Those calls state the leading dimension as the operand's own extent -- ``lda = n`` for the
-    ``m x n`` input, ``ldb = m`` for the ``n x m`` output -- which is the stride of a matrix packed
-    row after row with nothing between. A VIEW is not that: ``pos[:, 0:1]`` is an ``(N, 1)`` operand
-    whose consecutive elements sit ``3`` apart, and the call then walks the wrong memory and answers
-    plausible wrong numbers (the npbench ``nbody`` regression). The innermost stride is checked for
-    the same reason and admits no leading dimension at all: no ``ld`` can express a gap INSIDE a row.
-
-    A stride that is only symbolically equal to the packed one answers ``None``, which reads as
-    False and keeps the operand on the element-wise expansion -- the safe side.
-    """
-    _, _, (m, n), (in_row, in_elem) = _get_transpose_input(node, state, sdfg)
-    _, _, _, (out_row, out_elem) = _get_transpose_output(node, state, sdfg)
-    return all(
-        symbolic.equal(have, want) is True for have, want in ((in_elem, 1), (out_elem, 1), (in_row, n), (out_row, m))
-    )
+def _leading_dimensions(node, state, sdfg):
+    """The row strides of the row-major input and output, which BLAS takes as their leading dimensions, or ``None``
+    if a row is not contiguous (a vendor transpose cannot read it; the pure expansion can)."""
+    _, _, _, (in_row, in_col) = _get_transpose_input(node, state, sdfg)
+    _, _, _, (out_row, out_col) = _get_transpose_output(node, state, sdfg)
+    if in_col != 1 or out_col != 1:
+        return None
+    return sym2cpp(in_row), sym2cpp(out_row)
 
 
 @dace.library.expansion
@@ -152,9 +142,11 @@ class ExpandTransposeMKL(ExpandTransformation):
         if _is_single_element(node, state, sdfg):
             return ExpandTransposePure.make_sdfg(node, state, sdfg)
 
-        # A strided operand is not the packed matrix the call states (see :func:`_is_blas_packed`).
-        if not _is_blas_packed(node, state, sdfg):
+        # A row that is not contiguous has no leading dimension (see :func:`_leading_dimensions`).
+        leading = _leading_dimensions(node, state, sdfg)
+        if leading is None:
             return ExpandTransposePure.make_sdfg(node, state, sdfg)
+        lda, ldb = leading
 
         # Fall back to native implementation if input and output types are not the same
         if (
@@ -185,7 +177,7 @@ class ExpandTransposeMKL(ExpandTransformation):
             return ExpandTransposePure.expansion(node, state, sdfg)
 
         _, _, (m, n), _ = _get_transpose_input(node, state, sdfg)
-        code = f"mkl_{func}('R', 'T', {m}, {n}, {alpha}, {cast}_inp, {n}, {cast}_out, {m});"
+        code = f"mkl_{func}('R', 'T', {m}, {n}, {alpha}, {cast}_inp, {lda}, {cast}_out, {ldb});"
         tasklet = dace.sdfg.nodes.Tasklet(
             node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
         )
@@ -204,9 +196,11 @@ class ExpandTransposeOpenBLAS(ExpandTransformation):
         if _is_single_element(node, state, sdfg):
             return ExpandTransposePure.make_sdfg(node, state, sdfg)
 
-        # A strided operand is not the packed matrix the call states (see :func:`_is_blas_packed`).
-        if not _is_blas_packed(node, state, sdfg):
+        # A row that is not contiguous has no leading dimension (see :func:`_leading_dimensions`).
+        leading = _leading_dimensions(node, state, sdfg)
+        if leading is None:
             return ExpandTransposePure.make_sdfg(node, state, sdfg)
+        lda, ldb = leading
 
         # Fall back to native implementation if input and output types are not the same
         if (
@@ -250,7 +244,7 @@ class ExpandTransposeOpenBLAS(ExpandTransformation):
         # Adaptations for BLAS API
         order = "CblasRowMajor"
         trans = "CblasTrans"
-        code = f"cblas_{func}({order}, {trans}, {m}, {n}, {cast}{alpha}, {cast}_inp, {n}, {cast}_out, {m});"
+        code = f"cblas_{func}({order}, {trans}, {m}, {n}, {cast}{alpha}, {cast}_inp, {lda}, {cast}_out, {ldb});"
         tasklet = dace.sdfg.nodes.Tasklet(
             node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
         )
@@ -277,9 +271,11 @@ class ExpandTransposeGPUBLAS(ExpandTransformation):
         if _is_single_element(node, state, sdfg):
             return ExpandTransposePure.make_sdfg(node, state, sdfg)
 
-        # A strided operand is not the packed matrix the call states (see :func:`_is_blas_packed`).
-        if not _is_blas_packed(node, state, sdfg):
+        # A row that is not contiguous has no leading dimension (see :func:`_leading_dimensions`).
+        leading = _leading_dimensions(node, state, sdfg)
+        if leading is None:
             return ExpandTransposePure.make_sdfg(node, state, sdfg)
+        lda, ldb = leading
 
         # Fall back to native implementation if input and output types are not the same
         if (
@@ -302,14 +298,13 @@ class ExpandTransposeGPUBLAS(ExpandTransformation):
 
         alpha = f"__state->{cls.handle_field}.Constants().{factort}Pone()"
         beta = f"__state->{cls.handle_field}.Constants().{factort}Zero()"
-        _, _, (m, n), (istride, _) = _get_transpose_input(node, state, sdfg)
-        _, _, _, (ostride, _) = _get_transpose_output(node, state, sdfg)
+        _, _, (m, n), _ = _get_transpose_input(node, state, sdfg)
 
         code = (
             cls.environments[0].handle_setup_code(node)
             + f"""{cls.check_error}({cls.funcname(func)}(
                     {cls.handle}, {cls.op("T")}, {cls.op("N")},
-                    {m}, {n}, {alpha}, ({cdtype}*)_inp, {n}, {beta}, ({cdtype}*)_inp, {m}, ({cdtype}*)_out, {m}));
+                    {m}, {n}, {alpha}, ({cdtype}*)_inp, {lda}, {beta}, ({cdtype}*)_inp, {m}, ({cdtype}*)_out, {ldb}));
                 """
         )
 
