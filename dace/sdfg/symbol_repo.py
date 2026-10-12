@@ -20,6 +20,7 @@ from dace.symbolic_facts import (
     Predicate,
     Relation,
     RelationKind,
+    Scale,
     predicate_relation,
     relation_names,
 )
@@ -183,10 +184,15 @@ class SymbolRepo:
     The symbols of one SDFG. ``params`` declares the names passed in from outside; ``scopes`` holds what is declared
     for the names a loop, scope entry or interstate edge opens, only for owners that declare something. Which scopes
     enclose a point, and the facts holding there, come from the graph (``SymbolResolver.facts_at``).
+
+    ``small`` names the parameters of ``Scale.SMALL``; ``runtime_assumptions`` are the orders proofs took from the
+    scales, which the compiled program checks on every call.
     """
 
     params: Scope = field(default_factory=Scope)
     scopes: dict[ScopeOwner, Scope] = field(default_factory=dict)
+    small: OrderedSet[str] = field(default_factory=lambda: OrderedSet[str]([]))
+    runtime_assumptions: OrderedSet[Relation] = field(default_factory=lambda: OrderedSet[Relation]([]))
 
     def scope(self, at: ScopeOwner | None) -> Scope:
         """The declarations of ``at`` (``None``: the parameters), created empty on first use."""
@@ -195,8 +201,23 @@ class SymbolRepo:
         return self.scopes.setdefault(at, Scope())
 
     def facts(self) -> Facts:
-        """The facts of the parameters, for explicit use in proofs."""
-        return scope_facts(self.params)
+        """The facts of the parameters, for explicit use in proofs; orders proven from scales are recorded here."""
+        own = scope_facts(self.params)
+        return Facts(
+            own.relations, own.integers, frozenset(self.small), frozenset(self.params.types), self.runtime_assumptions
+        )
+
+    def set_scale(self, name: str, scale: Scale) -> None:
+        """Sets the scale of a declared parameter.
+
+        :raise KeyError: If the parameter is not declared.
+        """
+        if name not in self.params.types:
+            raise KeyError(f'Symbol "{name}" is not declared')
+        if scale is Scale.SMALL:
+            self.small.add(name)
+        else:
+            self.small.discard(name)
 
     def add(
         self,
@@ -277,11 +298,25 @@ class SymbolRepo:
             raise ValueError(f'Cannot remove symbol "{name}": the relations {mentioning} still name it')
         scope.predicates.pop(name, None)
         del scope.types[name]
+        if at is None:
+            self.small.discard(name)
 
     def replace(self, names: dict[str, str], replacements: Mapping[str, symbolic.SymbolicType]) -> None:
         """Renames declared names (``names``) in every scope, as ``SDFG.replace_dict`` does in the whole graph, and
         rewrites the relations. A name replaced by an expression becomes relations over it; a parameter's free symbols
         are declared with its dtype."""
+        self.runtime_assumptions = OrderedSet(
+            Relation(
+                relation.kind,
+                symbolic.replace_symbols(relation.lhs, replacements),
+                symbolic.replace_symbols(relation.rhs, replacements),
+            )
+            for relation in self.runtime_assumptions
+        )
+        # A parameter replaced by an expression has the scale of the expression
+        self.small = OrderedSet(
+            names.get(name, name) for name in self.small if name not in names or validate_name(names[name])
+        )
         for owner, scope in [(None, self.params), *self.scopes.items()]:
             scope.relations = OrderedSet(
                 Relation(
@@ -330,6 +365,10 @@ class SymbolRepo:
             visible = self.params.types.keys() | (bound if owner is not None else set())
             if not named <= visible:
                 raise InvalidSDFGError(f"Symbol facts name undeclared symbols {sorted(named - visible)}", sdfg, None)
+        if not set(self.small) <= self.params.types.keys():
+            raise InvalidSDFGError(
+                f"SMALL symbols {sorted(set(self.small) - self.params.types.keys())} are not declared", sdfg, None
+            )
         try:
             self.facts()
         except InconsistentAssumptionsError as error:
@@ -339,6 +378,10 @@ class SymbolRepo:
         """Serializes the repository with its scopes keyed by the position of their owners in ``sdfg``. A scope whose
         owner is no longer in ``sdfg`` is left out; validation reports it."""
         result: dict[str, Any] = {"params": scope_to_json(self.params)}
+        if self.small:
+            result["small"] = list(self.small)
+        if self.runtime_assumptions:
+            result["runtime_assumptions"] = [relation_to_json(relation) for relation in self.runtime_assumptions]
         keys = {owner: key for key, owner in scope_owners(sdfg)} if self.scopes else {}
         live = [(keys[owner], scope) for owner, scope in self.scopes.items() if owner in keys]
         if live:
@@ -359,4 +402,63 @@ class SymbolRepo:
         return cls(
             scope_from_json(obj["params"], context),
             {owner_at(scope["owner"]): scope_from_json(scope, context) for scope in obj.get("scopes", [])},
+            OrderedSet(obj.get("small", [])),
+            OrderedSet(relation_from_json(relation) for relation in obj.get("runtime_assumptions", [])),
         )
+
+
+def program_assumptions(sdfg: "SDFG") -> list[Relation]:
+    """The runtime assumptions of ``sdfg`` and of the SDFGs nested in it, over the symbols of ``sdfg``, in a fixed
+    order: nested ones are translated through each nesting node's symbol mapping, and constants are substituted."""
+    assumptions = OrderedSet(sdfg.symbol_repo.runtime_assumptions)
+    for state in sdfg.all_states():
+        for node in state.nodes():
+            if not isinstance(node, nodes.NestedSDFG):
+                continue
+            mapped = {name: symbolic.pystr_to_symbolic(value) for name, value in node.symbol_mapping.items()}
+            assumptions.update(
+                Relation(
+                    relation.kind,
+                    symbolic.replace_symbols(relation.lhs, mapped),
+                    symbolic.replace_symbols(relation.rhs, mapped),
+                )
+                for relation in program_assumptions(node.sdfg)
+            )
+    constants = {name: value for name, value in sdfg.constants.items() if name not in sdfg.arrays}
+    return [
+        Relation(
+            relation.kind,
+            symbolic.replace_symbols(relation.lhs, constants),
+            symbolic.replace_symbols(relation.rhs, constants),
+        )
+        for relation in assumptions
+    ]
+
+
+def assumption_check(name: str, params: str, assumptions: list[Relation], readable: set[str]) -> str:
+    """C++ of ``__dace_check_assumptions_<name>``, which returns the 1-based index of the first assumption that does not
+    hold for the symbol values it is given (the parameters of ``__dace_init_<name>``), or 0.
+
+    :raise ValueError: If an assumption names a symbol the program does not take.
+    """
+    lines = []
+    for index, relation in enumerate(assumptions, start=1):
+        unreadable = relation_names(relation) - readable
+        if unreadable:
+            raise ValueError(
+                f"Runtime assumption {relation_text(relation)} names {sorted(unreadable)}, which {name} does not take"
+            )
+        lhs, rhs = (symbolic.symstr(side, cpp_mode=True) for side in (relation.lhs, relation.rhs))
+        lines.append(f"    if (!({lhs} < {rhs})) return {index};")
+    body = "\n".join(lines)
+    return f"""
+DACE_EXPORTED int __dace_check_assumptions_{name}({params})
+{{
+{body}
+    return 0;
+}}
+"""
+
+
+def relation_text(relation: Relation) -> str:
+    return f"{relation.lhs} < {relation.rhs}"

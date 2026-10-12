@@ -1113,7 +1113,12 @@ class SDFG(ControlFlowRegion):
         super().replace_dict(repldict, symrepl, replace_in_graph, replace_keys)
 
     def add_symbol(
-        self, name, stype=None, find_new_name: bool = False, predicates: frozenset[symbolic.Predicate] = frozenset()
+        self,
+        name,
+        stype=None,
+        find_new_name: bool = False,
+        predicates: frozenset[symbolic.Predicate] = frozenset(),
+        scale: symbolic.Scale = symbolic.Scale.DEFAULT,
     ):
         """Adds a symbol to the SDFG. Adding a symbol again with the same type and predicates does nothing.
 
@@ -1121,12 +1126,18 @@ class SDFG(ControlFlowRegion):
         :param stype: Symbol type.
         :param find_new_name: Find a new name.
         :param predicates: Sign predicates assumed for the symbol.
+        :param scale: ``Scale.SMALL`` makes the symbol much smaller than every default one; see ``set_symbol_scale``.
         :raise NameCollisionError: If the name is used by a data descriptor.
         :raise InconsistentAssumptionsError: If the symbol exists with another type or other predicates, or the
                                              predicates contradict the SDFG's facts.
         """
         if isinstance(name, symbolic.symbol):
-            name, stype, predicates = name.name, name.declaration.dtype, name.declaration.predicates
+            name, stype, predicates, scale = (
+                name.name,
+                name.declaration.dtype,
+                name.declaration.predicates,
+                name.declaration.scale,
+            )
         dtype = stype if isinstance(stype, dtypes.typeclass) else dtypes.dtype_to_typeclass(stype)
         if not isinstance(dtype, dtypes.typeclass):
             raise TypeError(f'Invalid type {stype} for symbol "{name}"')
@@ -1140,7 +1151,17 @@ class SDFG(ControlFlowRegion):
                 f'Cannot create symbol "{name}", a loop or map scope binds it; its facts come from the scope.'
             )
         self._symbol_repo.add(name, dtype, predicates)
+        if scale is symbolic.Scale.SMALL:
+            self._symbol_repo.set_scale(name, scale)
         return name
+
+    def set_symbol_scale(self, name: str, scale: symbolic.Scale) -> None:
+        """Sets the scale of a declared symbol. Proofs may take every ``SMALL`` symbol to be much smaller than every
+        default one (``<<``, which implies ``<``); each order proven so is checked when the program is called.
+
+        :raise KeyError: If the symbol is not declared.
+        """
+        self._symbol_repo.set_scale(name, scale)
 
     def set_symbol_assumptions(self, name: str, predicates: frozenset[symbolic.Predicate]) -> None:
         """Replaces the sign predicates assumed for a declared symbol.
@@ -1176,7 +1197,7 @@ class SDFG(ControlFlowRegion):
         if not extents:
             return own
         nonnegative = [symbolic.predicate_relation(symbolic.Predicate.NONNEGATIVE, symbolic.symbol(n)) for n in extents]
-        return symbolic.Facts((*own.relations, *nonnegative), own.integers)
+        return own.with_relations(nonnegative)
 
     @property
     def symbol_repo(self) -> SymbolRepo:
@@ -1704,6 +1725,9 @@ class SDFG(ControlFlowRegion):
             free_syms |= symbolic.symbols_in_code(code.as_string, declared)
         for code in self.exit_code.values():
             free_syms |= symbolic.symbols_in_code(code.as_string, declared)
+        # The program checks the orders it was optimized under, so it takes their symbols
+        for relation in self._symbol_repo.runtime_assumptions:
+            free_syms |= symbolic.relation_names(relation)
 
         # Snapshot the set so super() can filter array names out of
         # ``free_syms``; we re-extract them from internal references below.

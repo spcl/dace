@@ -245,6 +245,15 @@ class CompiledSDFG:
         # Present exactly when a GPU target emitted its init/exit pair, which is a sharper test than
         # the ``has_gpu_code`` heuristic below.
         self._gpu_last_error = self.get_exported_function("__dace_gpu_last_error", restype=ctypes.c_int)
+        # Avoid import loop
+        from dace.sdfg.symbol_repo import program_assumptions
+
+        # The orders proofs took from symbol scales, checked against the symbol values of every call
+        self._assumptions = program_assumptions(sdfg)
+        self._check_assumptions = (
+            lib.get_symbol(f"__dace_check_assumptions_{sdfg.name}", restype=ctypes.c_int) if self._assumptions else None
+        )
+        self._initarg_names: tuple[str, ...] = ()
 
         # Cache SDFG return values
         self._return_syms: dict[str, Any] = None
@@ -604,6 +613,8 @@ with open(r"{temp_path}", "wb") as f:
         :note: This is an advanced interface.
         :note: In previous versions this function also called ``convert_return_values()``.
         """
+        if self._check_assumptions is not None:
+            self._raise_on_broken_assumption(initargs)
         try:
             # Call initializer function if necessary, then SDFG
             if self._initialized is False:
@@ -627,6 +638,22 @@ with open(r"{temp_path}", "wb") as f:
             self._lib.unload()
             self._initialized = False
             raise
+
+    def _raise_on_broken_assumption(self, initargs: Sequence[Any]) -> None:
+        """Raises if the symbol values break an order a transformation took from the symbol scales."""
+        broken = self._check_assumptions(*initargs)
+        if broken == 0:
+            return
+        relation = self._assumptions[broken - 1]
+        values = ", ".join(
+            f"{name}={getattr(value, 'value', value)}"
+            for name, value in zip(self._initarg_names, initargs)
+            if name in symbolic.relation_names(relation)
+        )
+        raise ValueError(
+            f'"{self._sdfg.name}" was optimized assuming {relation.lhs} < {relation.rhs} (SMALL symbols are much '
+            f"smaller than the others), which does not hold for {values}"
+        )
 
     def __del__(self):
         if self._initialized is True:
@@ -722,6 +749,7 @@ with open(r"{temp_path}", "wb") as f:
         )
         newargs = tuple(carg for carg, _aname in callparams)
         initargs = tuple(carg for carg, aname in callparams if aname in symbols)
+        self._initarg_names = tuple(aname for _carg, aname in callparams if aname in symbols)
 
         return (newargs, initargs)
 

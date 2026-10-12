@@ -6,6 +6,7 @@ from collections.abc import Iterable
 from typing import NamedTuple, cast
 
 import sympy
+from ordered_set import OrderedSet
 
 from dace import symbolic
 
@@ -20,6 +21,14 @@ class Predicate(enum.Enum):
     NONZERO = enum.auto()
 
 
+class Scale(enum.Enum):
+    """How large a symbol's values are. Every ``SMALL`` symbol is much smaller than every ``DEFAULT`` one; a proof that
+    relies on this records the relation, and the compiled program checks it on every call."""
+
+    SMALL = enum.auto()
+    DEFAULT = enum.auto()
+
+
 class RelationKind(enum.Enum):
     LT = enum.auto()
     LE = enum.auto()
@@ -27,6 +36,8 @@ class RelationKind(enum.Enum):
     NE = enum.auto()
     #: ``lhs`` divides ``rhs``: ``rhs`` is ``lhs`` times an integer
     DIVIDES = enum.auto()
+    #: ``lhs << rhs``, which implies ``lhs < rhs``; ``lhs >> rhs`` is ``rhs << lhs``
+    MUCH_LT = enum.auto()
 
 
 class Relation(NamedTuple):
@@ -82,18 +93,42 @@ class Facts:
     which rewrites a symbol as an expression of nonnegative slack variables; ``slacks`` gives each slack as the difference
     of its relation, ``residuals`` the bounds (expressions ``>= 0``) of slacks solved away, and ``nonzero`` keeps the
     ``!=`` facts.
+
+    ``small`` names the ``SMALL`` symbols and ``parameters`` the symbols a check at program entry can read; an order
+    proven only from their scales is added to ``assumed``, the runtime assumptions of the SDFG the facts belong to.
+    Without ``assumed``, scales prove nothing.
     """
 
-    __slots__ = ("relations", "integers", "substitution", "slacks", "residuals", "nonzero")
+    __slots__ = (
+        "relations",
+        "integers",
+        "small",
+        "parameters",
+        "assumed",
+        "substitution",
+        "slacks",
+        "residuals",
+        "nonzero",
+    )
 
     relations: tuple[Relation, ...]
     integers: frozenset[str]
+    small: frozenset[str]
+    parameters: frozenset[str]
+    assumed: OrderedSet[Relation] | None
     substitution: dict[sympy.Symbol, sympy.Expr]
     slacks: dict[sympy.Dummy, sympy.Expr]
     residuals: tuple[sympy.Expr, ...]
     nonzero: tuple[sympy.Expr, ...]
 
-    def __init__(self, relations: Iterable[Relation], integers: frozenset[str]) -> None:
+    def __init__(
+        self,
+        relations: Iterable[Relation],
+        integers: frozenset[str],
+        small: frozenset[str] = frozenset(),
+        parameters: frozenset[str] = frozenset(),
+        assumed: OrderedSet[Relation] | None = None,
+    ) -> None:
         # A canonical order, so that what is proven does not depend on the order the facts were given in
         self.relations = tuple(
             sorted(
@@ -102,6 +137,9 @@ class Facts:
             )
         )
         self.integers = integers
+        self.small = small
+        self.parameters = parameters
+        self.assumed = assumed
         self.substitution, self.slacks, self.residuals = eliminate(self.relations, integers)
         self.nonzero = tuple(
             reduced(relation, integers, self.substitution)
@@ -113,12 +151,19 @@ class Facts:
     def none(cls) -> "Facts":
         return cls((), frozenset())
 
-    # Determined by its relations and integers, so equal facts share cached proofs
+    def with_relations(self, relations: Iterable[Relation]) -> "Facts":
+        """These facts with more relations, the same scales, recording into the same assumptions."""
+        return Facts((*self.relations, *relations), self.integers, self.small, self.parameters, self.assumed)
+
+    # Determined by what it assumes, so equal facts share cached proofs; where proofs are recorded is no part of it
+    def key(self) -> tuple[object, ...]:
+        return (self.relations, self.integers, self.small, self.parameters)
+
     def __eq__(self, other: object) -> bool:
-        return isinstance(other, Facts) and (self.relations, self.integers) == (other.relations, other.integers)
+        return isinstance(other, Facts) and self.key() == other.key()
 
     def __hash__(self) -> int:
-        return hash((self.relations, self.integers))
+        return hash(self.key())
 
     def assumptions(self, name: str) -> dict[str, bool]:
         """The SymPy assumptions the facts prove for the symbol ``name``: integrality from its dtype, and a sign."""
@@ -228,7 +273,7 @@ def eliminate(
             sympy.sympify(side).atoms(sympy.Mod) for side in (relation.lhs, relation.rhs)
         ):
             continue
-        kind = relation.kind
+        kind = RelationKind.LT if relation.kind is RelationKind.MUCH_LT else relation.kind
         if kind is RelationKind.DIVIDES:
             # The multiple equals the divisor times an integer quotient
             divisor, multiple = (rewritten(side, integers, substitution) for side in (relation.lhs, relation.rhs))
@@ -410,7 +455,7 @@ def by_cases(expr: sympy.Expr, kind: RelationKind, extremum: sympy.Expr, facts: 
             for other in others
         ]
         try:
-            case_facts = Facts(facts.relations + tuple(case), facts.integers)
+            case_facts = facts.with_relations(case)
         except InconsistentAssumptionsError:
             continue  # The argument is never the extremum
         truths.add(ask(Relation(kind, sympy.Integer(0), cast(sympy.Expr, expr.xreplace({extremum: arg}))), case_facts))
@@ -427,7 +472,64 @@ def divides(query: Relation, facts: Facts) -> Truth:
     return Truth.FALSE if divisor.is_number and multiple.is_number else Truth.UNKNOWN
 
 
+def is_small(expr: sympy.Expr, facts: Facts) -> bool:
+    """Whether every symbol of ``expr`` is ``SMALL``; an expression of literals only has the default scale."""
+    names = {str(free) for free in sympy.sympify(expr).free_symbols}
+    return bool(names) and names <= facts.small
+
+
+def is_large(expr: sympy.Expr, facts: Facts) -> bool:
+    """Whether ``expr`` grows with a ``DEFAULT`` parameter: every term naming one has a positive coefficient, and it
+    names parameters only."""
+    expr = sympy.expand(sympy.sympify(expr))
+    names = {str(free) for free in expr.free_symbols}
+    large = names - facts.small
+    if not large or not names <= facts.parameters:
+        return False
+    terms = [term for term in sympy.Add.make_args(expr) if {str(free) for free in term.free_symbols} & large]
+    return all(cast(sympy.Expr, term.as_coeff_Mul()[0]).is_positive for term in terms)
+
+
+def much_less(lhs: sympy.Expr, rhs: sympy.Expr, facts: Facts) -> bool:
+    """Whether ``lhs << rhs`` follows from the scales: ``lhs`` is small and ``rhs`` large, both over parameters."""
+    return (
+        facts.assumed is not None
+        and is_small(lhs, facts)
+        and {str(free) for free in sympy.sympify(lhs).free_symbols} <= facts.parameters
+        and is_large(rhs, facts)
+    )
+
+
 def ask(query: Relation, facts: Facts) -> Truth:
+    """Whether the query holds under the facts. An order proven only from scales (``lhs << rhs``) is TRUE, and is
+    recorded in ``facts.assumed``, so that the program checks it before it runs."""
+    if query.kind is RelationKind.MUCH_LT:
+        if query in facts.relations:
+            return Truth.TRUE
+        if prove(Relation(RelationKind.LE, query.rhs, query.lhs), facts) is Truth.TRUE:
+            return Truth.FALSE
+        return assume(Relation(RelationKind.LT, query.lhs, query.rhs), facts)
+    answer = prove(query, facts)
+    if answer is not Truth.UNKNOWN or query.kind not in (RelationKind.LT, RelationKind.LE):
+        return answer
+    if (truth := assume(Relation(RelationKind.LT, query.lhs, query.rhs), facts)) is Truth.TRUE:
+        return truth
+    if assume(Relation(RelationKind.LT, query.rhs, query.lhs), facts) is Truth.TRUE:
+        return Truth.FALSE
+    return Truth.UNKNOWN
+
+
+def assume(order: Relation, facts: Facts) -> Truth:
+    """TRUE, recording ``order`` (``lhs < rhs``), when the scales make ``lhs << rhs``; UNKNOWN otherwise."""
+    if not much_less(order.lhs, order.rhs, facts):
+        return Truth.UNKNOWN
+    assert facts.assumed is not None  # checked by much_less
+    facts.assumed.add(order)
+    return Truth.TRUE
+
+
+def prove(query: Relation, facts: Facts) -> Truth:
+    """Whether the query follows from the relations alone."""
     if query.kind is RelationKind.DIVIDES:
         return divides(query, facts)
     expr = cast(sympy.Expr, sympy.sympify(query.rhs - query.lhs))

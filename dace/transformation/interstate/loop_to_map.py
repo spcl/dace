@@ -379,12 +379,17 @@ class LoopToMap(xf.MultiStateTransformation):
 
     loop = xf.PatternNode(LoopRegion)
 
+    keep_small_loops_sequential = properties.Property(
+        dtype=bool,
+        default=True,
+        desc="Leave a loop whose iteration range spans only SMALL symbols (e.g. ``range(n1 + n2)``) sequential",
+    )
+
     @classmethod
     def expressions(cls):
         return [sdutil.node_path_graph(cls.loop)]
 
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
-
         # If loop information cannot be determined, fail.
         start = loop_analysis.get_init_assignment(self.loop)
         end = loop_analysis.get_loop_end(self.loop)
@@ -398,6 +403,9 @@ class LoopToMap(xf.MultiStateTransformation):
         sset.update(sdfg.arrays)
         t = dtypes.result_type_of(infer_expr_type(start, sset), infer_expr_type(step, sset), infer_expr_type(end, sset))
         if not t in dtypes.INTEGER_TYPES:
+            return False
+
+        if self.keep_small_loops_sequential and symbolic.is_small(end - start, SymbolResolver().facts_at(self.loop)):
             return False
 
         # Loops containing break, continue, or returns may not be turned into a map.

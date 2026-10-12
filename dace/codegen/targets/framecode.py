@@ -18,6 +18,7 @@ from dace.sdfg import SDFG, SDFGState, nodes, utils
 from dace.sdfg import scope as sdscope
 from dace.sdfg.analysis import cfg as cfg_analysis
 from dace.sdfg.state import AbstractControlFlowRegion, ControlFlowBlock, ControlFlowRegion, LoopRegion, SymbolResolver
+from dace.sdfg.symbol_repo import assumption_check, program_assumptions
 from dace.sdfg.type_inference import infer_expr_type
 from dace.transformation.passes.analysis import StateReachability, loop_analysis
 
@@ -341,12 +342,22 @@ struct {mangle_dace_state_struct_name(sdfg)} {{
                     sdfg,
                 )
 
+        # The orders proofs took from symbol scales; init refuses symbol values that break one
+        assumptions = program_assumptions(sdfg)
+        if assumptions:
+            readable = {name for name in self.free_symbols(sdfg) if not name.startswith("__dace")}
+            callsite_stream.write(assumption_check(sdfg.name, initparams, assumptions, readable), sdfg)
+
         callsite_stream.write(
             f"""
 DACE_EXPORTED {mangle_dace_state_struct_name(sdfg)} *__dace_init_{sdfg.name}({initparams})
 {{""",
             sdfg,
         )
+        if assumptions:
+            callsite_stream.write(
+                f"    if (__dace_check_assumptions_{sdfg.name}({initparamnames}) != 0) return nullptr;\n", sdfg
+            )
 
         # Invoke all instrumentation providers
         for instr in self._dispatcher.instrumentation.values():

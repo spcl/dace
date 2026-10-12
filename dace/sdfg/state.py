@@ -2765,9 +2765,11 @@ class SymbolResolver:
 
         sdfg = block.sdfg
         own = sdfg.facts()
-        relations, integers = self.outer_facts(sdfg)
+        relations, integers, small, unreadable = self.outer_facts(sdfg)
         relations.extend(own.relations)
         integers |= own.integers
+        small |= own.small
+        parameters = own.parameters - unreadable
         scopes: list[tuple[Any, dict[str, dtypes.typeclass], list[tuple[str, Any, Any, Any]]]] = []
         region = block
         while region is not None and region is not sdfg:
@@ -2801,6 +2803,8 @@ class SymbolResolver:
         for owner, bound, ranges in scopes:
             # A scope rebinds its names: what held for an outer symbol of the same name no longer does
             relations = [relation for relation in relations if not symbolic.relation_names(relation) & bound.keys()]
+            small -= bound.keys()
+            parameters -= bound.keys()
             integers = (integers - bound.keys()) | {
                 name for name, stype in bound.items() if stype in dtypes.INTEGER_TYPES
             }
@@ -2818,16 +2822,23 @@ class SymbolResolver:
                 declared = scope_facts(sdfg.symbol_repo.scopes[owner])
                 relations.extend(declared.relations)
                 integers |= declared.integers
-        return symbolic.Facts(tuple(relations), frozenset(integers))
+        return symbolic.Facts(
+            tuple(relations), frozenset(integers), frozenset(small), frozenset(parameters), own.assumed
+        )
 
-    def outer_facts(self, sdfg: "SDFG") -> tuple[list[symbolic.Relation], set[str]]:
+    def outer_facts(self, sdfg: "SDFG") -> tuple[list[symbolic.Relation], set[str], set[str], frozenset[str]]:
         """The facts at the node nesting ``sdfg``, over renamed outer symbols, with each mapped symbol equal to its
-        renamed expression."""
+        renamed expression; and the mapped symbols that are ``SMALL`` there, and those a check at program entry cannot
+        read (their values come from more than the outer parameters)."""
         nsdfg = sdfg.parent_nsdfg_node
         if nsdfg is None:
-            return [], set()
+            return [], set(), set(), frozenset()
         outer = self.facts_at(sdfg.parent, nsdfg)
         mapped = {name: symbolic.pystr_to_symbolic(value) for name, value in nsdfg.symbol_mapping.items()}
+        small = {name for name, value in mapped.items() if symbolic.is_small(value, outer)}
+        unreadable = frozenset(
+            name for name, value in mapped.items() if not {str(f) for f in value.free_symbols} <= outer.parameters
+        )
         names = {name for relation in outer.relations for name in symbolic.relation_names(relation)}
         names |= {str(free) for value in mapped.values() for free in value.free_symbols}
         # ':' cannot appear in a DaCe name, so a renamed outer symbol never meets an inner one
@@ -2844,7 +2855,7 @@ class SymbolResolver:
             symbolic.Relation(symbolic.RelationKind.EQ, symbolic.symbol(name), symbolic.replace_symbols(value, renamed))
             for name, value in mapped.items()
         ]
-        return relations, {f"outer:{name}" for name in outer.integers}
+        return relations, {f"outer:{name}" for name in outer.integers}, small, unreadable
 
     def forget(self, sdfg: "SDFG") -> None:
         """Drops what was resolved for the states of an SDFG, after its symbols or data descriptors changed.
