@@ -11,6 +11,9 @@ from dace.transformation import helpers as xfh
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 
+#: Storages a Persistent allocation can live in; the rest (registers, pinned, thread-local, shared) are scoped.
+PERSISTENT_STORAGES = (dtypes.StorageType.CPU_Heap, dtypes.StorageType.GPU_Global, dtypes.StorageType.Default)
+
 #: Lifetimes a promotion would DEMOTE: Global belongs to the program, External to the caller.
 STRONGER_THAN_PERSISTENT = (
     dtypes.AllocationLifetime.Persistent,
@@ -70,6 +73,14 @@ def size_symbols_at_root(nsdfg: SDFG, names: set[str]) -> set[str] | None:
             outer |= {str(s) for s in symbolic.pystr_to_symbolic(str(mapping[name])).free_symbols}
         resolved, current = outer, current.parent_sdfg
     return resolved
+
+
+def is_unit(extent, cache: dict[Any, bool]) -> bool:
+    """Whether ``extent`` is provably one. Cached: few distinct extents recur across all transients (cloudsc: 5516
+    queries, 6 distinct), and each query can reach sympy's SAT solver."""
+    if extent not in cache:
+        cache[extent] = symbolic.equal(extent, 1) is True
+    return cache[extent]
 
 
 def size_is_program_wide(nsdfg: SDFG, desc: dt.Data, allowed: set[str]) -> bool:
@@ -132,15 +143,16 @@ class MakeTransientsPersistent(ppl.Pass):
         :return: cfg_id -> names promoted in it, or None if nothing was promoted.
         """
         allowed = persistent_size_symbols(sdfg)
+        unit_extents: dict[Any, bool] = {}
         result: dict[int, set[str]] = {}
         for nsdfg in sdfg.all_sdfgs_recursive():
-            promoted = self._promote_in(nsdfg, allowed)
+            promoted = self._promote_in(nsdfg, allowed, unit_extents)
             for name in promoted:
                 nsdfg.arrays[name].lifetime = dtypes.AllocationLifetime.Persistent
             result[nsdfg.cfg_id] = promoted
         return result if any(result.values()) else None
 
-    def _promote_in(self, nsdfg: SDFG, allowed: set[str]) -> set[str]:
+    def _promote_in(self, nsdfg: SDFG, allowed: set[str], unit_extents: dict[Any, bool]) -> set[str]:
         """The names in ``nsdfg`` that every one of their access nodes allows promoting."""
         persistent: set[str] = set()
         refused: set[str] = set()
@@ -155,12 +167,15 @@ class MakeTransientsPersistent(ppl.Pass):
                     and nsdfg.arrays[dnode.root_data].lifetime != dtypes.AllocationLifetime.Persistent
                 ):
                     continue
+                # A single element gains nothing from the state struct, and a persistent scalar has no
+                # state-struct form in the code generator.
                 if (
                     dnode.data in nsdfg.constants_prop
                     or not desc.transient
                     or type(desc) is not dt.Array
-                    or desc.storage == dtypes.StorageType.Register
+                    or desc.storage not in PERSISTENT_STORAGES
                     or desc.lifetime in STRONGER_THAN_PERSISTENT
+                    or all(is_unit(extent, unit_extents) for extent in desc.shape)
                 ):
                     refused.add(dnode.data)
                     continue
@@ -168,7 +183,12 @@ class MakeTransientsPersistent(ppl.Pass):
                     refused.add(dnode.data)
                     continue
                 if xfh.get_parent_map(state, dnode) is not None:
-                    if self.toplevel_only or desc.lifetime == dtypes.AllocationLifetime.Scope:
+                    # Default storage inside a map resolves to a per-thread register or stack array
+                    if (
+                        self.toplevel_only
+                        or desc.lifetime == dtypes.AllocationLifetime.Scope
+                        or desc.storage == dtypes.StorageType.Default
+                    ):
                         refused.add(dnode.data)
                         continue
                 persistent.add(dnode.data)
