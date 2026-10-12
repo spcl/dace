@@ -679,6 +679,36 @@ def test_a_wide_copy_named_by_a_moved_container_is_reanchored_on_the_source():
     assert np.array_equal(B, 2.0 * A)
 
 
+def test_an_rmw_chain_through_an_interior_access_node_writes_back_through_one_connector():
+    """``A[i] = (A[i] + 1) * 2`` staged through an interior ``A`` node binds ``A`` to one output connector.
+
+    A second, full-array output interface for the interior node wrote ``A`` back unordered with the
+    boundary connector, so the stale middle value could land last.
+    """
+    sdfg = dace.SDFG("rmw_chain_interior_access_node")
+    sdfg.add_array("A", [16], dace.float64)
+    state = sdfg.add_state()
+    me, mx = state.add_map("m", dict(i="0:16"))
+    inc = state.add_tasklet("inc", {"a"}, {"b"}, "b = a + 1.0")
+    dbl = state.add_tasklet("dbl", {"a"}, {"b"}, "b = a * 2.0")
+    middle = state.add_access("A")
+    state.add_memlet_path(state.add_read("A"), me, inc, dst_conn="a", memlet=dace.Memlet("A[i]"))
+    state.add_edge(inc, "b", middle, None, dace.Memlet("A[i]"))
+    state.add_edge(middle, None, dbl, "a", dace.Memlet("A[i]"))
+    state.add_memlet_path(dbl, mx, state.add_write("A"), src_conn="b", memlet=dace.Memlet("A[i]"))
+    sdfg.validate()
+
+    _, body = _map_body(state)
+    nsdfg = nest_state_subgraph(sdfg, state, StateSubgraphView(state, body))
+    sdfg.validate()
+
+    assert set(nsdfg.out_connectors) == {"A"}
+    A = np.random.rand(16)
+    expected = (A + 1.0) * 2.0
+    sdfg(A=A)
+    assert np.allclose(A, expected)
+
+
 def test_nest_two_loops_with_same_variable():
     """Nesting a second region that defines the same symbol must name its symbol output consistently."""
 
@@ -726,5 +756,6 @@ if __name__ == "__main__":
     test_folded_write_ordering_is_not_reanchored_into_a_cycle()
     test_a_folded_input_keeps_the_moved_tasklets_connectors()
     test_a_wide_copy_named_by_a_moved_container_is_reanchored_on_the_source()
+    test_an_rmw_chain_through_an_interior_access_node_writes_back_through_one_connector()
 
     test_nest_two_loops_with_same_variable()
