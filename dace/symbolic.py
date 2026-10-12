@@ -22,9 +22,11 @@ from dace.symbolic_facts import (  # noqa: F401
     Predicate,
     Relation,
     RelationKind,
+    Scale,
     Truth,
     ask,
     comparison_relation,
+    is_small,
     predicate_relation,
     provably_le,
     provably_nonnegative,
@@ -89,6 +91,7 @@ class SymbolDeclaration(NamedTuple):
 
     dtype: dtypes.typeclass
     predicates: frozenset[Predicate]
+    scale: Scale
 
 
 class symbol(sympy.Symbol):
@@ -120,7 +123,9 @@ class symbol(sympy.Symbol):
         # and signs come from the facts where an expression is simplified.
         self = sympy.Symbol.__xnew__(cls, name, real=True)
         self.declaration = SymbolDeclaration(
-            dtype, frozenset(predicate for predicate in Predicate if assumptions.get(predicate.name.lower()))
+            dtype,
+            frozenset(predicate for predicate in Predicate if assumptions.get(predicate.name.lower())),
+            Scale.SMALL if assumptions.get("small") else Scale.DEFAULT,
         )
         self._constraints = []
         return self
@@ -227,7 +232,7 @@ class UndefinedSymbol(symbol):
             dtype = DEFAULT_SYMBOL_TYPE
         # Bypass the name validation
         self = sympy.Symbol.__xnew__(cls, "?", **assumptions)
-        self.declaration = SymbolDeclaration(dtype, frozenset())
+        self.declaration = SymbolDeclaration(dtype, frozenset(), Scale.DEFAULT)
         self._constraints = []
         return self
 
