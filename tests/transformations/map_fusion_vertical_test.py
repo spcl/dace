@@ -3223,6 +3223,85 @@ def test_map_fusion_is_deprecated() -> None:
         MapFusion()
 
 
+@pytest.mark.parametrize("allow_intermediates_with_symbolic_size", [False, True])
+def test_map_fusion_symbolic_intermediate(allow_intermediates_with_symbolic_size: bool):
+    """Vertical fusion should only create symbolic-sized intermediates when explicitly allowed."""
+    N = dace.symbol("N", positive=True)
+
+    sdfg = dace.SDFG(unique_name("map_fusion_symbolic_intermediate"))
+    state = sdfg.add_state(is_start_block=True)
+    sdfg.add_array("A", shape=(N, N), dtype=dace.float64, transient=False)
+    sdfg.add_array("B", shape=(N,), dtype=dace.float64, transient=False)
+    sdfg.add_array("tmp", shape=(N, N), dtype=dace.float64, transient=True)
+
+    A = state.add_access("A")
+    B = state.add_access("B")
+    tmp = state.add_access("tmp")
+
+    state.add_mapped_tasklet(
+        "first_map",
+        map_ranges={"i": "0:N"},
+        inputs={"__in": dace.Memlet("A[i, 0:N]")},
+        code="for (int j = 0; j < N; ++j) __out[j] = __in[j] + 1.0;",
+        language=dace.Language.CPP,
+        outputs={"__out": dace.Memlet("tmp[i, 0:N]")},
+        input_nodes={A},
+        output_nodes={tmp},
+        external_edges=True,
+    )
+    state.add_mapped_tasklet(
+        "second_map",
+        map_ranges={"i": "0:N"},
+        inputs={"__in": dace.Memlet("tmp[i, 0:N]")},
+        code="__out = __in[0] * 2.0",
+        outputs={"__out": dace.Memlet("B[i]")},
+        input_nodes={tmp},
+        output_nodes={B},
+        external_edges=True,
+    )
+
+    mx1 = next(node for node in state.nodes() if isinstance(node, nodes.MapExit) and node.map.label == "first_map_map")
+    me2 = next(
+        node for node in state.nodes() if isinstance(node, nodes.MapEntry) and node.map.label == "second_map_map"
+    )
+
+    if allow_intermediates_with_symbolic_size:
+        apply_fusion(
+            sdfg,
+            removed_maps=1,
+            apply_once=True,
+            strict_dataflow=True,
+            allow_intermediates_with_symbolic_size=True,
+            where={
+                "first_map_exit": mx1,
+                "array": tmp,
+                "second_map_entry": me2,
+            },
+        )
+        assert count_nodes(state, nodes.MapEntry) == 1
+
+        n = 5
+        A_np = np.random.rand(n, n).astype(np.float64)
+        B_np = np.zeros((n,), dtype=np.float64)
+        compile_and_run_sdfg(sdfg, A=A_np, B=B_np, N=n)
+        ref = (A_np[:, 0] + 1.0) * 2.0
+        assert np.allclose(B_np, ref)
+    else:
+        # When symbolic intermediates are disallowed the transformation must not apply.
+        would_apply = MapFusionVertical.can_be_applied_to(
+            sdfg,
+            options={
+                "strict_dataflow": True,
+                "allow_intermediates_with_symbolic_size": False,
+            },
+            first_map_exit=mx1,
+            array=tmp,
+            second_map_entry=me2,
+        )
+        assert not would_apply
+        assert count_nodes(state, nodes.MapEntry) == 2
+
+
 if __name__ == "__main__":
     test_fusion_intrinsic_memlet_direction()
     test_fusion_dynamic_producer()
@@ -3271,3 +3350,5 @@ if __name__ == "__main__":
     test_map_fusion_stable_label(forward_fusion=True)
     test_map_fusion_stable_label(forward_fusion=False)
     test_map_fusion_is_deprecated()
+    test_map_fusion_symbolic_intermediate(allow_intermediates_with_symbolic_size=True)
+    test_map_fusion_symbolic_intermediate(allow_intermediates_with_symbolic_size=False)
