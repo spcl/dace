@@ -4900,9 +4900,10 @@ class ConditionalBlock(AbstractControlFlowRegion):
                 replace_in_codeblock(cond, repl)
 
     def to_json(self, parent=None):
-        json = super().to_json(parent)
-        del json["nodes"]
-        del json["edges"]
+        # Not ``super().to_json``: its nodes are the branches, so every nested conditional would serialize them twice
+        json = {"type": type(self).__name__, "attributes": None, **ControlFlowBlock.to_json(self, parent)}
+        json["cfg_list_id"] = int(self.cfg_id)
+        json["start_block"] = self._start_block
         json["branches"] = [
             (condition.to_json() if condition is not None else None, cfg.to_json()) for condition, cfg in self._branches
         ]
