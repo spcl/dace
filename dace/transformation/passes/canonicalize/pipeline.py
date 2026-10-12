@@ -47,7 +47,6 @@ from dace.transformation.passes.canonicalize.empty_state_elimination import Empt
 from dace.transformation.passes.canonicalize.fold_scalar_read_copies import FoldScalarReadCopies
 from dace.transformation.passes.canonicalize.forward_store_to_load import ForwardStoreToLoad
 from dace.transformation.passes.canonicalize.fuse_chained_scalar_reductions import FuseChainedScalarReductions
-from dace.transformation.passes.canonicalize.merge_guards import MergeGuards
 from dace.transformation.passes.canonicalize.fuse_consecutive_loops import FuseConsecutiveLoops
 from dace.transformation.passes.canonicalize.fuse_loops import FuseLoops
 from dace.transformation.passes.canonicalize.hoist_iv_updates import HoistInductionVariableUpdates
@@ -66,6 +65,7 @@ from dace.transformation.passes.canonicalize.loop_to_symm import LoopToSymm
 from dace.transformation.passes.canonicalize.loop_to_symmetrize import LoopToSymmetrize
 from dace.transformation.passes.canonicalize.loop_to_transpose import LoopToTranspose
 from dace.transformation.passes.canonicalize.materialize_loop_exit_symbols import MaterializeLoopExitSymbols
+from dace.transformation.passes.canonicalize.merge_guards import MergeGuards
 from dace.transformation.passes.canonicalize.move_loop_into_map_gated import MoveLoopIntoMapGated
 from dace.transformation.passes.canonicalize.normalize_floor_division import NormalizeFloorDivision
 from dace.transformation.passes.canonicalize.normalize_loop_and_map_origin import NormalizeLoopAndMapOrigin

@@ -105,8 +105,8 @@ class ParallelizePipeline(ppl.Pass):
 
     def _stages(self) -> list[ppl.Pass]:
         from dace.transformation.pass_pipeline import Pipeline
-        from dace.transformation.passes.canonicalize.merge_guards import MergeGuards
         from dace.transformation.passes.canonicalize.fuse_loops import FuseLoops
+        from dace.transformation.passes.canonicalize.merge_guards import MergeGuards
         from dace.transformation.passes.canonicalize.pipeline import IvSubstitutionFissionFixpoint, StructuralCleanup
         from dace.transformation.passes.fuse_maps import FuseMaps
         from dace.transformation.passes.fusion_inline import FuseStates
