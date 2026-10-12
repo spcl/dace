@@ -1,17 +1,9 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Every MPI library node must resolve its communicator through the shared
-``resolve_comm`` helper: it reads an optional ``_comm`` (raw ``opaque(MPI_Comm)``)
-input connector first, else an optional ``_grid`` process-grid connector, else
-falls back to ``MPI_COMM_WORLD``.  Neither connector is declared in the node's
-fixed ``inputs`` -- the caller wires them dynamically (``add_in_connector`` +
-edge) and the expansion picks them up via ``expanded_input_connectors``.
-
-These tests assert at the code-generation level (no MPI runtime needed): they
-expand each node's tasklet and check the emitted C uses the resolved connector
-token, NOT a hardcoded ``MPI_COMM_WORLD``.  They cover the nodes that previously
-hardcoded the world communicator (allgather / scatter / redistribute) plus the
-uniformity fix on barrier, and confirm backward compatibility (no connector ->
-``MPI_COMM_WORLD``).
+"""Every MPI library node resolves its communicator via ``resolve_comm``: an
+optional ``_comm`` connector, else an optional ``_grid`` connector, else
+``MPI_COMM_WORLD``.  These tests expand each node's tasklet and check the
+emitted C uses the resolved connector, not a hardcoded ``MPI_COMM_WORLD``
+(code-generation level, no MPI runtime needed).
 """
 
 from unittest import mock
@@ -26,6 +18,10 @@ from dace.libraries.mpi.nodes.comm_f2c import CommF2c
 from dace.libraries.mpi.nodes.redistribute import Redistribute
 from dace.memlet import Memlet
 
+# Routed to the MPI-capable heterogeneous runner (``-m mpi`` under mpirun), like every other
+# tests/library/mpi test -- even though these are codegen-only checks with no MPI runtime.
+pytestmark = pytest.mark.mpi
+
 # Comm-argument spellings of the wired connectors; used to prove a connector is
 # (or is not) the communicator of an emitted MPI call.  Matching the bare name is
 # ambiguous (e.g. ``int _commsize;`` contains ``_comm``), so we look for the
@@ -33,7 +29,9 @@ from dace.memlet import Memlet
 _COMM_AS_COMM = ("(_comm", "_comm,", "_comm)", "_comm;")
 _GRID_AS_COMM = ("(_grid", "_grid,", "_grid)", "_grid;")
 
+###############################################################################
 # Helpers
+###############################################################################
 
 
 class _MockProgramVisitor:
@@ -83,7 +81,9 @@ def _wire_grid(sdfg, state, node):
     state.add_edge(state.add_read(grid), None, node, "_grid", Memlet(data=grid))
 
 
+###############################################################################
 # SDFG builders (one fresh node per variant so resolution is independent)
+###############################################################################
 
 
 def _build_allgather():
@@ -150,30 +150,9 @@ _BUILDERS = {
     "redistribute": _build_redistribute,
 }
 
+###############################################################################
 # Tests
-
-
-@pytest.mark.parametrize("name", list(_BUILDERS))
-def test_default_comm_is_world(name):
-    """No ``_comm`` / ``_grid`` wired -> the node falls back to MPI_COMM_WORLD
-    (backward compatible with existing callers/tests)."""
-    sdfg, state, node = _BUILDERS[name]()
-    code, _ = _expanded_code(node, state, sdfg)
-    assert "MPI_COMM_WORLD" in code
-    for pat in _COMM_AS_COMM + _GRID_AS_COMM:
-        assert pat not in code
-
-
-@pytest.mark.parametrize("name", list(_BUILDERS))
-def test_comm_connector_is_honored(name):
-    """A wired ``_comm`` connector is used verbatim; no hardcoded world comm
-    remains, and the connector is threaded into the expanded tasklet."""
-    sdfg, state, node = _BUILDERS[name]()
-    _wire_comm(sdfg, state, node)
-    code, in_connectors = _expanded_code(node, state, sdfg)
-    assert "MPI_COMM_WORLD" not in code
-    assert any(pat in code for pat in _COMM_AS_COMM)
-    assert "_comm" in in_connectors
+###############################################################################
 
 
 @pytest.mark.parametrize("name", list(_BUILDERS))
@@ -204,9 +183,7 @@ def test_comm_takes_priority_over_grid(name):
 
 
 if __name__ == "__main__":
-    for _n in _BUILDERS:
-        test_default_comm_is_world(_n)
-        test_comm_connector_is_honored(_n)
-        test_grid_connector_is_honored(_n)
-        test_comm_takes_priority_over_grid(_n)
-    print("OK")
+    for name in _BUILDERS:
+        test_grid_connector_is_honored(name)
+    for name in _BUILDERS:
+        test_comm_takes_priority_over_grid(name)

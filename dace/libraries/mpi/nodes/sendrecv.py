@@ -56,7 +56,7 @@ class Sendrecv(MPINode):
             name,
             *args,
             inputs=OrderedSet(("_inbuffer", "_dest", "_src", "_sendtag", "_recvtag")),
-            outputs={"_outbuffer"},
+            outputs=OrderedSet(["_outbuffer"]),
             **kwargs,
         )
 

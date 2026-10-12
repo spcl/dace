@@ -55,7 +55,9 @@ class Gather(MPINode):
     default_implementation = "MPI"
 
     def __init__(self, name, *args, **kwargs):
-        super().__init__(name, *args, inputs=OrderedSet(("_inbuffer", "_root")), outputs={"_outbuffer"}, **kwargs)
+        super().__init__(
+            name, *args, inputs=OrderedSet(["_inbuffer", "_root"]), outputs=OrderedSet(["_outbuffer"]), **kwargs
+        )
 
     def validate(self, sdfg, state):
         """
@@ -145,7 +147,7 @@ class BlockGather(MPINode):
     default_implementation = "MPI"
 
     def __init__(self, name, *args, **kwargs):
-        super().__init__(name, *args, inputs={"_inp_buffer"}, outputs={"_out_buffer"}, **kwargs)
+        super().__init__(name, *args, inputs=OrderedSet(["_inp_buffer"]), outputs=OrderedSet(["_out_buffer"]), **kwargs)
 
     def validate(self, sdfg, state):
         """

@@ -2,8 +2,9 @@
 
 from typing import Any
 
-from dace import dtypes
+from dace import data, dtypes
 from dace.sdfg import nodes
+from dace.sdfg import utils as sdutil
 
 
 def input_descriptor_name(node: nodes.Node, state: Any, connector: str) -> str | None:
@@ -30,21 +31,7 @@ def expanded_input_connectors(node: nodes.Node, state: Any) -> dict[str, Any]:
 
 
 def resolve_comm(node: nodes.Node, state: Any) -> str:
-    """Resolve the MPI communicator an MPI library node should use from its
-    optional communicator-carrying input connectors.  The connector NAME is the
-    semantic discriminator:
-
-      * ``_comm`` -- a raw ``opaque(MPI_Comm)`` value (e.g. produced by a
-        ``Comm_f2c`` node from a Fortran integer handle); used DIRECTLY, no
-        cartesian topology.
-      * ``_grid`` -- a process grid (``ProcessGrid`` / ``FortranProcessGrid``)
-        whose cartesian sub-communicator is used.
-
-    ``_comm`` takes priority when both are present.  Falls back to
-    ``MPI_COMM_WORLD`` when neither is connected.  The returned string is the
-    connector name (or ``"MPI_COMM_WORLD"``); the C tasklet emits it verbatim
-    into the ``MPI_*`` call and DaCe codegen substitutes the connector's value.
-    """
+    """Communicator token for an MPI node: _comm if wired, else _grid if wired, else MPI_COMM_WORLD."""
     if input_descriptor_name(node, state, "_comm"):
         return "_comm"
     if input_descriptor_name(node, state, "_grid"):
@@ -57,6 +44,32 @@ def validate_integer_descriptor(desc: Any, name: str) -> None:
         raise ValueError(f"{name} connector is missing")
     if desc.dtype.base_type not in dtypes.INTEGER_TYPES:
         raise ValueError(f"{name} must be an integer")
+
+
+def integer_input(node: nodes.LibraryNode, state: Any, sdfg: Any, connector: str) -> data.Data:
+    """The integer descriptor on input ``connector`` of ``node``."""
+    desc = sdutil.in_desc_with_name(node, state, sdfg, connector)
+    validate_integer_descriptor(desc, f"{node.label} {connector}")
+    return desc
+
+
+def integer_output(node: nodes.LibraryNode, state: Any, sdfg: Any, connector: str) -> data.Data:
+    """The integer descriptor on output ``connector`` of ``node``."""
+    desc = sdutil.out_desc_with_name(node, state, sdfg, connector)
+    validate_integer_descriptor(desc, f"{node.label} {connector}")
+    return desc
+
+
+def mpi_tasklet(node: nodes.LibraryNode, state: Any, code: str, **out_types: dtypes.typeclass) -> nodes.Tasklet:
+    """The C++ tasklet of an MPI call; ``out_types`` overrides output connector types, e.g. an ``MPI_Comm`` handle."""
+    return nodes.Tasklet(
+        node.name,
+        expanded_input_connectors(node, state),
+        {**node.out_connectors, **out_types},
+        code,
+        language=dtypes.Language.CPP,
+        side_effects=True,
+    )
 
 
 class MPINode(nodes.LibraryNode):

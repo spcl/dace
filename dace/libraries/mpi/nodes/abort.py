@@ -1,63 +1,31 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Abort MPI execution as an explicit dataflow node (``MPI_Abort``).
-
-Terminates the processes in the resolved communicator with the ``_errorcode``
-integer-scalar input.  Carries side effects (so it is never pruned despite having
-no data outputs) and resolves its communicator from an optional ``_comm`` or
-``_grid`` input connector, else the default world.
-"""
-
-import dace.library
-import dace.properties
-import dace.sdfg.nodes
-from dace import dtypes
+from dace import library
 from dace.libraries.mpi import environments
-from dace.libraries.mpi.nodes.node import MPINode, expanded_input_connectors, resolve_comm, validate_integer_descriptor
+from dace.libraries.mpi.nodes.node import MPINode, integer_input, mpi_tasklet, resolve_comm
+from dace.ordered import OrderedSet
 from dace.transformation.transformation import ExpandTransformation
 
 
-@dace.library.expansion
+@library.expansion
 class ExpandAbortMPI(ExpandTransformation):
     environments = [environments.mpi.MPI]
 
     @staticmethod
-    def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
+    def expansion(node, parent_state, parent_sdfg, **kwargs):
         node.validate(parent_sdfg, parent_state)
         comm = resolve_comm(node, parent_state)
-        code = f"""
-            MPI_Abort({comm}, _errorcode);"""
-        tasklet = dace.sdfg.nodes.Tasklet(
-            node.name,
-            expanded_input_connectors(node, parent_state),
-            node.out_connectors,
-            code,
-            language=dtypes.Language.CPP,
-            side_effects=True,
-        )
-        return tasklet
+        return mpi_tasklet(node, parent_state, f"MPI_Abort({comm}, _errorcode);")
 
 
-@dace.library.node
+@library.node
 class Abort(MPINode):
-    """Collective ``MPI_Abort(comm, errorcode)`` -- terminate the communicator
-    with the ``_errorcode`` integer-scalar input.  No data outputs."""
+    """``MPI_Abort``: terminates every process of the communicator with ``_errorcode``."""
 
-    # Global properties
-    implementations = {
-        "MPI": ExpandAbortMPI,
-    }
+    implementations = {"MPI": ExpandAbortMPI}
     default_implementation = "MPI"
 
     def __init__(self, name, *args, **kwargs):
-        super().__init__(name, *args, inputs={"_errorcode"}, outputs=set(), **kwargs)
+        super().__init__(name, *args, inputs=OrderedSet(["_errorcode"]), outputs=set(), **kwargs)
 
     def validate(self, sdfg, state):
-        """
-        :return: the ``_errorcode`` input data descriptor in the parent SDFG.
-        """
-        errorcode = None
-        for e in state.in_edges(self):
-            if e.dst_conn == "_errorcode":
-                errorcode = sdfg.arrays[e.data.data]
-        validate_integer_descriptor(errorcode, "Abort _errorcode")
-        return errorcode
+        integer_input(self, state, sdfg, "_errorcode")

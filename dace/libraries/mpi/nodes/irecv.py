@@ -63,7 +63,7 @@ class Irecv(MPINode):
 
     def __init__(self, name, *args, **kwargs):
         super().__init__(
-            name, *args, inputs=OrderedSet(("_src", "_tag")), outputs=OrderedSet(("_buffer", "_request")), **kwargs
+            name, *args, inputs=OrderedSet(["_src", "_tag"]), outputs=OrderedSet(["_buffer", "_request"]), **kwargs
         )
 
     def validate(self, sdfg, state):

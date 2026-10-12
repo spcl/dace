@@ -27,7 +27,7 @@ class ExpandIsendMPI(ExpandTransformation):
 
         if not node.nosync and buffer.storage == dtypes.StorageType.GPU_Global:
             code += """
-            gpuStreamSynchronize(__dace_current_stream);
+            cudaStreamSynchronize(__dace_current_stream);
             """
 
         if ddt is not None:
@@ -77,7 +77,9 @@ class Isend(MPINode):
     )
 
     def __init__(self, name, *args, **kwargs):
-        super().__init__(name, *args, inputs=OrderedSet(("_buffer", "_dest", "_tag")), outputs={"_request"}, **kwargs)
+        super().__init__(
+            name, *args, inputs=OrderedSet(["_buffer", "_dest", "_tag"]), outputs=OrderedSet(["_request"]), **kwargs
+        )
 
     def validate(self, sdfg, state):
         """

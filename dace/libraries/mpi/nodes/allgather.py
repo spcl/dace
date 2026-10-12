@@ -4,6 +4,7 @@ import dace.properties
 import dace.sdfg.nodes
 from dace.libraries.mpi import environments
 from dace.libraries.mpi.nodes.node import MPINode, expanded_input_connectors, resolve_comm
+from dace.ordered import OrderedSet
 from dace.transformation.transformation import ExpandTransformation
 
 
@@ -48,7 +49,7 @@ class Allgather(MPINode):
     default_implementation = "MPI"
 
     def __init__(self, name, *args, **kwargs):
-        super().__init__(name, *args, inputs={"_inbuffer"}, outputs={"_outbuffer"}, **kwargs)
+        super().__init__(name, *args, inputs=OrderedSet(["_inbuffer"]), outputs=OrderedSet(["_outbuffer"]), **kwargs)
 
     def validate(self, sdfg, state):
         """

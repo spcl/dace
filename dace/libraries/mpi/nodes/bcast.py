@@ -3,7 +3,7 @@ import dace.library
 import dace.properties
 import dace.sdfg.nodes
 from dace import dtypes
-from dace.libraries.mpi import environments
+from dace.libraries.mpi import environments, utils
 from dace.libraries.mpi.nodes.node import MPINode, expanded_input_connectors, resolve_comm
 from dace.ordered import OrderedSet
 from dace.symbolic import symstr
@@ -17,22 +17,7 @@ class ExpandBcastMPI(ExpandTransformation):
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
         (buffer, count_str), root = node.validate(parent_sdfg, parent_state)
-        dtype = buffer.dtype.base_type
-        mpi_dtype_str = "MPI_BYTE"
-        if dtype == dtypes.float32:
-            mpi_dtype_str = "MPI_FLOAT"
-        elif dtype == dtypes.float64:
-            mpi_dtype_str = "MPI_DOUBLE"
-        elif dtype == dtypes.complex64:
-            mpi_dtype_str = "MPI_C_FLOAT_COMPLEX"
-        elif dtype == dtypes.complex128:
-            mpi_dtype_str = "MPI_C_DOUBLE_COMPLEX"
-        elif dtype == dtypes.int32:
-            mpi_dtype_str = "MPI_INT"
-        elif dtype == dtypes.int64:
-            mpi_dtype_str = "MPI_LONG_LONG"
-        else:
-            raise NotImplementedError("The datatype " + str(dtype) + " is not supported!")
+        mpi_dtype_str = utils.MPI_DDT(buffer.dtype.base_type)
         if buffer.dtype.veclen > 1:
             raise NotImplementedError
         if root.dtype.base_type != dtypes.int32 and root.dtype.base_type != dtypes.int64:
@@ -45,8 +30,7 @@ class ExpandBcastMPI(ExpandTransformation):
         init = ""
         comm = resolve_comm(node, parent_state)
         if comm == "MPI_COMM_WORLD" and node.fcomm:
-            # Legacy Fortran-comm-handle node property (superseded by a ``_comm``
-            # connector fed from a ``Comm_f2c`` node, but kept for direct callers).
+            # fcomm is the legacy per-node handle, superseded by a _comm connector.
             init = f"MPI_Comm __comm = MPI_Comm_f2c({node.fcomm});"
             comm = "__comm"
 
@@ -75,7 +59,9 @@ class Bcast(MPINode):
     fcomm = dace.properties.Property(dtype=str, allow_none=True, default=None, category="Semantics")
 
     def __init__(self, name, fcomm=None, *args, **kwargs):
-        super().__init__(name, *args, inputs=OrderedSet(("_inbuffer", "_root")), outputs={"_outbuffer"}, **kwargs)
+        super().__init__(
+            name, *args, inputs=OrderedSet(["_inbuffer", "_root"]), outputs=OrderedSet(["_outbuffer"]), **kwargs
+        )
         self.fcomm = fcomm
 
     def validate(self, sdfg, state):
