@@ -10,6 +10,25 @@ from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 
 
+def matrix_view(subset) -> tuple[list[Any], list[int]]:
+    """
+    Returns an operand's matrix view: the raw subset if it is already 2D, otherwise the squeezed one.
+
+    Squeezing unconditionally rejects a genuine ``(N, 1)`` column as "not a matrix"; not squeezing at
+    all rejects an ``(NQ, 1, NP)`` reshape. Callers that read a size, a stride or a dimension index
+    must all use this view, or they disagree about which dimensions the operand has.
+
+    :param subset: The subset of the memlet accessing the operand.
+    :return: The size in the matrix view, and the subset dimensions it kept.
+    """
+    size = subset.size()
+    if len(size) == 2:
+        return size, list(range(len(size)))
+    squeezed = copy.deepcopy(subset)
+    dims = squeezed.squeeze()
+    return squeezed.size(), dims
+
+
 def to_blastype(dtype):
     """Returns a BLAS character that corresponds to the input type.
     Used in MKL/CUBLAS calls."""
