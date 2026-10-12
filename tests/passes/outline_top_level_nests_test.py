@@ -6,6 +6,7 @@ import numpy
 import pytest
 
 import dace
+from dace.libraries.standard.nodes import Reduce
 from dace.sdfg import nodes
 from dace.sdfg.utils import inline_sdfgs
 from dace.transformation.passes.outline_top_level_nests import OutlineTopLevelNests, outline_top_level_nests
@@ -28,6 +29,11 @@ def seq_loop(A: dace.float64[N], B: dace.float64[N]):
     B[0] = A[0]
     for i in range(1, N):
         B[i] = B[i - 1] + A[i]
+
+
+@dace.program
+def total(A: dace.float64[N], out: dace.float64[1]):
+    out[0] = numpy.sum(A)
 
 
 def top_level_nsdfgs(sdfg):
@@ -151,3 +157,20 @@ if __name__ == "__main__":
     test_inlining_back_reproduces_the_original()
     test_numerically_equivalent(False)
     test_numerically_equivalent(True)
+
+
+def test_a_top_level_library_node_is_outlined_only_when_asked():
+    plain, asked = total.to_sdfg(simplify=True), total.to_sdfg(simplify=True)
+    asked.name = "outline_library_node"
+    A = numpy.random.default_rng(0).random(64)
+    out = numpy.zeros(1)
+
+    outline_top_level_nests(plain)
+    outline_top_level_nests(asked, library_nodes=True)
+    asked(A=A, out=out, N=64)
+
+    assert not top_level_nsdfgs(plain)
+    (nsdfg,) = top_level_nsdfgs(asked)
+    assert nsdfg.no_inline
+    assert [type(n) for n, parent in nsdfg.sdfg.all_nodes_recursive() if isinstance(n, nodes.LibraryNode)] == [Reduce]
+    assert numpy.isclose(out[0], A.sum())

@@ -4,7 +4,8 @@
 ``OutlineTopLevelNests`` first wraps each top-level map nest and loop region in a ``no_inline`` nested SDFG;
 each of those becomes an ``ExternalCall`` whose default ``DaceReference`` expansion is the nest itself, so the
 program is unchanged until a caller points a node at a compiled library and selects ``ExternCall``. A nest
-whose symbol mapping is not the identity stays a nested SDFG: an expansion re-binds symbols by name.
+whose symbol mapping is not the identity stays a nested SDFG: an expansion re-binds symbols by name. With
+``library_nodes``, each top-level library node becomes one too, rendered in its region with its own implementation.
 """
 
 import copy
@@ -12,7 +13,7 @@ from typing import Any
 
 from dace import SDFG
 from dace.libraries.standard.nodes import external_call
-from dace.properties import make_properties
+from dace.properties import Property, make_properties
 from dace.sdfg import nodes
 from dace.sdfg.state import SDFGState
 from dace.transformation import pass_pipeline as ppl
@@ -72,6 +73,8 @@ class OutlineToExternalCalls(ppl.Pass):
 
     CATEGORY: str = "Optimization Preparation"
 
+    library_nodes = Property(dtype=bool, default=False, desc="Also outline each top-level library node.")
+
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Nodes | ppl.Modifies.States | ppl.Modifies.Memlets | ppl.Modifies.Symbols
 
@@ -80,7 +83,7 @@ class OutlineToExternalCalls(ppl.Pass):
 
     def apply_pass(self, sdfg: SDFG, _: dict[str, Any]) -> list[external_call.ExternalCall] | None:
         """Outline and replace; returns the new nodes, or ``None`` if there were none."""
-        passes.outline_top_level_nests(sdfg)
+        passes.outline_top_level_nests(sdfg, self.library_nodes)
         created: list[external_call.ExternalCall] = []
         for state in [block for block in sdfg.nodes() if isinstance(block, SDFGState)]:
             nests = [n for n in state.nodes() if isinstance(n, nodes.NestedSDFG) and n.no_inline]
@@ -92,6 +95,9 @@ class OutlineToExternalCalls(ppl.Pass):
         return created or None
 
 
-def outline_to_external_calls(sdfg: SDFG) -> list[external_call.ExternalCall]:
-    """Replace the root SDFG's top-level loop nests with ``ExternalCall`` nodes in place; returns them."""
-    return OutlineToExternalCalls().apply_pass(sdfg, {}) or []
+def outline_to_external_calls(sdfg: SDFG, library_nodes: bool = False) -> list[external_call.ExternalCall]:
+    """Replace the root SDFG's top-level loop nests (and, with ``library_nodes``, library nodes) with
+    ``ExternalCall`` nodes in place; returns them."""
+    outliner = OutlineToExternalCalls()
+    outliner.library_nodes = library_nodes
+    return outliner.apply_pass(sdfg, {}) or []

@@ -11,7 +11,7 @@ import pytest
 import dace
 from dace import symbolic
 from dace.codegen import cpf
-from dace.libraries.standard.nodes import external_call
+from dace.libraries.standard.nodes import Reduce, external_call
 from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
 from dace.transformation import helpers, passes
@@ -52,6 +52,11 @@ def accumulate_steps(a: dace.float64[N], b: dace.float64[N], T: dace.int64):
     for t in range(T):
         for i in dace.map[0:N]:
             b[i] = b[i] + a[i] * t
+
+
+@dace.program
+def total(a: dace.float64[N], out: dace.float64[1]):
+    out[0] = np.sum(a)
 
 
 def outlined(program, name: str):
@@ -309,3 +314,18 @@ def test_the_thread_count_stays_out_of_the_abi_and_the_region_defines_it():
     # the GCC build runs on libgomp, so the count it read is the one this process's runtime reports
     threads = ctypes.CDLL(ctypes.util.find_library("gomp")).omp_get_max_threads()
     assert np.array_equal(b, a * threads)
+
+
+def test_a_library_node_becomes_a_call_whose_region_keeps_its_implementation():
+    sdfg = total.to_sdfg(simplify=True)
+    sdfg.name = "extcall_library_node"
+    next(n for n, parent in sdfg.all_nodes_recursive() if isinstance(n, Reduce)).implementation = "CPU"
+    a = np.random.default_rng(9).random(SIZE)
+    out = np.zeros(1)
+
+    (call,) = passes.outline_to_external_calls(sdfg, library_nodes=True)
+    sdfg(a=a, out=out, N=SIZE)
+
+    (reduce,) = [n for n, parent in call.standalone_sdfg.all_nodes_recursive() if isinstance(n, Reduce)]
+    assert reduce.implementation == "CPU"
+    assert np.isclose(out[0], a.sum())
