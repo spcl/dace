@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import ctypes
+import ctypes.util
 import pathlib
 import shutil
 import subprocess
@@ -8,6 +9,7 @@ import numpy as np
 import pytest
 
 import dace
+from dace import symbolic
 from dace.codegen import cpf
 from dace.libraries.standard.nodes import external_call
 from dace.sdfg import nodes
@@ -279,3 +281,31 @@ def test_cpf_declares_the_external_kernel_and_hands_its_archive_to_the_caller(tm
 
     assert result.arguments == ("N", "b", "a")
     assert np.array_equal(b, a * 3.0)
+
+
+def test_the_thread_count_stays_out_of_the_abi_and_the_region_defines_it():
+    sdfg = dace.SDFG("extcall_num_threads")
+    sdfg.add_array("a", [N], dace.float64)
+    sdfg.add_array("b", [N], dace.float64)
+    sdfg.symbols[symbolic.NUM_THREADS_SYMBOL] = dace.int64
+    state = sdfg.add_state()
+    state.add_mapped_tasklet(
+        "per_thread",
+        {"i": "0:N"},
+        {"x": dace.Memlet("a[i]")},
+        f"y = x * {symbolic.NUM_THREADS_SYMBOL}",
+        {"y": dace.Memlet("b[i]")},
+        external_edges=True,
+    )
+    a = np.random.default_rng(8).random(SIZE)
+    b = np.zeros(SIZE)
+
+    (call,) = passes.outline_to_external_calls(sdfg)
+    sdfg(a=a, b=b, N=SIZE)
+
+    assert list(call.abi_order) == ["a", "b", "N"]
+    assert symbolic.NUM_THREADS_SYMBOL not in call.signature
+    assert "omp_get_max_threads()" in generated_code(call.standalone_sdfg)
+    # the GCC build runs on libgomp, so the count it read is the one this process's runtime reports
+    threads = ctypes.CDLL(ctypes.util.find_library("gomp")).omp_get_max_threads()
+    assert np.array_equal(b, a * threads)

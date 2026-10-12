@@ -57,7 +57,8 @@ def replace_with_external_call(state: SDFGState, nsdfg: nodes.NestedSDFG, name: 
     for edge in state.out_edges(nsdfg):
         conn = None if edge.src_conn is None else external_call.out_conn(edge.src_conn)
         state.add_edge(node, conn, edge.dst, edge.dst_conn, copy.deepcopy(edge.data))
-    symbols = [str(s) for s in nsdfg.sdfg.free_symbols]
+    # reserved symbols (__dace_num_threads) are defined by the region's frame code, never passed (SDFG.arglist's rule)
+    symbols = [str(s) for s in nsdfg.sdfg.free_symbols if not str(s).startswith("__dace")]
     state.remove_node(nsdfg)
     node.symbol = name
     node.abi_order = external_call.nested_sdfg_order(node, state, symbols)
