@@ -16,9 +16,10 @@ import numpy as np
 import pytest
 
 import dace
+from dace.properties import CodeBlock
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
-from dace.sdfg.state import LoopRegion
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.passes.loop_fission import LoopFission
 
 N = dace.symbol("N")
@@ -512,6 +513,38 @@ def test_loop_fission_conditional_body_kept():
     assert np.allclose(A0, 9.0) and np.allclose(B0, 9.0)
 
 
+def test_a_guard_reading_a_scalar_the_loop_body_writes_is_not_split_off():
+    """``for k: {s = A[k]; if s > 0.5: B[k] = 1}``: the guard reads ``s`` in its condition only, with no
+    access node. Splitting it into its own loop would test the last ``s`` for every ``k``."""
+    sdfg = dace.SDFG("loop_fission_guard_reads_body_scalar")
+    sdfg.add_array("A", [8], dace.float64)
+    sdfg.add_array("B", [8], dace.float64)
+    sdfg.add_scalar("s", dace.float64, transient=True)
+    loop = LoopRegion("loop", "k < 8", "k", "k = 0", "k = k + 1")
+    sdfg.add_node(loop, is_start_block=True)
+    write = loop.add_state("write_s", is_start_block=True)
+    copy_a = write.add_tasklet("copy_a", {"a"}, {"o"}, "o = a")
+    write.add_edge(write.add_read("A"), None, copy_a, "a", dace.Memlet("A[k]"))
+    write.add_edge(copy_a, "o", write.add_write("s"), None, dace.Memlet("s"))
+    guard = ConditionalBlock("guard")
+    loop.add_node(guard)
+    loop.add_edge(write, guard, dace.InterstateEdge())
+    branch = ControlFlowRegion("guard_body")
+    guard.add_branch(CodeBlock("s > 0.5"), branch)
+    set_b = branch.add_state("set_b", is_start_block=True)
+    one = set_b.add_tasklet("one", {}, {"o"}, "o = 1.0")
+    set_b.add_edge(one, "o", set_b.add_write("B"), None, dace.Memlet("B[k]"))
+
+    LoopFission().apply_pass(sdfg, {})
+
+    sdfg.validate()
+    assert _loop_count(sdfg) == 1
+    A = np.array([0, 1, 0, 1, 1, 0, 0, 1], dtype=np.float64)
+    B = np.zeros(8)
+    sdfg(A=A, B=B)
+    assert np.array_equal(B, (A > 0.5).astype(np.float64))
+
+
 # Additional Python-frontend tests covering gaps in the existing coverage.
 
 
@@ -841,7 +874,41 @@ def test_loop_fission_refuses_constant_slot_intra_iter_carry():
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    test_loop_fission_two()
+    test_loop_fission_three()
+    test_loop_fission_single_is_noop()
+    test_loop_fission_dependent_kept_together_modified_splits_per_iter()
+    test_loop_fission_loop_carried_is_noop()
+    test_loop_fission_strided()
+    test_loop_fission_offset_strided()
+    test_loop_fission_symbolic_strided()
+    test_loop_fission_many_set_cpy()
+    test_loop_fission_perfect_nesting()
+    test_loop_fission_nested_dependent_inner_loops_not_split()
+    test_loop_fission_nested_cycle_not_split()
+    test_loop_fission_tsvc_carried_dep_not_split(tsvc_s211, "abcde")
+    test_loop_fission_tsvc_carried_dep_not_split(tsvc_s1213, "abcd")
+    test_loop_fission_tsvc_carried_dep_not_split(tsvc_s111, "ab")
+    test_loop_fission_tsvc_s222_correct_split()
+    test_loop_fission_tsvc_s221_splits_per_iter_a_chain()
+    test_loop_fission_recurrence_plus_independent_splits()
+    test_loop_fission_conditional_body_kept()
+    test_a_guard_reading_a_scalar_the_loop_body_writes_is_not_split_off()
+    test_loop_fission_same_array_two_writes_kept_together()
+    test_loop_fission_per_iter_rmw_kept_together()
+    test_loop_fission_three_independent_writes()
+    test_loop_fission_mixed_dep_and_independent_partitions()
+    test_loop_fission_reverse_iteration_splits()
+    test_loop_fission_pointwise_and_carried_recurrence_split()
+    test_loop_fission_eight_independent_writes_max_fission()
+    test_loop_fission_cross_iter_same_array_kept_together()
+    test_loop_fission_refuses_constant_slot_intra_iter_carry()
+    test_unfissionable_loop_is_left_untouched()
+    test_unfissionable_per_iter_bridge_is_value_preserving()
+    test_carried_transient_chain_stays_together()
+    test_dependence_aware_grouping_disjoint_same_data()
+    test_fission_splits_only_the_loop_it_is_given()
+    test_fission_of_a_loop_that_does_not_split_leaves_the_graph_unchanged()
 
 
 @dace.program
@@ -1009,4 +1076,38 @@ def test_fission_of_a_loop_that_does_not_split_leaves_the_graph_unchanged():
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    test_loop_fission_two()
+    test_loop_fission_three()
+    test_loop_fission_single_is_noop()
+    test_loop_fission_dependent_kept_together_modified_splits_per_iter()
+    test_loop_fission_loop_carried_is_noop()
+    test_loop_fission_strided()
+    test_loop_fission_offset_strided()
+    test_loop_fission_symbolic_strided()
+    test_loop_fission_many_set_cpy()
+    test_loop_fission_perfect_nesting()
+    test_loop_fission_nested_dependent_inner_loops_not_split()
+    test_loop_fission_nested_cycle_not_split()
+    test_loop_fission_tsvc_carried_dep_not_split(tsvc_s211, "abcde")
+    test_loop_fission_tsvc_carried_dep_not_split(tsvc_s1213, "abcd")
+    test_loop_fission_tsvc_carried_dep_not_split(tsvc_s111, "ab")
+    test_loop_fission_tsvc_s222_correct_split()
+    test_loop_fission_tsvc_s221_splits_per_iter_a_chain()
+    test_loop_fission_recurrence_plus_independent_splits()
+    test_loop_fission_conditional_body_kept()
+    test_a_guard_reading_a_scalar_the_loop_body_writes_is_not_split_off()
+    test_loop_fission_same_array_two_writes_kept_together()
+    test_loop_fission_per_iter_rmw_kept_together()
+    test_loop_fission_three_independent_writes()
+    test_loop_fission_mixed_dep_and_independent_partitions()
+    test_loop_fission_reverse_iteration_splits()
+    test_loop_fission_pointwise_and_carried_recurrence_split()
+    test_loop_fission_eight_independent_writes_max_fission()
+    test_loop_fission_cross_iter_same_array_kept_together()
+    test_loop_fission_refuses_constant_slot_intra_iter_carry()
+    test_unfissionable_loop_is_left_untouched()
+    test_unfissionable_per_iter_bridge_is_value_preserving()
+    test_carried_transient_chain_stays_together()
+    test_dependence_aware_grouping_disjoint_same_data()
+    test_fission_splits_only_the_loop_it_is_given()
+    test_fission_of_a_loop_that_does_not_split_leaves_the_graph_unchanged()
