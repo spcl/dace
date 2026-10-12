@@ -1,5 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import copy
+from copy import deepcopy as dc
 from typing import Any, NamedTuple
 
 import numpy as np
@@ -8,6 +8,25 @@ import dace
 from dace import data, dtypes
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
+
+
+def matrix_view(subset) -> tuple[list[Any], list[int]]:
+    """
+    Returns an operand's matrix view: the raw subset if it is already 2D, otherwise the squeezed one.
+
+    Squeezing unconditionally rejects a genuine ``(N, 1)`` column as "not a matrix"; not squeezing at
+    all rejects an ``(NQ, 1, NP)`` reshape. Callers that read a size, a stride or a dimension index
+    must all use this view, or they disagree about which dimensions the operand has.
+
+    :param subset: The subset of the memlet accessing the operand.
+    :return: The size in the matrix view, and the subset dimensions it kept.
+    """
+    size = subset.size()
+    if len(size) == 2:
+        return size, list(range(len(size)))
+    squeezed = dc(subset)
+    dims = squeezed.squeeze()
+    return squeezed.size(), dims
 
 
 def to_blastype(dtype):
@@ -197,7 +216,7 @@ def operand(node: nodes.LibraryNode, state: "dace.SDFGState", sdfg: "dace.SDFG",
     else:
         edge = sdutil.out_edge_with_name(node, state, connector)
     desc = sdfg.arrays[edge.data.data]
-    subset = copy.deepcopy(edge.data.subset)
+    subset = dc(edge.data.subset)
     dims = subset.squeeze()
     return Operand(desc, subset.size(), [desc.strides[d] * edge.data.subset[d][2] for d in dims])
 

@@ -4,6 +4,7 @@ from typing import Any
 
 from dace import SDFG, InterstateEdge
 from dace.sdfg import nodes as nd
+from dace.sdfg.state import ConditionalBlock
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 from dace.transformation.passes import analysis as ap
@@ -55,6 +56,18 @@ class ScalarFission(ppl.Pass):
             if not desc.transient:
                 continue
 
+            # Versioning gives each access ONE name, so an access in two scopes (a read after a
+            # conditional whose branches write in nested loops, which the analysis cannot merge into
+            # one scope) would read only one branch's version. Leave such a container whole.
+            seen: set[int] = set()
+            overlapping = False
+            for accesses in write_scope_dict.values():
+                for _block, access in accesses:
+                    overlapping |= id(access) in seen
+                    seen.add(id(access))
+            if overlapping:
+                continue
+
             for write, shadowed_reads in write_scope_dict.items():
                 if write is not None and len(shadowed_reads) > 0:
                     newdesc = desc.clone()
@@ -87,6 +100,8 @@ class ScalarFission(ppl.Pass):
                                     oeade.data.data = newname
                         elif isinstance(read[1], InterstateEdge):
                             read[1].replace_dict({name: newname})
+                        elif isinstance(read[1], ConditionalBlock):
+                            read[1].replace_meta_accesses({name: newname})
 
                     results[name].add(newname)
         return results
