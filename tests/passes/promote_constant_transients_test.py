@@ -816,7 +816,7 @@ def test_promoting_a_held_fill_removes_both_ends_of_its_scope():
     _run(sdfg)
     sdfg.validate()
 
-    state = sdfg.states()[0]
+    state = next(iter(sdfg.states()))
     entries = {n.map for n in state.nodes() if isinstance(n, nd.MapEntry)}
     exits = {n.map for n in state.nodes() if isinstance(n, nd.MapExit)}
     assert entries == exits, f"unpaired scope ends: {sorted(m.label for m in entries ^ exits)}"

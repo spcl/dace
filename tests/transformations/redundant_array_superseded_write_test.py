@@ -69,7 +69,7 @@ def test_redundant_array_refuses_superseded_write():
     sdfg = _build_superseded_write_sdfg()
     assert sdfg.apply_transformations_repeated(RedundantArray, validate=False) == 0
 
-    state = sdfg.states()[0]
+    state = next(iter(sdfg.states()))
     assert any(isinstance(n, nodes.AccessNode) and n.data == "tmp" for n in state.nodes()), (
         "the sequencing copy must survive"
     )

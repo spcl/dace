@@ -401,7 +401,7 @@ def test_a_copy_memlets_other_subset_is_normalized_too():
 
     assert NormalizeLoopsAndMaps().apply_pass(sdfg, {}) == 1
     sdfg.validate()
-    entry = next(n for n in sdfg.states()[0].nodes() if isinstance(n, nodes.MapEntry))
+    entry = next(n for n in next(iter(sdfg.states())).nodes() if isinstance(n, nodes.MapEntry))
     assert str(entry.map.range) == "0:3", str(entry.map.range)
     assert np.array_equal(run(copy.deepcopy(sdfg)), oracle)
 

@@ -187,7 +187,7 @@ def test_reentry_and_combined_verdict():
     _, long_state, long_ln, _ = loop_nested_copy("cost_reentry_long", "T")
     _, short_state, short_ln, _ = loop_nested_copy("cost_reentry_short", "4")
     top_sdfg, top_ln = copy_libnode_sdfg(BIG_ELEMS)
-    top_state = top_sdfg.states()[0]
+    top_state = next(iter(top_sdfg.states()))
 
     assert is_reentered_cpu_transfer(long_ln, long_state) is True
     assert is_reentered_cpu_transfer(short_ln, short_state) is False

@@ -69,7 +69,7 @@ def test_the_ordering_edge_survives_the_split():
     assert SplitStatements().apply_pass(sdfg, {}) == 1
     sdfg.validate()
 
-    state = sdfg.states()[0]
+    state = next(iter(sdfg.states()))
     clones = [n for n in state.nodes() if isinstance(n, dace.nodes.NestedSDFG)]
     assert len(clones) == 2, [type(n).__name__ for n in state.nodes()]
     ordering = [e for e in state.edges() if e.data.is_empty()]

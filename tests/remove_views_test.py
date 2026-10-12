@@ -839,7 +839,7 @@ def test_plane_view_copied_by_dst_keyed_memlet():
         e for s in sdfg.states() for e in s.edges() if isinstance(e.dst, nodes.AccessNode) and e.dst.data == "B"
     ]
     assert len(copy_edges) == 1
-    src_subset = copy_edges[0].data.get_src_subset(copy_edges[0], sdfg.states()[0])
+    src_subset = copy_edges[0].data.get_src_subset(copy_edges[0], next(iter(sdfg.states())))
     assert src_subset is not None, "RemoveViews dropped the view plane from the copy memlet"
     assert src_subset.dims() == 3
     assert str(src_subset) == f"0:{M}, 0:{N}, {PLANE}"
@@ -888,7 +888,7 @@ def test_read_view_keeps_ordering_edge():
     assert _count_views(sdfg) == 0
     sdfg.validate()
 
-    state = sdfg.states()[0]
+    state = next(iter(sdfg.states()))
     # STRUCTURAL: the constraint now lands on the view's READER, which is what X preceded.
     assert _empty_edges(state) == [("X", "B")]
     # ... and NOT on the viewed array, which would be a strictly stronger claim.
@@ -927,7 +927,7 @@ def test_write_view_keeps_ordering_edge():
     assert _count_views(sdfg) == 0
     sdfg.validate()
 
-    state = sdfg.states()[0]
+    state = next(iter(sdfg.states()))
     # STRUCTURAL: the constraint lands on the view's WRITER, not on the viewed array A.
     assert _empty_edges(state) == [("B", "Y")]
     assert not state.edges_between(a, y)
@@ -963,7 +963,7 @@ def test_ordering_edge_never_rehomed_onto_the_viewed_array():
     assert RemoveViews().apply_pass(sdfg, {}) is not None
     assert _count_views(sdfg) == 0
 
-    state = sdfg.states()[0]
+    state = next(iter(sdfg.states()))
     assert not state.has_cycles()
     assert not state.edges_between(x, a)
     assert _empty_edges(state) == [("X", "B")]
@@ -997,7 +997,7 @@ def test_view_with_ordering_edge_and_no_reader_is_kept():
     RemoveViews().apply_pass(sdfg, {})
     assert _count_views(sdfg) == 1, "RemoveViews must refuse a view whose ordering edge has no home"
 
-    state = sdfg.states()[0]
+    state = next(iter(sdfg.states()))
     assert _empty_edges(state) == [("X", "V")]
     assert len(state.edges_between(a, v)) == 1
 

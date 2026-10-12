@@ -722,7 +722,7 @@ def nest_and_expand_flux_body():
     sdfg = flux_reread_body()
     NestInnermostMapBodyIntoNSDFG(nest_provably_divisible=True).apply_pass(sdfg, {})
     nsdfg = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.NestedSDFG))
-    state = sdfg.states()[0]
+    state = next(iter(sdfg.states()))
     written = [e for e in state.out_edges(nsdfg) if e.data.data == "rf"]
     assert len(written) == 1, f"nesting must bind 'rf' through one out-connector, got {written}"
     PatternMatchAndApplyRepeated([ExpandNestedSDFGInputs()]).apply_pass(sdfg, {})

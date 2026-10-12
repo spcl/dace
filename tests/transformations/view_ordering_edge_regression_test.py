@@ -148,7 +148,7 @@ def build_read_view_with_ordering_in_edge() -> dace.SDFG:
 def test_remove_slice_view_keeps_the_ordering_edge(builder) -> None:
     """RemoveSliceView rewired one side only, so the ordering edge died with the node."""
     sdfg = builder()
-    state = sdfg.states()[0]
+    state = next(iter(sdfg.states()))
     assert count_empty_edges(state) == 1
     assert sdfg.apply_transformations(RemoveSliceView, validate=False, validate_all=False) == 1
     assert not any(isinstance(n, nodes.AccessNode) and n.data == "V" for n in state.nodes())

@@ -793,7 +793,7 @@ def test_a_one_iteration_map_inside_a_kernel_leaves_a_scalar_behind():
     eliminate_and_scalarize(sdfg)
     sdfg.validate()
 
-    state = sdfg.states()[0]
+    state = next(iter(sdfg.states()))
     maps = [n.map for n in state.nodes() if isinstance(n, dace.sdfg.nodes.MapEntry)]
     assert [m.label for m in maps] == ["device"], f"expected only the kernel to survive, got {maps}"
     assert maps[0].schedule == dtypes.ScheduleType.GPU_Device
@@ -809,7 +809,7 @@ def test_a_one_iteration_map_outside_a_kernel_keeps_its_array():
     """
     sdfg = kernel_with_a_one_iteration_inner_map()
     outer = next(
-        n for n in sdfg.states()[0].nodes() if isinstance(n, dace.sdfg.nodes.MapEntry) and n.map.label == "device"
+        n for n in next(iter(sdfg.states())).nodes() if isinstance(n, dace.sdfg.nodes.MapEntry) and n.map.label == "device"
     )
     outer.map.schedule = dtypes.ScheduleType.CPU_Multicore
     eliminate_and_scalarize(sdfg)
@@ -821,12 +821,12 @@ def test_a_trivial_kernel_map_is_never_eliminated():
     """The size-1 wrapper the pass builds for a hybrid state IS the kernel."""
     sdfg = kernel_with_a_one_iteration_inner_map()
     inner = next(
-        n for n in sdfg.states()[0].nodes() if isinstance(n, dace.sdfg.nodes.MapEntry) and n.map.label == "once"
+        n for n in next(iter(sdfg.states())).nodes() if isinstance(n, dace.sdfg.nodes.MapEntry) and n.map.label == "once"
     )
     inner.map.schedule = dtypes.ScheduleType.GPU_Device
     eliminate_and_scalarize(sdfg)
     sdfg.validate()
-    labels = {n.map.label for n in sdfg.states()[0].nodes() if isinstance(n, dace.sdfg.nodes.MapEntry)}
+    labels = {n.map.label for n in next(iter(sdfg.states())).nodes() if isinstance(n, dace.sdfg.nodes.MapEntry)}
     assert labels == {"device", "once"}, f"a GPU-scheduled map was eliminated: {labels}"
     assert isinstance(sdfg.arrays["acc"], dace.data.Array), "a kernel output was scalarized"
 

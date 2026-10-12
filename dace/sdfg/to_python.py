@@ -148,7 +148,7 @@ class PythonEmitter:
         sdfg = self.root
         n_arrays = len(sdfg.arrays)
         n_symbols = len(sdfg.symbols)
-        n_states = len(sdfg.states())
+        n_states = sdfg.num_states()
         return (
             f'"""Reconstructed SDFG ``{sdfg.name}`` (auto-generated).\n\n'
             f"This file was emitted by ``dace.sdfg.to_python.sdfg_to_python``.\n"

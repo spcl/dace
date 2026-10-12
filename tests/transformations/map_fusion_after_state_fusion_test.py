@@ -86,7 +86,7 @@ def _assert_ordered_inside_one_map(sdfg: SDFG, first_code: str, second_code: str
     Numerics alone do not prove this: an unordered pair may still be *emitted* in the
     right order by chance, and would then be reordered by the next pass that runs.
     """
-    state = sdfg.states()[0]
+    state = next(iter(sdfg.states()))
     first, second = _tasklet(sdfg, first_code), _tasklet(sdfg, second_code)
     assert nx.has_path(state._nx, first, second), f"{first_code!r} is not ordered before {second_code!r}"
     scope = state.scope_dict()

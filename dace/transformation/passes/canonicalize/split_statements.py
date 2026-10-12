@@ -478,7 +478,7 @@ def rmw_confined(body: Body, in_names: dict[str, None], rmw: list[str], groups: 
         return False
     # ``output_input_reads`` walks a single state at a time, so a producer chain that crosses
     # states is invisible to it -- only a one-state body is fully analyzable.
-    if len(body.states()) != 1:
+    if body.num_states() != 1:
         return False
     for grp in groups:
         reads: dict[str, None] = {}

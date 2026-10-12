@@ -297,7 +297,7 @@ def test_affine_scan_refuses_shapes_without_a_lowering():
     """
     for attr, value in (("exclusive", True), ("chains", 2)):
         sdfg = build_affine_sdfg()
-        node = next(n for n in sdfg.states()[0].nodes() if isinstance(n, Scan))
+        node = next(n for n in next(iter(sdfg.states())).nodes() if isinstance(n, Scan))
         setattr(node, attr, value)
         with pytest.raises(NotImplementedError, match="AFFINE"):
             sdfg.expand_library_nodes()
@@ -310,7 +310,7 @@ def test_a_strided_affine_scan_takes_the_per_class_entry_point():
     compute a different function, silently.
     """
     sdfg = build_affine_sdfg()
-    node = next(n for n in sdfg.states()[0].nodes() if isinstance(n, Scan))
+    node = next(n for n in next(iter(sdfg.states())).nodes() if isinstance(n, Scan))
     node.stride = 2
     sdfg.expand_library_nodes()
     code = "\n".join(c.clean_code for c in sdfg.generate_code())
@@ -357,7 +357,7 @@ def test_the_cuda_affine_call_is_emitted_into_the_cuda_unit():
     """
     sdfg = build_affine_cuda_sdfg(seed_on_device=False)
     sdfg.expand_library_nodes()
-    tasklet = next(n for n in sdfg.states()[0].nodes() if isinstance(n, dace.sdfg.nodes.Tasklet))
+    tasklet = next(n for n in next(iter(sdfg.states())).nodes() if isinstance(n, dace.sdfg.nodes.Tasklet))
     assert "inclusive_affine" not in tasklet.code.as_string, "the device call reached the host tasklet"
     assert "__dace_scan_affine_" in tasklet.code.as_string
     assert "inclusive_affine" in sdfg.global_code["cuda"].as_string

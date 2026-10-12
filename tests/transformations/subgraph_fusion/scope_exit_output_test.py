@@ -43,7 +43,7 @@ def build_write_through_outer_exit_sdfg() -> dace.SDFG:
 
 def test_maps_writing_through_the_outer_map_exit_are_not_fused():
     sdfg = build_write_through_outer_exit_sdfg()
-    state = sdfg.states()[0]
+    state = next(iter(sdfg.states()))
     outer_entry = next(n for n in state.nodes() if isinstance(n, nodes.MapEntry) and n.map.label == "outer")
     body = state.scope_subgraph(outer_entry, include_entry=False, include_exit=False)
     subgraph = SubgraphView(state, body.nodes())

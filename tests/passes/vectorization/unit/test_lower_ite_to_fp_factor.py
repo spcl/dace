@@ -49,7 +49,7 @@ def test_rewrites_simple_ite_tasklet():
     sdfg = _build_ite_tasklet_sdfg("_o = ITE(_c, _t, _e)")
     rewritten = LowerITEToFpFactor().apply_pass(sdfg, {})
     assert rewritten == 1
-    body = next(n for n in sdfg.states()[0].nodes() if isinstance(n, dace.nodes.Tasklet)).code.as_string
+    body = next(n for n in next(iter(sdfg.states())).nodes() if isinstance(n, dace.nodes.Tasklet)).code.as_string
     assert "ITE(" not in body
     # The rewrite should preserve the three operands.
     for op in ("_c", "_t", "_e"):
@@ -64,7 +64,7 @@ def test_float_ite_is_left_intact_for_select():
     would leak a NaN. The ITE is kept and lowered by a real select instead."""
     sdfg = _build_ite_tasklet_sdfg("_o = ITE(_c, _t, _e)", dtype=dace.float64)
     assert LowerITEToFpFactor().apply_pass(sdfg, {}) is None
-    body = next(n for n in sdfg.states()[0].nodes() if isinstance(n, dace.nodes.Tasklet)).code.as_string
+    body = next(n for n in next(iter(sdfg.states())).nodes() if isinstance(n, dace.nodes.Tasklet)).code.as_string
     assert "ITE(" in body
 
 
@@ -95,7 +95,7 @@ def test_handles_multiple_ites_in_one_tasklet():
     sdfg = _build_ite_tasklet_sdfg("_o = ITE(_c, _t, _e) + ITE(_c, _t, _e)")
     rewritten = LowerITEToFpFactor().apply_pass(sdfg, {})
     assert rewritten == 1
-    body = next(n for n in sdfg.states()[0].nodes() if isinstance(n, dace.nodes.Tasklet)).code.as_string
+    body = next(n for n in next(iter(sdfg.states())).nodes() if isinstance(n, dace.nodes.Tasklet)).code.as_string
     assert "ITE(" not in body
 
 
@@ -120,7 +120,7 @@ def test_handles_symbol_cond_in_ite_call():
 
     rewritten = LowerITEToFpFactor().apply_pass(sdfg, {})
     assert rewritten == 1
-    body = next(n for n in sdfg.states()[0].nodes() if isinstance(n, dace.nodes.Tasklet)).code.as_string
+    body = next(n for n in next(iter(sdfg.states())).nodes() if isinstance(n, dace.nodes.Tasklet)).code.as_string
     assert "ITE(" not in body
     # The symbol cond appears twice: once in `c0 == 1` and again in `1 - (c0 == 1)`.
     assert body.count("c0") == 2

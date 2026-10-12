@@ -106,7 +106,7 @@ def test_buffer_expansion_arr_subset_separates_the_two_ends(build_sdfg):
     loop-carried level shift ``p[k] = p[k-1]`` looks like a write that covers its own read.
     """
     sdfg = build_sdfg(f"buffer_expansion_{build_sdfg.__name__}")
-    state = sdfg.states()[0]
+    state = next(iter(sdfg.states()))
     edge = state.edges()[0]
 
     read = BufferExpansion._arr_subset(state, edge, edge.src)
@@ -125,7 +125,7 @@ def test_an_side_subset_separates_the_two_ends(build_sdfg):
     from dace.transformation.passes.vectorization.utils.subsets import an_side_subset, infer_edge_endpoints
 
     sdfg = build_sdfg(f"an_side_{build_sdfg.__name__}")
-    state = sdfg.states()[0]
+    state = next(iter(sdfg.states()))
     edge = state.edges()[0]
 
     assert str(an_side_subset(edge, edge.src, sdfg, state)) == f"{READ[0]}, {READ[1]}"
@@ -148,7 +148,7 @@ def test_canonicalize_node_side_subset_separates_the_two_ends(build_sdfg):
     from dace.transformation.passes.canonicalize.loop_to_transpose import _node_side_subset
 
     sdfg = build_sdfg(f"node_side_{build_sdfg.__name__}")
-    state = sdfg.states()[0]
+    state = next(iter(sdfg.states()))
     edge = state.edges()[0]
 
     assert str(_node_side_subset(state, edge, edge.src)) == f"{READ[0]}, {READ[1]}"

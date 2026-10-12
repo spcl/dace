@@ -962,7 +962,7 @@ def test_a_versioned_staging_copy_keeps_its_boundary_memlet_on_the_outer_contain
     propagate_memlets_sdfg(sdfg)
     sdfg.validate()
 
-    state = sdfg.states()[0]
+    state = next(iter(sdfg.states()))
     entry = next(n for n in state.nodes() if isinstance(n, dace.sdfg.nodes.MapEntry))
     boundary = state.in_edges(entry)
     assert len(boundary) == 1, f"expected one edge into the map entry, got {len(boundary)}"

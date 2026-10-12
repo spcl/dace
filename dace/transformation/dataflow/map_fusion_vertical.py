@@ -926,6 +926,17 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                 if not isinstance(producer_edge.data.dst_subset, subsets.Range):
                     return None
 
+                _, reduced_inter_shape, _ = self.compute_reduced_intermediate(
+                    producer_subset=producer_edge.data.dst_subset, inter_desc=intermediate_desc
+                )
+
+                # If the fused Map would create a new intermediate with symbolic size,
+                #  dynamic memory allocation may be required. Prevent this unless the
+                #  user explicitly opted in via `allow_intermediates_with_symbolic_size`.
+                if isinstance(intermediate_desc, dace.data.Array) and not self.allow_intermediates_with_symbolic_size:
+                    if not all(str(dim).isdigit() for dim in reduced_inter_shape):
+                        return None
+
                 # If we reduce the intermediate node then we also change the underlying
                 #  memory layout, i.e. the strides. This change is not captured by the
                 #  data dependency checks. Thus we have to check them separately here.

@@ -49,7 +49,7 @@ def test_stream_reaches_a_nested_sdfg_inside_a_host_map():
     GPUStreamPipeline().apply_pass(sdfg, {})
     sdfg.validate()
 
-    state = sdfg.states()[0]
+    state = next(iter(sdfg.states()))
     stream_name = get_gpu_stream_array_name()
     nsdfg_node = next(n for n in state.nodes() if isinstance(n, dace.nodes.NestedSDFG))
     # By label, not ``entry_node``: the scope lookup is exactly what a mis-wired stream edge

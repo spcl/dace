@@ -377,8 +377,8 @@ def test_velocity_stage1_round_trip(filename):
     # Structural equivalence: arrays, symbols, state count.
     assert set(original.arrays.keys()) == set(rebuilt.arrays.keys())
     assert set(original.symbols.keys()) == set(rebuilt.symbols.keys())
-    orig_states = len(original.states())
-    rebuilt_states = len(rebuilt.states())
+    orig_states = original.num_states()
+    rebuilt_states = rebuilt.num_states()
     assert orig_states == rebuilt_states
 
     # Compile both — failure here surfaces real codegen breakage.
@@ -571,8 +571,8 @@ def test_full_cloudsc_round_trip():
     assert set(original.arrays.keys()) == set(rebuilt.arrays.keys())
     assert set(original.symbols.keys()) == set(rebuilt.symbols.keys())
 
-    orig_states = len(original.states())
-    rebuilt_states = len(rebuilt.states())
+    orig_states = original.num_states()
+    rebuilt_states = rebuilt.num_states()
     assert orig_states == rebuilt_states
 
 

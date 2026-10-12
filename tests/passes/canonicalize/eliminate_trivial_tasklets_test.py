@@ -124,7 +124,7 @@ def test_each_pattern_shape_is_enumerated_under_its_own_index(builder, label, ex
     would have bound it to. Getting the index wrong is silent: ``can_be_applied`` reads the wrong
     ``read``/``write`` pattern node, refuses, and the site is skipped instead of eliminated."""
     sdfg = builder()
-    state = sdfg.states()[0]
+    state = next(iter(sdfg.states()))
     found = {
         expr_index
         for expr_index, binding in trivial_tasklet_candidates(state)

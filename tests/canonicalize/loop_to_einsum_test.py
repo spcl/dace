@@ -430,7 +430,7 @@ def test_ordering_memlet_is_not_a_prior_writer():
 
     sdfg = k2.to_sdfg(simplify=True)
     # An ordering-only AccessNode for the accumulator: legal SDFG, transfers nothing.
-    last = sdfg.states()[-1]
+    last = list(sdfg.states())[-1]
     last.add_edge(next(iter(last.data_nodes())), None, last.add_access("Eacc"), None, dace.Memlet())
 
     assert LoopToEinsum().apply_pass(sdfg, {}) == 1

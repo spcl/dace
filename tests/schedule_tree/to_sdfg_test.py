@@ -397,8 +397,8 @@ def test_create_tasklet_raw() -> None:
     )
 
     sdfg = stree.as_sdfg(validate=True)
-    assert len(sdfg.states()) == 1
-    state = sdfg.states()[0]
+    assert sdfg.num_states() == 1
+    state = next(iter(sdfg.states()))
     first_tasklet, write_read_node, second_tasklet, write_node = state.nodes()
 
     assert isinstance(first_tasklet, nodes.Tasklet)
@@ -432,7 +432,7 @@ def test_create_tasklet_waw() -> None:
     # simplify()'s state fusion (StateFusionExtended) fuses the WAW pair into one state,
     # ordering the writes with a happens-before (empty-memlet) edge instead of a state split.
     # main splits them; the assertions below read the fused form this branch produces.
-    assert len(sdfg.states()) == 1
+    assert sdfg.num_states() == 1
     (state,) = sdfg.states()
 
     bla, first_anode, bla2, second_anode = state.nodes()
@@ -719,7 +719,7 @@ def test_create_map_scope_write() -> None:
 
     sdfg = stree.as_sdfg(validate=True)
 
-    states = sdfg.states()
+    states = list(sdfg.states())
     assert len(states) == 1
     assert [type(node) for node in states[0].nodes()] == [
         nodes.MapEntry,
@@ -1373,7 +1373,7 @@ def test_multiple_copy_nodes() -> None:
 
     sdfg = stree.as_sdfg(validate=True)
 
-    states = sdfg.states()
+    states = list(sdfg.states())
     assert len(states) == 1, "expect one state"
 
     nodes = states[0].nodes()

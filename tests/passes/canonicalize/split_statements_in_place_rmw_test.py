@@ -126,7 +126,7 @@ def _shape(sdfg):
         sorted(type(n).__name__ for n, _ in sdfg.all_nodes_recursive()),
         sorted(k for s in sdfg.all_sdfgs_recursive() for k, v in s.arrays.items() if not v.transient),
         sum(len(s.edges()) for s in sdfg.states()),
-        len(sdfg.states()),
+        sdfg.num_states(),
     )
 
 

@@ -73,7 +73,7 @@ def _enumerate(sdfg: dace.SDFG, measure: bool = False) -> tuple[list[tuple[nodes
     :return: The yielded groups, the number of condition-function calls and
              the peak bytes allocated during enumeration (0 unless ``measure``).
     """
-    state = sdfg.states()[0]
+    state = next(iter(sdfg.states()))
     condition = CompositeFusion()
     condition.setup_match(SubgraphView(state, state.nodes()))
     condition.allow_tiling = False

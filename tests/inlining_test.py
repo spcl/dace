@@ -1629,7 +1629,7 @@ def test_inline_into_view_output():
     assert sdfg.apply_transformations_repeated(InlineSDFG) == 1
     sdfg.validate()
 
-    state = sdfg.states()[0]
+    state = next(iter(sdfg.states()))
     view_nodes = [
         n for n in state.data_nodes() if isinstance(sdfg.arrays[n.data], dace.data.View) and state.degree(n) > 0
     ]
