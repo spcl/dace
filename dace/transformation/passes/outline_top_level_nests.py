@@ -13,6 +13,9 @@ simplification from inlining the nest back, and codegen treats a ``no_inline`` n
 function rather than folding it into the parent. ``unique_name`` names that function deterministically
 so two structurally identical nests are not deduplicated into one.
 
+With ``library_nodes``, each top-level library node is outlined the same way, so a node whose expansion is
+not a nest (a C++ or vendor implementation) still gets its own function; the split-file codegen leaves it off.
+
 This is the codegen-agnostic half of the "outline top-level loop nests into their own translation
 units" feature; the emission side (routing each ``no_inline`` nest to its own file) lives in the CPU
 code generator.
@@ -21,7 +24,8 @@ code generator.
 from typing import Any
 
 from dace import SDFG, dtypes
-from dace.properties import make_properties
+from dace.libraries.standard.nodes import external_call
+from dace.properties import Property, make_properties
 from dace.sdfg import nodes
 from dace.sdfg.graph import SubgraphView
 from dace.sdfg.state import LoopRegion, SDFGState
@@ -57,6 +61,8 @@ class OutlineTopLevelNests(ppl.Pass):
 
     CATEGORY: str = "Optimization Preparation"
 
+    library_nodes = Property(dtype=bool, default=False, desc="Also outline each top-level library node.")
+
     def modifies(self) -> ppl.Modifies:
         # Creates NestedSDFG nodes and rewrites a state's dataflow (Nodes covers NestedSDFGs/Scopes);
         # the loop-region path replaces a CFG block with a state (States) and registers loop symbols
@@ -76,15 +82,21 @@ class OutlineTopLevelNests(ppl.Pass):
         # extraction as long as map subgraphs are recomputed at extraction time.
         loop_refs: list[LoopRegion] = []
         map_refs: list[tuple[SDFGState, nodes.MapEntry]] = []
+        library_refs: list[tuple[SDFGState, nodes.LibraryNode]] = []
         for block in sdfg.nodes():
             if isinstance(block, LoopRegion):
                 loop_refs.append(block)
             elif isinstance(block, SDFGState):
-                map_refs.extend(
-                    (block, node) for node in block.scope_children()[None] if isinstance(node, nodes.MapEntry)
-                )
+                top = block.scope_children()[None]
+                map_refs.extend((block, node) for node in top if isinstance(node, nodes.MapEntry))
+                if self.library_nodes:
+                    library_refs.extend(
+                        (block, node)
+                        for node in top
+                        if isinstance(node, nodes.LibraryNode) and not isinstance(node, external_call.ExternalCall)
+                    )
 
-        if not loop_refs and not map_refs:
+        if not loop_refs and not map_refs and not library_refs:
             return None
 
         count = 0
@@ -95,6 +107,12 @@ class OutlineTopLevelNests(ppl.Pass):
             subgraph = state.scope_subgraph(entry, include_entry=True, include_exit=True)
             name = self._unique_label(sdfg, count)
             nsdfg = helpers.nest_state_subgraph(sdfg, state, subgraph, name=name)
+            self._mark(nsdfg, name)
+            count += 1
+
+        for state, libnode in library_refs:
+            name = self._unique_label(sdfg, count)
+            nsdfg = helpers.nest_state_subgraph(sdfg, state, SubgraphView(state, [libnode]), name=name)
             self._mark(nsdfg, name)
             count += 1
 
@@ -131,6 +149,9 @@ class OutlineTopLevelNests(ppl.Pass):
         return "%s_nest_%d" % (sdfg.label, index)
 
 
-def outline_top_level_nests(sdfg: SDFG) -> int:
-    """Outline the root SDFG's top-level loop nests in place; returns the number outlined."""
-    return OutlineTopLevelNests().apply_pass(sdfg, {}) or 0
+def outline_top_level_nests(sdfg: SDFG, library_nodes: bool = False) -> int:
+    """Outline the root SDFG's top-level loop nests (and, with ``library_nodes``, library nodes) in place; returns
+    the number outlined."""
+    outliner = OutlineTopLevelNests()
+    outliner.library_nodes = library_nodes
+    return outliner.apply_pass(sdfg, {}) or 0

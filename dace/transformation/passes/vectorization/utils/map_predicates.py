@@ -568,7 +568,7 @@ def map_body_per_lane_subsets(state: SDFGState, map_entry: dace.nodes.MapEntry) 
     tile-lowerability gate need only inspect stores. Transients are skipped: only real
     (caller-visible) arrays constrain what the tile emitter must lower.
 
-    Body states are enumerated with ``all_states()`` so a write nested inside a control-flow region
+    Body states are enumerated with ``states()`` so a write nested inside a control-flow region
     (loop / conditional) of the body NSDFG is not missed (top-level ``states()`` would skip it).
 
     :raises StopIteration: at the CALL, not on first iteration, when ``map_entry`` has no exit in its
