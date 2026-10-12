@@ -114,6 +114,24 @@ def test_transpose_strided_column(implementation):
     assert np.allclose(sdfg(pos=pos, N=25), pos[:, 0:1].T)
 
 
+def test_transpose_strided_columns(implementation):
+    """``pos[:, 0:2]`` is an (N, 2) block whose rows are 3 apart: a vendor transpose reads it by that row stride,
+    not as 2 * N contiguous elements."""
+
+    @dace.program
+    def transpose_columns(pos: dace.float64[N, 3]):
+        return pos[:, 0:2].T
+
+    pos = np.random.rand(25, 3)
+    sdfg = transpose_columns.to_sdfg()
+    sdfg.name = f"{sdfg.name}_{implementation}"
+    transposes = [node for node, _ in sdfg.all_nodes_recursive() if type(node).__name__ == "Transpose"]
+    assert transposes, "the transpose did not become a Transpose library node"
+    for node in transposes:
+        node.implementation = implementation
+    assert np.allclose(sdfg(pos=pos, N=25), pos[:, 0:2].T)
+
+
 if __name__ == "__main__":
     implementations = ["pure", "MKL", "cuBLAS"]
     for implementation in implementations:
@@ -123,3 +141,4 @@ if __name__ == "__main__":
         test_dot_strided(implementation)
     for implementation in ["pure", "MKL", "OpenBLAS"]:
         test_transpose_strided_column(implementation)
+        test_transpose_strided_columns(implementation)
