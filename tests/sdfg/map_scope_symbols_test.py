@@ -24,21 +24,21 @@ def _map_over(range_str: str) -> dace.SDFG:
 
 def test_map_range_symbol_is_used():
     sdfg = _map_over("0:N")
-    entry = next(n for n in sdfg.states()[0].nodes() if isinstance(n, dace.nodes.MapEntry))
-    assert "N" in entry.used_symbols_within_scope(sdfg.states()[0], all_symbols=True)
+    entry = next(n for n in next(iter(sdfg.states())).nodes() if isinstance(n, dace.nodes.MapEntry))
+    assert "N" in entry.used_symbols_within_scope(next(iter(sdfg.states())), all_symbols=True)
 
 
 def test_map_range_bounds_and_step_symbols_are_used():
     sdfg = _map_over("M:N:M")
-    entry = next(n for n in sdfg.states()[0].nodes() if isinstance(n, dace.nodes.MapEntry))
-    assert {"M", "N"} <= entry.used_symbols_within_scope(sdfg.states()[0], all_symbols=True)
+    entry = next(n for n in next(iter(sdfg.states())).nodes() if isinstance(n, dace.nodes.MapEntry))
+    assert {"M", "N"} <= entry.used_symbols_within_scope(next(iter(sdfg.states())), all_symbols=True)
 
 
 def test_map_parameter_is_not_reported():
     """The parameter is defined by the map, not used by it."""
     sdfg = _map_over("0:N")
-    entry = next(n for n in sdfg.states()[0].nodes() if isinstance(n, dace.nodes.MapEntry))
-    assert "i" not in entry.used_symbols_within_scope(sdfg.states()[0], all_symbols=True)
+    entry = next(n for n in next(iter(sdfg.states())).nodes() if isinstance(n, dace.nodes.MapEntry))
+    assert "i" not in entry.used_symbols_within_scope(next(iter(sdfg.states())), all_symbols=True)
 
 
 if __name__ == "__main__":

@@ -285,7 +285,7 @@ def test_data_dependent_siblings_merge_without_a_cycle():
 
     assert NormalizeMapBody().apply_pass(sdfg, {}) == 1, "the two siblings must merge"
     sdfg.validate()
-    state = sdfg.states()[0]
+    state = next(iter(sdfg.states()))
     nested = [n for n in state.nodes() if isinstance(n, nodes.NestedSDFG)]
     assert len(nested) == 1, f"the map body must be a single nested SDFG, got {len(nested)}"
     merged = nested[0]
@@ -365,7 +365,7 @@ def test_ordering_memlet_into_sibling_keeps_no_connector():
 
     assert NormalizeMapBody().apply_pass(sdfg, {}) == 1, "the two siblings must merge"
 
-    state = sdfg.states()[0]
+    state = next(iter(sdfg.states()))
     nested = [nd for nd in state.nodes() if isinstance(nd, nodes.NestedSDFG)]
     assert len(nested) == 1, f"the map body must be a single nested SDFG, got {len(nested)}"
     merged = nested[0]

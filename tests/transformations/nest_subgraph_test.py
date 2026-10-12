@@ -96,7 +96,7 @@ def test_nest_keeps_ordering_memlets_empty():
     nsdfg_node = nest_state_subgraph(sdfg, state, state.scope_subgraph(me))
     sdfg.validate()
 
-    nstate = nsdfg_node.sdfg.states()[0]
+    nstate = next(iter(nsdfg_node.sdfg.states()))
     inner_me = next(n for n in nstate.nodes() if isinstance(n, dace.nodes.MapEntry))
     inner_side = next(n for n in nstate.nodes() if isinstance(n, dace.nodes.Tasklet) and n.label == "side")
 

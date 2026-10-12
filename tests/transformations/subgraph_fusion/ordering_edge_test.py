@@ -33,7 +33,7 @@ def build_waw_ordered_sdfg() -> dace.SDFG:
 
 def test_ordering_edge_from_intermediate_node():
     sdfg = build_waw_ordered_sdfg()
-    state = sdfg.states()[0]
+    state = next(iter(sdfg.states()))
     intermediate = [n for n in state.nodes() if isinstance(n, nodes.AccessNode) and state.in_degree(n) > 0][0]
     second = [n for n in state.nodes() if isinstance(n, nodes.Tasklet) and n.label == "second"][0]
 

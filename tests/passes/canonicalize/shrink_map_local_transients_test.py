@@ -37,7 +37,7 @@ def test_map_body_local_transient_shrinks_to_the_box_it_names():
 
     assert ShrinkMapLocalTransients().apply_pass(sdfg, {}) == 1
     assert tuple(int(s) for s in sdfg.arrays["scratch"].shape) == (1, 1)
-    for edge in sdfg.states()[0].edges():
+    for edge in next(iter(sdfg.states())).edges():
         if edge.data.data == "scratch":
             assert str(edge.data.subset) == "0, 0"
     sdfg.validate()

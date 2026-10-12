@@ -115,7 +115,7 @@ def cmod_gather_read_sdfg() -> dace.SDFG:
 def test_cmod_gather_read_1d(branch_mode, remainder_strategy):
     """A truncating ``CMod`` index whose dividend sign is unknown gathers per lane like the floored one."""
     sdfg = cmod_gather_read_sdfg()
-    index = next(e.data.subset for e in sdfg.states()[0].edges() if isinstance(e.dst, dace.nodes.Tasklet))
+    index = next(e.data.subset for e in next(iter(sdfg.states())).edges() if isinstance(e.dst, dace.nodes.Tasklet))
     assert isinstance(index.min_element()[0], dace.symbolic.CMod)
     xv, sv = 60, 3
     vectorized = run_vectorization_test(

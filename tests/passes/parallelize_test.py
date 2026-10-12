@@ -250,10 +250,10 @@ def test_short_loop_unroll_refuses_unfusable_branchy_body() -> None:
 
     # Branchy AND the iterate is unused -> refused, and the refusal leaves the SDFG untouched.
     refused = bit_mix.to_sdfg(simplify=True)
-    states_before = sum(len(sd.states()) for sd in refused.all_sdfgs_recursive())
+    states_before = sum(sd.num_states() for sd in refused.all_sdfgs_recursive())
     ShortLoopUnroll(unroll_limit=8).apply_pass(refused, {})
     assert _num_loops(refused) == 1
-    assert sum(len(sd.states()) for sd in refused.all_sdfgs_recursive()) == states_before
+    assert sum(sd.num_states() for sd in refused.all_sdfgs_recursive()) == states_before
 
     # Branchy but the iterate INDEXES the body: unrolling pins it, which is what folds the guards
     # and the constant subsets downstream (the CloudSC species loop). Still unrolled.

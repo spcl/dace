@@ -111,10 +111,10 @@ def test_a_region_that_needs_no_boundary_is_left_alone():
     sdfg = loop_and_branch.to_sdfg(simplify=True)
     assert any(True for _ in regions_of(sdfg))  # guard against a vacuous check
     assert not list(sizing_regions(sdfg))
-    before = len(sdfg.states())
+    before = sdfg.num_states()
 
     assert RegionBoundaryStates().apply_pass(sdfg, {}) is None
-    assert len(sdfg.states()) == before
+    assert sdfg.num_states() == before
     sdfg.validate()
 
 

@@ -1078,8 +1078,8 @@ def test_lifting_a_copy_keeps_a_connector_its_other_edge_still_uses():
     parallelize phase's ``lift_copy`` stage, on two ``zqx`` edges sharing one MapEntry connector.
     """
     sdfg = _sdfg_with_shared_input_connector()
-    entry = next(n for n in sdfg.states()[0].nodes() if isinstance(n, dace.nodes.MapEntry))
-    state = sdfg.states()[0]
+    entry = next(n for n in next(iter(sdfg.states())).nodes() if isinstance(n, dace.nodes.MapEntry))
+    state = next(iter(sdfg.states()))
     assert len(list(state.out_edges_by_connector(entry, "OUT_1"))) == 2
 
     AssignmentAndCopyKernelToMemsetAndMemcpy().apply_pass(sdfg, {})
@@ -1188,7 +1188,7 @@ def test_a_body_ordering_edge_blocks_the_lift():
     picked up positionally as the tasklet's write and carrying no subset to do arithmetic on.
     """
     sdfg = _sdfg_with_a_sibling_ordering_edge(ordered=True)
-    state = sdfg.states()[0]
+    state = next(iter(sdfg.states()))
     fill = next(n for n in state.nodes() if isinstance(n, dace.nodes.Tasklet) and n.label == "fill")
 
     AssignmentAndCopyKernelToMemsetAndMemcpy().apply_pass(sdfg, {})
@@ -1254,7 +1254,7 @@ def test_lifted_memsets_follow_map_order_not_memory_addresses():
     for rebuild in range(12):
         keep_alive.append([object() for attempt in range(rebuild * 1543)])
         sdfg = sdfg_with_independent_memset_maps(8)
-        state = sdfg.states()[0]
+        state = next(iter(sdfg.states()))
         AssignmentAndCopyKernelToMemsetAndMemcpy().apply_pass(sdfg, {})
         orders.append(
             [state.out_edges(node)[0].dst.data for node in state.nodes() if isinstance(node, FillLibraryNode)]

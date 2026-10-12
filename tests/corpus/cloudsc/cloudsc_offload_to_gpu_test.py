@@ -335,7 +335,7 @@ def test_device_written_data_is_not_constant():
 def with_kernel_written_scratch(sdfg: dace.SDFG) -> nodes.AccessNode:
     """Wire a transient ``scratch`` the kernel body writes into ``sdfg``; returns its top-level node."""
     sdfg.add_transient("scratch", [klev, klon, nblocks], dace.float64)
-    state = sdfg.states()[0]
+    state = next(iter(sdfg.states()))
     inner_exit = next(n for n in state.nodes() if isinstance(n, nodes.MapExit) and n.map.label == "work")
     block_exit = next(n for n in state.nodes() if isinstance(n, nodes.MapExit) and n.map.label == "blocks")
     tasklet = next(n for n in state.nodes() if isinstance(n, nodes.Tasklet))
@@ -376,7 +376,7 @@ def test_an_ordering_edge_to_a_host_tasklet_does_not_pin_a_kernel_written_transi
     sdfg = blocked_sdfg()
     scratch = with_kernel_written_scratch(sdfg)
     sdfg.add_transient("flag", [1], dace.float64)
-    state = sdfg.states()[0]
+    state = next(iter(sdfg.states()))
     host = state.add_tasklet("init", {}, {"o"}, "o = 0.0")
     state.add_edge(scratch, None, host, None, Memlet())
     state.add_edge(host, "o", state.add_write("flag"), None, Memlet(data="flag", subset="0"))
@@ -391,7 +391,7 @@ def test_host_only_transient_stays_host():
     readers would dereference device memory."""
     sdfg = blocked_sdfg()
     sdfg.add_transient("host_scratch", [4], dace.float64)
-    state = sdfg.states()[0]
+    state = next(iter(sdfg.states()))
     producer = state.add_tasklet("init", {}, {"o"}, "o = 1.0")
     state.add_edge(producer, "o", state.add_write("host_scratch"), None, Memlet(data="host_scratch", subset="0"))
     offload_cloudsc_to_gpu(sdfg)

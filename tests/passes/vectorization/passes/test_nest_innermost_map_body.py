@@ -347,7 +347,7 @@ def test_nested_body_reading_a_prefix_is_flattened_into_the_body():
     NestInnermostMapBodyIntoNSDFG(nest_provably_divisible=True).apply_pass(sdfg, {})
 
     sdfg.validate()
-    bodies = [node for node in sdfg.states()[0].nodes() if isinstance(node, dace.nodes.NestedSDFG)]
+    bodies = [node for node in next(iter(sdfg.states())).nodes() if isinstance(node, dace.nodes.NestedSDFG)]
     assert len(bodies) == 1
     assert not any(isinstance(node, dace.nodes.NestedSDFG) for node, _ in bodies[0].sdfg.all_nodes_recursive())
 

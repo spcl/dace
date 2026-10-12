@@ -175,7 +175,7 @@ def test_each_pattern_shape_is_enumerated_under_its_own_index(builder, expected)
     matcher would have bound it to. Getting the index wrong is silent: ``can_be_applied`` simply
     refuses, and the site is skipped instead of reverted."""
     sdfg = builder()
-    state = sdfg.states()[0]
+    state = next(iter(sdfg.states()))
     found = {expr_index for expr_index, _ in wcr_candidates(state)}
     assert expected in found, f"{builder.__name__} must enumerate expr {expected}, got {sorted(found)}"
 

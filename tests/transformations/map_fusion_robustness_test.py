@@ -190,7 +190,7 @@ def test_horizontal_refuses_unresolvable_view_in_scope(recwarn):
 def test_view_source_resolution_is_decidable():
     """``resolve_view_source()`` reports the undecidable View shape instead of raising."""
     sdfg = make_unresolvable_view_sdfg()
-    state = sdfg.states()[0]
+    state = next(iter(sdfg.states()))
     views = [n for n in state.data_nodes() if n.data == "AV" and state.out_degree(n) > 1]
     assert len(views) == 1
     assert mfhelper.resolve_view_source(state, views[0]) is None
@@ -330,7 +330,7 @@ def test_ordering_edges_survive_a_fusion(xform, recwarn):
     before = sum(1 for e in state.edges() if e.data.is_empty())
     sdfg.validate()
     sdfg.apply_transformations_repeated([xform], validate=False, validate_all=False)
-    state = sdfg.states()[0]
+    state = next(iter(sdfg.states()))
     after = sum(1 for e in state.edges() if e.data.is_empty())
     assert after >= before, "An ordering edge was dropped by the fusion."
     sdfg.validate()
