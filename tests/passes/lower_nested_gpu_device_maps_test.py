@@ -346,7 +346,7 @@ def test_directly_nested_gpu_map_lowers_without_detaching_its_body():
 
     assert count_gpu_device_maps(sdfg) == (1, 0)
     assert set(kernel_entry(sdfg).map.params) == {"__k", "__j"}, kernel_entry(sdfg).map.params
-    state = sdfg.states()[0]
+    state = next(iter(sdfg.states()))
     body = next(n for n in state.nodes() if isinstance(n, dace.nodes.NestedSDFG))
     assert state.in_degree(body) > 0, "the guarded body was detached from the kernel scope"
 
@@ -412,7 +412,7 @@ def test_an_inner_param_reusing_a_kernel_param_gets_its_own_dimension():
     sdfg = build_inner_kernel_reusing_the_outer_param("inner_reuses_outer_param")
     NestedGPUDeviceMapLowering().apply_pass(sdfg, {})
 
-    state = sdfg.states()[0]
+    state = next(iter(sdfg.states()))
     params = kernel_entry(sdfg).map.params
     assert len(params) == 3 and len(set(params)) == 3, params
     assert params[0] == "i" and "j" in params, params
@@ -455,7 +455,7 @@ def test_an_inner_param_shadowing_a_nested_symbol_is_renamed():
 
     absorbed = kernel_entry(sdfg).map.params[1]
     assert absorbed != "j", kernel_entry(sdfg).map.params
-    nested = next(n for n in sdfg.states()[0].nodes() if isinstance(n, dace.nodes.NestedSDFG))
+    nested = next(n for n in next(iter(sdfg.states())).nodes() if isinstance(n, dace.nodes.NestedSDFG))
     assert str(nested.symbol_mapping[absorbed]) == absorbed, nested.symbol_mapping
     assert str(nested.symbol_mapping["j"]) == "N", nested.symbol_mapping
 

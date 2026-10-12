@@ -126,7 +126,7 @@ def host_maps(sdfg: SDFG, spec: HostMapSpec = False) -> OrderedSet:
 def host_code_containers(sdfg: SDFG, region: ControlFlowRegion) -> OrderedSet[str]:
     """Containers touched by top-level tasklets, interstate edges and loop or branch conditions under ``region``."""
     touched: OrderedSet[str] = OrderedSet()
-    for state in region.all_states():
+    for state in region.states():
         scopes = state.scope_dict()
         for node in state.nodes():
             if isinstance(node, nodes.Tasklet) and scopes[node] is None:
@@ -178,7 +178,7 @@ def pinnable_maps(sdfg: SDFG, loop: LoopRegion) -> OrderedSet | None:
     """The maps of ``loop`` to keep on the host, or None when ``loop`` is a device loop."""
     host = host_code_containers(sdfg, loop)
     candidates: OrderedSet = OrderedSet()
-    for state in loop.all_states():
+    for state in loop.states():
         work = [n for n in state.scope_children()[None] if isinstance(n, (nodes.MapEntry, nodes.LibraryNode))]
         for node in work:
             if len(work) != 1 or not isinstance(node, nodes.MapEntry):

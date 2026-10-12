@@ -56,7 +56,7 @@ def test_basic():
     sdfg = simple_copy.to_sdfg()
     gpu_stream_pipeline.apply_pass(sdfg, {})
 
-    state = sdfg.states()[0]
+    state = next(iter(sdfg.states()))
 
     syncs = _sync_tasklets(state)
     assert len(syncs) == 1, f"Expected exactly one end-of-state sync tasklet; got {len(syncs)}"
@@ -95,7 +95,7 @@ def test_extended():
     sdfg.apply_gpu_transformations()
     gpu_stream_pipeline.apply_pass(sdfg, {})
 
-    state = sdfg.states()[0]
+    state = next(iter(sdfg.states()))
 
     syncs = _sync_tasklets(state)
     # Per-state syncs are fused into a single tasklet that synchronizes
@@ -141,7 +141,7 @@ def test_stream_count_read_at_apply():
     sdfg.apply_gpu_transformations()
     with dace.config.set_temporary("compiler", "cuda", "max_concurrent_streams", value=1):
         gpu_stream_pipeline.apply_pass(sdfg, {})
-    stream_ids = {n.gpu_stream_id for n in sdfg.states()[0].nodes() if n.gpu_stream_id is not None}
+    stream_ids = {n.gpu_stream_id for n in next(iter(sdfg.states())).nodes() if n.gpu_stream_id is not None}
     assert stream_ids == {0}, f"One concurrent stream allowed, got stream ids {stream_ids}."
 
 
@@ -331,8 +331,8 @@ def test_empty_state():
     gpu_stream_pipeline.apply_pass(sdfg, {})
 
     # No stream users: no sync tasklets and no nodes in the state.
-    assert len(sdfg.states()) == 1
-    state = sdfg.states()[0]
+    assert sdfg.num_states() == 1
+    state = next(iter(sdfg.states()))
     assert state.number_of_nodes() == 0
     assert _sync_tasklets(state) == []
 

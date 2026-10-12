@@ -23,7 +23,9 @@ flag is not part of the SDFG hash, so a shared name would serve one generator's
 compiled binary to the other and mask a real divergence).
 """
 
+import ctypes
 import importlib
+import os
 import pkgutil
 
 import numpy as np
@@ -166,6 +168,18 @@ def build_and_run(family, name, implementation, target):
     return run
 
 
+def serial(run):
+    """``run`` on one OpenMP thread: a parallel reduction rounds by its thread count, so the two generators match bit
+    for bit only when both sum in the serial order."""
+
+    def single_threaded():
+        os.environ["OMP_NUM_THREADS"] = "1"
+        ctypes.CDLL("libgomp.so.1").omp_set_num_threads(1)
+        return run()
+
+    return single_threaded
+
+
 @pytest.mark.parametrize("family,name", KERNELS, ids=[name for _, name in KERNELS])
 def test_cpu_compiles_and_matches_legacy(require_experimental, family, name):
     """Experimental CPU codegen compiles the kernel and reproduces the legacy result bit-exactly.
@@ -175,10 +189,10 @@ def test_cpu_compiles_and_matches_legacy(require_experimental, family, name):
     ``RuntimeError`` from the child and is skipped, keeping the broad sweep green. A failure of
     only the EXPERIMENTAL run, or a numeric divergence, is a real readable-codegen bug and fails."""
     try:
-        legacy = run_isolated(build_and_run(family, name, LEGACY, "cpu"))
+        legacy = run_isolated(serial(build_and_run(family, name, LEGACY, "cpu")))
     except RuntimeError as ex:
         pytest.skip(f"{family}/{name}: not buildable/runnable on legacy CPU: {ex}")
-    experimental = run_isolated(build_and_run(family, name, EXPERIMENTAL, "cpu"))
+    experimental = run_isolated(serial(build_and_run(family, name, EXPERIMENTAL, "cpu")))
     assert_outputs_equivalent(legacy, experimental, "cpu", label=f"{family}/{name}")
 
 
@@ -202,10 +216,10 @@ def test_gpu_compiles_and_matches_legacy(require_experimental, family, name):
 if __name__ == "__main__":
     for corpus, kernel in KERNELS:
         try:
-            leg = run_isolated(build_and_run(corpus, kernel, LEGACY, "cpu"))
+            leg = run_isolated(serial(build_and_run(corpus, kernel, LEGACY, "cpu")))
         except RuntimeError as error:
             print(f"skip {corpus}/{kernel}: legacy not buildable ({error})")
             continue
-        exp = run_isolated(build_and_run(corpus, kernel, EXPERIMENTAL, "cpu"))
+        exp = run_isolated(serial(build_and_run(corpus, kernel, EXPERIMENTAL, "cpu")))
         assert_outputs_equivalent(leg, exp, "cpu", label=f"{corpus}/{kernel}")
         print(f"ok   {corpus}/{kernel}")
