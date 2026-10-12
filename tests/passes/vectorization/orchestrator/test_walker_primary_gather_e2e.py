@@ -101,11 +101,8 @@ def test_k2_partial_kdep_gather_emits_W0_ONE_idx_shape():
     ``(W_0, ONE)`` because the gather expression depends only on ``i`` (the
     row iter-var).
 
-    Resolved by Phase A2: the walker now computes the per-iter-var dep mask
-    via :func:`compute_per_iter_var_dep_mask` which walks interstate edges
-    to resolve post-Bypass per-lane symbols (``__sym_<> = idx[i]`` becomes
-    "dep on i, not on j"). The materialiser receives the mask explicitly
-    and emits ``(W_0, ONE)``.
+    The per-iter-var dependence resolves post-Bypass per-lane symbols (``__sym_<> = idx[i]``
+    is "dep on i, not on j"), so the materialiser emits ``(W_0, ONE)``.
     """
     m, n = 8, 8
     vec_sdfg = k2_partial_kdep_gather.to_sdfg(simplify=True)

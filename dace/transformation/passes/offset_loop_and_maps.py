@@ -19,12 +19,10 @@ from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 
 
-def _get_expr_from_str(expr: str) -> dace.symbolic.SymExpr:
-    try:
-        parsed_expr = sympy.sympify(expr, evaluate=False)
-    except Exception as e:
-        parsed_expr = dace.symbolic.SymExpr(expr)
-    return parsed_expr
+def expr_from_str(expr: str) -> sympy.Basic:
+    """``expr`` parsed by dace's own parser: vanilla ``sympify`` resolves a symbol named ``N`` or ``S`` to a sympy
+    builtin."""
+    return dace.symbolic.pystr_to_symbolic(expr)
 
 
 def create_new_memlet(edge_data: dace.memlet.Memlet, repldict: dict[str, str]) -> dace.memlet.Memlet | None:
@@ -191,7 +189,7 @@ def add_to_rhs(expr: str, add_expr: dace.symbolic.SymExpr) -> str:
 
     # Convert back to string and simplify
     str_expr = ast.unparse(tree)
-    sym_expr = _get_expr_from_str(str_expr)
+    sym_expr = expr_from_str(str_expr)
     return symstr(sym_expr)
 
 
@@ -233,84 +231,6 @@ class OffsetLoopsAndMaps(ppl.Pass):
     def depends_on(self):
         return {}
 
-    # The substitution machinery below is shared with ``NormalizeLoopAndMapOrigin``, which drives it
-    # per scope instead of over the whole SDFG; it lives at module level so both callers reach it
-    # without touching another pass's privates. These methods stay as the pass-facing spelling.
-
-    def _create_new_memlet(self, edge_data: dace.memlet.Memlet, repldict: dict[str, str]) -> dace.memlet.Memlet | None:
-        """Create a new memlet with substituted subset ranges."""
-        return create_new_memlet(edge_data, repldict)
-
-    def _update_edge_if_changed(self, state, edge, new_memlet) -> None:
-        """Update edge if the new memlet is different from the current one."""
-        update_edge_if_changed(state, edge, new_memlet)
-
-    def _process_memlets_in_edges(self, state, edges, repldict: dict[str, str]) -> None:
-        """Process memlets in a collection of edges."""
-        process_memlets_in_edges(state, edges, repldict)
-
-    def _repl_memlets_recursive(self, cfg: ControlFlowRegion, repldict: dict[str, str]) -> None:
-        """Recursively replace memlets in all states of a control flow region."""
-        repl_memlets_recursive(cfg, repldict)
-
-    def _repl_memlets_on_edge_list(self, state, edges, repldict: dict[str, str]) -> None:
-        """Replace memlets on a specific list of edges."""
-        process_memlets_in_edges(state, edges, repldict)
-
-    def _repl_memlets_on_edge_list_recursive(self, state, edges, repldict: dict[str, str]) -> None:
-        """Replace memlets on a specific list of edges."""
-        process_memlets_in_edges(state, edges, repldict)
-
-        for node in state.nodes():
-            if isinstance(node, dace.nodes.NestedSDFG):
-                repl_memlets_recursive(node.sdfg, repldict)
-
-    def _repl_interstate_edges_recursive(self, cfg: ControlFlowRegion, repldict: dict[str, str]) -> None:
-        """Recursively replace interstate edges in control flow region."""
-        repl_interstate_edges_recursive(cfg, repldict)
-
-    def _repl_tasklets_recursive(self, cfg: ControlFlowRegion, repldict: dict[str, str]) -> None:
-        repl_tasklets_recursive(cfg, repldict)
-
-    def _repl_tasklets_on_node_list(
-        self, state: dace.SDFGState, nodes: list[dace.nodes.Node], repldict: dict[str, str]
-    ) -> None:
-        repl_tasklets_on_node_list(nodes, repldict)
-
-    def _repl_tasklets_recursive_from_node_list(
-        self, state: dace.SDFGState, nodes: list[dace.nodes.Node], repldict: dict[str, str]
-    ) -> None:
-        repl_tasklets_on_node_list(nodes, repldict)
-
-        for node in nodes:
-            if isinstance(node, dace.nodes.NestedSDFG):
-                repl_tasklets_recursive(node.sdfg, repldict)
-
-    def _token_match(self, code: str, src: str) -> bool:
-        # Split while keeping delimiters
-        tokens = re.split(r"(\s+|[()\[\]])", code)
-        # Replace tokens that exactly match src
-        tokens = [token for token in tokens if token.strip() == src]
-
-        # Recombine everything
-        return len(tokens) != 0
-
-    def _repl_for_regions_recursive(
-        self, root: ControlFlowRegion, cfg: ControlFlowRegion, repldict: dict[str, str]
-    ) -> None:
-        repl_for_regions_recursive(root, cfg, repldict)
-
-    def _repl_if_blocks_recursive(self, cfg: ControlFlowRegion, repldict: dict[str, str]) -> None:
-        repl_if_blocks_recursive(cfg, repldict)
-
-    def _repl_recursive(self, cfg: ControlFlowRegion, repldict: dict[str, str]) -> None:
-        """Replace both interstate edges and memlets recursively."""
-        repl_recursive(cfg, repldict)
-
-    def _add_to_rhs(self, expr: str, add_expr: dace.symbolic.SymExpr, sdfg: dace.SDFG) -> str:
-        """Add an expression to the right-hand side of a comparison."""
-        return add_to_rhs(expr, add_expr)
-
     def _apply(self, cfg: dace.ControlFlowRegion) -> int:
         """Offset every matching loop / map in ``cfg`` and everything nested below it.
 
@@ -328,16 +248,14 @@ class OffsetLoopsAndMaps(ppl.Pass):
                 init_lhs, init_rhs = node.init_statement.as_string.split("=")
                 if (
                     self.do_not_check_begin
-                    or _get_expr_from_str(init_rhs) == _get_expr_from_str(self.begin_expr)
+                    or expr_from_str(init_rhs) == expr_from_str(self.begin_expr)
                     or str(init_rhs) == str(self.begin_expr)
                 ):
                     init_expr_str = f"(({init_rhs}) + {self.offset_expr})"
-                    init_expr = _get_expr_from_str(init_expr_str)
+                    init_expr = expr_from_str(init_expr_str)
                     new_init_statement = symstr(init_expr)
                     node.init_statement = CodeBlock(f"{init_lhs} = {new_init_statement}")
-                    new_loop_condition = self._add_to_rhs(
-                        node.loop_condition.as_string, _get_expr_from_str(self.offset_expr), cfg.sdfg
-                    )
+                    new_loop_condition = add_to_rhs(node.loop_condition.as_string, expr_from_str(self.offset_expr))
                     node.loop_condition = CodeBlock(new_loop_condition)
 
                     # Try normalize after update
@@ -348,10 +266,10 @@ class OffsetLoopsAndMaps(ppl.Pass):
                     # multi-term offset (e.g. ``2 - N``) would produce ``(j - 2 - N)``, which parses as
                     # ``j - 2 - N`` instead of the intended ``j - (2 - N) = j - 2 + N`` -- silently wrong
                     # for any compound (non-single-token) offset expression.
-                    v = f"({node.loop_variable} - ({_get_expr_from_str(self.offset_expr)}))"
+                    v = f"({node.loop_variable} - ({expr_from_str(self.offset_expr)}))"
                     repldict = {node.loop_variable: v}
 
-                    self._repl_recursive(node, repldict)
+                    repl_recursive(node, repldict)
                     offset_count += 1
             elif isinstance(node, dace.SDFGState):
                 state = node
@@ -364,20 +282,16 @@ class OffsetLoopsAndMaps(ppl.Pass):
                         for (b, e, s), param in zip(state_node.map.range, state_node.map.params):
                             if (
                                 self.do_not_check_begin
-                                or b == _get_expr_from_str(self.begin_expr)
+                                or b == expr_from_str(self.begin_expr)
                                 or str(b) == str(self.begin_expr)
                             ):
                                 has_matches = True
 
                                 b_expr = as_basic(
-                                    dace.symbolic.SymExpr(
-                                        symstr(b) + " + " + symstr(_get_expr_from_str(self.offset_expr))
-                                    )
+                                    dace.symbolic.SymExpr(symstr(b) + " + " + symstr(expr_from_str(self.offset_expr)))
                                 ).simplify()
                                 e_expr = as_basic(
-                                    dace.symbolic.SymExpr(
-                                        symstr(e) + " + " + symstr(_get_expr_from_str(self.offset_expr))
-                                    )
+                                    dace.symbolic.SymExpr(symstr(e) + " + " + symstr(expr_from_str(self.offset_expr)))
                                 ).simplify()
                                 s_expr = as_basic(dace.symbolic.SymExpr(symstr(s))).simplify()
                                 prev_s_expr = s_expr
@@ -396,7 +310,7 @@ class OffsetLoopsAndMaps(ppl.Pass):
                                 # Parenthesize the offset before subtracting (see the matching fix in
                                 # the ``LoopRegion`` branch above): unparenthesized, a compound offset
                                 # (e.g. ``2 - N``) silently flips the sign of its trailing terms.
-                                offset_str = symstr(_get_expr_from_str(self.offset_expr))
+                                offset_str = symstr(expr_from_str(self.offset_expr))
                                 if self.squeeze:
                                     repldict[param] = f"(({param} * {prev_s_expr}) - ({offset_str}))"
                                 else:
@@ -409,11 +323,11 @@ class OffsetLoopsAndMaps(ppl.Pass):
                             state_node.map.range = new_range
                             nodes_between = state.all_nodes_between(state_node, required(state.exit_node(state_node)))
                             edges_between = state.all_edges(*nodes_between)
-                            self._repl_memlets_on_edge_list(state, edges_between, repldict)
-                            self._repl_tasklets_on_node_list(state, nodes_between, repldict)
+                            process_memlets_in_edges(state, edges_between, repldict)
+                            repl_tasklets_on_node_list(nodes_between, repldict)
                             for n in nodes_between:
                                 if isinstance(n, dace.nodes.NestedSDFG):
-                                    self._repl_recursive(n.sdfg, repldict)
+                                    repl_recursive(n.sdfg, repldict)
                             offset_count += 1
 
         for node in cfg.nodes():

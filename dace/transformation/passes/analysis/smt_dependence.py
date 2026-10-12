@@ -332,23 +332,6 @@ def prove_unsat(antecedent: Any, consequent: Any, rlimit: int = DEFAULT_RLIMIT) 
         return None
 
 
-def _domain_assumptions(start: Any, end: Any, step: Any) -> sp.Basic:
-    """Default domain assumptions for a loop: start <= end, step > 0.
-
-    These are the invariants the canonicalization pipeline maintains after
-    ``NormalizeNegativeStride``.
-    """
-    try:
-        step_v = int(symbolic.evaluate(step, {}))
-    except Exception:
-        step_v = None
-    if step_v is not None:
-        step_expr = sp.Integer(step_v)
-    else:
-        step_expr = sp.Symbol(str(step))
-    return sp.And(sp.LessThan(start, end + 1), sp.StrictGreaterThan(step_expr, 0))
-
-
 def prove_injective_write(
     write_expr: sp.Basic,
     itervar: str,

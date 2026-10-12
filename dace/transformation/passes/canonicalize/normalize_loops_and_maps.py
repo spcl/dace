@@ -10,7 +10,6 @@ same way. The substitution is value-preserving, so the SDFG result is
 unchanged. It reuses ``OffsetLoopsAndMaps``' tasklet token-replacement helpers.
 """
 
-import copy
 from typing import Any
 
 import sympy
@@ -24,7 +23,12 @@ from dace.subsets import Subset
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 from dace.transformation.passes.analysis import loop_analysis
-from dace.transformation.passes.offset_loop_and_maps import OffsetLoopsAndMaps, tasklets_assign
+from dace.transformation.passes.offset_loop_and_maps import (
+    OffsetLoopsAndMaps,
+    repl_recursive,
+    repl_tasklets_on_node_list,
+    tasklets_assign,
+)
 
 
 @properties.make_properties
@@ -52,44 +56,6 @@ class NormalizeLoopsAndMaps(OffsetLoopsAndMaps):
 
     def depends_on(self) -> list[type[ppl.Pass] | ppl.Pass]:
         return []
-
-    def _create_new_memlet(self, edge_data: dace.memlet.Memlet, repldict: dict[str, str]) -> dace.memlet.Memlet | None:
-        """Subset-substitute a memlet via proper dace symbols.
-
-        Overrides the base, which sympifies string values and so mis-parses a
-        symbol literally named ``S`` as ``sympy.S`` (and raises on
-        ``other_subset``). The pipeline's preparation ``_cleanup`` removes
-        ``other_subset`` copies before this pass runs; the ``other_subset``
-        branch below only guards standalone callers that skip that cleanup.
-
-        :param edge_data: The memlet to rewrite.
-        :param repldict: Symbol-name to replacement-expression mapping.
-        :returns: A new memlet with the substituted subsets, or ``None`` if the
-                  input carries no subset.
-        """
-        if edge_data is None or edge_data.subset is None:
-            return None
-        sd = {dace.symbolic.pystr_to_symbolic(k): dace.symbolic.pystr_to_symbolic(v) for k, v in repldict.items()}
-
-        def _r(sub: Subset | None) -> dace.subsets.Range | None:
-            if sub is None:
-                return None
-            return dace.subsets.Range(
-                [
-                    (
-                        b.subs(sd) if isinstance(b, sympy.Basic) else b,
-                        e.subs(sd) if isinstance(e, sympy.Basic) else e,
-                        s.subs(sd) if isinstance(s, sympy.Basic) else s,
-                    )
-                    for b, e, s in sub.ndrange()
-                ]
-            )
-
-        m = copy.deepcopy(edge_data)
-        m.subset = _r(m.subset)
-        if m.other_subset is not None:
-            m.other_subset = _r(m.other_subset)
-        return m
 
     def _normalize_map(self, state: dace.SDFGState, me: nodes.MapEntry) -> bool:
         """Normalize one map's non-canonical parameters in place.
@@ -132,7 +98,7 @@ class NormalizeLoopsAndMaps(OffsetLoopsAndMaps):
             # The other side of a copy memlet is indexed by the same parameter, so it moves too.
             if md.other_subset is not None:
                 md.other_subset = subs_range(md.other_subset)
-        self._repl_tasklets_on_node_list(state, list(scope.nodes()), repldict)
+        repl_tasklets_on_node_list(list(scope.nodes()), repldict)
         for n in scope.nodes():
             # An inner map's RANGE reads the rewritten parameter as often as a memlet does: a tiled
             # nest spells the inner sweep as ``outer : min(outer + C - 1, hi)``, and after the outer
@@ -191,7 +157,7 @@ class NormalizeLoopsAndMaps(OffsetLoopsAndMaps):
             return False
         # Rewrite the body (memlets/tasklets/interstate/nested); the loop's own
         # header is not a node within itself, so reset it explicitly after.
-        self._repl_recursive(loop, repldict)
+        repl_recursive(loop, repldict)
         loop.init_statement = CodeBlock(f"{var} = 0")
         loop.loop_condition = CodeBlock(f"{var} < ({n})")
         loop.update_statement = CodeBlock(f"{var} = {var} + 1")
@@ -252,7 +218,7 @@ class NormalizeLoopBounds(NormalizeLoopsAndMaps):
         repldict = {str(var): f"(({start}) + {var})"}
         if tasklets_assign((node for st in loop.states() for node in st.nodes()), repldict):
             return False
-        self._repl_recursive(loop, repldict)
+        repl_recursive(loop, repldict)
         new_end = dace.symbolic.simplify(end - start)
         loop.init_statement = CodeBlock(f"{var} = 0")
         loop.loop_condition = CodeBlock(f"{var} <= ({new_end})")
