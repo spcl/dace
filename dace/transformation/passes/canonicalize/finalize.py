@@ -511,7 +511,7 @@ def expand_gathered_dots(sdfg: SDFG) -> int:
             for nested in [n for n in state.nodes() if isinstance(n, nodes.NestedSDFG) and n not in before]:
                 InlineSDFG.apply_to(state.sdfg, nested_sdfg=nested, verify=False, save=False)
     if count:
-        FuseMaps().apply_pass(sdfg, {})
+        FuseMaps(allow_intermediates_with_symbolic_size=True).apply_pass(sdfg, {})
         sdfg.apply_transformations_repeated([RedundantArray, RedundantSecondArray], validate=False)
     return count
 

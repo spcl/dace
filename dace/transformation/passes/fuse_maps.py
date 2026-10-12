@@ -175,6 +175,11 @@ class FuseMaps(ppl.Pass):
         default=False,
         desc="If `True` all outputs of the first Map must be intermediate, i.e., going into the second Map.",
     )
+    allow_intermediates_with_symbolic_size = properties.Property(
+        dtype=bool,
+        default=False,
+        desc="If `True` vertical fusion may leave an intermediate of symbolic size (a dynamic allocation inside the Map).",
+    )
 
     perform_vertical_map_fusion = properties.Property(
         dtype=bool,
@@ -230,6 +235,7 @@ class FuseMaps(ppl.Pass):
         assume_always_shared: bool | None = None,
         require_exclusive_intermediates: bool | None = None,
         require_all_intermediates: bool | None = None,
+        allow_intermediates_with_symbolic_size: bool | None = None,
         only_if_common_ancestor: bool | None = None,
         consolidate_edges_only_if_not_extending: bool | None = None,
         never_consolidate_edges: bool | None = None,
@@ -250,6 +256,8 @@ class FuseMaps(ppl.Pass):
             self.require_exclusive_intermediates = require_exclusive_intermediates
         if require_all_intermediates is not None:
             self.require_all_intermediates = require_all_intermediates
+        if allow_intermediates_with_symbolic_size is not None:
+            self.allow_intermediates_with_symbolic_size = allow_intermediates_with_symbolic_size
         if perform_vertical_map_fusion is not None:
             self.perform_vertical_map_fusion = perform_vertical_map_fusion
         if perform_horizontal_map_fusion is not None:
@@ -272,7 +280,8 @@ class FuseMaps(ppl.Pass):
                 "strict_dataflow": strict_dataflow,
                 "assume_always_shared": assume_always_shared,
                 "require_exclusive_intermediates": require_exclusive_intermediates,
-                "require_all_intermediates": require_exclusive_intermediates,
+                "require_all_intermediates": require_all_intermediates,
+                "allow_intermediates_with_symbolic_size": allow_intermediates_with_symbolic_size,
             }
             specified_vertical_arguments = [arg for arg, val in unique_vertical_arguments.items() if val is not None]
             if specified_vertical_arguments:
@@ -330,6 +339,7 @@ class FuseMaps(ppl.Pass):
                     assume_always_shared=self.assume_always_shared,
                     require_exclusive_intermediates=self.require_exclusive_intermediates,
                     require_all_intermediates=self.require_all_intermediates,
+                    allow_intermediates_with_symbolic_size=self.allow_intermediates_with_symbolic_size,
                     consolidate_edges_only_if_not_extending=self.consolidate_edges_only_if_not_extending,
                     never_consolidate_edges=self.never_consolidate_edges,
                 )
