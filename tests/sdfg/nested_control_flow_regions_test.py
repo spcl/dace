@@ -74,5 +74,4 @@ if __name__ == "__main__":
     test_is_start_state_deprecation()
     test_cfg_list_is_rebuilt_on_deserialization()
 
-
     test_states_recurse_into_nested_regions_in_graph_order()

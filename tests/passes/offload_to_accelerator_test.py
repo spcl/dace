@@ -809,7 +809,9 @@ def test_a_one_iteration_map_outside_a_kernel_keeps_its_array():
     """
     sdfg = kernel_with_a_one_iteration_inner_map()
     outer = next(
-        n for n in next(iter(sdfg.states())).nodes() if isinstance(n, dace.sdfg.nodes.MapEntry) and n.map.label == "device"
+        n
+        for n in next(iter(sdfg.states())).nodes()
+        if isinstance(n, dace.sdfg.nodes.MapEntry) and n.map.label == "device"
     )
     outer.map.schedule = dtypes.ScheduleType.CPU_Multicore
     eliminate_and_scalarize(sdfg)
@@ -821,7 +823,9 @@ def test_a_trivial_kernel_map_is_never_eliminated():
     """The size-1 wrapper the pass builds for a hybrid state IS the kernel."""
     sdfg = kernel_with_a_one_iteration_inner_map()
     inner = next(
-        n for n in next(iter(sdfg.states())).nodes() if isinstance(n, dace.sdfg.nodes.MapEntry) and n.map.label == "once"
+        n
+        for n in next(iter(sdfg.states())).nodes()
+        if isinstance(n, dace.sdfg.nodes.MapEntry) and n.map.label == "once"
     )
     inner.map.schedule = dtypes.ScheduleType.GPU_Device
     eliminate_and_scalarize(sdfg)
