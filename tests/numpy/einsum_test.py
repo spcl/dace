@@ -205,8 +205,7 @@ def test_lift_einsum_reduce():
     B = np.random.rand(1)
 
     sdfg = tester.to_sdfg(A, B, simplify=True)
-    # Capture the original Reduce node before lowering; afterwards it lives in a
-    # nested SDFG that LiftEinsum intentionally does not traverse.
+    # A reduction has one operand, so LiftEinsum leaves its expansion alone: it stays a Reduce.
     rnode = next(node for node, _ in sdfg.all_nodes_recursive() if isinstance(node, Reduce))
     assert rnode.axes is None
 
@@ -229,8 +228,7 @@ def test_lift_einsum_reduce_partial():
     B = np.random.rand(10, 9)
 
     sdfg = tester.to_sdfg(A, B, simplify=True)
-    # Capture the original Reduce node before lowering; afterwards it lives in a
-    # nested SDFG that LiftEinsum intentionally does not traverse.
+    # A reduction has one operand, so LiftEinsum leaves its expansion alone: it stays a Reduce.
     rnode = next(node for node, _ in sdfg.all_nodes_recursive() if isinstance(node, Reduce))
     assert tuple(rnode.axes) == (1,)
 
@@ -436,6 +434,64 @@ def test_einsum_dot_node(beta):
     assert np.allclose(r[0], 2.0 * np.dot(x, y) + beta * prior), f"got {r[0]}"
 
 
+@pytest.mark.parametrize(
+    "spec,in_shape,out_shape,in_subset,out_subset",
+    [
+        ("i->i", [8], [8], "0:8", "0:8"),
+        ("i->i", [8], [8], "2:7", "1:6"),
+        ("ij->ji", [4, 6], [6, 4], "0:4, 0:6", "0:6, 0:4"),
+        ("ij->i", [4, 6], [4], "0:4, 0:6", "0:4"),
+        ("ijk->", [3, 4, 5], [1], "0:3, 0:4, 0:5", "0"),
+    ],
+)
+def test_one_operand_einsum_node(spec, in_shape, out_shape, in_subset, out_subset):
+    """A directly-constructed one-operand Einsum (copy, transpose, reduction) computes what numpy does, on a full
+    and on an offset range. LiftEinsum never produces one, so this is the only coverage of that expansion path."""
+    from dace.libraries.blas.nodes.einsum import Einsum
+
+    sdfg = dace.SDFG("one_operand_einsum")
+    sdfg.add_array("A", in_shape, dace.float64)
+    sdfg.add_array("B", out_shape, dace.float64)
+    state = sdfg.add_state()
+    enode = Einsum("einsum")
+    enode.einsum_str = spec
+    enode.in_connectors = {"a": None}
+    enode.out_connectors = {"b": None}
+    state.add_node(enode)
+    state.add_edge(state.add_read("A"), None, enode, "a", dace.Memlet(f"A[{in_subset}]"))
+    state.add_edge(enode, "b", state.add_write("B"), None, dace.Memlet(f"B[{out_subset}]"))
+
+    rng = np.random.default_rng(0)
+    A = rng.random(in_shape)
+    B = np.full(out_shape, -7.0)
+    expected = B.copy()
+    in_index = tuple(slice(*map(int, r.split(":"))) for r in in_subset.split(","))
+    out_index = tuple(slice(*map(int, r.split(":"))) if ":" in r else int(r) for r in out_subset.split(","))
+    expected[out_index] = np.einsum(spec, A[in_index])
+    sdfg(A=A, B=B)
+    assert np.allclose(B, expected)
+
+
+def test_lift_einsum_leaves_a_copy_map_alone():
+    """``y[i] = z[i]`` is a copy, not a contraction: LiftEinsum leaves the map for the copy passes."""
+    from dace.libraries.blas.nodes.einsum import Einsum
+    from dace.transformation.dataflow import LiftEinsum
+
+    sdfg = dace.SDFG("lift_einsum_copy")
+    sdfg.add_array("y", [10], dace.float64)
+    sdfg.add_array("z", [10], dace.float64)
+    sdfg.add_state().add_mapped_tasklet(
+        "copy",
+        {"i": "0:10"},
+        {"__in": dace.Memlet("z[i]")},
+        "__out = __in",
+        {"__out": dace.Memlet("y[i]")},
+        external_edges=True,
+    )
+    assert sdfg.apply_transformations(LiftEinsum) == 0
+    assert not any(isinstance(n, Einsum) for n, _ in sdfg.all_nodes_recursive())
+
+
 def test_matrix_vector_einsum_scratch_lives_where_its_output_lives():
     """A host BLAS call cannot reach in-kernel shared memory."""
     from dace.libraries.blas.nodes.einsum import Einsum
@@ -557,3 +613,4 @@ if __name__ == "__main__":
     test_batched_dot_in_loop()
     test_c_transposed()
     test_einsum_shape_check_equalizes_symbols()
+    test_lift_einsum_leaves_a_copy_map_alone()

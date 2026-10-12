@@ -118,25 +118,13 @@ class LiftEinsum(xf.SingleStateTransformation):
         if len(input_chars) == 0:
             return False
 
-        # Require a genuine multi-operand contraction (matmul: a chain of >=2 tensor
-        # operands). A single tensor operand is a unary copy / transpose / reduction
-        # (einsum 'i->i', 'ij->ji', 'ij->i'), NOT a matmul -- lifting it to an Einsum
-        # node is pointless and miscompiles (durbin's ``y[i] = z[i]`` copy -> 'i->i'
-        # silently corrupts the solver). Those belong to the copy / reduction passes.
+        # A single tensor operand is a copy, transpose or reduction (``i->i``, ``ij->ji``, ``ij->i``), not a
+        # contraction. Those have their own nodes (CopyLibraryNode, Transpose, Reduce), so they are left to them.
         if num_tensor_inputs < 2:
             return False
 
-        # A scalar output (no free output index) is a DOT / full reduction, NOT a GEMM --
-        # do NOT lift it. A vector-vector dot lowers to ``cblas_ddot``, which sums in an
-        # implementation-defined blocked / vectorized order and so REASSOCIATES relative to
-        # the source reduction. That FP-order divergence is harmless for a well-conditioned
-        # kernel but catastrophic for an ill-conditioned one (gramschmidt's near-rank-deficient
-        # ``R[k,j] = sum_i Q[i,k]*A[i,j]`` at a column that has collapsed to ~1e-14 amplifies
-        # the ULP difference to 100% relative error). BLAS is no win for a 1-D dot anyway, and
-        # keeping it as its WCR reduction stays bit-exact with the baseline (and avoids the
-        # degenerate 1x1-GEMM lowering entirely). Only a matrix einsum -- a free output index --
-        # lifts. Matvec/matmul (``ij,j->i`` / ``ik,kj->ij``) have a free output index, so they
-        # are unaffected.
+        # A scalar output (no free output index) is a dot product or a full reduction: a 1x1 GEMM gains nothing over
+        # the WCR reduction it came from, so only an einsum with a free output index lifts.
         if not (output_chars - {"0"}):
             return False
 
