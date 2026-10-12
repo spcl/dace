@@ -52,6 +52,7 @@ from dace import data as dt
 from dace.codegen import codegen
 from dace.codegen.codeobject import CodeObject
 from dace.config import Config, set_temporary
+from dace.library import get_environment
 from dace.optionals import required
 from dace.ordered import OrderedSet
 from dace.sdfg import SDFG, SDFGState, nodes
@@ -1217,6 +1218,9 @@ class Rendering(NamedTuple):
     #: Under a device dialect, the DEVICE unit (``<name>.hip`` / ``<name>.cu``): the ``__global__``
     #: kernels and the launchers ``code`` calls. Empty under a host dialect.
     device_code: str = ""
+    #: What the caller links the units against, in order: the libraries of every environment that only links
+    #: (an ``ExternCall``'s archive and its link flags). Empty when the units need nothing beyond the system's.
+    link: tuple[str, ...] = ()
 
 
 def render(
@@ -1318,7 +1322,21 @@ def render(
         if check_compiles:
             compile_check(unit, sdfg.name, dialect)
     arguments = tuple(signature.order) if signature is not None else tuple(entry_arglist)
-    return Rendering(code, prepared, arguments, device_code)
+    return Rendering(code, prepared, arguments, device_code, link_libraries(frame, dialect))
+
+
+def link_libraries(frame: CodeObject, dialect: cpf_lowering.Dialect) -> tuple[str, ...]:
+    """The libraries of the frame's environments, by environment name, without those CPF supplies itself. Only
+    link-only environments carry any here: the standalone footer refuses every other kind."""
+    libraries: list[str] = []
+    for name in sorted(frame.environments):
+        env = get_environment(name)
+        provided = cpf_lowering.PROVIDED_ENVIRONMENTS
+        if dialect in cpf_lowering.DEVICE_DIALECTS:
+            provided = provided | cpf_lowering.DEVICE_PROVIDED_ENVIRONMENTS
+        if env.__name__ not in provided:
+            libraries += env.cmake_libraries
+    return tuple(libraries)
 
 
 def cpf(

@@ -1,4 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+import ctypes
 import pathlib
 import shutil
 import subprocess
@@ -7,6 +8,7 @@ import numpy as np
 import pytest
 
 import dace
+from dace.codegen import cpf
 from dace.libraries.standard.nodes import external_call
 from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
@@ -247,3 +249,33 @@ def test_a_kernel_inside_a_loop_takes_the_loop_iterator_by_value(tmp_path):
         == f"const double* __restrict__ a, double* __restrict__ b, int64_t N, int64_t {loop.loop_variable}"
     )
     assert np.allclose(b, a * 2.0 * 6)
+
+
+@pytest.mark.parametrize("language", ["c", "c++"])
+def test_cpf_declares_the_external_kernel_and_hands_its_archive_to_the_caller(tmp_path, language):
+    sdfg, (call,) = outlined(scale, f"extcall_cpf_{'c' if language == 'c' else 'cpp'}")
+    # triples, while the nest doubles: the result shows which body ran
+    call.lib_path = static_library(
+        tmp_path,
+        f"void {call.symbol}(const double* restrict a, double* restrict b, int64_t N) {{"
+        " for (int64_t i = 0; i < N; ++i) b[i] = 3.0 * a[i]; }",
+    )
+    call.implementation = "ExternCall"
+
+    result = cpf.render(sdfg, language=language, signature=cpf.EntrySignature(["N", "b", "a"]))
+
+    linkage, restrict = ("", "restrict") if language == "c" else ('extern "C" ', "__restrict__")
+    assert f"{linkage}void {call.symbol}(const double* {restrict} a, double* {restrict} b, int64_t N);" in result.code
+    assert result.link == (call.lib_path,)
+    source = tmp_path / ("unit.c" if language == "c" else "unit.cpp")
+    source.write_text(result.code)
+    library = tmp_path / "libunit.so"
+    compiler = shutil.which("gcc" if language == "c" else "g++")
+    subprocess.run([compiler, "-O2", "-fPIC", "-shared", str(source), "-o", str(library), *result.link], check=True)
+    a = np.random.default_rng(7).random(SIZE)
+    b = np.zeros(SIZE)
+    entry = getattr(ctypes.CDLL(str(library)), sdfg.name)
+    entry(ctypes.c_int64(SIZE), b.ctypes.data_as(ctypes.c_void_p), a.ctypes.data_as(ctypes.c_void_p))
+
+    assert result.arguments == ("N", "b", "a")
+    assert np.array_equal(b, a * 3.0)
