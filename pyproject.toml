@@ -87,6 +87,8 @@ dependencies = [
     "cmake",
     "ninja",
     "click>=8.0",
+    # The experimental CPU code generator tokenizes emitted C++ with it.
+    "pygments",
 ]
 
 [project.optional-dependencies]

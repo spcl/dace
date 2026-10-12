@@ -632,7 +632,8 @@ DACE_EXPORTED int __dace_exit_{sdfg.name}({mangle_dace_state_struct_name(sdfg)} 
                 )
                 if value
             ]
-            if needs:
+            # Libraries alone are a link-line input, not code: CPF hands them to the caller (``Rendering.link``).
+            if needs and needs != ["linked libraries"]:
                 refused.append(f"the {env.__name__} environment ({', '.join(needs)})")
         if len(self._dispatcher.instrumentation) > 2:
             refused.append("instrumentation")

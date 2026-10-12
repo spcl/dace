@@ -23,7 +23,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import dace
-from dace import data, dtypes, library, properties, subsets
+from dace import cpf_lowering, data, dtypes, library, properties, subsets
 from dace.sdfg import nodes
 from dace.transformation.transformation import ExpandTransformation
 
@@ -217,13 +217,15 @@ class ExpandExternCall(ExpandTransformation):
                 f"ExternalCall {node.name!r}: signature ({signature}) has {parameter_count(signature)} "
                 f"parameters, abi_order {len(call_args)}"
             )
+        # ``extern "C"`` is a C++ construct; a CPF C unit already has C's linkage.
+        linkage = "" if cpf_lowering.standalone_c() else 'extern "C" '
         return nodes.Tasklet(
             node.name,
             node.in_connectors,
             node.out_connectors,
             f"{node.symbol}({', '.join(call_args)});",
             language=dtypes.Language.CPP,
-            code_global=f'extern "C" void {node.symbol}({signature});',
+            code_global=f"{linkage}void {node.symbol}({signature});",
             side_effects=True,
         )
 

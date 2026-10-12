@@ -52,6 +52,7 @@ from dace import data as dt
 from dace.codegen import codegen
 from dace.codegen.codeobject import CodeObject
 from dace.config import Config, set_temporary
+from dace.library import get_environment
 from dace.optionals import required
 from dace.ordered import OrderedSet
 from dace.sdfg import SDFG, SDFGState, nodes
@@ -138,7 +139,7 @@ LIBRARY_NODE_DESCRIPTIONS: dict[str, str] = {
     "Eigh": "eigh: eigenvalues and eigenvectors of a Hermitian matrix",
     "Einsum": "einsum: a contraction over the index expression",
     "ExternalCall": "external call: a nest run from its own SDFG or called in a separately compiled library",
-    "ExtremeIndex": "index of the extreme element, whole-array or along one dimension, under an optional mask",
+    "ExtremeIndex": "extreme index: position of the smallest or largest element along the reduced axis",
     "FFT": "discrete Fourier transform",
     "FFTInterpolate": "Fourier interpolation: resample through the frequency domain",
     "FillLibraryNode": "fill: set every element to a constant",
@@ -162,7 +163,7 @@ LIBRARY_NODE_DESCRIPTIONS: dict[str, str] = {
     "Isend": "MPI_Isend: non-blocking send",
     "LayoutChange": "layout change: rewrite the data into a different memory layout",
     "MPINode": "MPI operation",
-    "MaskReduction": "reduction of a mask, whole-array or along one dimension",
+    "MaskReduction": "mask reduction: fold of a mask along the reduced axes",
     "MaskedCopyLibraryNode": "masked tile copy: load or store a tile under a per-lane mask",
     "MatMul": "matrix product, dispatched to gemm / gemv / batched gemm by operand rank",
     "MergeLibraryNode": "merge: select elementwise between operands by a condition",
@@ -197,14 +198,14 @@ LIBRARY_NODE_DESCRIPTIONS: dict[str, str] = {
     "TensorTranspose": "tensor transpose: permute the axes",
     "TileBinop": "tile binary operation, elementwise over a tile",
     "TileFMA": "tile fused multiply-add",
-    "TileGather": "tile gather: read a tile through index tiles, replicated, transposed or broadcast",
     "TileITE": "tile select: elementwise choice between two tiles",
     "TileIota": "tile iota: fill a tile with its own indices",
+    "TileGather": "tile gather: read a tile through index tiles, replicated, transposed or broadcast",
     "TileMMA": "tile matrix multiply-accumulate",
     "TileMaskGen": "tile mask: the predicate for a partial tile",
     "TileOp": "tile operation: a loop over the lanes of a tile",
     "TileReduce": "tile reduction",
-    "TileScan": "tile scan: inclusive prefix combine over a one-dim tile",
+    "TileScan": "tile scan: running (prefix) fold over the lanes of a tile",
     "TileScatter": "tile scatter: write a tile through index tiles, transposed or broadcast",
     "TileUnop": "tile unary operation, elementwise over a tile",
     "Transpose": "matrix transpose",
@@ -1217,6 +1218,9 @@ class Rendering(NamedTuple):
     #: Under a device dialect, the DEVICE unit (``<name>.hip`` / ``<name>.cu``): the ``__global__``
     #: kernels and the launchers ``code`` calls. Empty under a host dialect.
     device_code: str = ""
+    #: What the caller links the units against, in order: the libraries of every environment that only links
+    #: (an ``ExternCall``'s archive and its link flags). Empty when the units need nothing beyond the system's.
+    link: tuple[str, ...] = ()
 
 
 def render(
@@ -1318,7 +1322,21 @@ def render(
         if check_compiles:
             compile_check(unit, sdfg.name, dialect)
     arguments = tuple(signature.order) if signature is not None else tuple(entry_arglist)
-    return Rendering(code, prepared, arguments, device_code)
+    return Rendering(code, prepared, arguments, device_code, link_libraries(frame, dialect))
+
+
+def link_libraries(frame: CodeObject, dialect: cpf_lowering.Dialect) -> tuple[str, ...]:
+    """The libraries of the frame's environments, by environment name, without those CPF supplies itself. Only
+    link-only environments carry any here: the standalone footer refuses every other kind."""
+    libraries: list[str] = []
+    for name in sorted(frame.environments):
+        env = get_environment(name)
+        provided = cpf_lowering.PROVIDED_ENVIRONMENTS
+        if dialect in cpf_lowering.DEVICE_DIALECTS:
+            provided = provided | cpf_lowering.DEVICE_PROVIDED_ENVIRONMENTS
+        if env.__name__ not in provided:
+            libraries += env.cmake_libraries
+    return tuple(libraries)
 
 
 def cpf(
