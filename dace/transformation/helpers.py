@@ -723,14 +723,13 @@ def nest_state_subgraph(
     if isinstance(top_scopenode, nodes.EntryNode):
         symbols_at_top.update(top_scopenode.new_symbols(sdfg, state, symbols_at_top))
     # Ordered: this drives ``add_symbol`` order, which is the nested SDFG's symbol order.
+    # Only what the moved nodes or their containers name: an unused one would become a free symbol outside.
     used_symbols = StateSubgraphView(state, subgraph.nodes()).used_symbols(all_symbols=False)
+    used_symbols |= {str(s) for desc in nsdfg.arrays.values() for s in desc.free_symbols}
     for v in dict.fromkeys([*symbols_at_top, *sdfg.symbols]):
-        if v in nsdfg.symbols:
+        if v in nsdfg.symbols or v not in used_symbols:
             continue
-        if v in sdfg.symbols:
-            nsdfg.add_symbol(v, sdfg.symbols[v].dtype)
-        elif v in used_symbols:
-            nsdfg.add_symbol(v, symbols_at_top[v].dtype)
+        nsdfg.add_symbol(v, (sdfg.symbols[v] if v in sdfg.symbols else symbols_at_top[v]).dtype)
 
     # Add constants to nested SDFG
     for cstname, cstval in sdfg.constants.items():
