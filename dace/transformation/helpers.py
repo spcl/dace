@@ -24,6 +24,7 @@ from dace.sdfg.state import (
     ControlFlowRegion,
     LoopRegion,
     ReturnBlock,
+    StateSubgraphView,
 )
 from dace.subsets import Range, union
 
@@ -717,14 +718,19 @@ def nest_state_subgraph(
         output_names[edge] = new_name
     ###################
 
-    # Add scope symbols to the nested SDFG
+    # Add scope symbols to the nested SDFG with their original data types
     symbols_at_top = state.symbols_defined_at(top_scopenode)
+    if isinstance(top_scopenode, nodes.EntryNode):
+        symbols_at_top.update(top_scopenode.new_symbols(sdfg, state, symbols_at_top))
     # Ordered: this drives ``add_symbol`` order, which is the nested SDFG's symbol order.
-    defined_vars = dict.fromkeys(symbolic.pystr_to_symbolic(s) for s in [*symbols_at_top, *sdfg.symbols])
-    for v in defined_vars:
+    used_symbols = StateSubgraphView(state, subgraph.nodes()).used_symbols(all_symbols=False)
+    for v in dict.fromkeys([*symbols_at_top, *sdfg.symbols]):
+        if v in nsdfg.symbols:
+            continue
         if v in sdfg.symbols:
-            sym = sdfg.symbols[v]
-            nsdfg.add_symbol(v, sym.dtype)
+            nsdfg.add_symbol(v, sdfg.symbols[v].dtype)
+        elif v in used_symbols:
+            nsdfg.add_symbol(v, symbols_at_top[v].dtype)
 
     # Add constants to nested SDFG
     for cstname, cstval in sdfg.constants.items():
