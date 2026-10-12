@@ -2255,10 +2255,10 @@ class ProgramVisitor(ExtNodeVisitor):
                             strides = [arr.strides[-1]]
                         dtype = arr.dtype
                         if isinstance(arr, data.Stream):
-                            vname, _ = self.sdfg.add_stream(f"{conn}_in_from", dtype, find_new_name=True)
+                            vname, _ = self.sdfg.add_stream(f"{conn}_in_from_{name}", dtype, find_new_name=True)
                         else:
                             vname, _ = self.sdfg.add_array(
-                                f"{conn}_in_from", shape, dtype, strides=strides, find_new_name=True
+                                f"{conn}_in_from_{name}", shape, dtype, strides=strides, find_new_name=True
                             )
                         self.accesses[(name, scope_memlet.subset, "r")] = (vname, orng)
                         self.inputs[vname] = (state, scope_memlet, inner_indices)
@@ -2342,10 +2342,10 @@ class ProgramVisitor(ExtNodeVisitor):
                             strides = [arr.strides[-1]]
                         dtype = arr.dtype
                         if isinstance(arr, data.Stream):
-                            vname, _ = self.sdfg.add_stream(f"{conn}_out_of", dtype, find_new_name=True)
+                            vname, _ = self.sdfg.add_stream(f"{conn}_out_of_{name}", dtype, find_new_name=True)
                         else:
                             vname, _ = self.sdfg.add_array(
-                                f"{conn}_out_of", shape, dtype, strides=strides, find_new_name=True
+                                f"{conn}_out_of_{name}", shape, dtype, strides=strides, find_new_name=True
                             )
                         self.accesses[(name, scope_memlet.subset, "w")] = (vname, orng)
                         self.outputs[vname] = (state, scope_memlet, inner_indices)
