@@ -17,11 +17,66 @@ from dace import SDFG, SDFGState
 from dace import memlet as mm
 from dace.frontend.common import op_repository as oprepo
 from dace.libraries.blas import blas_helpers, environments, gpu_dialect
+from dace.libraries.blas.blas_helpers import operand
 from dace.ordered import OrderedSet
 from dace.transformation.transformation import ExpandTransformation
 
 if TYPE_CHECKING:
     from dace.frontend.python.newast import ProgramVisitor
+
+
+def symmetric_element(uplo: bool, row: str, col: str) -> str:
+    """The condition under which element ``(row, col)`` of a symmetric matrix is stored at that position rather than
+    at its mirror, when only the upper (``uplo``) or lower triangle is referenced."""
+    return f"{row} <= {col}" if uplo else f"{row} >= {col}"
+
+
+@dace.library.expansion
+class ExpandSymvPure(ExpandTransformation):
+    environments: list[type] = []
+
+    @staticmethod
+    def expansion(node, parent_state, parent_sdfg, **kwargs):
+        node.validate(parent_sdfg, parent_state)
+        sdfg = blas_helpers.connector_sdfg(node, parent_state, parent_sdfg)
+        n = sdfg.arrays["_x"].shape[0]
+        init = sdfg.add_state(f"{node.label}_init")
+        init.add_mapped_tasklet(
+            "scale_y",
+            {"__i": f"0:{n}"},
+            {"__y": dace.Memlet("_yin[__i]")},
+            f"__out = ({node.beta}) * __y",
+            {"__out": dace.Memlet("_yout[__i]")},
+            external_edges=True,
+        )
+        product = sdfg.add_state_after(init, f"{node.label}_product")
+        product.add_mapped_tasklet(
+            "symv",
+            {"__i": f"0:{n}", "__j": f"0:{n}"},
+            {"__aij": dace.Memlet("_A[__i, __j]"), "__aji": dace.Memlet("_A[__j, __i]"), "__x": dace.Memlet("_x[__j]")},
+            f"__out = ({node.alpha}) * (__aij if {symmetric_element(node.uplo, '__i', '__j')} else __aji) * __x",
+            {"__out": dace.Memlet("_yout[__i]", wcr="lambda a, b: a + b")},
+            external_edges=True,
+        )
+        return sdfg
+
+
+def symv_call(node, state, sdfg) -> SDFG:
+    """``_yout = _yin``, then ``?symv`` updates ``_yout`` in place."""
+    a, x, yout = (operand(node, state, sdfg, c) for c in ("_A", "_x", "_yout"))
+    layout = blas_helpers.matrix_layout(a)
+    prefix = blas_helpers.blas_prefix(a.desc.dtype)
+    # CBLAS has no complex symv
+    if layout is None or prefix is None or a.desc.dtype.is_complex():
+        return ExpandSymvPure.expansion(node, state, sdfg)
+    scalars, arg = blas_helpers.scalar_arguments(a.desc.dtype, alpha=node.alpha, beta=node.beta)
+    order = "CblasRowMajor" if layout.row_major else "CblasColMajor"
+    uplo = "CblasUpper" if node.uplo else "CblasLower"
+    call = (
+        f"cblas_{prefix.lower()}symv({order}, {uplo}, {x.shape[0]}, {arg['alpha']}, __A, {layout.leading[0]}, __x, "
+        f"{x.strides[0]}, {arg['beta']}, __yout, {yout.strides[0]});"
+    )
+    return blas_helpers.in_place_call(node, state, sdfg, "_yin", "_yout", scalars + call)
 
 
 @dace.library.expansion
@@ -30,19 +85,8 @@ class ExpandSymvOpenBLAS(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, **kwargs):
-        (desc_A, lda), (_, sx), (_, syi), syo, n = node.validate(parent_sdfg, parent_state)
-        dt = desc_A.dtype.base_type
-        func, _, _ = blas_helpers.cublas_type_metadata(dt)
-        prefix = func.lower()
-        uplo = "CblasUpper" if node.uplo else "CblasLower"
-        a, b = node.alpha, node.beta
-        code = f"""
-        cblas_{prefix}copy({n}, _yin, {syi}, _yout, {syo});
-        cblas_{prefix}symv(CblasColMajor, {uplo}, {n}, ({dt.ctype})({a}), _A, {lda}, _x, {sx}, ({dt.ctype})({b}), _yout, {syo});
-        """
-        return dace.sdfg.nodes.Tasklet(
-            node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
-        )
+        node.validate(parent_sdfg, parent_state)
+        return symv_call(node, parent_state, parent_sdfg)
 
 
 @dace.library.expansion
@@ -50,8 +94,9 @@ class ExpandSymvMKL(ExpandTransformation):
     environments = [environments.intel_mkl.IntelMKL]
 
     @staticmethod
-    def expansion(*args, **kwargs):
-        return ExpandSymvOpenBLAS.expansion(*args, **kwargs)
+    def expansion(node, parent_state, parent_sdfg, **kwargs):
+        node.validate(parent_sdfg, parent_state)
+        return symv_call(node, parent_state, parent_sdfg)
 
 
 @dace.library.expansion
@@ -97,6 +142,7 @@ class Symv(dace.sdfg.nodes.LibraryNode):
     """BLAS ``?SYMV``: symmetric matrix-vector multiply, ``_yout := alpha A _x + beta _yin``."""
 
     implementations = {
+        "pure": ExpandSymvPure,
         "OpenBLAS": ExpandSymvOpenBLAS,
         "MKL": ExpandSymvMKL,
         "cuBLAS": ExpandSymvCuBLAS,

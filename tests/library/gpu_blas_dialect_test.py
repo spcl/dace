@@ -49,27 +49,6 @@ SPECS = {
         [("x", [N], F), ("r", [N], F)],
         [("_x", "x", True), ("_res", "r", False)],
     ),
-    "nrm2": (
-        lambda: blas.nrm2.Nrm2("n", N),
-        [("x", [N], F), ("r", [1], F)],
-        [("_x", "x", True), ("_result", "r", False)],
-    ),
-    "asum": (
-        lambda: blas.asum.Asum("n", N),
-        [("x", [N], F), ("r", [1], F)],
-        [("_x", "x", True), ("_result", "r", False)],
-    ),
-    "iamax": (
-        lambda: blas.iamax.Iamax("n", N),
-        [("x", [N], F), ("r", [1], dace.int32)],
-        [("_x", "x", True), ("_result", "r", False)],
-    ),
-    "swap": (
-        lambda: blas.swap.Swap("n"),
-        [("x", [N], F), ("y", [N], F)],
-        [("_xin", "x", True), ("_yin", "y", True), ("_xout", "x", False), ("_yout", "y", False)],
-    ),
-    "copy": (lambda: blas.copy.Copy("n"), [("x", [N], F), ("r", [N], F)], [("_x", "x", True), ("_y", "r", False)]),
     "ger": (
         lambda: blas.ger.Ger("n", alpha=1.0),
         [("x", [N], F), ("y", [N], F), ("a", [N, N], F), ("r", [N, N], F)],

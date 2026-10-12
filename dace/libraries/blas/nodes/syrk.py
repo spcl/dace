@@ -19,7 +19,7 @@ import dace.sdfg.nodes
 from dace import SDFG, SDFGState, properties, symbolic
 from dace import memlet as mm
 from dace.frontend.common import op_repository as oprepo
-from dace.libraries.blas import environments, gpu_dialect
+from dace.libraries.blas import blas_helpers, environments, gpu_dialect
 from dace.libraries.blas.blas_helpers import to_blastype
 from dace.libraries.blas.nodes.rank_k_helpers import (
     add_coeff_arrays,
@@ -103,27 +103,31 @@ class ExpandSyrkPure(ExpandTransformation):
 
 
 class ExpandSyrkCBLAS(ExpandTransformation):
-    """CBLAS ``cblas_?syrk`` (row-major): handles the DaCe row-major layout directly,
-    so no operand transpose trick is needed (unlike the GPU path)."""
+    """CBLAS ``cblas_?syrk`` in the operands' common order, row- or column-major; the pure
+    expansion when they share none."""
 
     environments: list[type] = []
 
     @staticmethod
     def expansion(node: "Syrk", state: SDFGState, sdfg: SDFG):
         info = operand_info(node, state, sdfg, OPERANDS)
-        (_, ashape, astrides), (cd, cshape, cstrides) = info["_a"], info["_c"]
+        layout = blas_helpers.matrix_layout(*(blas_helpers.Operand(*info[c]) for c in ("_a", "_c")))
+        if layout is None:
+            return ExpandSyrkPure.expansion(node, state, sdfg)
+        (_, ashape, _), (cd, cshape, _) = info["_a"], info["_c"]
         dtype = cd.dtype.base_type
         func = to_blastype(dtype.type).lower() + "syrk"
         n, k = syrk_dims(node, ashape, cshape)
         uplo = "CblasLower" if node.uplo == "L" else "CblasUpper"
         trans = "CblasNoTrans" if node.trans == "N" else "CblasTrans"
-        lda, ldc = symstr(astrides[0]), symstr(cstrides[0])
+        order = "CblasRowMajor" if layout.row_major else "CblasColMajor"
+        lda, ldc = (symstr(ld) for ld in layout.leading)
 
         def code_fn(ptrs, pa, pb):
             return (
                 f"{coeff_decl('__alpha', node.alpha, dtype, pa)}\n"
                 f"{coeff_decl('__beta', node.beta, dtype, pb)}\n"
-                f"cblas_{func}(CblasRowMajor, {uplo}, {trans}, {symstr(n)}, {symstr(k)}, __alpha, "
+                f"cblas_{func}({order}, {uplo}, {trans}, {symstr(n)}, {symstr(k)}, __alpha, "
                 f"{ptrs['_a']}, {lda}, __beta, {ptrs['_c']}, {ldc});"
             )
 

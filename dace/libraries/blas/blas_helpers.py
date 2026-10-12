@@ -1,10 +1,14 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+import copy
 from copy import deepcopy as dc
-from typing import Any
+from typing import Any, NamedTuple
 
 import numpy as np
 
+import dace
 from dace import data, dtypes, symbolic
+from dace.sdfg import nodes
+from dace.sdfg import utils as sdutil
 
 
 def matrix_view(subset) -> tuple[list[Any], list[int]]:
@@ -322,3 +326,91 @@ def promote_operands(node, state, connectors, dtype: dtypes.typeclass) -> None:
         )
         state.add_edge(promoted, None, node, edge.dst_conn, Memlet.from_array(name, desc))
         state.remove_edge(edge)
+
+
+class Operand(NamedTuple):
+    """The data on a BLAS connector, with its unit dimensions squeezed out."""
+
+    desc: data.Data
+    shape: list
+    strides: list
+
+
+def operand(node: nodes.LibraryNode, state: "dace.SDFGState", sdfg: "dace.SDFG", connector: str) -> Operand:
+    if connector in node.in_connectors:
+        edge = sdutil.in_edge_with_name(node, state, connector)
+    else:
+        edge = sdutil.out_edge_with_name(node, state, connector)
+    desc = sdfg.arrays[edge.data.data]
+    subset = copy.deepcopy(edge.data.subset)
+    dims = subset.squeeze()
+    return Operand(desc, subset.size(), [desc.strides[d] * edge.data.subset[d][2] for d in dims])
+
+
+class MatrixLayout(NamedTuple):
+    """How BLAS reads matrices: all in row-major or all in column-major order, each with its leading dimension."""
+
+    row_major: bool
+    leading: list
+
+
+def matrix_layout(*matrices: Operand) -> MatrixLayout | None:
+    """The common layout of ``matrices``, or ``None`` if one has no contiguous dimension or they differ."""
+    if all(m.strides[1] == 1 for m in matrices):
+        return MatrixLayout(True, [m.strides[0] for m in matrices])
+    if all(m.strides[0] == 1 for m in matrices):
+        return MatrixLayout(False, [m.strides[1] for m in matrices])
+    return None
+
+
+def blas_prefix(dtype: dtypes.typeclass) -> str | None:
+    """The BLAS letter of ``dtype`` (``D`` for ``double``), or ``None`` if BLAS has no routines for it."""
+    try:
+        func, _, _ = cublas_type_metadata(dtype)
+    except TypeError:
+        return None
+    return None if func == "H" else func
+
+
+def scalar_arguments(dtype: dtypes.typeclass, **values: Any) -> tuple[str, dict[str, str]]:
+    """Declares each of ``values`` as a scalar of ``dtype``; returns the declarations and, per name, the argument
+    passing it to CBLAS: the value itself to a real routine, its address to a complex one."""
+    declarations = "".join(f"{dtype.ctype} __{name} = {dtype.ctype}({value});\n" for name, value in values.items())
+    if dtype in (dtypes.complex64, dtypes.complex128):
+        return declarations, {name: f"&__{name}" for name in values}
+    return declarations, {name: f"__{name}" for name in values}
+
+
+def connector_sdfg(node: nodes.LibraryNode, state: "dace.SDFGState", sdfg: "dace.SDFG") -> "dace.SDFG":
+    """A nested SDFG with one array per connector of ``node``, in the squeezed shape and strides of its data."""
+    nsdfg = dace.SDFG(f"{node.label}_sdfg")
+    for connector in list(node.in_connectors) + list(node.out_connectors):
+        desc, shape, strides = operand(node, state, sdfg, connector)
+        nsdfg.add_array(connector, shape, desc.dtype, desc.storage, strides=strides)
+    return nsdfg
+
+
+def in_place_call(
+    node: nodes.LibraryNode, state: "dace.SDFGState", sdfg: "dace.SDFG", source: str, target: str, code: str
+) -> "dace.SDFG":
+    """A nested SDFG for a BLAS routine that updates an operand in place: copies connector ``source`` to ``target``,
+    then runs ``code``, which reads the other inputs and updates ``target``, each by its connector's name with one
+    more leading underscore (``__A`` for ``_A``): a tasklet connector named as the array would shadow it."""
+    nsdfg = connector_sdfg(node, state, sdfg)
+    copy_state = nsdfg.add_state(f"{node.label}_copy")
+    copy_state.add_nedge(
+        copy_state.add_read(source), copy_state.add_write(target), dace.Memlet.from_array(source, nsdfg.arrays[source])
+    )
+    call_state = nsdfg.add_state_after(copy_state, f"{node.label}_call")
+    inputs = [c for c in node.in_connectors if c != source]
+    # The call reads ``target`` too, so the copy into it is not dead
+    reads = {f"_{c}": c for c in inputs} | {f"_{target}_before": target}
+    tasklet = call_state.add_tasklet(node.label, set(reads), {f"_{target}"}, code, language=dtypes.Language.CPP)
+    for connector, name in reads.items():
+        call_state.add_edge(
+            call_state.add_read(name), None, tasklet, connector, dace.Memlet.from_array(name, nsdfg.arrays[name])
+        )
+    call_state.add_edge(
+        tasklet, f"_{target}", call_state.add_write(target), None, dace.Memlet.from_array(target, nsdfg.arrays[target])
+    )
+    return nsdfg

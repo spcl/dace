@@ -12,6 +12,7 @@ from dace import memlet as mm
 from dace import subsets as sbs
 from dace.frontend.common import op_repository as oprepo
 from dace.libraries.blas import blas_helpers, environments, gpu_dialect
+from dace.libraries.blas.blas_helpers import operand
 from dace.ordered import OrderedSet
 from dace.properties import SymbolicProperty
 from dace.sdfg import SDFG, SDFGState, nodes
@@ -19,7 +20,7 @@ from dace.sdfg.nodes import LibraryNode
 from dace.transformation.transformation import ExpandTransformation
 
 
-@library.expansion
+@dace.library.expansion
 class ExpandGerPure(ExpandTransformation):
     """
     Generic expansion of GER.
@@ -88,59 +89,46 @@ def _ger_strides(node, parent_state, parent_sdfg):
     return lda, sx, sy
 
 
-@library.expansion
-class ExpandGerOpenBLAS(ExpandTransformation):
-    """``cblas_?ger(layout, m, n, alpha, X, incX, Y, incY, A, lda)`` after copying ``_A`` into ``_res``."""
+def ger_call(node, state, sdfg) -> SDFG:
+    """``_res = _A``, then ``?ger`` (``?geru`` for complex data: ``Ger`` does not conjugate) updates ``_res`` in
+    place."""
+    res, x, y = (operand(node, state, sdfg, c) for c in ("_res", "_x", "_y"))
+    layout = blas_helpers.matrix_layout(res)
+    prefix = blas_helpers.blas_prefix(res.desc.dtype)
+    if layout is None or prefix is None:
+        return ExpandGerPure.expansion(node, state, sdfg)
+    routine = f"{prefix}geru" if res.desc.dtype.is_complex() else f"{prefix}ger"
+    scalars, arg = blas_helpers.scalar_arguments(res.desc.dtype, alpha=node.alpha)
+    order = "CblasRowMajor" if layout.row_major else "CblasColMajor"
+    (m, n), (lda,) = res.shape, layout.leading
+    call = (
+        f"cblas_{routine.lower()}({order}, {m}, {n}, {arg['alpha']}, __x, {x.strides[0]}, __y, {y.strides[0]}, "
+        f"__res, {lda});"
+    )
+    return blas_helpers.in_place_call(node, state, sdfg, "_A", "_res", scalars + call)
 
+
+@dace.library.expansion
+class ExpandGerOpenBLAS(ExpandTransformation):
     environments = [environments.openblas.OpenBLAS]
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, **kwargs):
         node.validate(parent_sdfg, parent_state)
-        a_desc = parent_sdfg.arrays[next(parent_state.in_edges_by_connector(node, "_A")).data.data]
-        dtype = a_desc.dtype.base_type
-        try:
-            func, _, _ = blas_helpers.cublas_type_metadata(dtype)
-        except TypeError as ex:
-            warnings.warn(f"{ex}. Falling back to pure expansion")
-            return ExpandGerPure.expansion(node, parent_state, parent_sdfg, **kwargs)
-        lda, sx, sy = _ger_strides(node, parent_state, parent_sdfg)
-        prefix = func.lower()
-        m, n = node.m, node.n
-        alpha = node.alpha
-        # cBLAS ger updates A in place; copy _A into _res first, then call.
-        if dtype in (dace.complex64, dace.complex128):
-            cfunc = prefix + "gerc" if dtype == dace.complex128 else prefix + "gerc"
-        else:
-            cfunc = prefix + "ger"
-        code = f"""
-        for (int __i = 0; __i < ({m}); ++__i)
-          cblas_{prefix}copy({n}, _A + __i * ({lda}), 1, _res + __i * ({lda}), 1);
-        """
-        if dtype in (dace.complex64, dace.complex128):
-            code += f"""
-            {dtype.ctype} __alpha = {dtype.ctype}({alpha});
-            cblas_{cfunc}(CblasRowMajor, {m}, {n}, &__alpha, _x, {sx}, _y, {sy}, _res, {lda});
-            """
-        else:
-            code += (
-                f"cblas_{cfunc}(CblasRowMajor, {m}, {n}, ({dtype.ctype})({alpha}), _x, {sx}, _y, {sy}, _res, {lda});"
-            )
-        return dace.sdfg.nodes.Tasklet(
-            node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
-        )
+        return ger_call(node, parent_state, parent_sdfg)
 
 
-@library.expansion
+@dace.library.expansion
 class ExpandGerMKL(ExpandTransformation):
     environments = [environments.intel_mkl.IntelMKL]
 
     @staticmethod
-    def expansion(*args, **kwargs):
-        return ExpandGerOpenBLAS.expansion(*args, **kwargs)
+    def expansion(node, parent_state, parent_sdfg, **kwargs):
+        node.validate(parent_sdfg, parent_state)
+        return ger_call(node, parent_state, parent_sdfg)
 
 
-@library.expansion
+@dace.library.expansion
 class ExpandGerGPUBLAS(ExpandTransformation):
     """cuBLAS ``cublas?ger(handle, m, n, &alpha, x, incx, y, incy, A, lda)``; works on the in-place ``_res`` after copy."""
 

@@ -21,7 +21,7 @@ import dace.sdfg.nodes
 from dace import SDFG, SDFGState, dtypes, properties, symbolic
 from dace import memlet as mm
 from dace.frontend.common import op_repository as oprepo
-from dace.libraries.blas import environments, gpu_dialect
+from dace.libraries.blas import blas_helpers, environments, gpu_dialect
 from dace.libraries.blas.blas_helpers import to_blastype
 from dace.optionals import required
 from dace.sdfg.narrowing import as_range
@@ -167,24 +167,29 @@ def _scalar(value, dtype: dtypes.typeclass) -> str:
 
 
 class _ExpandSymmCBLAS(ExpandTransformation):
-    """CBLAS ``cblas_?symm`` (row-major): handles the DaCe row-major layout
-    directly, so no operand transpose trick is needed (unlike the GPU path)."""
+    """CBLAS ``cblas_?symm`` in the operands' common order, row- or column-major; the pure
+    expansion when they share none."""
 
     environments: list[type] = []
 
     @staticmethod
     def expansion(node: "Symm", state: SDFGState, sdfg: SDFG):
-        (ad, ashape, astrides), (bd, bshape, bstrides), (cd, cshape, cstrides) = _symm_operands(node, state, sdfg)
+        operands = _symm_operands(node, state, sdfg)
+        layout = blas_helpers.matrix_layout(*(blas_helpers.Operand(*o) for o in operands))
+        if layout is None:
+            return ExpandSymmPure.expansion(node, state, sdfg)
+        cd, cshape = operands[2][0], operands[2][1]
         dtype = cd.dtype.base_type
         func = to_blastype(dtype.type).lower() + "symm"
         M, N = symstr(cshape[0]), symstr(cshape[1])
         side = "CblasLeft" if node.side == "L" else "CblasRight"
         uplo = "CblasLower" if node.uplo == "L" else "CblasUpper"
-        lda, ldb, ldc = symstr(astrides[0]), symstr(bstrides[0]), symstr(cstrides[0])
+        order = "CblasRowMajor" if layout.row_major else "CblasColMajor"
+        lda, ldb, ldc = (symstr(ld) for ld in layout.leading)
         code_fn = lambda a, b, c, pa, pb: (
             f"{_coeff_decl('__alpha', node.alpha, dtype, pa)}\n"
             f"{_coeff_decl('__beta', node.beta, dtype, pb)}\n"
-            f"cblas_{func}(CblasRowMajor, {side}, {uplo}, {M}, {N}, __alpha, "
+            f"cblas_{func}({order}, {side}, {uplo}, {M}, {N}, __alpha, "
             f"{a}, {lda}, {b}, {ldb}, __beta, {c}, {ldc});"
         )
         return _blas_inplace(node, state, sdfg, code_fn)

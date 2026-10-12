@@ -120,6 +120,24 @@ def test_a_constant_1d_factor_is_spliced_as_a_float(factor):
     assert floating_factor(factor) == float(factor)
 
 
+@pytest.mark.gpu
+def test_cufft_along_the_first_axis():
+    import dace.libraries.fft as fftlib
+
+    @dace.program
+    def tester(x: dace.complex128[16, 12]):
+        return np.fft.fft(x, axis=0)
+
+    sdfg = tester.to_sdfg()
+    sdfg.apply_gpu_transformations()
+    fftlib.FFT.default_implementation = "cuFFT"
+    sdfg.expand_library_nodes()
+    fftlib.FFT.default_implementation = "pure"
+
+    a = np.random.rand(16, 12) + 1j * np.random.rand(16, 12)
+    assert np.allclose(sdfg(a), np.fft.fft(a, axis=0))
+
+
 if __name__ == "__main__":
     test_fft(False)
     test_fft(True)
@@ -129,6 +147,7 @@ if __name__ == "__main__":
     test_ifft("ortho")
     test_cufft()
     test_cufft_twoplans()
+    test_cufft_along_the_first_axis()
     test_1d_fft_normalization_over_a_symbolic_extent("fft", "backward")
     test_1d_fft_normalization_over_a_symbolic_extent("fft", "forward")
     test_1d_fft_normalization_over_a_symbolic_extent("fft", "ortho")
