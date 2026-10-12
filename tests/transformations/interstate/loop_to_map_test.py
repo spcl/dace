@@ -1433,6 +1433,8 @@ def test_transient_read_only_on_interstate_edges_of_two_loops():
 
 
 if __name__ == "__main__":
+    test_transient_read_only_on_interstate_edges_of_two_loops()
+    test_symbol_assigned_in_every_branch_before_its_read()
     parser = argparse.ArgumentParser()
     parser.add_argument("--N", default=16, type=int)
     args = parser.parse_args()

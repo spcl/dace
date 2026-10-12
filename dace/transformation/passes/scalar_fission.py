@@ -163,6 +163,18 @@ class ScalarFission(ppl.Pass):
             if overlapping:
                 continue
 
+            # Versioning gives each access ONE name, so an access in two scopes (a read after a
+            # conditional whose branches write in nested loops, which the analysis cannot merge into
+            # one scope) would read only one branch's version. Leave such a container whole.
+            seen: set[int] = set()
+            overlapping = False
+            for accesses in write_scope_dict.values():
+                for _block, access in accesses:
+                    overlapping |= id(access) in seen
+                    seen.add(id(access))
+            if overlapping:
+                continue
+
             for write, shadowed_reads in write_scope_dict.items():
                 if write is not None and len(shadowed_reads) > 0:
                     newdesc = desc.clone()

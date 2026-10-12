@@ -629,19 +629,6 @@ def test_an_access_in_two_write_scopes_leaves_the_scalar_whole():
     assert read.data == "t" and all(node.data == "t" for _, node in writes)
 
 
-if __name__ == "__main__":
-    test_scalar_written_in_every_branch_is_private_to_each_loop()
-    test_scalar_fission(False)
-    test_branch_subscopes_nofission(False)
-    test_branch_subscopes_fission(False)
-    test_scalar_fission(True)
-    test_branch_subscopes_nofission(True)
-    test_branch_subscopes_fission(True)
-    test_scalar_fission_propagates_rename_into_nsdfg()
-    test_ordering_edge_does_not_start_a_version()
-    test_rename_node_memlets_follows_an_earlier_version()
-
-
 def test_privatize_loop_local_undominated_through_map_scope():
     """A loop-local scalar accumulated through a MAP scope (WCR write via ``map_exit``),
     written in both branches of a conditional (undominated / ``None`` write-scope) and
@@ -1058,5 +1045,18 @@ def test_scalar_written_in_every_branch_is_private_to_each_loop():
     sdfg(A=A, B=B, C=C, N=A.size)
     assert np.array_equal(B, 2.0 * np.where(A > 0.5, 1.0, A))
     assert np.array_equal(C, np.where(A > 0.25, 3.0, A))
+
+
+if __name__ == "__main__":
+    test_scalar_written_in_every_branch_is_private_to_each_loop()
+    test_scalar_fission(False)
+    test_branch_subscopes_nofission(False)
+    test_branch_subscopes_fission(False)
+    test_scalar_fission(True)
+    test_branch_subscopes_nofission(True)
+    test_branch_subscopes_fission(True)
+    test_scalar_fission_propagates_rename_into_nsdfg()
+    test_ordering_edge_does_not_start_a_version()
+    test_rename_node_memlets_follows_an_earlier_version()
     test_scalar_read_by_a_branch_condition_is_private_to_each_loop()
     test_an_access_in_two_write_scopes_leaves_the_scalar_whole()

@@ -4,6 +4,7 @@
 import copy
 import warnings
 from collections import Counter, defaultdict
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from itertools import islice
 from re import findall
@@ -20,6 +21,7 @@ from dace.sdfg import graph as gr
 from dace.sdfg import utils as sdutil
 from dace.sdfg.analysis import cfg as cfg_analysis
 from dace.sdfg.state import (
+    AbstractControlFlowRegion,
     BreakBlock,
     ConditionalBlock,
     ContinueBlock,
@@ -1201,6 +1203,37 @@ def exhaustively_assigned(block: ConditionalBlock) -> set[str]:
     return set.intersection(*per_branch) if per_branch else set()
 
 
+def own_reads(block, ctx: Optional["LiftContext"]) -> set[str]:
+    """The symbols ``block`` reads itself: a state's dataflow, a conditional's branch conditions, a loop's init,
+    condition and update. A region's ``free_symbols`` also hold what its nested blocks read, possibly after a nested
+    assignment; the walk visits those blocks on their own."""
+    if isinstance(block, SDFGState):
+        return {str(s) for s in block_free_symbols(block, ctx)}
+    if isinstance(block, ConditionalBlock):
+        return {
+            str(s) for condition, _ in block.branches if condition is not None for s in condition.get_free_symbols()
+        }
+    if isinstance(block, LoopRegion):
+        codes = (block.init_statement, block.loop_condition, block.update_statement)
+        return {str(s) for code in codes if code is not None for s in code.get_free_symbols()} - {block.loop_variable}
+    return set()
+
+
+def blocks_then_exits(order: list[ControlFlowBlock]) -> Iterator[tuple[ControlFlowBlock, bool]]:
+    """``(block, False)`` for each block of ``order``, and ``(block, True)`` once everything nested in it has run: a
+    region's out-edges are taken after its body, so a value its branches assign reaches them."""
+    position = {block: i for i, block in enumerate(order)}
+    exits_at: dict[int, list[ControlFlowBlock]] = defaultdict(list)
+    for i, block in enumerate(order):
+        nested = block.all_control_flow_blocks() if isinstance(block, AbstractControlFlowRegion) else ()
+        exits_at[max((position[b] for b in nested if b in position), default=i)].append(block)
+    for i, block in enumerate(order):
+        yield block, False
+        # Innermost first: a region closes after the regions nested in it
+        for closing in reversed(exits_at[i]):
+            yield closing, True
+
+
 def symbols_assigned_before_use(
     loop: LoopRegion,
     itervar: str,
@@ -1218,17 +1251,19 @@ def symbols_assigned_before_use(
     if blocks is None:
         blocks = cfg_analysis.blockorder_topological_sort(loop, recursive=True, ignore_nonstate_blocks=False)
     # Blocks are visited in order, so a symbol not yet assigned in this iteration comes from the previous one.
-    for block in blocks:
-        # A conditional precedes its branches in the order but its out-edges run after them, so a symbol
-        # every arm assigns is defined by then (the CloudSC nblks loop).
-        if isinstance(block, ConditionalBlock):
-            symbols_that_may_be_used |= exhaustively_assigned(block)
-        # ``read_symbols()`` sees only interstate-edge reads; a read in the block's dataflow (``b[im]``) counts too.
-        try:
-            block_reads = {str(s) for s in block_free_symbols(block, ctx)}
-        except Exception:
-            block_reads = set()
-        used_before_assignment |= block_reads - symbols_that_may_be_used
+    for block, leaving in blocks_then_exits(list(blocks)):
+        if not leaving:
+            # A conditional precedes its branches in the order, so a symbol every arm assigns is defined once
+            # they have run (the CloudSC nblks loop).
+            if isinstance(block, ConditionalBlock):
+                symbols_that_may_be_used |= exhaustively_assigned(block)
+            # ``read_symbols()`` sees only interstate-edge reads; a read in the block's dataflow (``b[im]``) counts.
+            try:
+                block_reads = own_reads(block, ctx)
+            except Exception:
+                block_reads = set()
+            used_before_assignment |= block_reads - symbols_that_may_be_used
+            continue
         for e in block.parent_graph.out_edges(block):
             used_before_assignment |= edge_read_symbols(e.data, ctx) - symbols_that_may_be_used
             assigned_symbols = set()
