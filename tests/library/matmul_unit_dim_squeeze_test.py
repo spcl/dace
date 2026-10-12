@@ -1,10 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""``SpecializeMatMul`` and ``Gemm`` must read the same view of an operand.
+"""``SpecializeMatMul``, ``Gemm.validate`` and the GEMM expansions read one matrix view of an operand.
 
-The dispatcher matches on squeezed sizes, so ``np.reshape(x, (NQ, 1, NP)) @ C4`` routes to ``Gemm``
-as ``(NQ, NP) @ (NP, NP)``. ``Gemm.validate`` and the GEMM codegen used to re-read the raw subset,
-see rank 3, and reject the operand -- "matrix-matrix product only supported on matrices". npbench's
-doitgen hits this. Collapsing the unit dim is exact (one GEMM), and keeping it on ``Gemm`` preserves
+``np.reshape(x, (NQ, 1, NP)) @ C4`` (npbench's doitgen) is a single ``(NQ, NP) @ (NP, NP)`` GEMM, which keeps
 ``alpha``, ``beta`` and the WCR that ``BatchedMatMul`` drops.
 """
 
@@ -12,6 +9,7 @@ import numpy as np
 import pytest
 
 import dace
+from dace import memlet as mm
 from dace.libraries.blas.nodes.matmul import MatMul
 from dace.transformation.auto.auto_optimize import auto_optimize
 
@@ -59,8 +57,6 @@ def test_reshape_unit_dim_matmul(optimize, sizes):
 
 def test_unit_batch_keeps_alpha():
     """Routing a unit-batch product away from Gemm would silently drop alpha, beta and WCR."""
-    from dace import memlet as mm
-
     sdfg = dace.SDFG("unit_batch_alpha")
     b, m, k, n = 1, 8, 6, 5
     sdfg.add_array("A", [b, m, k], dace.float64)
@@ -81,7 +77,7 @@ def test_unit_batch_keeps_alpha():
 
 
 if __name__ == "__main__":
-    for optimize in (False, True):
-        for sizes in SIZES:
-            test_reshape_unit_dim_matmul(optimize, sizes)
+    for opt in (False, True):
+        for sz in SIZES:
+            test_reshape_unit_dim_matmul(opt, sz)
     test_unit_batch_keeps_alpha()

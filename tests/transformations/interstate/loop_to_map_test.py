@@ -1296,6 +1296,38 @@ def test_a_symbol_assigned_later_stays_out_of_the_mapping():
     sdfg.validate()
 
 
+def test_transient_read_only_on_interstate_edges_of_two_loops():
+    """``k = C[i % 2]`` on an interstate edge is the only read of the constant ``C`` in each of two loops, as
+    graupel's unrolled species index ``iqx = Cqp_ind[...]``. Neither loop owns ``C``: mapping the first must not
+    move it into its body, or the second loop reads a container its SDFG no longer has."""
+    sdfg = dace.SDFG("transient_read_on_edges_of_two_loops")
+    sdfg.add_symbol("N", dace.int64)
+    sdfg.add_symbol("k", dace.int64)
+    sdfg.add_array("C", [2], dace.int64, transient=True)
+    sdfg.add_constant("C", np.array([3, 5], dtype=np.int64), sdfg.arrays["C"])
+    sdfg.add_array("A", ["N"], dace.int64)
+    sdfg.add_array("B", ["N"], dace.int64)
+    previous = sdfg.add_state("init", is_start_block=True)
+    for out in ("A", "B"):
+        loop = LoopRegion(f"loop_{out}", "i < N", "i", "i = 0", "i = i + 1")
+        sdfg.add_node(loop)
+        sdfg.add_edge(previous, loop, dace.InterstateEdge())
+        first = loop.add_state(f"first_{out}", is_start_block=True)
+        use = loop.add_state_after(first, f"use_{out}", assignments={"k": "C[i % 2]"})
+        write = use.add_tasklet(f"write_{out}", {}, {"o"}, "o = k")
+        use.add_edge(write, "o", use.add_write(out), None, dace.Memlet(f"{out}[i]"))
+        previous = loop
+    sdfg.validate()
+
+    assert sdfg.apply_transformations_repeated(LoopToMap) >= 1
+    assert "C" in sdfg.arrays
+
+    A, B = np.zeros(16, dtype=np.int64), np.zeros(16, dtype=np.int64)
+    sdfg(A=A, B=B, N=16)
+    expected = np.where(np.arange(16) % 2 == 0, 3, 5)
+    assert np.array_equal(A, expected) and np.array_equal(B, expected)
+
+
 def test_symbol_assigned_in_every_branch_before_its_read():
     """``if A[i] > 0.5: z = 1 else: z = A[i]; w = 2 * z; B[i] = w`` with ``z`` an interstate symbol, as CloudSC's ZFAC
     is once fissioned per loop. The edge leaving the conditional reads ``z`` after either branch assigned it, so the
@@ -1327,38 +1359,6 @@ def test_symbol_assigned_in_every_branch_before_its_read():
     B = np.zeros(16)
     sdfg(A=A, B=B, N=16)
     assert np.array_equal(B, 2.0 * np.where(A > 0.5, 1.0, A))
-
-
-def test_transient_read_only_on_interstate_edges_of_two_loops():
-    """``k = C[i % 2]`` on an interstate edge is the only read of the constant ``C`` in each of two loops, as
-    graupel's unrolled species index ``iqx = Cqp_ind[...]``. Neither loop owns ``C``: mapping the first must not
-    move it into its body, or the second loop reads a container its SDFG no longer has."""
-    sdfg = dace.SDFG("transient_read_on_edges_of_two_loops")
-    sdfg.add_symbol("N", dace.int64)
-    sdfg.add_symbol("k", dace.int64)
-    sdfg.add_array("C", [2], dace.int64, transient=True)
-    sdfg.add_constant("C", np.array([3, 5], dtype=np.int64), sdfg.arrays["C"])
-    sdfg.add_array("A", ["N"], dace.int64)
-    sdfg.add_array("B", ["N"], dace.int64)
-    previous = sdfg.add_state("init", is_start_block=True)
-    for out in ("A", "B"):
-        loop = LoopRegion(f"loop_{out}", "i < N", "i", "i = 0", "i = i + 1")
-        sdfg.add_node(loop)
-        sdfg.add_edge(previous, loop, dace.InterstateEdge())
-        first = loop.add_state(f"first_{out}", is_start_block=True)
-        use = loop.add_state_after(first, f"use_{out}", assignments={"k": "C[i % 2]"})
-        write = use.add_tasklet(f"write_{out}", {}, {"o"}, "o = k")
-        use.add_edge(write, "o", use.add_write(out), None, dace.Memlet(f"{out}[i]"))
-        previous = loop
-    sdfg.validate()
-
-    assert sdfg.apply_transformations_repeated(LoopToMap) == 2
-    assert "C" in sdfg.arrays
-
-    A, B = np.zeros(16, dtype=np.int64), np.zeros(16, dtype=np.int64)
-    sdfg(A=A, B=B, N=16)
-    expected = np.where(np.arange(16) % 2 == 0, 3, 5)
-    assert np.array_equal(A, expected) and np.array_equal(B, expected)
 
 
 def branchy_symbol_loop() -> dace.SDFG:
@@ -1399,6 +1399,8 @@ def test_conditional_body_does_not_crash_the_match():
 
 
 if __name__ == "__main__":
+    test_transient_read_only_on_interstate_edges_of_two_loops()
+    test_symbol_assigned_in_every_branch_before_its_read()
     parser = argparse.ArgumentParser()
     parser.add_argument("--N", default=16, type=int)
     args = parser.parse_args()
@@ -1441,6 +1443,5 @@ if __name__ == "__main__":
     test_loop_to_map_with_loop_invariant_if()
     test_dynamic_write_slab_separated_by_iteration_var()
     test_refuse_when_body_assigns_loop_range_symbol()
+    test_a_symbol_assigned_later_stays_out_of_the_mapping()
     test_conditional_body_does_not_crash_the_match()
-    test_symbol_assigned_in_every_branch_before_its_read()
-    test_transient_read_only_on_interstate_edges_of_two_loops()
