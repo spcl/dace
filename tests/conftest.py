@@ -213,13 +213,11 @@ _SUITE_DIRS = (
 #: still lands here. MPI library tests are NOT here -- ``tests/library/mpi`` is directory-marked
 #: ``mpi`` and runs under the heterogeneous runner's ``mpirun``.
 _LIBNODE_FILES = (
-    "allany_node_test.py",
     "arg_reduce_test.py",
     "argminmax_test.py",
     "blas_environment_test.py",
     "broadcast_test.py",
     "copy_node_test.py",
-    "count_node_test.py",
     "cshift_test.py",
     "fft_axis_test.py",
     "fft_fftw3_test.py",
@@ -235,6 +233,7 @@ _LIBNODE_FILES = (
     "loop_to_scan_test.py",
     "loop_to_symm_test.py",
     "loop_to_symmetrize_test.py",
+    "mask_reduction_test.py",
     "matmul_batched_test.py",
     "matmul_broadcast_test.py",
     "matmul_test.py",

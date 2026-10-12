@@ -6,7 +6,7 @@ Scope is intentionally narrow — only the surfaces this branch touched:
 
   * ``tests/hlfir/`` — the HLFIR frontend, including the verbatim
     ``ported/`` subdirectory ported from f2dace.
-  * ``tests/library/count_node_test.py`` and
+  * ``tests/library/mask_reduction_test.py`` and
     ``tests/library/merge_node_test.py`` — the two standard library
     nodes this branch introduced.
 
@@ -40,7 +40,7 @@ REPO = Path(__file__).resolve().parents[1]
 # pytest-xdist worker its own ``.dacecache_gw<N>`` directory.
 GROUPS: list[tuple[str, list[str]]] = [
     ("hlfir.frontend", ["tests/hlfir/"]),
-    ("library.standard", ["tests/library/count_node_test.py", "tests/library/merge_node_test.py"]),
+    ("library.standard", ["tests/library/mask_reduction_test.py", "tests/library/merge_node_test.py"]),
 ]
 
 # pytest's short-summary tail line: "= 220 passed, 2 skipped, 137 xfailed in 250.81s ="

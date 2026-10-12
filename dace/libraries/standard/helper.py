@@ -333,3 +333,38 @@ def broadcast_map_expansion(
         external_edges=True,
     )
     return sdfg
+
+
+def fortran_axis(node: nodes.LibraryNode, dim: int | None, rank: int) -> int | None:
+    """The 0-based axis of Fortran's 1-based ``dim``; ``None`` (or ``-1``) selects the whole array."""
+    if dim is None or dim == -1:
+        return None
+    if not 1 <= dim <= rank:
+        raise ValueError(f"{node.label}: dim={dim} is out of range for a rank-{rank} input")
+    return dim - 1
+
+
+def reduced_coordinates(shape: Sequence, axis: int | None) -> tuple[dict[str, str | dace.subsets.Subset], str]:
+    """Map ranges over the result of reducing ``shape`` along ``axis`` (every axis for ``None``) and the result's
+    subscript, both in the ``__i<d>`` iterators of a map over ``shape``; a whole-array result is one element."""
+    kept = [d for d in range(len(shape)) if axis is not None and d != axis]
+    if not kept:
+        return {"__i": "0:1"}, "0"
+    return map_ranges(shape, kept), ", ".join(f"__i{d}" for d in kept)
+
+
+def map_ranges(shape: Sequence, dims: Sequence[int] | None = None) -> dict[str, str | dace.subsets.Subset]:
+    """``__i<d>`` iterating over each of ``dims`` (every dimension for ``None``) of ``shape``."""
+    return {f"__i{d}": f"0:{shape[d]}" for d in (range(len(shape)) if dims is None else dims)}
+
+
+def connector_array(
+    sdfg: dace.SDFG, name: str, memlet: dace.Memlet, outer: dace.SDFG, *, dtype: dtypes.typeclass | None = None
+) -> list:
+    """Adds to ``sdfg`` the array ``name`` that a nested SDFG reads or writes through ``memlet`` of ``outer``: its shape
+    is the subset's and its strides the container's, scaled by the subset's steps. Returns the shape."""
+    desc = outer.arrays[memlet.data]
+    shape = memlet.subset.size()
+    strides = [stride * step for stride, (_, _, step) in zip(desc.strides, memlet.subset)]
+    sdfg.add_array(name, shape, dtype or desc.dtype, desc.storage, strides=strides)
+    return shape
