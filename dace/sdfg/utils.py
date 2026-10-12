@@ -6,6 +6,7 @@ import collections
 import copy
 import re
 import time
+import traceback
 import warnings
 from collections.abc import Callable, Container, Generator, Mapping, Sequence
 from typing import Any, Optional
@@ -1916,14 +1917,24 @@ def distributed_compile(sdfg: SDFG | None, comm, *, validate: bool = True) -> cs
     rank = comm.Get_rank()
     func = None
     folder = None
+    error = None
 
     # Rank 0 compiles SDFG.
     if rank == 0:
-        func = sdfg.compile(validate=validate)
-        folder = sdfg.build_folder
+        try:
+            func = sdfg.compile(validate=validate)
+            folder = sdfg.build_folder
+        except BaseException as exc:  # re-raised on every rank below
+            error = f"{type(exc).__name__}: {exc}\n{traceback.format_exc()}"
 
-    # Broadcasts build folder.
-    folder = comm.bcast(folder, root=0)
+    # Broadcast the build folder or rank 0's compile error. One bcast keeps the collective sequence identical on
+    # every rank; without it the other ranks wait forever for a folder that never comes.
+    error, folder = comm.bcast((error, folder), root=0)
+    if error is not None:
+        raise RuntimeError(
+            "distributed_compile: rank 0 compilation failed; all ranks abort "
+            f"to avoid a collective deadlock. Rank 0 traceback:\n{error}"
+        )
     if sdfg is not None:
         sdfg.build_folder = folder
 
