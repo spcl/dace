@@ -12,6 +12,7 @@ from dace import SDFG, SDFGState
 from dace import data as dace_data
 from dace import symbolic as dace_symbolic
 from dace.sdfg import nodes
+from dace.sdfg.state import LoopRegion
 from dace.transformation.dataflow import MapExpansion, MapFusion, MapFusionVertical
 
 
@@ -119,6 +120,7 @@ def apply_fusion(
     unspecific: bool = False,
     apply_once: bool = False,
     strict_dataflow: bool = True,
+    allow_intermediates_with_symbolic_size: bool | None = None,
     map_fusion_opt: dict[str, Any] = dict(),
     where: dict[str, dace.nodes.Node] | None = None,
 ) -> SDFG:
@@ -141,12 +143,14 @@ def apply_fusion(
 
             if where is not None:
                 assert apply_once
+                options = {"strict_dataflow": strict_dataflow}
+                if allow_intermediates_with_symbolic_size is not None:
+                    options = options | {
+                        "allow_intermediates_with_symbolic_size": allow_intermediates_with_symbolic_size
+                    }
                 MapFusionVertical.apply_to(
                     sdfg=sdfg,
-                    options={
-                        "strict_dataflow": strict_dataflow,
-                    }
-                    | map_fusion_opt,
+                    options=options | map_fusion_opt,
                     expr_index=0,
                     verify=True,
                     **where,
@@ -156,6 +160,7 @@ def apply_fusion(
             else:
                 map_fusion = MapFusionVertical(
                     strict_dataflow=strict_dataflow,
+                    allow_intermediates_with_symbolic_size=allow_intermediates_with_symbolic_size,
                     **map_fusion_opt,
                 )
                 apply_function = sdfg.apply_transformations if apply_once else sdfg.apply_transformations_repeated
@@ -2542,6 +2547,7 @@ def test_map_fusion_nested_sdfg_slicing(symbolic_size: bool, strict_dataflow: bo
         final_maps=1,
         apply_once=True,
         strict_dataflow=strict_dataflow,
+        allow_intermediates_with_symbolic_size=symbolic_size,
         where={
             "first_map_exit": mx1,
             "array": intermediate,
@@ -3218,6 +3224,138 @@ def test_map_fusion_is_deprecated() -> None:
         MapFusion()
 
 
+@pytest.mark.parametrize("allow_intermediates_with_symbolic_size", [False, True])
+def test_map_fusion_symbolic_intermediate(allow_intermediates_with_symbolic_size: bool):
+    """Vertical fusion should only create symbolic-sized intermediates when explicitly allowed.
+
+    Each Map body is a nested SDFG containing a ``LoopRegion``: the first Map a forward loop and
+    the second Map a backward loop. This tests that the symbolic-intermediate handling works
+    together with nested SDFGs that contain control flow.
+    """
+    N = dace.symbol("N", positive=True)
+
+    sdfg = dace.SDFG(unique_name("map_fusion_symbolic_intermediate"))
+    state = sdfg.add_state(is_start_block=True)
+    sdfg.add_array("A", shape=(N, N), dtype=dace.float64, transient=False)
+    sdfg.add_array("B", shape=(N,), dtype=dace.float64, transient=False)
+    sdfg.add_array("tmp", shape=(N, N), dtype=dace.float64, transient=True)
+
+    # Body of the first Map: a nested SDFG with a forward loop that produces one row of `tmp`.
+    first_body = dace.SDFG(unique_name("first_map_body"))
+    first_body.add_array("__in", shape=(N,), dtype=dace.float64, transient=False)
+    first_body.add_array("__out", shape=(N,), dtype=dace.float64, transient=False)
+    forward_loop = LoopRegion(
+        "forward_loop",
+        condition_expr="j < N",
+        loop_var="j",
+        initialize_expr="j = 0",
+        update_expr="j = j + 1",
+    )
+    first_body.add_node(forward_loop, is_start_block=True)
+    forward_state = forward_loop.add_state("forward_body")
+    forward_tasklet = forward_state.add_tasklet(
+        "compute",
+        {"__i"},
+        {"__o"},
+        "__o = __i[j] + (__i[j - 1] if j > 0 else __i[j])",
+    )
+    forward_state.add_memlet_path(
+        forward_state.add_access("__in"),
+        forward_tasklet,
+        dst_conn="__i",
+        memlet=dace.Memlet("__in"),
+    )
+    forward_state.add_memlet_path(
+        forward_tasklet,
+        forward_state.add_access("__out"),
+        src_conn="__o",
+        memlet=dace.Memlet("__out[j]"),
+    )
+
+    # Body of the second Map: a nested SDFG with a backward loop that consumes one row of `tmp`.
+    # The loop overwrites the scalar `__out` every iteration, so the final value (at `j == 0`)
+    # is `tmp[i, 0] + tmp[i, 1]`.
+    second_body = dace.SDFG(unique_name("second_map_body"))
+    second_body.add_array("__in", shape=(N,), dtype=dace.float64, transient=False)
+    second_body.add_scalar("__out", dtype=dace.float64, transient=False)
+    backward_loop = LoopRegion(
+        "backward_loop",
+        condition_expr="j >= 0",
+        loop_var="j",
+        initialize_expr="j = N - 1",
+        update_expr="j = j - 1",
+    )
+    second_body.add_node(backward_loop, is_start_block=True)
+    backward_state = backward_loop.add_state("backward_body")
+    backward_tasklet = backward_state.add_tasklet(
+        "compute",
+        {"__i"},
+        {"__o"},
+        "__o = __i[j] + (__i[j + 1] if j + 1 < N else __i[j])",
+    )
+    backward_state.add_memlet_path(
+        backward_state.add_access("__in"),
+        backward_tasklet,
+        dst_conn="__i",
+        memlet=dace.Memlet("__in"),
+    )
+    backward_state.add_memlet_path(
+        backward_tasklet,
+        backward_state.add_access("__out"),
+        src_conn="__o",
+        memlet=dace.Memlet("__out[0]"),
+    )
+
+    A = state.add_access("A")
+    B = state.add_access("B")
+    tmp = state.add_access("tmp")
+
+    # First Map: A -> tmp
+    me1, mx1 = state.add_map("first_map", ndrange={"i": "0:N"})
+    first_nsdfg = state.add_nested_sdfg(sdfg=first_body, inputs={"__in"}, outputs={"__out"})
+    state.add_edge(A, None, me1, "IN___in", dace.Memlet("A[0:N, 0:N]"))
+    me1.add_scope_connectors("__in")
+    state.add_edge(me1, "OUT___in", first_nsdfg, "__in", dace.Memlet("A[i, 0:N]"))
+    state.add_edge(first_nsdfg, "__out", mx1, "IN___out", dace.Memlet("tmp[i, 0:N]"))
+    mx1.add_scope_connectors("__out")
+    state.add_edge(mx1, "OUT___out", tmp, None, dace.Memlet("tmp[0:N, 0:N]"))
+
+    # Second Map: tmp -> B
+    me2, mx2 = state.add_map("second_map", ndrange={"i": "0:N"})
+    second_nsdfg = state.add_nested_sdfg(sdfg=second_body, inputs={"__in"}, outputs={"__out"})
+    state.add_edge(tmp, None, me2, "IN___in", dace.Memlet("tmp[0:N, 0:N]"))
+    me2.add_scope_connectors("__in")
+    state.add_edge(me2, "OUT___in", second_nsdfg, "__in", dace.Memlet("tmp[i, 0:N]"))
+    state.add_edge(second_nsdfg, "__out", mx2, "IN___out", dace.Memlet("B[i]"))
+    mx2.add_scope_connectors("__out")
+    state.add_edge(mx2, "OUT___out", B, None, dace.Memlet("B[0:N]"))
+
+    # Connector descriptors of the nested SDFGs must describe the parent containers.
+    first_nsdfg.integrate_into_parent()
+    second_nsdfg.integrate_into_parent()
+
+    sdfg.validate()
+
+    ref, res = make_sdfg_args(sdfg, dict(N=10))
+    compile_and_run_sdfg(sdfg, **ref)
+
+    apply_fusion(
+        sdfg,
+        removed_maps=(1 if allow_intermediates_with_symbolic_size else 0),
+        apply_once=True,
+        strict_dataflow=True,
+        allow_intermediates_with_symbolic_size=allow_intermediates_with_symbolic_size,
+    )
+
+    if allow_intermediates_with_symbolic_size:
+        assert count_nodes(state, nodes.MapEntry) == 1
+
+        compile_and_run_sdfg(sdfg, **res)
+        assert all(np.allclose(ref[k], res[k]) for k in ref)
+    else:
+        assert count_nodes(state, nodes.MapEntry) == 2
+
+
 if __name__ == "__main__":
     test_fusion_intrinsic_memlet_direction()
     test_fusion_dynamic_producer()
@@ -3266,3 +3404,5 @@ if __name__ == "__main__":
     test_map_fusion_stable_label(forward_fusion=True)
     test_map_fusion_stable_label(forward_fusion=False)
     test_map_fusion_is_deprecated()
+    test_map_fusion_symbolic_intermediate(allow_intermediates_with_symbolic_size=True)
+    test_map_fusion_symbolic_intermediate(allow_intermediates_with_symbolic_size=False)
