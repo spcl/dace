@@ -218,6 +218,17 @@ def test_rocblas_call_of_a_row_major_operand(node, inputs, routine, arguments):
     assert call.startswith(f"{routine}(__dace_rocblas_handle, {arguments}"), call[:120]
 
 
+@pytest.mark.parametrize("implementation", GPU_IMPLEMENTATIONS)
+def test_gpu_library_rejects_a_matrix_without_a_contiguous_dimension(implementation):
+    """The vendor libraries take row- or column-major matrices only; a matrix strided in both dimensions is an error
+    at expansion, not a call that reads the wrong elements. Expanding needs no device."""
+    strided = np.zeros((8, 8))[::2, ::2]
+    inputs = {"_A": ("a", strided), "_B": ("b", np.zeros((4, 3))), "_Cin": ("cin", np.zeros((4, 3)))}
+    sdfg = build("symm_strided", Symm("symm"), implementation, inputs, {"_Cout": ("cout", np.zeros((4, 3)))})
+    with pytest.raises(ValueError, match="row- or column-major"):
+        sdfg.expand_library_nodes()
+
+
 if __name__ == "__main__":
     for implementation in ("pure", "OpenBLAS"):
         test_scal(implementation)
@@ -228,3 +239,5 @@ if __name__ == "__main__":
             for flag, upper in ((False, False), (True, True)):
                 test_symm(implementation, order, flag, upper)
                 test_syrk(implementation, order, flag, upper)
+    for implementation in GPU_IMPLEMENTATIONS:
+        test_gpu_library_rejects_a_matrix_without_a_contiguous_dimension(implementation)

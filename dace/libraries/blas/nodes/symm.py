@@ -50,8 +50,11 @@ class ExpandSymmPure(ExpandTransformation):
 def symm_call(node, state, sdfg, dialect: gpu_dialect.GpuBlasDialect | None = None, environment=None) -> SDFG:
     """``_Cout = _Cin``, then ``?symm`` updates ``_Cout`` in place, through CBLAS or the GPU library of ``dialect``."""
     a, b, c = (operand(node, state, sdfg, conn) for conn in ("_A", "_B", "_Cout"))
-    layout = blas_helpers.matrix_layout(a, b, c)
     prefix = blas_helpers.blas_prefix(a.desc.dtype)
+    if dialect is not None and prefix is not None:
+        layout = gpu_dialect.required_layout(node, a, b, c)
+    else:
+        layout = blas_helpers.matrix_layout(a, b, c)
     if layout is None or prefix is None:
         return ExpandSymmPure.expansion(node, state, sdfg)
     (m, n), (lda, ldb, ldc) = c.shape, layout.leading

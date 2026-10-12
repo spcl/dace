@@ -75,12 +75,13 @@ def ger_call(node, state, sdfg, dialect: gpu_dialect.GpuBlasDialect | None = Non
     """``_res = _A``, then ``?ger`` (``?geru`` for complex data: ``Ger`` does not conjugate) updates ``_res`` in
     place, through CBLAS or the GPU library of ``dialect``."""
     res, x, y = (operand(node, state, sdfg, c) for c in ("_res", "_x", "_y"))
-    layout = blas_helpers.matrix_layout(res)
     prefix = blas_helpers.blas_prefix(res.desc.dtype)
+    if dialect is not None and prefix is not None:
+        layout = gpu_dialect.required_layout(node, res)
+        return ger_gpu_call(node, state, sdfg, dialect, environment, layout, res, x, y)
+    layout = blas_helpers.matrix_layout(res)
     if layout is None or prefix is None:
         return ExpandGerPure.expansion(node, state, sdfg)
-    if dialect is not None:
-        return ger_gpu_call(node, state, sdfg, dialect, environment, layout, res, x, y)
     routine = f"{prefix}geru" if res.desc.dtype.is_complex() else f"{prefix}ger"
     scalars, arg = blas_helpers.scalar_arguments(res.desc.dtype, alpha=node.alpha)
     order = "CblasRowMajor" if layout.row_major else "CblasColMajor"

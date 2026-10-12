@@ -95,6 +95,18 @@ def scalar_pointers(call: GpuCall, dtype: dtypes.typeclass, **values) -> tuple[s
     return declarations, {name: call.pointer(f"&__{name}") for name in values}
 
 
+def required_layout(node, *matrices: blas_helpers.Operand) -> blas_helpers.MatrixLayout:
+    """The common row- or column-major layout of ``matrices``. The vendor libraries take nothing else, so any other
+    layout is an error rather than a silent fallback."""
+    layout = blas_helpers.matrix_layout(*matrices)
+    if layout is None:
+        strides = [list(m.strides) for m in matrices]
+        raise ValueError(
+            f"{node.label}: cuBLAS/rocBLAS need every matrix in one row- or column-major layout, got strides {strides}"
+        )
+    return layout
+
+
 def call_code(call: GpuCall, environment: type, node, scalars: str, routine_call: str) -> str:
     """The tasklet body running ``routine_call``: handle setup, then the call with its scalars read from the host.
 

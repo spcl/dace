@@ -58,8 +58,11 @@ class ExpandSyrkPure(ExpandTransformation):
 def syrk_call(node, state, sdfg, dialect: gpu_dialect.GpuBlasDialect | None = None, environment=None) -> SDFG:
     """``_Cout = _Cin``, then ``?syrk`` updates ``_Cout`` in place, through CBLAS or the GPU library of ``dialect``."""
     a, c = operand(node, state, sdfg, "_A"), operand(node, state, sdfg, "_Cout")
-    layout = blas_helpers.matrix_layout(a, c)
     prefix = blas_helpers.blas_prefix(a.desc.dtype)
+    if dialect is not None and prefix is not None:
+        layout = gpu_dialect.required_layout(node, a, c)
+    else:
+        layout = blas_helpers.matrix_layout(a, c)
     if layout is None or prefix is None:
         return ExpandSyrkPure.expansion(node, state, sdfg)
     lda, ldc = layout.leading

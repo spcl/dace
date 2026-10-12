@@ -48,10 +48,10 @@ class ExpandSymvPure(ExpandTransformation):
 def symv_call(node, state, sdfg, dialect: gpu_dialect.GpuBlasDialect | None = None, environment=None) -> SDFG:
     """``_yout = _yin``, then ``?symv`` updates ``_yout`` in place, through CBLAS or the GPU library of ``dialect``."""
     a, x, yout = (operand(node, state, sdfg, c) for c in ("_A", "_x", "_yout"))
-    layout = blas_helpers.matrix_layout(a)
     prefix = blas_helpers.blas_prefix(a.desc.dtype)
-    if dialect is not None and layout is not None and prefix is not None:
+    if dialect is not None and prefix is not None:
         # A row-major symmetric matrix is its own transpose in column-major order, with the other triangle stored
+        layout = gpu_dialect.required_layout(node, a)
         gpu = gpu_dialect.gpu_call(dialect, a.desc.dtype)
         scalars, arg = gpu_dialect.scalar_pointers(gpu, a.desc.dtype, alpha=node.alpha, beta=node.beta)
         upper = node.uplo != layout.row_major
@@ -62,6 +62,7 @@ def symv_call(node, state, sdfg, dialect: gpu_dialect.GpuBlasDialect | None = No
         )
         code = gpu_dialect.call_code(gpu, environment, node, scalars, call)
         return blas_helpers.in_place_call(node, state, sdfg, "_yin", "_yout", code)
+    layout = blas_helpers.matrix_layout(a)
     # CBLAS has no complex symv
     if layout is None or prefix is None or a.desc.dtype.is_complex():
         return ExpandSymvPure.expansion(node, state, sdfg)
