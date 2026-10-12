@@ -6,12 +6,14 @@ import numpy as np
 import pytest
 
 import dace
+from dace.codegen.common import get_gpu_backend
 from dace.libraries.blas.nodes import Ger, Scal, Symm, Symv, Syrk
 
 IMPLEMENTATIONS = [
     "pure",
     pytest.param("OpenBLAS", marks=pytest.mark.lapack),
-    pytest.param("cuBLAS", marks=pytest.mark.gpu),
+    # The vendor library of this build's GPU backend, resolved only when a GPU test runs.
+    pytest.param("gpu", marks=pytest.mark.gpu),
 ]
 rng = np.random.default_rng(42)
 
@@ -31,6 +33,8 @@ def run(
 ):
     """Connects ``node`` to one array per connector and runs it, on the GPU for a GPU implementation; writes the
     results back into the ``outputs`` arrays."""
+    if implementation == "gpu":
+        implementation = "rocBLAS" if get_gpu_backend() == "hip" else "cuBLAS"
     sdfg = build(name, node, implementation, inputs, outputs)
     if implementation not in GPU_IMPLEMENTATIONS:
         sdfg(**dict({**inputs, **outputs}.values()))
