@@ -32,7 +32,7 @@ The recipe, applied once in order:
    applies ``LoopToMap`` outermost-first, sharing the per-SDFG analysis across probes and caching
    refusals, then sweeps once more in graph order to pick up what the outermost-first order misses
    (measured on CloudSC: the same 314 maps as the plain matcher, 515.2s against 927.7s).
-6. :data:`FUSE_ROUNDS` x ``Pipeline([FuseStates, FuseMaps, FuseLoops, FuseConditions])`` -- maps
+6. :data:`FUSE_ROUNDS` x ``Pipeline([FuseStates, FuseMaps, FuseLoops, MergeGuards])`` -- maps
    fuse only within a state, fusing maps in turn frees the state boundaries the fused maps were
    pinning, and the loop/condition passes remove the two other things that keep fusable bodies
    apart: a pair of sequential loops ``ParallelizeLoops`` had to refuse (map fusion only ever sees
@@ -105,7 +105,7 @@ class ParallelizePipeline(ppl.Pass):
 
     def _stages(self) -> list[ppl.Pass]:
         from dace.transformation.pass_pipeline import Pipeline
-        from dace.transformation.passes.canonicalize.fuse_conditions import FuseConditions
+        from dace.transformation.passes.canonicalize.merge_guards import MergeGuards
         from dace.transformation.passes.canonicalize.fuse_loops import FuseLoops
         from dace.transformation.passes.canonicalize.pipeline import IvSubstitutionFissionFixpoint, StructuralCleanup
         from dace.transformation.passes.fuse_maps import FuseMaps
@@ -146,10 +146,10 @@ class ParallelizePipeline(ppl.Pass):
         # ``FuseMaps`` fuses vertically and horizontally in one FindSingleUseData scan.
         # ``FuseLoops`` joins the sequential loops ``ParallelizeLoops`` had to refuse (map
         # fusion only ever sees MapEntry nodes, so those pairs are invisible to it), and
-        # ``FuseConditions`` folds the guards that keep otherwise fusable bodies apart.
+        # ``MergeGuards`` folds the guards that keep otherwise fusable bodies apart.
         # A fresh Pipeline per round: FuseMaps declares a FindSingleUseData dependency whose
         # results the Pipeline caches, and the second round runs on a graph the first rewrote.
-        stages.extend(Pipeline([FuseStates(), FuseMaps(), FuseLoops(), FuseConditions()]) for _ in range(FUSE_ROUNDS))
+        stages.extend(Pipeline([FuseStates(), FuseMaps(), FuseLoops(), MergeGuards()]) for _ in range(FUSE_ROUNDS))
         return stages
 
     def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> int | None:

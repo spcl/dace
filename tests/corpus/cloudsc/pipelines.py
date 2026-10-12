@@ -345,7 +345,7 @@ _PARALLELIZE_PHASE: dict[str, str] = {
     "FuseStates": "fuse",
     "FuseMaps": "fuse",
     "FuseLoops": "fuse",
-    "FuseConditions": "fuse",
+    "MergeGuards": "fuse",
     "FindSingleUseData": "fuse",
 }
 

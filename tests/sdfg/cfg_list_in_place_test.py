@@ -191,10 +191,10 @@ def nest_a_map(sdfg):
                 return
 
 
-def fuse_conditions(sdfg):
-    from dace.transformation.passes.canonicalize.fuse_conditions import FuseConditions
+def merge_guards(sdfg):
+    from dace.transformation.passes.canonicalize.merge_guards import MergeGuards
 
-    FuseConditions(matcher_order=True).apply_pass(sdfg, {})
+    MergeGuards().apply_pass(sdfg, {})
 
 
 def move_ifs_into_loops(sdfg):
@@ -210,7 +210,7 @@ def parallelize(sdfg):
     ParallelizeLoops(propagate=False).apply_pass(sdfg, {})
 
 
-@pytest.mark.parametrize("rewrite", [lower_maps, nest_a_map, fuse_conditions, move_ifs_into_loops, parallelize])
+@pytest.mark.parametrize("rewrite", [lower_maps, nest_a_map, merge_guards, move_ifs_into_loops, parallelize])
 def test_a_rewrite_keeps_the_tree_as_a_reset_builds_it_and_computes_the_same(rewrite, monkeypatch):
     sdfg = maps_loops_and_guards.to_sdfg(simplify=True)
     reference = copy.deepcopy(sdfg)

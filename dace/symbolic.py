@@ -5384,6 +5384,23 @@ def equal(a: SymbolicType, b: SymbolicType, is_length: bool = True) -> bool | No
     return ask_equal(*args, is_length)
 
 
+def guards_equal(first: str, second: str) -> bool:
+    """Whether two branch guards are provably the same predicate. ``False`` when unknown or unparsable."""
+    try:
+        return bool(pystr_to_symbolic(first) == pystr_to_symbolic(second))
+    except Exception:  # noqa: BLE001 -- an unparsable guard is simply not provably equal
+        return False
+
+
+def guards_opposite(first: str, second: str) -> bool:
+    """Whether ``second`` is provably the negation of ``first``. ``False`` when unknown or unparsable."""
+    try:
+        a, b = pystr_to_symbolic(first), pystr_to_symbolic(second)
+        return simplify(sympy.Equivalent(sympy.Not(a), b)) == sympy.true
+    except Exception:  # noqa: BLE001 -- an unparsable guard is simply not provably opposite
+        return False
+
+
 @lru_cache(maxsize=16384, typed=True)
 def ask_equal(a: SymbolicType, b: SymbolicType, is_length: bool) -> bool | None:
     """The assumption solver's verdict on ``a == b``, for :func:`equal`.

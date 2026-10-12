@@ -47,7 +47,7 @@ from dace.transformation.passes.canonicalize.empty_state_elimination import Empt
 from dace.transformation.passes.canonicalize.fold_scalar_read_copies import FoldScalarReadCopies
 from dace.transformation.passes.canonicalize.forward_store_to_load import ForwardStoreToLoad
 from dace.transformation.passes.canonicalize.fuse_chained_scalar_reductions import FuseChainedScalarReductions
-from dace.transformation.passes.canonicalize.fuse_conditions import FuseConditions
+from dace.transformation.passes.canonicalize.merge_guards import MergeGuards
 from dace.transformation.passes.canonicalize.fuse_consecutive_loops import FuseConsecutiveLoops
 from dace.transformation.passes.canonicalize.fuse_loops import FuseLoops
 from dace.transformation.passes.canonicalize.hoist_iv_updates import HoistInductionVariableUpdates
@@ -1105,9 +1105,9 @@ def _build_stages(
     # no longer fuses horizontally with a 1-D sibling, so mixed-parallelism nests stay apart.
     s += [("collapse", PatternApplyOnceEverywhere([MapCollapse()]))]
 
-    # fuse: ConditionFusion recombines identical guards split by fission, LiftTrivialIf drops the
-    # unsatisfiable combinations, cleanup co-locates the maps, then vertical + horizontal fusion.
-    s += [("fuse", FuseConditions(matcher_order=True))]
+    # fuse: MergeGuards recombines identical guards split by fission, LiftTrivialIf drops guards that
+    # are always true or false, cleanup co-locates the maps, then vertical + horizontal fusion.
+    s += [("fuse", MergeGuards())]
     s += [("fuse", LiftTrivialIf())]
     s += _inline_single_state("fuse")
     s += _structural_cleanup("fuse")
@@ -1121,7 +1121,7 @@ def _build_stages(
     # normalize_map_body: merge sibling NestedSDFGs in one map body so their same-condition guards
     # become adjacent, fuse, and later hoist out of the map at hoist_guards.
     s += [("fuse", NormalizeMapBody())]
-    s += [("fuse", FuseConditions(matcher_order=True))]
+    s += [("fuse", MergeGuards())]
     s += _inline_single_state("fuse")
     s += _structural_cleanup("fuse")
 
@@ -1175,11 +1175,7 @@ def _build_stages(
     #
     # ``PruneEmptyConditionalBranches`` closes the case the state-level cleanup cannot see: an empty
     # conditional ARM is a ControlFlowRegion, not a state, so ``DeadStateElimination`` walks past it.
-    # ``ConditionFusion`` merges two adjacent guards into one ConditionalBlock whose branches are
-    # their cross product, and the combination that does no work is an empty arm -- the terminal
-    # simplify used to drop it, and without that the collapsed nest carries a dead fourth branch
-    # (``canonicalize_coexisting_guards``) and the guarded scan split keeps an empty ``else``
-    # (``scan_conditional``). It only ever removes a branch with no work in it, so the guarded
+    # It only ever removes a branch with no work in it, so the guarded
     # specializations the recipe leans on -- whose arms all carry a body -- are untouched.
     s += _inline_single_state("end")
     s += [("end", PruneEmptyConditionalBranches())]
