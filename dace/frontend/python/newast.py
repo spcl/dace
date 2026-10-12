@@ -1100,8 +1100,6 @@ class ProgramVisitor(ExtNodeVisitor):
         self.numbers = dict()  # Dict[str, str]
         self.variables = dict()  # Dict[str, str]
         self.accesses = dict()
-        # Number of each state in the order it first names an outer-data access; keeps those names unique
-        self.state_numbers: dict[SDFGState, int] = {}
         self.views: dict[str, tuple[str, Memlet]] = {}  # Keeps track of views
         self.nested_closure_arrays: dict[str, tuple[Any, data.Data]] = {}
         self.annotated_types: dict[str, data.Data] = annotated_types or {}
@@ -2242,12 +2240,6 @@ class ProgramVisitor(ExtNodeVisitor):
                         self.inputs[vname] = (state, memlet, [])
                     else:
                         name = memlet.data
-                        vname = "{c}_in_from_{s}{n}".format(
-                            c=conn,
-                            s=self.state_numbers.setdefault(state, len(self.state_numbers)),
-                            n=(f"_{state.node_id(entry_node)}" if entry_node else ""),
-                        )
-                        self.accesses[(name, scope_memlet.subset, "r")] = (vname, orng)
                         orig_shape = orng.size()
                         shape = [d for i, d in enumerate(orig_shape) if d != 1 or i in inner_indices]
                         strides = [i for j, i in enumerate(arr.strides) if j not in outer_indices]
@@ -2263,9 +2255,12 @@ class ProgramVisitor(ExtNodeVisitor):
                             strides = [arr.strides[-1]]
                         dtype = arr.dtype
                         if isinstance(arr, data.Stream):
-                            self.sdfg.add_stream(vname, dtype)
+                            vname, _ = self.sdfg.add_stream(f"{conn}_in_from", dtype, find_new_name=True)
                         else:
-                            self.sdfg.add_array(vname, shape, dtype, strides=strides)
+                            vname, _ = self.sdfg.add_array(
+                                f"{conn}_in_from", shape, dtype, strides=strides, find_new_name=True
+                            )
+                        self.accesses[(name, scope_memlet.subset, "r")] = (vname, orng)
                         self.inputs[vname] = (state, scope_memlet, inner_indices)
                         memlet.data = vname
                 else:
@@ -2331,12 +2326,6 @@ class ProgramVisitor(ExtNodeVisitor):
                         self.outputs[vname] = (state, memlet, [])
                     else:
                         name = memlet.data
-                        vname = "{c}_out_of_{s}{n}".format(
-                            c=conn,
-                            s=self.state_numbers.setdefault(state, len(self.state_numbers)),
-                            n=(f"_{state.node_id(exit_node)}" if exit_node else ""),
-                        )
-                        self.accesses[(name, scope_memlet.subset, "w")] = (vname, orng)
                         orig_shape = orng.size()
                         shape = [d for d in orig_shape if d != 1]
                         shape = [d for i, d in enumerate(orig_shape) if d != 1 or i in inner_indices]
@@ -2353,9 +2342,12 @@ class ProgramVisitor(ExtNodeVisitor):
                             strides = [arr.strides[-1]]
                         dtype = arr.dtype
                         if isinstance(arr, data.Stream):
-                            self.sdfg.add_stream(vname, dtype)
+                            vname, _ = self.sdfg.add_stream(f"{conn}_out_of", dtype, find_new_name=True)
                         else:
-                            self.sdfg.add_array(vname, shape, dtype, strides=strides)
+                            vname, _ = self.sdfg.add_array(
+                                f"{conn}_out_of", shape, dtype, strides=strides, find_new_name=True
+                            )
+                        self.accesses[(name, scope_memlet.subset, "w")] = (vname, orng)
                         self.outputs[vname] = (state, scope_memlet, inner_indices)
                         inner_memlet.data = vname
                 else:
