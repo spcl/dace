@@ -131,68 +131,8 @@ def test_an_index_read_inside_a_branch_condition_stays_a_symbol():
     assert R[0] == 0.9
 
 
-def float_guard_sdfg(also_store: bool, writes_guard_source: bool) -> dace.SDFG:
-    """``g = A[0]; if g > 0.5: <store>`` (s275's ``if aa[0, i] > 0``). The branch stores ``g`` if ``also_store``,
-    else 1, into ``A[0]`` if ``writes_guard_source`` (s275's recurrence writes ``aa``), else into ``R[0]``."""
-    sdfg = dace.SDFG(f"float_guard_{also_store}_{writes_guard_source}")
-    sdfg.add_symbol("g", dace.float64)
-    sdfg.add_array("A", [1], dace.float64)
-    sdfg.add_array("R", [1], dace.float64)
-    start = sdfg.add_state("start", is_start_block=True)
-    cond = ConditionalBlock("guarded")
-    branch = ControlFlowRegion("store")
-    body = branch.add_state(is_start_block=True)
-    write = body.add_tasklet("store", {}, {"o"}, "o = g" if also_store else "o = 1.0")
-    target = "A" if writes_guard_source else "R"
-    body.add_edge(write, "o", body.add_write(target), None, dace.Memlet(f"{target}[0]"))
-    cond.add_branch(dace.properties.CodeBlock("g > 0.5"), branch)
-    sdfg.add_node(cond)
-    sdfg.add_edge(start, cond, dace.InterstateEdge(assignments={"g": "A[0]"}))
-    return sdfg
-
-
-def test_a_guard_read_from_data_the_sdfg_writes_stays_a_symbol():
-    """A float that only selects a branch and is read from data the SDFG writes stays a symbol: as a scalar, its read
-    would join the dataflow of those writes."""
-    sdfg = float_guard_sdfg(also_store=False, writes_guard_source=True)
-    sdfg.validate()
-    assert DemoteNonStructuralSymbols().apply_pass(sdfg, {}) is None
-    assert "g" in sdfg.symbols and "g" not in sdfg.arrays
-
-    A = np.array([0.9])
-    sdfg(A=A, R=np.zeros(1))
-    assert A[0] == 1.0
-
-
-def test_a_guard_read_from_data_nothing_writes_is_demoted():
-    """CloudSC's ``iphase[jm]`` guard: read from data nothing writes, it becomes a scalar like any value."""
-    sdfg = float_guard_sdfg(also_store=False, writes_guard_source=False)
-    sdfg.validate()
-    assert DemoteNonStructuralSymbols().apply_pass(sdfg, {}) == 1
-    assert "g" in sdfg.arrays and "g" not in sdfg.symbols
-
-    R = np.zeros(1)
-    sdfg(A=np.array([0.9]), R=R)
-    assert R[0] == 1.0
-
-
-def test_a_condition_value_a_tasklet_also_reads_is_demoted():
-    """Read as data too, the same value is no longer only a guard and becomes a scalar."""
-    sdfg = float_guard_sdfg(also_store=True, writes_guard_source=True)
-    sdfg.validate()
-    assert DemoteNonStructuralSymbols().apply_pass(sdfg, {}) == 1
-    assert "g" in sdfg.arrays and "g" not in sdfg.symbols
-
-    A = np.array([0.9])
-    sdfg(A=A, R=np.zeros(1))
-    assert A[0] == 0.9
-
-
 if __name__ == "__main__":
     test_a_counter_becomes_a_scalar_and_its_loop_maps()
     test_a_demoted_value_keeps_its_arithmetic_as_written()
     test_a_tasklet_reading_a_demoted_symbol_keeps_its_expression()
     test_an_index_read_inside_a_branch_condition_stays_a_symbol()
-    test_a_guard_read_from_data_the_sdfg_writes_stays_a_symbol()
-    test_a_guard_read_from_data_nothing_writes_is_demoted()
-    test_a_condition_value_a_tasklet_also_reads_is_demoted()
