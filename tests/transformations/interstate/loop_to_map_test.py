@@ -1295,6 +1295,7 @@ def test_a_symbol_assigned_later_stays_out_of_the_mapping():
     assert {str(s) for s in sdfg.free_symbols} <= before
     sdfg.validate()
 
+
 def test_transient_read_only_on_interstate_edges_of_two_loops():
     """``k = C[i % 2]`` on an interstate edge is the only read of the constant ``C`` in each of two loops, as
     graupel's unrolled species index ``iqx = Cqp_ind[...]``. Neither loop owns ``C``: mapping the first must not
