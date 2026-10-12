@@ -441,8 +441,3 @@ class ScopedSymbolResolver:
         self.sdfg_bases.pop(sdfg, None)
         for state in [s for s in self.state_tables if s.sdfg is sdfg]:
             del self.state_tables[state]
-
-    def invalidate_all(self) -> None:
-        """Drop everything."""
-        self.sdfg_bases.clear()
-        self.state_tables.clear()

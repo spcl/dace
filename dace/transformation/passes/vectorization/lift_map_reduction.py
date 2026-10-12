@@ -113,7 +113,7 @@ def _const_assign_value(code: str) -> float | None:
 
 
 class PureWCRReductionInfo:
-    """Pure-WCR boundary reduction from :func:`_recognize_pure_wcr_reduction`.
+    """Pure-WCR boundary reduction from :func:`_recognize_pure_wcr_reductions`.
 
     The ``body -> map_exit`` ``write_edge`` carries the scalar accumulator under a
     ``CR:op`` WCR; accumulator is NOT read at map entry (WCR alone folds).
@@ -232,14 +232,6 @@ def _recognize_pure_wcr_reductions(
             return []
         infos.append(info)
     return infos
-
-
-def _recognize_pure_wcr_reduction(
-    state: "dace.SDFGState", map_entry: "dace.nodes.MapEntry"
-) -> PureWCRReductionInfo | None:
-    # Recognise ``acc (op)= f(...)`` as a MapExit WCR with no carry-in.
-    infos = _recognize_pure_wcr_reductions(state, map_entry)
-    return infos[0] if len(infos) == 1 else None
 
 
 class LiftMapReductionToReduce(ppl.Pass):

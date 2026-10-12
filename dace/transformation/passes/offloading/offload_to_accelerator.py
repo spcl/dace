@@ -2461,68 +2461,6 @@ class OffloadToAccelerator(ppl.Pass):
     # answer is the fixpoint, compared against the current scalars / len-1 arrays with the
     # mismatches converted.
 
-    def decide_length1_array_or_scalar_FPI(self, sdfg: SDFG):
-        # 1)
-        all_scalars: OrderedSet[str] = OrderedSet(data_name for data_name in sdfg.arrays if is_scalar(data_name, sdfg))
-        all_len1arrays: OrderedSet[str] = OrderedSet(
-            data_name for data_name in sdfg.arrays if is_length1_array(data_name, sdfg)
-        )
-        vars: OrderedSet[str] = all_scalars | all_len1arrays
-
-        # 2) with current scheduling heuristic, only toplevel can be GPU
-        # 3) tasklets within nested sdfgs are not relevant
-        gpu_written: OrderedSet[str] = OrderedSet()
-        tasklet_dict: dict = {
-            # maps tasklet to (inputs, outputs) where both are sets of data names (array & scalar) accessed as
-            # input/output
-        }
-        for state in sdfg.states():
-            for node in state.nodes():
-                if isinstance(node, (nodes.MapExit, nodes.LibraryNode)) and has_GPU_schedule(node):
-                    outputs = get_data_used_by_outgoing_access_nodes(sdfg, state, node, include_scalars=True)
-                    gpu_written |= outputs & vars
-
-                elif isinstance(node, nodes.Tasklet):
-                    inputs = get_data_used_by_incoming_access_nodes(sdfg, state, node, include_scalars=True)
-                    outputs = get_data_used_by_outgoing_access_nodes(sdfg, state, node, include_scalars=True)
-                    tasklet_dict[node] = (inputs, outputs)
-
-        # 4)
-
-        if gpu_written:
-            new_gpu_written = gpu_written.copy()
-
-            while True:
-                for inputs, outputs in tasklet_dict.values():
-                    # at least one in- or output var is written to by gpu
-                    if inputs & gpu_written or outputs & gpu_written:
-                        new_gpu_written |= outputs  # add all outputs as being potentially written to by gpu
-
-                if new_gpu_written == gpu_written:  # fixpoint reached
-                    break
-                gpu_written = new_gpu_written.copy()
-
-        # 5)
-        to_len1_arrays = all_scalars & gpu_written
-        to_scalars = all_len1arrays - gpu_written
-        to_scalars = OrderedSet(
-            name for name in to_scalars if not name.startswith("__return")
-        )  # is usually very inefficient because __return if mostly used at the end of the graph
-
-        if to_len1_arrays:
-            ConvertScalarsToLengthOneArrays(
-                recursive=True,
-                preserve_abi=True,
-                filter=to_len1_arrays,
-            ).apply_pass(sdfg, {})
-
-        if to_scalars:
-            ConvertLengthOneArraysToScalars(
-                recursive=True,
-                preserve_abi=True,
-                filter=to_scalars,
-            ).apply_pass(sdfg, {})
-
 
 def reenters(state: SDFGState, region: AbstractSet[nodes.Node]) -> bool:
     """Whether a dataflow path leaves ``region`` and comes back into it."""

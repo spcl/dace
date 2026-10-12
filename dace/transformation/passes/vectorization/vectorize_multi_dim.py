@@ -48,7 +48,6 @@ from dace.libraries.tileops.nodes import (
 )
 from dace.optionals import required
 from dace.ordered import OrderedSet
-from dace.sdfg.narrowing import as_map_entry
 from dace.sdfg.nodes import LibraryNode
 from dace.sdfg.state import ControlFlowRegion
 from dace.transformation import helpers
@@ -57,7 +56,7 @@ from dace.transformation import pass_pipeline as ppl
 # Walker-primary pipeline. The walker (InsertTileLoadStore + PreparePerLaneIndices) stages tile
 # transients and emits the TileGather / TileScatter / TileMaskGen boundary; ConvertTaskletsToTileOps
 # then rewrites the raw tasklets between staged tiles into TileBinop / TileITE / TileReduce.
-from dace.transformation.dataflow import MapCollapse, MapFission, WCRToAugAssign
+from dace.transformation.dataflow import MapCollapse, WCRToAugAssign
 from dace.transformation.interstate import InlineMultistateSDFG, InlineSDFG, StateFusionExtended
 from dace.transformation.interstate.expand_nested_sdfg_inputs import ExpandNestedSDFGInputs
 from dace.transformation.passes.analysis import scopes
@@ -200,59 +199,6 @@ def _expandable_during_vectorization(node: dace.nodes.Node) -> bool:
     # Library nodes the vectorizer's ``expand_library_nodes`` may lower: ONLY its own tile-op nodes
     # (:data:`TILE_NODE_TYPES`), nothing else.
     return isinstance(node, TILE_NODE_TYPES)
-
-
-def _wcr_output_is_injective_rmw(
-    graph: dace.SDFGState, map_exit: dace.nodes.MapExit, array: str, params: Sequence[str]
-) -> bool:
-    # True iff every inner per-element write of ``array`` into ``map_exit`` indexes with EVERY enclosing map param -- an
-    # injective per-element read-modify-write (s212 ``a[i] *= c[i]``) that writes each element exactly once, NOT a
-    # cross-iteration reduction.
-    param_syms = {str(p) for p in params}
-    inner = [
-        e for e in graph.in_edges(map_exit) if e.data is not None and e.data.data == array and e.data.subset is not None
-    ]
-    if not inner:
-        return False
-    for e in inner:
-        idx_syms = {str(s) for s in required(e.data.subset).free_symbols}
-        if not param_syms.issubset(idx_syms):
-            # A map param is reduced over (absent from this write) -> cross-iteration reduction.
-            return False
-    return True
-
-
-class _MultiOutputReductionMapFission(MapFission):
-    def can_be_applied(self, graph: dace.SDFGState, expr_index: int, sdfg: dace.SDFG, permissive: bool = False) -> bool:
-        # Base ``MapFission.can_be_applied`` can raise (KeyError seen on adi) on a map it can't
-        # handle. Can't decide -> DECLINE, don't propagate: ``apply_transformations_repeated``
-        # downgrades the raise to a warning, leaving the map un-fissioned -> opaque codegen error later.
-        try:
-            if not super().can_be_applied(graph, expr_index, sdfg, permissive):
-                return False
-        except Exception:
-            return False
-        map_exit = graph.exit_node(self.map_entry)
-        # Count only genuine reductions. An injective per-element RMW WCR (s212 ``a[i] *= c[i]``) is
-        # elementwise, and fissioning it detaches the write from its snapshot and miscompiles s212.
-        params = as_map_entry(self.map_entry).map.params
-        wcr_arrays = {
-            e.data.data
-            for e in graph.out_edges(map_exit)
-            if e.data is not None
-            and e.data.data is not None
-            and e.data.wcr is not None
-            and not _wcr_output_is_injective_rmw(graph, map_exit, e.data.data, params)
-        }
-        if len(wcr_arrays) < 2:
-            return False
-        # Do not fission independent pure-scalar reductions (azimint ``s += a[j]; cnt += 1``): each lifts
-        # in place; fissioning would duplicate the shared mask read. Contractions (gesummv) still fission.
-        from dace.transformation.passes.vectorization.lift_map_reduction import _recognize_pure_wcr_reductions
-
-        if len(_recognize_pure_wcr_reductions(graph, self.map_entry)) >= 2:
-            return False
-        return True
 
 
 #: The GPU-only one-kernel strategies: ``SplitMapForTileRemainder`` peels a ``__tile_main``

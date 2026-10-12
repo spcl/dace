@@ -5,7 +5,6 @@
   from an incident edge without picking the wrong side.
 - Pattern replace (``repl_subset``, ``repl_subset_to_use_laneid_offset``): symbolic substitution on
   a single subset.
-- Memlet rewrite (``replace_all_access_subsets``): walk edges, replace the payload in-place.
 """
 
 import copy
@@ -199,16 +198,3 @@ def repl_subset_to_use_laneid_offset(
     new_subset = repl_subset(subset=subset, repl_dict=repl_dict)
     _assert_no_new_free_symbols(sdfg, prev_sdfg_free_syms, free_syms, "repl_subset_to_use_laneid_offset")
     return new_subset
-
-
-def replace_all_access_subsets(state: dace.SDFGState, name: str, new_subset_expr: str) -> None:
-    """Replace every memlet subset for ``name`` in ``state`` with a new subset.
-
-    :param state: The SDFG state to modify.
-    :param name: Array name whose accesses are replaced.
-    :param new_subset_expr: The new subset expression (e.g. ``"0:4"``).
-    """
-    for edge in state.edges():
-        if edge.data is not None and edge.data.data == name:
-            nm = dace.memlet.Memlet(expr=f"{name}[{new_subset_expr}]")
-            edge.data = nm

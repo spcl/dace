@@ -10,7 +10,6 @@ from .code_rewrite import (  # noqa: F401
 from .subsets import (  # noqa: F401
     repl_subset,
     repl_subset_to_use_laneid_offset,
-    replace_all_access_subsets,
 )
 from .map_predicates import (  # noqa: F401
     get_single_nsdfg_inside_map,

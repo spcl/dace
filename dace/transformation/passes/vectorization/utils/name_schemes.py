@@ -188,18 +188,6 @@ class LaneIdScheme:
         return LaneIdScheme.make_multi(base, kept)
 
     @staticmethod
-    def contains_lane_chunk(text: str) -> bool:
-        """Whether ``text`` contains any lane-chunk substring.
-
-        Substring-only scanner for audit passes classifying memlet subset strings / interstate
-        expressions without parsing the whole symbol. Matches canonical + legacy forms.
-
-        :param text: Free-form text (e.g., ``str(memlet.subset)``).
-        :returns: True iff at least one lane-chunk present in ``text``.
-        """
-        return LaneIdScheme.LANE_INFIX_RE.search(text) is not None
-
-    @staticmethod
     def varies_with_dim(name: str, dim: int) -> bool:
         """Whether ``name`` carries a chunk for tile dim ``dim``.
 
