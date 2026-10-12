@@ -139,7 +139,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         dtype=bool,
         default=False,
         category="Applicability",
-        desc="If `True` then intermediates with symbolic sizes are allowed.",
+        desc="If `True` then intermediates with symbolic sizes are allowed. Set to `False` to avoid dynamic memory allocations inside Maps.",
     )
 
     never_consolidate_edges = properties.Property(
@@ -1073,9 +1073,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         self,
         producer_subset: subsets.Range,
         inter_desc: dace.data.Data,
-    ) -> tuple[
-        tuple[dace.symbolic.SymbolicType, ...], tuple[dace.symbolic.SymbolicType, ...], list[dace.symbolic.SymbolicType]
-    ]:
+    ) -> tuple[tuple[dace.symbolic.SymbolicType, ...], tuple[dace.symbolic.SymbolicType, ...], list[int]]:
         """Compute the size of the new (reduced) intermediate.
 
         `MapFusionVertical` does not only fuses Map, but, depending on the situation, also
@@ -1086,7 +1084,8 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             * The raw shape of the reduced intermediate.
             * The cleared shape of the reduced intermediate, essentially the raw shape
                 with all shape 1 dimensions removed.
-            * Which dimensions of the raw shape have been removed to get the cleared shape.
+            * Indexes of the squeezed dimensions, i.e., the dimensions that were removed
+                from the raw shape to get the cleared shape.
 
         :param producer_subset: The subset that was used to write into the intermediate.
         :param inter_desc: The data descriptor for the intermediate.
@@ -1099,7 +1098,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         new_inter_shape_raw = symbolic.overapproximate(producer_subset.size())
         inter_shape = inter_desc.shape
         if not self.strict_dataflow:
-            squeezed_dims: list[dace.symbolic.SymbolicType] = []  # These are the dimensions we removed.
+            squeezed_dims: list[int] = []  # These are the dimensions we removed.
             new_inter_shape: list[dace.symbolic.SymbolicType] = []  # This is the final shape of the new intermediate.
             for dim, (proposed_dim_size, full_dim_size) in enumerate(zip(new_inter_shape_raw, inter_shape)):
                 if full_dim_size == 1:  # Must be kept!
