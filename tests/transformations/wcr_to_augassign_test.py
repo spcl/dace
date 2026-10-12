@@ -601,6 +601,49 @@ def test_a_privatized_subtraction_on_a_nested_map_exit_chain_reverts():
     assert np.allclose(A, want), np.max(np.abs(A - want))
 
 
+def test_a_read_back_enters_through_the_outer_map_the_output_sits_in():
+    """The scalar-loop symm once its ``k`` loop is a map inside the ``j`` map: ``priv -(+)-> inner exit -> A`` with
+    that ``A`` access node INSIDE the outer map. The read-back of ``A`` threaded only the inner map entry, so it came
+    from a top-level ``A`` straight into a map nested in another ("Illegal memlet between disjoint scopes")."""
+    M, N = 5, 7
+    sdfg = dace.SDFG("wcr_output_inside_outer_map")
+    sdfg.add_array("A", [M, N], dace.float64)
+    sdfg.add_array("q", [M], dace.float64)
+    sdfg.add_array("w", [N], dace.float64)
+    sdfg.add_scalar("priv", dace.float64, transient=True)
+    sdfg.add_scalar("scale", dace.float64, transient=True)
+    state = sdfg.add_state()
+    ome, omx = state.add_map("outer", dict(i=f"0:{N}"))
+    ime, imx = state.add_map("inner", dict(j=f"0:{M}"))
+    # A per-``i`` factor computed inside the outer map and fed to the inner one (symm's ``alpha * B[i, j]``).
+    pre = state.add_tasklet("pre", {"x"}, {"y"}, "y = 2.0 * x")
+    state.add_memlet_path(state.add_read("w"), ome, pre, dst_conn="x", memlet=dace.Memlet("w[i]"))
+    scale = state.add_access("scale")
+    state.add_edge(pre, "y", scale, None, dace.Memlet("scale[0]"))
+    tasklet = state.add_tasklet("t", {"inp", "s"}, {"out"}, "out = inp * s")
+    state.add_memlet_path(state.add_read("q"), ome, ime, tasklet, dst_conn="inp", memlet=dace.Memlet("q[j]"))
+    state.add_memlet_path(scale, ime, tasklet, dst_conn="s", memlet=dace.Memlet("scale[0]"))
+    priv = state.add_access("priv")
+    state.add_edge(tasklet, "out", priv, None, dace.Memlet("priv[0]"))
+    inside = state.add_access("A")
+    state.add_memlet_path(priv, imx, inside, memlet=dace.Memlet(data="A", subset="j, i", wcr="lambda a, b: a + b"))
+    state.add_memlet_path(inside, omx, state.add_write("A"), memlet=dace.Memlet(data="A", subset=f"0:{M}, i"))
+    propagate_memlets_sdfg(sdfg)
+    sdfg.validate()
+
+    assert sdfg.apply_transformations_repeated(WCRToAugAssign) > 0
+    sdfg.validate()
+    assert not [e for e in state.edges() if e.data.wcr is not None]
+
+    rng = np.random.default_rng(3)
+    A = rng.standard_normal((M, N))
+    q = rng.standard_normal(M)
+    w = rng.standard_normal(N)
+    want = A + 2.0 * q[:, None] * w[None, :]
+    sdfg(A=A, q=q, w=w)
+    assert np.allclose(A, want), np.max(np.abs(A - want))
+
+
 def test_a_wcr_into_a_view_reads_back_through_a_bound_view():
     """mixed_precision_ir: reverting ``yv[3] (+)= v`` reads the destination back, and an unbound view access node
     for that read made the SDFG invalid ("Ambiguous or invalid edge to/from a View access node")."""
@@ -635,4 +678,5 @@ if __name__ == "__main__":
     test_the_output_binding_must_name_the_array_the_wcr_edge_writes()
     test_a_scan_seeded_in_the_same_state_keeps_its_accumulator_load()
     test_a_privatized_subtraction_on_a_nested_map_exit_chain_reverts()
+    test_a_read_back_enters_through_the_outer_map_the_output_sits_in()
     test_a_wcr_into_a_view_reads_back_through_a_bound_view()
