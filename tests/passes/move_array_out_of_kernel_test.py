@@ -214,14 +214,22 @@ def test_a_symbolically_sized_device_local_transient_is_lifted_to_global_memory(
     sdfg.validate()
 
 
-def test_a_constant_sized_device_local_transient_stays_in_place():
-    """A register array of known size is a plain local of the kernel."""
+@pytest.mark.parametrize("elements, hoisted", [(16, False), (17, True), (1024, True)])
+def test_a_register_array_over_the_threshold_leaves_the_kernel(elements, hoisted):
+    """A per-thread register array of up to ``register_demotion_max_elements`` (16) is a plain local of the
+    kernel; a larger one would take more registers than an intermediate should, so it is hoisted like a
+    symbolically sized one."""
     sdfg = kernel_with_internal_transient()
-    sdfg.arrays["buf"].storage = dtypes.StorageType.Register
+    buf = sdfg.arrays["buf"]
+    buf.storage = dtypes.StorageType.Register
+    buf.set_shape((elements,))
 
-    assert MoveArrayOutOfKernel().apply_pass(sdfg, {}) is None
+    assert MoveArrayOutOfKernel().apply_pass(sdfg, {}) == (1 if hoisted else None)
 
-    assert sdfg.arrays["buf"].storage == dtypes.StorageType.Register and tuple(sdfg.arrays["buf"].shape) == (1024,)
+    if hoisted:
+        assert sdfg.arrays["buf"].storage == GLOBAL and tuple(sdfg.arrays["buf"].shape) == (128, elements)
+    else:
+        assert sdfg.arrays["buf"].storage == dtypes.StorageType.Register and tuple(sdfg.arrays["buf"].shape) == (16,)
 
 
 def kernel_with_a_tasklet_naming_the_buffer(language: dtypes.Language) -> dace.SDFG:
@@ -960,8 +968,8 @@ def test_a_non_transient_accumulator_keeps_its_storage_and_sums(program, expecte
 
 @pytest.mark.gpu
 def test_wcr_np_sum_small_n_auto_staging():
-    """``total[0] = np.sum(A)`` with no storage annotations reduces correctly after
-    ``auto_optimize`` for GPU."""
+    """``total[0] = np.sum(A)`` with no storage annotations reduces correctly after ``auto_optimize`` for GPU,
+    and the hoist leaves every array where auto_optimize put it."""
     from dace.dtypes import DeviceType
     from dace.transformation.auto.auto_optimize import auto_optimize
 
@@ -972,10 +980,12 @@ def test_wcr_np_sum_small_n_auto_staging():
     sdfg = reduce_sum.to_sdfg()
     auto_optimize(sdfg, DeviceType.GPU)
     set_block_sizes(sdfg)
-    before = {(owner.name, name): desc.storage for owner, name in wcr_targets(sdfg) for desc in [owner.arrays[name]]}
-    MoveArrayOutOfKernel().apply_pass(sdfg, {})
-    after = {(owner.name, name): owner.arrays[name].storage for owner, name in wcr_targets(sdfg)}
-    assert before and after == before, (before, after)
+    # auto_optimize leaves the sum a GPU ``Reduce`` node; nothing in it is a kernel-internal array to move.
+    assert any(type(node).__name__ == "Reduce" for node, _ in sdfg.all_nodes_recursive())
+    before = {(owner.name, name): desc.storage for owner in sdfg.all_sdfgs_recursive() for name, desc in owner.arrays.items()}
+    assert MoveArrayOutOfKernel().apply_pass(sdfg, {}) is None
+    after = {(owner.name, name): desc.storage for owner in sdfg.all_sdfgs_recursive() for name, desc in owner.arrays.items()}
+    assert after == before, (before, after)
 
     A = np.arange(64, dtype=np.float64)
     total = np.zeros(1, dtype=np.float64)
@@ -1003,7 +1013,8 @@ if __name__ == "__main__":
         test_a_small_transient_outliving_the_invocation_is_lifted_not_demoted(lifetime)
     for storage in [dtypes.StorageType.Register, dtypes.StorageType.Default]:
         test_a_symbolically_sized_device_local_transient_is_lifted_to_global_memory(storage)
-    test_a_constant_sized_device_local_transient_stays_in_place()
+    for elements, hoisted in [(16, False), (17, True), (1024, True)]:
+        test_a_register_array_over_the_threshold_leaves_the_kernel(elements, hoisted)
     test_a_tasklet_body_naming_a_lifted_buffer_gains_the_kernel_index()
     test_a_cpp_tasklet_subscripting_a_lifted_buffer_is_refused()
     test_lifted_transient_is_renamed_around_a_colliding_descriptor()
