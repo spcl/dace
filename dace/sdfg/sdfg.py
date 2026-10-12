@@ -185,6 +185,16 @@ def _nested_arrays_from_json(obj, context=None):
     return NestedDict({k: dace.serialize.from_json(v, context) for k, v in obj.items()})
 
 
+# ``frontend_metadata`` carries values dace never interprets, so both directions are a plain deep copy: enough to
+# keep the stored dict and the emitted JSON from aliasing each other.
+def _frontend_metadata_to_json(meta):
+    return copy.deepcopy(meta) if meta else {}
+
+
+def _frontend_metadata_from_json(obj, context=None):
+    return copy.deepcopy(obj) if obj else {}
+
+
 def _replace_dict_keys(d, old, new):
     # Keys are names, but a replacement may be given as a symbolic expression
     old = str(old)
@@ -765,6 +775,17 @@ class SDFG(ControlFlowRegion):
         dtype=bool, default=False, category="(Debug)", desc="Whether the SDFG contains explicit control flow constructs"
     )
 
+    # Opaque, JSON-safe payload a frontend attaches to describe how this SDFG maps back to its source program
+    # (dace-fortran keeps its frozen Fortran signature here), so it survives a save/load round-trip.
+    frontend_metadata = Property(
+        dtype=dict,
+        default={},
+        to_json=_frontend_metadata_to_json,
+        from_json=_frontend_metadata_from_json,
+        category="General",
+        desc="Frontend-owned, JSON-serializable metadata; opaque to dace",
+    )
+
     build_folder = Property(
         dtype=str,
         default=None,
@@ -817,6 +838,7 @@ class SDFG(ControlFlowRegion):
         self._parent_nsdfg_node = None
         self._arrays = NestedDict()  # type: Dict[str, dt.Array]
         self.arg_names = []
+        self.frontend_metadata = {}
         self._labels: set[str] = set()
         self.global_code = {"frame": CodeBlock("", dtypes.Language.CPP)}
         self.init_code = {"frame": CodeBlock("", dtypes.Language.CPP)}
