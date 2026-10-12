@@ -10,12 +10,12 @@ semantics-breaking hoists.
 import math
 
 import numpy as np
-import pytest
 
 import dace
 from dace import memlet as mm
+from dace.properties import CodeBlock
 from dace.sdfg import nodes
-from dace.sdfg.state import LoopRegion
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.passes.loop_invariant_code_motion import LoopInvariantCodeMotion
 
 N = dace.symbol("N")
@@ -676,6 +676,41 @@ def test_an_inner_loop_reading_a_body_array_only_on_an_interstate_edge_is_not_ho
     _run_and_check(sdfg, py_ref, t=np.zeros(1), out=np.zeros(4), N=4, K=3)
 
 
+def test_a_guard_reading_a_body_scalar_only_in_its_condition_is_not_hoisted():
+    """velocity_tendencies' ``if cfl_clip_1_0_index`` reads the scalar the loop body computes only in its branch
+    condition. With that read uncounted the guard looked invariant and was hoisted above the loop."""
+    sdfg = dace.SDFG("licm_condition_read")
+    sdfg.add_array("A", [N], dace.float64)
+    sdfg.add_array("B", [N], dace.float64)
+    sdfg.add_scalar("s", dace.float64, transient=True)
+    loop = LoopRegion("loop", "i < N", "i", "i = 0", "i = i + 1")
+    sdfg.add_node(loop, is_start_block=True)
+    compute = loop.add_state("compute", is_start_block=True)
+    copy_a = compute.add_tasklet("copy_a", {"a"}, {"y"}, "y = a")
+    compute.add_edge(compute.add_read("A"), None, copy_a, "a", mm.Memlet("A[i]"))
+    compute.add_edge(copy_a, "y", compute.add_write("s"), None, mm.Memlet("s"))
+    guard = ConditionalBlock("guard")
+    loop.add_node(guard)
+    loop.add_edge(compute, guard, dace.InterstateEdge())
+    branch = ControlFlowRegion("guard_body")
+    guard.add_branch(CodeBlock("s > 0.5"), branch)
+    store = branch.add_state("store", is_start_block=True)
+    put = store.add_tasklet("put", {}, {"y"}, "y = 7.0")
+    store.add_edge(put, "y", store.add_write("B"), None, mm.Memlet("B[0]"))
+
+    LoopInvariantCodeMotion().apply_pass(sdfg, {})
+    sdfg.validate()
+
+    assert any(n is guard for n in loop.nodes()), "the guard was hoisted out of the loop that computes s"
+
+    def py_ref(A, B, N):
+        for i in range(N):
+            if A[i] > 0.5:
+                B[0] = 7.0
+
+    _run_and_check(sdfg, py_ref, A=np.array([0.0, 0.0, 1.0, 0.0]), B=np.zeros(4), N=4)
+
+
 def test_tsvc2_s452_like_loop_body_uses_index_blocks_hoist():
     """TSVC2 s452: `for nl: for i: a[i] = b[i] + c[i] * (i + 1)`.
 
@@ -1236,4 +1271,31 @@ def test_map_invariant_scalar_read_hoist_uses_inner_memlet():
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    test_pure_tasklet_hoisted_from_loop_region()
+    test_invariant_load_without_inloop_writer_is_hoisted()
+    test_load_with_inloop_writer_is_not_hoisted()
+    test_transitive_chain_is_hoisted()
+    test_hoisted_chain_producer_and_consumer_stay_connected()
+    test_map_scope_pure_tasklet_hoisted()
+    test_map_scope_hoists_invariant_tasklets_in_node_order_not_address_order()
+    test_tsvc2_s000_inner_loop_hoisted_leaves_hull()
+    test_middle_child_hoist_keeps_body_chain_connected()
+    test_wcr_output_is_not_hoisted()
+    test_loop_index_dependent_load_not_hoisted()
+    test_hull_is_not_rehoisted()
+    test_tsvc2_s451_like_inner_loop_with_sin_cos_hoisted()
+    test_tsvc2_s431_like_inner_loop_aw_read_blocks_hoist()
+    test_an_inner_loop_reading_a_body_array_only_on_an_interstate_edge_is_not_hoisted()
+    test_a_guard_reading_a_body_scalar_only_in_its_condition_is_not_hoisted()
+    test_tsvc2_s452_like_loop_body_uses_index_blocks_hoist()
+    test_llvm_basictest_scalar_times_literal_hoisted()
+    test_llvm_hoist_binop_chain_both_hoisted()
+    test_llvm_mustexec_unconditional_load_hoisted()
+    test_llvm_hoist_add_sub_chain_hoisted()
+    test_llvm_hoist_fast_fdiv_hoisted()
+    test_llvm_call_hoisting_pure_math_call_hoisted()
+    test_llvm_expr_reassociate_four_operand_chain_hoisted()
+    test_llvm_infinite_loops_style_while_loop_hoisted()
+    test_llvm_hoist_invariant_load_multi_consumer()
+    test_llvm_gep_reassociate_map_scope_invariant_load()
+    test_map_invariant_scalar_read_hoist_uses_inner_memlet()

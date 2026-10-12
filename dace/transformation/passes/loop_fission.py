@@ -514,11 +514,16 @@ def _single_compute_state(loop: LoopRegion) -> SDFGState | None:
 def _block_rw(block: ControlFlowBlock) -> tuple[set[str], set[str]]:
     """Recursively collect (reads, writes) data containers of a CFG block.
 
+    A region also reads every container named in its branch conditions, loop headers and interstate
+    edges: a guard ``if s:`` reads ``s`` without an access node.
+
     :param block: An ``SDFGState`` or control-flow region.
     :returns: ``(reads, writes)`` sets of data-container names.
     """
     reads: set[str] = set()
     writes: set[str] = set()
+    if not isinstance(block, SDFGState):
+        reads |= block.used_symbols(all_symbols=True) & block.sdfg.arrays.keys()
     states = [block] if isinstance(block, SDFGState) else list(block.states())
     for st in states:
         for n in st.nodes():
