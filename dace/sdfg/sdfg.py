@@ -2745,6 +2745,7 @@ class SDFG(ControlFlowRegion):
         :param interface: The decided Python interface for this SDFG ('ctypes'
             or 'nanobind'); if not given, it is resolved from the configuration
             and ``self`` via :func:`~dace.codegen.compiler.resolve_compiler_interface`.
+         @CLAUDE: This comment is hard to read please reformulate it and make it a bit clearer. Porbably also less high level some parts might be moved to comments inside the function.
         :note: The probe is deliberately interface-agnostic: it reports loaded
             when the (build folder, name) identity is resident under EITHER
             mechanism - the ``sys.modules`` registry for nanobind modules (key
@@ -2766,6 +2767,7 @@ class SDFG(ControlFlowRegion):
         # Avoid import loops
         from dace.codegen import ctypes_compiled_sdfg as cs, compiler
 
+        # @CLAUDE: Why is the interface deleted? (my guess is to squash an 'unused argument'). In any case remove it or add an explanation why.
         # `interface` is accepted for call-site symmetry but does not narrow the
         #  probe: residency under either mechanism makes the identity taken.
         del interface
@@ -2839,6 +2841,7 @@ class SDFG(ControlFlowRegion):
         #  inspects the arglist, which requires resolved external nested
         #  SDFGs - so the decision runs on the materialized compile copy
         #  (every branch below materializes it anyway, this is cost-neutral).
+        # @CLAUDE: This is unneeded as the deep copy is run all the time. This also has consequences for the deepcopy calls bellow.
         if sdfg is None:
             sdfg = copy.deepcopy(self)
             sdfg.load_external_nsdfgs()
@@ -2862,6 +2865,7 @@ class SDFG(ControlFlowRegion):
                 sdfg = copy.deepcopy(self)
                 sdfg.load_external_nsdfgs()
 
+            # @CLAUDE: The source hash does not include the configuration, i.e. `dace.Config`, thus changed configuration will not be recorded. We should add this. This has become simpler as now, since [PR#2602](https://github.com/spcl/dace/pull/2602) was merged, all configuration variables are present.
             instr_sig = ','.join([sdfg.instrument.name] + [
                 n.instrument.name for n, _ in sdfg.all_nodes_recursive() if getattr(n, 'instrument', None) is not None
             ])
@@ -2969,6 +2973,7 @@ class SDFG(ControlFlowRegion):
         else:
             # The code was already generated, just load the program folder
             program_folder = build_folder
+            # @CLAUDE: Consequence from above, this branch cannot be triggered.
             if sdfg is None:
                 sdfg = copy.deepcopy(self)
                 sdfg.load_external_nsdfgs()

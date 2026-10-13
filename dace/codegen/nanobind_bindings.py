@@ -211,6 +211,7 @@ def _ndarray_device(desc) -> str:
     and it runs only when a GPU array actually exists.
     """
     if desc.storage == dtypes.StorageType.GPU_Global:
+        # @CLAUDE: Call `get_gpu_backend()` directly.
         backend = Config.get('compiler', 'cuda', 'backend')
         if backend in (None, '', 'auto'):
             from dace.codegen import common
@@ -221,6 +222,7 @@ def _ndarray_device(desc) -> str:
 
 def _has_gpu_code(sdfg) -> bool:
     """Same detection as the ctypes ``CompiledSDFG``, evaluated at codegen time."""
+    # @CLAUDE: Make a helper function out of it (placed somewhere in codegen) that can be shared. Then start a short sweap, i.e. `grep -e has -r | grep -i gpu | grep -i code` and replace them with the new helper. But first check if there is one.
     for _, _, desc in sdfg.arrays_recursive():
         if desc.storage in dtypes.GPU_STORAGES:
             return True
@@ -613,6 +615,9 @@ def generate_bindings_code(sdfg, statestruct=None, gpu_backend=None) -> str:
         be = gpu_backend
         gpu_runtime_include = ('\n#include <cuda_runtime.h>' if be == 'cuda' else '\n#include <hip/hip_runtime.h>')
         gpu_check_decl = f'\nint __dace_gpu_last_error({state_t} *__state);'
+
+        # @CLAUDE: Having a full function definition as a string is not nice. To solve that create a helper function in the runtime, and then call it with passing the needed members directly, i.e. `gpu_check_call` will become something like `check_gpu_error(this->m_state, this->m_gpu_error_check);`.
+
         gpu_check_method = f'''
     // Raise the error the generated code recorded for this SDFG, if any (the
     // read clears the record, so a failure is delivered exactly once).

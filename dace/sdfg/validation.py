@@ -290,6 +290,7 @@ def validate_sdfg(sdfg: "dace.sdfg.SDFG", references: set[int] = None, **context
                 raise InvalidSDFGError("Found multiple blocks with the same name in " + cfg.name, sdfg, None)
 
         # Check the names of data descriptors and co.
+        # @CLAUDE: Refactor this into `if set(sdfg.arrays.keys()).intersects(sdfg.symbols.keys())`
         seen_names: set[str] = set()
         for obj_names in [sdfg.arrays.keys(), sdfg.symbols.keys()]:
             if not seen_names.isdisjoint(obj_names):
@@ -354,6 +355,7 @@ def validate_sdfg(sdfg: "dace.sdfg.SDFG", references: set[int] = None, **context
                     )
 
         # Test the return value.
+        # @Claude this code seems to be the same as above, but slightly different. Looks like the result of a bad merge.
         tuple_return_args = {n for n in sdfg._arrays if n.startswith('__return_')}
         if '__return' in sdfg._arrays and tuple_return_args:
             raise InvalidSDFGError(

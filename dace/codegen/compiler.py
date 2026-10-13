@@ -204,6 +204,7 @@ def generate_program_folder(
         bindings_folder = os.path.join(src_path, 'cpu')
         os.makedirs(bindings_folder, exist_ok=True)
         bindings_name = f'{sdfg.name}_nanobind.cpp'
+        # @CLAUDE: According to the reviewer, all objects with title `Frame` should have a `statestruct` so the `getattr()` is not needed.
         statestruct = next((getattr(obj, 'statestruct', None) for obj in code_objects if obj.title == 'Frame'), None)
         # The GPU error record accessor exists exactly when the CUDA target emitted its code
         # object, so the binding's per-call check is gated on that - not on a storage or
@@ -1105,6 +1106,7 @@ def _get_stub_library_path(sdfg_lib_path: Union[pathlib.Path, str]) -> pathlib.P
 def load_precompiled_sdfg(
     folder: Union[pathlib.Path, str],
     sdfg: Optional['dace.SDFG'] = None,
+    # @CLAUDE: The type annotation is wrong here, it should return the protocol, it is also happening at other places.
 ) -> csd.CtypesCompiledSDFG:
     """Loads a precompiled SDFG from ``folder``.
 

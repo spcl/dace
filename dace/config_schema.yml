@@ -158,6 +158,7 @@ required:
                     wrong reuse. Only consulted when ``compiler.interface`` is
                     "nanobind".
 
+            # @CLAUDE: The reviewer suggested to remove this flag and make the default and only supported behaviour `false`, i.e. always accept cats.
             nanobind_strict_scalar_cast:
                 type: bool
                 default: false

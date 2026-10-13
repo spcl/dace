@@ -300,6 +300,7 @@ def instrument_data(
                 # call hooks, so its handle is ready; the nanobind interface initializes inside
                 # the compiled call, so the hook initializes eagerly (idempotent - its `args` is
                 # a 1-tuple holding the processed keyword arguments) and uses the returned state.
+                # @CLAUDE: This should be an `isinstance` check.
                 if hasattr(csdfg, "_libhandle"):
                     state = csdfg._libhandle
                 else:
