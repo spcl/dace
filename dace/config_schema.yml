@@ -131,6 +131,7 @@ required:
                     the nanobind interface's scope is then refused at code
                     generation instead of falling back.
 
+            # @CLAUDE: Remove this key, the only supported behaviour is `rename`.
             nanobind_name_collision:
                 type: str
                 default: rename
