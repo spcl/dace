@@ -29,7 +29,7 @@ from dace.frontend.python.common import SDFGClosure, SDFGConvertible, structured
 from dace.sdfg import SDFG
 
 from .capture import CapturedProgram, capture
-from .context import sanitize_name
+from .context import RANDOM_SEED_SYMBOL, sanitize_name
 from .dtypes import to_torch_dtype
 from .shapes import ALL, DimSpec
 from .sources import CapturedGuard, SourceRef
@@ -66,6 +66,9 @@ _IMPLIED_GUARDS = {"TENSOR_MATCH", "GRAD_MODE", "SHAPE_ENV"}
 
 #: Graph inputs that a module conversion can provide
 _SUPPORTED_INPUTS = ("argument", "parameter", "buffer", "attribute", "global", "size", "stride", "storage_offset")
+
+#: Name of the closure scalar a module declares to feed its random seed (see :meth:`ModuleConvertible.__sdfg__`)
+RANDOM_SEED_CLOSURE = "__dace_random_seed_src"
 
 
 def as_sdfg_convertible(module: torch.nn.Module) -> "ModuleConvertible":
@@ -148,11 +151,40 @@ class ModuleConvertible(SDFGConvertible):
         self._guards, self.unchecked_guards = guard_evaluators(program, self.module, f"__torch_{id(self.module):x}")
         _warn_on_symbolic_assumptions(program, type(self.module).__name__)
         self.program = program
+        self._resolve_random_seed(result.sdfg)
         return result.sdfg
+
+    def _resolve_random_seed(self, sdfg: SDFG) -> None:
+        """
+        Makes a training-mode module that draws random numbers (e.g. dropout) self-contained in a ``@dace.program``.
+
+        A random operator seeds itself from the free symbol ``dace_random_seed`` (see :data:`.context.RANDOM_SEED_SYMBOL`)
+        so that each call can draw a fresh stream. A plain ``@dace.program`` call has no runtime to supply that symbol,
+        so the module declares a closure scalar (``__dace_random_seed_src``) whose getter draws a fresh seed from torch's
+        default generator at call time, and assigns ``dace_random_seed`` from it on a start edge. The symbol is then no
+        longer free, and the scalar is threaded like any other closure array (by reference, re-evaluated per call), which
+        also keeps ``torch.manual_seed`` reproducible. ``dace.ml.training_step``/``differentiable`` reuse the same scalar
+        so the forward and backward of a step share the seed.
+        """
+        if RANDOM_SEED_SYMBOL not in sdfg.free_symbols:
+            return
+        sdfg.add_array(RANDOM_SEED_CLOSURE, (1,), dtypes.int64, transient=False)
+        sdfg.add_state_before(
+            sdfg.start_block,
+            "draw_random_seed",
+            is_start_block=True,
+            assignments={RANDOM_SEED_SYMBOL: f"{RANDOM_SEED_CLOSURE}[0]"},
+        )
+        self._closure[RANDOM_SEED_CLOSURE] = _draw_random_seed
 
     # ------------------------------------------------------------------------------------------ helpers
     def _state_tensors(self) -> list[tuple[str, torch.Tensor]]:
         return list(self.module.named_parameters()) + list(self.module.named_buffers())
+
+
+def _draw_random_seed() -> torch.Tensor:
+    """Draws a fresh seed from torch's default generator (so ``torch.manual_seed`` reproduces a run)."""
+    return torch.randint(0, 2**31 - 1, (1,), dtype=torch.int64)
 
 
 def _state_getter(module: torch.nn.Module, qualname: str) -> Callable[[], torch.Tensor]:

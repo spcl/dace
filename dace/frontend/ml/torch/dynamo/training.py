@@ -33,10 +33,34 @@ from dace.codegen.compiled_sdfg import CompiledSDFG
 from dace.data import create_datadescriptor
 from dace.frontend.python.parser import DaceProgram, infer_symbols_from_datadescriptor
 
+from .context import RANDOM_SEED_SYMBOL
 from .dtypes import to_torch_dtype
 
 #: Name of the container a program's return value is written to
 _RETURN = "__return"
+
+
+def _supply_random_seed(sdfg, call: dict[str, Any]) -> None:
+    """
+    Draws one fresh random seed (from torch's generator, so ``torch.manual_seed`` reproduces) and puts it into ``call``
+    for a program that uses random operators (e.g. dropout).
+
+    A module that draws random numbers resolves its ``dace_random_seed`` symbol from a closure scalar
+    (:data:`.convertible.RANDOM_SEED_CLOSURE`); the forward and backward phases of one step read it from the same
+    ``call`` dict, so they share the seed. When the symbol itself is an argument it is supplied directly. Drawing the
+    seed here (once per call) keeps a two-phase step consistent and the backward of a forward/backward pair reuses the
+    forward's value.
+    """
+    from .convertible import RANDOM_SEED_CLOSURE  # Deferred: convertible imports the backend, which imports this module
+
+    seed = None
+    if RANDOM_SEED_CLOSURE in sdfg.arrays:
+        seed = int(torch.randint(0, 2**31 - 1, (), dtype=torch.int64))
+        call[RANDOM_SEED_CLOSURE] = torch.tensor([seed], dtype=torch.int64)
+    if RANDOM_SEED_SYMBOL in sdfg.symbols:
+        if seed is None:
+            seed = int(torch.randint(0, 2**31 - 1, (), dtype=torch.int64))
+        call[RANDOM_SEED_SYMBOL] = seed
 
 
 def _gradient_name(name: str) -> str:
@@ -101,6 +125,7 @@ class _ProgramCompiler:
                 sdfg, {name: create_datadescriptor(value) for name, value in call.items() if name in sdfg.arrays}
             )
         )
+        _supply_random_seed(sdfg, call)
         return call, objects
 
 

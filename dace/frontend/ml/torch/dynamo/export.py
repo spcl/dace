@@ -11,6 +11,7 @@ sources :meth:`.capture.CapturedProgram.bind` uses).
 """
 
 import inspect
+import warnings
 from typing import Any
 
 import torch
@@ -23,6 +24,20 @@ from .convertible import example_arguments
 from .runtime import CompiledGraph
 
 _SUPPORTED_INPUTS = ("argument", "parameter", "buffer", "attribute", "global", "size", "stride", "storage_offset")
+
+
+def _warn_if_training(model: Any) -> None:
+    """
+    Warns when a module is exported in training mode, where stochastic layers are traced for training.
+
+    Ahead-of-time export captures a single graph for the module's current mode. In training mode dropout draws a mask
+    and batch-norm uses batch statistics, which is usually not what inference wants. The lazy ``torch.compile`` route
+    re-traces on mode changes, so it does not warn.
+    """
+    if isinstance(model, torch.nn.Module) and model.training:
+        warnings.warn(
+            "module is in training mode; dropout/batch-norm are traced for training (call .eval() for inference)"
+        )
 
 
 def _default_name(model: Any) -> str:
@@ -88,6 +103,7 @@ def to_sdfg(
     :param kwargs: Keyword argument descriptors.
     :return: The simplified, validated SDFG (not compiled).
     """
+    _warn_if_training(model)
     program = _capture_from_descriptors(model, args, kwargs, dynamic_shapes, simplify)
     _check_inputs(program, model)
     return program.import_graph(name or _default_name(model), return_arrays=True).sdfg
@@ -146,6 +162,7 @@ def compile(
     This is the ahead-of-time overload of :func:`dace.frontend.ml.torch.dynamo.compile`; it is selected when
     descriptor arguments follow the model.
     """
+    _warn_if_training(model)
     program = _capture_from_descriptors(model, args, kwargs, dynamic_shapes, simplify)
     _check_inputs(program, model)
     return CompiledModule(program, name or _default_name(model))
