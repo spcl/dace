@@ -39,6 +39,10 @@ class UnsupportedOpError(NotImplementedError):
         super().__init__(msg)
 
 
+#: Symbol that seeds the random operators of a program; the runtime passes a fresh value on every call
+RANDOM_SEED_SYMBOL = "dace_random_seed"
+
+
 @dataclasses.dataclass(eq=False)
 class TensorValue:
     """A tensor materialized as a DaCe data container (array or view)."""
@@ -216,6 +220,7 @@ class LoweringContext:
         self.constants: dict[str, tuple[data.Data, Any]] = {}
         #: Dynamo's unbacked (data-dependent) symbols the program assigns, by Dynamo name
         self.assigned_symbols: dict[str, symbolic.symbol] = {}
+        self.random_streams = 0  #: Number of random operators emitted so far (each gets its own stream offset)
 
     # ------------------------------------------------------------------ naming / containers
     def new_name(self, prefix: str) -> str:

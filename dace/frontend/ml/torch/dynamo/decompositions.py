@@ -41,8 +41,6 @@ EXTRA_DECOMPOSITIONS = [
     "softplus",
     "log_sigmoid_forward",
     "log_sigmoid",
-    "native_dropout",
-    "dropout",
     "tril",
     "triu",
     "masked_fill",
@@ -78,7 +76,7 @@ EXTRA_DECOMPOSITIONS = [
     "cross_entropy_loss",
 ]
 
-#: Operators lowered natively by the frontend; removed from the decomposition table.
+#: Operators lowered natively by the frontend (maps or library nodes); removed from the decomposition table.
 NATIVE_OPS = [
     "mm",
     "bmm",
@@ -87,6 +85,8 @@ NATIVE_OPS = [
     "dot",
     "matmul",
     "convolution",
+    "native_dropout",
+    "native_dropout_backward",
     "_to_copy",
     "clone",
     "cat",

@@ -383,8 +383,10 @@ class GraphImporter:
             from .ops import onnx_fallback
 
             fn = onnx_fallback.lookup(target)
+        if fn is None and isinstance(target, torch._ops.OpOverload):
+            fn = ops.generic.lower_aten_op  # A library node; whether DaCe implements it is decided at expansion
         if fn is None:
-            raise UnsupportedOpError(target, "no lowering registered (and no ONNX fallback available)")
+            raise UnsupportedOpError(target, "no lowering registered")
         args = map_arg(node.args, lambda n: ctx.env[n])
         kwargs = map_arg(node.kwargs, lambda n: ctx.env[n])
         return fn(ctx, node, *args, **kwargs)

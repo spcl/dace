@@ -1,10 +1,11 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """
-Neural-network operators lowered to DaCe maps: convolution and pooling.
+Neural-network operators lowered to DaCe maps: pooling, the convolution backward, and the dropout backward.
 
-Both are expressed over a zero/-inf padded copy of the input so that the inner loops never touch out-of-bounds
-elements. Convolution accumulates with a write-conflict-resolution sum in a nested map; pooling evaluates the
-(statically sized) window inside one tasklet per output element.
+The forward convolution and dropout are library nodes (:mod:`dace.libraries.torch.nodes.aten`, emitted by the generic
+lowering in :mod:`.generic`). Pooling and the convolution backward are expressed over a zero/-inf padded copy of the
+input so that the inner loops never touch out-of-bounds elements; pooling evaluates the (statically sized) window
+inside one tasklet per output element.
 """
 
 from collections.abc import Sequence
@@ -25,7 +26,7 @@ from dace.frontend.ml.torch.dynamo.dtypes import is_floating
 from dace.memlet import Memlet
 
 from . import register_lowering, resolve
-from .pointwise import cast_expr, emit_elementwise, literal
+from .pointwise import cast_expr, emit_elementwise, literal, lower_pointwise_values
 from .reduction import emit_reduce_into
 
 aten = torch.ops.aten
@@ -61,75 +62,11 @@ def _pad_input(
     return xp
 
 
-# ---------------------------------------------------------------------- convolution
-@register_lowering(*resolve("aten.convolution.default", "aten._convolution.default"))
-def lower_convolution(
-    ctx: LoweringContext,
-    node,
-    x: TensorValue,
-    w: TensorValue,
-    bias,
-    stride,
-    padding,
-    dilation,
-    transposed,
-    output_padding,
-    groups,
-    *rest,
-):
-    if bool(as_sym(transposed)):
-        raise UnsupportedOpError(node.target, "transposed convolution is not supported yet")
-    nd = w.rank - 2
-    stride, padding, dilation = _ints(stride, nd), _ints(padding, nd), _ints(dilation, nd)
-    groups = as_sym(groups)
-    val = node.meta["val"]
-    out = ctx.add_tensor_like("t_" + node.name, val)
-    N, Cin = x.tshape[0], x.tshape[1]
-    Cout, Cg = w.tshape[0], w.tshape[1]  # Cg = Cin / groups
-    kernel = list(w.tshape[2:])
-    ospatial = list(out.tshape[2:])
-
-    # Padded input: spatial extent covers every window position
-    extents = [
-        sympy.Max(s + 2 * p, (o - 1) * st + (k - 1) * d + 1)
-        if not all(isinstance(v, int) for v in (s, p, o, st, k, d))
-        else max(s + 2 * p, (o - 1) * st + (k - 1) * d + 1)
-        for s, p, o, st, k, d in zip(x.tshape[2:], padding, ospatial, stride, kernel, dilation)
-    ]
-    xp = _pad_input(ctx, node.name, x, 2, padding, extents, 0)
-
-    # Initialize output with bias (or zero)
-    if isinstance(bias, TensorValue):
-        emit_elementwise(ctx, node.name + "_init", out, [(bias, ["__i1"])], f"__out = {cast_expr('__in0', out.dtype)}")
-    else:
-        emit_elementwise(ctx, node.name + "_init", out, [], f"__out = {cast_expr('0', out.dtype)}")
-
-    # Accumulate: outer map over output elements, inner map over the reduction window
-    outer_params = ["__n", "__co"] + [f"__o{k}" for k in range(nd)]
-    outer_ranges = [(0, N - 1, 1), (0, Cout - 1, 1)] + [(0, o - 1, 1) for o in ospatial]
-    inner_params = ["__ci"] + [f"__k{k}" for k in range(nd)]
-    inner_ranges = [(0, Cg - 1, 1)] + [(0, k - 1, 1) for k in kernel]
-    cout_per_group = Cout / groups if not (isinstance(Cout, int) and isinstance(groups, int)) else Cout // groups
-    group = "0" if (isinstance(groups, int) and groups == 1) else f"int_floor(__co, {cout_per_group})"
-    in_idx = ["__n", f"({group}) * ({Cg}) + __ci"] + [
-        f"__o{k} * {st} + __k{k} * {d}" for k, (st, d) in enumerate(zip(stride, dilation))
-    ]
-    w_idx = ["__co", "__ci"] + [f"__k{k}" for k in range(nd)]
-    out_idx = ["__n", "__co"] + [f"__o{k}" for k in range(nd)]
-    out_memlet = index_memlet(out.name, out_idx)
-    out_memlet.wcr = "lambda a, b: a + b"
-    code = f"__out = {cast_expr('__x', out.dtype)} * {cast_expr('__w', out.dtype)}"
-    ctx.emit_nested_mapped_tasklet(
-        node.name + "_acc",
-        outer_params,
-        outer_ranges,
-        inner_params,
-        inner_ranges,
-        {"__x": index_memlet(xp.name, in_idx), "__w": index_memlet(w.name, w_idx)},
-        code,
-        {"__out": out_memlet},
-    )
-    return out
+# ---------------------------------------------------------------------- dropout
+@register_lowering(*resolve("aten.native_dropout_backward.default"))
+def lower_native_dropout_backward(ctx: LoweringContext, node, grad_output: TensorValue, mask: TensorValue, scale):
+    """``grad_output * scale`` where the (boolean) mask is set, zero elsewhere."""
+    return lower_pointwise_values(ctx, node, [grad_output, mask, scale], "(({0}) * ({2}) if ({1}) else 0)", nocast=(1,))
 
 
 # ---------------------------------------------------------------------- pooling

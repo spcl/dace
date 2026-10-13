@@ -9,6 +9,7 @@ import torch
 from dace import symbolic
 from dace.codegen.compiled_sdfg import CompiledSDFG
 
+from .context import RANDOM_SEED_SYMBOL
 from .training import CompiledTwoPhase, TwoPhaseFunction
 
 
@@ -52,6 +53,8 @@ class CompiledGraph:
         self.outputs = outputs
         self.fixed_arguments = dict(fixed_arguments or {})
         self.name = csdfg.sdfg.name
+        #: Whether the program has random operators, which draw a fresh seed from torch's generator on every call
+        self.random = RANDOM_SEED_SYMBOL in csdfg.sdfg.arglist()
 
     def __call__(self, *args) -> list[Any]:
         if len(args) == 1 and isinstance(args[0], list):  # Boxed: graph inputs are tensors and numbers, never lists
@@ -59,6 +62,8 @@ class CompiledGraph:
             args = tuple(inputs)
             inputs.clear()
         kwargs: dict[str, Any] = dict(self.fixed_arguments)
+        if self.random:
+            kwargs[RANDOM_SEED_SYMBOL] = int(torch.randint(0, 2**31 - 1, (), dtype=torch.int64))
         symvals: dict[str, int] = {}
         for spec in self.inputs:
             if spec.kind == "sym":

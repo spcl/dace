@@ -120,8 +120,16 @@ How programs are lowered
 
 * **Operators.** Composite ATen operators are decomposed (Inductor-style) into a small primitive set. Pointwise
   operators become maps with broadcasting, reductions use the standard-library ``Reduce`` node, matrix products use
-  the BLAS ``MatMul`` node, convolutions and pooling become nested maps, and ``view``/``permute``/``slice``/``expand``
-  become DaCe views that reuse the FakeTensor's strides. Type promotion follows ATen.
+  the BLAS ``MatMul`` node, pooling becomes maps, and ``view``/``permute``/``slice``/``expand`` become DaCe views that
+  reuse the FakeTensor's strides. Type promotion follows ATen.
+* **Library nodes.** Every other ATen operator becomes a library node of :mod:`dace.libraries.torch` (an ``ATenOp``
+  whose connectors are named after the operator schema and whose remaining arguments are node properties), so the
+  SDFG shows the operator itself and the decision how to implement it is taken when the SDFG is expanded. Convolution
+  and dropout have dedicated nodes (``Convolution``, ``NativeDropout``) whose ``ml`` expansion delegates to
+  :mod:`dace.libraries.ml` (pure, cuDNN and MIOpen implementations of convolution; a counter-based Philox generator
+  for dropout, seeded per call through the ``dace_random_seed`` symbol). Operators without any implementation stay in
+  the SDFG and raise an error naming the operator when it is expanded; an implementation is added by registering an
+  expansion for the node (``dace.library.register_expansion``), without touching the frontend.
 * **Dynamic shapes.** Every symbolic size and stride produced by Dynamo (``s0``, ``s1``, ...) is a DaCe symbol with
   the same name. Non-contiguous inputs therefore do not trigger recompilation either.
 * **Control flow.** The higher-order operators ``torch.cond``, ``torch.while_loop``, ``torch._higher_order_ops.scan``
@@ -188,5 +196,6 @@ Limitations
   with a different pattern recompiles. ``dynamic_shapes`` (above) avoids the duck shaping; sizes 0 and 1 remain
   special.
 * Data-dependent shapes (``nonzero``, ``.item()``) are not captured.
-* Operators without a native lowering raise an error naming the operator; ``extra_decompositions`` and
-  ``native_ops`` can be used to steer the decomposition table.
+* ATen operators without an implementation are imported as library nodes and raise an error naming the operator when
+  the SDFG is expanded (at compile time); ``extra_decompositions`` and ``native_ops`` can be used to steer the
+  decomposition table instead.
