@@ -240,8 +240,8 @@ QUALIFIED_DESCRIPTIONS: dict[str, str] = {
 #:
 #: DELIBERATELY ABSENT, and the reason this list is a checked allowlist rather than a filter on
 #: ``environments``: DaCe's faster-sounding implementations declare no environment and still name a
-#: symbol nothing here defines. ``Reduce``'s ``CPU`` lowers onto ``dace::reduce`` and its
-#: ``vectorized`` onto ``horizontal_reduce_*`` from ``dace/horizontal_reduce.h``. ``Auto`` is a
+#: symbol nothing here defines. ``Reduce``'s ``vectorized`` lowers onto ``horizontal_reduce_*`` from
+#: ``dace/horizontal_reduce.h`` (its ``CPU`` is re-spelled, see :data:`RENDERABLE_BY_NODE`). ``Auto`` is a
 #: per-node dispatcher that can land on those, so it is listed only for the nodes whose ``Auto``
 #: always renders (:data:`RENDERABLE_BY_NODE`).
 RENDERABLE_IMPLEMENTATIONS = ("pure", "pure-seq", "MappedTasklet")
@@ -253,10 +253,12 @@ RENDERABLE_IMPLEMENTATIONS = ("pure", "pure-seq", "MappedTasklet")
 #:
 #: CPF is a parallel form, so a node renders through its OpenMP ``CPU`` lowering whenever CPF can
 #: spell what that lowering reaches. ``ArgReduce``'s emits a self-contained ``omp declare
-#: reduction`` over a (value, index) pair; ``FindFirst``'s ``dace::find_first_index``, ``Scan``'s
+#: reduction`` over a (value, index) pair; ``Reduce``'s ``dace::reduce`` entry points, ``FindFirst``'s
+#: ``dace::find_first_index``, ``Scan``'s
 #: ``dace::scan`` entry points and ``ScatterConflictCheck``'s ``dace::detect_collision`` are
-#: re-spelled by :mod:`dace.cpf_lowering` as the cancelling search, the ``inscan`` scan and the
-#: tagged-write check. Without them a node falls to ``pure``, a SEQUENTIAL loop, and the rendered
+#: re-spelled by :mod:`dace.cpf_lowering` as the OpenMP ``reduction`` loop, the cancelling search, the
+#: ``inscan`` scan and the tagged-write check. ``Reduce``'s ``pure`` would be a parallel loop with a
+#: ``critical`` section per element (argmax_value under canonicalize: ~0.5 s for 6M doubles). Without them a node falls to ``pure``, a SEQUENTIAL loop, and the rendered
 #: unit hands its reader a serial loop for work the canonicalize pipeline itself parallelizes --
 #: ``argmax_with_index``, ``tsvc_2_s318`` and ``tsvc_2_s3110`` all measured 9-11x over numpy in the
 #: parallel form and rendered with no ``omp`` at all.
@@ -272,6 +274,7 @@ RENDERABLE_BY_NODE: dict[str, tuple[str, ...]] = {
     "FillLibraryNode": ("Auto",),
     "FindFirst": ("CPU",),
     "IntegerSort": ("isocpp",),
+    "Reduce": ("CPU",),
     "Scan": ("CPU",),
     "ScatterConflictCheck": ("CPU",),
 }
@@ -286,14 +289,14 @@ RENDERABLE_BY_NODE: dict[str, tuple[str, ...]] = {
 #: host code and dereferences a device pointer, and ``FindFirst`` refuses outright rather than let
 #: it. A ``pure`` expansion made of MAPS (``Reduce``, ``ArgReduce``, the copy and fill nodes) is not
 #: in that shape: the maps inherit the library node's GPU schedule and become a kernel, which is
-#: both correct and the rendering CPF wants -- so ``Reduce`` is deliberately ABSENT, its ``GPUAuto``
-#: being a ``dace::`` cub call where its ``pure`` is loops.
+#: both correct and the rendering CPF wants -- so ``Reduce`` takes ``pure`` here, ahead of its host
+#: ``CPU`` lowering, its ``GPUAuto`` being a ``dace::`` cub call where its ``pure`` is loops.
 #:
 #: The device expansions named here reach the runtime the same way the host ones do, and CPF spells
 #: what they reach: ``get_scratch``, ``find_first_index_device`` and ``inclusive_affine`` are
 #: inline definitions in :mod:`dace.cpf_lowering`, exactly as ``find_first_index`` and the scans are
 #: for the host.
-RENDERABLE_BY_NODE_DEVICE: dict[str, tuple[str, ...]] = {"FindFirst": ("CUDA",), "Scan": ("CUDA",)}
+RENDERABLE_BY_NODE_DEVICE: dict[str, tuple[str, ...]] = {"FindFirst": ("CUDA",), "Reduce": ("pure",), "Scan": ("CUDA",)}
 
 #: Consecutive rounds of :func:`force_renderable_expansions` that may leave the library-node census
 #: unchanged before it refuses. NOT a bound on total rounds: a state needs one round per node.

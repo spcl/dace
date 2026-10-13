@@ -28,6 +28,7 @@ import pytest
 import dace
 from dace import cpf_lowering
 from dace.codegen.cpf import CONTRACT_LINES, render
+from dace.libraries.standard.nodes.copy import CopyLibraryNode
 from dace.libraries.standard.nodes.scan import PARALLEL_SCAN_HINT, SEQUENTIAL_SCAN_HINT, Scan, ScanOp
 from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
@@ -409,17 +410,21 @@ def test_the_canonicalize_pipeline_names_the_loops_it_leaves_behind():
 
 
 def test_a_map_a_library_expansion_leaves_is_labelled():
-    """s311: the Reduce map carried the library description and no kind, unlike every other map."""
-    sdfg = dace.SDFG("cpf_kind_reduce")
-    sdfg.add_array("a", [N], dace.float64)
-    sdfg.add_array("total", [1], dace.float64)
-    state = sdfg.add_state("reduce")
-    reduction = state.add_reduce("lambda x, y: x + y", axes=None, identity=0.0)
-    state.add_edge(state.add_read("a"), None, reduction, "_in", dace.Memlet("a[0:N]"))
-    state.add_edge(reduction, "_out", state.add_write("total"), None, dace.Memlet("total[0]"))
+    """s311: a map a library expansion left carried the library description and no kind, unlike every other map.
+
+    A copy of unknown size expands (``Auto``) to a parallel mapped tasklet; a Reduce now renders through its OpenMP
+    reduction call and leaves no map (``test_reduce_lowering``)."""
+    sdfg = dace.SDFG("cpf_kind_library_map")
+    sdfg.add_array("src", [N], dace.float64)
+    sdfg.add_array("dst", [N], dace.float64)
+    state = sdfg.add_state("copy")
+    copy = CopyLibraryNode("copy")
+    state.add_node(copy)
+    state.add_edge(state.add_read("src"), None, copy, CopyLibraryNode.INPUT_CONNECTOR_NAME, dace.Memlet("src[0:N]"))
+    state.add_edge(copy, CopyLibraryNode.OUTPUT_CONNECTOR_NAME, state.add_write("dst"), None, dace.Memlet("dst[0:N]"))
     sdfg.validate()
     rendered = comment_lines(render(sdfg).code)
-    assert "// reduction over the given axes with the given operator" in rendered, rendered
+    assert "// copy: write one buffer into another" in rendered, rendered
     assert "// " + PARALLEL.splitlines()[0] in rendered, rendered
 
 

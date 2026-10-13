@@ -720,8 +720,89 @@ INLINE_DEFINITIONS.update(
     }
 )
 
+#: Per ``dace::reduce`` entry point: the OpenMP reduction identifier and how ``a`` folds in ``x`` in C++ and in C,
+#: as :data:`SCAN_OPERATIONS` spells the four a scan shares. The ``Reduce`` CPU lowering emits nothing else.
+REDUCE_OPERATIONS: dict[str, tuple[str, str, str]] = {
+    **SCAN_OPERATIONS,
+    "bitwise_and": ("&", "{a} & {x}", "{a} & {x}"),
+    "bitwise_or": ("|", "{a} | {x}", "{a} | {x}"),
+    "bitwise_xor": ("^", "{a} ^ {x}", "{a} ^ {x}"),
+    "logical_and": ("&&", "{a} && {x}", "{a} && {x}"),
+    "logical_or": ("||", "{a} || {x}", "{a} || {x}"),
+}
+
+
+#: A complex sum or product reduces through a combiner it declares itself: OpenMP has no complex reduction, and C
+#: refuses a ``declare reduction`` of ``+`` / ``*`` over its predeclared ``_Complex`` types. Identifier, combining
+#: operator and identity, as the CPU code generator spells them.
+COMPLEX_REDUCE_COMBINERS: dict[str, tuple[str, str, int]] = {
+    "sum": ("cpf_cadd", "+=", 0),
+    "product": ("cpf_cmul", "*=", 1),
+}
+
+
+def reduce_body(operation: str, ctype: str, parallel: bool, c_dialect: bool, complex_initial: str = "") -> list[str]:
+    """The body of one ``dace::reduce`` entry: fold ``count`` inputs ``stride`` apart into ``seed``, under an OpenMP
+    reduction unless it is the ``seq`` entry the expansion calls from inside a parallel scope. ``complex_initial``
+    spells the identity of a complex accumulator, which then reduces through a block-scope declared combiner."""
+    clause, cpp_step, c_step = REDUCE_OPERATIONS[operation]
+    step = (c_step if c_dialect else cpp_step).format(a="acc", x="in[i * stride]", T=ctype)
+    declare: list[str] = []
+    if complex_initial:
+        clause, combine, identity = COMPLEX_REDUCE_COMBINERS[operation]
+        declare = [
+            "    #pragma omp declare reduction(%s : %s : omp_out %s omp_in) initializer(omp_priv = %s)"
+            % (clause, ctype, combine, complex_initial.format(identity=identity))
+        ]
+    pragma = ["    #pragma omp parallel for reduction(%s:acc)" % clause] if parallel else []
+    loop = "    for (long i = 0; i < count; ++i) acc = %s;" % step
+    return [*declare, "    %s acc = seed;" % ctype, *pragma, loop, "    return acc;"]
+
+
+def reduce_name(operation: str, parallel: bool) -> str:
+    return "reduce_%s%s" % ("" if parallel else "seq_", operation)
+
+
+def cpp_reduce_definition(operation: str, parallel: bool) -> str:
+    """One ``dace::reduce`` entry as a C++ template over the input type ``T`` and the seed type ``S``; a parallel sum
+    or product adds the ``std::complex`` overload that declares its combiner."""
+    name = reduce_name(operation, parallel)
+    lines = [
+        "template <typename T, typename S>",
+        "static inline S %s(const T *in, long count, long stride, S seed) {" % name,
+        *reduce_body(operation, "S", parallel, c_dialect=False),
+        "}",
+    ]
+    if parallel and operation in COMPLEX_REDUCE_COMBINERS:
+        lines += [
+            "template <typename T, typename V>",
+            "static inline std::complex<V> %s(const T *in, long count, long stride, std::complex<V> seed) {" % name,
+            *reduce_body(
+                operation, "std::complex<V>", parallel, c_dialect=False, complex_initial="std::complex<V>({identity})"
+            ),
+            "}",
+        ]
+    return "\n".join(lines)
+
+
+# reductions
+# The DaCe runtime provides these in ``dace/reduction.h``; CPF spells each one out with its OpenMP clause, so a
+# ``Reduce`` renders through its parallel CPU lowering instead of ``pure``'s per-element critical section.
+INLINE_DEFINITIONS.update(
+    {
+        reduce_name(operation, parallel): cpp_reduce_definition(operation, parallel)
+        for parallel in (True, False)
+        for operation in REDUCE_OPERATIONS
+    }
+)
+
 #: Definitions each definition calls. Emission is dependency-first (see :func:`definitions_for`).
 DEFINITION_DEPENDENCIES: dict[str, tuple[str, ...]] = {
+    **{
+        reduce_name(operation, parallel): (f"cpf_{operation}",)
+        for operation in ("min", "max")
+        for parallel in (True, False)
+    },
     "scan_incl_min": ("min_identity", "cpf_min"),
     "scan_incl_max": ("max_identity", "cpf_max"),
     "scan_excl_min": ("min_identity", "cpf_min"),
@@ -735,6 +816,7 @@ DEFINITION_DEPENDENCIES: dict[str, tuple[str, ...]] = {
 
 #: System headers each inline definition needs, beyond :data:`BASE_HEADERS`.
 DEFINITION_HEADERS: dict[str, tuple[str, ...]] = {
+    **{reduce_name(operation, True): ("<complex>",) for operation in COMPLEX_REDUCE_COMBINERS},
     "ifloor": ("<type_traits>",),
     "min_identity": ("<limits>",),
     "max_identity": ("<limits>",),
@@ -1305,6 +1387,8 @@ SCAN_ENTRY_CALL: "re.Pattern" = re.compile(
     r"(?:::)?dace::scan::(inclusive|exclusive|strided_inclusive)_(sum|product|min|max)\s*\("
 )
 AFFINE_SCAN_ENTRY_CALL: "re.Pattern" = re.compile(r"(?:::)?dace::scan::inclusive_affine(_strided)?\s*\(")
+#: The ``Reduce`` CPU lowering's ``dace::reduce`` entry points, respelled by :func:`respell_reduce_entry_points`.
+REDUCE_ENTRY_CALL: "re.Pattern" = re.compile(r"(?:::)?\bdace::reduce::(seq::)?(%s)\s*\(" % "|".join(REDUCE_OPERATIONS))
 #: The copy node's contiguous CPU lowering, ``dace::CopyImpl<T, 1>(src, dst, count)``.
 COPY_IMPL_CALL: "re.Pattern" = re.compile(r"(?:::)?dace::CopyImpl\s*<\s*([^,<>]+?)\s*,\s*1\s*>\s*\(")
 
@@ -1383,6 +1467,15 @@ def respell_scan_entry_points(code: str) -> str:
     return c_rewrite_calls(code, AFFINE_SCAN_ENTRY_CALL, affine)
 
 
+def respell_reduce_entry_points(code: str) -> str:
+    """Spell each ``dace::reduce::[seq::]<op>(in, count, stride, seed)`` as CPF's ``reduce_[seq_]<op>``.
+
+    :param code: the body as the expansion wrote it.
+    :returns: the body with every ``dace::reduce`` entry point respelled.
+    """
+    return REDUCE_ENTRY_CALL.sub(lambda m: "%s(" % reduce_name(m.group(2), m.group(1) is None), code)
+
+
 def respell_copy_impl(code: str) -> str:
     """Spell the copy node's ``dace::CopyImpl<T, 1>(src, dst, count)`` as the ``std::memcpy`` it performs.
 
@@ -1432,13 +1525,13 @@ def rewrite_native_code(code: str, dialect: Dialect | None = None, site: NativeS
     tables = tables_for(dialect)
     c_dialect = (dialect if dialect is not None else _active_dialect) is Dialect.STANDALONE_C
     code = POLICY_SORT_CALL.sub("std::sort(", code)
-    code = rewrite_ctypes(respell_scan_entry_points(respell_copy_impl(code)), dialect)
+    code = rewrite_ctypes(respell_reduce_entry_points(respell_scan_entry_points(respell_copy_impl(code))), dialect)
 
     if c_dialect:
         # A C++ standard header (``<algorithm>``) names nothing in C; the unit's C headers come from its preamble.
         code = C_CXX_INCLUDE.sub("", code)
         # The scan reads its seed's type from the identity call, so it runs before the identities.
-        code = c_sort(c_detect_collision(c_scan(code, site), site), site)
+        code = c_sort(c_detect_collision(c_reduce(c_scan(code, site), site), site), site)
         code = c_native_renames(c_copy(c_numeric_limits(c_scan_identities(code))))
 
     def replace(match: "re.Match") -> str:
@@ -2487,8 +2580,8 @@ C_DTYPE_ALTERNATION: str = "|".join(sorted(C_SCALAR_SPELLINGS, key=len, reverse=
 #: The name of a typed instantiation: its family, then one dace type per type parameter
 #: (``cpf_scan_incl_sum_int8_int64_int64``). No group captures, so it can join another alternation.
 C_INSTANCE_NAMES: str = (
-    r"cpf_(?:scan_(?:incl|excl)_(?:sum|product|min|max)|detect_collision_sized|detect_collision"
-    r"|sort)(?:_(?:%s))+" % C_DTYPE_ALTERNATION
+    r"cpf_(?:scan_(?:incl|excl)_(?:sum|product|min|max)|reduce_(?:seq_)?(?:%s)|detect_collision_sized"
+    r"|detect_collision|sort)(?:_(?:%s))+" % ("|".join(REDUCE_OPERATIONS), C_DTYPE_ALTERNATION)
 )
 
 #: :data:`C_INSTANCE_NAMES` with the family, the scan's kind and operation, and the type list captured.
@@ -2496,6 +2589,44 @@ C_INSTANCE_NAME: "re.Pattern" = re.compile(
     r"cpf_(scan_(incl|excl)_(sum|product|min|max)|detect_collision_sized"
     r"|detect_collision|sort)((?:_(?:%s))+)" % C_DTYPE_ALTERNATION
 )
+
+
+#: A typed reduction: ``seq_`` or not, the operation, then the input's and the seed's dace types.
+C_REDUCE_INSTANCE_NAME: "re.Pattern" = re.compile(
+    r"cpf_reduce_(seq_)?(%s)_(%s)_(%s)" % ("|".join(REDUCE_OPERATIONS), C_DTYPE_ALTERNATION, C_DTYPE_ALTERNATION)
+)
+
+
+def c_reduce_definition(name: str, operation: str, parallel: bool, source: str, accumulator: str) -> str:
+    """One ``dace::reduce`` entry as a C function over its input and seed types; the accumulator takes the seed's.
+
+    A complex sum or product reduces through a combiner declared in the function; any other complex fold runs
+    sequentially, OpenMP having no reduction for it.
+
+    :raises NotImplementedError: for a min or max over a complex accumulator, which has no order.
+    """
+    if operation in ("min", "max") and accumulator in C_COMPLEX_DTYPES:
+        raise NotImplementedError(
+            f"CPF cannot render a {operation} reduction over {accumulator}: the type has no order"
+        )
+    ctype = C_SCALAR_SPELLINGS[accumulator]
+    is_complex = accumulator in C_COMPLEX_DTYPES
+    declared = is_complex and operation in COMPLEX_REDUCE_COMBINERS
+    body = reduce_body(
+        operation,
+        ctype,
+        parallel and (declared or not is_complex),
+        c_dialect=True,
+        complex_initial="{identity}" if declared else "",
+    )
+    return "\n".join(
+        (
+            "static inline %s %s(const %s *in, long count, long stride, %s seed) {"
+            % (ctype, name, C_SCALAR_SPELLINGS[source], ctype),
+            *body,
+            "}",
+        )
+    )
 
 
 @functools.lru_cache(maxsize=None, typed=True)
@@ -2508,6 +2639,10 @@ def c_instance(name: str) -> tuple[str, tuple[str, ...]] | None:
 
     :raises NotImplementedError: for a combination the family cannot order.
     """
+    reduction = C_REDUCE_INSTANCE_NAME.fullmatch(name)
+    if reduction is not None:
+        sequential, operation, source, accumulator = reduction.groups()
+        return c_reduce_definition(name, operation, sequential is None, source, accumulator), ()
     match = C_INSTANCE_NAME.fullmatch(name)
     if match is None:
         return None
@@ -2576,6 +2711,7 @@ C_UNSUPPORTED: dict[str, str] = {}
 C_REWRITTEN_IN_NATIVE_CODE: frozenset[str] = frozenset(
     {"min_identity", "max_identity", "find_first_index", "detect_collision"}
     | {"scan_%s_%s" % (kind, operation) for kind in ("incl", "excl") for operation in SCAN_OPERATIONS}
+    | {reduce_name(operation, parallel) for operation in REDUCE_OPERATIONS for parallel in (True, False)}
 )
 
 #: Headers CPF's C output always includes. ``<stdbool.h>`` is deliberately absent: ``bool`` /
@@ -3519,6 +3655,11 @@ def c_native_value_dtype(argument: str, site: NativeSite | None, call: str) -> s
         and c_encloses(text, required(subscripted).end() - 1)
     ):
         return array[0]
+    # A scalar the expansion reads through its address, ``(&s)[0]``: the scalar itself.
+    addressed = re.fullmatch(r"\(\s*&\s*([A-Za-z_]\w*)\s*\)\s*\[\s*0\s*\]", text)
+    scalar = names.get(addressed.group(1)) if addressed is not None else None
+    if scalar is not None and not scalar[1] and scalar[0] in C_SCALAR_SPELLINGS:
+        return scalar[0]
     spelled = C_SPELLED_VALUE.match(text)
     if spelled is not None and c_encloses(text, spelled.end() - 1):
         return C_SPELLED_DTYPES[next(group for group in spelled.groups() if group is not None)]
@@ -3557,6 +3698,29 @@ def c_sort(code: str, site: NativeSite | None) -> str:
         return c_instance_call("cpf_sort_%s" % c_native_array_dtype(arguments[0], site, "std::sort"), arguments)
 
     return c_rewrite_calls(code, C_SORT_CALL, rewrite)
+
+
+#: The opening of a reduction call once :func:`respell_reduce_entry_points` has named it.
+C_REDUCE_CALL: "re.Pattern" = re.compile(r"\breduce_(seq_)?(%s)\s*\(" % "|".join(REDUCE_OPERATIONS))
+
+
+def c_reduce(code: str, site: NativeSite | None) -> str:
+    """Spell each reduction call as a call to the reduction typed for its input and its seed.
+
+    :param code: the body as the expansion wrote it.
+    :param site: the typed names at the call site.
+    :returns: the body with every reduction as a typed call.
+    :raises NotImplementedError: if a type is unknown, or the operation has no order over the seed's type.
+    """
+
+    def rewrite(match: "re.Match", arguments: tuple[str, ...]) -> str | None:
+        if len(arguments) != 4:
+            return None
+        call = reduce_name(match.group(2), match.group(1) is None)
+        types = (c_native_array_dtype(arguments[0], site, call), c_native_value_dtype(arguments[3], site, call))
+        return c_instance_call("cpf_%s_%s" % (call, "_".join(types)), arguments)
+
+    return c_rewrite_calls(code, C_REDUCE_CALL, rewrite)
 
 
 def c_scan(code: str, site: NativeSite | None) -> str:

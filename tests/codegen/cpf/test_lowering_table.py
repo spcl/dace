@@ -482,7 +482,16 @@ CONSTEXPR_PROBES = {
 #: this table is what states it rather than leaving the omission to look like an oversight.
 _SCAN_REASON = "writes through an output iterator under an OpenMP inscan clause, which cannot be constant-evaluated"
 
+#: A reduction cannot fold either: its parallel entry runs under an OpenMP reduction clause, and both read a
+#: pointer at a run-time stride.
+REDUCE_REASON = "folds a strided pointer walk, under an OpenMP reduction clause for the parallel entry"
+
 NOT_CONSTEXPR = {
+    **{
+        cpf_lowering.reduce_name(operation, parallel): REDUCE_REASON
+        for operation in cpf_lowering.REDUCE_OPERATIONS
+        for parallel in (True, False)
+    },
     "scan_incl_sum": _SCAN_REASON,
     "scan_incl_product": _SCAN_REASON,
     "scan_incl_min": _SCAN_REASON,
