@@ -19,7 +19,7 @@ import torch
 from dace.sdfg import SDFG
 
 from .capture import CapturedProgram, capture
-from .context import sanitize_name
+from .context import RANDOM_SEED_SYMBOL, sanitize_name
 from .convertible import example_arguments
 from .runtime import CompiledGraph
 
@@ -82,6 +82,7 @@ def to_sdfg(
     dynamic_shapes: Any = None,
     simplify: bool = True,
     name: str | None = None,
+    random_seed: int | None = None,
     **kwargs,
 ) -> SDFG:
     """
@@ -100,13 +101,24 @@ def to_sdfg(
                            :func:`dace.frontend.ml.torch.dynamo.compile`).
     :param simplify: Whether to simplify the SDFG.
     :param name: Name of the SDFG (defaults to the module's class name or the function's name).
+    :param random_seed: Fixes the seed of the random operators (e.g. training-mode dropout) in the SDFG. By default
+                        the seed is the symbol ``dace_random_seed``, which the runtimes draw from torch's generator on
+                        every call; individual nodes can still be pinned through their ``seed`` property.
     :param kwargs: Keyword argument descriptors.
     :return: The simplified, validated SDFG (not compiled).
     """
     _warn_if_training(model)
     program = _capture_from_descriptors(model, args, kwargs, dynamic_shapes, simplify)
     _check_inputs(program, model)
-    return program.import_graph(name or _default_name(model), return_arrays=True).sdfg
+    sdfg = program.import_graph(name or _default_name(model), return_arrays=True).sdfg
+    _specialize_random_seed(sdfg, random_seed)
+    return sdfg
+
+
+def _specialize_random_seed(sdfg: SDFG, random_seed: int | None) -> None:
+    """Replaces the per-call random seed symbol by a constant, if the SDFG has one and a seed was requested."""
+    if random_seed is not None and RANDOM_SEED_SYMBOL in sdfg.symbols:
+        sdfg.specialize({RANDOM_SEED_SYMBOL: int(random_seed)})
 
 
 class CompiledModule:
@@ -119,9 +131,10 @@ class CompiledModule:
     are available for inspection and :meth:`save`.
     """
 
-    def __init__(self, program: CapturedProgram, name: str):
+    def __init__(self, program: CapturedProgram, name: str, random_seed: int | None = None):
         self._program = program
         self._result = program.import_graph(name)
+        _specialize_random_seed(self._result.sdfg, random_seed)
         self._compiled = self._result.sdfg.compile()
         self._runtime = CompiledGraph(self._compiled, self._result.inputs, self._result.outputs)
 
@@ -153,6 +166,7 @@ def compile(
     dynamic_shapes: Any = None,
     simplify: bool = True,
     name: str | None = None,
+    random_seed: int | None = None,
     **kwargs,
 ) -> CompiledModule:
     """
@@ -160,12 +174,12 @@ def compile(
     :func:`to_sdfg`) and returns a :class:`CompiledModule` that runs on torch tensors.
 
     This is the ahead-of-time overload of :func:`dace.frontend.ml.torch.dynamo.compile`; it is selected when
-    descriptor arguments follow the model.
+    descriptor arguments follow the model. ``random_seed`` fixes the seed of random operators (see :func:`to_sdfg`).
     """
     _warn_if_training(model)
     program = _capture_from_descriptors(model, args, kwargs, dynamic_shapes, simplify)
     _check_inputs(program, model)
-    return CompiledModule(program, name or _default_name(model))
+    return CompiledModule(program, name or _default_name(model), random_seed)
 
 
 def sdfg_of(compiled: Any) -> SDFG | None:

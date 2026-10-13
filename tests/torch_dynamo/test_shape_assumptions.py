@@ -105,7 +105,23 @@ def test_real_assumption_is_reported_with_origin_and_range():
     assert program.symbol_ranges["N"] == (2, 4)
 
 
+@pytest.mark.torch
+def test_compiled_conv_net_does_not_recompile_at_the_threshold():
+    """The torch.compile route traces without the backend heuristic too: one SDFG serves both sides of it."""
+    import dace.ml
+
+    torch.manual_seed(0)
+    model = _ConvNet().eval()
+    compiled = dace.ml.compile(model)
+    with torch.no_grad():
+        for batch in (2, _CONV_BACKEND_THRESHOLD + 4):
+            x = torch.randn(batch, 3, 8, 10)
+            torch.testing.assert_close(compiled(x), model(x), rtol=1e-4, atol=1e-5)
+    assert compiled._dace_backend.compile_count == 1
+
+
 if __name__ == "__main__":
     test_capture_conv_records_no_batch_heuristic()
     test_program_conv_net_runs_on_both_sides_of_the_threshold()
     test_real_assumption_is_reported_with_origin_and_range()
+    test_compiled_conv_net_does_not_recompile_at_the_threshold()

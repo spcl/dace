@@ -69,6 +69,11 @@ callable that runs on torch tensors (binding the module's current parameters at 
 See ``samples/ml/inference_torch_compile.py`` for both routes (``torch.compile`` and ahead of time) on a torchvision
 model.
 
+Random operators (training-mode dropout) seed themselves from the symbol ``dace_random_seed``, which every route draws
+from torch's generator on each call, so ``torch.manual_seed`` reproduces a run and nothing has to be configured. For a
+deterministic SDFG pass ``random_seed=`` to ``to_sdfg``/``compile``, or specialize the symbol yourself; a single node
+can be pinned through the ``seed`` property of its library node.
+
 Choosing what is symbolic
 -------------------------
 

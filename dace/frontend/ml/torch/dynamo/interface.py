@@ -10,6 +10,7 @@ import torch
 
 from . import shapes
 from .backend import CAPTURE_CONFIG, DaceBackend
+from .capture import without_conv_backend_guards
 from .export import compile as export_compile
 
 
@@ -27,6 +28,7 @@ def compile(
     extra_decompositions=None,
     native_ops=None,
     save_sdfg: str | None = None,
+    random_seed: int | None = None,
     verbose: bool = False,
     **torch_compile_kwargs,
 ) -> Callable:
@@ -80,6 +82,8 @@ def compile(
     :param extra_decompositions: Additional ATen operators to decompose before lowering.
     :param native_ops: ATen operators that must not be decomposed.
     :param save_sdfg: If set, directory in which generated SDFGs are saved (lazy route).
+    :param random_seed: Fixes the seed of random operators (dropout) in the exported SDFG, which otherwise draw a fresh
+                        seed from torch's generator on every call (ahead-of-time route).
     :param torch_compile_kwargs: Additional keyword arguments for ``torch.compile`` (lazy route).
     :return: The compiled callable, or a :class:`.export.CompiledModule` on the ahead-of-time route.
     """
@@ -87,7 +91,12 @@ def compile(
         if model is None:
             raise TypeError("dace.ml.compile needs a model when descriptor arguments are given")
         return export_compile(
-            model, *descriptors, dynamic_shapes=dynamic_shapes, simplify=simplify, name=name or sdfg_name
+            model,
+            *descriptors,
+            dynamic_shapes=dynamic_shapes,
+            simplify=simplify,
+            name=name or sdfg_name,
+            random_seed=random_seed,
         )
 
     options = dict(
@@ -122,12 +131,15 @@ def compile(
 
 
 def _with_capture_config(compiled: Callable) -> Callable:
-    """Traces every call of ``compiled`` with :data:`~.backend.CAPTURE_CONFIG` (modules stay modules)."""
+    """
+    Traces every call of ``compiled`` with :data:`~.backend.CAPTURE_CONFIG` (modules stay modules) and without the
+    shape guards of ATen's convolution backend selection (:func:`~.capture.without_conv_backend_guards`).
+    """
     call = compiled.forward if isinstance(compiled, torch.nn.Module) else compiled
 
     @functools.wraps(call)
     def configured(*args, **kwargs):
-        with torch._dynamo.config.patch(**CAPTURE_CONFIG):
+        with torch._dynamo.config.patch(**CAPTURE_CONFIG), without_conv_backend_guards():
             return call(*args, **kwargs)
 
     if isinstance(compiled, torch.nn.Module):
