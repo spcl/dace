@@ -115,6 +115,14 @@ captured as a single graph (graph breaks raise an error), and the captured graph
 To obtain the captured graph without compiling it, use :func:`dace.frontend.ml.torch.dynamo.capture`, which returns
 the ATen graph, the source of every input (argument, parameter, buffer, ...), and TorchDynamo's guards.
 
+When a module is used inside a ``@dace.program`` (or ``capture`` is given a per-argument ``dynamic_shapes``
+specification), only the sizes that are symbolic in DaCe are symbolic while tracing: every other dimension is marked
+static, so it appears as a plain integer in the captured graph, in the shape guards, and in error messages, while
+integer arguments stay symbolic. If TorchDynamo or AOTAutograd cannot trace the module, a
+:class:`~dace.frontend.ml.torch.dynamo.CaptureError` is raised whose message states the failing condition with
+concrete sizes and your symbol names, followed by the lines of the model's code that led to it; the original exception
+is chained as the cause. Set ``TORCHDYNAMO_VERBOSE=1`` to keep PyTorch's full internal stack trace.
+
 How programs are lowered
 ------------------------
 

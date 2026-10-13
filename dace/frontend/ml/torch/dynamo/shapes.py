@@ -20,6 +20,11 @@ Named dimensions are marked with ``torch._dynamo.mark_dynamic`` (an error is rai
 ``'all'`` uses ``maybe_mark_dynamic`` (lenient). Two dimensions with the same name are only one symbol if the program
 constrains them to be equal (for instance by using both in one operation); otherwise the second one is suffixed and a
 warning is emitted, because ``torch.compile`` cannot impose the equality from the outside (``torch.export`` can).
+
+:func:`~dace.frontend.ml.torch.dynamo.capture.capture` goes one step further for a per-argument specification: every
+dimension the specification does not name is marked static (``torch._dynamo.mark_static``), so that only the named
+sizes are symbols while tracing and every other size is a plain integer in the graph, in shape guards, and in error
+messages. Integer arguments are not affected (they stay symbolic with ``dynamic=True``).
 """
 
 import dataclasses
@@ -167,17 +172,36 @@ def dim_specs(spec: Any, ndim: int) -> list[DimSpec | None]:
     raise TypeError(f"Unsupported dynamic_shapes entry {spec!r}")
 
 
-# ---------------------------------------------------------------------------------------------- marking arguments
-def mark_value(value: Any, spec: Any) -> None:
-    """Marks the tensors in ``value`` (recursively) as dynamic according to ``spec``."""
+def dim_spec(spec: Any, index: int) -> DimSpec | None:
+    """Specification of dimension ``index`` of a tensor entry, when the tensor's rank is not known."""
     if spec is None:
+        return None
+    if spec == ALL:
+        return DimSpec(strict=False)
+    if isinstance(spec, dict):
+        return parse_dim(spec.get(index))
+    if isinstance(spec, (list, tuple)):
+        return parse_dim(spec[index]) if 0 <= index < len(spec) else None
+    return None
+
+
+# ---------------------------------------------------------------------------------------------- marking arguments
+def mark_value(value: Any, spec: Any, static_by_default: bool = False) -> None:
+    """
+    Marks the tensors in ``value`` (recursively) as dynamic according to ``spec``.
+
+    :param static_by_default: Also mark every dimension that ``spec`` does not name as static, so that it stays a plain
+                              integer when tracing with ``dynamic=True``.
+    """
+    if spec is None and not static_by_default:
         return
     if isinstance(value, torch.Tensor):
         for i, ds in enumerate(dim_specs(spec, value.dim())):
-            if ds is None:
+            if ds is None or (ds.name is None and not ds.strict and value.shape[i] in (0, 1)):
+                # Not requested, or 'all' on a size 0/1 (specialized by PyTorch anyway, and may be broadcasting)
+                if static_by_default:
+                    torch._dynamo.mark_static(value, i)
                 continue
-            if ds.name is None and not ds.strict and value.shape[i] in (0, 1):
-                continue  # 'all': sizes 0/1 are specialized by PyTorch anyway (and may be broadcasting)
             if ds.strict:
                 bounds = {}
                 if ds.min is not None or ds.max is not None:
@@ -188,16 +212,16 @@ def mark_value(value: Any, spec: Any) -> None:
         return
     if isinstance(value, (list, tuple)):
         for k, v in enumerate(value):
-            mark_value(v, spec_at(spec, k))
+            mark_value(v, spec_at(spec, k), static_by_default)
     elif isinstance(value, dict):
         for k, v in value.items():
-            mark_value(v, spec_at(spec, k))
+            mark_value(v, spec_at(spec, k), static_by_default)
     # ints/floats are made symbolic by dynamic=True; nothing to mark
 
 
-def mark_arguments(bound: inspect.BoundArguments, spec: Any) -> None:
+def mark_arguments(bound: inspect.BoundArguments, spec: Any, static_by_default: bool = False) -> None:
     for name, value in bound.arguments.items():
-        mark_value(value, spec_for_argument(spec, name))
+        mark_value(value, spec_for_argument(spec, name), static_by_default)
 
 
 def install_marking(compiled: Callable, original: Callable, spec: Any) -> Callable:

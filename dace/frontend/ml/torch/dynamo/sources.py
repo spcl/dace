@@ -336,3 +336,38 @@ def symbol_names_for_graph(
             if ds is not None and sym is not None:
                 assign(sym.name, ds.name or _default_name(ref.root, ref.path, None))
     return names
+
+
+def symbol_names_from_sources(shape_env, spec: Any, signature: inspect.Signature | None = None) -> dict[str, str]:
+    """
+    Maps Dynamo shape symbols to user-facing names from the shape environment's record of where each symbol came from
+    (``var_to_sources``), instead of from a graph. Usable when tracing failed before Dynamo produced a graph, e.g., to
+    name the symbols in an error message.
+
+    :param shape_env: The ``ShapeEnv`` of the compilation.
+    :param spec: A normalized specification (see :func:`.shapes.normalize`).
+    :param signature: Signature of the compiled callable (see :func:`symbol_names_for_graph`).
+    :return: Dict from Dynamo symbol name to DaCe symbol name, for the symbols the specification names.
+    """
+    if spec is None:
+        return {}
+    names: dict[str, str] = {}
+    resolver = SourceResolver(signature)
+    for sym, sym_sources in shape_env.var_to_sources.items():
+        for source in sym_sources:
+            ref = resolver.resolve(source)
+            if ref.root is None or ref.kind not in ("argument", "size"):
+                continue
+            entry = shapes.spec_for_argument(spec, ref.root)
+            for key in ref.path:
+                entry = shapes.spec_at(entry, key)
+            if entry is None:
+                continue
+            if ref.kind == "size":
+                ds = shapes.dim_spec(entry, ref.dim)
+            else:  # An integer argument
+                ds = shapes.parse_dim(entry) if entry != shapes.ALL else shapes.DimSpec(strict=False)
+            if ds is not None:
+                names[str(sym)] = ds.name or _default_name(ref.root, ref.path, ref.dim)
+                break
+    return names

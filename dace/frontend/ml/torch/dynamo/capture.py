@@ -11,11 +11,16 @@ come from.
 
 import dataclasses
 import inspect
-from collections.abc import Callable, Sequence
+import re
+import traceback
+from collections.abc import Callable, Iterator, Sequence
 from typing import Any
 
 import torch
 from torch._dynamo.exc import BackendCompilerFailed
+from torch._guards import TracingContext
+from torch._subclasses.fake_tensor import FakeTensor, FakeTensorMode
+from torch.fx.experimental.symbolic_shapes import ShapeEnv
 
 from dace.sdfg import SDFG
 
@@ -23,7 +28,17 @@ from . import shapes
 from .backend import CAPTURE_CONFIG, DaceBackend, DaceBackendOptions
 from .importer import GraphImporter, ImportResult
 from .runtime import CompiledGraph
-from .sources import CapturedGuard, GraphDescription, SourceRef, shape_assumptions
+from .sources import CapturedGuard, GraphDescription, SourceRef, shape_assumptions, symbol_names_from_sources
+
+
+class CaptureError(RuntimeError):
+    """
+    TorchDynamo or AOTAutograd could not trace the callable given to :func:`capture`.
+
+    The message states the failing condition with concrete sizes and the user's symbol names in place of Dynamo's
+    symbols (``s53``), followed by the lines of the model's code that led to it. The exception Dynamo raised is
+    chained as the cause; its internal stack trace is only kept with ``TORCHDYNAMO_VERBOSE=1``.
+    """
 
 
 @dataclasses.dataclass
@@ -112,6 +127,16 @@ class _CaptureComplete(Exception):
 class _CaptureBackend(DaceBackend):
     """A ``DaceBackend`` that stops after AOTAutograd produced the forward graph and returns it instead."""
 
+    def __init__(self, **options):
+        super().__init__(**options)
+        self.shape_env: ShapeEnv | None = None  #: Shape environment of the most recent Dynamo-level graph
+
+    def __call__(self, gm: torch.fx.GraphModule, example_inputs: list[Any]) -> Callable:
+        context = TracingContext.try_get()
+        if context is not None and context.fake_mode is not None:
+            self.shape_env = context.fake_mode.shape_env
+        return super().__call__(gm, example_inputs)
+
     def _compile_forward(
         self, gm: torch.fx.GraphModule, example_inputs: list[Any], description: GraphDescription | None = None
     ) -> Callable:
@@ -154,6 +179,11 @@ def capture(
     The whole call must be captured into one graph: graph breaks raise Dynamo's error, as with ``fullgraph=True``.
     Gradients are not recorded (inference graph).
 
+    With a per-argument ``dynamic_shapes`` specification, only the named dimensions are symbolic: every other
+    dimension of the tensor arguments is marked static, so that it is a plain integer in the graph, in the shape
+    guards, and in error messages (integer arguments stay symbolic). ``'all'`` and ``None`` leave the decision to
+    ``dynamic``.
+
     :param fn: The module or function.
     :param args: Example arguments. Only their metadata (shapes, strides, dtypes, devices) is used.
     :param dynamic: Passed to ``torch.compile``; ``True`` makes sizes symbolic.
@@ -166,6 +196,7 @@ def capture(
                              of tracing them as 0-d tensor inputs.
     :param kwargs: Example keyword arguments.
     :return: The captured program.
+    :raises CaptureError: If TorchDynamo or AOTAutograd cannot trace the call.
     """
     target = fn.forward if isinstance(fn, torch.nn.Module) else fn
     signature = inspect.signature(target)
@@ -181,7 +212,7 @@ def capture(
     )
     compiled = torch.compile(fn, backend=backend, dynamic=dynamic, fullgraph=True)
     if spec is not None:
-        shapes.mark_arguments(signature.bind(*args, **kwargs), spec)
+        shapes.mark_arguments(signature.bind(*args, **kwargs), spec, static_by_default=spec != shapes.ALL)
     try:
         with torch.no_grad(), torch._dynamo.config.patch(specialize_float=specialize_float, **CAPTURE_CONFIG):
             compiled(*args, **kwargs)
@@ -192,5 +223,90 @@ def capture(
             program.signature = signature
             program.global_vars = target.__globals__
             return program
-        raise
+        raise _capture_error(fn, ex, backend, spec, signature) from _without_internal_frames(ex)
+    except Exception as ex:
+        raise _capture_error(fn, ex, backend, spec, signature) from _without_internal_frames(ex)
     raise RuntimeError("TorchDynamo did not compile the callable (it may have been skipped); nothing was captured")
+
+
+# ---------------------------------------------------------------------------------------------- error reporting
+_DYNAMO_SYMBOL = re.compile(r"\bs\d+\b")
+#: Dynamo appends the user frames and its own hints to the message; they are reported separately
+_DYNAMO_MESSAGE_SUFFIXES = ("\nfrom user code:", "\nSet TORCHDYNAMO_VERBOSE=1")
+
+
+def _capture_error(fn: Callable, ex: BaseException, backend: _CaptureBackend, spec: Any, signature) -> CaptureError:
+    """Translates an exception of ``torch.compile`` into a :class:`CaptureError` (see its documentation)."""
+    what = type(fn).__name__ if isinstance(fn, torch.nn.Module) else getattr(fn, "__qualname__", repr(fn))
+    innermost = list(_exception_chain(ex))[-1]
+    message = str(innermost)
+    for suffix in _DYNAMO_MESSAGE_SUFFIXES:
+        message = message.split(suffix)[0]
+    message = message.strip()
+    shape_env = backend.shape_env or _shape_env_in(ex)
+    if shape_env is not None:
+        names = symbol_names_from_sources(shape_env, spec, signature)
+        if backend.last_description is not None:
+            names.update(backend.last_description.symbol_names)
+        message = _substitute_symbols(message, shape_env, names)
+    lines = [f"Capturing {what} failed: {type(innermost).__name__}: {message}"]
+    frames = next((e.real_stack for e in _exception_chain(ex) if getattr(e, "real_stack", None)), None)
+    if frames:
+        lines.append("from user code:")
+        lines.append("".join(traceback.format_list(frames)).rstrip())
+    lines.append("Set TORCHDYNAMO_VERBOSE=1 for the complete stack trace.")
+    return CaptureError("\n".join(lines))
+
+
+def _exception_chain(ex: BaseException) -> Iterator[BaseException]:
+    """The exception and the exceptions it was raised from (or during), outermost first."""
+    seen = set()
+    while ex is not None and id(ex) not in seen:
+        seen.add(id(ex))
+        yield ex
+        ex = ex.__cause__ or ex.__context__
+
+
+def _without_internal_frames(ex: BaseException) -> BaseException:
+    """
+    Drops the stack traces of ``ex`` and the exceptions it was raised from unless ``TORCHDYNAMO_VERBOSE=1`` (Dynamo's
+    own convention): without it, the traceback consists of Dynamo's internals.
+    """
+    if not torch._dynamo.config.verbose:
+        for e in _exception_chain(ex):
+            e.__traceback__ = None
+    return ex
+
+
+def _shape_env_in(ex: BaseException) -> ShapeEnv | None:
+    """The shape environment of the fake tensors and symbolic scalars in the frames the exception passed through."""
+    for e in _exception_chain(ex):
+        tb = e.__traceback__
+        while tb is not None:
+            for value in list(tb.tb_frame.f_locals.values()):
+                shape_env = _shape_env_of(value)
+                if shape_env is not None:
+                    return shape_env
+            tb = tb.tb_next
+    return None
+
+
+def _shape_env_of(value: Any) -> ShapeEnv | None:
+    if isinstance(value, ShapeEnv):
+        return value
+    if isinstance(value, FakeTensorMode):
+        return value.shape_env
+    if isinstance(value, FakeTensor):
+        return value.fake_mode.shape_env
+    if isinstance(value, (torch.SymInt, torch.SymFloat, torch.SymBool)):
+        return value.node.shape_env
+    return None
+
+
+def _substitute_symbols(message: str, shape_env: ShapeEnv, names: dict[str, str]) -> str:
+    """Replaces Dynamo's symbols in ``message`` by the user's names, or by their example values (hints) if unnamed."""
+    hints = getattr(shape_env, "backed_var_to_val", None)
+    if hints is None:  # pragma: no cover - older torch
+        hints = shape_env.var_to_val
+    spelling = {str(sym): names.get(str(sym), str(value)) for sym, value in hints.items()}
+    return _DYNAMO_SYMBOL.sub(lambda match: spelling.get(match.group(0), match.group(0)), message)

@@ -31,7 +31,7 @@ from dace.sdfg import SDFG
 from .capture import CapturedProgram, capture
 from .context import sanitize_name
 from .dtypes import to_torch_dtype
-from .shapes import DimSpec
+from .shapes import ALL, DimSpec
 from .sources import CapturedGuard, SourceRef
 from .symbols import free_symbol_names
 
@@ -177,9 +177,11 @@ def example_arguments(arguments: dict[str, Any]) -> tuple[dict[str, Any], dict[s
     ``dynamic_shapes`` specification that names the resulting Dynamo symbols after the DaCe symbols.
 
     Symbolic sizes get distinct example values (hints) of at least 2 that differ from every static size of the
-    arguments, so that Dynamo neither specializes them nor unifies them with unrelated sizes ("duck shaping").
-    Arguments that are integer scalars or symbols become symbolic integers named after the argument (or the element,
-    e.g., ``xs_0``).
+    arguments, so that Dynamo neither specializes them nor unifies them with unrelated sizes ("duck shaping"). Static
+    sizes stay static while tracing (plain integers in the graph, in shape guards, and in error messages); the
+    exception is an array with a static shape but symbolic strides, whose sizes are left symbolic so that its strides
+    are symbolic, too. Arguments that are integer scalars or symbols become symbolic integers named after the argument
+    (or the element, e.g., ``xs_0``).
 
     :return: A tuple of (example values by argument name, ``dynamic_shapes`` specification by argument name).
     """
@@ -240,6 +242,10 @@ def _example(
             for k, size in enumerate(value.shape)
             if symbolic.issymbolic(size)
         }
+        if not dims and any(symbolic.issymbolic(stride) for stride in value.strides):
+            # Dynamo infers the strides of a tensor with static sizes as constants: keep the sizes symbolic (anonymous,
+            # inferred from the descriptor by the program) so that the symbolic strides are not specialized
+            return _example_tensor(value, hints), ALL
         return _example_tensor(value, hints), dims
     if symbolic.issymbolic(value):
         return int(symbolic.evaluate(value, hints)), DimSpec(name=element, strict=False)

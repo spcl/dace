@@ -13,7 +13,7 @@ Usage::
 """
 
 from .backend import DaceBackend, dace_backend
-from .capture import CapturedProgram, capture
+from .capture import CapturedProgram, CaptureError, capture
 from .export import CompiledModule, sdfg_of, to_sdfg
 from .interface import compile
 from .training import DifferentiableProgram, TrainingStep, differentiable, training_step
@@ -27,6 +27,7 @@ __all__ = [
     "CompiledModule",
     "capture",
     "CapturedProgram",
+    "CaptureError",
     "TrainingStep",
     "training_step",
     "DifferentiableProgram",
