@@ -216,17 +216,17 @@ class LoopLocalMemoryReduction(ppl.Pass):
         all_write_indices = list()
 
         read_edges = {
-            e for st in loop.all_states() for an in st.data_nodes() if an.data == array_name for e in st.out_edges(an)
+            e for st in loop.states() for an in st.data_nodes() if an.data == array_name for e in st.out_edges(an)
         }
         uncond_write_edges = {
             e
-            for st in loop.all_states()
+            for st in loop.states()
             for an in st.data_nodes()
             if an.data == array_name and an not in self.cond_unique
             for e in st.in_edges(an)
         }
         all_write_edges = {
-            e for st in loop.all_states() for an in st.data_nodes() if an.data == array_name for e in st.in_edges(an)
+            e for st in loop.states() for an in st.data_nodes() if an.data == array_name for e in st.in_edges(an)
         }
 
         for edge in read_edges:
@@ -303,6 +303,15 @@ class LoopLocalMemoryReduction(ppl.Pass):
             if a <= -1:
                 span = (read_ub - write_ub) / (-a)
                 cond = uncond_write_ub < read_lb  # At least one write index must be lower than all read indices
+
+            # If we have a span of one, it's enough that reads happen after writes in the loop.
+            if span == 0:
+                cond = all(
+                    st.in_degree(an) > 0 and st.out_degree(an) > 0
+                    for st in loop.states()
+                    for an in st.data_nodes()
+                    if an.data == array_name
+                )
 
             # Relaxation: when writes are not strictly past all reads, the buffer can
             # still be safely reused if every read happens after every write within the
@@ -410,7 +419,7 @@ class LoopLocalMemoryReduction(ppl.Pass):
 
         read_locations = []
         write_locations = []
-        for st in loop.all_states():
+        for st in loop.states():
             for an in st.data_nodes():
                 if an.data != array_name:
                     continue
@@ -485,7 +494,7 @@ class LoopLocalMemoryReduction(ppl.Pass):
         if loop in self.out_of_loop_states_cache:
             out_of_loop_states = self.out_of_loop_states_cache[loop]
         else:
-            loop_states = set(loop.all_states())
+            loop_states = set(loop.states())
             states_reach = self.states_reach[sdfg.cfg_id]
             out_of_loop_states = {v for st in loop_states for v in states_reach[st] if v not in loop_states}
             self.out_of_loop_states_cache[loop] = out_of_loop_states
@@ -498,7 +507,7 @@ class LoopLocalMemoryReduction(ppl.Pass):
 
     def _get_max_indices_before_loop(self, array_name: str, sdfg: sd.SDFG, loop: LoopRegion) -> list[int]:
         # Collect all read and write subsets of the array before the loop.
-        loop_states = set(loop.all_states())
+        loop_states = set(loop.states())
         subsets = set()
         for v1 in self.states_reach.values():
             for k2, v2 in v1.items():
@@ -655,10 +664,10 @@ class LoopLocalMemoryReduction(ppl.Pass):
 
         # Replace all read and write edges in the loop with modulo accesses.
         read_edges = {
-            e for st in sdfg.all_states() for an in st.data_nodes() if an.data == array_name for e in st.out_edges(an)
+            e for st in sdfg.states() for an in st.data_nodes() if an.data == array_name for e in st.out_edges(an)
         }
         write_edges = {
-            e for st in sdfg.all_states() for an in st.data_nodes() if an.data == array_name for e in st.in_edges(an)
+            e for st in sdfg.states() for an in st.data_nodes() if an.data == array_name for e in st.in_edges(an)
         }
 
         # XXX: We use abs() because pystr_to_symbolic() rewrites modulo operations, e.g. (-i + 32) % 31 -> Mod(1 - i, 31), which changes the behavior as C++ modulo differs from Python for negative numbers.

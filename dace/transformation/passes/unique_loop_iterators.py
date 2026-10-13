@@ -94,14 +94,12 @@ class UniqueLoopIterators(ppl.Pass):
         # below -- ``SDFG.replace_dict`` already renamed its descriptors.)
         if not isinstance(cfg, dace.SDFG):
             owner = cfg.sdfg
-            for aname in {
-                n.data for st in cfg.all_states() for n in st.nodes() if isinstance(n, dace.nodes.AccessNode)
-            }:
+            for aname in {n.data for st in cfg.states() for n in st.nodes() if isinstance(n, dace.nodes.AccessNode)}:
                 desc = owner.arrays.get(aname)
                 if desc is not None and old_name in {str(s) for s in desc.free_symbols}:
                     replace_properties_dict(desc, repl)
 
-        for state in cfg.all_states():
+        for state in cfg.states():
             for node in state.nodes():
                 if not isinstance(node, dace.nodes.NestedSDFG):
                     continue
@@ -285,7 +283,7 @@ class UniqueLoopIterators(ppl.Pass):
 
             self._next_id += 1
 
-        for state in sdfg.all_states():
+        for state in sdfg.states():
             for node in state.nodes():
                 if isinstance(node, dace.nodes.NestedSDFG):
                     renamed |= self._apply_recursive(node.sdfg)
@@ -320,7 +318,7 @@ class UniqueLoopIterators(ppl.Pass):
             for cfg in graph.all_control_flow_regions():
                 if isinstance(cfg, LoopRegion) and cfg.loop_variable:
                     max_id = max(max_id, _id_of(cfg.loop_variable))
-            for state in graph.all_states():
+            for state in graph.states():
                 for node in state.nodes():
                     if isinstance(node, dace.nodes.NestedSDFG):
                         stack.append(node.sdfg)
