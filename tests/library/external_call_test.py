@@ -59,6 +59,15 @@ def total(a: dace.float64[N], out: dace.float64[1]):
     out[0] = np.sum(a)
 
 
+@dace.program
+def strided_sum(a: dace.float64[N], out: dace.float64[1], inc: dace.int64):
+    s = 0.0
+    for i in range(N - 1):
+        off = inc + i
+        s = s + a[off]
+    out[0] = s
+
+
 def outlined(program, name: str):
     sdfg = program.to_sdfg(simplify=True)
     sdfg.name = name
@@ -329,3 +338,13 @@ def test_a_library_node_becomes_a_call_whose_region_keeps_its_implementation():
     (reduce,) = [n for n, parent in call.standalone_sdfg.all_nodes_recursive() if isinstance(n, Reduce)]
     assert reduce.implementation == "CPU"
     assert np.isclose(out[0], a.sum())
+
+
+def test_a_scalar_argument_the_nest_reads_as_a_symbol_crosses_by_value():
+    sdfg, (call,) = outlined(strided_sum, "extcall_scalar_symbol")
+    a, out = np.arange(float(SIZE)), np.zeros(1)
+
+    sdfg(a=a, out=out, inc=1, N=SIZE)
+
+    assert "inc" in call.abi_order and "int64_t inc" in call.signature
+    assert out[0] == a[1:].sum()

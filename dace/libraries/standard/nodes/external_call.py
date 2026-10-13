@@ -107,8 +107,12 @@ def data_param(node: "ExternalCall", arg: str, site: CallSite) -> tuple[str, str
 
 
 def symbol_param(arg: str, defined: dict[str, dtypes.typeclass], sdfg: dace.SDFG) -> str:
-    """A symbol argument, typed where it is defined at the call: an SDFG symbol, an inter-state assignment, or the
-    iterator of a loop or map around the call."""
+    """A symbol argument, typed where it is defined at the call: an SDFG symbol, an inter-state assignment, the
+    iterator of a loop or map around the call, or a scalar container the nest reads as a symbol (a C variable in
+    scope at the call, passed by value)."""
+    scalar = sdfg.arrays.get(arg)
+    if arg not in defined and isinstance(scalar, data.Scalar):
+        return f"{scalar.dtype.ctype} {arg}"
     if arg not in defined:
         raise ValueError(
             f"ExternalCall argument {arg!r} is neither a connected container nor a symbol defined at the call in "
