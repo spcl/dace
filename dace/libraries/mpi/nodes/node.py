@@ -2,9 +2,15 @@
 
 from typing import Any
 
-from dace import data, dtypes
+from dace import data, dtypes, symbolic
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
+
+
+def count_expression(count: symbolic.SymbolicType) -> str:
+    """An element count as a parenthesized C++ expression: a code template divides or multiplies it, and an
+    extent may hold a floor division (Python's ``//`` is a C++ comment)."""
+    return f"({symbolic.symstr(count, cpp_mode=True)})"
 
 
 def input_descriptor_name(node: nodes.Node, state: Any, connector: str) -> str | None:

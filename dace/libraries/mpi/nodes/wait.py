@@ -5,7 +5,6 @@ import dace.sdfg.nodes
 from dace import dtypes
 from dace.libraries.mpi import environments
 from dace.libraries.mpi.nodes.node import MPINode
-from dace.ordered import OrderedSet
 from dace.transformation.transformation import ExpandTransformation
 
 
@@ -48,9 +47,7 @@ class Wait(MPINode):
     n = dace.properties.SymbolicProperty(allow_none=True, default=None, category="Semantics")
 
     def __init__(self, name, *args, **kwargs):
-        super().__init__(
-            name, *args, inputs=OrderedSet(["_request"]), outputs=OrderedSet(("_stat_tag", "_stat_source")), **kwargs
-        )
+        super().__init__(name, *args, inputs=["_request"], outputs=["_stat_tag", "_stat_source"], **kwargs)
 
     def validate(self, sdfg, state):
         """
@@ -118,7 +115,7 @@ class Waitall(MPINode):
     n = dace.properties.SymbolicProperty(allow_none=True, default=None, category="Semantics")
 
     def __init__(self, name, *args, **kwargs):
-        super().__init__(name, *args, inputs=OrderedSet(["_request"]), outputs={}, **kwargs)
+        super().__init__(name, *args, inputs=["_request"], outputs={}, **kwargs)
 
     def validate(self, sdfg, state):
         """

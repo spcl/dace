@@ -2,7 +2,6 @@
 from dace import library
 from dace.libraries.mpi import environments
 from dace.libraries.mpi.nodes.node import MPINode, integer_output, mpi_tasklet, resolve_comm
-from dace.ordered import OrderedSet
 from dace.transformation.transformation import ExpandTransformation
 
 
@@ -25,7 +24,7 @@ class CommRank(MPINode):
     default_implementation = "MPI"
 
     def __init__(self, name, *args, **kwargs):
-        super().__init__(name, *args, inputs=set(), outputs=OrderedSet(["_rank"]), **kwargs)
+        super().__init__(name, *args, inputs=set(), outputs=["_rank"], **kwargs)
 
     def validate(self, sdfg, state):
         integer_output(self, state, sdfg, "_rank")

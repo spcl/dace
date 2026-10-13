@@ -2,7 +2,6 @@
 from dace import dtypes, library
 from dace.libraries.mpi import environments
 from dace.libraries.mpi.nodes.node import MPINode, integer_input, mpi_tasklet
-from dace.ordered import OrderedSet
 from dace.transformation.transformation import ExpandTransformation
 
 
@@ -26,7 +25,7 @@ class CommF2c(MPINode):
     default_implementation = "MPI"
 
     def __init__(self, name, *args, **kwargs):
-        super().__init__(name, *args, inputs=OrderedSet(["_fcomm"]), outputs=OrderedSet(["_comm"]), **kwargs)
+        super().__init__(name, *args, inputs=["_fcomm"], outputs=["_comm"], **kwargs)
 
     def validate(self, sdfg, state):
         integer_input(self, state, sdfg, "_fcomm")

@@ -3,8 +3,13 @@ import dace.library
 import dace.properties
 import dace.sdfg.nodes
 from dace.libraries.mpi import environments
-from dace.libraries.mpi.nodes.node import MPINode, expanded_input_connectors, resolve_comm, validate_integer_descriptor
-from dace.ordered import OrderedSet
+from dace.libraries.mpi.nodes.node import (
+    MPINode,
+    count_expression,
+    expanded_input_connectors,
+    resolve_comm,
+    validate_integer_descriptor,
+)
 from dace.transformation.transformation import ExpandTransformation
 
 
@@ -55,8 +60,8 @@ class Sendrecv(MPINode):
         super().__init__(
             name,
             *args,
-            inputs=OrderedSet(("_inbuffer", "_dest", "_src", "_sendtag", "_recvtag")),
-            outputs=OrderedSet(["_outbuffer"]),
+            inputs=["_inbuffer", "_dest", "_src", "_sendtag", "_recvtag"],
+            outputs=["_outbuffer"],
             **kwargs,
         )
 
@@ -95,6 +100,6 @@ class Sendrecv(MPINode):
         if not dace.libraries.mpi.utils.is_access_contiguous(recv_memlet, sdfg.arrays[recv_memlet.data]):
             raise NotImplementedError("Sendrecv: non-contiguous recv buffer; run MpiPackUnpack first.")
 
-        send_count = "*".join(str(e) for e in send_memlet.subset.size_exact())
-        recv_count = "*".join(str(e) for e in recv_memlet.subset.size_exact())
+        send_count = count_expression(send_memlet.subset.num_elements_exact())
+        recv_count = count_expression(recv_memlet.subset.num_elements_exact())
         return (inbuffer, send_count), (outbuffer, recv_count), dest, src, sendtag, recvtag

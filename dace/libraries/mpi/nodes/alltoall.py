@@ -2,8 +2,7 @@
 import dace.library
 import dace.sdfg.nodes
 from dace.libraries.mpi import environments
-from dace.libraries.mpi.nodes.node import MPINode, expanded_input_connectors, resolve_comm
-from dace.ordered import OrderedSet
+from dace.libraries.mpi.nodes.node import MPINode, count_expression, expanded_input_connectors, resolve_comm
 from dace.transformation.transformation import ExpandTransformation
 
 
@@ -49,7 +48,7 @@ class Alltoall(MPINode):
     default_implementation = "MPI"
 
     def __init__(self, name, *args, **kwargs):
-        super().__init__(name, *args, inputs=OrderedSet(["_inbuffer"]), outputs=OrderedSet(["_outbuffer"]), **kwargs)
+        super().__init__(name, *args, inputs=["_inbuffer"], outputs=["_outbuffer"], **kwargs)
 
     def validate(self, sdfg, state):
         """
@@ -69,11 +68,9 @@ class Alltoall(MPINode):
         out_count_str = "XXX"
         for _, src_conn, _, _, data in state.out_edges(self):
             if src_conn == "_outbuffer":
-                dims = [str(e) for e in data.subset.size_exact()]
-                out_count_str = "*".join(dims)
+                out_count_str = count_expression(data.subset.num_elements_exact())
         for _, _, _, dst_conn, data in state.in_edges(self):
             if dst_conn == "_inbuffer":
-                dims = [str(e) for e in data.subset.size_exact()]
-                in_count_str = "*".join(dims)
+                in_count_str = count_expression(data.subset.num_elements_exact())
 
         return (inbuffer, in_count_str), (outbuffer, out_count_str)

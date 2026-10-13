@@ -72,10 +72,48 @@ def test_mpi(implementation, dtype):
         raise (ValueError("The received values are not what I expected on root."))
 
 
+def make_compound_extents_sdfg():
+    sdfg = dace.SDFG("mpi_alltoall_compound_extents")
+    state = sdfg.add_state("dataflow")
+    shape = [dace.symbol("p"), dace.symbolic.pystr_to_symbolic("(m + 1) // 2 + 3")]
+    for name in ("inbuf", "outbuf"):
+        sdfg.add_array(name, shape, dace.float64)
+    node = mpi.nodes.alltoall.Alltoall("alltoall")
+    whole = {name: Memlet.from_array(name, sdfg.arrays[name]) for name in ("inbuf", "outbuf")}
+    state.add_memlet_path(state.add_access("inbuf"), node, dst_conn="_inbuffer", memlet=whole["inbuf"])
+    state.add_memlet_path(node, state.add_access("outbuf"), src_conn="_outbuffer", memlet=whole["outbuf"])
+    return sdfg
+
+
+@pytest.mark.mpi
+def test_mpi_counts_of_compound_extents():
+    """Extents with a sum and a floor division: the count is one C++ expression of the whole buffer."""
+    from mpi4py import MPI as MPI4PY
+
+    comm = MPI4PY.COMM_WORLD
+    rank, commsize = comm.Get_rank(), comm.Get_size()
+    if commsize < 2:
+        raise ValueError("This test is supposed to be run with at least two processes!")
+    mpi_sdfg = None
+    for r in range(commsize):
+        if r == rank:
+            mpi_sdfg = make_compound_extents_sdfg().compile()
+        comm.Barrier()
+
+    m = 5
+    width = (m + 1) // 2 + 3
+    A = np.arange(commsize * width, dtype=np.float64).reshape(commsize, width) + 100 * rank
+    B = np.zeros((commsize, width))
+    mpi_sdfg(inbuf=A, outbuf=B, p=commsize, m=m)
+    expected = np.stack([np.arange(rank * width, (rank + 1) * width) + 100.0 * src for src in range(commsize)])
+    assert np.array_equal(B, expected)
+
+
 ###############################################################################
 
 if __name__ == "__main__":
     test_mpi("MPI", dace.float32)
     test_mpi("MPI", dace.float64)
+    test_mpi_counts_of_compound_extents()
 
 ###############################################################################

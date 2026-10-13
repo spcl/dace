@@ -3,8 +3,7 @@ import dace.library
 import dace.properties
 import dace.sdfg.nodes
 from dace.libraries.mpi import environments
-from dace.libraries.mpi.nodes.node import MPINode, expanded_input_connectors, resolve_comm
-from dace.ordered import OrderedSet
+from dace.libraries.mpi.nodes.node import MPINode, count_expression, expanded_input_connectors, resolve_comm
 from dace.transformation.transformation import ExpandTransformation
 
 
@@ -58,9 +57,7 @@ class Reduce(MPINode):
     op = dace.properties.Property(dtype=str, default="MPI_SUM", category="Semantics")
 
     def __init__(self, name, op="MPI_SUM", *args, **kwargs):
-        super().__init__(
-            name, *args, inputs=OrderedSet(["_inbuffer", "_root"]), outputs=OrderedSet(["_outbuffer"]), **kwargs
-        )
+        super().__init__(name, *args, inputs=["_inbuffer", "_root"], outputs=["_outbuffer"], **kwargs)
         self.op = op
 
     def validate(self, sdfg, state):
@@ -92,7 +89,6 @@ class Reduce(MPINode):
         count_str = "XXX"
         for _, src_conn, _, _, data in state.out_edges(self):
             if src_conn == "_outbuffer":
-                dims = [str(e) for e in data.subset.size_exact()]
-                count_str = "*".join(dims)
+                count_str = count_expression(data.subset.num_elements_exact())
 
         return (inbuffer, count_str), outbuffer, root, in_place

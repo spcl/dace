@@ -3,7 +3,6 @@ from dace import dtypes, library, properties, subsets, symbolic
 from dace.codegen.targets import cpp
 from dace.libraries.mpi import environments
 from dace.libraries.mpi.nodes.node import MPINode, expanded_input_connectors, resolve_comm
-from dace.ordered import OrderedSet
 from dace.sdfg import nodes
 from dace.transformation.transformation import ExpandTransformation
 
@@ -102,7 +101,7 @@ class Redistribute(MPINode):
     redistr = properties.DataProperty(default="tmp", category="General")
 
     def __init__(self, name, redistr="tmp", *args, **kwargs):
-        super().__init__(name, *args, inputs=OrderedSet(["_inp_buffer"]), outputs=OrderedSet(["_out_buffer"]), **kwargs)
+        super().__init__(name, *args, inputs=["_inp_buffer"], outputs=["_out_buffer"], **kwargs)
         self.redistr = redistr
 
     def validate(self, sdfg, state):
