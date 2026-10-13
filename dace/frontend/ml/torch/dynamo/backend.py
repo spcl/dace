@@ -257,6 +257,7 @@ class DaceBackend:
         if self.options.save_sdfg:
             os.makedirs(self.options.save_sdfg, exist_ok=True)
             sdfg.save(os.path.join(self.options.save_sdfg, sdfg.name + ".sdfgz"))
+        select_implementations(sdfg)
         if self.options.auto_optimize:
             from dace.transformation.auto import auto_optimize as aopt  # Deferred: imports the transformation library
 
@@ -300,6 +301,16 @@ def sdfg_device(sdfg):
         if desc.storage == dtypes.StorageType.GPU_Global:
             return dtypes.DeviceType.GPU
     return dtypes.DeviceType.CPU
+
+
+def select_implementations(sdfg) -> None:
+    """Chooses the library-node implementations for the device of ``sdfg``: on the GPU the vendor libraries
+    (cuBLAS/cuDNN or rocBLAS/MIOpen) through ``set_fast_implementations``; on the CPU the defaults are kept."""
+    if sdfg_device(sdfg) != dtypes.DeviceType.GPU:
+        return
+    from dace.transformation.auto import auto_optimize as aopt  # Deferred: imports the transformation library
+
+    aopt.set_fast_implementations(sdfg, dtypes.DeviceType.GPU)
 
 
 def _print_op_histogram(gm: torch.fx.GraphModule) -> None:

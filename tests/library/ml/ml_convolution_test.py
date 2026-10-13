@@ -213,7 +213,7 @@ def test_save_roundtrip(tmp_path):
     assert node2.groups == 2
 
 
-@pytest.mark.parametrize("impl", ["cudnn", "miopen"])
+@pytest.mark.parametrize("impl", ["cuDNN", "MIOpen"])
 def test_gpu_codegen(impl):
     """The GPU expansions should at least generate code (requires a CUDA/HIP toolchain to compile)."""
     strides, pads, dils, groups = (1, 1), (1, 1), (1, 1), 1
@@ -229,8 +229,161 @@ def test_gpu_codegen(impl):
     except Exception as e:  # pragma: no cover - environment dependent
         pytest.skip(f"{impl} codegen needs a GPU toolchain that is absent: {e}")
     joined = "\n".join(c.clean_code for c in code)
-    fn = "cudnnConvolutionForward" if impl == "cudnn" else "miopenConvolutionForward"
+    fn = "cudnnConvolutionForward" if impl == "cuDNN" else "miopenConvolutionForward"
     assert fn in joined
+    bias = "cudnnAddTensor" if impl == "cuDNN" else "miopenConvolutionForwardBias"
+    assert bias in joined
+    assert "ConvolutionPlan" in joined and "Configure(" in joined
+
+
+def _gpu_implementation() -> str:
+    from dace.codegen.common import get_gpu_backend
+
+    return {"cuda": "cuDNN", "hip": "MIOpen"}[get_gpu_backend()]
+
+
+def _channels_last_strides(shape):
+    """Strides of a dense (N, spatial..., C) layout viewed as (N, C, spatial...), like ``torch.channels_last``."""
+    n, c, *spatial = shape
+    plane = int(np.prod(spatial))
+    strides = [c * plane, 1]
+    inner = c
+    for s in reversed(spatial):
+        strides.insert(2, inner)
+        inner *= s
+    return strides
+
+
+@pytest.mark.parametrize("impl", ["cuDNN", "MIOpen"])
+def test_gpu_codegen_channels_last(impl):
+    """Channels-last activations and weights: cuDNN gets an NHWC filter layout, MIOpen NHWC descriptors throughout."""
+    xshape, wshape = (2, 8, 9, 7), (4, 8, 3, 3)
+    sdfg, yshape = _build_conv_sdfg(xshape, wshape, (1, 1), (1, 1), (1, 1), 1, False)
+    for name in ("x", "w", "y"):
+        desc = sdfg.arrays[name]
+        desc.storage = dtypes.StorageType.GPU_Global
+        desc.strides = _channels_last_strides(desc.shape)
+    node = next(x for s in sdfg.states() for x in s.nodes() if isinstance(x, ml.Convolution))
+    node.implementation = impl
+    sdfg.expand_library_nodes()
+    joined = "\n".join(c.clean_code for c in sdfg.generate_code())
+    if impl == "cuDNN":
+        assert "CUDNN_TENSOR_NHWC" in joined and "CUDNN_TENSOR_NCHW" not in joined
+    else:
+        assert joined.count("miopenSetNdTensorDescriptorWithLayout") == 3
+        assert "miopenTensorNHWC" in joined and "miopenTensorNCHW" not in joined
+
+
+@pytest.mark.parametrize("impl", ["cuDNN", "MIOpen"])
+def test_gpu_codegen_mixed_layouts_use_strides(impl):
+    """A channels-last input with contiguous weights: MIOpen falls back to stride descriptors, cuDNN keeps NCHW filters."""
+    xshape, wshape = (2, 8, 9, 7), (4, 8, 3, 3)
+    sdfg, yshape = _build_conv_sdfg(xshape, wshape, (1, 1), (1, 1), (1, 1), 1, False)
+    for desc in sdfg.arrays.values():
+        desc.storage = dtypes.StorageType.GPU_Global
+    sdfg.arrays["x"].strides = _channels_last_strides(xshape)
+    node = next(x for s in sdfg.states() for x in s.nodes() if isinstance(x, ml.Convolution))
+    node.implementation = impl
+    sdfg.expand_library_nodes()
+    joined = "\n".join(c.clean_code for c in sdfg.generate_code())
+    if impl == "cuDNN":
+        assert "CUDNN_TENSOR_NCHW" in joined
+    else:
+        assert "miopenSetNdTensorDescriptorWithLayout" not in joined
+        assert "{504, 1, 56, 8}" in joined  # the input strides reach the descriptor
+
+
+@pytest.mark.parametrize("impl", ["cuDNN", "MIOpen"])
+def test_gpu_codegen_conv1d_promoted(impl):
+    """Both libraries need two spatial dimensions: a 1-D convolution is described as (N, C, 1, L)."""
+    sdfg, yshape = _build_conv_sdfg((3, 4, 20), (6, 4, 3), (2,), (1,), (1,), 1, True)
+    for desc in sdfg.arrays.values():
+        desc.storage = dtypes.StorageType.GPU_Global
+    node = next(x for s in sdfg.states() for x in s.nodes() if isinstance(x, ml.Convolution))
+    node.implementation = impl
+    sdfg.expand_library_nodes()
+    joined = "\n".join(c.clean_code for c in sdfg.generate_code())
+    assert "{3, 4, 1, 20}" in joined and "{6, 4, 1, 3}" in joined  # promoted input and weight sizes
+    assert "{0, 1}" in joined and "{1, 2}" in joined  # promoted padding and stride
+    if impl == "MIOpen":
+        assert "miopenTensorNCHW" in joined
+
+
+def test_cudnn_rejects_unsupported_weight_layout():
+    sdfg, _ = _build_conv_sdfg((2, 3, 8, 8), (4, 3, 3, 3), (1, 1), (1, 1), (1, 1), 1, False)
+    for desc in sdfg.arrays.values():
+        desc.storage = dtypes.StorageType.GPU_Global
+    sdfg.arrays["w"].strides = [1, 4, 12, 36]  # column-major: neither NCHW nor NHWC
+    node = next(x for s in sdfg.states() for x in s.nodes() if isinstance(x, ml.Convolution))
+    node.implementation = "cuDNN"
+    with pytest.raises(NotImplementedError, match="channels-last"):
+        sdfg.expand_library_nodes()
+
+
+@pytest.mark.gpu
+def test_gpu_conv2d_grouped_bias_symbolic_batch():
+    """cuDNN/MIOpen on the GPU: grouped, biased, strided and dilated; the plan is rebuilt when the batch changes."""
+    strides, pads, dils, groups = (2, 1), (1, 1), (1, 2), 2
+    xshape, wshape = (4, 4, 11, 13), (6, 2, 3, 3)
+    N = dace.symbol("N")
+    sdfg, yshape = _build_conv_sdfg(xshape, wshape, strides, pads, dils, groups, True, nsym=N)
+    sdfg.apply_gpu_transformations()
+    node = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, ml.Convolution))
+    node.implementation = _gpu_implementation()
+    rng = np.random.default_rng(7)
+    w = rng.standard_normal(wshape).astype(np.float32)
+    b = rng.standard_normal((wshape[0],)).astype(np.float32)
+    for batch in (4, 2):  # a second, smaller batch reuses the compiled program and reconfigures the plan
+        x = rng.standard_normal((batch,) + xshape[1:]).astype(np.float32)
+        y = np.zeros((batch,) + tuple(yshape[1:]), np.float32)
+        sdfg(x=x, w=w, b=b, y=y, N=batch)
+        ref = _ref_conv(x, w, strides, pads, dils, groups, b)
+        assert np.allclose(y, ref, atol=1e-3, rtol=1e-4), np.max(np.abs(y - ref))
+
+
+@pytest.mark.gpu
+def test_gpu_conv2d_channels_last():
+    """cuDNN/MIOpen with channels-last input, weights and output (torch.channels_last)."""
+    strides, pads, dils, groups = (1, 1), (1, 1), (1, 1), 1
+    xshape, wshape = (2, 8, 9, 7), (4, 8, 3, 3)
+    sdfg, yshape = _build_conv_sdfg(xshape, wshape, strides, pads, dils, groups, True)
+    for name in ("x", "w", "y"):
+        sdfg.arrays[name].strides = _channels_last_strides(sdfg.arrays[name].shape)
+    sdfg.apply_gpu_transformations()
+    node = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, ml.Convolution))
+    node.implementation = _gpu_implementation()
+    rng = np.random.default_rng(8)
+
+    def channels_last(shape):  # a dense (N, H, W, C) buffer viewed as (N, C, H, W)
+        n, c, h, w = shape
+        return rng.standard_normal((n, h, w, c)).astype(np.float32).transpose(0, 3, 1, 2)
+
+    x, w = channels_last(xshape), channels_last(wshape)
+    b = rng.standard_normal((wshape[0],)).astype(np.float32)
+    y = np.zeros((yshape[0], yshape[2], yshape[3], yshape[1]), np.float32).transpose(0, 3, 1, 2)
+    with dace.config.set_temporary("compiler", "allow_view_arguments", value=True):
+        sdfg(x=x, w=w, b=b, y=y)
+    ref = _ref_conv(np.ascontiguousarray(x), np.ascontiguousarray(w), strides, pads, dils, groups, b)
+    assert np.allclose(y, ref, atol=1e-3, rtol=1e-4), np.max(np.abs(y - ref))
+
+
+@pytest.mark.gpu
+def test_gpu_conv1d():
+    """A 1-D convolution runs through the promoted (N, C, 1, L) descriptors."""
+    strides, pads, dils, groups = (2,), (1,), (1,), 1
+    xshape, wshape = (3, 4, 20), (6, 4, 3)
+    sdfg, yshape = _build_conv_sdfg(xshape, wshape, strides, pads, dils, groups, True)
+    sdfg.apply_gpu_transformations()
+    node = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, ml.Convolution))
+    node.implementation = _gpu_implementation()
+    rng = np.random.default_rng(9)
+    x = rng.standard_normal(xshape).astype(np.float32)
+    w = rng.standard_normal(wshape).astype(np.float32)
+    b = rng.standard_normal((wshape[0],)).astype(np.float32)
+    y = np.zeros(yshape, np.float32)
+    sdfg(x=x, w=w, b=b, y=y)
+    ref = _ref_conv(x, w, strides, pads, dils, groups, b)
+    assert np.allclose(y, ref, atol=1e-3, rtol=1e-4), np.max(np.abs(y - ref))
 
 
 if __name__ == "__main__":

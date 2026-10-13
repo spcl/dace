@@ -178,6 +178,9 @@ class TrainingStep(_ProgramCompiler):
         missing = [name for name in differentiated + [_RETURN] if _gradient_name(name) not in sdfg.arrays]
         if missing:
             raise ValueError(f"Automatic differentiation of {self.program.name} produced no gradient for {missing}")
+        from .backend import select_implementations  # Deferred: backend imports this module
+
+        select_implementations(sdfg)
         compiled = _Compiled(sdfg.compile(), differentiated, set(sdfg.arglist()))
         self.compile_count += 1
         self._compiled[key] = compiled
@@ -250,6 +253,10 @@ class DifferentiableProgram(_ProgramCompiler):
 
 def compile_pair(backward_pass: BackwardPass, outputs: list[str], differentiated: list[str]) -> SDFGPair:
     """Compiles the forward and backward SDFGs of ``backward_pass``."""
+    from .backend import select_implementations  # Deferred: backend imports this module
+
+    select_implementations(backward_pass.forward)
+    select_implementations(backward_pass.backward)
     return SDFGPair(
         backward_pass.forward.compile(),
         backward_pass.backward.compile(),

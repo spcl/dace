@@ -26,7 +26,7 @@ from torch.fx.experimental.symbolic_shapes import ShapeEnv
 from dace.sdfg import SDFG
 
 from . import shapes
-from .backend import CAPTURE_CONFIG, DaceBackend, DaceBackendOptions
+from .backend import CAPTURE_CONFIG, DaceBackend, DaceBackendOptions, select_implementations
 from .importer import GraphImporter, ImportResult
 from .runtime import CompiledGraph
 from .sources import (
@@ -78,6 +78,7 @@ class CapturedProgram:
         list of graph outputs. No guards are checked: the caller must respect :attr:`guards`.
         """
         result = self.import_graph(name)
+        select_implementations(result.sdfg)
         compiled = CompiledGraph(result.sdfg.compile(), result.inputs, result.outputs)
 
         def call(*args, **kwargs) -> list[Any]:

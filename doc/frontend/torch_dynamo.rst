@@ -138,9 +138,12 @@ How programs are lowered
 * **Library nodes.** Every other ATen operator becomes a library node of :mod:`dace.libraries.torch` (an ``ATenOp``
   whose connectors are named after the operator schema and whose remaining arguments are node properties), so the
   SDFG shows the operator itself and the decision how to implement it is taken when the SDFG is expanded. Convolution
-  and dropout have dedicated nodes (``Convolution``, ``NativeDropout``) whose ``ml`` expansion delegates to
-  :mod:`dace.libraries.ml` (pure, cuDNN and MIOpen implementations of convolution; a counter-based Philox generator
-  for dropout, seeded per call through the ``dace_random_seed`` symbol). Operators without any implementation stay in
+  and dropout have dedicated nodes (``Convolution``, ``NativeDropout``) that offer the implementations of the
+  :mod:`dace.libraries.ml` nodes (``pure``, ``cuDNN`` and ``MIOpen`` for convolution; a counter-based Philox generator
+  for dropout, seeded per call through the ``dace_random_seed`` symbol). On GPU programs the frontend selects the
+  vendor implementations automatically (cuBLAS/cuDNN or rocBLAS/MIOpen, through ``set_fast_implementations``; nothing
+  to configure); a specific implementation can still be forced by setting ``implementation`` on a node of the SDFG
+  returned by :func:`dace.ml.to_sdfg` before compiling. Operators without any implementation stay in
   the SDFG and raise an error naming the operator when it is expanded; an implementation is added by registering an
   expansion for the node (``dace.library.register_expansion``), without touching the frontend.
 * **Dynamic shapes.** Every symbolic size and stride produced by Dynamo (``s0``, ``s1``, ...) is a DaCe symbol with

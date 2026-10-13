@@ -261,290 +261,6 @@ class ExpandConvolutionPure(ExpandTransformation):
         return sdfg
 
 
-def _cudnn_dtype(dtype):
-    mapping = {
-        dtypes.float16: "CUDNN_DATA_HALF",
-        dtypes.float32: "CUDNN_DATA_FLOAT",
-        dtypes.float64: "CUDNN_DATA_DOUBLE",
-    }
-    if dtype not in mapping:
-        raise NotImplementedError(f"cuDNN convolution does not support dtype {dtype}")
-    return mapping[dtype]
-
-
-def _miopen_dtype(dtype):
-    mapping = {
-        dtypes.float16: "miopenHalf",
-        dtypes.float32: "miopenFloat",
-        dtypes.float64: "miopenDouble",
-    }
-    if dtype not in mapping:
-        raise NotImplementedError(f"MIOpen convolution does not support dtype {dtype}")
-    return mapping[dtype]
-
-
-def _c_array(values):
-    from dace.codegen.targets import cpp
-
-    return "{" + ", ".join(cpp.sym2cpp(v) for v in values) + "}"
-
-
-def _gpu_validate(node, x, w, y):
-    if node.transposed:
-        raise NotImplementedError("Transposed convolution is not implemented in the GPU expansions")
-    for desc, name in ((x, "_x"), (w, "_w"), (y, "_y")):
-        if desc.storage != dtypes.StorageType.GPU_Global:
-            raise ValueError(f"cuDNN/MIOpen convolution requires '{name}' to be in GPU_Global storage")
-
-
-@library.register_expansion(Convolution, "cudnn")
-class ExpandConvolutionCuDNN(ExpandTransformation):
-    """
-    cuDNN ``cudnnConvolutionForward`` expansion. Tensor descriptors are built
-    from the actual shapes and strides (``cudnnSetTensorNdDescriptor`` with
-    explicit strides), the forward algorithm is chosen via
-    ``cudnnGetConvolutionForwardAlgorithm_v7``, and the workspace is a scratch
-    allocation. Bias (when ``_b`` is connected) is added with ``cudnnAddTensor``.
-    """
-
-    environments = [env.cudnn.cuDNN]
-    uid = 0
-
-    @staticmethod
-    def expansion(node: "Convolution", parent_state: SDFGState, parent_sdfg: SDFG):
-        x, w, b, y = node.validate(parent_sdfg, parent_state)
-        _gpu_validate(node, x, w, y)
-        ndim = len(w.shape) - 2
-        has_bias = b is not None
-
-        tag = ExpandConvolutionCuDNN.uid
-        ExpandConvolutionCuDNN.uid += 1
-        xd = f"__state->conv_xDesc_{tag}"
-        yd = f"__state->conv_yDesc_{tag}"
-        wd = f"__state->conv_wDesc_{tag}"
-        cd = f"__state->conv_convDesc_{tag}"
-        bd = f"__state->conv_bDesc_{tag}"
-
-        fields = [
-            f"cudnnTensorDescriptor_t conv_xDesc_{tag};",
-            f"cudnnTensorDescriptor_t conv_yDesc_{tag};",
-            f"cudnnFilterDescriptor_t conv_wDesc_{tag};",
-            f"cudnnConvolutionDescriptor_t conv_convDesc_{tag};",
-        ]
-        if has_bias:
-            fields.append(f"cudnnTensorDescriptor_t conv_bDesc_{tag};")
-
-        cudnn_dt = _cudnn_dtype(y.dtype)
-        compute_dt = "CUDNN_DATA_FLOAT" if y.dtype == dtypes.float16 else cudnn_dt
-        nb = ndim + 2
-
-        x_dims, x_strides = _c_array(x.shape), _c_array(x.strides)
-        y_dims, y_strides = _c_array(y.shape), _c_array(y.strides)
-        w_dims = _c_array(w.shape)
-        pads, convstr, dils = _c_array(node.pads), _c_array(node.strides), _c_array(node.dilations)
-
-        init_code = f"""
-cudnnCreateTensorDescriptor(&{xd});
-cudnnCreateTensorDescriptor(&{yd});
-cudnnCreateFilterDescriptor(&{wd});
-cudnnCreateConvolutionDescriptor(&{cd});
-{{
-    int __xdims[] = {x_dims};
-    int __xstrides[] = {x_strides};
-    dace::ml::CheckCudnnError(cudnnSetTensorNdDescriptor({xd}, {cudnn_dt}, {nb}, __xdims, __xstrides));
-    int __ydims[] = {y_dims};
-    int __ystrides[] = {y_strides};
-    dace::ml::CheckCudnnError(cudnnSetTensorNdDescriptor({yd}, {cudnn_dt}, {nb}, __ydims, __ystrides));
-    int __wdims[] = {w_dims};
-    dace::ml::CheckCudnnError(cudnnSetFilterNdDescriptor({wd}, {cudnn_dt}, CUDNN_TENSOR_NCHW, {nb}, __wdims));
-    int __pads[] = {pads};
-    int __convstrides[] = {convstr};
-    int __dilations[] = {dils};
-    dace::ml::CheckCudnnError(cudnnSetConvolutionNdDescriptor({cd}, {ndim}, __pads, __convstrides, __dilations,
-        CUDNN_CROSS_CORRELATION, {compute_dt}));
-    dace::ml::CheckCudnnError(cudnnSetConvolutionGroupCount({cd}, {node.groups}));
-}}
-"""
-        exit_code = f"""
-cudnnDestroyTensorDescriptor({xd});
-cudnnDestroyTensorDescriptor({yd});
-cudnnDestroyFilterDescriptor({wd});
-cudnnDestroyConvolutionDescriptor({cd});
-"""
-        if has_bias:
-            b_dims = _c_array([1, w.shape[0]] + [1] * ndim)
-            b_strides = _c_array([w.shape[0]] + [1] * (ndim + 1))
-            init_code += f"""
-cudnnCreateTensorDescriptor(&{bd});
-{{
-    int __bdims[] = {b_dims};
-    int __bstrides[] = {b_strides};
-    dace::ml::CheckCudnnError(cudnnSetTensorNdDescriptor({bd}, {cudnn_dt}, {nb}, __bdims, __bstrides));
-}}
-"""
-            exit_code += f"cudnnDestroyTensorDescriptor({bd});\n"
-
-        code = (
-            env.cudnn.cuDNN.handle_setup_code(node)
-            + f"""
-const float __alpha = 1.0f, __beta = 0.0f;
-cudnnConvolutionFwdAlgoPerf_t __perf;
-int __returned = 0;
-dace::ml::CheckCudnnError(cudnnGetConvolutionForwardAlgorithm_v7(__dace_cudnn_handle, {xd}, {wd}, {cd}, {yd},
-    1, &__returned, &__perf));
-cudnnConvolutionFwdAlgo_t __algo = __perf.algo;
-size_t __ws_size = 0;
-dace::ml::CheckCudnnError(cudnnGetConvolutionForwardWorkspaceSize(__dace_cudnn_handle, {xd}, {wd}, {cd}, {yd},
-    __algo, &__ws_size));
-void *__workspace = nullptr;
-if (__ws_size > 0) cudaMalloc(&__workspace, __ws_size);
-dace::ml::CheckCudnnError(cudnnConvolutionForward(__dace_cudnn_handle, &__alpha, {xd}, _x, {wd}, _w, {cd}, __algo,
-    __workspace, __ws_size, &__beta, {yd}, _y));
-"""
-        )
-        if has_bias:
-            code += f"""
-dace::ml::CheckCudnnError(cudnnAddTensor(__dace_cudnn_handle, &__alpha, {bd}, _b, &__alpha, {yd}, _y));
-"""
-        code += "if (__workspace) cudaFree(__workspace);\n"
-
-        in_conns = {"_x", "_w"} | ({"_b"} if has_bias else set())
-        tasklet = nodes.Tasklet(
-            node.name + "_cudnn",
-            in_conns,
-            {"_y"},
-            code,
-            language=dtypes.Language.CPP,
-            state_fields=fields,
-            code_init=init_code,
-            code_exit=exit_code,
-        )
-        return tasklet
-
-
-@library.register_expansion(Convolution, "miopen")
-class ExpandConvolutionMIOpen(ExpandTransformation):
-    """
-    MIOpen ``miopenConvolutionForward`` expansion. Tensor descriptors are built
-    from the actual shapes and strides, the forward algorithm is chosen via
-    ``miopenFindConvolutionForwardAlgorithm``, and the workspace is a scratch
-    allocation. Bias (when ``_b`` is connected) is added with
-    ``miopenConvolutionForwardBias``.
-    """
-
-    environments = [env.miopen.MIOpen]
-    uid = 0
-
-    @staticmethod
-    def expansion(node: "Convolution", parent_state: SDFGState, parent_sdfg: SDFG):
-        x, w, b, y = node.validate(parent_sdfg, parent_state)
-        _gpu_validate(node, x, w, y)
-        ndim = len(w.shape) - 2
-        has_bias = b is not None
-
-        tag = ExpandConvolutionMIOpen.uid
-        ExpandConvolutionMIOpen.uid += 1
-        xd = f"__state->conv_xDesc_{tag}"
-        yd = f"__state->conv_yDesc_{tag}"
-        wd = f"__state->conv_wDesc_{tag}"
-        cd = f"__state->conv_convDesc_{tag}"
-        bd = f"__state->conv_bDesc_{tag}"
-
-        fields = [
-            f"miopenTensorDescriptor_t conv_xDesc_{tag};",
-            f"miopenTensorDescriptor_t conv_yDesc_{tag};",
-            f"miopenTensorDescriptor_t conv_wDesc_{tag};",
-            f"miopenConvolutionDescriptor_t conv_convDesc_{tag};",
-        ]
-        if has_bias:
-            fields.append(f"miopenTensorDescriptor_t conv_bDesc_{tag};")
-
-        miopen_dt = _miopen_dtype(y.dtype)
-        nb = ndim + 2
-        x_dims, x_strides = _c_array(x.shape), _c_array(x.strides)
-        y_dims, y_strides = _c_array(y.shape), _c_array(y.strides)
-        w_dims, w_strides = _c_array(w.shape), _c_array(w.strides)
-        pads, convstr, dils = _c_array(node.pads), _c_array(node.strides), _c_array(node.dilations)
-
-        init_code = f"""
-miopenCreateTensorDescriptor(&{xd});
-miopenCreateTensorDescriptor(&{yd});
-miopenCreateTensorDescriptor(&{wd});
-miopenCreateConvolutionDescriptor(&{cd});
-{{
-    int __xdims[] = {x_dims};
-    int __xstrides[] = {x_strides};
-    dace::ml::CheckMiopenError(miopenSetTensorDescriptor({xd}, {miopen_dt}, {nb}, __xdims, __xstrides));
-    int __ydims[] = {y_dims};
-    int __ystrides[] = {y_strides};
-    dace::ml::CheckMiopenError(miopenSetTensorDescriptor({yd}, {miopen_dt}, {nb}, __ydims, __ystrides));
-    int __wdims[] = {w_dims};
-    int __wstrides[] = {w_strides};
-    dace::ml::CheckMiopenError(miopenSetTensorDescriptor({wd}, {miopen_dt}, {nb}, __wdims, __wstrides));
-    int __pads[] = {pads};
-    int __convstrides[] = {convstr};
-    int __dilations[] = {dils};
-    dace::ml::CheckMiopenError(miopenInitConvolutionNdDescriptor({cd}, {ndim}, __pads, __convstrides, __dilations,
-        miopenConvolution));
-    dace::ml::CheckMiopenError(miopenSetConvolutionGroupCount({cd}, {node.groups}));
-}}
-"""
-        exit_code = f"""
-miopenDestroyTensorDescriptor({xd});
-miopenDestroyTensorDescriptor({yd});
-miopenDestroyTensorDescriptor({wd});
-miopenDestroyConvolutionDescriptor({cd});
-"""
-        if has_bias:
-            b_dims = _c_array([1, w.shape[0]] + [1] * ndim)
-            b_strides = _c_array([w.shape[0]] + [1] * (ndim + 1))
-            init_code += f"""
-miopenCreateTensorDescriptor(&{bd});
-{{
-    int __bdims[] = {b_dims};
-    int __bstrides[] = {b_strides};
-    dace::ml::CheckMiopenError(miopenSetTensorDescriptor({bd}, {miopen_dt}, {nb}, __bdims, __bstrides));
-}}
-"""
-            exit_code += f"miopenDestroyTensorDescriptor({bd});\n"
-
-        code = (
-            env.miopen.MIOpen.handle_setup_code(node)
-            + f"""
-const float __alpha = 1.0f, __beta = 0.0f;
-size_t __ws_size = 0;
-dace::ml::CheckMiopenError(miopenConvolutionForwardGetWorkSpaceSize(__dace_miopen_handle, {wd}, {xd}, {cd}, {yd},
-    &__ws_size));
-void *__workspace = nullptr;
-if (__ws_size > 0) cudaMalloc(&__workspace, __ws_size);
-miopenConvAlgoPerf_t __perf;
-int __returned = 0;
-dace::ml::CheckMiopenError(miopenFindConvolutionForwardAlgorithm(__dace_miopen_handle, {xd}, _x, {wd}, _w, {cd},
-    {yd}, _y, 1, &__returned, &__perf, __workspace, __ws_size, false));
-dace::ml::CheckMiopenError(miopenConvolutionForward(__dace_miopen_handle, &__alpha, {xd}, _x, {wd}, _w, {cd},
-    __perf.fwd_algo, &__beta, {yd}, _y, __workspace, __ws_size));
-"""
-        )
-        if has_bias:
-            code += f"""
-dace::ml::CheckMiopenError(miopenConvolutionForwardBias(__dace_miopen_handle, &__alpha, {bd}, _b, &__beta, {yd}, _y));
-"""
-        code += "if (__workspace) cudaFree(__workspace);\n"
-
-        in_conns = {"_x", "_w"} | ({"_b"} if has_bias else set())
-        tasklet = nodes.Tasklet(
-            node.name + "_miopen",
-            in_conns,
-            {"_y"},
-            code,
-            language=dtypes.Language.CPP,
-            state_fields=fields,
-            code_init=init_code,
-            code_exit=exit_code,
-        )
-        return tasklet
-
-
 # ---------------------------------------------------------------------------------------------- backward data
 @library.node
 class ConvolutionBackwardData(nodes.LibraryNode):
@@ -823,3 +539,389 @@ class ExpandConvolutionBackwardFilterPure(ExpandTransformation):
             external_edges=True,
         )
         return sdfg
+
+
+# ---------------------------------------------------------------------------------------------- cuDNN and MIOpen
+# One tasklet per node that owns a ``ConvolutionPlan`` (see ``include/dace_cudnn.h`` and ``dace_miopen.h``): the
+# tensor descriptors, the chosen algorithm and a workspace that grows on demand. The plan is rebuilt only when the
+# shape key (sizes and strides, which may be symbolic) changes, so the per-call cost is the library call itself.
+
+_CUDNN_DTYPES = {
+    dtypes.float16: "CUDNN_DATA_HALF",
+    dtypes.bfloat16: "CUDNN_DATA_BFLOAT16",
+    dtypes.float32: "CUDNN_DATA_FLOAT",
+    dtypes.float64: "CUDNN_DATA_DOUBLE",
+}
+_MIOPEN_DTYPES = {
+    dtypes.float16: "miopenHalf",
+    dtypes.bfloat16: "miopenBFloat16",
+    dtypes.float32: "miopenFloat",
+}
+
+#: Per kind of convolution: which connector feeds the plan's ``input``/``output``/``filter`` descriptors.
+_PLAN_ROLES = {
+    "forward": {"input": "_x", "output": "_y", "filter": "_w"},
+    "backward_data": {"input": "_dx", "output": "_dy", "filter": "_w"},
+    "backward_filter": {"input": "_x", "output": "_dy", "filter": "_dw"},
+}
+
+# cuDNN heuristics (no data needed), algorithm enumerations and the call of each kind
+_CUDNN_CALLS = {
+    "forward": dict(
+        perf="cudnnConvolutionFwdAlgoPerf_t",
+        count="CUDNN_CONVOLUTION_FWD_ALGO_COUNT",
+        algo="cudnnConvolutionFwdAlgo_t",
+        query="cudnnGetConvolutionForwardAlgorithm_v7(__h, {input}, {filter}, {conv}, {output}, __c, __n, __p)",
+        call="cudnnConvolutionForward(__h, &__alpha, {input}, _x, {filter}, _w, {conv}, ({algo})__plan.algo, "
+        "__plan.Workspace(), __plan.workspace_size, &__beta, {output}, _y)",
+    ),
+    "backward_data": dict(
+        perf="cudnnConvolutionBwdDataAlgoPerf_t",
+        count="CUDNN_CONVOLUTION_BWD_DATA_ALGO_COUNT",
+        algo="cudnnConvolutionBwdDataAlgo_t",
+        query="cudnnGetConvolutionBackwardDataAlgorithm_v7(__h, {filter}, {output}, {conv}, {input}, __c, __n, __p)",
+        call="cudnnConvolutionBackwardData(__h, &__alpha, {filter}, _w, {output}, _dy, {conv}, ({algo})__plan.algo, "
+        "__plan.Workspace(), __plan.workspace_size, &__beta, {input}, _dx)",
+    ),
+    "backward_filter": dict(
+        perf="cudnnConvolutionBwdFilterAlgoPerf_t",
+        count="CUDNN_CONVOLUTION_BWD_FILTER_ALGO_COUNT",
+        algo="cudnnConvolutionBwdFilterAlgo_t",
+        query="cudnnGetConvolutionBackwardFilterAlgorithm_v7(__h, {input}, {output}, {conv}, {filter}, __c, __n, __p)",
+        call="cudnnConvolutionBackwardFilter(__h, &__alpha, {input}, _x, {output}, _dy, {conv}, ({algo})__plan.algo, "
+        "__plan.Workspace(), __plan.workspace_size, &__beta, {filter}, _dw)",
+    ),
+}
+
+# MIOpen: workspace query, the search (which needs the buffers; done once per shape) and the call of each kind
+_MIOPEN_CALLS = {
+    "forward": dict(
+        workspace="miopenConvolutionForwardGetWorkSpaceSize(__h, {filter}, {input}, {conv}, {output}, &__ws)",
+        find="miopenFindConvolutionForwardAlgorithm(__h, {input}, _x, {filter}, _w, {conv}, {output}, _y, 1, &__n, "
+        "&__perf, __wsp, __ws, false)",
+        algo="miopenConvFwdAlgorithm_t",
+        found="fwd_algo",
+        call="miopenConvolutionForward(__h, &__alpha, {input}, _x, {filter}, _w, {conv}, ({algo})__plan.algo, &__beta, "
+        "{output}, _y, __plan.Workspace(), __plan.workspace_size)",
+    ),
+    "backward_data": dict(
+        workspace="miopenConvolutionBackwardDataGetWorkSpaceSize(__h, {output}, {filter}, {conv}, {input}, &__ws)",
+        find="miopenFindConvolutionBackwardDataAlgorithm(__h, {output}, _dy, {filter}, _w, {conv}, {input}, _dx, 1, "
+        "&__n, &__perf, __wsp, __ws, false)",
+        algo="miopenConvBwdDataAlgorithm_t",
+        found="bwd_data_algo",
+        call="miopenConvolutionBackwardData(__h, &__alpha, {output}, _dy, {filter}, _w, {conv}, ({algo})__plan.algo, "
+        "&__beta, {input}, _dx, __plan.Workspace(), __plan.workspace_size)",
+    ),
+    "backward_filter": dict(
+        workspace="miopenConvolutionBackwardWeightsGetWorkSpaceSize(__h, {output}, {input}, {conv}, {filter}, &__ws)",
+        find="miopenFindConvolutionBackwardWeightsAlgorithm(__h, {output}, _dy, {input}, _x, {conv}, {filter}, _dw, "
+        "1, &__n, &__perf, __wsp, __ws, false)",
+        algo="miopenConvBwdWeightsAlgorithm_t",
+        found="bwd_weights_algo",
+        call="miopenConvolutionBackwardWeights(__h, &__alpha, {output}, _dy, {input}, _x, {conv}, ({algo})__plan.algo, "
+        "&__beta, {filter}, _dw, __plan.Workspace(), __plan.workspace_size)",
+    ),
+}
+
+
+def _c_list(values) -> str:
+    """The values as a C initializer list of ``int`` (symbolic sizes are cast, as they may be 64-bit symbols)."""
+    from dace.codegen.targets import cpp
+
+    return ", ".join(str(v) if isinstance(v, int) else f"(int)({cpp.sym2cpp(v)})" for v in values)
+
+
+def _gpu_operands(node, parent_sdfg, parent_state, kind: str):
+    """Validates the node for a GPU expansion and returns its operand descriptors by connector name."""
+    if node.transposed:
+        raise NotImplementedError("Transposed convolution is not implemented in the cuDNN/MIOpen expansions")
+    node.validate(parent_sdfg, parent_state)
+    ins, outs = _edges_by_connector(parent_state, node)
+    operands = {conn: parent_sdfg.arrays[e.data.data] for conn, e in list(ins.items()) + list(outs.items())}
+    for conn, desc in operands.items():
+        if desc.storage != dtypes.StorageType.GPU_Global:
+            raise ValueError(f"cuDNN/MIOpen convolution requires '{conn}' to be in GPU_Global storage")
+    return operands
+
+
+def _library_dtype(mapping: dict, dtype, library: str) -> str:
+    if dtype not in mapping:
+        raise NotImplementedError(f"{library} convolution does not support dtype {dtype}")
+    return mapping[dtype]
+
+
+#: Output connector of each kind of convolution
+_OUTPUT_CONNECTOR = {"forward": "_y", "backward_data": "_dx", "backward_filter": "_dw"}
+
+_plan_count = 0
+
+
+def _plan_tasklet(node, kind: str, operands: dict, plan_type: str, code: str, field: str) -> nodes.Tasklet:
+    """A tasklet that owns one convolution plan (``field`` of the program's state struct) and runs ``code``."""
+    out_conn = _OUTPUT_CONNECTOR[kind]
+    return nodes.Tasklet(
+        node.name + "_" + plan_type.lower(),
+        set(operands) - {out_conn},
+        {out_conn},
+        code,
+        language=dtypes.Language.CPP,
+        state_fields=[f"dace::ml::{plan_type}ConvolutionPlan {field};"],
+    )
+
+
+def _new_plan_field() -> str:
+    """Name of a plan in the state struct, unique per program (nested SDFGs share the struct)."""
+    global _plan_count
+    _plan_count += 1
+    return f"conv_plan_{_plan_count}"
+
+
+class _Geometry:
+    """
+    Sizes and strides of the operands and the convolution parameters as the libraries take them: both need at least
+    two spatial dimensions, so a 1-D convolution is promoted to a 2-D one with a unit height (the inserted dimension
+    gets a stride that keeps the dense layouts recognizable).
+    """
+
+    def __init__(self, node, operands: dict, kind: str):
+        roles = _PLAN_ROLES[kind]
+        ndim = len(operands[roles["filter"]].shape) - 2
+        self.promoted = ndim == 1
+        self.ndim = max(ndim, 2)
+        self.x, self.y, self.w = (self._dims(operands[r]) for r in (roles["input"], roles["output"], roles["filter"]))
+        cout = self.w[0][0]
+        self.bias = ([1, cout] + [1] * self.ndim, [cout] + [1] * (self.ndim + 1))
+        unit = [0] if self.promoted else []
+        one = [1] if self.promoted else []
+        self.pads = unit + list(node.pads)
+        self.strides = one + list(node.strides)
+        self.dilations = one + list(node.dilations)
+
+    def _dims(self, desc) -> tuple[list, list]:
+        shape, strides = list(desc.shape), list(desc.strides)
+        if self.promoted:
+            shape.insert(2, 1)
+            strides.insert(2, strides[2] * shape[3])
+        return shape, strides
+
+    def key(self, with_filter_strides: bool) -> str:
+        """The shape key of the plan: everything that can change between calls of a program with symbolic sizes."""
+        values = self.x[0] + self.x[1] + self.y[0] + self.y[1] + self.w[0]
+        if with_filter_strides:
+            values = values + self.w[1]
+        return _c_list(values)
+
+
+def _is_dense_in_order(shape: list, strides: list, order: list[int]) -> bool:
+    """Whether the strides are those of a dense tensor whose dimensions are laid out in ``order`` (outermost first)."""
+    expected = 1
+    for dim in reversed(order):
+        if symbolic.equal(strides[dim], expected) is False:
+            return False
+        expected = expected * shape[dim]
+    return True
+
+
+def _layout(dims: tuple[list, list]) -> str | None:
+    """``"NCHW"`` (contiguous), ``"NHWC"`` (``torch.channels_last``: channels innermost) or ``None`` (other)."""
+    shape, strides = dims
+    rank = len(shape)
+    if _is_dense_in_order(shape, strides, list(range(rank))):
+        return "NCHW"
+    if _is_dense_in_order(shape, strides, [0] + list(range(2, rank)) + [1]):
+        return "NHWC"
+    return None
+
+
+def _require_dense_bias(b, library: str) -> None:
+    if symbolic.equal(b.strides[0], 1) is False:
+        raise NotImplementedError(f"{library} requires a contiguous bias (stride {b.strides[0]} given)")
+
+
+_CUDNN_FILTER_FORMATS = {"NCHW": "CUDNN_TENSOR_NCHW", "NHWC": "CUDNN_TENSOR_NHWC"}
+_MIOPEN_LAYOUTS = {
+    ("NCHW", 4): "miopenTensorNCHW",
+    ("NHWC", 4): "miopenTensorNHWC",
+    ("NCHW", 5): "miopenTensorNCDHW",
+    ("NHWC", 5): "miopenTensorNDHWC",
+}
+
+
+def _cudnn_code(node, kind: str, operands: dict, field: str) -> str:
+    roles = _PLAN_ROLES[kind]
+    y, w = operands[roles["output"]], operands[roles["filter"]]
+    b = operands.get("_b")
+    geo = _Geometry(node, operands, kind)
+    ndim = geo.ndim
+    # cuDNN filter descriptors carry a layout instead of strides
+    filter_format = _CUDNN_FILTER_FORMATS.get(_layout(geo.w))
+    if filter_format is None:
+        raise NotImplementedError(
+            f"cuDNN supports contiguous (NCHW) or channels-last (NHWC) weights; strides {list(w.strides)} given"
+        )
+    if b is not None:
+        _require_dense_bias(b, "cuDNN")
+    dt = _library_dtype(_CUDNN_DTYPES, y.dtype, "cuDNN")
+    compute_dt = "CUDNN_DATA_DOUBLE" if y.dtype == dtypes.float64 else "CUDNN_DATA_FLOAT"
+    scalar = "double" if y.dtype == dtypes.float64 else "float"
+    # Reduced-precision data may use the tensor cores (what torch does); single precision stays exact (no TF32)
+    math_type = "CUDNN_TENSOR_OP_MATH" if y.dtype in (dtypes.float16, dtypes.bfloat16) else "CUDNN_FMA_MATH"
+    plan = {role: f"__plan.{role}" for role in ("input", "output", "filter", "conv", "bias")}
+    plan["algo"] = _CUDNN_CALLS[kind]["algo"]
+    shape_key = geo.key(with_filter_strides=False)
+
+    def tensor(desc_name, shape, strides):
+        return f"""
+        {{
+            int __dims[] = {{{_c_list(shape)}}};
+            int __strides[] = {{{_c_list(strides)}}};
+            dace::ml::CheckCudnnError(cudnnSetTensorNdDescriptor({desc_name}, {dt}, {ndim + 2}, __dims, __strides));
+        }}"""
+
+    setup = tensor(plan["input"], *geo.x) + tensor(plan["output"], *geo.y)
+    setup += f"""
+        {{
+            int __dims[] = {{{_c_list(geo.w[0])}}};
+            dace::ml::CheckCudnnError(cudnnSetFilterNdDescriptor({plan["filter"]}, {dt}, {filter_format}, {ndim + 2},
+                __dims));
+            int __pads[] = {{{_c_list(geo.pads)}}};
+            int __strides[] = {{{_c_list(geo.strides)}}};
+            int __dilations[] = {{{_c_list(geo.dilations)}}};
+            dace::ml::CheckCudnnError(cudnnSetConvolutionNdDescriptor({plan["conv"]}, {ndim}, __pads, __strides,
+                __dilations, CUDNN_CROSS_CORRELATION, {compute_dt}));
+            dace::ml::CheckCudnnError(cudnnSetConvolutionGroupCount({plan["conv"]}, {node.groups}));
+            dace::ml::CheckCudnnError(cudnnSetConvolutionMathType({plan["conv"]}, {math_type}));
+        }}"""
+    if b is not None:
+        setup += tensor(plan["bias"], *geo.bias)
+    calls = _CUDNN_CALLS[kind]
+    query = calls["query"].format(**plan)
+    code = f"""
+    cudnnHandle_t &__h = __dace_cudnn_handle;
+    auto &__plan = __state->{field};
+    if (__plan.Configure({{{shape_key}}})) {{{setup}
+        auto __choice = dace::ml::SelectAlgorithm<{calls["perf"]}>(
+            [&](int __c, int *__n, {calls["perf"]} *__p) {{ return {query}; }}, {calls["count"]});
+        __plan.algo = __choice.algo;
+        __plan.workspace_size = __choice.workspace;
+    }}
+    const {scalar} __alpha = 1, __beta = 0;
+    dace::ml::CheckCudnnError({calls["call"].format(**plan)});
+"""
+    if b is not None:
+        code += f"""    dace::ml::CheckCudnnError(cudnnAddTensor(__h, &__alpha, {plan["bias"]}, _b, &__alpha, {plan["output"]}, _y));
+"""
+    return env.cudnn.cuDNN.handle_setup_code(node) + code
+
+
+def _miopen_code(node, kind: str, operands: dict, field: str) -> str:
+    roles = _PLAN_ROLES[kind]
+    y = operands[roles["output"]]
+    b = operands.get("_b")
+    geo = _Geometry(node, operands, kind)
+    ndim = geo.ndim
+    if b is not None:
+        _require_dense_bias(b, "MIOpen")
+    dt = _library_dtype(_MIOPEN_DTYPES, y.dtype, "MIOpen")
+    plan = {role: f"__plan.{role}" for role in ("input", "output", "filter", "conv", "bias")}
+    plan["algo"] = _MIOPEN_CALLS[kind]["algo"]
+    shape_key = geo.key(with_filter_strides=True)
+
+    def tensor(desc_name, shape, strides):
+        return f"""
+        {{
+            int __dims[] = {{{_c_list(shape)}}};
+            int __strides[] = {{{_c_list(strides)}}};
+            dace::ml::CheckMiopenError(miopenSetTensorDescriptor({desc_name}, {dt}, {ndim + 2}, __dims, __strides));
+        }}"""
+
+    def tensor_with_layout(desc_name, shape, layout):
+        return f"""
+        {{
+            int __dims[] = {{{_c_list(shape)}}};
+            dace::ml::CheckMiopenError(miopenSetNdTensorDescriptorWithLayout({desc_name}, {dt}, {layout}, __dims,
+                {ndim + 2}));
+        }}"""
+
+    # MIOpen's convolution solvers are selected by the layout the descriptors imply. When the operands share a
+    # standard layout (NCHW or channels-last, as torch produces them) it is stated explicitly, as torch does; any other
+    # combination is described by its strides and MIOpen decides whether it supports it.
+    layouts = {_layout(geo.x), _layout(geo.y), _layout(geo.w)}
+    layout = _MIOPEN_LAYOUTS.get((next(iter(layouts)), ndim + 2)) if len(layouts) == 1 else None
+    if layout is not None:
+        setup = (
+            tensor_with_layout(plan["input"], geo.x[0], layout)
+            + tensor_with_layout(plan["output"], geo.y[0], layout)
+            + tensor_with_layout(plan["filter"], geo.w[0], layout)
+        )
+    else:
+        setup = tensor(plan["input"], *geo.x) + tensor(plan["output"], *geo.y) + tensor(plan["filter"], *geo.w)
+    setup += f"""
+        {{
+            int __pads[] = {{{_c_list(geo.pads)}}};
+            int __strides[] = {{{_c_list(geo.strides)}}};
+            int __dilations[] = {{{_c_list(geo.dilations)}}};
+            dace::ml::CheckMiopenError(miopenInitConvolutionNdDescriptor({plan["conv"]}, {ndim}, __pads, __strides,
+                __dilations, miopenConvolution));
+            dace::ml::CheckMiopenError(miopenSetConvolutionGroupCount({plan["conv"]}, {node.groups}));
+        }}"""
+    if b is not None:
+        setup += tensor(plan["bias"], *geo.bias)
+    calls = _MIOPEN_CALLS[kind]
+    code = f"""
+    miopenHandle_t &__h = __dace_miopen_handle;
+    auto &__plan = __state->{field};
+    if (__plan.Configure({{{shape_key}}})) {{{setup}
+        size_t __ws = 0;
+        dace::ml::CheckMiopenError({calls["workspace"].format(**plan)});
+        void *__wsp = __plan.Workspace(__ws);
+        miopenConvAlgoPerf_t __perf;
+        int __n = 0;
+        dace::ml::CheckMiopenError({calls["find"].format(**plan)});
+        if (__n < 1) throw std::runtime_error("MIOpen found no applicable convolution algorithm");
+        __plan.algo = __perf.{calls["found"]};
+        __plan.workspace_size = __perf.memory;
+    }}
+    const float __alpha = 1.0f, __beta = 0.0f;
+    dace::ml::CheckMiopenError({calls["call"].format(**plan)});
+"""
+    if b is not None:
+        code += f"""    dace::ml::CheckMiopenError(miopenConvolutionForwardBias(__h, &__alpha, {plan["bias"]}, _b, &__beta, {plan["output"]}, _y));
+"""
+    return env.miopen.MIOpen.handle_setup_code(node) + code
+
+
+def _register_gpu_expansions(node_class, kind: str) -> None:
+    """Registers the ``cuDNN`` and ``MIOpen`` expansions of one convolution node class."""
+
+    class ExpandCuDNN(ExpandTransformation):
+        __doc__ = f"""cuDNN implementation ({kind}): the algorithm is chosen by cuDNN's heuristics once per shape, the
+        descriptors and workspace live in the program's state (see ``include/dace_cudnn.h``)."""
+        environments = [env.cudnn.cuDNN]
+
+        @staticmethod
+        def expansion(node, parent_state: SDFGState, parent_sdfg: SDFG):
+            operands = _gpu_operands(node, parent_sdfg, parent_state, kind)
+            field = _new_plan_field()
+            return _plan_tasklet(node, kind, operands, "Cudnn", _cudnn_code(node, kind, operands, field), field)
+
+    class ExpandMIOpen(ExpandTransformation):
+        __doc__ = f"""MIOpen implementation ({kind}): the algorithm is searched (``miopenFind*``) once per shape, the
+        descriptors and workspace live in the program's state (see ``include/dace_miopen.h``)."""
+        environments = [env.miopen.MIOpen]
+
+        @staticmethod
+        def expansion(node, parent_state: SDFGState, parent_sdfg: SDFG):
+            operands = _gpu_operands(node, parent_sdfg, parent_state, kind)
+            field = _new_plan_field()
+            return _plan_tasklet(node, kind, operands, "Miopen", _miopen_code(node, kind, operands, field), field)
+
+    for cls, name in ((ExpandCuDNN, "cuDNN"), (ExpandMIOpen, "MIOpen")):
+        cls.__name__ = cls.__qualname__ = f"Expand{node_class.__name__}{name}"
+        library.register_expansion(node_class, name)(cls)
+
+
+_register_gpu_expansions(Convolution, "forward")
+_register_gpu_expansions(ConvolutionBackwardData, "backward_data")
+_register_gpu_expansions(ConvolutionBackwardFilter, "backward_filter")
