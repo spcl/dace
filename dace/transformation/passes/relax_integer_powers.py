@@ -17,7 +17,6 @@ from typing import Any
 import sympy
 
 from dace import SDFG, data, dtypes, subsets, symbolic
-from dace.frontend.python import astutils
 from dace.properties import CodeBlock
 from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
@@ -171,9 +170,27 @@ class PowerRelaxer:
             tree = ast.parse(text)
         except SyntaxError:
             return None
+        relaxer = self
+
+        class PowToIpow(ast.NodeTransformer):
+            def visit_BinOp(self, node: ast.BinOp) -> ast.AST:
+                self.generic_visit(node)
+                if not isinstance(node.op, ast.Pow):
+                    return node
+                try:
+                    exp = symbolic.pystr_to_symbolic(ast.unparse(node.right))
+                except (sympy.SympifyError, SyntaxError, TypeError):  # a non-symbolic exponent stays a power
+                    return node
+                result = relaxed_exponent(exp, ranges, facts) if isinstance(exp, sympy.Expr) else None
+                if result is None:
+                    return node
+                relaxer.relaxed += 1
+                power = node.right if result.free_symbols else ast.Constant(int(result))
+                return ast.copy_location(ast.Call(ast.Name("ipow", ast.Load()), [node.left, power], []), node)
+
         before = self.relaxed
-        tree = _PowToIpow(self, ranges, facts).visit(tree)
-        return astutils.unparse(tree) if self.relaxed > before else None
+        tree = PowToIpow().visit(tree)
+        return ast.unparse(tree) if self.relaxed > before else None
 
     def relax_code(self, code: CodeBlock | None, ranges: Ranges, facts: SignFacts) -> None:
         # Loop bounds and conditions codegen through the interstate-edge unparser, where an unrelaxed ``R**e``
@@ -201,7 +218,14 @@ class PowerRelaxer:
                 nsdfg.symbol_mapping[name] = relaxed
 
     def visit_sdfg(self, sdfg: SDFG, ranges: Ranges) -> None:
-        self.visit_region(sdfg, ranges, SignFacts.of_sdfg(sdfg), set())
+        facts = SignFacts.of_sdfg(sdfg)
+        relaxed_arrays: set[str] = set()
+        self.visit_region(sdfg, ranges, facts, relaxed_arrays)
+        # A nested SDFG's argument may have no access node of its own; left as ``R**e`` it would no longer match
+        # the parent's relaxed descriptor, which validation compares it with.
+        for name, desc in sdfg.arrays.items():
+            if name not in relaxed_arrays and isinstance(desc, data.Array):
+                self.relax_descriptor(desc, ranges, facts)
 
     def visit_region(
         self, region: ControlFlowRegion, ranges: Ranges, facts: SignFacts, relaxed_arrays: set[str]
@@ -276,33 +300,6 @@ class PowerRelaxer:
             for sub in (edge.data.subset, edge.data.other_subset):
                 if sub is not None:
                     self.relax_subset(sub, live, facts)
-
-
-class _PowToIpow(ast.NodeTransformer):
-    """Rewrites ``base ** exp`` to ``ipow(base, exp)`` where :func:`relaxed_exponent` proves ``exp`` a non-negative
-    integer, leaving every other node as written."""
-
-    def __init__(self, relaxer: PowerRelaxer, ranges: Ranges, facts: SignFacts):
-        self.relaxer, self.ranges, self.facts = relaxer, ranges, facts
-
-    def visit_BinOp(self, node: ast.BinOp) -> ast.AST:
-        self.generic_visit(node)
-        if not isinstance(node.op, ast.Pow):
-            return node
-        try:
-            exp = symbolic.pystr_to_symbolic(astutils.unparse(node.right))
-        except Exception:  # pylint: disable=broad-exception-caught  # a non-symbolic exponent stays ``pow``
-            return node
-        if not isinstance(exp, sympy.Expr):
-            return node
-        result = relaxed_exponent(exp, self.ranges, self.facts)
-        if result is None:
-            return node
-        self.relaxer.relaxed += 1
-        power = node.right if result.free_symbols else ast.Constant(int(result))
-        return ast.copy_location(
-            ast.Call(func=ast.Name(id="ipow", ctx=ast.Load()), args=[node.left, power], keywords=[]), node
-        )
 
 
 def nested_ranges(nsdfg: nodes.NestedSDFG, ranges: Ranges) -> Ranges:

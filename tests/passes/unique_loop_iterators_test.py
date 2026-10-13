@@ -430,36 +430,17 @@ def test_no_postamble_drops_dead_symbol_declaration():
     assert loopvars == sorted(set(loopvars))
     assert all(v.startswith("_loop_it_") for v in loopvars)
 
-    # The previously-leaking ``i`` declaration must be gone from every
-    # SDFG-level symbol table that lost its last user.
+    # An SDFG whose last use of ``i`` was renamed no longer declares it.
     for n in body_nsdfgs:
         assert "i" not in n.sdfg.symbols, f"stale 'i' still declared in {n.sdfg.name}.symbols"
 
-    # And the resulting SDFG validates cleanly (no missing-symbol error on
-    # the NestedSDFG boundary).
     sdfg.validate()
 
 
 def test_no_postamble_clears_loop_var_for_inner_accumulator():
-    """Regression: an inner reduction-style accumulator (``s += a[i, j-1] +
-    a[i, j] + a[i, j+1]``) writes the per-iteration scalar ``s`` inside a
-    ``for j: ...`` loop. With ``assign_loop_iterator_post_value = False``
-    the rename must drop the dead ``j`` from ``sdfg.symbols`` of the
-    enclosing NestedSDFG -- otherwise ``j`` lingers as a declared symbol
-    that no longer corresponds to any loop variable, and the validator
-    reports ``Missing symbols on nested SDFG: ['j']`` on the enclosing
-    Map's body NestedSDFG.
-
-    The previous gate ``old_name not in sdfg.free_symbols`` was circular:
-    ``SDFG.free_symbols`` calls ``used_symbols(all_symbols=True)`` which
-    unconditionally folds ``sdfg.symbols.keys()`` back into the "free"
-    set (``ControlFlowRegion._used_symbols_internal``, the ``if
-    all_symbols: free_syms |= set(self.symbols.keys())`` branch). The
-    declared symbol therefore always appeared "free" by virtue of being
-    declared and was never removed. The fix uses
-    ``used_symbols(all_symbols=False)`` which reflects only actual
-    code-generation usage.
-    """
+    """An accumulator ``s += a[i, j-1] + a[i, j] + a[i, j+1]`` inside ``for j``: without the post-value assignment,
+    the nested SDFG of the enclosing map no longer declares ``j``, which nothing reads after the rename (as a
+    declared but unmapped symbol, validation would report it missing on the nested SDFG)."""
 
     @dace.program
     def redux(a: dace.float64[8, 9], b: dace.float64[8]):
@@ -530,16 +511,8 @@ def test_postamble_preserves_symbol_declaration():
 
 
 def test_idempotent_skips_already_unique_iterators():
-    """Running the pass twice must be a no-op the second time and must NOT
-    re-rename already-unique ``_loop_it_<N>`` iterators.
-
-    Re-renaming an already-unique iterator that a deeply-nested SDFG
-    imports used to drop the import from the grandchild's
-    ``symbol_mapping`` (the re-key did not survive a second rename),
-    producing "Missing symbols on nested SDFG: ['_loop_it_<N>']". The
-    pass now skips iterators already in ``_loop_it_*`` form. This mirrors
-    the canonicalize pipeline, which runs UniqueLoopIterators twice (the
-    ``clean`` and ``ssa`` stages)."""
+    """A second run renames nothing: iterators already named ``_loop_it_<N>`` keep their names, so a grandchild
+    nested SDFG's import of an outer iterator stays intact."""
 
     # A map body (nested SDFG) with two nested loops, then a deeper nest --
     # the shape where a grandchild NSDFG imports the outer iterators.
@@ -599,19 +572,8 @@ def _sibling_kbound_oracle(arr, x, n):
 
 
 def test_value_preserving_sibling_kbound_loops():
-    """Renaming two sibling loops that share the iterator name ``k`` must
-    not cross-contaminate their memlets.
-
-    The frontend's ``accesses`` cache hands out the *same* Range object for
-    the identical ``arr[i, k]`` read in both loop bodies, and ``Memlet.simple``
-    stores a Subset by reference, so the two read edges used to share one
-    subset object. Renaming the first loop's ``k`` to ``_loop_it_0`` then
-    rewrote that shared subset in place, leaving the *second* (guarded) loop
-    reading ``arr[i, _loop_it_0]`` while writing ``out[i, _loop_it_1]`` -- a
-    silent value corruption that only manifested when the guard was taken
-    (``x = 1``). With each edge owning its subset the rename is local and the
-    accumulation is preserved. Regression for the frontend slice-subset
-    aliasing surfaced through UniqueLoopIterators."""
+    """Renaming two sibling loops that share the iterator ``k`` keeps their memlets apart, including the identical
+    ``arr[i, k]`` reads the frontend builds for both, and the guarded accumulation keeps its value."""
     n = 8
     rng = np.random.default_rng(1)
     arr = rng.standard_normal((n, n))
@@ -758,10 +720,8 @@ def test_seeds_counter_past_existing_map_params():
 
 
 def test_loop_and_map_coexist_no_collision_value_preserving():
-    """End-to-end: a map (parameter ``_loop_it_0``) and a separate loop (``i``)
-    coexist. Renaming the loop must avoid the map's id and stay value-preserving.
-    Regression for the ``_first_free_id`` map blindness that produced a
-    ``_loop_it_0`` collision and corrupted output."""
+    """A map with parameter ``_loop_it_0`` and a loop over ``i``: the loop's new name skips the map's id, and the
+    result is unchanged."""
     sdfg = dace.SDFG("loop_map_coexist")
     sdfg.add_array("a", [8], dace.float64)
     sdfg.add_array("b", [8], dace.float64)
