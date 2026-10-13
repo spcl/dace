@@ -14,6 +14,7 @@ Usage::
 
 from .backend import DaceBackend, dace_backend
 from .capture import CapturedProgram, capture
+from .export import CompiledModule, sdfg_of, to_sdfg
 from .interface import compile
 from .training import DifferentiableProgram, TrainingStep, differentiable, training_step
 
@@ -21,6 +22,9 @@ __all__ = [
     "DaceBackend",
     "dace_backend",
     "compile",
+    "to_sdfg",
+    "sdfg_of",
+    "CompiledModule",
     "capture",
     "CapturedProgram",
     "TrainingStep",

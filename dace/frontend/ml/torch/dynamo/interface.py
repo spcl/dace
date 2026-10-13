@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""User-facing entry point: ``dace.ml.compile``."""
+"""User-facing entry points: ``dace.ml.compile`` and ``dace.ml.to_sdfg``."""
 
 import functools
 import inspect
@@ -10,15 +10,17 @@ import torch
 
 from . import shapes
 from .backend import CAPTURE_CONFIG, DaceBackend
+from .export import compile as export_compile
 
 
 def compile(
     model: Any | None = None,
-    *,
+    *descriptors,
     dynamic: bool | None = True,
     dynamic_shapes: Any = None,
     fullgraph: bool = False,
     sdfg_name: str | None = None,
+    name: str | None = None,
     simplify: bool = True,
     auto_optimize: bool = False,
     onnx_fallback: bool = True,
@@ -31,9 +33,21 @@ def compile(
     """
     Compiles a ``torch.nn.Module`` or function with DaCe through TorchDynamo.
 
-    Equivalent to ``torch.compile(model, backend=DaceBackend(...), dynamic=dynamic, fullgraph=fullgraph)``. With
-    ``dynamic=True`` (the default) tensor sizes and strides become DaCe symbols, so the generated SDFG is compiled once
-    and reused for all shapes that satisfy Dynamo's guards.
+    Two routes, selected by whether descriptor arguments follow the model:
+
+    * **Lazy (``torch.compile``):** ``dace.ml.compile(model)`` with no positional arguments returns a drop-in callable
+      that captures and compiles the SDFG on its first call (and reuses it for every shape that satisfies Dynamo's
+      guards). This is equivalent to ``torch.compile(model, backend=DaceBackend(...), dynamic=dynamic,
+      fullgraph=fullgraph)``. The backend of a compiled object is exposed as ``compiled._dace_backend`` (its
+      ``last_sdfg``/``compile_count``); :func:`dace.frontend.ml.torch.dynamo.sdfg_of` returns its most recent SDFG.
+
+    * **Ahead of time:** ``dace.ml.compile(model, dace.float32[N, 3, 224, 224])`` with DaCe data descriptors (see
+      :func:`to_sdfg`) compiles the inference SDFG immediately and returns a :class:`.export.CompiledModule` that runs
+      on torch tensors (binding the module's current parameters at call time) and exposes ``.sdfg``,
+      ``.compiled_sdfg``, and ``.save(path)``.
+
+    With ``dynamic=True`` (the default, lazy route) tensor sizes and strides become DaCe symbols, so the generated SDFG
+    is compiled once and reused for all shapes that satisfy Dynamo's guards.
 
     By default Dynamo decides which sizes share a symbol (sizes that are equal in the first call do) and specializes
     sizes 0 and 1. ``dynamic_shapes`` overrides this::
@@ -47,26 +61,35 @@ def compile(
 
     See :mod:`dace.frontend.ml.torch.dynamo.shapes` for the full specification format.
 
-    Can be used as a decorator::
+    Can be used as a decorator (lazy route only)::
 
         @dace.ml.compile
         def f(x):
             return torch.sin(x) + 1
 
     :param model: The module or function to compile. If ``None``, returns a decorator.
+    :param descriptors: Ahead-of-time: DaCe data descriptors / symbols / ints for the model's arguments.
     :param dynamic: Passed to ``torch.compile``. ``True`` traces with symbolic shapes up front.
     :param dynamic_shapes: ``'all'`` or a per-argument specification of symbolic dimensions and their names.
     :param fullgraph: Passed to ``torch.compile``. If ``True``, graph breaks raise errors.
-    :param sdfg_name: Base name for the generated SDFGs.
+    :param sdfg_name: Base name for the generated SDFGs (lazy route).
+    :param name: Name of the ahead-of-time SDFG (ahead-of-time route).
     :param simplify: Whether to simplify the generated SDFGs.
-    :param auto_optimize: Whether to apply DaCe auto-optimization before compiling.
+    :param auto_optimize: Whether to apply DaCe auto-optimization before compiling (lazy route).
     :param onnx_fallback: Whether to use ``dace.libraries.onnx`` expansions for operators without a native lowering.
     :param extra_decompositions: Additional ATen operators to decompose before lowering.
     :param native_ops: ATen operators that must not be decomposed.
-    :param save_sdfg: If set, directory in which generated SDFGs are saved.
-    :param torch_compile_kwargs: Additional keyword arguments for ``torch.compile``.
-    :return: The compiled callable. The backend instance is available as ``compiled._dace_backend``.
+    :param save_sdfg: If set, directory in which generated SDFGs are saved (lazy route).
+    :param torch_compile_kwargs: Additional keyword arguments for ``torch.compile`` (lazy route).
+    :return: The compiled callable, or a :class:`.export.CompiledModule` on the ahead-of-time route.
     """
+    if descriptors:
+        if model is None:
+            raise TypeError("dace.ml.compile needs a model when descriptor arguments are given")
+        return export_compile(
+            model, *descriptors, dynamic_shapes=dynamic_shapes, simplify=simplify, name=name or sdfg_name
+        )
+
     options = dict(
         sdfg_name=sdfg_name,
         simplify=simplify,

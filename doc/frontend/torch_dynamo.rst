@@ -32,7 +32,42 @@ Usage
 the name ``'dace'``, so ``torch.compile(fn, backend='dace', dynamic=True)`` works as well. Options (simplification,
 auto-optimization, decomposition overrides, saving the generated SDFGs) are keyword arguments of
 :func:`dace.frontend.ml.torch.dynamo.compile`; the backend instance used for a compiled object is available as
-``compiled._dace_backend`` and exposes ``last_sdfg`` and ``compile_count``.
+``compiled._dace_backend`` and exposes ``last_sdfg`` and ``compile_count``. :func:`dace.ml.sdfg_of` returns the most
+recent SDFG of any object compiled with the ``dace`` backend (a ``torch.compile`` result or the one below), so its
+``build_folder`` (the generated C++) can be inspected without reaching into the backend.
+
+Inference SDFGs from descriptors
+--------------------------------
+
+To build an inference SDFG without running the model first, pass DaCe data descriptors instead of example tensors.
+:func:`dace.ml.to_sdfg` captures the module (or function) for those descriptors and returns the SDFG, simplified and
+validated but not compiled:
+
+.. code-block:: python
+
+    import dace, dace.ml
+
+    model = MyModule().eval()
+    N = dace.symbol('N')
+    sdfg = dace.ml.to_sdfg(model, dace.float32[N, 3, 224, 224])   # symbolic batch N
+
+The SDFG's arguments are the ``forward`` parameter names for the inputs, the qualified names of the module's parameters
+and buffers (``features_0_weight``, ...), and the user's DaCe symbols (which keep their names) — the same convention a
+``@dace.program`` that calls the module uses. Arguments may be DaCe data descriptors (with symbolic sizes), DaCe
+symbols or ints for scalar arguments, or torch tensors (metadata only).
+
+``dace.ml.compile`` compiles this SDFG ahead of time when descriptor arguments follow the model, returning a small
+callable that runs on torch tensors (binding the module's current parameters at call time) and exposes ``.sdfg``,
+``.compiled_sdfg``, and ``.save(path)``:
+
+.. code-block:: python
+
+    compiled = dace.ml.compile(model, dace.float32[N, 3, 224, 224])
+    y = compiled(torch.randn(8, 3, 224, 224))     # one compiled SDFG serves every batch size
+    compiled.save('model.sdfgz')
+
+See ``samples/ml/inference_torch_compile.py`` for both routes (``torch.compile`` and ahead of time) on a torchvision
+model.
 
 Choosing what is symbolic
 -------------------------
