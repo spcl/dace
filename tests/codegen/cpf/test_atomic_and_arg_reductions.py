@@ -29,7 +29,9 @@ def conflicting(name: str, wcr: str) -> dace.SDFG:
     """The scatter with its conflicting accumulation resolved by ``wcr`` instead of ``+``."""
     sdfg = scatter.to_sdfg(simplify=True)
     sdfg.name = name
-    edges = [e for e, _ in sdfg.all_edges_recursive() if isinstance(e.data, dace.Memlet) and e.data.wcr is not None]
+    edges = [
+        e for e, parent in sdfg.all_edges_recursive() if isinstance(e.data, dace.Memlet) and e.data.wcr is not None
+    ]
     assert edges, "the scatter has no conflicting accumulation to resolve"
     for edge in edges:
         edge.data.wcr = wcr

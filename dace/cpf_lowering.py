@@ -2950,7 +2950,7 @@ class Tables(NamedTuple):
 #: An OPTIONAL explicit template-argument list between a helper's name and its call parentheses
 #: (``get_scratch<ScanTag>(...)``, ``arg_pair_of<std::complex<double>, int64_t>(...)``). Deliberately narrow --
 #: no parentheses, one level of nesting, one line -- so a comparison chain (``a < b && c > (d)``) cannot read as one.
-_EXPLICIT_TEMPLATE_ARGUMENTS = r"(?:<(?:[^<>();{}\n]|<[^<>();{}\n]*>)*>\s*)?"
+EXPLICIT_TEMPLATE_ARGUMENTS = r"(?:<(?:[^<>();{}\n]|<[^<>();{}\n]*>)*>\s*)?"
 
 
 def _tables(
@@ -2982,7 +2982,7 @@ def _tables(
         base_headers=base_headers,
         definition_dependencies=dependencies,
         definition_headers=definition_headers,
-        helper_call=re.compile(r"(?<![\w:.])(" + helper_names + r")\s*" + _EXPLICIT_TEMPLATE_ARGUMENTS + r"\("),
+        helper_call=re.compile(r"(?<![\w:.])(" + helper_names + r")\s*" + EXPLICIT_TEMPLATE_ARGUMENTS + r"\("),
         known=(
             set(std_renames) | set(rewrites) | set(inline_definitions) | set(minmax) | set(unsupported) | set(typed)
         ),
