@@ -20,7 +20,7 @@ from dace import dtypes
 from dace.libraries.blas.nodes.gemm import Gemm
 from dace.libraries.blas.nodes.gemv import Gemv
 from dace.libraries.lapack import Getrf, Getrs
-from dace.libraries.lapack.nodes import Geqrf, Orgqr, Potrf, Potrs
+from dace.libraries.lapack.nodes import Potrf
 from dace.libraries.linalg.nodes.transpose import Transpose
 
 N = 8
@@ -183,25 +183,10 @@ def solver_code(node: dace.nodes.LibraryNode, dtype: dace.typeclass, reads: dict
     return node.expand(state) and _tasklet_code(sdfg)
 
 
-SQUARE, VECTOR = f"0:{N}, 0:{N}", f"0:{N}"
-#: The solvers ``cegterg`` (Cholesky) and the QR users reach, each with the connectors it takes.
+SQUARE = f"0:{N}, 0:{N}"
+#: The solvers ``cegterg`` (Cholesky) reaches, each with the connectors it takes.
 SOLVERS = {
     "potrf": lambda: (Potrf("potrf"), {"_xin": ("A", SQUARE)}, {"_xout": ("A", SQUARE), "_res": ("info", "0")}),
-    "potrs": lambda: (
-        Potrs("potrs"),
-        {"_a": ("A", SQUARE), "_bin": ("B", f"0:{N}, 0:1")},
-        {"_bout": ("X", f"0:{N}, 0:1"), "_res": ("info", "0")},
-    ),
-    "geqrf": lambda: (
-        Geqrf("geqrf"),
-        {"_ain": ("A", SQUARE)},
-        {"_aout": ("A", SQUARE), "_tau": ("tau", VECTOR), "_res": ("info", "0")},
-    ),
-    "orgqr": lambda: (
-        Orgqr("orgqr"),
-        {"_ain": ("A", SQUARE), "_tau": ("tau", VECTOR)},
-        {"_aout": ("A", SQUARE), "_res": ("info", "0")},
-    ),
 }
 
 

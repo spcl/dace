@@ -1,7 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Shape integrity of the npbench ``vadv`` kernel across canonicalization.
 
-``vadv`` is the corpus's only kernel with an ASYMMETRIC leading dimension:
+``vadv`` is a kernel with an ASYMMETRIC leading dimension:
 ``wcon`` is declared ``[I + 1, J, K]`` while every other array is ``[I, J, K]``,
 and the kernel reads ``wcon[1:, :, k]`` / ``wcon[:-1, :, k]`` -- two ``I``-long
 windows into an ``I + 1``-long axis. Any pass that confuses a window length with
@@ -24,7 +24,7 @@ import pytest
 from dace.transformation.passes.canonicalize.finalize import finalize_for_target
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
 from dace.transformation.passes.length_one_array_scalar_conversion import ConvertLengthOneArraysToScalars
-from tests.corpus.npbench.structured_grids import vadv
+from tests.npbench.weather_stencils import vadv_test as vadv
 
 #: The numerical corpus gate's canonicalize configuration (canonicalize_numerical_corpus_test.CPU).
 CPU = dict(
@@ -35,10 +35,10 @@ CPU = dict(
     scatter_to_guarded_maps=True,
 )
 
-#: Kernel argument order, matching ``vadv.initialize``'s positional return.
-ARGS = ("utens_stage", "u_stage", "wcon", "u_pos", "utens", "dtr_stage")
+#: Kernel argument order of ``vadv.initialize``'s positional return.
+ARGS = ("dtr_stage", "utens_stage", "u_stage", "wcon", "u_pos", "utens")
 
-#: fp64 corpus tolerance (npbench._tol_for). vadv is FP-reassociation sensitive
+#: fp64 corpus tolerance. vadv is FP-reassociation sensitive
 #: (the inner k-sweep is a Thomas solve), so the gate's own criterion is used
 #: rather than a bit-exact compare.
 RTOL, ATOL = 1e-9, 1e-11
@@ -46,14 +46,14 @@ RTOL, ATOL = 1e-9, 1e-11
 
 def _inputs(I, J, K):
     """``(arrays_dict, reference_utens_stage)`` for one dataset size."""
-    arrays = dict(zip(ARGS, vadv.CORPUS["initialize"](I, J, K)))
+    arrays = dict(zip(ARGS, vadv.initialize(I, J, K)))
     work = {n: (v.copy() if isinstance(v, np.ndarray) else v) for n, v in arrays.items()}
-    vadv.CORPUS["reference"](**work)
+    vadv.ground_truth(**work)
     return arrays, work["utens_stage"]
 
 
 def _canonicalized(tag):
-    sdfg = vadv.CORPUS["program"].to_sdfg(simplify=True)
+    sdfg = vadv.vadv_kernel.to_sdfg(simplify=True)
     sdfg.name = f"vadv_{tag}"
     canonicalize(sdfg, validate=True, **CPU)
     return sdfg
@@ -62,7 +62,7 @@ def _canonicalized(tag):
 def test_canonicalize_preserves_array_shapes():
     """Canonicalize changes no surviving array's shape -- in particular ``wcon``
     keeps ``I + 1`` and the ``(I, J)`` slice transients do not grow to ``(I + 1, J)``."""
-    sdfg = vadv.CORPUS["program"].to_sdfg(simplify=True)
+    sdfg = vadv.vadv_kernel.to_sdfg(simplify=True)
     before = {name: tuple(str(d) for d in desc.shape) for name, desc in sdfg.arrays.items()}
     sdfg.name = "vadv_shape_preserved"
     canonicalize(sdfg, validate=True, **CPU)
@@ -104,3 +104,11 @@ def test_canonicalize_matches_reference(size):
     work = {n: (v.copy() if isinstance(v, np.ndarray) else v) for n, v in arrays.items()}
     sdfg.compile()(**work, I=I, J=J, K=K)
     assert np.allclose(work["utens_stage"], ref, rtol=RTOL, atol=ATOL)
+
+
+if __name__ == "__main__":
+    test_canonicalize_preserves_array_shapes()
+    test_canonicalize_validates_and_leaves_no_oversized_subset()
+    test_scalarized_single_element_scratch_validates()
+    test_canonicalize_matches_reference((32, 32, 32))
+    test_canonicalize_matches_reference((33, 32, 30))

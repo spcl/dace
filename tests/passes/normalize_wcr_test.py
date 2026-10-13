@@ -33,6 +33,7 @@ from dace.sdfg.dealias import convert_legacy_nested_sdfgs
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.passes.normalize_wcr import NormalizeWCR
 from tests.corpus import corpus_suite as CS
+from tests.npbench.misc.azimint_naive_test import dace_azimint_naive
 from tests.sdfg.cfg_list_in_place_test import assert_tree_consistent
 
 
@@ -82,12 +83,9 @@ def _wcr_edges(sdfg: dace.SDFG, single: bool):
 
 
 # Corpus tests: value-preservation on the untransformed baseline (normalize only).
-# azimint_* carry the target write-only in-nsdfg reduction; the polybench kernels carry a
-# nested reduction the pass must leave value-preserving (symm/covariance/gramschmidt are
+# The polybench kernels carry a nested reduction the pass must leave value-preserving (symm/covariance/gramschmidt are
 # already-normalized or symbol-guarded, floyd_warshall exercises the ``min`` op/identity).
 _NESTED_REDUCTION_KERNELS = [
-    ("np", "azimint_naive"),
-    ("np", "azimint_hist"),
     ("poly", "symm"),
     ("poly", "covariance"),
     ("poly", "gramschmidt"),
@@ -103,7 +101,7 @@ def _normalize_only(sdfg: dace.SDFG) -> dace.SDFG:
 @pytest.mark.parametrize("suite,name", _NESTED_REDUCTION_KERNELS)
 def test_normalize_only_preserves_semantics(suite, name):
     """``NormalizeWCR`` alone (no canonicalize) is value-preserving."""
-    ctx = CS.make(suite, name, "S")
+    ctx = CS.make(suite, name)
     sdfg = CS.build(ctx, _normalize_only, "nnr_" + uuid.uuid4().hex[:8])
     assert CS.run_matches(ctx, sdfg), f"normalize changed {suite}:{name} output vs reference"
 
@@ -111,7 +109,7 @@ def test_normalize_only_preserves_semantics(suite, name):
 @pytest.mark.parametrize("suite,name", _NESTED_REDUCTION_KERNELS)
 def test_normalize_is_idempotent(suite, name):
     """A second apply is a no-op (returns ``None``) and the output still matches."""
-    ctx = CS.make(suite, name, "S")
+    ctx = CS.make(suite, name)
 
     second = {}
 
@@ -219,17 +217,10 @@ def test_symm_slice_wcr_extracted_to_single_element():
 def test_azimint_naive_structure_after_normalize():
     """On ``azimint_naive`` the pass fires: no write-only in-nsdfg scalar WCR remains, and
     the map-exit edge feeding the accumulator ``tmp`` now carries a WCR."""
-    ctx = CS.make("np", "azimint_naive", "S")
+    sdfg = dace_azimint_naive.to_sdfg(simplify=True)
+    result = NormalizeWCR().apply_pass(sdfg, {})
 
-    captured = {}
-
-    def tf(sdfg):
-        captured["res"] = NormalizeWCR().apply_pass(sdfg, {})
-        return sdfg
-
-    sdfg = CS.build(ctx, tf, "nnrstruct_" + uuid.uuid4().hex[:8])
-
-    assert captured["res"] is not None, "pass should rewrite azimint_naive (has the target pattern)"
+    assert result is not None, "pass should rewrite azimint_naive (has the target pattern)"
     assert not _write_only_scalar_wcr_conns(sdfg), "no write-only in-nsdfg scalar WCR should remain"
 
     tmp_exit_wcr = [

@@ -28,7 +28,6 @@ pulls in no extra dependency.
 import importlib
 import inspect
 import pkgutil
-from collections.abc import Callable
 from dataclasses import dataclass
 
 import numpy as np
@@ -97,18 +96,8 @@ def collect(name: str | None = None) -> list[PolybenchKernel]:
     return kernels
 
 
-def paper_size_row(mod) -> dict[str, int]:
-    """The module's ``paper_sizes`` row, or its largest ``sizes`` entry as a fallback.
-
-    polybench's own five sizes are mini..extra-large, none of which is the shape the papers
-    report; the ``paper_sizes`` row carries that (ported from the npbench repo's ``bench_info``
-    descriptors, which pin a ``paper`` dataset per kernel).
-    """
-    return vars(mod).get("paper_sizes") or mod.sizes[-1]
-
-
 def make_inputs(
-    kernel: PolybenchKernel, size_index: int = DEFAULT_SIZE_INDEX, cap: int | None = SIZE_CAP, paper: bool = False
+    kernel: PolybenchKernel, size_index: int = DEFAULT_SIZE_INDEX, cap: int | None = SIZE_CAP
 ) -> tuple[dict[str, np.ndarray], dict[str, int]]:
     """Allocate + initialize one input set; return ``(call_arrays, symbol_values)``.
 
@@ -116,15 +105,14 @@ def make_inputs(
     aligned with the program's ``argnames``); ``symbol_values`` maps each dataset
     symbol (e.g. ``N``) to its concrete value. ``cap`` clamps dataset symbols (default
     ``SIZE_CAP`` for a fast value-preserving check); pass ``cap=None`` for the full
-    ``sizes[size_index]`` preset (the perf/speedup test needs realistic sizes).
-    ``paper=True`` takes the published ``paper_sizes`` row instead of ``sizes[size_index]``.
+    ``sizes[size_index]`` preset.
     """
     mod = _module(kernel)
     program = _program(mod)
     # Clamp dataset symbols to a small size for a fast numerical-correctness check
     # (the same value feeds the baseline and the candidate run, so value-preservation
     # is unaffected); polybench ``mini`` is still up to ~2000 on some kernels.
-    row = paper_size_row(mod) if paper else mod.sizes[size_index]
+    row = mod.sizes[size_index]
     psize = {str(k): (int(v) if cap is None else min(int(v), cap)) for k, v in row.items()}
     arrays = []
     for shape, dtype in mod.args:
@@ -151,42 +139,6 @@ def reference(
     out = {n: a.copy() for n, a in call_arrays.items()}
     base.compile()(**out, **psize)
     return out
-
-
-def numpy_call(
-    kernel: PolybenchKernel, call_arrays: dict[str, np.ndarray], psize: dict[str, int]
-) -> tuple[Callable[..., None], dict[str, object]]:
-    """``(fn, kwargs)`` for repeated *timed* invocation of this kernel's numpy reference.
-
-    Shaped like :func:`tests.corpus.corpus_suite.compiled_call` so a perf harness can treat the
-    denominator exactly like an arm: the copies and the name resolution happen HERE, once, outside
-    the timed region. The reference's parameters are resolved by name against the input arrays and
-    the dataset symbols, the same rule the tsvc_2_5 oracle adapter uses.
-
-    WARNING: The polybench kernels write their inputs, so repetition ``k+1`` would otherwise see what
-    repetition ``k`` left behind; call :func:`restore_inputs` between repetitions (outside the
-    timed region) when the kernel's result depends on its input state.
-    WARNING: Time it WITHOUT pinning BLAS threads: the agreed baseline is *parallel* numpy.
-    """
-    fn = polybench_numpy.REFERENCES[kernel.name]
-    pool: dict[str, object] = {**{n: a.copy() for n, a in call_arrays.items()}, **psize}
-    return fn, {p: pool[p] for p in inspect.signature(fn).parameters}
-
-
-def restore_inputs(kwargs: dict[str, object], call_arrays: dict[str, np.ndarray]) -> None:
-    """Reset the array arguments in ``kwargs`` to their pristine input values, IN PLACE.
-
-    In place rather than re-copying so a timing loop reuses one allocation per array; run it
-    between repetitions but outside the timed region, or the memcpy lands in the denominator.
-
-    ARRAY arguments only, as the name says: npbench passes some of its inputs as python/numpy
-    scalars (``cavity_flow`` dt/dx/dy, ``compute`` a/b/c), which are immutable and cannot be
-    written back into. They are pass-by-value, so a callee cannot have changed them either.
-    """
-    for name, pristine in call_arrays.items():
-        target = kwargs.get(name)
-        if isinstance(target, np.ndarray) and isinstance(pristine, np.ndarray):
-            np.copyto(target, pristine)
 
 
 def numpy_reference(

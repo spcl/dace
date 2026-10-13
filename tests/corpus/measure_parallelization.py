@@ -1,6 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Measure how MAXIMALLY PARALLEL the ``canonicalize`` pipeline is over the four
-corpora -- polybench, npbench, tsvc, tsvc_2_5 -- with the correct CPU parameters
+"""Measure how MAXIMALLY PARALLEL the ``canonicalize`` pipeline is over the three
+corpora -- polybench, tsvc, tsvc_2_5 -- with the correct CPU parameters
 (``validate_all=False``, the ``_CPU`` knob set the numerical gate uses).
 
 For every kernel it builds the simplified baseline SDFG and, on deep copies,
@@ -23,7 +23,7 @@ Two orthogonal facets, selectable:
 
 Run::
 
-    python -m tests.corpus.measure_parallelization                 # all 4, parallelism
+    python -m tests.corpus.measure_parallelization                 # every corpus, parallelism
     python -m tests.corpus.measure_parallelization --check         # + correctness
     python -m tests.corpus.measure_parallelization tsvc --peel 8   # one corpus, peel study
     python -m tests.corpus.measure_parallelization --peel 0        # peeling disabled
@@ -68,7 +68,6 @@ from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.enums import ISA
 from dace.transformation.passes.vectorization.vectorize_multi_dim import VectorizeCPUMultiDim
 from tests.corpus import corpus_suite as _CS
-from tests.corpus.npbench import npbench as _NB
 from tests.corpus.polybench import polybench as _PB
 from tests.corpus.tsvc import tsvc as _TS
 from tests.corpus.tsvc_2_5 import tsvc_2_5 as _T25
@@ -223,17 +222,6 @@ def _poly_case(name):
     return _PB.fresh_sdfg(k), lambda fin: bool(_PB.outputs_match(ref, _PB.run(fin, arrays, psize)))
 
 
-def _np_names() -> list[str]:
-    return [c["name"] for c in _NB.collect()]
-
-
-def _np_case(name):
-    c = _NB.collect(name)[0]
-    arrays, params = _NB.make_inputs(c, cap=32)  # preset S
-    ref = _NB.reference_outputs(c, arrays, params)
-    return _NB.fresh_sdfg(c), lambda fin: bool(_NB.outputs_match(ref, _NB.run_outputs(c, fin, arrays, params)))
-
-
 def _tsvc_names() -> list[str]:
     return [k.name for k in _TS.collect()]
 
@@ -241,7 +229,7 @@ def _tsvc_names() -> list[str]:
 def tsvc_reference(name):
     """``(arrays, call_kwargs, ref)`` for one tsvc kernel: the inputs, and what the numpy oracle
     makes of them. Shared with the non-vacuity test, which asserts ``ref != arrays``."""
-    ctx = _CS.make("tsvc", name, "S")
+    ctx = _CS.make("tsvc", name)
     return ctx["arrays"], ctx["params"], ctx["ref"]
 
 
@@ -264,7 +252,7 @@ def _tsvc25_names() -> list[str]:
 
 def tsvc25_reference(program):
     """``(arrays, scalars, ref)`` for one tsvc_2_5 kernel. Shared with the non-vacuity test."""
-    ctx = _CS.make("tsvc25", program.name, "S")
+    ctx = _CS.make("tsvc25", program.name)
     return ctx["arrays"], ctx["scalars"], ctx["ref"]
 
 
@@ -301,9 +289,8 @@ def _hpcagent_framework():
 
 def _hpcagent_names() -> list[str]:
     """Path-keys of the hpcagent_bench kernels this sweep measures: every ``foundation`` /
-    ``hpc`` / ``ml`` track kernel EXCEPT the ones the ``np`` / ``poly`` corpora above already
-    run (``subtrack == 'polybench'`` or tagged ``'npbench'`` -- the identical kernel, ported
-    into hpcagent_bench) and any kernel with no DaCe implementation at all. Skips are counted
+    ``hpc`` / ``ml`` track kernel EXCEPT the ones the ``poly`` corpus above already runs
+    (``subtrack == 'polybench'`` -- the identical kernel, ported into hpcagent_bench) and any kernel with no DaCe implementation at all. Skips are counted
     and named below, never silent.
     """
     from hpcagent_bench import paths as hpcagent_paths
@@ -314,7 +301,7 @@ def _hpcagent_names() -> list[str]:
     names: list[str] = []
     for key in KERNELS.select_keys("all"):
         spec = BenchSpec.load(key)
-        if spec.subtrack == "polybench" or "npbench" in spec.tags:
+        if spec.subtrack == "polybench":
             covered.append(key)
             continue
         kdir = hpcagent_paths.BENCHMARKS / spec.relative_path
@@ -324,7 +311,7 @@ def _hpcagent_names() -> list[str]:
         names.append(key)
     print(
         f"[hpcagent] {len(names)} kernels selected; skipped {len(covered)} "
-        f"(np/poly duplicates already covered above), {len(no_dace)} (no DaCe impl): "
+        f"(poly duplicates already covered above), {len(no_dace)} (no DaCe impl): "
         f"{sorted(no_dace)}",
         flush=True,
     )
@@ -352,7 +339,6 @@ def _hpcagent_case(name):
 
 CORPORA: dict[str, tuple[Callable, Callable]] = {
     "poly": (_poly_names, _poly_case),
-    "np": (_np_names, _np_case),
     "tsvc": (_tsvc_names, _tsvc_case),
     "tsvc25": (_tsvc25_names, _tsvc25_case),
     "hpcagent": (_hpcagent_names, _hpcagent_case),

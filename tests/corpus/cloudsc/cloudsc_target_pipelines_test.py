@@ -28,12 +28,11 @@ copy-in / copy-out states and is therefore called with ordinary host arrays, whi
 runs ``apply_gpu_storage`` and leaves the non-transients themselves in ``GPU_Global``, so those
 arguments must be device buffers.
 
-The CPU-canonicalized graph is the shared baseline of three of the five legs, which is why its own
-numeric leg is here rather than only in ``cloudsc_canonicalize_test``: without it a red vectorize or
-offload leg cannot be attributed to the vectorizer / the offload rather than to canonicalization.
+The CPU-canonicalized graph is the shared baseline of three of the five legs, which is why it has its
+own numeric leg: without it a red vectorize or offload leg cannot be attributed to the vectorizer / the
+offload rather than to canonicalization.
 
-Tolerances are NOT new. Both host legs and both device legs use the ``parallel`` arm bound of
-``cloudsc_canonicalize_test`` (:data:`PARALLEL_TOL`): the graphs run their maps in parallel, so the
+Both host legs and both device legs use one parallel bound (:data:`PARALLEL_TOL`): the graphs run their maps in parallel, so the
 reduction order differs from the sequential reference by construction. The device legs additionally
 build under :func:`~tests.corpus.cloudsc.pipelines.strict_fp_device_build` (nvcc or amdclang), so the
 device compiler contracts nothing and approximates nothing -- the residual is device libm, not
@@ -63,6 +62,7 @@ from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.canonicalize.finalize import finalize_for_target, offload_to_gpu
 from dace.transformation.passes.vectorization import VectorizeCPUMultiDim
 from dace.transformation.passes.vectorization.config import VectorizeConfig
+from dace.transformation.passes.vectorization.vectorize_gpu import VectorizeGPU
 from tests.corpus.cloudsc.generate_data_for_cloudsc import (
     CLOUDSC_CONSTANTS,
     IEEE_CPU_ARGS,
@@ -81,15 +81,13 @@ from tests.corpus.cloudsc.pipelines import (
     run_candidate,
     strict_fp_device_build,
 )
-from tests.corpus.cloudsc.reproduce import vectorize_gpu
 
 #: Run-time configuration flags, baked in at the values the reference inputs carry. The
 #: ``yrecldp_nssopt`` if/elif chain has no ``else`` and the ``yrecldp_laericesed`` branch writes one
 #: ``zvqx`` species inside the column loop, so left symbolic they keep 6 column loops sequential.
 CONFIG_FLAGS = {name: int(CLOUDSC_CONSTANTS[name]) for name in ("yrecldp_nssopt", "yrecldp_laericesed")}
 
-#: Tolerance for every leg here, taken from the ``parallel`` arm of ``cloudsc_canonicalize_test``
-#: (``_ARMS['parallel']``): each leg runs its maps in parallel -- OpenMP on the host, one thread per
+#: Tolerance for every leg here: each leg runs its maps in parallel -- OpenMP on the host, one thread per
 #: element on the device -- so the reductions and WCR accumulations fold in a different order than
 #: the sequential reference. It bounds reassociation, nothing else; the FP build flags are strict on
 #: both sides of every comparison.
@@ -99,6 +97,8 @@ PARALLEL_TOL = 1e-10
 #: (``tsvc_canonicalize_vectorize_corpus_test``), and the ISA is the HOST's best runnable one --
 #: vectorization enforces arch-native, so a forced non-host ISA would SIGILL at run time.
 VECTOR_WIDTH = 8
+#: Tile width for the GPU vectorize leg.
+GPU_VECTOR_WIDTH = 2
 
 #: Storage classes that put an array in device memory, so the caller must pass a device buffer for it.
 GPU_STORAGES = (dtypes.StorageType.GPU_Global, dtypes.StorageType.CPU_Pinned)
@@ -307,7 +307,8 @@ def test_vectorize_on_canonical_gpu_is_numerically_correct(reference_bundle, can
     sdfg = dace.SDFG.from_file(canonical_gpu_file)
 
     offload_cloudsc_to_gpu(sdfg)
-    vectorize_gpu(sdfg)
+    with open(os.devnull, "w") as devnull, contextlib.redirect_stdout(devnull):
+        VectorizeGPU(VectorizeConfig(widths=(GPU_VECTOR_WIDTH,))).apply_pass(sdfg, {})
     sdfg.validate()
 
     tiles = tile_nodes(sdfg)

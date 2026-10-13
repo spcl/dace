@@ -29,7 +29,6 @@ from dace.libraries.linalg import Cholesky, Solve
 from dace.transformation.auto.auto_optimize import set_fast_implementations
 from dace.transformation.dataflow import MapFusion
 from dace.transformation.interstate import LoopToMap
-from tests.corpus.npbench import npbench
 from tests.corpus.polybench import polybench
 
 pytestmark = pytest.mark.gpu
@@ -165,28 +164,9 @@ def test_polybench_cholesky_gpu(codegen):
     assert _worst_diff(cpu_out, gpu_out) < 1e-10
 
 
-@pytest.mark.parametrize("codegen", CODEGENS)
-def test_npbench_cholesky2_gpu(codegen):
-    descriptor = npbench.collect("cholesky2")[0]
-    arrays, params = npbench.make_inputs(descriptor)
-
-    cpu = npbench.fresh_sdfg(descriptor)
-    _cpu_pipeline(cpu)
-    cpu_out = npbench.run_outputs(descriptor, cpu, copy.deepcopy(arrays), params)
-
-    with set_temporary("compiler", "cpu", "implementation", value=codegen):
-        gpu = npbench.fresh_sdfg(descriptor)
-        gpu.name = f"{gpu.name}_gpu_{codegen}"
-        _gpu_pipeline(gpu)
-        gpu_out = npbench.run_outputs(descriptor, gpu, copy.deepcopy(arrays), params)
-
-    assert _worst_diff(cpu_out, gpu_out) < 1e-9
-
-
 if __name__ == "__main__":
     test_cholesky_libnode_gpu(dace.float64)
     test_solve_libnode_gpu(dace.float64)
     for cg in CODEGENS:
         test_polybench_cholesky_gpu(cg)
-        test_npbench_cholesky2_gpu(cg)
     print("All cuSOLVER GPU tests passed.")

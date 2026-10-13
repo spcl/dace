@@ -1,7 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Numerical equivalence of the experimental "readable" CPU generator vs legacy.
 
-For each curated kernel from the npbench, polybench, tsvc and tsvc_2_5 corpora:
+For each curated kernel from the polybench, tsvc and tsvc_2_5 corpora:
 
 1. build a fresh SDFG through the corpus loader,
 2. apply the standard pipeline ``simplify`` + ``LoopToMap`` + ``MapFusion``
@@ -21,8 +21,7 @@ without a CUDA device.
 
 Curated set: ~3-5 representative kernels per corpus to keep the suite fast. To
 run the FULL corpora, replace each ``*_KERNELS`` list with the loader's own
-enumeration, e.g. ``[k.name for k in polybench.collect()]``,
-``[c["name"] for c in npbench.collect()]``, ``[k.name for k in tsvc.collect()]``,
+enumeration, e.g. ``[k.name for k in polybench.collect()]``, ``[k.name for k in tsvc.collect()]``,
 and ``list(T25_PROGRAMS)`` (expect long build/compile times).
 """
 
@@ -40,14 +39,12 @@ from tests.codegen.readable.conftest import (
     run_isolated,
     use_implementation,
 )
-from tests.corpus.npbench import npbench
 from tests.corpus.polybench import polybench
 from tests.corpus.tsvc import tsvc
 from tests.corpus.tsvc_2_5 import tsvc_2_5
 
 # Curated, fast-to-build kernels (small elementwise / linear-algebra / stencil).
 POLYBENCH_KERNELS = ["atax", "bicg", "mvt", "gesummv", "jacobi_1d"]
-NPBENCH_KERNELS = ["go_fast", "azimint_hist", "arc_distance", "hdiff"]
 TSVC_KERNELS = ["s000_d_single", "s1351_d_single", "s127_d_single", "vpv_d_single", "vpvtv_d_single"]
 TSVC_2_5_KERNELS = ["ext_strided_load_2", "ext_floordiv_offset", "ext_war_unit"]
 
@@ -62,7 +59,6 @@ TSVC_2_5_PROGRAMS = {tsvc_2_5_short_name(program): program for program in tsvc_2
 
 CASES = (
     [("poly", name) for name in POLYBENCH_KERNELS]
-    + [("np", name) for name in NPBENCH_KERNELS]
     + [("tsvc", name) for name in TSVC_KERNELS]
     + [("tsvc25", name) for name in TSVC_2_5_KERNELS]
 )
@@ -92,10 +88,6 @@ def make_base(corpus, name):
         kernel = polybench.collect(name)[0]
         arrays, extra = polybench.make_inputs(kernel)
         return dict(kernel=kernel, arrays=arrays, extra=extra)
-    if corpus == "np":
-        descriptor = npbench.collect(name)[0]
-        arrays, extra = npbench.make_inputs(descriptor)
-        return dict(descriptor=descriptor, arrays=arrays, extra=extra)
     if corpus == "tsvc":
         kernel = tsvc.collect(name=name)[0]
         arrays, extra = tsvc.make_inputs(kernel)
@@ -118,11 +110,6 @@ def build_and_run(corpus, name, implementation, target, base):
         sdfg.name = f"{sdfg.name}_{tag}"
         sdfg.compile()(**arrays, **extra)
         return arrays
-    if corpus == "np":
-        sdfg = npbench.fresh_sdfg(base["descriptor"])
-        apply_pipeline(sdfg, target)
-        sdfg.name = f"{sdfg.name}_{tag}"
-        return npbench.run_outputs(base["descriptor"], sdfg, arrays, extra)
     if corpus == "tsvc":
         sdfg = tsvc.to_sdfg(base["kernel"], tag, simplify=True)
         apply_pipeline(sdfg, target)

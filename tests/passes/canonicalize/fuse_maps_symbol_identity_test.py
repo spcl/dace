@@ -5,20 +5,17 @@ The two maps range over ``0:N`` with ``N`` spelled as two sympy symbols (``int64
 path, ``int`` from the other), so the parameter remapping used to see different ranges and refuse.
 """
 
-import importlib
-
 import numpy as np
 import pytest
 
 import dace
 from dace.transformation.passes.canonicalize import canonicalize
-
-azimint = importlib.import_module("tests.corpus.npbench.map_reduce.azimint_naive")
+from tests.npbench.misc.azimint_naive_test import dace_azimint_naive, numpy_azimint_naive
 
 
 @pytest.mark.parametrize("target", ["cpu", "gpu"])
 def test_the_mask_is_fused_into_the_masked_reduction(target):
-    sdfg = azimint.kernel.to_sdfg(simplify=True)
+    sdfg = dace_azimint_naive.to_sdfg(simplify=True)
     canonicalize(sdfg, target=target)
     masks = [
         (state.label, node.data)
@@ -29,11 +26,16 @@ def test_the_mask_is_fused_into_the_masked_reduction(target):
 
 
 def test_the_fused_kernel_computes_the_bin_means():
-    sdfg = azimint.kernel.to_sdfg(simplify=True)
+    sdfg = dace_azimint_naive.to_sdfg(simplify=True)
     canonicalize(sdfg, target="cpu")
     rng = np.random.default_rng(0)
     n, npt = 300, 5
     data, radius = rng.random(n), rng.random(n)
-    want = np.zeros(npt)
-    azimint.reference(data, radius, npt, want)
+    want = numpy_azimint_naive(data, radius, npt)
     np.testing.assert_allclose(sdfg(data=data, radius=radius, N=n, npt=npt), want, rtol=1e-12)
+
+
+if __name__ == "__main__":
+    test_the_mask_is_fused_into_the_masked_reduction("cpu")
+    test_the_mask_is_fused_into_the_masked_reduction("gpu")
+    test_the_fused_kernel_computes_the_bin_means()

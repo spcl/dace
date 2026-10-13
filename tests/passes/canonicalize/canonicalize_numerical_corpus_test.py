@@ -1,10 +1,10 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """End-to-end NUMERICAL corpus test: ``canonicalize`` must be value-preserving on
-every kernel of the COMBINED polybench + npbench corpus.
+every kernel of the combined polybench + tsvc + tsvc_2_5 corpus.
 
 For each kernel a fresh SDFG is canonicalized + ``finalize_for_target('cpu')`` and
 run; its output must match the suite's reference (polybench: the untransformed
-SDFG; npbench: the numpy reference). Every kernel in the corpus must pass -- there
+SDFG; tsvc / tsvc_2_5: the scalar numpy oracle). Every kernel in the corpus must pass -- there
 is no xfail list, so a canon gap is a hard failure rather than a tracked backlog item.
 
 Run as a script for the full canon / auto-opt comparison tables:
@@ -72,14 +72,14 @@ def _canon(s):
 
 
 def _preserves(suite, name, transform, tag):
-    ctx = CS.make(suite, name, "S")  # small/fast preset for a quick correctness check
+    ctx = CS.make(suite, name)
     sdfg = CS.build(ctx, transform, tag)
     return CS.run_matches(ctx, sdfg)
 
 
 @pytest.mark.parametrize("suite,name", CS.kernels())
 def test_canon_preserves_semantics(suite, name):
-    """``canonicalize(target='cpu')`` is value-preserving across polybench + npbench."""
+    """``canonicalize(target='cpu')`` is value-preserving across the corpus."""
     assert _preserves(suite, name, _canon, "canon"), f"canon changed {suite}:{name} output vs reference"
 
 
@@ -97,7 +97,7 @@ def _generate_tables():
         row = {}
         for lbl, transform in pipelines.items():
             try:
-                ctx = CS.make(suite, name, "S")
+                ctx = CS.make(suite, name)
                 s = CS.build(ctx, transform, lbl.replace("-", ""))
                 row[lbl] = "PASS" if CS.run_matches(ctx, s) else "WRONG"
             except Exception as e:

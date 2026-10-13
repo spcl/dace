@@ -1315,7 +1315,7 @@ def test_add_missing_symbols_honors_integer_cast():
     COMPILE time -- this is a compile-time regression, not just a numeric one.
 
     Regression test for the ``compute_bin``/``histogram`` shape in
-    ``tests/corpus/npbench/map_reduce/azimint_hist.py``, reduced to its essentials: a
+    npbench ``azimint_hist``, reduced to its essentials: a
     single-argument int64 cast of a float expression, called through a nested ``@dace.program``,
     then min'd against an integer symbol and used to index+increment an array.
     """

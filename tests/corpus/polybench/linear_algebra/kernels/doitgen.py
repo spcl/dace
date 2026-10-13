@@ -18,7 +18,6 @@ sizes = [
 ]
 
 #: ported from the npbench bench_info paper row
-paper_sizes = {NQ: 250, NR: 220, NP: 270}
 
 args = [([NR, NQ, NP], datatype), ([NP, NP], datatype)]
 
