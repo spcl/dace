@@ -32,6 +32,7 @@ from dace.codegen import command_db, compiler_family, nanobind_bindings
 from dace.codegen import ctypes_compiled_sdfg as csd
 from dace.codegen import exceptions as cgx
 from dace.codegen.codeobject import CodeObject
+from dace.codegen.compiled_sdfg import CompiledSDFGProtocol
 from dace.codegen.nanobind_compiled_sdfg import NanobindCompiledSDFG
 from dace.codegen.target import TargetCodeGenerator, make_absolute
 from dace.config import Config
@@ -202,8 +203,7 @@ def generate_program_folder(
         bindings_folder = os.path.join(src_path, "cpu")
         os.makedirs(bindings_folder, exist_ok=True)
         bindings_name = f"{sdfg.name}_nanobind.cpp"
-        # @CLAUDE: According to the reviewer, all objects with title `Frame` should have a `statestruct` so the `getattr()` is not needed.
-        statestruct = next((getattr(obj, "statestruct", None) for obj in code_objects if obj.title == "Frame"), None)
+        statestruct = next((obj.statestruct for obj in code_objects if obj.title == "Frame"), None)
         # The GPU error record accessor exists exactly when the CUDA target emitted its code
         # object, so the binding's per-call check is gated on that - not on a storage or
         # schedule heuristic, which would declare a symbol the library may not have.
@@ -271,14 +271,6 @@ def generate_program_folder(
     # Generate the parts of the folder that are exclusive to the development folder mode.
     if folder_mode == "development":
         Config.save(os.path.join(out_path, "dace.conf"), all=True)
-
-    # The runtime's `report.save()` uses `std::ofstream` to open `<folder>/perf/report-*.json`.
-    #  If `perf/` does not exist it will fail, thus we have to create it if it is needed.
-    #  Technically we only need to create it if the SDFG is instrumented. But we will also
-    #  create it in development mode. Furthermore, if there is no SDFG given, we also create
-    #  it to be on the safe side.
-    if (folder_mode == "development") or (sdfg is None) or sdfg.is_instrumented():
-        os.makedirs(os.path.join(out_path, "perf"), exist_ok=True)
 
     # The folder mode file is always generated. In case it is missing we assume the old version.
     #  Concurrent processes probe it, e.g. through `get_binary_name()`, thus it must never be observed incomplete.
@@ -1126,8 +1118,7 @@ def _get_stub_library_path(sdfg_lib_path: pathlib.Path | str) -> pathlib.Path:
 def load_precompiled_sdfg(
     folder: pathlib.Path | str,
     sdfg: Optional["dace.SDFG"] = None,
-    # @CLAUDE: The type annotation is wrong here, it should return the protocol, it is also happening at other places.
-) -> csd.CtypesCompiledSDFG:
+) -> "CompiledSDFGProtocol":
     """Loads a precompiled SDFG from ``folder``.
 
     If ``sdfg`` is not given then the function expects to find the ``program.sdfg(z)``
