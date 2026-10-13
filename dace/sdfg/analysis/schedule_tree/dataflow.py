@@ -66,7 +66,7 @@ def _bound(expr: sympy.Expr, ranges: dict[str, tuple[sympy.Expr, sympy.Expr] | N
     return expr
 
 
-def _disjoint(a: Box, b: Box) -> bool:
+def disjoint(a: Box, b: Box) -> bool:
     """Whether two regions provably share no element."""
     for x, y in zip(a, b):
         if x is None or y is None:
@@ -399,7 +399,7 @@ class ReachingAnalysis:
         """
         if write_memlet.data != read_memlet.data:
             return False
-        if _disjoint(self.region(write, write_memlet, None), self.region(read, read_memlet, None)):
+        if disjoint(self.region(write, write_memlet, None), self.region(read, read_memlet, None)):
             return False
         write_path, read_path = _path(write), _path(read)
         depth = 0  # Length of the common prefix
@@ -458,7 +458,7 @@ class ReachingAnalysis:
             return False
         if not any(isinstance(n, (tn.LoopScope, tn.MapScope)) for n in _path(scope)):
             return False  # Runs once
-        if _disjoint(self.region(write, write_memlet, None), self.region(read, read_memlet, None)):
+        if disjoint(self.region(write, write_memlet, None), self.region(read, read_memlet, None)):
             return False
         read_path = _path(read)
         child = read_path[next(k for k, n in enumerate(read_path) if n is scope) + 1]

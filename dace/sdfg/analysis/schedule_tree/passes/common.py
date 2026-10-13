@@ -409,3 +409,68 @@ class ReplaceAccesses(ast.NodeTransformer):
         if id(node) in self.names:
             return ast.copy_location(ast.Name(id=self.names[id(node)], ctx=ast.Load()), node)
         return super().visit(node)
+
+
+def expression_symbols(expression: ast.expr) -> set[str]:
+    """The symbol and container names a Python expression reads."""
+    return set(symbolic.symbols_in_ast(expression))
+
+
+def conjuncts(condition: ast.expr) -> list[ast.expr]:
+    """The operands of a condition that is a conjunction (``a and b``), else the condition itself."""
+    if isinstance(condition, ast.BoolOp) and isinstance(condition.op, ast.And):
+        return list(condition.values)
+    return [condition]
+
+
+def normalized_indices(indices: list[str]) -> tuple[str, ...]:
+    """Indices in a canonical form, so that equal ones compare equal as strings."""
+    return tuple(str(symbolic.pystr_to_symbolic(i)) for i in indices)
+
+
+def memlet_element(memlet: Memlet) -> tuple[str, ...] | None:
+    """The indices of the single element a memlet accesses, or ``None`` if it accesses more."""
+    indices = []
+    for start, end, _ in memlet.subset.ndrange():
+        if symbolic.simplify(end - start) != 0:
+            return None
+        indices.append(str(start))
+    return normalized_indices(indices)
+
+
+def path_to(node: tn.ScheduleTreeNode, scope: tn.ScheduleTreeScope) -> list[tn.ScheduleTreeNode]:
+    """``node`` and its ancestors below ``scope``, innermost first."""
+    path = []
+    while node is not scope:
+        path.append(node)
+        node = node.parent
+    return path
+
+
+def child_containing(scope: tn.ScheduleTreeScope, node: tn.ScheduleTreeNode) -> tn.ScheduleTreeNode:
+    """The child of ``scope`` that is or contains ``node`` (a descendant of ``scope``)."""
+    return path_to(node, scope)[-1]
+
+
+def inside(node: tn.ScheduleTreeNode, scope: tn.ScheduleTreeScope) -> bool:
+    """Whether ``node`` is ``scope`` or a descendant of it."""
+    while node is not None:
+        if node is scope:
+            return True
+        node = node.parent
+    return False
+
+
+def bound_between(node: tn.ScheduleTreeNode, scope: tn.ScheduleTreeScope) -> set[str]:
+    """The iteration variables that ``node`` (if a loop or map) and its ancestors below ``scope`` bind."""
+    return set().union(*(bound_names(n) for n in path_to(node, scope)))
+
+
+def assigned_in(nodes_: list[tn.ScheduleTreeNode]) -> set[str]:
+    """Containers and symbols assigned in subtrees, other than loop and map variables."""
+    assigned: set[str] = set()
+    for root in nodes_:
+        for node in root.preorder_traversal():
+            if not isinstance(node, (tn.LoopScope, tn.MapScope)):
+                assigned |= names_written(node)
+    return assigned
