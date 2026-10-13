@@ -1001,7 +1001,7 @@ def strided_extent(shape, strides):
     return sum((size - 1) * stride for size, stride in zip(shape, strides)) + 1
 
 
-def reconstruct_view(sdfg: SDFG, target: SDFGState, name: str) -> nodes.AccessNode:
+def reconstruct_view(sdfg: SDFG, target: SDFGState, name: str) -> nd.AccessNode:
     """Adds the view ``name`` (and the views it views) to ``target``, as defined in another state of ``sdfg``."""
     for state in sdfg.states():
         if state is target:
