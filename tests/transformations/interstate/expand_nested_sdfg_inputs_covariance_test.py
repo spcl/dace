@@ -24,7 +24,7 @@ from dace.transformation.dataflow.map_for_loop import MapToForLoop
 from dace.transformation.interstate.expand_nested_sdfg_inputs import ExpandNestedSDFGInputs
 from dace.transformation.interstate.multistate_inline import InlineMultistateSDFG
 from dace.transformation.interstate.sdfg_nesting import InlineSDFG
-from dace.transformation.passes.canonicalize.pipeline import _build_stages
+from dace.transformation.passes.canonicalize.pipeline import build_stages
 from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
 from dace.transformation.passes.vectorization.nest_innermost_map_body import NestInnermostMapBodyIntoNSDFG
 
@@ -97,7 +97,7 @@ def _canonicalize_through_lower(sdfg: dace.SDFG) -> None:
     ``comp_cov_col`` / row-reduction body-NSDFG so ``ExpandNestedSDFGInputs`` has
     something to widen (mirrors the task's minimal repro)."""
     seen_lower = False
-    for label, unit in _build_stages():
+    for label, unit in build_stages():
         unit.apply_pass(sdfg, {})
         if label == "lower":
             seen_lower = True

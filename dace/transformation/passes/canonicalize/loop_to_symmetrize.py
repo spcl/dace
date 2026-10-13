@@ -28,12 +28,12 @@ from dace.sdfg.state import ControlFlowRegion, LoopRegion, SDFGState
 from dace.subsets import Subset
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.analysis import loop_analysis
+from dace.transformation.passes.canonicalize.loop_iteration_value import unit_stride
 from dace.transformation.passes.canonicalize.loop_to_transpose import (
     _single_body_state,
     _single_child_loop,
     match_copy_chain,
 )
-from dace.transformation.passes.canonicalize.rank_k_match import unit_stride
 from dace.transformation.transformation import explicit_cf_compatible
 
 

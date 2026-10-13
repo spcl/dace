@@ -22,6 +22,7 @@ import pytest
 import dace
 from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock
+from dace.transformation.interstate.move_map_invariant_if_up import hoist_invariant_guards
 from dace.transformation.passes.canonicalize import canonicalize
 
 N = dace.symbol("N")
@@ -133,6 +134,9 @@ def test_config_two_array_branches_guard_present():
     correctness is the primary contract."""
     sdfg = config_two_array_branches.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
+    hoist_invariant_guards(
+        sdfg, require_full_hoist=False
+    )  # the specialization step hoists; canonicalize keeps guards pushed in
     sdfg.validate()
     assert _ncond_blocks(sdfg) == 1, f"expected exactly the one config-flag guard, got {_ncond_blocks(sdfg)}"
     assert [b for b in sdfg.nodes() if isinstance(b, ConditionalBlock)], "the invariant guard did not hoist"

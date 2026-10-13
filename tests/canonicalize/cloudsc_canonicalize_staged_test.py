@@ -52,7 +52,7 @@ os.environ.setdefault("UCX_VFS_ENABLE", "n")
 import pytest
 
 import dace
-from dace.transformation.passes.canonicalize.pipeline import _build_stages
+from dace.transformation.passes.canonicalize.pipeline import build_stages
 from tests.corpus.cloudsc.generate_data_for_cloudsc import (
     IEEE_CPU_ARGS,
     SPECIES_CONSTANTS,
@@ -100,7 +100,7 @@ def quiet():
 def phase_order() -> list[str]:
     """The pipeline's phase labels, in order, de-duplicated."""
     order: list[str] = []
-    for label, _ in _build_stages():
+    for label, unit in build_stages():
         if not order or order[-1] != label:
             if label not in order:
                 order.append(label)
@@ -191,7 +191,7 @@ def run_staged(
     :returns: One record per phase.
     """
     os.makedirs(cache_dir, exist_ok=True)
-    stages = _build_stages()
+    stages = build_stages()
     order = phase_order()
 
     reference = pristine = reference_outputs = None

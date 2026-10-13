@@ -79,7 +79,7 @@ def _is_cleanup_stage(unit: ppl.Pass) -> bool:
 def _canonicalize(sdfg: dace.SDFG, with_cleanup: bool) -> dace.SDFG:
     """Run the real recipe, optionally with the cleanup stage skipped (the A/B reference)."""
     canon_pipeline.disable_openmp_sections(sdfg)
-    for label, unit in canon_pipeline._build_stages():
+    for label, unit in canon_pipeline.build_stages():
         if not with_cleanup and _is_cleanup_stage(unit):
             continue
         unit.apply_pass(sdfg, {})
@@ -121,9 +121,9 @@ def _shape(sdfg: dace.SDFG) -> tuple[list[tuple[str, str]], list[tuple[str, str,
     return arrays, edges
 
 
-def test_the_stage_is_wired_in_once_after_the_terminal_fuse():
-    labels = [label for label, unit in canon_pipeline._build_stages() if _is_cleanup_stage(unit)]
-    assert labels == ["end"], labels
+def test_the_stage_is_wired_in_once_after_maximal_fusion():
+    labels = [label for label, unit in canon_pipeline.build_stages() if _is_cleanup_stage(unit)]
+    assert labels == ["recompose"], labels
 
 
 def test_heat3d_loses_the_copy_out_buffer():
@@ -174,7 +174,7 @@ def test_heat3d_is_bit_exact():
 
 
 if __name__ == "__main__":
-    test_the_stage_is_wired_in_once_after_the_terminal_fuse()
+    test_the_stage_is_wired_in_once_after_maximal_fusion()
     test_heat3d_loses_the_copy_out_buffer()
     test_the_stage_is_idempotent()
     test_heat3d_is_bit_exact()

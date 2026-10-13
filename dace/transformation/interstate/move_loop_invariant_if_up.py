@@ -1,22 +1,20 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Hoist a loop-invariant guarding conditional out of its enclosing loop.
 
-The inverse of ``MoveIfIntoLoop``: ``for k: { prep*; if c: body }`` becomes
-``prep*; if c: { for k: body }`` when ``c`` (and the interstate-edge symbol
-assignments it depends on) is provably invariant w.r.t. the loop. Applied to
-a fixpoint, so an innermost invariant guard sifts all the way up through a
-stack of nested loops (a mix of loops and maps -- maps are lowered to
-``LoopRegion`` s by the canonicalize pipeline before this runs, so operating
-on ``LoopRegion`` covers both).
+The inverse of ``MoveIfIntoLoop`` -- loop unswitching: ``for k: { prep*; if c: A else: B }`` becomes
+``prep*; if c: { for k: A } else: { for k: B }`` when every branch condition (and the interstate-edge symbol
+assignments it depends on) is provably invariant w.r.t. the loop, so every iteration takes the same branch. Any
+number of branches, with or without an ``else``; a branch with no work becomes an empty state, not a loop.
+Applied to a fixpoint, so an innermost invariant guard sifts all the way up through a stack of nested loops.
+The canonical form keeps guards innermost; this runs at specialization (``hoist_invariant_guards``).
 
 Conservative -- only fires when:
 
 * the loop body is a linear chain whose only non-empty block is the
-  single-branch (no-else) ``ConditionalBlock``; empty boundary states are
-  allowed and are dropped (they carry no effect, so the loop is a genuine
-  no-op when ``c`` is false -> hoisting is value-preserving: ``c`` true =>
-  the loop runs the body every iteration as before; ``c`` false => the loop
-  did nothing observable before and is simply not entered after). A guard
+  ``ConditionalBlock``; empty boundary states are allowed and are dropped
+  (they carry no effect, so each branch's copy of the loop runs exactly the
+  work that branch did in every iteration; without an ``else`` the not-taken
+  case did nothing observable and the loop is simply not entered). A guard
   that shares its body with siblings it is data-independent of is first
   distributed into a loop of its own (``for k: { A; if c: B }`` ->
   ``for k: { A }; for k: { if c: B }``) using ``LoopFission``'s independence
@@ -213,7 +211,7 @@ def _hoistable(
 
     :param sdfg: The root SDFG (bounds the ancestor walk).
     :param loop: The loop the guard sits in.
-    :param cb: The single-branch guarding conditional block.
+    :param cb: The guarding conditional block; every branch condition must be invariant (an ``else`` has none).
     :param require_full_hoist: If set, only accept the candidate when the
         guard can be sifted out past *every* enclosing loop (the whole parent
         chain) -- if it would get stuck at some ancestor loop (its condition
@@ -226,10 +224,8 @@ def _hoistable(
         are inside the new (now-guarded) loop body and are NOT in this list --
         the splice in ``_move`` keeps them in place automatically.
     """
-    if len(cb.branches) != 1:
-        return None
-    cond, branch = cb.branches[0]
-    if cond is None or not isinstance(branch, ControlFlowRegion):
+    conds = [cond for cond, _ in cb.branches if cond is not None]
+    if not conds or any(not isinstance(branch, ControlFlowRegion) for _, branch in cb.branches):
         return None
 
     lvar = str(loop.loop_variable)
@@ -253,7 +249,7 @@ def _hoistable(
                 return None
 
     assigned = {lhs for lhs, _ in chain_assignments}
-    cfree = {str(s) for s in cond.get_free_symbols()}
+    cfree = {str(s) for cond in conds for s in cond.get_free_symbols()}
     # The guard must be invariant: no loop variable, and no dependence on
     # loop-written data/symbols other than the hoistable chain symbols.
     if lvar in cfree:
@@ -279,7 +275,7 @@ def _hoistable(
             if any(avar in _free(rhs) or (_free(rhs) & aw) for _, rhs in chain_assignments):
                 return None
 
-    return cond, chain_assignments
+    return conds[0], chain_assignments
 
 
 def match_loop(
@@ -439,41 +435,75 @@ class MoveLoopInvariantIfUp(ppl.Pass):
 
     @staticmethod
     def _move(loop: LoopRegion, cb: ConditionalBlock, cond: CodeBlock, hoist_assignments: list[tuple[str, str]]):
-        """Splice ``loop`` into ``[assign chain]; if cond: { loop' }`` in place.
+        """Splice ``loop`` into ``[assign chain]; if c1: { loop_1 } elif c2: { loop_2 } ... else: { loop_n }`` in place.
 
-        ``loop'`` is ``loop`` with its conditional block ``cb`` spliced out and
-        replaced by ``cb`` s branch body. All other body blocks (and the
-        per-iteration iedge assignments on them) are preserved.
+        ``loop_k`` is ``loop`` with its conditional block ``cb`` replaced by branch ``k``'s body -- loop
+        unswitching: the invariant condition picks the same branch in every iteration, so each branch runs as a loop
+        of its own. A branch with no work becomes an empty state rather than a loop that does nothing.
 
         :param loop: The loop whose invariant guard is being hoisted.
         :param cb: The guarding conditional block inside ``loop``.
-        :param cond: The (invariant) branch condition of ``cb``.
-        :param hoist_assignments: Invariant iedge ``(lhs, rhs)`` assignments to
-            move onto the outer guard's incoming edge.
+        :param cond: The first branch condition (kept for the call signature; every branch is used).
+        :param hoist_assignments: Invariant iedge ``(lhs, rhs)`` assignments to move onto the outer guard's incoming
+            edge.
         """
+        del cond
         parent = loop.parent_graph
         in_edges = list(parent.in_edges(loop))
         out_edges = list(parent.out_edges(loop))
         is_start = parent.start_block is loop
 
-        cond, branch = copy.deepcopy(cb).branches[0]
+        outer_cb = ConditionalBlock(label=f"{loop.label}_guard")
+        for index, (branch_cond, branch) in enumerate(cb.branches):
+            inner = ControlFlowRegion(label=f"{loop.label}_body_{index}" if index else f"{loop.label}_body")
+            if all(_is_empty_state(b) for b in branch.nodes()):
+                inner.add_state(f"{loop.label}_skip_{index}", is_start_block=True)
+            else:
+                unswitched = MoveLoopInvariantIfUp._loop_with_branch(loop, cb, index, hoist_assignments)
+                inner.add_node(unswitched, is_start_block=True, ensure_unique_name=True)
+            outer_cb.add_branch(None if branch_cond is None else CodeBlock(branch_cond.as_string), inner)
 
-        # loop' = a deepcopy of the loop with cb spliced out in place.
+        parent.add_node(outer_cb, ensure_unique_name=True)
+        # Hoisted invariant assignments go on the edge entering the guard.
+        hoisted = dict(hoist_assignments)
+        for e in in_edges:
+            data = copy.deepcopy(e.data)
+            data.assignments.update(hoisted)
+            parent.add_edge(e.src, outer_cb, data)
+        if not in_edges and hoisted:
+            pre = parent.add_state(f"{loop.label}_hoist")
+            parent.add_edge(pre, outer_cb, InterstateEdge(assignments=hoisted))
+            if is_start:
+                parent.start_block = parent.node_id(pre)
+                is_start = False
+        for e in out_edges:
+            parent.add_edge(outer_cb, e.dst, copy.deepcopy(e.data))
+        for e in in_edges + out_edges:
+            parent.remove_edge(e)
+        parent.remove_node(loop)
+        if is_start:
+            parent.start_block = parent.node_id(outer_cb)
+
+    @staticmethod
+    def _loop_with_branch(
+        loop: LoopRegion, cb: ConditionalBlock, index: int, hoist_assignments: list[tuple[str, str]]
+    ) -> LoopRegion:
+        """A copy of ``loop`` with ``cb`` spliced out and replaced by the body of its branch ``index``.
+
+        Every other body block, and the per-iteration iedge assignments on them, are preserved; the invariant prep
+        that moves out with the guard is removed from the copy, and emptied boundary states are spliced out.
+        """
+        branch = copy.deepcopy(cb).branches[index][1]
         new_loop = copy.deepcopy(loop)
-        # Find the corresponding cb in the deepcopy by label match.
         new_cb_candidates = [b for b in new_loop.nodes() if isinstance(b, ConditionalBlock) and b.label == cb.label]
         assert len(new_cb_candidates) == 1, f"expected one ConditionalBlock named {cb.label!r} in deepcopy"
         new_cb = new_cb_candidates[0]
         cb_pred_edges = list(new_loop.in_edges(new_cb))
         cb_succ_edges = list(new_loop.out_edges(new_cb))
         cb_was_start = new_loop.start_block is new_cb
-        # Drop edges to/from cb, then drop cb itself; preserve every other
-        # block (in particular: per-iteration iedge assignments on the body
-        # chain stay intact because they live on the OTHER edges).
         for e in cb_pred_edges + cb_succ_edges:
             new_loop.remove_edge(e)
         new_loop.remove_node(new_cb)
-        # Splice branch body into new_loop.
         bb = list(branch.nodes())
         be = list(branch.edges())
         bstart = branch.start_block
@@ -482,10 +512,8 @@ class MoveLoopInvariantIfUp(ppl.Pass):
             new_loop.add_node(b, ensure_unique_name=True)
         for e in be:
             new_loop.add_edge(e.src, e.dst, copy.deepcopy(e.data))
-        # Wire cb's predecessors to branch.start_block.
         for e in cb_pred_edges:
             new_loop.add_edge(e.src, bstart, copy.deepcopy(e.data))
-        # Wire branch sinks to cb's successors.
         for sink in branch_sinks:
             for e in cb_succ_edges:
                 new_loop.add_edge(sink, e.dst, copy.deepcopy(e.data))
@@ -499,10 +527,7 @@ class MoveLoopInvariantIfUp(ppl.Pass):
                 if e.data.assignments.get(lhs) == rhs:
                     del e.data.assignments[lhs]
 
-        # Splice out empty boundary states left in ``new_loop`` (the
-        # original loop may have had empty pre/post-cb states; with cb
-        # gone they are now empty linear-chain hops contributing nothing).
-        # Mirrors EmptyStateElimination's local-fixpoint splice.
+        # Splice out empty boundary states the removed conditional leaves (EmptyStateElimination's local splice).
         changed = True
         while changed:
             changed = False
@@ -531,30 +556,4 @@ class MoveLoopInvariantIfUp(ppl.Pass):
                     new_loop.remove_node(st)
                     changed = True
                     break
-
-        # if cond: { loop' }
-        inner = ControlFlowRegion(label=f"{loop.label}_body")
-        inner.add_node(new_loop, is_start_block=True, ensure_unique_name=True)
-        outer_cb = ConditionalBlock(label=f"{loop.label}_guard")
-        outer_cb.add_branch(CodeBlock(cond.as_string), inner)
-
-        parent.add_node(outer_cb, ensure_unique_name=True)
-        # Hoisted invariant assignments go on the edge entering the guard.
-        hoisted = dict(hoist_assignments)
-        for e in in_edges:
-            data = copy.deepcopy(e.data)
-            data.assignments.update(hoisted)
-            parent.add_edge(e.src, outer_cb, data)
-        if not in_edges and hoisted:
-            pre = parent.add_state(f"{loop.label}_hoist")
-            parent.add_edge(pre, outer_cb, InterstateEdge(assignments=hoisted))
-            if is_start:
-                parent.start_block = parent.node_id(pre)
-                is_start = False
-        for e in out_edges:
-            parent.add_edge(outer_cb, e.dst, copy.deepcopy(e.data))
-        for e in in_edges + out_edges:
-            parent.remove_edge(e)
-        parent.remove_node(loop)
-        if is_start:
-            parent.start_block = parent.node_id(outer_cb)
+        return new_loop

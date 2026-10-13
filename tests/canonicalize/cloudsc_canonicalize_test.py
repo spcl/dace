@@ -19,7 +19,7 @@ import pytest
 import dace
 from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
-from dace.transformation.passes.canonicalize.pipeline import CANONICALIZE_STAGES
+from dace.transformation.passes.canonicalize.pipeline import CANONICALIZE_STAGES, DERIVE_PARALLELISM
 from tests.corpus.cloudsc.generate_data_for_cloudsc import build_cloudsc_sdfg
 
 pytestmark = pytest.mark.integration
@@ -34,19 +34,19 @@ def map_entries(sdfg: dace.SDFG) -> int:
 
 
 def test_the_loop_centric_stages_expose_parallelism_in_cloudsc():
-    """Every stage through ``parallelize`` applies, keeps CloudSC valid, and leaves it with fewer
+    """Every stage through the ``derive_parallelism`` phase applies, keeps CloudSC valid, and leaves it with fewer
     loops and more Maps than it started with -- which a recipe of no-ops cannot do."""
     sdfg = build_cloudsc_sdfg(simplify=True)
     sdfg.validate()  # fixture must start valid
     loops_before, maps_before = residual_loops(sdfg), map_entries(sdfg)
 
-    last_parallelize = max(i for i, (label, _) in enumerate(CANONICALIZE_STAGES) if label == "parallelize")
+    last_parallelize = max(i for i, (label, _) in enumerate(CANONICALIZE_STAGES) if label == DERIVE_PARALLELISM)
     applied = []
     for label, factory in CANONICALIZE_STAGES[: last_parallelize + 1]:
         applied.extend((label, type(unit).__name__) for unit in factory() if unit.apply_pass(sdfg, {}) is not None)
         sdfg.validate()  # each stage boundary must preserve a valid SDFG
 
-    assert applied, "not one stage through parallelize rewrote anything"
+    assert applied, "not one stage through derive_parallelism rewrote anything"
     assert map_entries(sdfg) > maps_before, (
         f"LoopToMap exposed no parallelism: {maps_before} -> {map_entries(sdfg)} maps"
     )
@@ -56,4 +56,4 @@ def test_the_loop_centric_stages_expose_parallelism_in_cloudsc():
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    test_the_loop_centric_stages_expose_parallelism_in_cloudsc()

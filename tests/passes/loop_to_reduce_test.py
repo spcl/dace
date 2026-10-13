@@ -1298,7 +1298,7 @@ def test_wcr_scalar_refuses_scan_shape_recurrence():
     """
     import numpy as np
 
-    from dace.transformation.passes.canonicalize.pipeline import _build_stages
+    from dace.transformation.passes.canonicalize.pipeline import build_stages
 
     NN = dace.symbol("NN")
 
@@ -1311,7 +1311,7 @@ def test_wcr_scalar_refuses_scan_shape_recurrence():
     # Run the canonicalize pre-stages so LoopToScan rewrites the body before
     # LoopToReduce(wcr-scalar) sees it -- the exact shape the regression
     # surfaced under.
-    for label, pass_obj in _build_stages():
+    for label, pass_obj in build_stages():
         if label == "reduction_to_wcr_map":
             break
         if hasattr(pass_obj, "apply_pass"):

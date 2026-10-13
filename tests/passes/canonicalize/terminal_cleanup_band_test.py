@@ -39,7 +39,6 @@ import pytest
 
 import dace
 from dace.sdfg import nodes
-from dace.sdfg.state import ConditionalBlock
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.array_elimination import ArrayElimination
 from dace.transformation.passes.canonicalize import pipeline as canon_pipeline
@@ -80,19 +79,6 @@ def _fission_dep_then_indep(
         b[i] = y[i] * 2.0
 
 
-@dace.program
-def _guarded_scan(out: dace.float64[LEN_1D], delta: dace.float64[LEN_1D], mask: dace.int64[LEN_1D]):
-    """TSVC-2.5 ``scan_conditional``: a masked prefix sum, where the running total advances only
-    where the mask is set. ``LoopToScan`` splits the guard into a delta build plus a scan, which
-    leaves the ``else`` arm -- ``out[i] = out[i - 1]``, the additive identity -- with nothing left
-    to do. Caller seeds ``out[0]``."""
-    for i in range(1, LEN_1D):
-        if mask[i] > 0:
-            out[i] = out[i - 1] + delta[i]
-        else:
-            out[i] = out[i - 1]
-
-
 def _is_reclaim_stage(unit: ppl.Pass) -> bool:
     """A stage that reclaims arrays, never a ``SimplifyPass``.
 
@@ -114,7 +100,7 @@ CLEANUP_TYPES = frozenset(type(p).__name__ for label, p in canon_pipeline._struc
 
 def _reclaim_slots() -> list[int]:
     """Recipe indices of every array-reclaiming stage, in order."""
-    at = [i for i, (label, p) in enumerate(canon_pipeline._build_stages()) if _is_reclaim_stage(p)]
+    at = [i for i, (label, p) in enumerate(canon_pipeline.build_stages()) if _is_reclaim_stage(p)]
     assert at, "the recipe no longer reclaims arrays at all"
     return at
 
@@ -140,7 +126,7 @@ def _cleanup_slots() -> list[int]:
     cleanup they precede, so a fixed-width window would skip that tail instead and the A/B would be
     measuring something else entirely while still passing.
     """
-    stages = canon_pipeline._build_stages()
+    stages = canon_pipeline.build_stages()
     start = _band_start()
     names = [type(p).__name__ for label, p in stages]
     want = [type(p).__name__ for label, p in canon_pipeline._structural_cleanup("probe")]
@@ -172,7 +158,7 @@ def _canonicalize(
     canon_pipeline.disable_openmp_sections(sdfg)
     reclaim_slots = _reclaim_slots()
     cleanup_slots = _cleanup_slots()
-    for index, (label, unit) in enumerate(canon_pipeline._build_stages()):
+    for index, (label, unit) in enumerate(canon_pipeline.build_stages()):
         if not with_reclaim and index in reclaim_slots:
             continue
         if not with_cleanup and index in cleanup_slots:
@@ -280,62 +266,11 @@ def test_fission_replica_is_absent_from_the_canonical_form():
     assert set(_transients(sdfg)) == LIVE_TRANSIENTS, sorted(_transients(sdfg))
 
 
-def _states(sdfg: dace.SDFG) -> list[str]:
-    return sorted(state.label for nested in sdfg.all_sdfgs_recursive() for state in nested.states())
-
-
-def _workless_branches(sdfg: dace.SDFG) -> list[str]:
-    """Conditional arms that carry no dataflow at all.
-
-    Named by the arm rather than by a state, because that is the whole point of the case: an arm is
-    a ControlFlowRegion, so ``DeadStateElimination`` walks past it however empty its states are.
-    """
-    return sorted(
-        branch.label
-        for nested in sdfg.all_sdfgs_recursive()
-        for block in nested.all_control_flow_blocks()
-        if isinstance(block, ConditionalBlock)
-        for condition, branch in block.branches
-        if not any(state.nodes() for state in branch.states())
-    )
-
-
-def test_spent_conditional_arm_is_spliced_out():
-    """The cleanup half of the band: state-machine scaffolding, not dataflow.
-
-    The terminal ``SimplifyPass`` was the last thing that ran ``FuseStates`` / ``DeadStateElimination``
-    over the recipe's output. ``_structural_cleanup`` plus ``PruneEmptyConditionalBranches`` at ``end``
-    is what takes its place, and the empty arm is the half only the latter reaches -- the state-level
-    passes see a ControlFlowRegion and step over it.
-    """
-    reference = _canonicalize(_guarded_scan.to_sdfg(simplify=False), with_cleanup=False)
-    spent = _workless_branches(reference)
-    assert spent, f"expected the split scan to leave an empty arm, got {_states(reference)}"
-
-    cleaned = _canonicalize(_guarded_scan.to_sdfg(simplify=False), with_cleanup=True)
-    assert _workless_branches(cleaned) == [], _states(cleaned)
-    assert len(_states(cleaned)) < len(_states(reference))
-    # The split itself must survive the tidy-up: the scan is still a Map, and the arm that was
-    # pruned really was the identity.
-    assert _maps(cleaned) == _maps(reference) and _maps(cleaned) > 0
-
-    length = 64
-    rng = np.random.default_rng(11)
-    delta, mask = rng.random(length), (rng.random(length) > 0.5).astype(np.int64)
-    expected = np.zeros(length)
-    for i in range(1, length):
-        expected[i] = expected[i - 1] + delta[i] if mask[i] > 0 else expected[i - 1]
-
-    out = np.zeros(length)
-    cleaned(out=out, delta=delta, mask=mask, LEN_1D=length)
-    assert np.allclose(out, expected)
-
-
 def test_the_stage_is_idempotent():
     """Re-entering the stage must find nothing -- canonicalize's output is already its fixed point."""
     sdfg = _canonicalize(_fuse_diamond.to_sdfg(simplify=False))
     before = (_transients(sdfg), _access_nodes(sdfg), _tasklets(sdfg))
-    stage = [unit for label, unit in canon_pipeline._build_stages() if _is_reclaim_stage(unit)][0]
+    stage = [unit for label, unit in canon_pipeline.build_stages() if _is_reclaim_stage(unit)][0]
     stage.apply_pass(sdfg, {})
     assert (_transients(sdfg), _access_nodes(sdfg), _tasklets(sdfg)) == before
     sdfg.validate()

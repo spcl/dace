@@ -42,7 +42,8 @@ Conservative -- only fires when:
   subsets do not mention a map parameter;
 * for a map at the top level of its state, the state holds nothing but that map
   and the ``AccessNode`` s wired through it (so the whole state can be replaced
-  by the hoisted conditional).
+  by the hoisted conditional). A state with more maps is split first, upstream
+  map first, until the guarded map has a state of its own.
 
 Anything else is a no-op.
 """
@@ -353,6 +354,38 @@ def _split_map_producers(sdfg: SDFG, require_full_hoist: bool = False) -> bool:
     return False
 
 
+def _split_off_first_map(sdfg: SDFG, require_full_hoist: bool = False) -> bool:
+    """Give a hoistable top-level map a state of its own: move the first map of its state, with what it reads, into
+    a new state before it.
+
+    Canonicalization pushes every guard into its map, so independent guarded maps share one state, where
+    :func:`_match` refuses the state for holding more than the map. A map that nothing else in the state feeds can
+    always run first; splitting maps off one at a time, upstream first, leaves single-map states the hoist takes. The
+    states merge again after the hoist where they still can (``FuseStates`` in :func:`hoist_invariant_guards`).
+
+    :returns: Whether a state was split.
+    """
+    for st, me, _ns, _cb in _candidates(sdfg, allow_inner_defs=False, require_full_hoist=require_full_hoist):
+        if st.entry_node(me) is not None:
+            continue
+        top_maps = [n for n in st.nodes() if isinstance(n, MapEntry) and st.entry_node(n) is None]
+        if len(top_maps) < 2:
+            continue
+        for first in top_maps:
+            upstream = [
+                n
+                for n in sdutil.find_upstream_nodes(first, st)
+                if n is not first and not isinstance(n, AccessNode) and st.entry_node(n) is None
+            ]
+            if upstream:
+                continue
+            scope = st.scope_subgraph(first, include_entry=True, include_exit=True).nodes()
+            readers = [e.src for e in st.in_edges(first) if isinstance(e.src, AccessNode)]
+            state_fission(SubgraphView(st, list(scope) + readers))
+            return True
+    return False
+
+
 def _candidate_at(
     st: SDFGState, me: MapEntry, allow_inner_defs: bool = True
 ) -> tuple[SDFGState, MapEntry, NestedSDFG, ConditionalBlock] | None:
@@ -561,6 +594,8 @@ class MoveMapInvariantIfUp(ppl.Pass):
                 continue
             if _split_map_producers(sdfg, self.require_full_hoist):
                 continue
+            if _split_off_first_map(sdfg, self.require_full_hoist):
+                continue
             # No top-level candidate left; try to expose one by isolating an
             # inner map of a chain into its own nested SDFG. That makes its
             # state a single-map state, which the top-level path above then
@@ -702,3 +737,25 @@ class MoveMapInvariantIfUp(ppl.Pass):
         cfg.remove_node(st)
         if is_start:
             cfg.start_block = cfg.node_id(outer_cb)
+
+
+def hoist_invariant_guards(sdfg: SDFG, require_full_hoist: bool) -> None:
+    """The specialization step for guards: hoist every invariant guard as far up as it goes -- out of loops, then out
+    of maps (one map copy per branch) -- then run canonicalization's maximal fusion on what that leaves.
+
+    Canonicalization pushes guards inward (``MoveIfIntoLoop``, ``MoveIfIntoMap``); how far back up a guard should go
+    is a target decision, so it is made here, after canonicalization.
+
+    :param sdfg: The canonicalized SDFG, in place.
+    :param require_full_hoist: Hoist a guard only if it leaves every enclosing scope (GPU: a guard stalled between
+                               two maps splits the kernel).
+    """
+    from dace.transformation.interstate.move_loop_invariant_if_up import MoveLoopInvariantIfUp
+    from dace.transformation.passes.canonicalize.pipeline import maximal_fusion
+
+    MoveLoopInvariantIfUp(require_full_hoist=require_full_hoist).apply_pass(sdfg, {})
+    if not MoveMapInvariantIfUp(require_full_hoist=require_full_hoist).apply_pass(sdfg, {}):
+        return
+    # Two maps under the same guard come out as two ``if c`` blocks: canonicalization's own maximal fusion merges the
+    # guards, inlines the bodies and fuses the maps.
+    maximal_fusion("gpu" if require_full_hoist else "cpu").apply_pass(sdfg, {})

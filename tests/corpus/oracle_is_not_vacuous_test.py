@@ -18,7 +18,7 @@ import tests.corpus.measure_parallelization as mp
 from tests.corpus.polybench import polybench as _PB
 from tests.corpus.tsvc_2_5 import tsvc_2_5 as _T25
 
-#: A paper-preset tsvc_2_5 dataset extent, and a per-thread block of the blocked scan.
+#: A large tsvc_2_5 dataset extent (the paper preset's before 2**23), and a per-thread block of the blocked scan.
 _PAPER_N = 589824
 _BLOCK = 4096
 

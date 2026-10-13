@@ -6,7 +6,7 @@ UniqueLoopIterators -> PrivatizeScalars -> simplify -> ParallelizeLoops ->
 2x(StateFusionExtended -> FuseMaps). The canon variants run the full
 canonicalization recipe instead, with peeling and anti-dependence breaking on (their defaults).
 ``canon_gpu`` runs every GPU knob but does not offload; the cutoff is structural (``offload_to_gpu``
-absent from ``_build_stages``), so the graph stays CPU-runnable and the numeric check compiles it for
+absent from ``build_stages``), so the graph stays CPU-runnable and the numeric check compiles it for
 the host.
 
 GPU offload is a separate OPT-IN phase (``offload=True``), appended after the variant's own phases for
@@ -50,7 +50,7 @@ from dace.config import set_temporary
 from dace.sdfg import nodes
 from dace.sdfg.utils import specialize_symbols
 from dace.transformation.pass_pipeline import Pipeline
-from dace.transformation.passes.canonicalize.pipeline import _build_stages
+from dace.transformation.passes.canonicalize.pipeline import build_stages
 from dace.transformation.passes.parallelization_prep import DEFAULT_UNROLL_LIMIT
 from dace.transformation.passes.parallelize import ParallelizePipeline
 from dace.transformation.passes.pattern_matching import PatternMatchAndApply
@@ -381,96 +381,39 @@ def _parallelize_phases() -> list[Phase]:
     return phases
 
 
-#: Coarse canon super-phases: each fine ``_build_stages`` stage label -> one of four super-phases, so
-#: canon checkpoints at 4 boundaries (Loop2X and Loop2Map kept distinct) instead of ~47. GLUE labels
-#: (value-preserving structural fixups that recur across regions) inherit the currently-open
-#: super-phase, so a ``cascade_iedges_up`` between the loop_to_x lifts stays in ``loop_to_x`` rather
-#: than opening a spurious ``normalize`` group. A fine label absent from BOTH maps trips the assert in
-#: :func:`_canon_coarse_phases` -- a canon stage added upstream must be classified here, never
-#: silently misfiled.
-_CANON_SUPER_PHASE: dict[str, str] = {
-    # normalize: clean + semantic lifts + lower-to-loops + reduce-prep -> canonical loop form.
-    "clean": "normalize",
-    "loop_to_symm": "normalize",
-    "lift_inv": "normalize",
-    "privatize_scatter": "normalize",
-    "normalize_reduction": "normalize",
-    "loop_to_rank_k_update": "normalize",
-    "prep": "normalize",
-    "lift_reduce": "normalize",
-    "lower": "normalize",
-    "reroll": "normalize",
-    "reduce": "normalize",
-    "index_subsets": "normalize",
-    "distribute": "normalize",
-    "loop_to_symmetrize": "normalize",
-    # loop_to_x (Loop2X): parallelization-prep (peel/break/fission/stride) + the reduction/scan lifts.
-    "rotate": "loop_to_x",
-    "peel": "loop_to_x",
-    "break_antidep": "loop_to_x",
-    "move_if_into_loop": "loop_to_x",
-    "fission": "loop_to_x",
-    "loop_stride_permutation": "loop_to_x",
-    "fuse_consecutive_loops": "loop_to_x",
-    "lift_copy_loops": "loop_to_x",
-    "loop_to_x": "loop_to_x",
-    "loop_to_scan": "loop_to_x",
-    # parallelize (Loop2Map): loops -> maps, scatter guards, post-l2m fusion / interchange / collapse.
-    "parallelize": "parallelize",
-    "parallelize_guarded": "parallelize",
-    "reduction_to_wcr_map": "parallelize",
-    "scatter": "parallelize",
-    "post_l2m": "parallelize",
-    "loop_fuse": "parallelize",
-    "lift_copy": "parallelize",
-    "interchange": "parallelize",
-    "reorder": "parallelize",
-    "collapse": "parallelize",
-    # ``coalesce`` runs between ``post_l2m`` and ``loop_fuse`` (pipeline.py ``_coalesce``): graph
-    # prep for maximal fusion once loops are maps, so it belongs to the same super-phase as its
-    # neighbours rather than opening a new checkpoint boundary.
-    "coalesce": "parallelize",
-    # finalize: map fusion + einsum lift + guard hoist + WCR normalize + terminal simplify / parallelize.
-    "fuse": "finalize",
-    "lift": "finalize",
-    "licm": "finalize",
-    "hoist_guards": "finalize",
-    "normalize_wcr": "finalize",
-    "revert_nonreduction_wcr": "finalize",
-    "relax_powers": "finalize",
-    "end": "finalize",
-    "fuse_final": "finalize",
-}
-#: Recurring value-preserving structural-fixup labels that inherit the currently-open super-phase.
-_CANON_GLUE = frozenset({"cascade_iedges_up", "ssa", "untrivialize"})
-
-#: The four canon super-phases, in pipeline order.
+#: The four canon super-phases, in pipeline order: the recipe's phases (normalize statements, lift semantics,
+#: derive parallelism, recompose), under the names the tolerance boundary reads.
 _CANON_ORDER: tuple[str, ...] = ("normalize", "loop_to_x", "parallelize", "finalize")
+#: The recipe's between-phase cleanup label: it separates two phases and belongs to neither.
+_CANON_RAIL = "cleanup"
 
 
 def _canon_coarse_phases(target: str, assume_parallel_guards: bool) -> list[Phase]:
-    """The canonicalization recipe coarse-grouped into the four :data:`_CANON_ORDER` super-phases
-    (``normalize`` -> ``loop_to_x`` -> ``parallelize`` -> ``finalize``), so canon checkpoints at 4
-    boundaries with Loop2X (reduction/scan lifts) and Loop2Map distinct instead of ~47 fine ones.
-    Sound max-parallelism defaults (peel_limit=4, break_anti_dependence=True)."""
+    """The canonicalization recipe grouped into the four :data:`_CANON_ORDER` super-phases, one per recipe phase.
+
+    The recipe puts a structural cleanup (label :data:`_CANON_RAIL`) at its start and between every two phases, so
+    a phase begins where a cleanup run ends; the ingest cleanup joins ``normalize``, the terminal cleanup joins
+    ``finalize``. Grouping by the cleanup runs rather than by label keeps the out-of-phase lifts (labelled
+    ``lift_semantics`` where their matcher needs another phase's shape) inside the phase they run in. Sound
+    max-parallelism defaults (peel_limit=4, break_anti_dependence=True)."""
     phases: list[Phase] = []
-    current = _CANON_ORDER[0]
-    for label, unit in _build_stages(
+    index = 0
+    previous = None
+    in_a_phase = False
+    for label, unit in build_stages(
         target=target, peel_limit=4, break_anti_dependence=True, assume_parallel_guards=assume_parallel_guards
     ):
-        if label in _CANON_GLUE:
-            super_phase = current  # inherit the open region so recurring glue doesn't split a phase
-        else:
-            assert label in _CANON_SUPER_PHASE, (
-                f"canon stage {label!r} is unclassified -- add it to _CANON_SUPER_PHASE or _CANON_GLUE"
-            )
-            super_phase = _CANON_SUPER_PHASE[label]
-        current = super_phase
+        if previous == _CANON_RAIL and label != _CANON_RAIL and in_a_phase:
+            index = min(index + 1, len(_CANON_ORDER) - 1)
+        in_a_phase = in_a_phase or label != _CANON_RAIL
+        previous = label
+        super_phase = _CANON_ORDER[index]
         stage = (label, lambda sdfg, u=unit: u.apply_pass(sdfg, {}))
         if phases and phases[-1][0] == super_phase:
             phases[-1][1].append(stage)
         else:
             phases.append((super_phase, [stage]))
+    assert [name for name, stages in phases] == list(_CANON_ORDER), [name for name, stages in phases]
     return phases
 
 

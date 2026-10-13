@@ -33,6 +33,7 @@ import pytest
 import dace
 from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock
+from dace.transformation.interstate.move_map_invariant_if_up import hoist_invariant_guards
 from dace.transformation.passes import canonicalize
 
 N = dace.symbol("N")
@@ -112,6 +113,9 @@ def test_guarded_independent_hoists_and_merges(canon):
     n = 16
     sdfg = guarded_independent.to_sdfg(simplify=False)
     canon(sdfg)
+    hoist_invariant_guards(
+        sdfg, require_full_hoist=False
+    )  # the specialization step hoists; canonicalize keeps guards pushed in
 
     # ONE parallel map carrying both statements, ONE merged guard, hoisted out.
     assert len(_top_map_entries(sdfg)) == 1, "the two guarded statements must fuse into one map"
@@ -158,6 +162,9 @@ def test_guarded_forward_read_war_splits_and_merges(canon):
     n = 16
     sdfg = guarded_forward_read_war.to_sdfg(simplify=False)
     canon(sdfg)
+    hoist_invariant_guards(
+        sdfg, require_full_hoist=False
+    )  # the specialization step hoists; canonicalize keeps guards pushed in
 
     # The WAR is snapshot-broken so the body fissions, then re-fuses: one map,
     # one merged guard hoisted out.

@@ -13,8 +13,8 @@ canonicalization pass must then do. Two outcomes are correct and the tests disti
 * FAIL-DANGEROUS sites -- ``NormalizeLoopAndMapOrigin`` (rebases the map range, then substitutes the
   shift into the body it walked) and ``LoopToEinsum``'s transpose purity check (approves the scope
   it walked as a pure copy) -- now read scope membership, and the sink no longer changes the answer.
-* FAIL-SAFE sites -- ``LoopToSymm`` and ``LiftInv`` guard on ``len(body) != 1`` and REFUSE on the
-  emptied walk. The refusal loses a lift and never produces a wrong answer, so the walk stays; the
+* FAIL-SAFE site -- ``LiftInv`` guards on ``len(body) != 1`` and REFUSES on the emptied walk. The
+  refusal loses a lift and never produces a wrong answer, so the walk stays; the
   tests here pin the refusal so a later relaxation of the guard cannot turn it dangerous silently.
 """
 
@@ -32,7 +32,6 @@ import pytest
 
 import dace
 from dace import dtypes
-from dace.libraries.blas.nodes.symm import Symm
 from dace.libraries.linalg.nodes.inv import Inv
 from dace.memlet import Memlet
 from dace.sdfg import SDFG, SDFGState, nodes
@@ -40,7 +39,6 @@ from dace.sdfg.dealias import convert_legacy_nested_sdfgs
 from dace.transformation.passes.analysis import map_scope
 from dace.transformation.passes.canonicalize import loop_to_einsum
 from dace.transformation.passes.canonicalize.lift_inv import LiftInv
-from dace.transformation.passes.canonicalize.loop_to_symm import LoopToSymm
 from dace.transformation.passes.canonicalize.normalize_loop_and_map_origin import NormalizeLoopAndMapOrigin
 from dace.transformation.passes.canonicalize.normalize_map_body import NormalizeMapBody
 
@@ -178,62 +176,13 @@ def transpose_probe(side_effect: bool) -> SDFG:
     return sdfg
 
 
-M = dace.symbol("M")
 N = dace.symbol("N")
-
-
-@dace.program
-def polybench_symm(
-    C: dace.float64[M, N], A: dace.float64[M, M], B: dace.float64[M, N], alpha: dace.float64[1], beta: dace.float64[1]
-):
-    """The hand-written polybench ``symm`` nest ``LoopToSymm`` is built to recognize."""
-
-    @dace.mapscope
-    def comp_all(j: _[0:N], i: _[0:M]):
-        temp2 = dace.define_local_scalar(dace.float64)
-
-        @dace.tasklet
-        def reset_tmp():
-            tmp >> temp2
-            tmp = 0
-
-        @dace.map
-        def comp_t2(k: _[0:i]):
-            ialpha << alpha
-            ia << A[i, k]
-            ibi << B[i, j]
-            ibk << B[k, j]
-            oc >> C(1, lambda a, b: a + b)[k, j]
-            ot2 >> temp2(1, lambda a, b: a + b)
-
-            oc = ialpha * ibi * ia
-            ot2 = ibk * ia
-
-        @dace.tasklet
-        def comp_rest():
-            ibeta << beta
-            ib << B[i, j]
-            iadiag << A[i, i]
-            ialpha << alpha
-            it2 << temp2
-            ic << C[i, j]
-            oc >> C[i, j]
-            oc = ibeta * ic + ialpha * ib * iadiag + ialpha * it2
 
 
 @dace.program
 def solve_eye(A: dace.float64[N, N], out: dace.float64[N, N]):
     """``solve(A, eye(N))`` -- the inverse spelling ``LiftInv`` is built to recognize."""
     out[:] = np.linalg.solve(A, np.eye(N))
-
-
-def symm_nest(scratch_in_body: bool) -> SDFG:
-    """The polybench symm nest, optionally with a write-only scratch planted in its map body."""
-    sdfg = polybench_symm.to_sdfg(simplify=False)
-    state, entry = two_param_map_entry(sdfg)
-    planters = {True: plant_write_only_scratch, False: leave_body_alone}
-    planters[scratch_in_body](sdfg, state, entry)
-    return sdfg
 
 
 def solve_against_identity(scratch_in_body: bool) -> SDFG:
@@ -353,21 +302,6 @@ def test_a_lone_nested_sdfg_beside_a_write_only_scratch_is_left_alone():
     sdfg.validate()
 
 
-@pytest.mark.parametrize("scratch_in_body, expected_lifts, expected_symms", [(False, 1, 1), (True, None, 0)])
-def test_symm_nest_lifts_only_while_its_body_holds_the_nested_sdfg_alone(
-    scratch_in_body: bool, expected_lifts, expected_symms: int
-):
-    """``LoopToSymm`` guards on a body of exactly one node, so the scratch costs the lift. Fail-safe
-    by construction: the nest is left standing and still computes symm, never lifted wrongly."""
-    sdfg = symm_nest(scratch_in_body)
-
-    lifts = LoopToSymm().apply_pass(sdfg, {})
-
-    assert lifts == expected_lifts
-    assert sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Symm)) == expected_symms
-    sdfg.validate()
-
-
 @pytest.mark.parametrize("scratch_in_body, expected_lifts, expected_invs", [(False, 1, 1), (True, None, 0)])
 def test_solve_against_identity_lifts_only_while_the_identity_map_holds_its_tasklet_alone(
     scratch_in_body: bool, expected_lifts, expected_invs: int
@@ -381,3 +315,16 @@ def test_solve_against_identity_lifts_only_while_the_identity_map_holds_its_task
     assert lifts == expected_lifts
     assert sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Inv)) == expected_invs
     sdfg.validate()
+
+
+if __name__ == "__main__":
+    test_a_map_scope_holding_nothing_counts_zero_body_nodes()
+    test_a_write_only_scratch_scalar_is_a_map_body_node()
+    test_rebasing_a_map_beside_a_write_only_scratch_shifts_the_body_reads()
+    test_rebasing_is_refused_when_a_scratch_bearing_body_rebinds_the_map_parameter()
+    test_a_pure_transposed_copy_is_read_as_a_transpose()
+    test_a_transposed_copy_that_also_writes_another_array_is_not_a_transpose()
+    test_sibling_nested_sdfgs_beside_a_write_only_scratch_are_still_merged()
+    test_a_lone_nested_sdfg_beside_a_write_only_scratch_is_left_alone()
+    test_solve_against_identity_lifts_only_while_the_identity_map_holds_its_tasklet_alone(False, 1, 1)
+    test_solve_against_identity_lifts_only_while_the_identity_map_holds_its_tasklet_alone(True, None, 0)

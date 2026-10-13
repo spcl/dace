@@ -23,6 +23,7 @@ def gpu_specialize_offloaded(sdfg: SDFG) -> SDFG:
     :param sdfg: An offloaded SDFG.
     :returns: The same ``sdfg`` instance.
     """
+    from dace.transformation.interstate.move_map_invariant_if_up import hoist_invariant_guards
     from dace.transformation.passes.canonicalize.move_loop_into_map_gated import MoveLoopIntoMapGated
     from dace.transformation.passes.gpu_specialization.block_tile_kernels import BlockTileKernels
     from dace.transformation.passes.gpu_specialization.contiguous_axis_to_threads import ContiguousAxisToThreads
@@ -31,6 +32,8 @@ def gpu_specialize_offloaded(sdfg: SDFG) -> SDFG:
         SequentializeNestedDeviceScopes,
     )
 
+    # A guard left between two maps splits the kernel, so it goes all the way up or stays.
+    hoist_invariant_guards(sdfg, require_full_hoist=True)
     # A loop around a single-iteration kernel launches it once per trip; running the loop inside is one launch.
     MoveLoopIntoMapGated(target="gpu", single_iteration_only=True).apply_pass(sdfg, {})
     # A ``specialize`` node (MatMul) becomes the node it stands for during implementation selection;

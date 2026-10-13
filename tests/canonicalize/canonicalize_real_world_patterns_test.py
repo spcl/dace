@@ -50,8 +50,10 @@ import pytest
 import dace
 from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock, LoopRegion
+from dace.transformation.interstate.move_map_invariant_if_up import hoist_invariant_guards
 from dace.transformation.passes.canonicalize import canonicalize
-from dace.transformation.passes.canonicalize.pipeline import CANONICALIZE_STAGES
+from dace.transformation.passes.canonicalize.pipeline import build_stages
+from dace.transformation.passes.parallelize_loops import ParallelizeLoops
 
 N = dace.symbol("N")
 M = dace.symbol("M")
@@ -183,6 +185,9 @@ def test_icon_solve_nonhydro_shape_structure():
     """
     sdfg = icon_solve_nonhydro_shape.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
+    hoist_invariant_guards(
+        sdfg, require_full_hoist=False
+    )  # the specialization step hoists; canonicalize keeps guards pushed in
     sdfg.validate()
     assert _nmaps(sdfg) == 3, f"expected 3 collapsed inner maps after canonicalize, got {_nmaps(sdfg)}"
     assert _nloops(sdfg) == 1, (
@@ -306,6 +311,9 @@ def test_icon_velocity_advection_istep_shape_structure():
     """
     sdfg = icon_velocity_advection_istep_shape.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
+    hoist_invariant_guards(
+        sdfg, require_full_hoist=False
+    )  # the specialization step hoists; canonicalize keeps guards pushed in
     sdfg.validate()
     assert _nmaps(sdfg) == 3, f"expected 3 collapsed inner maps, got {_nmaps(sdfg)}"
     assert _nloops(sdfg) == 2, f"expected 2 surviving LoopRegions, got {_nloops(sdfg)}"
@@ -702,6 +710,9 @@ def test_cloudsc_nssopt_config_chain_shape_hoists_the_invariant_guard():
     level and each of its three arms keeps its own parallel nest."""
     sdfg = cloudsc_nssopt_config_chain_shape.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
+    hoist_invariant_guards(
+        sdfg, require_full_hoist=False
+    )  # the specialization step hoists; canonicalize keeps guards pushed in
     sdfg.validate()
     top_level = [b for b in sdfg.nodes() if isinstance(b, ConditionalBlock)]
     assert len(top_level) == 1, f"the invariant ladder did not reach the top level: {sdfg.nodes()}"
@@ -731,20 +742,14 @@ def test_cloudsc_nssopt_config_chain_shape_e2e(nssopt):
 
 
 def _run_canonicalize_pre_parallelize(kernel):
-    """Drive the canonicalize pipeline up to (but not through) the
-    post-fission ``parallelize`` stage, so the loop body has the shape MLIU
-    expects to see (post fission / normalize / ssa / cascade-up).
-
-    The front-loaded recipe has TWO ``parallelize`` stages -- an early
-    ``LoopToMap`` (right after the reduction recipe, before fission) and the
-    post-fission one. Stop before the LAST: the early ``LoopToMap`` has already
-    turned the fully-parallel inner nests into Maps, leaving the per-``jb`` loop
-    with its still-invariant ``istep`` guard for MLIU to hoist."""
+    """Drive the canonicalize recipe up to (not through) its last ``ParallelizeLoops`` sweep: the earlier sweeps
+    have turned the fully parallel inner nests into Maps, leaving the per-``jb`` loop with its still-invariant
+    ``istep`` guard for MLIU to hoist."""
     sdfg = kernel.to_sdfg(simplify=True)
-    last_parallelize = max(i for i, (label, _) in enumerate(CANONICALIZE_STAGES) if label == "parallelize")
-    for _label, factory in CANONICALIZE_STAGES[:last_parallelize]:
-        for unit in factory():
-            unit.apply_pass(sdfg, {})
+    stages = build_stages()
+    last_parallelize = max(i for i, (label, unit) in enumerate(stages) if isinstance(unit, ParallelizeLoops))
+    for _label, unit in stages[:last_parallelize]:
+        unit.apply_pass(sdfg, {})
     return sdfg
 
 

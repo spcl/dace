@@ -25,7 +25,7 @@ import dace
 from dace import data
 from dace.transformation.pass_pipeline import Pass, Pipeline
 from dace.transformation.passes.array_elimination import ArrayElimination
-from dace.transformation.passes.canonicalize.pipeline import _build_stages
+from dace.transformation.passes.canonicalize.pipeline import build_stages
 
 
 def flatten(unit: Pass):
@@ -41,7 +41,7 @@ def flatten(unit: Pass):
 
 def stage_kinds():
     """``[{type names of every pass in the stage}]``, one entry per built stage, in order."""
-    return [{type(child).__name__ for child in flatten(unit)} for label, unit in _build_stages()]
+    return [{type(child).__name__ for child in flatten(unit)} for label, unit in build_stages()]
 
 
 def test_the_reclaim_is_the_last_stage():

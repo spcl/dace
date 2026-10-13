@@ -30,6 +30,7 @@ from dace.transformation.passes.canonicalize.loop_to_stream_compaction import (
     LoopToStreamCompaction,
     NestLevel,
 )
+from dace.transformation.passes.canonicalize.pipeline import build_stages
 from dace.transformation.passes.cpu_specialization import cpu_specialize
 from tests.sdfg.cfg_list_in_place_test import assert_tree_consistent
 
@@ -159,6 +160,16 @@ def s343_kernel(aa: dace.float64[M, M], bb: dace.float64[M, M], flat: dace.float
             if bb[j, i] > 0.0:
                 k = k + 1
                 flat[k] = aa[j, i]
+
+
+def up_to_stream_compaction(program) -> dace.SDFG:
+    """``program`` through the canonicalize recipe, stopped just before ``LoopToStreamCompaction``."""
+    sdfg = program.to_sdfg(simplify=True)
+    for label, unit in build_stages():
+        if isinstance(unit, LoopToStreamCompaction):
+            break
+        unit.apply_pass(sdfg, {})
+    return sdfg
 
 
 def test_s341_lifts_and_parallelizes():
@@ -417,14 +428,7 @@ def test_guard_as_body_start_block():
     The rewrite has to add one. Without it the phase-3 copy keeps the carried cursor, ``LoopToMap``
     refuses it, and the scatter stays a sequential loop -- correct, but the lift bought nothing.
     """
-    from dace.transformation.passes.canonicalize.pipeline import CANONICALIZE_STAGES
-
-    sdfg = guard_without_preamble.to_sdfg(simplify=True)
-    for label, factory in CANONICALIZE_STAGES:
-        if label == "loop_to_x":
-            break
-        for unit in factory():
-            unit.apply_pass(sdfg, {})
+    sdfg = up_to_stream_compaction(guard_without_preamble)
     loop = [r for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion) and r.loop_variable][0]
     assert isinstance(loop.start_block, dace.sdfg.state.ConditionalBlock)  # no preamble to bind on
 
@@ -697,21 +701,10 @@ def test_refuse_side_effecting_body():
     not whether the loop may be evaluated twice -- so the purity gate is the only check. Same
     SDFG, same pipeline prefix, ``side_effects`` the only difference.
     """
-    from dace.transformation.passes.canonicalize.pipeline import CANONICALIZE_STAGES
-
-    def prefix_up_to_loop_to_x() -> dace.SDFG:
-        sdfg = bump_after_writes.to_sdfg(simplify=True)
-        for label, factory in CANONICALIZE_STAGES:
-            if label == "loop_to_x":
-                return sdfg
-            for unit in factory():
-                unit.apply_pass(sdfg, {})
-        return sdfg
-
-    clean = prefix_up_to_loop_to_x()
+    clean = up_to_stream_compaction(bump_after_writes)
     assert LoopToStreamCompaction().apply_pass(clean, {}) == 1
 
-    marked = prefix_up_to_loop_to_x()
+    marked = up_to_stream_compaction(bump_after_writes)
     loop = [r for r in marked.all_control_flow_regions() if isinstance(r, LoopRegion) and r.loop_variable][0]
     tasklets = [n for state in loop.states() for n in state.nodes() if isinstance(n, nd.Tasklet)]
     assert tasklets

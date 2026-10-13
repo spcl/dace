@@ -17,7 +17,7 @@ import collections
 import numpy as np
 
 import dace
-from dace.transformation.passes.canonicalize.pipeline import _build_stages, canonicalize
+from dace.transformation.passes.canonicalize.pipeline import build_stages, canonicalize
 
 N = dace.symbol("N")
 
@@ -60,7 +60,7 @@ def test_no_stage_introduces_duplicate_block_names():
     Asserting on the final SDFG alone would say "invalid" without saying which of the ~160
     stages did it, so the loop reports the culprit."""
     sdfg = stencil_reduce_recurrence.to_sdfg(simplify=False)
-    for label, unit in _build_stages():
+    for label, unit in build_stages():
         unit.apply_pass(sdfg, {})
         duplicates = _duplicate_block_names(sdfg)
         assert not duplicates, f"stage {label!r} introduced duplicate block names: {duplicates}"

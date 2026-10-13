@@ -32,7 +32,7 @@ import numpy as np
 
 from dace import SDFG, dtypes, symbolic
 from dace import data as dt
-from dace.transformation.passes.canonicalize.pipeline import _build_stages
+from dace.transformation.passes.canonicalize.pipeline import build_stages
 
 #: Default small value assigned to every free (sizing) symbol.
 DEFAULT_SYMBOL_VALUE: int = 3
@@ -230,7 +230,7 @@ def canonicalize_with_stage_checks(
 
     results: list[StageCheckResult] = []
     work = copy.deepcopy(sdfg)
-    for index, (label, unit) in enumerate(_build_stages()):
+    for index, (label, unit) in enumerate(build_stages()):
         unit.apply_pass(work, {})
 
         valid, verr = True, None

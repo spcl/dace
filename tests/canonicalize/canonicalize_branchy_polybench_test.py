@@ -37,6 +37,7 @@ import pytest
 import dace
 from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock, LoopRegion
+from dace.transformation.interstate.move_map_invariant_if_up import hoist_invariant_guards
 from dace.transformation.passes.canonicalize import canonicalize
 
 N = dace.symbol("N")
@@ -299,6 +300,9 @@ def test_loop_invariant_guard_over_inner_hoisted_to_top():
     parallel maps."""
     sdfg = loop_invariant_guard_over_inner.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
+    hoist_invariant_guards(
+        sdfg, require_full_hoist=False
+    )  # the specialization step hoists; canonicalize keeps guards pushed in
     sdfg.validate()
     top_conds = [c for c in sdfg.nodes() if isinstance(c, ConditionalBlock)]
     assert len(top_conds) == 1, (

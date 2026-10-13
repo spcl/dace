@@ -24,7 +24,7 @@ import dace
 from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.canonicalize.distribute_producer_consumer import DistributeProducerConsumerLoop
-from dace.transformation.passes.canonicalize.pipeline import _build_stages
+from dace.transformation.passes.canonicalize.pipeline import build_stages
 from tests.cfg_tree import assert_tree_matches_a_reset, spy_on_resets
 
 M = dace.symbol("M")
@@ -32,15 +32,14 @@ N = dace.symbol("N")
 
 
 def _to_loops(prog):
-    """Run the canonicalize recipe up to (not including) the ``distribute`` stage.
+    """Run the canonicalize recipe up to (not including) this pass's own stage.
 
-    Stopping at ``distribute`` -- not at the later ``loop_to_x`` -- is what leaves this pass
-    something to do: the ``distribute`` stage IS this pass, so running through it hands the tests
-    an already-distributed SDFG on which a second application correctly reports ``None``.
+    Running through it hands the tests an already-distributed SDFG on which a second application
+    correctly reports ``None``.
     """
     sdfg = prog.to_sdfg(simplify=True)
-    for label, unit in _build_stages():
-        if label == "distribute":
+    for label, unit in build_stages():
+        if isinstance(unit, DistributeProducerConsumerLoop):
             break
         unit.apply_pass(sdfg, {})
     return sdfg
@@ -60,7 +59,7 @@ def _run_full(prog, **kw):
     body into a shape the einsum lift then mis-classifies.
     """
     sdfg = prog.to_sdfg(simplify=True)
-    for label, unit in _build_stages():
+    for label, unit in build_stages():
         unit.apply_pass(sdfg, {})
     sdfg(**kw)
     return sdfg

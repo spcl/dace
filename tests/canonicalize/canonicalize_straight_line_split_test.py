@@ -26,7 +26,7 @@ import dace
 from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.passes.canonicalize import canonicalize
-from dace.transformation.passes.canonicalize.pipeline import _build_stages
+from dace.transformation.passes.canonicalize.pipeline import build_stages, first_round_stages
 from dace.transformation.passes.canonicalize.split_statements import SplitStatements
 from dace.transformation.passes.length_one_array_scalar_conversion import ConvertLengthOneArraysToScalars
 
@@ -281,11 +281,11 @@ def test_s2710_shaped_guarded_rmw_stays_refused():
 def test_length_one_scalarization_runs_before_the_split():
     """A ``(1,)`` transient Array is the frontend's spelling of a scalar temporary; normalize it
     to a real ``Scalar`` before anything downstream keys on the descriptor."""
-    stages = [(lbl, type(p).__name__) for lbl, p in _build_stages()]
+    stages = [(lbl, type(p).__name__) for lbl, p in first_round_stages(build_stages())]
     convert = [i for i, (lbl, nm) in enumerate(stages) if nm == ConvertLengthOneArraysToScalars.__name__]
     split = [i for i, (lbl, nm) in enumerate(stages) if nm == SplitStatements.__name__]
     assert convert and split, stages
-    assert stages[convert[0]][0] == "prep"
+    assert stages[convert[0]][0] == "normalize_statements"
     assert convert[0] < split[0]
 
 

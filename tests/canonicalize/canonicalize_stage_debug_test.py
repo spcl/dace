@@ -150,7 +150,7 @@ def test_harness_detects_value_corrupting_stage(monkeypatch):
     """Monkeypatch the stage list to a single value-corrupting pass; the
     harness must report a numerical mismatch (and ``first_failing_stage``
     must find it)."""
-    monkeypatch.setattr(cdbg, "_build_stages", lambda: [("inject", _PerturbOutputValues())])
+    monkeypatch.setattr(cdbg, "build_stages", lambda: [("inject", _PerturbOutputValues())])
     sdfg = elementwise.to_sdfg(simplify=True)
     results = canonicalize_with_stage_checks(sdfg, symbol_value=3)
     assert len(results) == 1
@@ -163,7 +163,7 @@ def test_harness_detects_value_corrupting_stage(monkeypatch):
 def test_harness_detects_invalid_stage(monkeypatch):
     """Monkeypatch the stage list to a structure-corrupting pass; the
     harness must report the stage as invalid."""
-    monkeypatch.setattr(cdbg, "_build_stages", lambda: [("inject", _InjectInvalidNode())])
+    monkeypatch.setattr(cdbg, "build_stages", lambda: [("inject", _InjectInvalidNode())])
     sdfg = elementwise.to_sdfg(simplify=True)
     results = canonicalize_with_stage_checks(sdfg, symbol_value=3)
     assert len(results) == 1
@@ -173,7 +173,7 @@ def test_harness_detects_invalid_stage(monkeypatch):
 
 def test_stop_on_failure_halts_at_first_bad_stage(monkeypatch):
     monkeypatch.setattr(
-        cdbg, "_build_stages", lambda: [("inject", _PerturbOutputValues()), ("inject2", _PerturbOutputValues())]
+        cdbg, "build_stages", lambda: [("inject", _PerturbOutputValues()), ("inject2", _PerturbOutputValues())]
     )
     sdfg = elementwise.to_sdfg(simplify=True)
     results = canonicalize_with_stage_checks(sdfg, symbol_value=3, stop_on_failure=True)

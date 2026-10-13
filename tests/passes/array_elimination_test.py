@@ -261,14 +261,14 @@ def test_source_merge_preserves_carrier_raw_order_on_sibling_transient():
     """
     import numpy as np
 
-    from dace.transformation.passes.canonicalize.pipeline import _build_stages
+    from dace.transformation.passes.canonicalize.pipeline import build_stages
     from tests.corpus.tsvc.tsvc import s254_d_single
 
     sdfg = s254_d_single.to_sdfg(simplify=True)
     # Drive the SDFG to the state right BEFORE the final SimplifyPass enters
     # ArrayElimination -- the agent's bisect proved ArrayElimination is the
     # specific Simplify sub-pass that breaks s254.
-    for label, pass_obj in _build_stages():
+    for label, pass_obj in build_stages():
         if label == "end":
             break
         if hasattr(pass_obj, "apply_pass"):

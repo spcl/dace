@@ -14,6 +14,7 @@ import dace
 from dace.libraries.sort.nodes.scatter_conflict_check import ScatterConflictCheck
 from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock, LoopRegion
+from dace.transformation.interstate.move_map_invariant_if_up import hoist_invariant_guards
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
 from dace.transformation.passes.scatter_to_guarded_maps import ScatterToGuardedMaps, detect_scatter_idx_arrays
 
@@ -691,6 +692,9 @@ def test_a_sliced_guard_hoisted_out_of_a_map_feeds_the_dispatcher_inside_it(repe
     dst = np.zeros((4, 5))
 
     canonicalize(sdfg, validate=True)
+    hoist_invariant_guards(
+        sdfg, require_full_hoist=False
+    )  # the specialization step hoists; canonicalize keeps guards pushed in
 
     conditions = [
         cond.as_string

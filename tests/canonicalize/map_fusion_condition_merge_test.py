@@ -30,6 +30,7 @@ import pytest
 import dace
 from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock
+from dace.transformation.interstate.move_map_invariant_if_up import hoist_invariant_guards
 from dace.transformation.passes import canonicalize
 
 N = dace.symbol("N")
@@ -99,6 +100,9 @@ def test_mapfusion_fuses_then_merges_invariant_guard():
     n = 16
     sdfg = two_guarded_loops.to_sdfg(simplify=False)
     canonicalize(sdfg, validate=True)
+    hoist_invariant_guards(
+        sdfg, require_full_hoist=False
+    )  # the specialization step hoists; canonicalize keeps guards pushed in
 
     assert _num_condblocks(sdfg) == 1, "the two same-condition guards must merge into one"
     assert _guard_over_a_map(sdfg), "the merged map-invariant guard must hoist out of the map"

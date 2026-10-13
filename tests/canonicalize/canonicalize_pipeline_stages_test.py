@@ -24,8 +24,9 @@ from dace.memlet import Memlet
 from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.transformation import pass_pipeline as ppl
-from dace.transformation.passes.canonicalize import CANONICALIZE_STAGES, canonicalize
-from dace.transformation.passes.canonicalize.pipeline import PropagateAndPrune
+from dace.transformation.interstate.move_map_invariant_if_up import hoist_invariant_guards
+from dace.transformation.passes.canonicalize import canonicalize
+from dace.transformation.passes.canonicalize.pipeline import PhaseFixpoint, PropagateAndPrune, build_stages, prepared
 from dace.transformation.passes.fuse_maps import FuseMaps
 from dace.transformation.passes.pattern_matching import PatternMatchAndApply
 
@@ -253,6 +254,9 @@ def test_canonicalize_guarded_two_stencils(av):
 
     sdfg = guarded_two_stencils.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
+    hoist_invariant_guards(
+        sdfg, require_full_hoist=False
+    )  # the specialization step hoists; canonicalize keeps guards pushed in
     assert nmaps(sdfg) == 1, f"the two stencils must fuse into one map, got {nmaps(sdfg)}"
     assert ntop_conds(sdfg) == 1, "the guard must survive as a single top-level ConditionalBlock"
     out_b, out_d = np.full(n, 5.0), np.full(n, 5.0)
@@ -269,19 +273,33 @@ def test_canonicalize_guarded_two_stencils(av):
 
 def collect_validating_units(unit: ppl.Pass) -> list[ppl.Pass]:
     found = [unit] if isinstance(unit, (PatternMatchAndApply, FuseMaps)) else []
-    if isinstance(unit, ppl.Pipeline):
-        for member in unit.passes:
-            found.extend(collect_validating_units(member))
+    members = (
+        unit.passes
+        if isinstance(unit, ppl.Pipeline)
+        else prepared(unit.factory())
+        if isinstance(unit, PhaseFixpoint)
+        else []
+    )
+    for member in members:
+        found.extend(collect_validating_units(member))
     return found
 
 
 def test_canonicalize_stage_units_leave_validation_to_the_pipeline():
-    units = [
-        found for _, factory in CANONICALIZE_STAGES for unit in factory() for found in collect_validating_units(unit)
-    ]
+    units = [found for _, unit in build_stages() for found in collect_validating_units(unit)]
     assert any(isinstance(unit, FuseMaps) for unit in units)
     assert all(not unit.validate and not unit.validate_all for unit in units)
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    test_propagate_and_prune_leaves_a_graph_with_nothing_to_fold_and_reports_every_round()
+    test_propagate_and_prune_folds_a_constant_bound_symbol_into_the_memlet()
+    test_canonicalize_accumulator_reduction()
+    test_canonicalize_perfect_loop_nesting()
+    test_canonicalize_partially_shared_transient()
+    test_canonicalize_conditional_with_else(1)
+    test_canonicalize_conditional_with_else(0)
+    test_canonicalize_indirect_scatter()
+    test_canonicalize_guarded_two_stencils(1)
+    test_canonicalize_guarded_two_stencils(0)
+    test_canonicalize_stage_units_leave_validation_to_the_pipeline()

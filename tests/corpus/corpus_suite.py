@@ -51,13 +51,15 @@ _POLY_PRESET = {"S": 0, "paper": int(os.environ.get("CORPUS_POLY_PAPER_INDEX", "
 _NP_PRESET = {"S": 32, "paper": int_or_none(os.environ.get("CORPUS_NP_PAPER_CAP", ""))}
 #: preset -> tsvc swept extent, ``(1d regime, 2d regime)``; the non-swept extent
 #: follows from ``tsvc.regime_sizes``. ``S`` is the corpus's own default length.
-#: ``paper`` is TSVC's own LEN_1D. The bound is s176, the one kernel quadratic in LEN_1D: the numpy
+#: ``paper`` is 2**23: 64 MB per array, past the MI300A's 256 MB Infinity Cache for any kernel with four or
+#: more arrays, so a kernel times its memory traffic instead of the OpenMP fork (at 589824 the arrays sat in
+#: cache and a TSVC kernel took 20 us). The bound is s176, the one kernel quadratic in LEN_1D: the numpy
 #: oracles are scalar Python loops, so its CORRECTNESS run (once per kernel, not per rep) costs
-#: O(LEN_1D**2) interpreter iterations while every other kernel's is linear and free.
+#: O(LEN_1D**2) interpreter iterations while every other kernel's is linear.
 _TSVC_PRESET = {
     "S": (64, 16),
     "paper": (
-        int(os.environ.get("CORPUS_TSVC_PAPER_LEN1D", "589824")),
+        int(os.environ.get("CORPUS_TSVC_PAPER_LEN1D", str(2**23))),
         int(os.environ.get("CORPUS_TSVC_PAPER_LEN2D", "768")),
     ),
 }
@@ -77,10 +79,10 @@ TSVC_LEN1D_CAP = {"s176_d_single": int(os.environ.get("CORPUS_TSVC_S176_LEN1D", 
 _T25_PRESET = {
     "S": {},
     "paper": {
-        "LEN_1D": int(os.environ.get("CORPUS_T25_PAPER_LEN1D", "589824")),
+        "LEN_1D": int(os.environ.get("CORPUS_T25_PAPER_LEN1D", str(2**23))),
         "LEN_2D": int(os.environ.get("CORPUS_T25_PAPER_LEN2D", "768")),
         "LEN_3D": int(os.environ.get("CORPUS_T25_PAPER_LEN3D", "96")),
-        "LEN_R7": 7 * int(os.environ.get("CORPUS_T25_PAPER_R7_BLOCKS", "73728")),
+        "LEN_R7": 7 * int(os.environ.get("CORPUS_T25_PAPER_R7_BLOCKS", str(2**23 // 7))),
     },
 }
 

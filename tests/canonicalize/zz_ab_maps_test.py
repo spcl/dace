@@ -4,10 +4,9 @@
 Reports the map / pragma counts for a human to read, and asserts the two structural contracts
 the dirty flag exists to uphold:
 
-* the recipe splices ``StructuralCleanup`` in at a FIXED number of stage boundaries
-  (``_TOTAL_CLEANUP_BOUNDARIES``, read off ``_build_stages`` in ``pipeline.py``: two in
-  ``_coalesce``, one each in ``lower``, ``loop_to_scan``, ``reduction_to_wcr_map`` and ``end``,
-  two in ``fuse``), so no run on any SDFG can execute more cleanups than that;
+* the recipe splices ``StructuralCleanup`` in at a FIXED set of places, read off ``build_stages``:
+  the rail between phases plus the cleanups inside each ``PhaseFixpoint``, which runs them at most
+  ``max_rounds`` times (:func:`cleanup_bound`), so no run on any SDFG can execute more cleanups than that;
 * ``changed_the_graph`` only ever filters a bare ``ppl.Pipeline`` result as analysis-only "no
   change" -- never a differently-typed unit. A unit outside that one case landing in ``skipped``
   means the dirty flag went stale behind a real rewrite, which is exactly what would let a later
@@ -42,11 +41,20 @@ from dace.transformation.passes.canonicalize import pipeline as canon_pipeline
 from tests.corpus.cloudsc.generate_data_for_cloudsc import SPECIES_CONSTANTS, build_cloudsc_sdfg
 from tests.corpus.cloudsc.pipelines import map_entries, omp_parallel_for_count
 
-#: Stage boundaries the recipe splices ``StructuralCleanup`` into. A code fact read off
-#: ``_build_stages``, not a measurement -- it tracks the recipe's own shape, not what
-#: canonicalize does to any particular SDFG, so pinning it carries none of the risk a map count
-#: does.
-_TOTAL_CLEANUP_BOUNDARIES = 8
+
+def cleanup_bound(units: list | None = None) -> int:
+    """The most ``StructuralCleanup`` runs ``units`` (default: the cpu recipe) allow: one per splice, ``max_rounds``
+    times over for a splice inside a ``PhaseFixpoint`` (fixpoints nest). A code fact read off ``build_stages``,
+    not a measurement of what canonicalize does to any SDFG."""
+    if units is None:
+        units = [unit for _label, unit in canon_pipeline.build_stages(target="cpu")]
+    bound = 0
+    for unit in units:
+        if isinstance(unit, canon_pipeline.StructuralCleanup):
+            bound += 1
+        elif isinstance(unit, canon_pipeline.PhaseFixpoint):
+            bound += unit.max_rounds * cleanup_bound(unit.factory())
+    return bound
 
 
 @pytest.mark.integration
@@ -81,12 +89,13 @@ def test_ab_map_counts() -> None:
         canon_pipeline.changed_the_graph = original_changed
 
     print(f"AB_RESULT maps={len(map_entries(sdfg))} omp_parallel_for={omp_parallel_for_count(sdfg)}")
-    print(f"AB_RESULT cleanup_blocks_run={len(applied)} of {_TOTAL_CLEANUP_BOUNDARIES}")
+    bound = cleanup_bound()
+    print(f"AB_RESULT cleanup_blocks_run={len(applied)} of at most {bound}")
     print(f"AB_RESULT analysis_only_results_filtered={len(skipped)} units={sorted(set(skipped))}")
 
-    assert len(applied) <= _TOTAL_CLEANUP_BOUNDARIES, (
-        f"{len(applied)} StructuralCleanup boundaries ran against a recipe that only splices in "
-        f"{_TOTAL_CLEANUP_BOUNDARIES} -- a boundary ran more than once, or one was double-counted."
+    assert len(applied) <= bound, (
+        f"{len(applied)} StructuralCleanup runs against a recipe that allows at most {bound} -- a splice ran "
+        "more often than its place allows, or one was double-counted."
     )
     assert set(skipped) <= {"Pipeline"}, (
         f"changed_the_graph filtered {sorted(set(skipped) - {'Pipeline'})} as analysis-only with no "
@@ -94,3 +103,7 @@ def test_ab_map_counts() -> None:
         "type reporting a non-None result IS a change, and treating it as one is what keeps the next "
         "StructuralCleanup boundary from being skipped behind a real rewrite."
     )
+
+
+if __name__ == "__main__":
+    test_ab_map_counts()

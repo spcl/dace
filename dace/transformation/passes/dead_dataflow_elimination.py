@@ -221,10 +221,13 @@ class DeadDataflowElimination(ppl.ControlFlowRegionPass):
 
                 result[state].update(dead_nodes)
 
-                # Remove isolated access nodes after elimination
+                # Remove access nodes left without data after elimination: an isolated one, or a sink whose only
+                # in-edges are empty memlets, which order nothing once the node is neither read nor written.
                 access_nodes = set(state.data_nodes())
                 for node in access_nodes:
-                    if state.degree(node) == 0:
+                    if state.out_degree(node) == 0 and all(e.data.is_empty() for e in state.in_edges(node)):
+                        for edge in list(state.in_edges(node)):
+                            state.remove_edge(edge)
                         state.remove_node(node)
                         result[state].add(node)
 

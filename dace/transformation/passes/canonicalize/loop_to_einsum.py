@@ -96,8 +96,8 @@ from dace.sdfg.state import AbstractControlFlowRegion, ControlFlowBlock, Control
 from dace.symbolic import pystr_to_symbolic
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.analysis import loop_analysis, map_scope
+from dace.transformation.passes.canonicalize.loop_iteration_value import replace_loop_with_state
 from dace.transformation.passes.canonicalize.loop_to_transpose import _is_copy_tasklet
-from dace.transformation.passes.canonicalize.rank_k_match import replace_loop_with_state
 from dace.transformation.passes.canonicalize.split_statements import value_edges
 from dace.transformation.transformation import explicit_cf_compatible
 

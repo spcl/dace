@@ -2,111 +2,166 @@
 """Lift a hand-written symmetric rank-k or rank-2k update nest to a ``Syrk`` / ``Syr2k`` BLAS node.
 
 polybench ``syrk`` (``C := alpha*A*A^T + beta*C``) and ``syr2k`` (``C := alpha*A*B^T + alpha*B*A^T + beta*C``)
-update one triangle of ``C`` as a per-row triangular accumulation::
+update one triangle of ``C``, one row per iteration of an outer loop over ``i``::
 
     for i in range(N):
-        C[i, :i + 1] *= beta[0]
+        for j in range(i + 1):
+            C[i, j] *= beta
         for k in range(M):
-            C[i, :i + 1] += alpha[0] * A[i, k] * A[:i + 1, k]                                   # syrk
-            C[i, :i + 1] += A[:i + 1, k] * alpha[0] * B[i, k] + B[:i + 1, k] * alpha[0] * A[i, k]  # syr2k
+            for j in range(i + 1):
+                C[i, j] += alpha * A[i, k] * A[j, k]                               # syrk
+                C[i, j] += A[j, k] * alpha * B[i, k] + B[j, k] * alpha * A[i, k]   # syr2k
 
-Both share one skeleton and one dataflow-expression match (see
-:mod:`~dace.transformation.passes.canonicalize.rank_k_match`); only the operand pairing differs. One operand read
-at ``[i,k]`` and ``[j,k]`` is a rank-k update, two cross-paired operands are a rank-2k update. The BLAS primitive
-computes only the referenced triangle, threaded. Any deviation is a clean no-op.
+The slice spelling ``C[i, :i + 1] += alpha * A[i, k] * A[:i + 1, k]`` reaches ``lift_semantics`` as a chain of
+elementwise loops over vector temporaries instead; both are recognized by what one outer iteration computes
+(:func:`~dace.transformation.passes.canonicalize.loop_iteration_value.summarize`). The iteration must store only
+one row triangle of a square ``C``: ``C[r, 0:r+1]`` (``uplo='L'``) or ``C[r, r:N]`` (``'U'``), where the row ``r``
+is ``i`` or ``N - 1 - i`` (either loop direction), and there store exactly::
+
+    beta * C[r, j] + alpha * Sum_k A[r, k] * A[j, k]                                 # Syrk
+    beta * C[r, j] + alpha * Sum_k (A[r, k] * B[j, k] + B[r, k] * A[j, k])           # Syr2k
+
+with the operands read ``[r, k]`` / ``[j, k]`` (``trans='N'``) or ``[k, r]`` / ``[k, j]`` (``'T'``) and written
+nowhere in the nest. ``alpha`` and ``beta`` are numbers, runtime single-element containers, or their products; no
+prior ``C`` term is ``beta = 0``. Iterations store disjoint rows and read ``C`` only at the element they store, so
+the loop computes the BLAS update in either direction. Any deviation is a clean no-op.
 """
 
 from typing import Any, NamedTuple
 
 import sympy
+from sympy.core.function import AppliedUndef
 
 from dace import SDFG
-from dace import memlet as mm
-from dace.sdfg.state import ControlFlowRegion, LoopRegion, SDFGState
+from dace.sdfg.state import ControlFlowRegion, LoopRegion
 from dace.transformation import pass_pipeline as ppl
-from dace.transformation.passes.canonicalize.rank_k_match import (
-    RankKMatch,
-    beta_and_inner_loop,
-    expressions_equal,
-    full_memlet,
-    internal_writes_contained,
-    loop_extent,
-    loop_invariant,
-    match_beta_state,
-    operand_shape_ok,
+from dace.transformation.passes.canonicalize.loop_iteration_value import (
+    AxisKind,
+    Refused,
+    Scale,
+    Summary,
+    blas_coefficients,
+    canonical,
+    leaf,
+    leaves,
     outer_loop_candidates,
-    replace_loop_with_state,
-    resolve_accumulate,
-    root_sdfg_of,
-    single_body_state,
-    sink_node,
-    square_output_ok,
+    own_indices,
+    read_array,
+    same,
+    scale_of,
+    shape_is,
+    splice_blas_node,
+    summarize,
+    transients_dead_outside,
 )
 from dace.transformation.transformation import explicit_cf_compatible
 
-# Stand-in for the triangular slice index while the body expression is resolved.
-SLICE_INDEX = sympy.Symbol("__rk_j")
 
+class RankKMatch(NamedTuple):
+    """Operands, coefficients and orientation of a recognized rank-k / rank-2k nest."""
 
-class TriangularNest(NamedTuple):
-    scale_state: SDFGState
-    inner: LoopRegion
-    acc_state: SDFGState
     c: str
-    n: object
-    k: object
+    a: str
+    b: str | None  #: ``None`` for syrk
+    alpha: Scale
+    beta: Scale | None  #: ``None``: the prior ``C`` is dropped (``beta = 0``)
+    uplo: str
+    trans: str
 
 
-def triangular_nest(root: SDFG, loop: LoopRegion) -> TriangularNest | None:
-    """The beta-scale state, inner ``k`` loop and square output ``C`` of a candidate nest."""
-    n = loop_extent(loop)
-    if n is None:
+def triangle(summary: Summary) -> tuple[str, sympy.Expr, sympy.Expr] | None:
+    """``(uplo, r, j)`` when the iteration stores exactly one row triangle of a square ``C``: ``C[r, 0:r+1]`` is
+    ``'L'``, ``C[r, r:N]`` is ``'U'``; ``r`` is the row the iteration owns, ``j`` the query symbol of the column."""
+    if len(summary.domains) != 1 or len(summary.domains[0].axes) != 2:
         return None
-    split = beta_and_inner_loop(loop)
-    if split is None:
+    (domain,) = summary.domains
+    row, col = domain.axes
+    if row.kind is not AxisKind.FIXED or col.kind is not AxisKind.RANGE:
         return None
-    scale_state, inner = split
-    k = loop_extent(inner)
-    if k is None:
-        return None
-    acc_state = single_body_state(inner)
-    if acc_state is None:
-        return None
-    # The output C is whatever the accumulation state writes (its only sink).
-    sink = sink_node(acc_state)
-    if sink is None:
-        return None
-    if not square_output_ok(root, sink.data, n) or not internal_writes_contained(loop, root, sink.data):
-        return None
-    return TriangularNest(scale_state, inner, acc_state, sink.data, n, k)
+    n = summary.extent
+    for own in own_indices(summary):
+        r = own.index
+        if not same(row.lo, r):
+            continue
+        if same(col.lo, 0) and same(col.hi, r):
+            return "L", r, domain.index[1]
+        if same(col.lo, r) and same(col.hi, n - 1):
+            return "U", r, domain.index[1]
+    return None
 
 
-def symmetric_operands(roles: dict[str, Any], c_array: str) -> list[str] | None:
-    """``[A]`` (rank-k) or sorted ``[A, B]`` (rank-2k) when every operand is read at both ``[i,k]`` and ``[j,k]``."""
-    rows, cols = roles["row"], roles["col"]
-    if len(rows) not in (1, 2) or rows.keys() != cols.keys():
-        return None
-    operands = sorted(rows)
-    return None if c_array in operands else operands
+class Pairing(NamedTuple):
+    """One term ``alpha * Sum_k row[r, k] * col[j, k]`` (``[k, r]`` / ``[k, j]`` for ``trans='T'``)."""
+
+    alpha: Scale
+    row: str
+    col: str
+    extent: sympy.Expr
+    trans: str
 
 
-def update_operands(
-    root: SDFG, loop: LoopRegion, nest: TriangularNest, value: sympy.Basic, roles: dict[str, Any], beta: str
-) -> list[str] | None:
-    """The operands when ``value`` is ``C[i,j] + alpha * <symmetric pairing>`` over loop-invariant inputs."""
-    operands = symmetric_operands(roles, nest.c)
-    if operands is None:
+def pairing(sdfg: SDFG, term: sympy.Expr, r: sympy.Expr, j: sympy.Expr) -> Pairing | None:
+    factors = sympy.Mul.make_args(term)
+    sums = [f for f in factors if isinstance(f, sympy.Sum)]
+    alpha = scale_of(sdfg, sympy.Mul(*(f for f in factors if not isinstance(f, sympy.Sum))))
+    if len(sums) != 1 or alpha is None:
         return None
-    alpha, alpha_sym = next(iter(roles["coeffs"].items()))
-    if not all(operand_shape_ok(root, name, roles["trans"], nest.n, nest.k) for name in operands):
+    (k, lo, hi), inner = sums[0].limits[0], sympy.Mul.make_args(sums[0].function)
+    if not same(lo, 0) or hi.has(*r.free_symbols) or hi.has(j) or len(inner) != 2:
         return None
-    if not loop_invariant(loop, (*operands, alpha, beta)):
+    if not all(isinstance(read, AppliedUndef) and len(read.args) == 2 for read in inner):
         return None
-    # A[i,k]*A[j,k] for one operand, A[i,k]*B[j,k] + B[i,k]*A[j,k] for two.
-    pairing = sum(roles["row"][p] * roles["col"][q] for p, q in zip(operands, reversed(operands)))
-    if not expressions_equal(value, roles["c"] + alpha_sym * pairing):
+    for trans, (outer_axis, k_axis) in (("N", (0, 1)), ("T", (1, 0))):
+        if not all(read.args[k_axis] == k for read in inner):
+            continue
+        rows = [read for read in inner if same(read.args[outer_axis], r)]
+        cols = [read for read in inner if read.args[outer_axis] == j]
+        if len(rows) == 1 and len(cols) == 1:
+            return Pairing(alpha, read_array(rows[0]), read_array(cols[0]), hi + 1, trans)
+    return None
+
+
+def match_rank_k(sdfg: SDFG, loop: LoopRegion) -> RankKMatch | None:
+    try:
+        summary = summarize(sdfg, loop)
+    except Refused:
         return None
-    return operands
+    shape = triangle(summary)
+    c, n = summary.output, summary.extent
+    if shape is None or not shape_is(sdfg, c, n, n):
+        return None
+    uplo, r, j = shape
+    value = canonical(summary.domains[0].value)
+    prior = leaf(c, (r, j))
+    beta_factor = value.coeff(prior)
+    beta = None if beta_factor == 0 else scale_of(sdfg, beta_factor)
+    if beta_factor != 0 and beta is None:
+        return None
+    update = sympy.expand(value - beta_factor * prior)
+    if any(read_array(read) == c for read in leaves(update)):
+        return None
+    terms = [pairing(sdfg, t, r, j) for t in sympy.Add.make_args(update)]
+    if not terms or any(t is None for t in terms):
+        return None
+    first = terms[0]
+    if any(t.alpha != first.alpha or t.trans != first.trans or not same(t.extent, first.extent) for t in terms):
+        return None
+    pairs = sorted((t.row, t.col) for t in terms)
+    if len(pairs) == 1 and pairs[0][0] == pairs[0][1]:
+        operands = [pairs[0][0]]
+    elif len(pairs) == 2 and pairs[0] == pairs[1][::-1] and pairs[0][0] != pairs[0][1]:
+        operands = list(pairs[0])
+    else:
+        return None
+    extent = (n, first.extent) if first.trans == "N" else (first.extent, n)
+    if c in operands or not all(shape_is(sdfg, name, *extent) for name in operands):
+        return None
+    runtime = [s.name for s in (first.alpha, beta) if s is not None and s.name is not None]
+    if any(name in summary.written for name in (*operands, *runtime)):
+        return None
+    if not transients_dead_outside(sdfg, loop, summary):
+        return None
+    return RankKMatch(c, operands[0], operands[1] if len(operands) == 2 else None, first.alpha, beta, uplo, first.trans)
 
 
 @explicit_cf_compatible
@@ -125,63 +180,25 @@ class LoopToRankKUpdate(ppl.Pass):
         count = 0
         for parent, loop in outer_loop_candidates(sdfg):
             if loop not in parent.nodes():
-                continue  # already spliced out (defensive)
-            match = self.match(parent, loop)
-            if match is None:
-                continue
-            self.replace(parent, loop, match)
-            count += 1
+                continue  # inside a nest an earlier lift spliced out
+            match = match_rank_k(parent.sdfg, loop)
+            if match is not None:
+                replace(parent, loop, match)
+                count += 1
         return count or None
 
-    def match(self, parent: ControlFlowRegion, loop: LoopRegion) -> RankKMatch | None:
-        root = root_sdfg_of(parent)
-        nest = triangular_nest(root, loop)
-        if nest is None:
-            return None
-        i = loop.loop_variable
-        beta_match = match_beta_state(nest.scale_state, root, nest.c, i, SLICE_INDEX, nest.n)
-        if beta_match is None:
-            return None
-        beta, uplo = beta_match
-        resolved = resolve_accumulate(nest.acc_state, root, nest.c, i, SLICE_INDEX, nest.inner.loop_variable, nest.n)
-        # The scale and the accumulation must cover the same triangle.
-        if resolved is None or resolved[2] != uplo:
-            return None
-        roles = resolved[1]
-        operands = update_operands(root, loop, nest, resolved[0], roles, beta)
-        if operands is None:
-            return None
-        return RankKMatch(
-            c=nest.c,
-            a=operands[0],
-            b=operands[1] if len(operands) == 2 else None,
-            alpha=next(iter(roles["coeffs"])),
-            beta=beta,
-            uplo=uplo,
-            trans=roles["trans"],
-            n=nest.n,
-            k=nest.k,
-        )
 
-    def replace(self, parent: ControlFlowRegion, loop: LoopRegion, match: RankKMatch) -> None:
-        # Deferred: the BLAS package imports transformations.
-        from dace.libraries.blas.nodes.syr2k import Syr2k
-        from dace.libraries.blas.nodes.syrk import Syrk
+def replace(parent: ControlFlowRegion, loop: LoopRegion, match: RankKMatch) -> None:
+    # Deferred: the BLAS package imports transformations.
+    from dace.libraries.blas.nodes.syr2k import Syr2k
+    from dace.libraries.blas.nodes.syrk import Syrk
 
-        node_class, suffix = (Syrk, "_syrk") if match.b is None else (Syr2k, "_syr2k")
-        operands = [match.a] if match.b is None else [match.a, match.b]
-        root = root_sdfg_of(parent)
-        state = replace_loop_with_state(parent, loop, loop.label + suffix)
-        node = node_class(
-            loop.label + suffix, uplo=match.uplo, trans=match.trans, alpha=1, beta=1, alpha_input=True, beta_input=True
-        )
-        state.add_node(node)
-        for conn, name in zip(("_a", "_b"), operands):
-            state.add_edge(state.add_read(name), None, node, conn, full_memlet(root, name))
-        state.add_edge(state.add_read(match.c), None, node, "_c", full_memlet(root, match.c))
-        state.add_edge(state.add_read(match.alpha), None, node, "_alpha", mm.Memlet(f"{match.alpha}[0]"))
-        state.add_edge(state.add_read(match.beta), None, node, "_beta", mm.Memlet(f"{match.beta}[0]"))
-        state.add_edge(node, "_c", state.add_write(match.c), None, full_memlet(root, match.c))
+    node_class, suffix = (Syrk, "_syrk") if match.b is None else (Syr2k, "_syr2k")
+    operands = {"_a": match.a} if match.b is None else {"_a": match.a, "_b": match.b}
+    node = node_class(
+        loop.label + suffix, uplo=match.uplo, trans=match.trans, **blas_coefficients(match.alpha, match.beta)
+    )
+    splice_blas_node(parent, loop, node, operands, match.c, match.alpha, match.beta)
 
 
 __all__ = ["LoopToRankKUpdate"]

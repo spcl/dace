@@ -38,18 +38,18 @@ def run(sdfg, n=64):
     return a, b
 
 
-def test_stage_labels_are_duplicate_free_and_fuse_has_a_successor():
-    """stage_labels() names every stage once, 'fuse' among them, with a later stage."""
+def test_stage_labels_are_duplicate_free_and_recompose_has_a_predecessor():
+    """stage_labels() names every phase once, 'recompose' among them, after the others."""
     labels = stage_labels()
     assert len(labels) == len(set(labels))
-    assert "fuse" in labels
-    assert labels.index("fuse") < len(labels) - 1
+    assert "recompose" in labels
+    assert labels.index("recompose") > 0
 
 
-def test_prefix_and_suffix_split_at_fuse_reproduces_the_full_run():
-    """Canonicalizing in two pieces at the 'fuse' boundary matches one full run, values included."""
+def test_prefix_and_suffix_split_at_recompose_reproduces_the_full_run():
+    """Canonicalizing in two pieces at the 'recompose' boundary matches one full run, values included."""
     labels = stage_labels()
-    idx = labels.index("fuse")
+    idx = labels.index("recompose")
 
     sdfg_full = producer_consumer.to_sdfg(simplify=False)
     canonicalize(sdfg_full, validate=True)
@@ -66,11 +66,11 @@ def test_prefix_and_suffix_split_at_fuse_reproduces_the_full_run():
     assert np.allclose(b_split, a_split * 2.0 + 1.0)
 
 
-def test_stopping_before_coalesce_leaves_the_two_maps_unfused():
-    """FuseMaps first runs in the 'coalesce' stage; stopping earlier leaves both maps standing,
-    and resuming from there reaches the same map count and values as a full run."""
+def test_stopping_before_recompose_leaves_the_two_maps_unfused():
+    """Maps first fuse in the 'recompose' phase; stopping earlier leaves both maps standing, and resuming from
+    there reaches the same map count and values as a full run."""
     labels = stage_labels()
-    idx = labels.index("coalesce")
+    idx = labels.index("recompose")
 
     sdfg_full = producer_consumer.to_sdfg(simplify=False)
     canonicalize(sdfg_full, validate=True)
@@ -94,24 +94,8 @@ def test_unknown_stage_label_raises():
         canonicalize(sdfg, stages=["not_a_real_stage"])
 
 
-def test_the_stages_after_fuse_without_fuse_final_keep_a_hand_chosen_split():
-    """A caller that picks the map granularity by hand runs the stages after 'fuse' without 'fuse_final', the
-    terminal re-fusion; the two maps it left split stay split and still compute the full run's values."""
-    labels = stage_labels()
-    assert labels.index("fuse") < labels.index("fuse_final")
-    after_fuse = [label for label in labels[labels.index("fuse") + 1 :] if label != "fuse_final"]
-
-    sdfg_full = producer_consumer.to_sdfg(simplify=False)
-    canonicalize(sdfg_full, validate=True)
-    _, b_full = run(sdfg_full)
-
-    sdfg_split = producer_consumer.to_sdfg(simplify=False)
-    canonicalize(sdfg_split, validate=True, stages=labels[: labels.index("coalesce")])
-    canonicalize(sdfg_split, validate=True, stages=after_fuse)
-    assert count_top_level_maps(sdfg_split) > count_top_level_maps(sdfg_full)
-    _, b_split = run(sdfg_split)
-    assert np.allclose(b_split, b_full)
-
-
 if __name__ == "__main__":
-    pytest.main([__file__, "-q"])
+    test_stage_labels_are_duplicate_free_and_recompose_has_a_predecessor()
+    test_prefix_and_suffix_split_at_recompose_reproduces_the_full_run()
+    test_stopping_before_recompose_leaves_the_two_maps_unfused()
+    test_unknown_stage_label_raises()

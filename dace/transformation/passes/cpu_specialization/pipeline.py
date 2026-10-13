@@ -50,6 +50,7 @@ and truncates term by term. Both are re-runnable: the guard dedups and re-anchor
 
 from dace import SDFG
 from dace.sdfg import infer_types
+from dace.transformation.interstate.move_map_invariant_if_up import hoist_invariant_guards
 from dace.transformation.passes.canonicalize.assume_symbols_nonnegative import AssumeSymbolConstraints
 from dace.transformation.passes.canonicalize.normalize_floor_division import NormalizeFloorDivision
 from dace.transformation.passes.cpu_specialization.calibrate_thresholds import CalibrateCpuThresholds
@@ -86,6 +87,7 @@ def cpu_specialize(sdfg: SDFG, break_anti_dependence: bool = True, validate: boo
     # leaving half of them implicit in a codegen rule.
     infer_types.set_default_schedule_and_storage_types(sdfg, None)
 
+    hoist_invariant_guards(sdfg, require_full_hoist=False)
     CalibrateCpuThresholds().apply_pass(sdfg, {})
     if break_anti_dependence:
         ChunkAntiDependence().apply_pass(sdfg, {})
