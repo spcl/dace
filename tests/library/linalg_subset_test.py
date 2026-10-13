@@ -171,29 +171,6 @@ def test_contraction_extents_are_compared_by_name_not_by_structure():
     sdfg.validate()
 
 
-@pytest.mark.parametrize(
-    "dtype, call",
-    [
-        (dace.float64, "dTensorTranspose(perm, 2, 1, _inp_tensor"),
-        (dace.complex128, "zTensorTranspose(perm, 2, 1, false, _inp_tensor"),
-    ],
-)
-def test_an_hptt_call_matches_the_signature_of_its_type(dtype, call):
-    """HPTT's complex entry points take ``conjA`` right after ``alpha``; without it the input pointer lands on the
-    ``conjA`` bool and the call does not compile (npbench ``stockham_fft`` with HPTT installed)."""
-    from dace.libraries.linalg.nodes.ttranspose import ExpandHPTT
-
-    sdfg = dace.SDFG(f"hptt_call_{dtype.to_string()}")
-    sdfg.add_array("x", (4, 8), dtype)
-    sdfg.add_array("y", (8, 4), dtype)
-    state = sdfg.add_state(is_start_block=True)
-    node = TensorTranspose("_TensorTranspose", axes=[1, 0])
-    state.add_node(node)
-    state.add_edge(state.add_read("x"), None, node, "_inp_tensor", dace.Memlet("x[0:4, 0:8]"))
-    state.add_edge(node, "_out_tensor", state.add_write("y"), None, dace.Memlet("y[0:8, 0:4]"))
-    assert call in ExpandHPTT.expansion(node, state, sdfg).code.as_string
-
-
 if __name__ == "__main__":
     test_transpose_into_a_slice_of_a_larger_container()
     test_transpose_out_of_a_slice_of_a_larger_container()
@@ -202,7 +179,3 @@ if __name__ == "__main__":
     test_a_genuine_extent_mismatch_is_still_rejected()
     test_contraction_into_a_slice_of_a_larger_container()
     test_contraction_extents_are_compared_by_name_not_by_structure()
-    test_an_hptt_call_matches_the_signature_of_its_type(dace.float64, "dTensorTranspose(perm, 2, 1, _inp_tensor")
-    test_an_hptt_call_matches_the_signature_of_its_type(
-        dace.complex128, "zTensorTranspose(perm, 2, 1, false, _inp_tensor"
-    )

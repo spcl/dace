@@ -735,6 +735,31 @@ def test_nest_two_loops_with_same_variable():
     assert np.allclose(A, A_ref) and np.allclose(B, B_ref)
 
 
+def test_a_container_moved_across_the_boundary_gets_one_connector():
+    """``A`` flows in, through an interior access node of ``A`` (a read-modify-write chain), and out: the
+    nested SDFG binds it through one input and one output connector, not a second ``A_0`` pair whose
+    writeback is unordered with the first."""
+    sdfg = dace.SDFG("rmw_chain")
+    sdfg.add_array("A", [8], dace.float64)
+    state = sdfg.add_state()
+    entry, exit_ = state.add_map("m", {"i": "0:8"})
+    first = state.add_tasklet("first", {"x"}, {"y"}, "y = x + 1")
+    second = state.add_tasklet("second", {"x"}, {"y"}, "y = x * 2")
+    middle = state.add_access("A")
+    state.add_memlet_path(state.add_read("A"), entry, first, dst_conn="x", memlet=dace.Memlet("A[i]"))
+    state.add_edge(first, "y", middle, None, dace.Memlet("A[i]"))
+    state.add_edge(middle, None, second, "x", dace.Memlet("A[i]"))
+    state.add_memlet_path(second, exit_, state.add_write("A"), src_conn="y", memlet=dace.Memlet("A[i]"))
+
+    nested = nest_state_subgraph(sdfg, state, state.scope_subgraph(entry))
+
+    assert set(nested.in_connectors) == {"A"} and set(nested.out_connectors) == {"A"}
+    sdfg.validate()
+    a = np.arange(8.0)
+    sdfg(A=a)
+    assert np.allclose(a, (np.arange(8.0) + 1) * 2)
+
+
 if __name__ == "__main__":
     test_nest_oneelementmap()
     test_internal_outarray()
@@ -759,3 +784,4 @@ if __name__ == "__main__":
     test_an_rmw_chain_through_an_interior_access_node_writes_back_through_one_connector()
 
     test_nest_two_loops_with_same_variable()
+    test_a_container_moved_across_the_boundary_gets_one_connector()

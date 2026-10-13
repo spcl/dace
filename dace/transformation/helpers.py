@@ -660,10 +660,8 @@ def nest_state_subgraph(
                 output_arrays[node.data] = state.in_edges(node)[0].data.wcr
     # One container, one connector: a container a boundary edge already moves in a direction needs no
     # full-array interface in that direction, and its boundary connector takes the container's own name
-    # (below). A second interface binds the same outer container twice: an input one reads a fresh
-    # in-scope access node that bypasses the ``IN_x`` edge ordering the map after the writer, and two
-    # output ones write back unordered (an RMW chain through interior access nodes of ``A`` ending on
-    # the scope exit stored its stale middle value last).
+    # (below). A second interface binds the same outer container twice, and its writebacks are unordered
+    # with the boundary one's.
     for edge in inputs:
         input_arrays.pop(edge.data.data, None)
     for edge in outputs:
