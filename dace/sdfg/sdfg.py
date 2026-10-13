@@ -2898,17 +2898,6 @@ class SDFG(ControlFlowRegion):
             sdfg.build_folder = build_folder
 
             # Rename SDFG to avoid runtime issues with clashing names
-            if nanobind_interface and sdfg.is_loaded(folder_mode=folder_mode):
-                collision_mode = Config.get("compiler", "nanobind_name_collision")
-                assert collision_mode in ("rename", "error"), (
-                    f'Invalid value "{collision_mode}" for compiler.nanobind_name_collision (expected "rename" or "error").'
-                )
-                if collision_mode == "error":
-                    raise ValueError(
-                        f"SDFG name '{sdfg.name}' is already loaded in this process and "
-                        "compiler.nanobind_name_collision is set to 'error'."
-                    )
-
             # An explicitly set build folder behaves like `cache` set to `single` and
             #  an explicitly set `default_build_folder`. Thus a collision renamed
             #  program builds _in place_ inside the build folder.

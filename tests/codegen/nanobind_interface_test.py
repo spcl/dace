@@ -655,24 +655,6 @@ def test_nanobind_interface_sdfg_safe_call_refused(nanobind_interface):
         sdfg.safe_call(A=np.zeros(4))
 
 
-def test_nanobind_interface_name_collision_error(nanobind_interface):
-    """With compiler.nanobind_name_collision=error, a taken name refuses to compile."""
-    import pytest
-
-    # Pins the rename machinery; reuse has its own test.
-    with set_temporary("compiler", "nanobind_reuse_loaded", value=False):
-        with set_temporary("compiler", "nanobind_name_collision", value="error"):
-            N = dace.symbol("N")
-
-            @dace.program
-            def axpy_nanobind_collerr(A: dace.float64[N], B: dace.float64[N], alpha: dace.float64):
-                B[:] = alpha * A + B
-
-            axpy_nanobind_collerr.to_sdfg().compile()
-            with pytest.raises(Exception, match="already loaded"):
-                axpy_nanobind_collerr.to_sdfg().compile()
-
-
 def test_nanobind_interface_workspace(nanobind_interface):
     """External-memory workspace functions work on the nanobind interface."""
     N = dace.symbol("N")
