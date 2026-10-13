@@ -796,8 +796,119 @@ INLINE_DEFINITIONS.update(
     }
 )
 
+# argmax / argmin
+# ``dace/arg_reduction.h`` declares the (value, index) pair and its ``arg_max_pair`` / ``arg_min_pair`` OpenMP
+# reductions; the ``ArgReduce`` CPU lowering names them. CPF carries the same text without the namespace.
+ARG_VALUE_CTYPES: tuple[str, ...] = (
+    "float",
+    "double",
+    "int8_t",
+    "int16_t",
+    "int32_t",
+    "int64_t",
+    "uint8_t",
+    "uint16_t",
+    "uint32_t",
+    "uint64_t",
+    "std::complex<float>",
+    "std::complex<double>",
+)
+ARG_INDEX_CTYPES: tuple[str, ...] = ("int32_t", "int64_t")
+
+
+def arg_pair_declare(op: str) -> str:
+    """The ``arg_<op>_pair`` reduction over every pair :data:`ARG_VALUE_CTYPES` x :data:`ARG_INDEX_CTYPES` names."""
+    pairs = ", ".join(f"arg_pair<{v}, {i}>" for i in ARG_INDEX_CTYPES for v in ARG_VALUE_CTYPES)
+    return (
+        f"#pragma omp declare reduction(arg_{op}_pair : {pairs} : omp_out = arg_{op}_combine(omp_out, omp_in)) "
+        "initializer(omp_priv = omp_orig)"
+    )
+
+
+ARG_REDUCTION_CPP: dict[str, str] = {
+    "arg_pair": "\n".join(
+        [
+            "template <typename V, typename I>",
+            "struct arg_pair {",
+            "    V __ar_v;",
+            "    I __ar_i;",
+            "};",
+            "template <typename V, typename = void>",
+            "struct arg_is_complex : std::false_type {};",
+            "template <typename V>",
+            "struct arg_is_complex<V, std::void_t<decltype(std::declval<V>().imag())>> : std::true_type {};",
+            "template <typename V>",
+            "static inline bool arg_greater(const V &a, const V &b) {",
+            "    if constexpr (arg_is_complex<V>::value) {",
+            "        return a.real() > b.real() || (a.real() == b.real() && a.imag() > b.imag());",
+            "    } else {",
+            "        return a > b;",
+            "    }",
+            "}",
+            "template <typename V, typename I>",
+            "static inline arg_pair<V, I> arg_max_combine(const arg_pair<V, I> &out, const arg_pair<V, I> &in) {",
+            "    return (arg_greater(in.__ar_v, out.__ar_v) || (in.__ar_v == out.__ar_v && in.__ar_i < out.__ar_i)) "
+            "? in : out;",
+            "}",
+            "template <typename V, typename I>",
+            "static inline arg_pair<V, I> arg_min_combine(const arg_pair<V, I> &out, const arg_pair<V, I> &in) {",
+            "    return (arg_greater(out.__ar_v, in.__ar_v) || (in.__ar_v == out.__ar_v && in.__ar_i < out.__ar_i)) "
+            "? in : out;",
+            "}",
+            arg_pair_declare("max"),
+            arg_pair_declare("min"),
+        ]
+    ),
+    "arg_pair_of": "template <typename V, typename I>\n"
+    "static inline arg_pair<V, I> arg_pair_of(const V &v, I i) { return arg_pair<V, I>{v, i}; }",
+    "arg_max_step": "template <typename V, typename I>\n"
+    "static inline arg_pair<V, I> arg_max_step(const arg_pair<V, I> &held, const V &v, I i) {\n"
+    "    return arg_greater(v, held.__ar_v) ? arg_pair<V, I>{v, i} : held;\n}",
+    "arg_min_step": "template <typename V, typename I>\n"
+    "static inline arg_pair<V, I> arg_min_step(const arg_pair<V, I> &held, const V &v, I i) {\n"
+    "    return arg_greater(held.__ar_v, v) ? arg_pair<V, I>{v, i} : held;\n}",
+}
+INLINE_DEFINITIONS.update(ARG_REDUCTION_CPP)
+
+
+def atomic_minmax_body(op: str, ctype: str) -> list[str]:
+    """``*x = max(*x, v)`` (or min) as one atomic: OpenMP 5.1 ``atomic compare``, which NVHPC does not parse, so
+    there the GNU compare-and-swap builtin loops instead. Same rule as ``cpf_max`` / ``cpf_min``: a NaN never wins."""
+    better = "*x < v" if op == "max" else "v < *x"
+    seen_better = "seen < v" if op == "max" else "v < seen"
+    return [
+        "#if defined(__NVCOMPILER)",
+        f"    {ctype} seen;",
+        "    __atomic_load(x, &seen, __ATOMIC_RELAXED);",
+        f"    while ({seen_better} && !__atomic_compare_exchange(x, &seen, &v, 0, __ATOMIC_RELAXED, __ATOMIC_RELAXED)) {{}}",
+        "#else",
+        "    #pragma omp atomic compare",
+        f"    if ({better}) {{ *x = v; }}",
+        "#endif",
+    ]
+
+
+#: A conflicting min / max accumulation (:meth:`~dace.codegen.targets.cpu.CPUCodeGen.standalone_atomic_wcr`).
+INLINE_DEFINITIONS.update(
+    {
+        f"cpf_atomic_{op}": "\n".join(
+            [
+                "template <typename T, typename U>",
+                f"static inline void cpf_atomic_{op}(T *x, U value) {{",
+                "    T v = static_cast<T>(value);",
+                *atomic_minmax_body(op, "T"),
+                "}",
+            ]
+        )
+        for op in ("max", "min")
+    }
+)
+
 #: Definitions each definition calls. Emission is dependency-first (see :func:`definitions_for`).
 DEFINITION_DEPENDENCIES: dict[str, tuple[str, ...]] = {
+    "arg_pair_of": ("arg_pair",),
+    "arg_max_step": ("arg_pair",),
+    "arg_min_step": ("arg_pair",),
     **{
         reduce_name(operation, parallel): (f"cpf_{operation}",)
         for operation in ("min", "max")
@@ -816,6 +927,7 @@ DEFINITION_DEPENDENCIES: dict[str, tuple[str, ...]] = {
 
 #: System headers each inline definition needs, beyond :data:`BASE_HEADERS`.
 DEFINITION_HEADERS: dict[str, tuple[str, ...]] = {
+    "arg_pair": ("<complex>", "<type_traits>", "<utility>"),
     **{reduce_name(operation, True): ("<complex>",) for operation in COMPLEX_REDUCE_COMBINERS},
     "ifloor": ("<type_traits>",),
     "min_identity": ("<limits>",),
@@ -1531,7 +1643,7 @@ def rewrite_native_code(code: str, dialect: Dialect | None = None, site: NativeS
         # A C++ standard header (``<algorithm>``) names nothing in C; the unit's C headers come from its preamble.
         code = C_CXX_INCLUDE.sub("", code)
         # The scan reads its seed's type from the identity call, so it runs before the identities.
-        code = c_sort(c_detect_collision(c_reduce(c_scan(code, site), site), site), site)
+        code = c_sort(c_detect_collision(c_reduce(c_scan(c_arg_pairs(code), site), site), site), site)
         code = c_native_renames(c_copy(c_numeric_limits(c_scan_identities(code))))
 
     def replace(match: "re.Match") -> str:
@@ -2580,7 +2692,8 @@ C_DTYPE_ALTERNATION: str = "|".join(sorted(C_SCALAR_SPELLINGS, key=len, reverse=
 #: The name of a typed instantiation: its family, then one dace type per type parameter
 #: (``cpf_scan_incl_sum_int8_int64_int64``). No group captures, so it can join another alternation.
 C_INSTANCE_NAMES: str = (
-    r"cpf_(?:scan_(?:incl|excl)_(?:sum|product|min|max)|reduce_(?:seq_)?(?:%s)|detect_collision_sized"
+    r"cpf_(?:scan_(?:incl|excl)_(?:sum|product|min|max)|reduce_(?:seq_)?(?:%s)|arg_pair_of|arg_max_step"
+    r"|arg_min_step|atomic_max|atomic_min|detect_collision_sized"
     r"|detect_collision|sort)(?:_(?:%s))+" % ("|".join(REDUCE_OPERATIONS), C_DTYPE_ALTERNATION)
 )
 
@@ -2589,6 +2702,52 @@ C_INSTANCE_NAME: "re.Pattern" = re.compile(
     r"cpf_(scan_(incl|excl)_(sum|product|min|max)|detect_collision_sized"
     r"|detect_collision|sort)((?:_(?:%s))+)" % C_DTYPE_ALTERNATION
 )
+
+
+#: A typed argmax / argmin piece: its family, then the value's and the index's dace types.
+C_ARG_INSTANCE_NAME: "re.Pattern" = re.compile(
+    r"cpf_(arg_pair_of|arg_max_step|arg_min_step)_(%s)_(%s)" % (C_DTYPE_ALTERNATION, C_DTYPE_ALTERNATION)
+)
+
+
+def c_arg_pair_definition(value: str, index: str) -> str:
+    """The (value, index) pair of ``value`` x ``index`` in C: its struct, constructor, combiners and the two
+    ``arg_max_pair`` / ``arg_min_pair`` OpenMP reductions over it, as ``dace/arg_reduction.h`` declares them. A
+    complex value orders lexicographically, real part first."""
+    v, i = C_SCALAR_SPELLINGS[value], C_SCALAR_SPELLINGS[index]
+    pair, tag = f"cpf_arg_pair_{value}_{index}", f"{value}_{index}"
+    if value in C_COMPLEX_DTYPES:
+        greater = "creal(a) > creal(b) || (creal(a) == creal(b) && cimag(a) > cimag(b))"
+    else:
+        greater = "a > b"
+    lines = [
+        f"typedef struct {{ {v} __ar_v; {i} __ar_i; }} {pair};",
+        f"static inline int cpf_arg_greater_{tag}({v} a, {v} b) {{ return {greater}; }}",
+        f"static inline {pair} cpf_arg_pair_of_{tag}({v} v, {i} i) {{ {pair} p = {{v, i}}; return p; }}",
+    ]
+    for op, better in (
+        ("max", "cpf_arg_greater_%s(in.__ar_v, out.__ar_v)"),
+        ("min", "cpf_arg_greater_%s(out.__ar_v, in.__ar_v)"),
+    ):
+        lines += [
+            f"static inline {pair} cpf_arg_{op}_combine_{tag}({pair} out, {pair} in) {{",
+            f"    return ({better % tag} || (in.__ar_v == out.__ar_v && in.__ar_i < out.__ar_i)) ? in : out;",
+            "}",
+            f"#pragma omp declare reduction(arg_{op}_pair : {pair} : omp_out = cpf_arg_{op}_combine_{tag}(omp_out, omp_in)) "
+            "initializer(omp_priv = omp_orig)",
+        ]
+    return "\n".join(lines)
+
+
+def c_arg_step_definition(op: str, value: str, index: str) -> str:
+    """One thread's argmax / argmin step over the pair of ``value`` x ``index``: a strictly better value wins."""
+    v, i, tag = C_SCALAR_SPELLINGS[value], C_SCALAR_SPELLINGS[index], f"{value}_{index}"
+    pair = f"cpf_arg_pair_{tag}"
+    better = f"cpf_arg_greater_{tag}(v, held.__ar_v)" if op == "max" else f"cpf_arg_greater_{tag}(held.__ar_v, v)"
+    return (
+        f"static inline {pair} cpf_arg_{op}_step_{tag}({pair} held, {v} v, {i} i) {{\n"
+        f"    return {better} ? cpf_arg_pair_of_{tag}(v, i) : held;\n}}"
+    )
 
 
 #: A typed reduction: ``seq_`` or not, the operation, then the input's and the seed's dace types.
@@ -2639,6 +2798,20 @@ def c_instance(name: str) -> tuple[str, tuple[str, ...]] | None:
 
     :raises NotImplementedError: for a combination the family cannot order.
     """
+    atomic = re.fullmatch(r"cpf_atomic_(max|min)_(%s)" % C_DTYPE_ALTERNATION, name)
+    if atomic is not None:
+        op, dtype = atomic.groups()
+        ctype = C_SCALAR_SPELLINGS[dtype]
+        lines = [f"static inline void {name}({ctype} *x, {ctype} v) {{", *atomic_minmax_body(op, ctype), "}"]
+        return "\n".join(lines), ()
+    piece = C_ARG_INSTANCE_NAME.fullmatch(name)
+    if piece is not None:
+        family, value, index = piece.groups()
+        if family == "arg_pair_of":
+            return c_arg_pair_definition(value, index), ()
+        return c_arg_step_definition(family[len("arg_") : -len("_step")], value, index), (
+            f"cpf_arg_pair_of_{value}_{index}",
+        )
     reduction = C_REDUCE_INSTANCE_NAME.fullmatch(name)
     if reduction is not None:
         sequential, operation, source, accumulator = reduction.groups()
@@ -2712,6 +2885,8 @@ C_REWRITTEN_IN_NATIVE_CODE: frozenset[str] = frozenset(
     {"min_identity", "max_identity", "find_first_index", "detect_collision"}
     | {"scan_%s_%s" % (kind, operation) for kind in ("incl", "excl") for operation in SCAN_OPERATIONS}
     | {reduce_name(operation, parallel) for operation in REDUCE_OPERATIONS for parallel in (True, False)}
+    | set(ARG_REDUCTION_CPP)
+    | {"cpf_atomic_max", "cpf_atomic_min"}
 )
 
 #: Headers CPF's C output always includes. ``<stdbool.h>`` is deliberately absent: ``bool`` /
@@ -2773,9 +2948,9 @@ class Tables(NamedTuple):
 
 
 #: An OPTIONAL explicit template-argument list between a helper's name and its call parentheses
-#: (``get_scratch<ScanTag>(...)``). Deliberately narrow -- no parentheses, no nesting, one line --
-#: so a comparison chain (``a < b && c > (d)``) cannot read as one.
-_EXPLICIT_TEMPLATE_ARGUMENTS = r"(?:<[^<>();{}\n]*>\s*)?"
+#: (``get_scratch<ScanTag>(...)``, ``arg_pair_of<std::complex<double>, int64_t>(...)``). Deliberately narrow --
+#: no parentheses, one level of nesting, one line -- so a comparison chain (``a < b && c > (d)``) cannot read as one.
+_EXPLICIT_TEMPLATE_ARGUMENTS = r"(?:<(?:[^<>();{}\n]|<[^<>();{}\n]*>)*>\s*)?"
 
 
 def _tables(
@@ -3702,6 +3877,42 @@ def c_sort(code: str, site: NativeSite | None) -> str:
 
 #: The opening of a reduction call once :func:`respell_reduce_entry_points` has named it.
 C_REDUCE_CALL: "re.Pattern" = re.compile(r"\breduce_(seq_)?(%s)\s*\(" % "|".join(REDUCE_OPERATIONS))
+
+
+#: The dace ctypes that are not their C fixed-width spelling, by dace type.
+C_NATIVE_CTYPE_DTYPES: dict[str, str] = {
+    "int": "int32",
+    "unsigned int": "uint32",
+    "long long": "int64",
+    "unsigned long long": "uint64",
+    "short": "int16",
+    "unsigned short": "uint16",
+    "char": "int8",
+    "unsigned char": "uint8",
+}
+
+#: ``dace::arg_pair<V, I>`` and its calls, ``arg_pair_of`` / ``arg_max_step`` / ``arg_min_step``, as the
+#: ``ArgReduce`` CPU lowering writes them once :func:`rewrite_ctypes` has spelled ``V`` and ``I`` in C.
+C_ARG_PIECE: "re.Pattern" = re.compile(
+    r"(?:::)?(?:\bdace::)?\barg_(pair|pair_of|max_step|min_step)\s*<\s*([^<>,]+?)\s*,\s*([^<>,]+?)\s*>"
+)
+
+
+def c_arg_pairs(code: str) -> str:
+    """Spell each argmax / argmin piece as the C instance typed for its value and index.
+
+    :raises NotImplementedError: for a value or index type C has no spelling for.
+    """
+    # A dace ctype may spell a fixed-width type its own way (``int`` for int32).
+    dtypes_of = {spelling: name for name, spelling in C_SCALAR_SPELLINGS.items()} | C_NATIVE_CTYPE_DTYPES
+
+    def rewrite(match: "re.Match") -> str:
+        piece, value, index = match.group(1), match.group(2), match.group(3)
+        if value not in dtypes_of or index not in dtypes_of:
+            raise NotImplementedError(f"CPF cannot render an argmax pair of {value} and {index} in C")
+        return f"cpf_arg_{piece}_{dtypes_of[value]}_{dtypes_of[index]}"
+
+    return C_ARG_PIECE.sub(rewrite, code)
 
 
 def c_reduce(code: str, site: NativeSite | None) -> str:
