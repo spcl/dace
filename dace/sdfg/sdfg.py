@@ -2560,8 +2560,8 @@ class SDFG(ControlFlowRegion):
             # A shape may name a scoped symbol (e.g. a transient sized by a map parameter) or one an interstate edge
             # assigns, which are not SDFG symbols
             scoped = scope_bound_names(sdfg) | interstate_bound_names(sdfg) | bound_names
-            # The dtype comes with the symbol object. A symbol inside an expression may be another object of that name
-            # SymPy cached the expression with, so one name declared with two dtypes in a process is ambiguous here.
+            # The dtype comes with the symbol object. SymPy may build an expression from another object of the same name,
+            # so a symbol name has one dtype in a process.
             for sym in new:
                 if sym.name in scoped:
                     continue
