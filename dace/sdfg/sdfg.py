@@ -4,6 +4,7 @@ import collections
 import copy
 import ctypes
 import gzip
+import io
 import json
 import os
 import pathlib
@@ -65,7 +66,7 @@ LAUNCHER_RANK_VARS = (
 )
 
 if TYPE_CHECKING:
-    from dace.codegen.compiled_sdfg import CompiledSDFG
+    from dace.codegen.compiled_sdfg import CompiledSDFGProtocol
     from dace.codegen.instrumentation.data.data_report import InstrumentedDataReport
     from dace.codegen.instrumentation.report import InstrumentationReport
     from dace.sdfg.analysis.schedule_tree.treenodes import ScheduleTreeRoot
@@ -1386,9 +1387,9 @@ class SDFG(ControlFlowRegion):
         :param kwargs: Keyword arguments to call SDFG with.
         :return: The return value(s) of this SDFG.
         """
-        from dace.codegen.compiled_sdfg import CompiledSDFG  # Avoid import loop
+        from dace.codegen.compiled_sdfg import CompiledSDFGProtocol  # Avoid import loop
 
-        binaryobj: CompiledSDFG = self.compile()
+        binaryobj: CompiledSDFGProtocol = self.compile()
         set_report = binaryobj.get_exported_function("__dace_set_instrumented_data_report")
         if set_report is None:
             raise ValueError(
@@ -2738,40 +2739,34 @@ class SDFG(ControlFlowRegion):
         for k, v in symbols.items():
             self.add_constant(str(k), v)
 
-    def is_loaded(self, folder_mode: str | None = None, interface: str | None = None) -> bool:
+    def is_loaded(self, folder_mode: str | None = None) -> bool:
         """
-        Returns True if the SDFG binary is already loaded in the current process.
+        Returns True if this SDFG's compiled library is resident in the current process.
 
-        :param interface: The decided Python interface for this SDFG ('ctypes'
-            or 'nanobind'); if not given, it is resolved from the configuration
-            and ``self`` via :func:`~dace.codegen.compiler.resolve_compiler_interface`.
-         @CLAUDE: This comment is hard to read please reformulate it and make it a bit clearer. Porbably also less high level some parts might be moved to comments inside the function.
-        :note: The probe is deliberately interface-agnostic: it reports loaded
-            when the (build folder, name) identity is resident under EITHER
-            mechanism - the ``sys.modules`` registry for nanobind modules (key
-            built by :func:`nanobind_qualified_module_name`) or the process's
-            ctypes DLL bookkeeping for the compiled extension file. Both
-            interfaces deliberately share the library file name, and dlopen
-            short-circuits on an exact pathname match against the link map -
-            so rebuilding a path whose previous artifact is still mapped under
-            the OTHER interface would hand the loader the stale mapping (a
-            ctypes library imported as a module fails with a ``PyInit``
-            ImportError; the reverse would silently run stale code). Reporting
-            such an identity as loaded drives the rename loop in
-            :func:`compile` instead.
-            Neither check inspects (explicitly) the content of the library, so an SDFG
-            modified after compilation may still report loaded. The only exception is
-            the case where ``self.build_folder`` is not explicitly set and ``cache``
-            is set to `hash`, but this might have side effects as it is unstable.
+        The probe asks whether the (build folder, SDFG name) identity is taken, under
+        either Python interface: a library imported as a nanobind module counts just
+        as one loaded through ctypes. It does not inspect the library's content, so an
+        SDFG modified after compilation may still report loaded.
+
+        :param folder_mode: The build-folder layout to probe ('development' or
+            'production'); if not given, it is inferred from the folder itself,
+            falling back to the configuration.
         """
         # Avoid import loops
         from dace.codegen import compiler
         from dace.codegen import ctypes_compiled_sdfg as cs
 
-        # @CLAUDE: Why is the interface deleted? (my guess is to squash an 'unused argument'). In any case remove it or add an explanation why.
-        # `interface` is accepted for call-site symmetry but does not narrow the
-        #  probe: residency under either mechanism makes the identity taken.
-        del interface
+        # Checking BOTH mechanisms (instead of only the decided interface's own) is
+        #  deliberate: the interfaces share the library file name, and dlopen
+        #  short-circuits on an exact pathname match against the link map. Rebuilding
+        #  a path whose previous artifact is still mapped under the OTHER interface
+        #  would therefore hand the loader the stale mapping (a ctypes library
+        #  imported as a module fails with a `PyInit` ImportError; the reverse would
+        #  silently run stale code). Reporting such an identity as loaded makes
+        #  `compile()` rename instead.
+
+        # Nanobind residency: generated modules register in `sys.modules` under a
+        #  qualified name derived from (build folder, SDFG name).
         if compiler.nanobind_qualified_module_name(self.build_folder, self.name) in sys.modules:
             return True
 
@@ -2781,6 +2776,7 @@ class SDFG(ControlFlowRegion):
         if folder_mode is None:
             folder_mode = Config.get("compiler", "build_folder_mode")
 
+        # ctypes residency, via the process's DLL bookkeeping for the library file.
         # Note here is kind of a "leak". The issue is that while the library is not
         #  loaded the stub library is loaded. However, it is never unloaded, because
         #  the `unload()` function is not called. This is technically not an issue
@@ -2789,7 +2785,7 @@ class SDFG(ControlFlowRegion):
         dll = cs.ReloadableDLL(binary_filename)
         return dll.is_loaded()
 
-    def compile(self, output_file=None, validate=True, return_program_handle=True) -> "CompiledSDFG":
+    def compile(self, output_file=None, validate=True, return_program_handle=True) -> "CompiledSDFGProtocol":
         """Compiles a runnable binary from this SDFG.
 
         :param output_file: If not None, copies the output library file to
@@ -2831,21 +2827,16 @@ class SDFG(ControlFlowRegion):
 
         # This is the SDFG instance that we will generate code for and will be returned
         #  as the `sdfg` attribute of the compiled SDFG. All mutating operations must
-        #  be performed on it, not on `self`. If it is `None` then it means it was not
-        #  yet created, i.e. deepcopied from `self`. Note if it is not `None` then client
-        #  code can expect `load_external_nsdfgs()` was called on it.
-        sdfg: SDFG | None = None
+        #  be performed on it, not on `self`: later changes to `self` must never leak
+        #  into the compiled artifact.
+        sdfg = copy.deepcopy(self)
+        sdfg.load_external_nsdfgs()
 
         # Decide the Python interface for THIS SDFG once. Everything below -
         #  reuse, collision handling, folder generation - keys off the decided
-        #  value, and code generation never re-reads the configuration. The 'auto' detector
-        #  inspects the arglist, which requires resolved external nested
-        #  SDFGs - so the decision runs on the materialized compile copy
-        #  (every branch below materializes it anyway, this is cost-neutral).
-        # @CLAUDE: This is unneeded as the deep copy is run all the time. This also has consequences for the deepcopy calls bellow.
-        if sdfg is None:
-            sdfg = copy.deepcopy(self)
-            sdfg.load_external_nsdfgs()
+        #  value, and code generation never re-reads the configuration. The 'auto'
+        #  detector inspects the arglist, which requires the resolved external
+        #  nested SDFGs of the compile copy above.
         interface = compiler.resolve_compiler_interface(sdfg)
         nanobind_interface = interface == "nanobind"
 
@@ -2858,14 +2849,13 @@ class SDFG(ControlFlowRegion):
         # collision between different contents could, which we accept everywhere.
         source_hash = None
         if nanobind_interface and Config.get_bool("compiler", "nanobind_reuse_loaded"):
-            # `hash_sdfg()` does not consider the instrumentation (at any level), but
-            #  we have to, because it leads to different code. However, for that we
-            #  have to make sure that all external nested SDFGs are loaded.
-            if sdfg is None:
-                sdfg = copy.deepcopy(self)
-                sdfg.load_external_nsdfgs()
-
-            # @CLAUDE: The source hash does not include the configuration, i.e. `dace.Config`, thus changed configuration will not be recorded. We should add this. This has become simpler as now, since [PR#2602](https://github.com/spcl/dace/pull/2602) was merged, all configuration variables are present.
+            # `hash_sdfg()` considers neither the instrumentation (at any level) nor
+            #  the configuration, but both influence the generated code, so they join
+            #  the reuse key. The whole effective configuration is hashed - also
+            #  entries that do not affect codegen - which errs on the side of a
+            #  redundant rebuild, never a wrong reuse. The YAML dump is deterministic
+            #  (keys are sorted) and, with the environment applied at load time,
+            #  covers every configuration source.
             instr_sig = ",".join(
                 [sdfg.instrument.name]
                 + [
@@ -2874,7 +2864,10 @@ class SDFG(ControlFlowRegion):
                     if getattr(n, "instrument", None) is not None
                 ]
             )
-            source_hash = f"{sdfg.hash_sdfg()}:{md5(instr_sig.encode('utf-8')).hexdigest()}"
+            config_dump = io.StringIO()
+            Config.save(file=config_dump, all=True)
+            codegen_sig = f"{instr_sig}:{config_dump.getvalue()}"
+            source_hash = f"{sdfg.hash_sdfg()}:{md5(codegen_sig.encode('utf-8')).hexdigest()}"
             # The folder must still hold a nanobind artifact: a ctypes rebuild
             #  of the same (folder, name) identity - routine under the 'auto'
             #  default, when ctypes-pinned compiles interleave with auto ones -
@@ -2895,11 +2888,6 @@ class SDFG(ControlFlowRegion):
                 return
 
         if self.regenerate_code or not os.path.isdir(build_folder):
-            # Clone SDFG as the other modules may modify its contents
-            if sdfg is None:
-                sdfg = copy.deepcopy(self)
-                sdfg.load_external_nsdfgs()
-
             # Attach the original sdfg hash to the SDFG, such that the nanobind bindings
             #  generator can include it in the bindings.
             # TODO(phimuell): It should not be a property, but we should come up with a
@@ -2916,7 +2904,7 @@ class SDFG(ControlFlowRegion):
             sdfg.build_folder = build_folder
 
             # Rename SDFG to avoid runtime issues with clashing names
-            if nanobind_interface and sdfg.is_loaded(folder_mode=folder_mode, interface=interface):
+            if nanobind_interface and sdfg.is_loaded(folder_mode=folder_mode):
                 collision_mode = Config.get("compiler", "nanobind_name_collision")
                 assert collision_mode in ("rename", "error"), (
                     f'Invalid value "{collision_mode}" for compiler.nanobind_name_collision (expected "rename" or "error").'
@@ -2936,7 +2924,7 @@ class SDFG(ControlFlowRegion):
 
             folder_was_explicit = self._build_folder is not None
             index = 0
-            while sdfg.is_loaded(folder_mode=folder_mode, interface=interface):
+            while sdfg.is_loaded(folder_mode=folder_mode):
                 sdfg.name = f"{self.name}_{index}"
                 index += 1
                 if nanobind_interface and not folder_was_explicit:
@@ -2984,10 +2972,6 @@ class SDFG(ControlFlowRegion):
         else:
             # The code was already generated, just load the program folder
             program_folder = build_folder
-            # @CLAUDE: Consequence from above, this branch cannot be triggered.
-            if sdfg is None:
-                sdfg = copy.deepcopy(self)
-                sdfg.load_external_nsdfgs()
             sdfg.build_folder = build_folder
 
         # Compile the code and get the shared library path

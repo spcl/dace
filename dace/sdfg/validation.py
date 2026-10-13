@@ -290,17 +290,14 @@ def validate_sdfg(sdfg: "dace.sdfg.SDFG", references: set[int] = None, **context
                 raise InvalidSDFGError("Found multiple blocks with the same name in " + cfg.name, sdfg, None)
 
         # Check the names of data descriptors and co.
-        # @CLAUDE: Refactor this into `if set(sdfg.arrays.keys()).intersects(sdfg.symbols.keys())`
-        seen_names: set[str] = set()
-        for obj_names in [sdfg.arrays.keys(), sdfg.symbols.keys()]:
-            if not seen_names.isdisjoint(obj_names):
-                raise InvalidSDFGError(
-                    f'Found duplicated names: "{seen_names.intersection(obj_names)}". Please ensure '
-                    "that the names of symbols and data descriptors are unique.",
-                    sdfg,
-                    None,
-                )
-            seen_names.update(obj_names)
+        duplicated_names = sdfg.arrays.keys() & sdfg.symbols.keys()
+        if duplicated_names:
+            raise InvalidSDFGError(
+                f'Found duplicated names: "{duplicated_names}". Please ensure '
+                "that the names of symbols and data descriptors are unique.",
+                sdfg,
+                None,
+            )
 
         # Ensure that there is a mentioning of constants in either the array or symbol.
         for const_name, (const_type, _) in sdfg.constants_prop.items():
@@ -350,41 +347,6 @@ def validate_sdfg(sdfg: "dace.sdfg.SDFG", references: set[int] = None, **context
                     raise InvalidSDFGError(
                         f"Only arrays can be returned from SDFG, but `{ret_name_to_check}` is a "
                         f"`{type(ret_desc).__name__}`",
-                        sdfg,
-                        None,
-                    )
-
-        # Test the return value.
-        # @Claude this code seems to be the same as above, but slightly different. Looks like the result of a bad merge.
-        tuple_return_args = {n for n in sdfg._arrays if n.startswith("__return_")}
-        if "__return" in sdfg._arrays and tuple_return_args:
-            raise InvalidSDFGError(
-                "Ambiguous return values: an SDFG cannot have both a `__return` (single value) "
-                "and `__return_<i>` (tuple) data descriptor.",
-                sdfg,
-                None,
-            )
-        elif "__return" in sdfg._arrays:
-            tuple_return_args = {"__return"}  # This is abuse
-        elif tuple_return_args and tuple_return_args != {f"__return_{i}" for i in range(len(tuple_return_args))}:
-            raise InvalidSDFGError("Tuple return values are not consecutively named", sdfg, None)
-        for ret_name_to_check in tuple_return_args:
-            ret_desc = sdfg._arrays[ret_name_to_check]
-            if ret_desc.transient:
-                raise InvalidSDFGError(f"The return value `{ret_name_to_check}` can not be a transient.", sdfg, None)
-            if sdfg.parent is None:
-                # These are some top level specific test
-                if isinstance(ret_desc, dt.Scalar):
-                    # This is an implementation level constraint and is thus a separate error.
-                    #  In certain cases the frontend will promote it to a length 1 array.
-                    raise InvalidSDFGError(
-                        f"{ret_name_to_check} is a scalar and scalars can not be returned.", sdfg, None
-                    )
-                if not isinstance(ret_desc, dt.Array):
-                    # This is a limitation of the Python <-> Binary interface, because Python needs to allocate
-                    #  the return value and for that NumPy/CuPy is used.
-                    raise InvalidSDFGError(
-                        f"Only arrays can be returned from SDFG, but `{ret_name_to_check}` is a `{type(ret_desc).__name__}`",
                         sdfg,
                         None,
                     )
