@@ -1962,9 +1962,9 @@ class CPUCodeGen(TargetCodeGenerator):
         custom_reduction = cpp.unparse_cr(sdfg, memlet.wcr, dtype)
         return f"const auto __dace__reduction_lambda = {custom_reduction};\ndace::wcr_custom<{dtype.ctype}>::{func}<decltype(__dace__reduction_lambda)>(__dace__reduction_lambda, {ptr}, {inname})"
 
-    #: WCR operators ``omp atomic update`` accepts on the ``x = x op expr`` form. ``min``/``max``
-    #: are not among them -- OpenMP 5.1 spells those ``atomic compare``, which gcc does not
-    #: implement -- so they take the critical section below.
+    #: WCR operators ``omp atomic update`` accepts on the ``x = x op expr`` form. ``min``/``max`` take
+    #: ``atomic compare`` (``cpf_atomic_max`` / ``cpf_atomic_min``), ``&&``/``||`` an ``atomic write``,
+    #: and anything else a compare-and-swap loop: a conflicting accumulation never takes a critical section.
     _CPF_ATOMIC_OPS = ("+", "*", "&", "|", "^")
 
     def standalone_atomic_wcr(self, sdfg: SDFG, memlet, redtype, ptr: str, inname: str, dtype, target: str) -> str:
@@ -1982,7 +1982,8 @@ class CPUCodeGen(TargetCodeGenerator):
         :data:`~dace.cpf_lowering.HIP_DEVICE_BLOCKS`'s ``cpf_gpu_atomic``, which applies the same
         combination through one ``atomicCAS`` loop.
 
-        :raises NotImplementedError: for a vector-typed WCR, which has no scalar location to lock.
+        :raises NotImplementedError: for a vector-typed WCR, which has no scalar location to lock, and for a
+                                     complex accumulation other than a sum, which no atomic covers.
         """
         if isinstance(dtype, dtypes.vector):
             raise NotImplementedError(
@@ -1998,13 +1999,55 @@ class CPUCodeGen(TargetCodeGenerator):
             return hint + standalone_gpu_atomic(
                 self.standalone_wcr_operator(sdfg, memlet, redtype, dtype, target), ptr, inname, redtype, dtype.ctype
             )
-        body = self.standalone_wcr(sdfg, memlet, redtype, ptr, inname, dtype, atomic=False)
-        # OpenMP ``atomic`` takes only real arithmetic scalars; a complex accumulation takes the critical section.
-        if _REDUCTION_TO_OMP_OP.get(redtype) in self._CPF_ATOMIC_OPS and not dtype.is_complex():
+        op = _REDUCTION_TO_OMP_OP.get(redtype)
+        c_dialect = cpf_lowering.standalone_c()
+        # Multi-statement forms are one block; the semicolon the caller appends is then an empty statement.
+        if dtype.is_complex():
+            # OpenMP atomics take real scalars; a sum is one per component, a product or custom fold has none.
+            if op != "+":
+                raise NotImplementedError(
+                    f"CPF has no atomic form for the conflicting {redtype} on complex {target}: only a sum splits "
+                    "into per-component atomics. Tree-reduce it before rendering."
+                )
+            part = "float" if dtype == dtypes.complex64 else "double"
+            parts = f"(({part} *)({ptr}))" if c_dialect else f"reinterpret_cast<{part} *>({ptr})"
+            real, imag = (
+                (f"creal({inname})", f"cimag({inname})") if c_dialect else (f"({inname}).real()", f"({inname}).imag()")
+            )
+            return (
+                f"{hint}{{\n#pragma omp atomic update\n{parts}[0] += {real};\n"
+                f"#pragma omp atomic update\n{parts}[1] += {imag};\n}}"
+            )
+        if op in self._CPF_ATOMIC_OPS:
+            body = self.standalone_wcr(sdfg, memlet, redtype, ptr, inname, dtype, atomic=False)
             return f"{hint}#pragma omp atomic update\n{body}"
-        # No atomic form for this operator or type; a critical section is the portable one. The trailing
-        # semicolon the caller appends lands after the block, where it is an empty statement.
-        return f"{hint}#pragma omp critical (cpf_wcr)\n{{ {body}; }}"
+        if op in ("max", "min"):
+            helper = f"cpf_atomic_{op}_{dtype.to_string()}" if c_dialect else f"cpf_atomic_{op}"
+            return f"{hint}{helper}({ptr}, {inname})"
+        if op in ("&&", "||"):
+            # Only a falsy (``&&``) or truthy (``||``) value changes the accumulator, and then to a constant.
+            guard, value = (f"!({inname})", 0) if op == "&&" else (f"{inname}", 1)
+            return f"{hint}if ({guard}) {{\n#pragma omp atomic write\n*({ptr}) = {value};\n}}"
+        # Any other fold (a custom resolution, ``-``, ``/``): compare-and-swap until no other writer intervened.
+        folded = self.standalone_wcr_value(sdfg, memlet, redtype, "cpf_seen", inname, target, dtype)
+        ctype = dtype.ctype
+        return (
+            f"{hint}{{\n{ctype} cpf_seen, cpf_next;\n"
+            "#if defined(__NVCOMPILER)\n"
+            f"__atomic_load({ptr}, &cpf_seen, __ATOMIC_RELAXED);\n"
+            f"do {{ cpf_next = {folded}; }} while (!__atomic_compare_exchange({ptr}, &cpf_seen, &cpf_next, 0, "
+            "__ATOMIC_RELAXED, __ATOMIC_RELAXED));\n"
+            "#else\n"
+            "int cpf_done = 0;\n"
+            "while (!cpf_done) {\n"
+            f"#pragma omp atomic read\ncpf_seen = *({ptr});\n"
+            f"cpf_next = {folded};\n"
+            f"#pragma omp atomic compare capture\n{{ cpf_done = *({ptr}) == cpf_seen; if (cpf_done) {{ *({ptr}) = cpf_next; }} }}\n"
+            "if (cpf_seen != cpf_seen) break;  // a NaN accumulator never compares equal; it stays NaN\n"
+            "}\n"
+            "#endif\n"
+            "}"
+        )
 
     def standalone_wcr_value(
         self,
@@ -2071,8 +2114,9 @@ class CPUCodeGen(TargetCodeGenerator):
         read-modify-write. The third is a per-element atomic, which the runtime provides as
         ``dace::wcr_fixed<...>::reduce_atomic`` -- a symbol CPF does not have.
 
-        That third form is rendered, not refused, from OpenMP's own vocabulary: ``omp atomic
-        update`` where the operator is one atomic admits, ``omp critical`` otherwise. Refusing it
+        That third form is rendered, not refused, from OpenMP's own vocabulary and never as a critical
+        section: ``omp atomic update`` where the operator is one atomic admits, ``atomic compare`` for
+        min/max, ``atomic write`` for a logical fold, a compare-and-swap loop otherwise. Refusing it
         loses the kernel entirely, and a rendering that drops a kernel says less about the program
         than one that shows an unresolved accumulation and SAYS SO. The hint above the statement is
         the honest part: this accumulation serializes, and reducing it is an optimization the
@@ -3774,9 +3818,9 @@ class CPUCodeGen(TargetCodeGenerator):
 
     def renders_simd(self, sdfg: SDFG, state: SDFGState, map_entry: nodes.MapEntry) -> bool:
         """Whether ``map_entry``'s loop carries ``simd``: ``MarkSIMDMaps`` marked it and, in a standalone
-        unit, no accumulation in its body falls back to ``omp atomic`` / ``omp critical``.
+        unit, no accumulation in its body falls back to an ``omp atomic`` form.
 
-        OpenMP admits no ``critical`` inside a ``simd`` region; vexx_k's complex scatter reaches one
+        A ``simd`` region and the fallback's atomics do not mix well; vexx_k's complex scatter reaches one
         through the nested SDFG its loop calls. A write this map tree-reduces is not a fallback.
         """
         if not map_entry.map.omp_simd or not cpf_lowering.standalone():

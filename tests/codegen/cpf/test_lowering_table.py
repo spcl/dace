@@ -492,6 +492,11 @@ NOT_CONSTEXPR = {
         for operation in cpf_lowering.REDUCE_OPERATIONS
         for parallel in (True, False)
     },
+    **dict.fromkeys(
+        cpf_lowering.ARG_REDUCTION_CPP, "declares OpenMP reductions over a pair struct and folds it per thread"
+    ),
+    "cpf_atomic_max": "updates memory under an OpenMP atomic",
+    "cpf_atomic_min": "updates memory under an OpenMP atomic",
     "scan_incl_sum": _SCAN_REASON,
     "scan_incl_product": _SCAN_REASON,
     "scan_incl_min": _SCAN_REASON,
