@@ -6,7 +6,7 @@ The matcher reads the NORMALIZED nest the phased recipe hands ``lift_semantics``
 iteration stores into ``C`` (the rows above ``i`` and row ``i``) and compares that against ``symm``. The npbench
 slice spelling -- column slices, a ``B[:i, j] @ A[i, :i]`` inner product, a separate ``C *= beta`` prescale -- and
 the scalar-loop spelling with a ``temp2`` accumulator are different nests there and must both lift; nests with the
-same access shapes but other arithmetic must not. The legacy recipe runs the same matcher at its own placement.
+same access shapes but other arithmetic must not.
 """
 
 import os

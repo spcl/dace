@@ -621,7 +621,7 @@ FUSION_OUTER_ROUNDS = 3
 
 
 def prepared(units: list[ppl.Pass]) -> list[ppl.Pass]:
-    """Switch off per-unit validation and progress bars, as the legacy builder does."""
+    """Switch off per-unit validation and progress bars on every unit."""
     for unit in units:
         disable_unit_validation(unit)
         if isinstance(unit, PatternMatchAndApplyRepeated):
