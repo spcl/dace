@@ -117,6 +117,18 @@ def gpu_stream_expr(stream: int | str) -> str:
     return f"__state->gpu_context->streams[{stream}]"
 
 
+def sdfg_has_gpu_code(sdfg: SDFG) -> bool:
+    """Whether the generated program contains GPU code: a globally GPU-resident
+    array or a GPU-scheduled map or library node anywhere in the SDFG tree."""
+    if any(desc.storage == dtypes.StorageType.GPU_Global for _, _, desc in sdfg.arrays_recursive()):
+        return True
+    return any(
+        isinstance(node, (sd.nodes.EntryNode, sd.nodes.ExitNode, sd.nodes.LibraryNode))
+        and node.schedule in dtypes.GPU_SCHEDULES
+        for node, _ in sdfg.all_nodes_recursive()
+    )
+
+
 @lru_cache
 def get_gpu_backend() -> str:
     """

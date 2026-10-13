@@ -10,7 +10,9 @@
 
 #include <Python.h>
 
-#include <cstdint>  // uint8_t
+#include <cstdint>    // uint8_t
+#include <stdexcept>  // std::runtime_error
+#include <string>     // std::string
 
 #include <nanobind/nanobind.h>
 #include <nanobind/ndarray.h>  // dtype_traits, dlpack::dtype
@@ -19,6 +21,25 @@
 
 namespace dace {
 namespace nanobind_detail {
+
+// Raise the error the generated code recorded for this SDFG, if any (the read
+// clears the record, so a failure is delivered exactly once). `last_error` is
+// the program's own `__dace_gpu_last_error` accessor and `error_string` the
+// backend's error formatter, both handed in by the generated module - this
+// header stays backend-agnostic and is compiled into CPU-only modules too.
+template <typename StateT, typename GetLastError, typename ErrorString>
+inline void check_gpu_error(StateT *state, bool enabled, GetLastError &&last_error,
+                            ErrorString &&error_string, const char *program_name) {
+    if (!enabled || !state) return;
+    const int err = last_error(state);
+    if (err != 0)
+        throw std::runtime_error(
+            std::string("An error was detected when calling \"") + program_name + "\": " +
+            error_string(err) +
+            ". Consider enabling synchronous debugging mode (environment "
+            "variable: DACE_compiler_cuda_syncdebug=1) to see where the "
+            "issue originates from.");
+}
 
 // Boolean scalar arguments need their own caster: nanobind's bool caster only
 // ever accepts an exact Python bool, and the integer-caster detour this

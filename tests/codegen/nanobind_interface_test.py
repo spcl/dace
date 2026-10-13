@@ -2007,16 +2007,26 @@ def test_nanobind_interface_gpu_array_binding():
         sdfg.arrays["C"].optional = True
         return sdfg
 
-    with set_temporary("compiler", "cuda", "backend", value="cuda"):
-        code = generate_bindings_code(build())
-    assert "nb::ndarray<double, nb::device::cuda> A" in code
-    assert "nb::ndarray<double, nb::device::cpu> B" in code
-    assert "std::optional<nb::ndarray<double, nb::device::cuda>> C" in code
+    from dace.codegen.common import get_gpu_backend
 
-    with set_temporary("compiler", "cuda", "backend", value="hip"):
-        code = generate_bindings_code(build())
-    assert "nb::ndarray<double, nb::device::rocm> A" in code
-    assert "nb::ndarray<double, nb::device::cpu> B" in code
+    # get_gpu_backend() caches the configured backend process-wide, so each
+    # config change needs a cache_clear (and a final one so later tests do not
+    # inherit "hip").
+    try:
+        with set_temporary("compiler", "cuda", "backend", value="cuda"):
+            get_gpu_backend.cache_clear()
+            code = generate_bindings_code(build())
+        assert "nb::ndarray<double, nb::device::cuda> A" in code
+        assert "nb::ndarray<double, nb::device::cpu> B" in code
+        assert "std::optional<nb::ndarray<double, nb::device::cuda>> C" in code
+
+        with set_temporary("compiler", "cuda", "backend", value="hip"):
+            get_gpu_backend.cache_clear()
+            code = generate_bindings_code(build())
+        assert "nb::ndarray<double, nb::device::rocm> A" in code
+        assert "nb::ndarray<double, nb::device::cpu> B" in code
+    finally:
+        get_gpu_backend.cache_clear()
 
 
 @pytest.mark.gpu
@@ -2459,59 +2469,18 @@ def test_nanobind_interface_float16_return_value(nanobind_interface):
     assert np.allclose(result.astype(np.float32), a.astype(np.float32) + 1.0)
 
 
-def test_nanobind_interface_strict_scalar_cast_binding():
-    """The strict option adds .noconvert() to a numeric scalar arg; default does not."""
-    from dace.codegen.nanobind_bindings import generate_bindings_code
+def test_nanobind_interface_scalar_widening_cast(nanobind_interface):
+    """Safe widening scalar casts (int -> double, exact-width numpy scalars) are accepted."""
 
-    def build():
-        sdfg = dace.SDFG("strict_scalar_probe")
-        sdfg.add_scalar("a", dace.int32)
-        return sdfg
-
-    with set_temporary("compiler", "nanobind_strict_scalar_cast", value=True):
-        strict_code = generate_bindings_code(build())
-    with set_temporary("compiler", "nanobind_strict_scalar_cast", value=False):
-        loose_code = generate_bindings_code(build())
-
-    assert 'nb::arg("a").noconvert()' in strict_code
-    assert 'nb::arg("a").noconvert()' not in loose_code
-    assert 'nb::arg("a")' in loose_code  # present, just without .noconvert()
-
-
-def test_nanobind_interface_strict_scalar_cast_runtime(nanobind_interface):
-    """Strict off allows a safe widening scalar cast (int -> double); strict on rejects it."""
-    import pytest
-
-    # Default (off): a Python int widens to the double parameter.
     @dace.program
-    def widen_off_prog(a: dace.float64):
+    def widen_prog(a: dace.float64):
         return a + 1.0
 
-    off = widen_off_prog.to_sdfg().compile()
-    result = off(2)  # Python int -> double (widening), accepted
+    csdfg = widen_prog.to_sdfg().compile()
+    result = csdfg(2)  # Python int -> double (widening), accepted
     assert np.isclose(result[0], 3.0)
-    result = off(np.float64(2.0))  # exact-width numpy scalar, accepted
+    result = csdfg(np.float64(2.0))  # exact-width numpy scalar, accepted
     assert np.isclose(result[0], 3.0)
-
-    # On: the same widening is rejected. A distinct SDFG name keeps the
-    # .dacecache entry separate from the off build (the cache key is the SDFG
-    # hash, which does not capture the config option).
-    with set_temporary("compiler", "nanobind_strict_scalar_cast", value=True):
-
-        @dace.program
-        def widen_on_prog(a: dace.float64):
-            return a + 1.0
-
-        on = widen_on_prog.to_sdfg().compile()
-        with pytest.raises(Exception):
-            on(2)  # Python int -> double rejected under .noconvert()
-        # .noconvert() also disables the __index__ path, so numpy scalars
-        # are rejected even at the exact width: strict means built-in
-        # Python scalar types only.
-        with pytest.raises(Exception):
-            on(np.float64(2.0))
-        result = on(2.0)  # a genuine Python float still passes
-        assert np.isclose(result[0], 3.0)
 
 
 def _structure_reject_probe(name: str, container: bool = False):
@@ -2717,5 +2686,4 @@ if __name__ == "__main__":
     test_nanobind_interface_single_element_tuple_return()
     test_nanobind_interface_non_array_return_rejected()
     test_nanobind_interface_many_return_values()
-    test_nanobind_interface_strict_scalar_cast_binding()
-    test_nanobind_interface_strict_scalar_cast_runtime()
+    test_nanobind_interface_scalar_widening_cast()

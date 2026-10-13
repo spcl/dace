@@ -19,8 +19,7 @@ import sympy
 
 from dace import data as dt
 from dace import dtypes, symbolic
-from dace.codegen.common import sym2cpp
-from dace.config import Config
+from dace.codegen.common import get_gpu_backend, sdfg_has_gpu_code, sym2cpp
 
 # ml_dtypes-backed low-precision types: numpy cannot export their arrays via
 # DLPack or the buffer protocol, so nanobind cannot ingest them; they are
@@ -214,32 +213,13 @@ def _ndarray_device(desc) -> str:
 
     Only ``GPU_Global`` is device memory from the caller's perspective;
     everything else (including ``CPU_Pinned``, which numpy reports as a CPU
-    DLPack device) binds as host memory. The configured backend is consulted
-    at codegen time; only ``'auto'`` falls back to ``get_gpu_backend()``,
-    whose hardware probe is lru-cached (and so blind to config changes) -
-    and it runs only when a GPU array actually exists.
+    DLPack device) binds as host memory. ``get_gpu_backend()`` is lru-cached
+    (and so blind to config changes), and it runs only when a GPU array
+    actually exists.
     """
     if desc.storage == dtypes.StorageType.GPU_Global:
-        # @CLAUDE: Call `get_gpu_backend()` directly.
-        backend = Config.get("compiler", "cuda", "backend")
-        if backend in (None, "", "auto"):
-            from dace.codegen import common
-
-            backend = common.get_gpu_backend()
-        return "nb::device::cuda" if backend == "cuda" else "nb::device::rocm"
+        return "nb::device::cuda" if get_gpu_backend() == "cuda" else "nb::device::rocm"
     return "nb::device::cpu"
-
-
-def _has_gpu_code(sdfg) -> bool:
-    """Same detection as the ctypes ``CompiledSDFG``, evaluated at codegen time."""
-    # @CLAUDE: Make a helper function out of it (placed somewhere in codegen) that can be shared. Then start a short sweap, i.e. `grep -e has -r | grep -i gpu | grep -i code` and replace them with the new helper. But first check if there is one.
-    for _, _, desc in sdfg.arrays_recursive():
-        if desc.storage in dtypes.GPU_STORAGES:
-            return True
-    for node, _ in sdfg.all_nodes_recursive():
-        if getattr(node, "schedule", False) in dtypes.GPU_SCHEDULES:
-            return True
-    return False
 
 
 def _argument_binding(
@@ -299,8 +279,6 @@ def _argument_binding(
     # Return-array setup runs LAST: allocation sizes reference symbols, so the
     # must-pass extractions and inference deductions must already have run.
     return_setup = []
-
-    strict_scalar = Config.get_bool("compiler", "nanobind_strict_scalar_cast")
 
     for name, desc in arglist.items():
         # The scope predicate is the one refusal site: everything it flags is
@@ -510,7 +488,7 @@ def _argument_binding(
             # When omitted, the value comes from an array's shape via the codegen-time inverted
             # expression - or, with no source, a clear error instead of nanobind's missing-argument
             # message. The typed local under the real name keeps init_call and the program call
-            # unchanged. The strict_scalar option does not apply here (inference is inherently a conversion).
+            # unchanged.
             params_by_name[name] = f"std::optional<{ctype}> {name}__opt"
             if name in symbol_fallbacks:
                 setup_stmts.append(
@@ -530,23 +508,18 @@ def _argument_binding(
 
         elif isinstance(desc, dt.Scalar) and desc.dtype.base_type == dtypes.bool_:
             # Bound through the shared dace_bool caster (<dace/nanobind_helpers.h>): Python
-            # bool, numpy.bool_ and integer-like values. Deliberately exempt from
-            # strict_scalar's .noconvert(), which would re-reject numpy.bool_.
+            # bool, numpy.bool_ and integer-like values.
             params_by_name[name] = f"dace::nanobind_detail::dace_bool {name}"
             call_args.append(f"static_cast<{ctype}>({name}.value)")
             nb_args_by_name[name] = f'nb::arg("{name}")'
 
         elif isinstance(desc, dt.Scalar):
-            # `.noconvert()` (strict option on) makes nanobind reject even a safe
-            # widening scalar cast (e.g. int -> double). A lossy cast (float ->
-            # int) is rejected by nanobind regardless. `.noconvert()` also
-            # disables the `__index__` path, so it rejects every numpy scalar,
-            # even at the exact width (numpy.int32 -> int32_t): strict means
-            # built-in Python scalar types only.
+            # nanobind's standard conversions apply: a safe widening cast (e.g.
+            # int -> double) is accepted, a lossy cast (float -> int) rejected.
             params_by_name[name] = f"{ctype} {name}"
             if name not in binding_only:
                 call_args.append(name)
-            nb_args_by_name[name] = f'nb::arg("{name}").noconvert()' if strict_scalar else f'nb::arg("{name}")'
+            nb_args_by_name[name] = f'nb::arg("{name}")'
 
         else:
             raise NotImplementedError(
@@ -645,21 +618,14 @@ def generate_bindings_code(sdfg, statestruct=None, gpu_backend=None) -> str:
         gpu_runtime_include = "\n#include <cuda_runtime.h>" if be == "cuda" else "\n#include <hip/hip_runtime.h>"
         gpu_check_decl = f"\nint __dace_gpu_last_error({state_t} *__state);"
 
-        # @CLAUDE: Having a full function definition as a string is not nice. To solve that create a helper function in the runtime, and then call it with passing the needed members directly, i.e. `gpu_check_call` will become something like `check_gpu_error(this->m_state, this->m_gpu_error_check);`.
-
+        # The error raising itself lives in the runtime header
+        # (dace::nanobind_detail::check_gpu_error); only the program-specific
+        # pieces - state, accessor, backend error formatter, name - are baked in.
         gpu_check_method = f"""
-    // Raise the error the generated code recorded for this SDFG, if any (the
-    // read clears the record, so a failure is delivered exactly once).
     void check_gpu_error() {{
-        if (!m_gpu_error_check || !m_state) return;
-        const int __err = __dace_gpu_last_error(m_state);
-        if (__err != 0)
-            throw std::runtime_error(
-                "An error was detected when calling \\"{name}\\": " +
-                std::string({be}GetErrorString(static_cast<{be}Error_t>(__err))) +
-                ". Consider enabling synchronous debugging mode (environment "
-                "variable: DACE_compiler_cuda_syncdebug=1) to see where the "
-                "issue originates from.");
+        dace::nanobind_detail::check_gpu_error(
+            m_state, m_gpu_error_check, __dace_gpu_last_error,
+            [](int e) {{ return {be}GetErrorString(static_cast<{be}Error_t>(e)); }}, "{name}");
     }}
 """
         gpu_check_call = "        check_gpu_error();\n"
@@ -759,7 +725,7 @@ def generate_bindings_code(sdfg, statestruct=None, gpu_backend=None) -> str:
     # The trailing nb::kwargs absorber needs an annotation too.
     call_def_args = "".join(f", {a}" for a in nb_args + ['nb::arg("_extra_kwargs")'])
     init_def_args = "".join(f", {a}" for a in init_nb_args + ['nb::arg("_extra_kwargs")'])
-    has_gpu = "true" if _has_gpu_code(sdfg) else "false"
+    has_gpu = "true" if sdfg_has_gpu_code(sdfg) else "false"
 
     # Codegen-time call metadata, exposed on the handle so the Python wrapper
     # does not re-derive it (the __return naming convention lives in one place).

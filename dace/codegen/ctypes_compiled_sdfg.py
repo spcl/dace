@@ -26,7 +26,6 @@ from dace import data as dt
 from dace import dtypes, hooks, symbolic
 from dace.codegen import exceptions as cgx
 from dace.config import Config
-from dace.sdfg import nodes
 
 
 class ReloadableDLL:
@@ -317,16 +316,9 @@ class CtypesCompiledSDFG:
                 " arguments. This is allowed but deprecated."
             )
 
-        if any(aval.storage == dtypes.StorageType.GPU_Global for _, _, aval in self._sdfg.arrays_recursive()):
-            self.has_gpu_code = True
-        elif any(
-            isinstance(node, (nodes.EntryNode, nodes.ExitNode, nodes.LibraryNode))
-            and node.schedule in dtypes.GPU_SCHEDULES
-            for node, _ in self._sdfg.all_nodes_recursive()
-        ):
-            self.has_gpu_code = True
-        else:
-            self.has_gpu_code = False
+        from dace.codegen.common import sdfg_has_gpu_code  # Avoid import loop
+
+        self.has_gpu_code = sdfg_has_gpu_code(self._sdfg)
 
         self.external_memory_types = {
             aval.storage
