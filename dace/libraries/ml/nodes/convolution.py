@@ -543,3 +543,283 @@ dace::ml::CheckMiopenError(miopenConvolutionForwardBias(__dace_miopen_handle, &_
             code_exit=exit_code,
         )
         return tasklet
+
+
+# ---------------------------------------------------------------------------------------------- backward data
+@library.node
+class ConvolutionBackwardData(nodes.LibraryNode):
+    """
+    Gradient of a (non-transposed) N-d convolution with respect to its input. Connectors: inputs ``_dy`` (output
+    gradient) and ``_w`` (weights); output ``_dx`` (input gradient). Same semantics/properties as :class:`Convolution`.
+    """
+
+    implementations = {}
+    default_implementation = "pure"
+
+    strides = properties.ListProperty(element_type=int, default=[], category="Semantics", desc="Stride per spatial dim")
+    pads = properties.ListProperty(element_type=int, default=[], category="Semantics", desc="Symmetric padding")
+    dilations = properties.ListProperty(element_type=int, default=[], category="Semantics", desc="Dilation per dim")
+    groups = properties.Property(dtype=int, default=1, category="Semantics", desc="Number of convolution groups")
+    transposed = properties.Property(dtype=bool, default=False, category="Semantics", desc="Transposed convolution")
+
+    def __init__(self, name, strides=None, pads=None, dilations=None, groups=1, transposed=False, **kwargs):
+        super().__init__(name, inputs={"_dy", "_w"}, outputs={"_dx"}, **kwargs)
+        if strides is not None:
+            self.strides = list(strides)
+        if pads is not None:
+            self.pads = list(pads)
+        if dilations is not None:
+            self.dilations = list(dilations)
+        self.groups = groups
+        self.transposed = transposed
+
+    def validate(self, sdfg: SDFG, state: SDFGState):
+        ins, outs = _edges_by_connector(state, self)
+        if "_dy" not in ins or "_w" not in ins:
+            raise ValueError("ConvolutionBackwardData requires '_dy' and '_w' input connectors")
+        if "_dx" not in outs:
+            raise ValueError("ConvolutionBackwardData requires a '_dx' output connector")
+        dy = sdfg.arrays[ins["_dy"].data.data]
+        w = sdfg.arrays[ins["_w"].data.data]
+        dx = sdfg.arrays[outs["_dx"].data.data]
+        ndim = len(w.shape) - 2
+        if ndim < 1 or ndim > 3:
+            raise ValueError("ConvolutionBackwardData supports 1-3 spatial dimensions")
+        if len(dy.shape) != ndim + 2 or len(dx.shape) != ndim + 2:
+            raise ValueError("Input/output rank must equal (number of spatial dims) + 2")
+        for lst, lname in ((self.strides, "strides"), (self.pads, "pads"), (self.dilations, "dilations")):
+            if len(lst) != ndim:
+                raise ValueError(f"'{lname}' must have one entry per spatial dimension ({ndim})")
+        if symbolic.equal(dx.shape[1], w.shape[1] * self.groups) is False:
+            raise ValueError("Input-gradient channels must equal (weight input channels) * groups")
+        if symbolic.equal(dy.shape[1], w.shape[0]) is False:
+            raise ValueError("Output-gradient channels must equal the number of weight output channels")
+        if not self.transposed:
+            for i in range(ndim):
+                expected = _spatial_output_size(
+                    dx.shape[2 + i], w.shape[2 + i], self.pads[i], self.dilations[i], self.strides[i]
+                )
+                if symbolic.equal(dy.shape[2 + i], expected) is False:
+                    raise ValueError(f"Output-gradient spatial dim {i} ({dy.shape[2 + i]}) does not match {expected}")
+        return dy, w, dx
+
+
+@library.register_expansion(ConvolutionBackwardData, "pure")
+class ExpandConvolutionBackwardDataPure(ExpandTransformation):
+    """
+    Gather formulation: one outer map over ``_dx`` elements, an inner reduction over the output channels of the group
+    and the output positions that could have read this input element (ranges clipped so every read is in bounds, plus a
+    divisibility guard for strided/dilated windows). No padded copy; accumulation is write-conflict-resolved.
+    """
+
+    environments = []
+
+    @staticmethod
+    def expansion(node: "ConvolutionBackwardData", parent_state: SDFGState, parent_sdfg: SDFG) -> SDFG:
+        dy, w, dx = node.validate(parent_sdfg, parent_state)
+        if node.transposed:
+            raise NotImplementedError("Transposed convolution is not implemented in the 'pure' expansion")
+        ndim = len(w.shape) - 2
+
+        sdfg = SDFG("conv_backward_data_pure")
+        sdfg.add_array("_dy", dy.shape, dy.dtype, strides=dy.strides, storage=dy.storage)
+        sdfg.add_array("_w", w.shape, w.dtype, strides=w.strides, storage=w.storage)
+        sdfg.add_array("_dx", dx.shape, dx.dtype, strides=dx.strides, storage=dx.storage)
+        sdfg.add_transient("_acc", dx.shape, dx.dtype, storage=dx.storage)
+
+        cout = w.shape[0]
+        cin_g = w.shape[1]
+        cout_pg = cout // node.groups
+        out_spatial = [dy.shape[2 + i] for i in range(ndim)]
+        ksize = [w.shape[2 + i] for i in range(ndim)]
+
+        n, ci = "__n", "__ci"
+        ipos = [f"__i{i}" for i in range(ndim)]
+        cog = "__cog"
+        o = [f"__o{i}" for i in range(ndim)]
+
+        dx_index = ", ".join([n, ci] + ipos)
+        dx_ranges = {
+            p: f"0:{symbolic.symstr(s)}"
+            for p, s in zip([n, ci] + ipos, [dx.shape[0], dx.shape[1]] + [dx.shape[2 + i] for i in range(ndim)])
+        }
+
+        init = sdfg.add_state("init")
+        init.add_mapped_tasklet(
+            "cbd_init", dx_ranges, {}, "__out = 0", {"__out": Memlet(f"_acc[{dx_index}]")}, external_edges=True
+        )
+
+        acc_state = sdfg.add_state_after(init, "accumulate")
+        rdy = acc_state.add_read("_dy")
+        rw = acc_state.add_read("_w")
+        wacc = acc_state.add_write("_acc")
+        ome, omx = acc_state.add_map("cbd_outer", dx_ranges)
+
+        inner_ranges = {cog: f"0:{symbolic.symstr(cout_pg)}"}
+        for i in range(ndim):
+            p, s, d = node.pads[i], node.strides[i], node.dilations[i]
+            lo = f"max(0, int_ceil(({ipos[i]}) + {p} - ({symbolic.symstr(ksize[i])} - 1)*{d}, {s}))"
+            hi = f"min({symbolic.symstr(out_spatial[i])}, int_floor(({ipos[i]}) + {p}, {s}) + 1)"
+            inner_ranges[o[i]] = f"{lo}:{hi}"
+        ime, imx = acc_state.add_map("cbd_inner", inner_ranges)
+
+        co = f"(({ci}) // ({symbolic.symstr(cin_g)})) * {symbolic.symstr(cout_pg)} + ({cog})"
+        ci_g = f"({ci}) % ({symbolic.symstr(cin_g)})"
+        kpos = [
+            f"(({ipos[i]}) + {node.pads[i]} - ({o[i]})*{node.strides[i]}) // {node.dilations[i]}" for i in range(ndim)
+        ]
+        dy_index = ", ".join([n, co] + o)
+        w_index = ", ".join([co, ci_g] + kpos)
+        valid = " and ".join(
+            f"((({ipos[i]}) + {node.pads[i]} - ({o[i]})*{node.strides[i]}) % {node.dilations[i]} == 0)"
+            for i in range(ndim)
+        )
+        tasklet = acc_state.add_tasklet("cbd_mul", {"__g", "__w"}, {"__o"}, f"__o = (__g * __w) if ({valid}) else 0")
+        acc_state.add_memlet_path(rdy, ome, ime, tasklet, dst_conn="__g", memlet=Memlet(f"_dy[{dy_index}]"))
+        acc_state.add_memlet_path(rw, ome, ime, tasklet, dst_conn="__w", memlet=Memlet(f"_w[{w_index}]"))
+        acc_state.add_memlet_path(
+            tasklet, imx, omx, wacc, src_conn="__o", memlet=Memlet(f"_acc[{dx_index}]", wcr="lambda a, b: a + b")
+        )
+
+        fin = sdfg.add_state_after(acc_state, "finalize")
+        fin.add_mapped_tasklet(
+            "cbd_copy",
+            dx_ranges,
+            {"__acc": Memlet(f"_acc[{dx_index}]")},
+            "__dx = __acc",
+            {"__dx": Memlet(f"_dx[{dx_index}]")},
+            external_edges=True,
+        )
+        return sdfg
+
+
+# ---------------------------------------------------------------------------------------------- backward filter
+@library.node
+class ConvolutionBackwardFilter(nodes.LibraryNode):
+    """
+    Gradient of a (non-transposed) N-d convolution with respect to its weights. Connectors: inputs ``_x`` (data) and
+    ``_dy`` (output gradient); output ``_dw`` (weight gradient). Same semantics/properties as :class:`Convolution`.
+    """
+
+    implementations = {}
+    default_implementation = "pure"
+
+    strides = properties.ListProperty(element_type=int, default=[], category="Semantics", desc="Stride per spatial dim")
+    pads = properties.ListProperty(element_type=int, default=[], category="Semantics", desc="Symmetric padding")
+    dilations = properties.ListProperty(element_type=int, default=[], category="Semantics", desc="Dilation per dim")
+    groups = properties.Property(dtype=int, default=1, category="Semantics", desc="Number of convolution groups")
+    transposed = properties.Property(dtype=bool, default=False, category="Semantics", desc="Transposed convolution")
+
+    def __init__(self, name, strides=None, pads=None, dilations=None, groups=1, transposed=False, **kwargs):
+        super().__init__(name, inputs={"_x", "_dy"}, outputs={"_dw"}, **kwargs)
+        if strides is not None:
+            self.strides = list(strides)
+        if pads is not None:
+            self.pads = list(pads)
+        if dilations is not None:
+            self.dilations = list(dilations)
+        self.groups = groups
+        self.transposed = transposed
+
+    def validate(self, sdfg: SDFG, state: SDFGState):
+        ins, outs = _edges_by_connector(state, self)
+        if "_x" not in ins or "_dy" not in ins:
+            raise ValueError("ConvolutionBackwardFilter requires '_x' and '_dy' input connectors")
+        if "_dw" not in outs:
+            raise ValueError("ConvolutionBackwardFilter requires a '_dw' output connector")
+        x = sdfg.arrays[ins["_x"].data.data]
+        dy = sdfg.arrays[ins["_dy"].data.data]
+        dw = sdfg.arrays[outs["_dw"].data.data]
+        ndim = len(dw.shape) - 2
+        if ndim < 1 or ndim > 3:
+            raise ValueError("ConvolutionBackwardFilter supports 1-3 spatial dimensions")
+        if len(x.shape) != ndim + 2 or len(dy.shape) != ndim + 2:
+            raise ValueError("Input/output rank must equal (number of spatial dims) + 2")
+        for lst, lname in ((self.strides, "strides"), (self.pads, "pads"), (self.dilations, "dilations")):
+            if len(lst) != ndim:
+                raise ValueError(f"'{lname}' must have one entry per spatial dimension ({ndim})")
+        if symbolic.equal(dw.shape[0], dy.shape[1]) is False:
+            raise ValueError("Weight-gradient output channels must equal the output-gradient channels")
+        if symbolic.equal(x.shape[1], dw.shape[1] * self.groups) is False:
+            raise ValueError("Input channels must equal (weight input channels) * groups")
+        return x, dy, dw
+
+
+@library.register_expansion(ConvolutionBackwardFilter, "pure")
+class ExpandConvolutionBackwardFilterPure(ExpandTransformation):
+    """
+    Reduction formulation: one outer map over ``_dw`` elements, an inner reduction over the batch and output positions
+    (clipped so the correlated input index stays in bounds). No padded copy; accumulation is write-conflict-resolved.
+    """
+
+    environments = []
+
+    @staticmethod
+    def expansion(node: "ConvolutionBackwardFilter", parent_state: SDFGState, parent_sdfg: SDFG) -> SDFG:
+        x, dy, dw = node.validate(parent_sdfg, parent_state)
+        if node.transposed:
+            raise NotImplementedError("Transposed convolution is not implemented in the 'pure' expansion")
+        ndim = len(dw.shape) - 2
+
+        sdfg = SDFG("conv_backward_filter_pure")
+        sdfg.add_array("_x", x.shape, x.dtype, strides=x.strides, storage=x.storage)
+        sdfg.add_array("_dy", dy.shape, dy.dtype, strides=dy.strides, storage=dy.storage)
+        sdfg.add_array("_dw", dw.shape, dw.dtype, strides=dw.strides, storage=dw.storage)
+        sdfg.add_transient("_acc", dw.shape, dw.dtype, storage=dw.storage)
+
+        cout = dw.shape[0]
+        cin_g = dw.shape[1]
+        cout_pg = cout // node.groups
+        n_batch = x.shape[0]
+        out_spatial = [dy.shape[2 + i] for i in range(ndim)]
+        in_spatial = [x.shape[2 + i] for i in range(ndim)]
+        ksize = [dw.shape[2 + i] for i in range(ndim)]
+
+        co, cig = "__co", "__cig"
+        kpos = [f"__k{i}" for i in range(ndim)]
+        n = "__n"
+        o = [f"__o{i}" for i in range(ndim)]
+
+        dw_index = ", ".join([co, cig] + kpos)
+        dw_ranges = {p: f"0:{symbolic.symstr(s)}" for p, s in zip([co, cig] + kpos, [cout, cin_g] + ksize)}
+
+        init = sdfg.add_state("init")
+        init.add_mapped_tasklet(
+            "cbf_init", dw_ranges, {}, "__out = 0", {"__out": Memlet(f"_acc[{dw_index}]")}, external_edges=True
+        )
+
+        acc_state = sdfg.add_state_after(init, "accumulate")
+        rx = acc_state.add_read("_x")
+        rdy = acc_state.add_read("_dy")
+        wacc = acc_state.add_write("_acc")
+        ome, omx = acc_state.add_map("cbf_outer", dw_ranges)
+
+        inner_ranges = {n: f"0:{symbolic.symstr(n_batch)}"}
+        for i in range(ndim):
+            p, s, d = node.pads[i], node.strides[i], node.dilations[i]
+            lo = f"max(0, int_ceil({p} - ({kpos[i]})*{d}, {s}))"
+            hi = f"min({symbolic.symstr(out_spatial[i])}, int_ceil({symbolic.symstr(in_spatial[i])} + {p} - ({kpos[i]})*{d}, {s}))"
+            inner_ranges[o[i]] = f"{lo}:{hi}"
+        ime, imx = acc_state.add_map("cbf_inner", inner_ranges)
+
+        ci = f"(({co}) // {symbolic.symstr(cout_pg)}) * {symbolic.symstr(cin_g)} + ({cig})"
+        xpos = [f"({o[i]})*{node.strides[i]} - {node.pads[i]} + ({kpos[i]})*{node.dilations[i]}" for i in range(ndim)]
+        dy_index = ", ".join([n, co] + o)
+        x_index = ", ".join([n, ci] + xpos)
+        tasklet = acc_state.add_tasklet("cbf_mul", {"__g", "__x"}, {"__o"}, "__o = __g * __x")
+        acc_state.add_memlet_path(rdy, ome, ime, tasklet, dst_conn="__g", memlet=Memlet(f"_dy[{dy_index}]"))
+        acc_state.add_memlet_path(rx, ome, ime, tasklet, dst_conn="__x", memlet=Memlet(f"_x[{x_index}]"))
+        acc_state.add_memlet_path(
+            tasklet, imx, omx, wacc, src_conn="__o", memlet=Memlet(f"_acc[{dw_index}]", wcr="lambda a, b: a + b")
+        )
+
+        fin = sdfg.add_state_after(acc_state, "finalize")
+        fin.add_mapped_tasklet(
+            "cbf_copy",
+            dw_ranges,
+            {"__acc": Memlet(f"_acc[{dw_index}]")},
+            "__dw = __acc",
+            {"__dw": Memlet(f"_dw[{dw_index}]")},
+            external_edges=True,
+        )
+        return sdfg

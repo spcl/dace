@@ -16,9 +16,31 @@ dependencies and configuration for code generation.
 
 from dace.library import register_library
 
-from .nodes import ATenOp, Convolution, NativeDropout, aten_node, node_class, registered_targets
+from .nodes import (
+    ATenOp,
+    AvgPool,
+    Convolution,
+    ConvolutionBackward,
+    MaxPoolWithIndices,
+    MaxPoolWithIndicesBackward,
+    NativeDropout,
+    aten_node,
+    node_class,
+    registered_targets,
+)
 
-__all__ = ["ATenOp", "Convolution", "NativeDropout", "aten_node", "node_class", "registered_targets"]
+__all__ = [
+    "ATenOp",
+    "AvgPool",
+    "Convolution",
+    "ConvolutionBackward",
+    "MaxPoolWithIndices",
+    "MaxPoolWithIndicesBackward",
+    "NativeDropout",
+    "aten_node",
+    "node_class",
+    "registered_targets",
+]
 
 try:
     from .environments import PyTorch, PyTorchGPU
