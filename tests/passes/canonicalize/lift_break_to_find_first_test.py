@@ -23,6 +23,18 @@ def capture(a: dace.float64[N], out_index: dace.int64[1], out_value: dace.float6
             break
 
 
+M = dace.symbol("M", dace.int64)
+
+
+@dace.program
+def capture_column(a: dace.float64[N, M], out_index: dace.int64[1]):
+    out_index[0] = -1
+    for i in range(N):
+        if a[i, 2] > 0.9:
+            out_index[0] = i
+            break
+
+
 @dace.program
 def capture_into_symbols(a: dace.float64[N], result: dace.float64[1]):
     index = -2
@@ -157,3 +169,44 @@ if __name__ == "__main__":
     test_the_chunked_search_stays_parallel_inside_its_chunk_loop()
     test_symbols_only_the_effect_assigns_may_be_read_after_the_loop(33)
     test_symbols_only_the_effect_assigns_may_be_read_after_the_loop(None)
+
+
+@pytest.mark.parametrize("implementation", ["CPU", "pure"])
+@pytest.mark.parametrize("hit", [5, 0, None])
+def test_a_two_dimensional_test_reads_the_element_it_names(implementation, hit):
+    """The predicate keeps ``a[i, 2]`` per dimension; each lowering reads that element, never a flat neighbor."""
+    sdfg, result = lifted(capture_column, f"lift_ff_column_{implementation}_{hit}")
+    (node,) = find_firsts(sdfg)
+    node.implementation = implementation
+    a = np.random.default_rng(3).uniform(0.0, 0.5, (40, 7))
+    a[:, 3] = 0.95  # the flat neighbor of column 2 fires everywhere
+    if hit is not None:
+        a[hit, 2] = 0.95
+    out_index = np.zeros(1, np.int64)
+
+    sdfg(a=a, out_index=out_index, N=40, M=7)
+
+    assert result == 1
+    assert "[__i, 2]" in node.predicate, node.predicate
+    assert out_index[0] == (-1 if hit is None else hit)
+
+
+@pytest.mark.parametrize("hit", [17, 0, None])
+def test_the_pure_search_is_python_sdfg_components_and_finds_the_first_hit(hit):
+    sdfg, result = lifted(capture, f"lift_ff_pure_{hit}")
+    (node,) = find_firsts(sdfg)
+    node.implementation = "pure"
+    sdfg.expand_library_nodes()
+    a = np.random.default_rng(0).uniform(0.0, 0.5, 1000)
+    if hit is not None:
+        a[hit] = 0.95
+        a[hit + 300] = 0.99
+    out_index, out_value = np.zeros(1, np.int64), np.zeros(1)
+
+    sdfg(a=a, out_index=out_index, out_value=out_value, N=a.size)
+
+    assert result == 1 and not find_firsts(sdfg)
+    tasklets = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.Tasklet)]
+    assert all(t.language == dace.Language.Python for t in tasklets), [t.label for t in tasklets]
+    assert out_index[0] == (-1 if hit is None else hit)
+    assert out_value[0] == (-1.0 if hit is None else 0.95)
