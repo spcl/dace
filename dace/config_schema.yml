@@ -150,13 +150,12 @@ required:
                 title: Reuse a loaded, content-identical module on recompile
                 description: >
                     When compiling an SDFG whose (build folder, name) identity is
-                    already loaded AND whose content hash matches the hash the
+                    already loaded and whose content hash matches the hash the
                     loaded module was built from, return a fresh handle to that
                     module instead of rename-and-recompile. Content changes still
-                    rename and rebuild (extension modules cannot be reloaded).
-                    Hash instability can only cause a redundant rebuild, never a
-                    wrong reuse. Only consulted when ``compiler.interface`` is
-                    "nanobind".
+                    rename and rebuild. If you suspect hash instability consider
+                    setting this key to `false`.
+                    Only consulted when ``compiler.interface`` is "nanobind".
 
             build_folder_mode:
                 type: str

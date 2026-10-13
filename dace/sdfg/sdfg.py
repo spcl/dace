@@ -2863,6 +2863,7 @@ class SDFG(ControlFlowRegion):
             Config.save(file=config_dump, all=True)
             codegen_sig = f"{instr_sig}:{config_dump.getvalue()}"
             source_hash = f"{sdfg.hash_sdfg()}:{md5(codegen_sig.encode('utf-8')).hexdigest()}"
+
             # The folder must still hold a nanobind artifact: a ctypes rebuild
             #  of the same identity flips the INTERFACE marker, and reusing
             #  the stale sys.modules entry would hand out a module whose
