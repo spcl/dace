@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Deprecated alias of :mod:`dace.libraries.comm`, which superseded the MPI library."""
+
 import sys
 import warnings
 
