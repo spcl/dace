@@ -632,10 +632,12 @@ class ConstantRangeMemlet(MemletPattern):
         # an unknown function) cannot be bounded
         first = {p: dim[0] for p, dim in zip(self.params, node_range)}
         return all(
-            sympy.sympify(_subexpr(dexpr, first)).is_comparable
+            sympy.sympify(
+                _subexpr(bound, first) if isinstance(bound, (sympy.Basic, symbolic.SymExpr)) else bound
+            ).is_comparable
             for expr in expressions
             for dexpr in expr
-            for dexpr in (dexpr if isinstance(dexpr, tuple) else (dexpr,))
+            for bound in (dexpr if isinstance(dexpr, tuple) else (dexpr,))
         )
 
     # TODO: An integer set library should shine here (unify indices)
