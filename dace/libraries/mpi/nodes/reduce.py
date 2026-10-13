@@ -3,7 +3,7 @@ import dace.library
 import dace.properties
 import dace.sdfg.nodes
 from dace.libraries.mpi import environments
-from dace.libraries.mpi.nodes.node import MPINode, expanded_input_connectors, resolve_comm
+from dace.libraries.mpi.nodes.node import MPINode, count_expression, expanded_input_connectors, resolve_comm
 from dace.transformation.transformation import ExpandTransformation
 
 
@@ -89,7 +89,6 @@ class Reduce(MPINode):
         count_str = "XXX"
         for _, src_conn, _, _, data in state.out_edges(self):
             if src_conn == "_outbuffer":
-                dims = [str(e) for e in data.subset.size_exact()]
-                count_str = "*".join(dims)
+                count_str = count_expression(data.subset.num_elements_exact())
 
         return (inbuffer, count_str), outbuffer, root, in_place

@@ -1,9 +1,14 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 from dace import data, dtypes, library
 from dace.libraries.mpi import environments, utils
-from dace.libraries.mpi.nodes.node import MPINode, expanded_input_connectors, input_descriptor_name, resolve_comm
+from dace.libraries.mpi.nodes.node import (
+    MPINode,
+    count_expression,
+    expanded_input_connectors,
+    input_descriptor_name,
+    resolve_comm,
+)
 from dace.sdfg import nodes
-from dace.symbolic import symstr
 from dace.transformation.transformation import ExpandTransformation
 from dace.utils import prod as _prod
 
@@ -79,12 +84,10 @@ class Gather(MPINode):
         out_count_str = "XXX"
         for _, src_conn, _, _, memlet in state.out_edges(self):
             if src_conn == "_outbuffer":
-                dims = [symstr(e) for e in memlet.subset.size_exact()]
-                out_count_str = "*".join(dims)
+                out_count_str = count_expression(memlet.subset.num_elements_exact())
         for _, _, _, dst_conn, memlet in state.in_edges(self):
             if dst_conn == "_inbuffer":
-                dims = [symstr(e) for e in memlet.subset.size_exact()]
-                in_count_str = "*".join(dims)
+                in_count_str = count_expression(memlet.subset.num_elements_exact())
 
         return (inbuffer, in_count_str), (outbuffer, out_count_str), root
 
@@ -112,16 +115,16 @@ class ExpandBlockGatherMPI(ExpandTransformation):
         if reduce_grid:
             code = f"""
                 if (__state->{gather_grid}_valid) {{
-                    MPI_Reduce(MPI_IN_PLACE, _inp_buffer, {symstr(_prod(inp_buffer.shape))}, {mpi_dtype_str}, MPI_SUM, __state->{reduce_grid}_rank, _reduce_grid);
-                    MPI_Gatherv(_inp_buffer, {symstr(_prod(inp_buffer.shape))}, {mpi_dtype_str}, _out_buffer, __state->{subarray_type}_counts, __state->{subarray_type}_displs, __state->{subarray_type}, 0, _gather_grid);
+                    MPI_Reduce(MPI_IN_PLACE, _inp_buffer, {count_expression(_prod(inp_buffer.shape))}, {mpi_dtype_str}, MPI_SUM, __state->{reduce_grid}_rank, _reduce_grid);
+                    MPI_Gatherv(_inp_buffer, {count_expression(_prod(inp_buffer.shape))}, {mpi_dtype_str}, _out_buffer, __state->{subarray_type}_counts, __state->{subarray_type}_displs, __state->{subarray_type}, 0, _gather_grid);
                 }} else if (__state->{reduce_grid}_valid) {{
-                    MPI_Reduce(_inp_buffer, nullptr, {symstr(_prod(inp_buffer.shape))}, {mpi_dtype_str}, MPI_SUM, 0, _reduce_grid);
+                    MPI_Reduce(_inp_buffer, nullptr, {count_expression(_prod(inp_buffer.shape))}, {mpi_dtype_str}, MPI_SUM, 0, _reduce_grid);
                 }}
             """
         else:
             code = f"""
                 if (__state->{gather_grid}_valid) {{
-                    MPI_Gatherv(_inp_buffer, {symstr(_prod(inp_buffer.shape))}, {mpi_dtype_str}, _out_buffer, __state->{subarray_type}_counts, __state->{subarray_type}_displs, __state->{subarray_type}, 0, _gather_grid);
+                    MPI_Gatherv(_inp_buffer, {count_expression(_prod(inp_buffer.shape))}, {mpi_dtype_str}, _out_buffer, __state->{subarray_type}_counts, __state->{subarray_type}_displs, __state->{subarray_type}, 0, _gather_grid);
                 }}
             """
 

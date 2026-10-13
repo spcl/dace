@@ -1,9 +1,8 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 from dace import data, dtypes, library
 from dace.libraries.mpi import environments, utils
-from dace.libraries.mpi.nodes.node import MPINode, mpi_tasklet, resolve_comm
+from dace.libraries.mpi.nodes.node import MPINode, count_expression, mpi_tasklet, resolve_comm
 from dace.sdfg import utils as sdutil
-from dace.symbolic import symstr
 from dace.transformation.transformation import ExpandTransformation
 
 
@@ -18,7 +17,9 @@ class ExpandGathervMPI(ExpandTransformation):
         outbuffer = sdutil.out_desc_with_name(node, parent_state, parent_sdfg, "_outbuffer")
         if inbuffer.dtype.veclen > 1:
             raise NotImplementedError
-        count = symstr(sdutil.in_edge_with_name(node, parent_state, "_inbuffer").data.subset.num_elements_exact())
+        count = count_expression(
+            sdutil.in_edge_with_name(node, parent_state, "_inbuffer").data.subset.num_elements_exact()
+        )
         # A scalar send buffer is a value in the tasklet, not a pointer
         in_ref = "&" if isinstance(inbuffer, data.Scalar) else ""
         code = (
