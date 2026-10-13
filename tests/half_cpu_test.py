@@ -367,6 +367,25 @@ def test_float16_openmp_reduction_thread_counts(tmp_path):
         )
 
 
+def test_float16_cpu_pow():
+    """Host ``half ** double`` and ``half ** int`` compile and agree with NumPy."""
+
+    @dace.program
+    def half_pow(h: dace.float16[1], d: dace.float64[1], e: dace.int32[1], out: dace.float64[2]):
+        with dace.tasklet:
+            a << h[0]
+            b << d[0]
+            c << e[0]
+            x >> out[0]
+            y >> out[1]
+            x = a**b
+            y = a**c
+
+    out = np.zeros(2)
+    half_pow(h=np.array([2.0], np.float16), d=np.array([0.5]), e=np.array([-1], np.int32), out=out)
+    np.testing.assert_allclose(out, [np.sqrt(2.0), 0.5])
+
+
 if __name__ == "__main__":
     test_float16_cpu_roundtrip_matches_numpy()
     test_float16_cpu_random_roundtrip_matches_numpy()
@@ -376,3 +395,4 @@ if __name__ == "__main__":
     test_float16_openmp_reduction_minmax("min", "lambda a, b: min(a, b)", np.float16(np.inf), np.min)
     test_float16_openmp_reduction_minmax("max", "lambda a, b: max(a, b)", np.float16(-np.inf), np.max)
     test_float16_openmp_reduction_scales_with_threads()
+    test_float16_cpu_pow()
