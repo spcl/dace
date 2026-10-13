@@ -222,9 +222,11 @@ def generate_program_folder(
 
     # The runtime's report.save() opens `<folder>/perf/report-*.json` with a
     # bare std::ofstream, which neither creates directories nor reports a
-    # failed open - a missing folder drops every report SILENTLY. The
-    # production trim list deliberately does not touch `perf`.
-    if sdfg is not None and sdfg.is_instrumented():
+    # failed open - a missing folder drops every report SILENTLY. Strictly
+    # needed only for instrumented SDFGs; development mode (and a missing
+    # SDFG) creates it unconditionally to be on the safe side. The production
+    # trim list deliberately does not touch `perf`.
+    if (folder_mode == "development") or (sdfg is None) or sdfg.is_instrumented():
         os.makedirs(os.path.join(out_path, "perf"), exist_ok=True)
 
     # Write list of files

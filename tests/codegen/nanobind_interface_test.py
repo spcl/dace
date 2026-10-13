@@ -614,9 +614,10 @@ def test_nanobind_interface_report_follows_rename(nanobind_interface):
     assert sdfg.get_latest_report() is None, diag
 
 
-def test_nanobind_interface_perf_folder_only_when_instrumented(nanobind_interface):
-    """The perf/ report folder is created exactly when the SDFG is
-    instrumented, in BOTH folder modes (a missing folder would silently drop
+def test_nanobind_interface_perf_folder_modes(nanobind_interface):
+    """The perf/ report folder follows the folder-mode contract on the
+    nanobind interface too: production creates it exactly when the SDFG is
+    instrumented, development always (a missing folder would silently drop
     every report)."""
     import os
 
@@ -636,12 +637,11 @@ def test_nanobind_interface_perf_folder_only_when_instrumented(nanobind_interfac
         csdfg2 = sdfg2.compile()  # collision-renamed - irrelevant here
         assert os.path.isdir(os.path.join(csdfg2.sdfg.build_folder, "perf"))
 
-    # Development mode: uninstrumented folders are lean here too
-    # (previously perf/ was created unconditionally).
+    # Development mode: perf/ exists even without instrumentation.
     with set_temporary("compiler", "build_folder_mode", value="development"):
         sdfg3 = axpy_nanobind_perfdir.to_sdfg()
         csdfg3 = sdfg3.compile()  # renamed again - fresh folder
-        assert not os.path.isdir(os.path.join(csdfg3.sdfg.build_folder, "perf"))
+        assert os.path.isdir(os.path.join(csdfg3.sdfg.build_folder, "perf"))
 
 
 def test_nanobind_interface_sdfg_safe_call_refused(nanobind_interface):
@@ -1702,6 +1702,7 @@ def test_nanobind_interface_includes_umbrella_header():
         "<dace/types.h>",
         "<dace/vector.h>",
         "<dace/pyinterop.h>",
+        "<dace/math.h>",
         "<nanobind/nanobind.h>",
         "<nanobind/ndarray.h>",
         "<nanobind/stl/complex.h>",
@@ -1725,16 +1726,20 @@ def test_nanobind_interface_generated_tu_is_self_contained(tmp_path):
         pytest.skip("clang++ not available")
     import nanobind as nanobind_pkg
 
-    from dace import dtypes
+    from dace import dtypes, symbolic
     from dace.codegen.nanobind_bindings import generate_bindings_code
 
+    N = dace.symbol("N")
     sdfg = dace.SDFG("self_contained_probe")
     sdfg.add_array("A", [10], dtypes.float64)
     sdfg.arrays["A"].optional = True  # std::optional<nb::ndarray>
     sdfg.add_scalar("s", dtypes.string)  # std::optional<std::string>
     sdfg.add_scalar("b", dtypes.bool_)  # the dace_bool caster
     sdfg.add_array("P", [4], dtypes.pyobject())  # std::uintptr_t via __array_interface__
-    sdfg.add_array("__return", [5], dtypes.float64)  # in-binding allocation
+    # In-binding allocation with the shape codegen would produce for N**2
+    # (RelaxIntegerPowers runs in generate_code, which this probe bypasses):
+    # the emitted dace::math::ipow must resolve through the umbrella header.
+    sdfg.add_array("__return", [symbolic.ipow(N, 2)], dtypes.float64)
     state = sdfg.add_state()
     t = state.add_tasklet("t", {"a_in", "s_in", "b_in", "p_in"}, {"o"}, "o = a_in")
     state.add_edge(state.add_read("A"), None, t, "a_in", dace.Memlet("A[0]"))
@@ -2536,6 +2541,26 @@ def test_nanobind_interface_return_shape_symbol_not_in_arglist(nanobind_interfac
     # With no inference source, omitting the symbol is a clear error.
     with pytest.raises(Exception, match="missing argument 'RETSYM'"):
         csdfg()
+
+
+def test_nanobind_interface_symbolic_power_return_shape(nanobind_interface):
+    """A power in a return shape (``N**2``) unparses to ``dace::math::ipow``
+    in the bindings' allocation and validation expressions; the umbrella
+    header must provide dace/math.h or the module does not compile."""
+    N = dace.symbol("N", dace.int64)
+    sdfg = dace.SDFG("ipow_return_shape_prog")
+    sdfg.add_symbol("N", dace.int64)
+    sdfg.add_array("A", [N], dace.float64)
+    sdfg.add_array("__return", [N**2], dace.float64)
+    state = sdfg.add_state()
+    t = state.add_tasklet("t", {"a_in"}, {"o"}, "o = a_in + 1.0")
+    state.add_edge(state.add_read("A"), None, t, "a_in", dace.Memlet("A[0]"))
+    state.add_edge(t, "o", state.add_write("__return"), None, dace.Memlet("__return[0]"))
+
+    csdfg = sdfg.compile()
+    out = csdfg(A=np.full(3, 41.0), N=3)
+    assert out.shape == (9,)
+    assert out[0] == 42.0
 
 
 if __name__ == "__main__":

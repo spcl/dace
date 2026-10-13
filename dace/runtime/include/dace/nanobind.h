@@ -24,6 +24,10 @@
 #include <dace/types.h>
 #include <dace/vector.h>
 #include <dace/pyinterop.h>
+// Symbolic shape/stride/size expressions unparse through sym2cpp, which emits
+// dace::math:: calls (ipow for powers, min/max/int_ceil and friends) into the
+// bindings' allocation and validation expressions.
+#include <dace/math.h>
 
 #include <nanobind/nanobind.h>
 #include <nanobind/ndarray.h>
