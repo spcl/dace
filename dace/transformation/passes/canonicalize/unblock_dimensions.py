@@ -1,14 +1,26 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""UnblockDimensions -- inverse of SplitDimensions (Block): merges each blocked (outer, inner) dim pair back into one flat dim, ``outer*factor + inner``. Assumes layout normal form (post ``prepare_for_layout``), a packed blocked array, and single-tile outer accesses; multi-tile outer accesses raise."""
+r"""UnblockDimensions: merges each blocked (outer, inner) dimension pair of an array back into one flat
+dimension, ``outer*factor + inner`` -- the inverse of blocking, which ``UntileLoops(unblock_arrays=True)``
+applies to the arrays a tiled loop reads blocked. Assumes a packed blocked array and single-tile outer
+accesses; multi-tile outer accesses raise.
+
+An interstate assignment holds a whole expression, so its accesses are located structurally
+(``pystr_to_symbolic`` lowers ``A[i, j]`` to :class:`~dace.symbolic.Subscript`), never by text: a greedy
+``name\[(.*)\]`` over ``A[i] * B[i]`` runs to B's closing bracket. Sympy re-associates the rewritten
+expression as it parses (``0.5 * (A + B)`` prints as ``0.5*A + 0.5*B``); that is accepted.
+"""
 
 import copy
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+import sympy
+
 import dace
-from dace.sdfg.narrowing import as_expr
+from dace import symbolic
+from dace.sdfg.narrowing import as_basic, as_expr
 from dace.transformation import pass_pipeline as ppl
-from dace.transformation.layout.subscript_rewrite import rewrite_subscript_indices
 
 
 @dataclass
@@ -16,8 +28,8 @@ class UnblockDimensions(ppl.Pass):
     """``unblock_map``: ``{array_name: (masks, factors)}`` -- the same mapping the Block transform used; length equals the original (unblocked) rank."""
 
     def __init__(self, unblock_map: dict[str, tuple[list[bool], list[int]]], verbose: bool = False):
-        self._unblock_map = unblock_map
-        self._verbose = verbose
+        self.unblock_map = unblock_map
+        self.verbose = verbose
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Nodes | ppl.Modifies.Memlets | ppl.Modifies.Descriptors | ppl.Modifies.InterstateEdges
@@ -26,11 +38,11 @@ class UnblockDimensions(ppl.Pass):
         return False
 
     # Shape / subset reconstruction
-    def _inner_slot(self, masks: list[bool], d: int) -> int:
+    def inner_slot(self, masks: list[bool], d: int) -> int:
         """Appended-inner-dimension index for original masked dimension ``d``."""
         return len(masks) + sum(1 for m in masks[:d] if m)
 
-    def _recover_extent(self, blocked_dim, factor: int):
+    def recover_extent(self, blocked_dim, factor: int):
         """Invert Block's per-dimension division to recover the original extent: unwraps ``int_ceil``/``int_floor(E, factor)`` to ``E`` exactly, falling back to ``count * factor`` for a folded integer count."""
         expr = dace.symbolic.pystr_to_symbolic(blocked_dim)
         if (
@@ -41,18 +53,16 @@ class UnblockDimensions(ppl.Pass):
             return expr.args[0]
         return dace.symbolic.simplify(as_expr(expr) * factor)
 
-    def _unblocked_shape(self, blocked_shape, masks: list[bool], factors: list[int]) -> list:
+    def unblocked_shape(self, blocked_shape, masks: list[bool], factors: list[int]) -> list:
         new_shape = []
         for d, m in enumerate(masks):
             if m:
-                new_shape.append(self._recover_extent(blocked_shape[d], factors[d]))
+                new_shape.append(self.recover_extent(blocked_shape[d], factors[d]))
             else:
                 new_shape.append(blocked_shape[d])
         return new_shape
 
-    def _unblocked_subset(
-        self, subset: dace.subsets.Range, masks: list[bool], factors: list[int]
-    ) -> dace.subsets.Range:
+    def unblocked_subset(self, subset: dace.subsets.Range, masks: list[bool], factors: list[int]) -> dace.subsets.Range:
         ranges = list(subset.ranges)
         expected = len(masks) + sum(1 for m in masks if m)
         if len(ranges) != expected:
@@ -67,7 +77,7 @@ class UnblockDimensions(ppl.Pass):
                 new_ranges.append(ranges[d])
                 continue
             ob, oe, os = ranges[d]
-            ib, ie, iss = ranges[self._inner_slot(masks, d)]
+            ib, ie, iss = ranges[self.inner_slot(masks, d)]
             factor = factors[d]
             # (i//f)*f + i%f -> i (symbols nonnegative).
             new_b = dace.symbolic.simplify(ob * factor + ib)
@@ -76,7 +86,7 @@ class UnblockDimensions(ppl.Pass):
         return dace.subsets.Range(new_ranges)
 
     # Descriptor / memlet / interstate rewrites (recurse into nested SDFGs)
-    def _replace_array(self, sdfg: dace.SDFG, arr_name: str, new_shape: list):
+    def replace_array(self, sdfg: dace.SDFG, arr_name: str, new_shape: list):
         arr = sdfg.arrays[arr_name]
         datadesc = copy.deepcopy(arr)
         sdfg.remove_data(arr_name, validate=False)
@@ -92,7 +102,7 @@ class UnblockDimensions(ppl.Pass):
             find_new_name=False,
         )
 
-    def _nested_targets(self, sdfg: dace.SDFG, arr_name: str):
+    def nested_targets(self, sdfg: dace.SDFG, arr_name: str):
         """Yield ``(nested_sdfg, inner_name)`` per nested SDFG ``arr_name`` flows into, deduped (a read-write array shares its in/out inner name)."""
         seen = set()
         for state in sdfg.states():
@@ -110,12 +120,12 @@ class UnblockDimensions(ppl.Pass):
                         seen.add(key)
                         yield node.sdfg, conn
 
-    def _replace_array_recursive(self, sdfg: dace.SDFG, arr_name: str, new_shape: list):
-        self._replace_array(sdfg, arr_name, new_shape)
-        for nsdfg, inner in self._nested_targets(sdfg, arr_name):
-            self._replace_array_recursive(nsdfg, inner, new_shape)
+    def replace_array_recursive(self, sdfg: dace.SDFG, arr_name: str, new_shape: list):
+        self.replace_array(sdfg, arr_name, new_shape)
+        for nsdfg, inner in self.nested_targets(sdfg, arr_name):
+            self.replace_array_recursive(nsdfg, inner, new_shape)
 
-    def _replace_memlets_recursive(self, sdfg: dace.SDFG, arr_name: str, masks, factors):
+    def replace_memlets_recursive(self, sdfg: dace.SDFG, arr_name: str, masks, factors):
         for state in sdfg.states():
             for edge in state.edges():
                 if (
@@ -127,7 +137,7 @@ class UnblockDimensions(ppl.Pass):
                     # The other side of a copy keeps its own subset; one that indexes ``arr_name`` would need unblocking
                     raise NotImplementedError(f"UnblockDimensions: a copy into '{arr_name}' named after its source.")
                 if edge.data is not None and edge.data.data == arr_name:
-                    new_subset = self._unblocked_subset(edge.data.subset, masks, factors)
+                    new_subset = self.unblocked_subset(edge.data.subset, masks, factors)
                     # keep wcr: reduction still accumulates.
                     edge.data = dace.memlet.Memlet(
                         data=edge.data.data,
@@ -137,10 +147,10 @@ class UnblockDimensions(ppl.Pass):
                         wcr_nonatomic=edge.data.wcr_nonatomic,
                         dynamic=edge.data.dynamic,
                     )
-        for nsdfg, inner in self._nested_targets(sdfg, arr_name):
-            self._replace_memlets_recursive(nsdfg, inner, masks, factors)
+        for nsdfg, inner in self.nested_targets(sdfg, arr_name):
+            self.replace_memlets_recursive(nsdfg, inner, masks, factors)
 
-    def _replace_interstate_edges_recursive(self, sdfg: dace.SDFG, arr_name: str, masks, factors):
+    def replace_interstate_edges_recursive(self, sdfg: dace.SDFG, arr_name: str, masks, factors):
         expected = len(masks) + sum(1 for m in masks if m)
 
         def merge_indices(indices):
@@ -151,7 +161,7 @@ class UnblockDimensions(ppl.Pass):
                 )
             # fold each (outer, appended inner) pair back into the original index
             return [
-                indices[d] * factors[d] + indices[self._inner_slot(masks, d)] if m else indices[d]
+                indices[d] * factors[d] + indices[self.inner_slot(masks, d)] if m else indices[d]
                 for d, m in enumerate(masks)
             ]
 
@@ -159,11 +169,11 @@ class UnblockDimensions(ppl.Pass):
             edge.data.assignments = {
                 k: rewrite_subscript_indices(v, arr_name, merge_indices) for k, v in edge.data.assignments.items()
             }
-        for nsdfg, inner in self._nested_targets(sdfg, arr_name):
-            self._replace_interstate_edges_recursive(nsdfg, inner, masks, factors)
+        for nsdfg, inner in self.nested_targets(sdfg, arr_name):
+            self.replace_interstate_edges_recursive(nsdfg, inner, masks, factors)
 
     def apply_pass(self, sdfg: dace.SDFG, pipeline_results: dict[str, Any]) -> int:
-        for arr_name, (masks, factors) in self._unblock_map.items():
+        for arr_name, (masks, factors) in self.unblock_map.items():
             arr = sdfg.arrays[arr_name]
             expected = len(masks) + sum(1 for m in masks if m)
             if len(arr.shape) != expected:
@@ -171,8 +181,53 @@ class UnblockDimensions(ppl.Pass):
                     f"UnblockDimensions: array '{arr_name}' has rank {len(arr.shape)}, expected blocked "
                     f"rank {expected} for masks {masks}"
                 )
-            new_shape = self._unblocked_shape(tuple(arr.shape), masks, factors)
-            self._replace_array_recursive(sdfg, arr_name, new_shape)
-            self._replace_memlets_recursive(sdfg, arr_name, masks, factors)
-            self._replace_interstate_edges_recursive(sdfg, arr_name, masks, factors)
+            new_shape = self.unblocked_shape(tuple(arr.shape), masks, factors)
+            self.replace_array_recursive(sdfg, arr_name, new_shape)
+            self.replace_memlets_recursive(sdfg, arr_name, masks, factors)
+            self.replace_interstate_edges_recursive(sdfg, arr_name, masks, factors)
         return 0
+
+
+def rewrite_subscript_indices(
+    expr_str: str,
+    name: str,
+    new_indices: Callable[[tuple[symbolic.SymbolicType, ...]], Sequence[symbolic.SymbolicType]],
+) -> str:
+    """``expr_str`` with the indices of every ``name[...]`` access replaced by ``new_indices``.
+
+    :param expr_str: The assignment expression to rewrite.
+    :param name: The accessed container to reindex; other containers are left alone.
+    :param new_indices: Maps an access' old index tuple to its new one.
+    :return: The rewritten expression, or ``expr_str`` unchanged if it holds no such access.
+    """
+    if name not in expr_str:  # cheap reject before parsing
+        return expr_str
+    try:
+        expr = symbolic.pystr_to_symbolic(expr_str)
+    except (SyntaxError, TypeError, AttributeError):
+        return expr_str
+    if not isinstance(expr, sympy.Basic):
+        return expr_str
+
+    rewritten = rewrite_expression(expr, name, new_indices)
+    if rewritten is expr:
+        return expr_str
+    return symbolic.symstr(rewritten, arrayexprs=frozenset(symbolic.arrays(rewritten)))
+
+
+def rewrite_expression(
+    expr: symbolic.SymbolicType,
+    name: str,
+    new_indices: Callable[[tuple[symbolic.SymbolicType, ...]], Sequence[symbolic.SymbolicType]],
+) -> symbolic.SymbolicType:
+    """:func:`rewrite_subscript_indices` on a parsed expression. Bottom-up, so an access nested in
+    another access' index is reindexed too."""
+    if not as_basic(expr).args:
+        return expr
+    args = tuple(rewrite_expression(a, name, new_indices) for a in as_basic(expr).args)
+    # the container is ``args[0]`` of a Subscript, never the function -- ``expr.func`` is ``Subscript``
+    if isinstance(expr, symbolic.Subscript) and str(args[0]) == name:
+        args = (args[0],) + tuple(new_indices(args[1:]))
+    if args == as_basic(expr).args:
+        return expr
+    return as_basic(expr).func(*args)

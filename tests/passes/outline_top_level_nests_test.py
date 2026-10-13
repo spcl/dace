@@ -8,7 +8,6 @@ import pytest
 import dace
 from dace.libraries.standard.nodes import Reduce
 from dace.sdfg import nodes
-from dace.sdfg.state import ConditionalBlock
 from dace.sdfg.utils import inline_sdfgs
 from dace.transformation.passes.outline_top_level_nests import OutlineTopLevelNests, outline_top_level_nests
 
@@ -30,19 +29,6 @@ def seq_loop(A: dace.float64[N], B: dace.float64[N]):
     B[0] = A[0]
     for i in range(1, N):
         B[i] = B[i - 1] + A[i]
-
-
-@dace.program
-def guarded_map(A: dace.float64[N], B: dace.float64[N], k: dace.int64):
-    if k > 0:
-        for i in dace.map[0:N]:
-            B[i] = A[i] * 2.0
-
-
-@dace.program
-def guarded_scalar(A: dace.float64[1], k: dace.int64):
-    if k > 0:
-        A[0] = 1.0
 
 
 @dace.program
@@ -188,31 +174,3 @@ def test_a_top_level_library_node_is_outlined_only_when_asked():
     assert nsdfg.no_inline
     assert [type(n) for n, parent in nsdfg.sdfg.all_nodes_recursive() if isinstance(n, nodes.LibraryNode)] == [Reduce]
     assert numpy.isclose(out[0], A.sum())
-
-
-def test_a_guarded_map_is_outlined_whole_and_computes_the_same():
-    sdfg = guarded_map.to_sdfg(simplify=True)
-    assert [type(b) for b in sdfg.nodes()] == [ConditionalBlock], "fixture must be one top-level guard"
-    A = numpy.random.default_rng(0).random(64)
-    B = numpy.zeros(64)
-    untouched = numpy.zeros(64)
-
-    count = outline_top_level_nests(sdfg)
-    sdfg(A=A, B=B, k=1, N=64)
-    sdfg(A=A, B=untouched, k=0, N=64)
-
-    assert count == 1
-    assert not any(isinstance(b, ConditionalBlock) for b in sdfg.nodes())
-    (nsdfg,) = top_level_nsdfgs(sdfg)
-    assert nsdfg.no_inline
-    assert [type(b) for b in nsdfg.sdfg.nodes()] == [ConditionalBlock]
-    assert numpy.allclose(B, 2.0 * A)
-    assert not untouched.any()
-
-
-def test_a_guard_around_scalar_work_alone_is_no_nest():
-    sdfg = guarded_scalar.to_sdfg(simplify=True)
-    assert [type(b) for b in sdfg.nodes()] == [ConditionalBlock], "fixture must be one top-level guard"
-
-    assert outline_top_level_nests(sdfg) == 0
-    assert not top_level_nsdfgs(sdfg)

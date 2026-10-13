@@ -143,7 +143,7 @@ def run_isolated(build_and_run, timeout=300):
     parent keeps the root conftest's deliberate multi-thread count for every other test in the
     worker.
     """
-    from dace.transformation.layout.isolation import pause_openmp_pools, set_openmp_thread_count
+    from dace.isolation import pause_openmp_pools, set_openmp_thread_count
 
     pause_openmp_pools()
     handle, path = tempfile.mkstemp(suffix=".npz")

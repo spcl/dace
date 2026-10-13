@@ -164,7 +164,6 @@ LIBRARY_NODE_DESCRIPTIONS: dict[str, str] = {
     "Inv": "matrix inverse",
     "Irecv": "MPI_Irecv: non-blocking receive",
     "Isend": "MPI_Isend: non-blocking send",
-    "LayoutChange": "layout change: rewrite the data into a different memory layout",
     "MPINode": "MPI operation",
     "MaskReduction": "mask reduction: fold of a mask along the reduced axes",
     "MaskedCopyLibraryNode": "masked tile copy: load or store a tile under a per-lane mask",

@@ -73,7 +73,7 @@ jobs:
         # idxalg is an optional out-of-tree symbolic backend; its seam tests stay in the repo but do not run here.
         # --ignore=tests/library: the library-node tree (marked and unmarked) runs once in the
         # libnode-loop2x-transformations job instead of once per matrix cell here.
-        pytest -n auto --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 --ignore=tests/symbolic/optional_idxalg_backend_test.py --ignore=tests/library -m "not gpu and not autodiff and not torch and not onnx and not tensorflow and not mkl and not openblas and not sve and not papi and not mlir and not lapack and not tblis and not mpi and not scalapack and not datainstrument and not long and not integration and not sequential and not vectorization and not canonicalization and not corpus and not loop2x_libnodes and not layout"
+        pytest -n auto --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 --ignore=tests/symbolic/optional_idxalg_backend_test.py --ignore=tests/library -m "not gpu and not autodiff and not torch and not onnx and not tensorflow and not mkl and not openblas and not sve and not papi and not mlir and not lapack and not tblis and not mpi and not scalapack and not datainstrument and not long and not integration and not sequential and not vectorization and not canonicalization and not corpus and not loop2x_libnodes"
         ./codecov
 
     - name: Run sequential tests
@@ -96,7 +96,7 @@ jobs:
         # the general selection above: those suites have their own workflows, with their own
         # configuration. A test carrying both `sequential` and one of them would otherwise run here
         # under general CI's settings rather than under the ones its own workflow sets.
-        uv run pytest -n 1 --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -m "sequential and not vectorization and not canonicalization and not corpus and not loop2x_libnodes and not layout"
+        uv run pytest -n 1 --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -m "sequential and not vectorization and not canonicalization and not corpus and not loop2x_libnodes"
         ./codecov
 
     - name: Run other tests
@@ -445,10 +445,10 @@ jobs:
           tests/graphlib \
           -m "not gpu and not long and not sequential"
 
-  # --- Advisory suites, on one runner ---
-  # Both of these are non-blocking, for reasons recorded on each step. They are kept apart from the
-  # blocking jobs on purpose: continue-on-error is a JOB-level setting, so putting either of them
-  # in with a real gate would swallow that gate's failures too.
+  # --- Advisory suite ---
+  # Non-blocking, for the reason recorded on its step. Kept apart from the blocking jobs on purpose:
+  # continue-on-error is a JOB-level setting, so putting it in with a real gate would swallow that
+  # gate's failures too.
   advisory:
     if: "!contains(github.event.pull_request.labels.*.name, 'no-ci')"
     runs-on: ubuntu-latest
@@ -466,24 +466,6 @@ jobs:
           libblas-dev libopenblas-dev liblapacke-dev liblapack-dev
         pip-packages: pytest-xdist
         groups: testing
-
-    # Non-blocking until the isolation tests stop racing each other under xdist: seven of them fail
-    # at -n4 and pass at -n2 and serially, because the workers share one build folder. The
-    # ``layout`` marker is excluded from every other job's selection, so until this ran, its 895
-    # tests -- all of tests/transformations/layout -- ran nowhere in CI.
-    - name: Test with pytest (layout)
-      if: always()
-      run: |
-        export NOSTATUSBAR=1
-        ulimit -s 65536 || true
-        export OMP_STACKSIZE=64M
-        export DACE_compiler_max_stack_array_size=65536
-        export DACE_testing_serialization=1
-        export DACE_testing_deserialize_exception=1
-        export DACE_cache=unique
-        export DACE_optimizer_automatic_simplification=1
-        pytest -n auto --tb=short --timeout_method thread --timeout=300 \
-          -m "layout and not gpu and not long and not sequential and not tblis"
 
     # Non-blocking until the ratchet's baselines are re-measured on an idle machine: the numbers in
     # ``_KNOWN_SLOWER`` were taken on a box running eleven other pytest processes, which moved

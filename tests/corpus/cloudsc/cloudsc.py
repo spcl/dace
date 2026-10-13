@@ -1777,21 +1777,7 @@ def cloudsc_py(
 if __name__ == "__main__":
     # Imported here, not at module scope: this file is also the kernel corpus, and
     # importing it to reach `cloudsc_py` must not require the transformation stack.
-    from dace.transformation.layout.split_array import SplitArray
     from dace.transformation.passes import ScalarToSymbolPromotion
-
-    NAME_ORDER = ["ncldql", "ncldqi", "ncldqr", "ncldqs", "ncldqv"]
-    NAME_MAP = {i: NAME_ORDER[i] for i in range(5)}
-    # Split along the first dimension (size = nclv-1) into separate 2D arrays
-    symbol_map = {
-        "nclv": 5,
-        "ncldql": 1,
-        "ncldqi": 2,
-        "ncldqr": 3,
-        "ncldqs": 4,
-        "ncldqv": 5,
-    }
-    name_map = {"nclv": NAME_ORDER}
 
     load_if_existing = False
 
@@ -1815,5 +1801,3 @@ if __name__ == "__main__":
         sdfg.save("cloudsc_pydace_simplified_symbolic.sdfgz", compress=True)
 
     sdfg.validate()
-    SplitArray(symbol_map=symbol_map, name_map=name_map).apply_pass(sdfg, {})
-    sdfg.save("cloudsc_split.sdfgz", compress=True)

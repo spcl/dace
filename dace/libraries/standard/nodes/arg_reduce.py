@@ -152,6 +152,16 @@ def _scan_context(
     return in_dtype, idx_dtype.ctype, sym2cpp(_count(in_edge)), read, val_edge is not None
 
 
+def _beats(op: str, cand_v: str, cand_i: str, held_v: str, held_i: str) -> str:
+    """C++ for "the candidate (value, index) pair replaces the held one".
+
+    Strictly better on the value, or equal on the value at a LOWER index. That is a total order on
+    pairs, which is what makes every combine below -- across lanes, across blocks, across threads --
+    agree with the sequential first-wins scan however the range was split.
+    """
+    return f"{cand_v} {op} {held_v} || ({cand_v} == {held_v} && {cand_i} < {held_i})"
+
+
 def _writeback(has_val: bool) -> str:
     """Copy the scan's answer out through whichever result connectors are wired."""
     return ("_out_val = __ar_best.__ar_v;\n" if has_val else "") + "_out_idx = __ar_best.__ar_i;"
@@ -215,13 +225,12 @@ class ExpandArgReducePure(ExpandTransformation):
 
 @library.expansion
 class ExpandArgReduceCPU(ExpandTransformation):
-    """Parallel CPU lowering: the ``arg_max_pair`` / ``arg_min_pair`` OpenMP reductions over a (value, index) pair.
+    """Parallel CPU lowering: an OpenMP ``declare reduction`` over a (value, index) pair.
 
     argmax is associative on the PAIR, not on the value alone -- combining two partial results has
     to carry the index that produced the winning value, and break ties toward the LOWER index so
     the result matches the sequential scan element-for-element. A plain ``reduction(max:val)``
-    cannot express that. The pair, its per-thread step and the combiners are declared once, in
-    ``dace/arg_reduction.h`` (and as CPF definitions); a complex value orders lexicographically.
+    cannot express that, hence the custom combiner.
 
     The per-thread scan stays a plain branchy loop. Restructuring it into several independent
     accumulators would let a compiler vectorise the comparison, and that was measured on the four
@@ -236,15 +245,22 @@ class ExpandArgReduceCPU(ExpandTransformation):
     @staticmethod
     def expansion(node: "ArgReduce", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> nodes.Tasklet:
         in_dtype, it, n_str, read, has_val = _scan_context(node, parent_state, parent_sdfg)
-        types = f"<{in_dtype.ctype}, {it}>"
-        # Seeded from element 0 rather than an identity: the input slice is never empty, and
-        # ``initializer(omp_priv = omp_orig)`` then hands every thread a real element, so no
-        # dtype-dependent infinity has to be spelled.
+        vt, op = in_dtype.ctype, _OP_CPP[node.op]
+        thread_beats = _beats(op, "omp_in.__ar_v", "omp_in.__ar_i", "omp_out.__ar_v", "omp_out.__ar_i")
+        # ``__ar_best`` is seeded from element 0 rather than an identity: the input slice is never
+        # empty, and ``initializer(omp_priv = omp_orig)`` then hands every thread a real element,
+        # so no dtype-dependent infinity has to be spelled.
         code = (
-            f"dace::arg_pair{types} __ar_best = dace::arg_pair_of{types}({read('0')}, 0);\n"
-            f"#pragma omp parallel for reduction(arg_{node.op}_pair : __ar_best)\n"
+            f"struct __ar_pair {{ {vt} __ar_v; {it} __ar_i; }};\n"
+            f"#pragma omp declare reduction(__ar_best_op : struct __ar_pair : \\\n"
+            f"    omp_out = ({thread_beats}) ? omp_in : omp_out) \\\n"
+            f"    initializer(omp_priv = omp_orig)\n"
+            f"struct __ar_pair __ar_best;\n"
+            f"__ar_best.__ar_v = {read('0')}; __ar_best.__ar_i = 0;\n"
+            f"#pragma omp parallel for reduction(__ar_best_op : __ar_best)\n"
             f"for ({it} __i = 1; __i < ({n_str}); ++__i) {{\n"
-            f"    __ar_best = dace::arg_{node.op}_step{types}(__ar_best, {read('__i')}, __i);\n"
+            f"    const {vt} __v = {read('__i')};\n"
+            f"    if (__v {op} __ar_best.__ar_v) {{ __ar_best.__ar_v = __v; __ar_best.__ar_i = __i; }}\n"
             f"}}\n" + _writeback(has_val)
         )
         return nodes.Tasklet(

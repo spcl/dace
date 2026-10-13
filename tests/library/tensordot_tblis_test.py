@@ -10,9 +10,9 @@ import numpy as np
 import pytest
 
 import dace
+from dace.libraries.linalg.environments.tblis import TBLIS
 from dace.libraries.linalg.nodes.tensordot import ExpandTBLIS, TensorDot
 from dace.memlet import Memlet
-from dace.transformation.layout.select_lowering import tblis_is_linkable
 
 # (left_shape, right_shape, left_axes, right_axes, permutation)
 CASES = [
@@ -79,7 +79,7 @@ def test_unsupported_dtype_raises():
 
 
 @pytest.mark.tblis
-@pytest.mark.skipif(not tblis_is_linkable(), reason="TBLIS not installed")
+@pytest.mark.skipif(not TBLIS.is_installed(), reason="TBLIS not installed")
 @pytest.mark.parametrize("left_shape,right_shape,left_axes,right_axes,permutation", CASES)
 def test_tblis_execution(left_shape, right_shape, left_axes, right_axes, permutation):
     """Compile + run through TBLIS and compare to numpy. Requires the TBLIS library."""

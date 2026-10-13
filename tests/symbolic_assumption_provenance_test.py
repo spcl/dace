@@ -23,8 +23,6 @@ from dace.libraries.standard.nodes.symmetrize import ExpandSymmetrizeCUDA, Symme
 from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
 from dace.transformation.dataflow.wcr_conversion import WCRToAugAssign
-from dace.transformation.layout.apply_assignment import covers_dimension, covers_full_array
-from dace.transformation.layout.permute_dimensions import covers_full_array as permute_covers_full_array
 from dace.transformation.pass_pipeline import Pipeline
 from dace.transformation.passes.analysis.analysis import covers_full_extent
 from dace.transformation.passes.canonicalize.lift_inv import LiftInv
@@ -53,22 +51,6 @@ def test_covers_full_extent_accepts_reparsed_bound():
     desc = data.Array(dace.float64, (DECLARED_N,))
     reparsed = subsets.Range([(0, bare("N") - 1, 1)])
     assert covers_full_extent(reparsed, desc) is True
-
-
-def test_apply_assignment_covers_dimension_accepts_reparsed_bound():
-    assert covers_dimension(0, bare("N") - 1, 1, DECLARED_N) is True
-
-
-def test_apply_assignment_covers_full_array_accepts_reparsed_memlet():
-    desc = data.Array(dace.float64, (DECLARED_N,))
-    memlet = dace.Memlet(data="a", subset=subsets.Range([(0, bare("N") - 1, 1)]))
-    assert covers_full_array(memlet, desc) is True
-
-
-def test_permute_dimensions_covers_full_array_accepts_reparsed_memlet():
-    desc = data.Array(dace.float64, (DECLARED_N,))
-    memlet = dace.Memlet(data="a", subset=subsets.Range([(0, bare("N") - 1, 1)]))
-    assert permute_covers_full_array(memlet, desc) is True
 
 
 def test_contiguous_element_count_accepts_reparsed_total_size():

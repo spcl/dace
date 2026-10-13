@@ -1,4 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+import ctypes.util
 import os
 
 from dace import config, library
@@ -24,6 +25,11 @@ class TBLIS:
     init_code = ""
     finalize_code = ""
     dependencies: list[str] = []
+
+    @staticmethod
+    def is_installed():
+        """Whether TBLIS is on this host: ``TBLIS_ROOT`` names an install, or ``libtblis`` is on the loader path."""
+        return "TBLIS_ROOT" in os.environ or ctypes.util.find_library("tblis") is not None
 
     @staticmethod
     def cmake_includes():

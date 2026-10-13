@@ -1,8 +1,8 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Turn every top-level loop nest of the root SDFG into an ``ExternalCall`` library node.
 
-``OutlineTopLevelNests`` first wraps each top-level map nest, loop region and nest-holding conditional block in a
-``no_inline`` nested SDFG; each of those becomes an ``ExternalCall`` whose default ``DaceReference`` expansion is the nest itself, so the
+``OutlineTopLevelNests`` first wraps each top-level map nest and loop region in a ``no_inline`` nested SDFG;
+each of those becomes an ``ExternalCall`` whose default ``DaceReference`` expansion is the nest itself, so the
 program is unchanged until a caller points a node at a compiled library and selects ``ExternCall``. A nest
 whose symbol mapping is not the identity stays a nested SDFG: an expansion re-binds symbols by name. With
 ``library_nodes``, each top-level library node becomes one too, rendered in its region with its own implementation.

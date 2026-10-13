@@ -88,6 +88,7 @@ from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.canonicalize.fresh_names import lowest_free_suffix
 from dace.transformation.passes.canonicalize.tracked_assumptions import record_assumption
+from dace.transformation.passes.canonicalize.unblock_dimensions import UnblockDimensions
 
 #: Prefix for the synthesised unit-stride iterator that replaces the (i, ii) pair.
 UNTILE_PREFIX = "_untile_k_"
@@ -498,7 +499,7 @@ def reads_only_through_sum(text: str, outer_var: str, inner_var: str) -> bool:
     )
 
 
-#: ``{array: (masks, factors)}`` for :class:`~dace.transformation.layout.unblock_dimensions.UnblockDimensions`.
+#: ``{array: (masks, factors)}`` for :class:`~dace.transformation.passes.canonicalize.unblock_dimensions.UnblockDimensions`.
 BlockedArrays = dict[str, tuple[list[bool], list[int]]]
 
 
@@ -542,8 +543,10 @@ def blocked_arrays_of(
     K_expr: symbolic.SymbolicType,
     K_const: int | None,
     sdfg: SDFG,
+    aligned: bool,
 ) -> BlockedArrays | None:
-    """:func:`_audit_combined_access` that also admits a case-A read of an array blocked to match the tile.
+    """:func:`_audit_combined_access` that also admits a case-A read of an array blocked to match the tile, and
+    (tiles starting at multiples of ``K``: ``aligned``) one unblocked already, ``K*int_floor(i, K) + ii``.
 
     :returns: ``None`` to refuse, else the arrays to unblock before the substitution.
     """
@@ -555,9 +558,13 @@ def blocked_arrays_of(
             if e.data is None or e.data.is_empty():
                 continue
             # Naming both tile variables is not enough: ``2*i + ii`` collapses to ``k`` as well.
-            if all(reads_only_through_sum(text, outer_var, inner_var) for text in memlet_bound_texts(e.data)):
+            texts = memlet_bound_texts(e.data)
+            if aligned:
+                texts = [fold_tile_origin(text, outer_var, K_expr) for text in texts]
+            if all(reads_only_through_sum(text, outer_var, inner_var) for text in texts):
                 continue
-            if K_const is None or e.data.subset is None or e.data.other_subset is not None:
+            # A copy reading the array (a scalar the frontend reads it into) keeps its other side as it is.
+            if K_const is None or e.data.subset is None:
                 return None
             spec = match_block_memlet(sdfg, e.data, outer_var, inner_var, K_expr, K_const)
             if spec is None or blocked.setdefault(e.data.data, spec) != spec:
@@ -565,9 +572,17 @@ def blocked_arrays_of(
     return blocked
 
 
+def fold_tile_origin(text: str, outer_var: str, K_expr: symbolic.SymbolicType) -> str:
+    """``text`` with ``int_floor(i, K)`` as ``i / K``: exact for a tile origin ``i`` that is a multiple of ``K``, so
+    ``K*int_floor(i, K)`` reads as ``i`` and a lone block index stays fractional (and is refused)."""
+    block_index = symbolic.pystr_to_symbolic(f"int_floor({outer_var}, {symbolic.symstr(K_expr)})")
+    origin = symbolic.pystr_to_symbolic(outer_var)
+    return symbolic.symstr(sympy.expand(as_basic(symbolic.pystr_to_symbolic(text)).subs(block_index, origin / K_expr)))
+
+
 def unblock_is_safe(sdfg: SDFG, blocked_arrays: BlockedArrays) -> bool:
     """``True`` iff every access to every array in ``blocked_arrays`` is one ``UnblockDimensions`` can rewrite: none
-    crosses a NestedSDFG boundary, carries an ``other_subset``, or has another rank."""
+    crosses a NestedSDFG boundary, reaches it through the other side of a copy, or has another rank."""
     for arr_name, spec in blocked_arrays.items():
         masks = spec[0]
         arr = sdfg.arrays.get(arr_name)
@@ -581,13 +596,17 @@ def unblock_is_safe(sdfg: SDFG, blocked_arrays: BlockedArrays) -> bool:
                 ):
                     return False
             for edge in state.edges():
-                if edge.data is None or edge.data.data != arr_name:
+                if edge.data is None or edge.data.is_empty():
                     continue
-                if (
-                    edge.data.other_subset is not None
-                    or edge.data.subset is None
-                    or len(as_range(edge.data.subset).ranges) != expected
-                ):
+                if edge.data.data != arr_name:
+                    # a copy named after its other side would index the array through ``other_subset``
+                    ends = (edge.src, edge.dst)
+                    if edge.data.other_subset is not None and any(
+                        isinstance(n, nodes.AccessNode) and n.data == arr_name for n in ends
+                    ):
+                        return False
+                    continue
+                if edge.data.subset is None or len(as_range(edge.data.subset).ranges) != expected:
                     return False
     return True
 
@@ -604,9 +623,6 @@ def unblock_before_untile(
     # Every tile origin must be a multiple of K, else each element shifts by ``start mod K``.
     if symbolic.simplify(sympy.Mod(outer_start, K_expr)) != 0 or not unblock_is_safe(sdfg, blocked_arrays):
         return False
-    # Avoid import loop: the layout package imports the canonicalize pipeline.
-    from dace.transformation.layout.unblock_dimensions import UnblockDimensions
-
     UnblockDimensions(unblock_map=blocked_arrays).apply_pass(sdfg, {})
     return True
 
@@ -652,9 +668,9 @@ class UntileLoops(ppl.Pass):
     without the auto-trigger the matcher never sees it and the hand-written
     tiling survives into codegen.
 
-    **Blocked arrays** (``unblock_arrays=True``, the layout preparation): a case-A body may also read an
+    **Blocked arrays** (``unblock_arrays=True``, as relayout prepares a program): a case-A body may also read an
     array blocked to match the tile, ``A[..., int_floor(i, K), ii]`` of extent ``K``; that array is unblocked
-    with :class:`~dace.transformation.layout.unblock_dimensions.UnblockDimensions` before the substitution.
+    with :class:`~dace.transformation.passes.canonicalize.unblock_dimensions.UnblockDimensions` before the substitution.
 
     Runs BEFORE :class:`~dace.transformation.passes.parallelization_prep.ShortLoopUnroll`
     so the small fixed-trip inner loop doesn't get straight-line-unrolled.
@@ -791,7 +807,7 @@ class UntileLoops(ppl.Pass):
         # be reported too -- returning None after lowering and re-lifting every map would tell the
         # caller nothing changed and let it reuse stale analyses.
         roundtrip = 0
-        # Under unblock_arrays the trip is taken only when forced: the layout preparation canonicalizes right after,
+        # Under unblock_arrays the trip is taken only when forced: the layout preparation (relayout) canonicalizes right after,
         # and canonicalize takes the trip there, so scanning for a Map tile nest here would pay for it twice.
         take_roundtrip = self.map_roundtrip or (
             not self.unblock_arrays and map_tile_pattern_present(sdfg) and self.roundtrip_recovers_maps(sdfg)
@@ -824,6 +840,7 @@ class UntileLoops(ppl.Pass):
         K_expr: symbolic.SymbolicType,
         K_const: int | None,
         sdfg: SDFG,
+        outer_start: symbolic.SymbolicType,
     ) -> BlockedArrays | None:
         """Arrays to unblock before collapsing ``candidate`` with its outer tile loop, or ``None`` to refuse."""
         if not self.unblock_arrays:
@@ -831,7 +848,8 @@ class UntileLoops(ppl.Pass):
         # The unblock rewrite has no remainder-tile form; canonicalize collapses a clamped nest later.
         if clamped:
             return None
-        return blocked_arrays_of(candidate, outer_var, candidate.loop_variable, case, K_expr, K_const, sdfg)
+        aligned = symbolic.simplify(sympy.Mod(outer_start, K_expr)) == 0
+        return blocked_arrays_of(candidate, outer_var, candidate.loop_variable, case, K_expr, K_const, sdfg, aligned)
 
     def _try_untile(self, outer: LoopRegion, sdfg: SDFG) -> bool:
         # The outer must be ``for i in range(0, N, K)`` with a positive tile
@@ -876,7 +894,9 @@ class UntileLoops(ppl.Pass):
             if match is None:
                 continue
             cand_case, cand_stride, cand_needs_div, cand_clamped = match
-            audit = self.audit_candidate(candidate, outer.loop_variable, cand_case, cand_clamped, K_expr, K_const, sdfg)
+            audit = self.audit_candidate(
+                candidate, outer.loop_variable, cand_case, cand_clamped, K_expr, K_const, sdfg, outer_start_sym
+            )
             if audit is None:
                 continue
             # Multi-dim sanity: any intermediate LoopRegion between outer

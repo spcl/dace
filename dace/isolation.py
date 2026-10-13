@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Run a freshly-compiled candidate in a forked child, so a segfault or runaway loop in generated code cannot take down the layout sweep; also pauses OpenMP thread pools first to avoid a fork deadlock."""
+"""Run a freshly-compiled program in a forked child, so a segfault or runaway loop in generated code cannot take down the caller (a sweep over candidates); also pauses OpenMP thread pools first to avoid a fork deadlock."""
 
 import ctypes
 import json
@@ -15,8 +15,6 @@ OMP_RUNTIME_SONAMES = ("libgomp.so.1", "libomp.so.5", "libomp.so", "libiomp5.so"
 
 #: omp_pause_resource_t (OpenMP 5.0): soft keeps threadprivate data, hard frees everything; soft suffices for fork safety.
 OMP_PAUSE_SOFT = 1
-OMP_PAUSE_HARD = 2
-OMP_PAUSE_MODES = {"soft": OMP_PAUSE_SOFT, "hard": OMP_PAUSE_HARD}
 
 
 def pause_openmp_pools(mode: int = OMP_PAUSE_SOFT) -> bool:
@@ -131,7 +129,7 @@ def run_isolated(work_fn: Callable[[], dict], timeout: float = 900.0) -> dict:
             remaining = timeout - (time.perf_counter() - start)
             if remaining <= 0:
                 break  # deadline hit
-            ready, _, _ = select.select([r], [], [], remaining)
+            ready = select.select([r], [], [], remaining)[0]
             if not ready:
                 break
             chunk = os.read(r, 65536)
@@ -148,7 +146,7 @@ def run_isolated(work_fn: Callable[[], dict], timeout: float = 900.0) -> dict:
             os.waitpid(pid, 0)
             return {"error": f"timeout after {timeout:.0f}s (runaway kernel)"}
     else:
-        _, status = os.waitpid(pid, 0)  # EOF seen: child exiting, blocking reap is safe
+        status = os.waitpid(pid, 0)[1]  # EOF seen: child exiting, blocking reap is safe
     if os.WIFSIGNALED(status):  # segfault etc. never reached os.write, so buf is empty
         return {"error": f"crashed (signal {os.WTERMSIG(status)})"}
     try:

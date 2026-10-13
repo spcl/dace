@@ -14,7 +14,7 @@ import numpy as np
 import pytest
 
 import dace
-from dace.transformation.layout.isolation import pause_openmp_pools
+from dace.isolation import pause_openmp_pools
 from tests.conftest import UNGUARDED_FORK, guarded_fork, openmp_pool_may_outlive_fork, thread_count
 
 N = dace.symbol("N", dtype=dace.int64)
@@ -92,7 +92,7 @@ def test_pause_reports_the_teardown_it_performed(live_team):
 def test_fork_is_refused_when_the_pool_cannot_be_torn_down(live_team, monkeypatch):
     """A runtime predating OpenMP 5.0, or a fork from inside a parallel region: the teardown does not
     happen, the child would wait on a barrier forever, and the guard must refuse instead."""
-    import dace.transformation.layout.isolation as isolation
+    import dace.isolation as isolation
 
     monkeypatch.setattr(isolation, "pause_openmp_pools", lambda mode=isolation.OMP_PAUSE_SOFT: False)
     monkeypatch.setattr("tests.conftest.thread_count", lambda: 8)  # a one-core host has no team either way

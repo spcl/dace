@@ -14,9 +14,9 @@ import numpy as np
 import pytest
 
 import dace
+from dace.isolation import set_openmp_thread_count
 from dace.sdfg.state import LoopRegion
 from dace.transformation.interstate import LoopToMap
-from dace.transformation.layout.isolation import set_openmp_thread_count
 from dace.transformation.pass_pipeline import Pipeline
 from dace.transformation.passes.canonicalize.fold_scalar_read_copies import FoldScalarReadCopies
 from dace.transformation.passes.canonicalize.lift_loop_carried_reduction import LiftLoopCarriedReduction

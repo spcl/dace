@@ -1025,9 +1025,6 @@ def test_map_roundtrip_declined_when_a_map_would_not_come_back():
     assert _count_maps(sdfg) == maps_before and _count_loops(sdfg) == 0, "no Map may be left as a loop"
 
 
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
-
 # The remainder clamp -- ``min(i + K, <parent limit>)``.
 #
 # Every hand-tiled stencil writes its inner bound this way, because the last tile would otherwise
@@ -1138,3 +1135,64 @@ def test_a_four_level_cascade_of_nested_clamps_collapses_completely():
 
     survivors = run_against_flat_stencil(four_lvl)
     assert len(survivors) == 1, f"all ten spatial loops must collapse; got {survivors}"
+
+
+@dace.program
+def blocked_tiles(a: dace.float64[N], b: dace.float64[N]):
+    blk = np.empty([N // 4, 4], dtype=np.float64)
+    for i in range(0, N, 4):
+        for ii in range(4):
+            blk[i // 4, ii] = b[i + ii] + 1.0
+    for i in range(0, N, 4):
+        for ii in range(4):
+            a[i + ii] = blk[i // 4, ii] * 2.0
+
+
+def test_an_array_blocked_to_the_tile_is_unblocked_and_both_nests_untile():
+    """``blk[i // 4, ii]`` is written by one tile nest and read (through the scalar the frontend copies it into)
+    by another: ``unblock_arrays`` flattens ``blk`` to ``blk[i + ii]`` and collapses both nests, the second
+    reading ``4*int_floor(i, 4) + ii`` once ``blk`` is flat, which is ``i + ii`` for tiles starting at 0."""
+    sdfg = blocked_tiles.to_sdfg(simplify=True)
+    assert len(_loops(sdfg)) == 4
+    assert UntileLoops(unblock_arrays=True).apply_pass(sdfg, {}) == 2
+    sdfg.validate()
+    assert len(sdfg.arrays["blk"].shape) == 1 and len(_loops(sdfg)) == 2
+    a, b = np.zeros(12), np.random.default_rng(0).random(12)
+    sdfg(a=a, b=b, N=12)
+    assert np.allclose(a, 2.0 * (b + 1.0))
+
+
+if __name__ == "__main__":
+    test_case_a_combined_access_K4_collapses_to_single_loop()
+    test_case_a_with_arithmetic_combination_collapses()
+    test_case_b_absolute_inner_collapses_to_single_loop()
+    test_case_b_inner_stride_2_collapses_preserving_step()
+    test_case_b_3level_cascade_collapses_via_fixpoint_preserving_stride()
+    test_untiles_when_outer_stride_is_bare_symbol()
+    test_untiles_when_outer_stride_is_bare_symbol_case_b()
+    test_refuses_when_outer_stride_is_compound_symbolic_expr()
+    test_refuses_when_outer_stride_is_one()
+    test_refuses_when_inner_trip_does_not_match_outer_stride()
+    test_refuses_when_body_uses_bare_outer_iterator()
+    test_refuses_when_body_uses_bare_inner_iterator()
+    test_refuses_when_iterators_do_not_enter_as_their_sum(scaled_outer, lambda i, ii: 2 * i + ii)
+    test_refuses_when_iterators_do_not_enter_as_their_sum(squared_both, lambda i, ii: i * i + ii * ii)
+    test_untiles_when_outer_start_is_not_zero()
+    test_refuses_when_outer_body_is_not_a_perfect_two_level_nest()
+    test_jacobi2d_tiled_1lvl_range_collapses_to_2d_nest()
+    test_jacobi2d_tiled_1lvl_map_collapses_to_2d_map()
+    test_jacobi2d_tiled_2lvl_range_collapses_via_cascade_fixpoint()
+    test_heat3d_tiled_1lvl_range_collapses_to_3d_nest()
+    test_heat3d_tiled_1lvl_map_collapses_to_3d_map()
+    test_heat3d_tiled_2lvl_range_collapses_via_cascade_fixpoint()
+    test_jacobi2d_tiled_1lvl_sym_range_collapses_to_2d_nest()
+    test_heat3d_tiled_1lvl_sym_range_collapses_to_3d_nest()
+    test_symbolic_tile_nonunit_inner_stride_collapses_under_assumption()
+    for family_member in sorted(_TILED_FAMILY):
+        test_tiled_stencil_corpus_untiles_to_the_canonical_nest(family_member)
+    test_map_tiled_3level_untiles_on_the_pass_defaults()
+    test_map_roundtrip_declined_when_a_map_would_not_come_back()
+    test_a_clamped_two_level_tile_collapses_to_the_flat_stencil()
+    test_a_clamped_tile_with_swapped_inner_axes_collapses()
+    test_a_four_level_cascade_of_nested_clamps_collapses_completely()
+    test_an_array_blocked_to_the_tile_is_unblocked_and_both_nests_untile()

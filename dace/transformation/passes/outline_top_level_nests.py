@@ -1,9 +1,8 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Wrap every top-level loop nest of the root SDFG in its own nested SDFG.
 
-Each outermost map-nest (a ``MapEntry`` at the top of a state's scope tree), each top-level CFG
-``LoopRegion`` and each top-level ``ConditionalBlock`` holding a nest (a guard, or canonicalize's
-parallel/sequential specialization) is outlined into a ``NestedSDFG`` marked ``no_inline`` and given a stable
+Each outermost map-nest (a ``MapEntry`` at the top of a state's scope tree) and each top-level CFG
+``LoopRegion`` is outlined into a ``NestedSDFG`` marked ``no_inline`` and given a stable
 ``unique_name``. The rewrite is purely structural -- it moves subgraphs into nested SDFGs using the
 same ``nest_state_subgraph`` / ``nest_sdfg_subgraph`` outliners the rest of DaCe uses, so both the
 legacy and the experimental CPU code generators consume the result identically.
@@ -29,17 +28,16 @@ from dace.libraries.standard.nodes import external_call
 from dace.properties import Property, make_properties
 from dace.sdfg import nodes
 from dace.sdfg.graph import SubgraphView
-from dace.sdfg.state import ConditionalBlock, LoopRegion, SDFGState
+from dace.sdfg.state import LoopRegion, SDFGState
 from dace.transformation import helpers
 from dace.transformation import pass_pipeline as ppl
 
 NestNode = nodes.MapEntry | LoopRegion
-NestRegion = LoopRegion | ConditionalBlock
 
 
-def loop_defined_symbols(loop: NestRegion) -> set[str]:
-    """Symbols DEFINED inside a loop region or conditional block: each loop variable (the region and any
-    nested ``LoopRegion``) plus every inter-state-edge assignment target.
+def loop_defined_symbols(loop: LoopRegion) -> set[str]:
+    """Symbols DEFINED inside a loop region: each loop variable (the region and any nested
+    ``LoopRegion``) plus every inter-state-edge assignment target.
 
     ``nest_sdfg_subgraph`` emits a symbolic output for each such symbol that something outside the loop
     observes, and types an inter-state assignment target from the nested-or-parent ``sdfg.symbols``; a
@@ -56,18 +54,10 @@ def loop_defined_symbols(loop: NestRegion) -> set[str]:
     return syms
 
 
-def holds_nest(block: ConditionalBlock) -> bool:
-    """Whether a branch of ``block`` holds a map, a loop region or a library node: a guard around scalar work
-    alone is no nest."""
-    if any(isinstance(b, LoopRegion) for b in block.all_control_flow_blocks(recursive=True)):
-        return True
-    return any(isinstance(n, nodes.MapEntry | nodes.LibraryNode) for n, parent in block.all_nodes_recursive())
-
-
 @make_properties
 class OutlineTopLevelNests(ppl.Pass):
-    """Outline each top-level map-nest, CFG loop region and nest-holding conditional block of the root SDFG
-    into its own ``no_inline`` nested SDFG. See the module docstring."""
+    """Outline each top-level map-nest and CFG loop region of the root SDFG into its own
+    ``no_inline`` nested SDFG. See the module docstring."""
 
     CATEGORY: str = "Optimization Preparation"
 
@@ -90,11 +80,11 @@ class OutlineTopLevelNests(ppl.Pass):
         # collecting refs up front (as NestForge's `outer` strategy does) avoids iterating a mutating
         # container. Top-level nests are disjoint scopes, so sibling node objects stay valid across an
         # extraction as long as map subgraphs are recomputed at extraction time.
-        loop_refs: list[NestRegion] = []
+        loop_refs: list[LoopRegion] = []
         map_refs: list[tuple[SDFGState, nodes.MapEntry]] = []
         library_refs: list[tuple[SDFGState, nodes.LibraryNode]] = []
         for block in sdfg.nodes():
-            if isinstance(block, LoopRegion) or isinstance(block, ConditionalBlock) and holds_nest(block):
+            if isinstance(block, LoopRegion):
                 loop_refs.append(block)
             elif isinstance(block, SDFGState):
                 top = block.scope_children()[None]

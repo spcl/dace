@@ -960,12 +960,12 @@ def c_real_scatter(idx: dace.int64[N], val: dace.float64[N], out: dace.float64[N
         out[idx[i]] += val[i]
 
 
-def test_a_conflicting_complex_accumulation_takes_one_atomic_per_component_and_a_real_one_one_atomic():
+def test_a_conflicting_complex_accumulation_takes_a_critical_section_and_a_real_one_stays_atomic():
     """OpenMP ``atomic`` accepts only real arithmetic scalars; ``double _Complex`` under it does not
-    compile, which refused quantum espresso's exchange kernel. A complex ``+`` accumulation adds each
-    component under its own atomic -- never a critical section; a real one keeps the one atomic."""
+    compile, which refused quantum espresso's exchange kernel. A complex ``+`` accumulation takes the
+    critical section; a real one keeps the atomic."""
     sdfg, code = render_c(c_complex_scatter, "cpf_c_complex_scatter")
-    assert code.count("#pragma omp atomic update") == 2 and "critical" not in code, code
+    assert "#pragma omp critical (cpf_wcr)" in code and "#pragma omp atomic" not in code, code
     rng = np.random.default_rng(0)
     idx = rng.integers(0, 32, size=256).astype(np.int64)
     val = rng.random(256) + 1j * rng.random(256)
@@ -975,7 +975,7 @@ def test_a_conflicting_complex_accumulation_takes_one_atomic_per_component_and_a
     run_c(sdfg, code, {"idx": idx, "val": val, "out": out, "N": 256}, "cpf_c_complex_scatter")
     assert_matches({"out": expected}, {"out": out}, "cpf_c_complex_scatter")
     _, real_code = render_c(c_real_scatter, "cpf_c_real_scatter")
-    assert "#pragma omp atomic update\n" in real_code and "critical" not in real_code, real_code
+    assert "#pragma omp atomic update\n" in real_code and "critical (cpf_wcr)" not in real_code, real_code
 
 
 @dace.program
@@ -1016,11 +1016,11 @@ def test_a_complex_sum_tree_reduces_through_its_own_declared_c_reduction():
 
 
 def test_a_map_holding_a_conflicting_accumulation_renders_without_simd():
-    """vexx_k's complex scatter reaches a conflicting accumulation through the loop body, whose atomics
-    keep ``simd`` off the map: it stays ``parallel for``; a conflict-free map keeps ``simd``."""
+    """OpenMP admits no ``critical`` inside a ``simd`` region, and vexx_k's complex scatter reached one
+    through the loop body. That map keeps ``parallel for`` without ``simd``; a conflict-free map keeps it."""
     _, code = render_c(c_complex_scatter, "cpf_c_scatter_no_simd")
     pragmas = [line.strip() for line in code.splitlines() if line.strip().startswith("#pragma omp")]
-    assert "#pragma omp atomic update" in pragmas and "critical" not in code, pragmas
+    assert "#pragma omp critical (cpf_wcr)" in pragmas, pragmas
     assert any(p.startswith("#pragma omp parallel for") for p in pragmas), pragmas
     assert not any("simd" in p for p in pragmas), pragmas
     full_source, clean = render_c(c_scale_add, "cpf_c_scale_add_simd")
@@ -1338,7 +1338,7 @@ if __name__ == "__main__":
     test_the_scatter_guard_renders_without_the_dace_runtime()
     for cast_ctype in ("int64_t", "int", "double", "size_t"):
         test_a_cast_carried_through_a_symbolic_expression_renders_as_a_c_cast(cast_ctype)
-    test_a_conflicting_complex_accumulation_takes_one_atomic_per_component_and_a_real_one_one_atomic()
+    test_a_conflicting_complex_accumulation_takes_a_critical_section_and_a_real_one_stays_atomic()
     test_a_complex_sum_tree_reduces_through_its_own_declared_c_reduction()
     test_a_map_holding_a_conflicting_accumulation_renders_without_simd()
     test_a_literal_integer_power_of_an_untyped_symbol_renders_as_a_c_product()

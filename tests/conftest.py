@@ -64,7 +64,7 @@ def thread_count() -> int:
 
 
 #: Substrings identifying an OpenMP runtime in ``/proc/self/maps``; keep in step with
-#: ``dace.transformation.layout.isolation.OMP_RUNTIME_SONAMES``.
+#: ``dace.isolation.OMP_RUNTIME_SONAMES``.
 OMP_RUNTIME_MARKERS = ("libgomp", "libomp", "libiomp", "libnvomp")
 
 
@@ -92,7 +92,7 @@ def openmp_pool_may_outlive_fork() -> bool:
         return False  # not Linux: no census, so the guard abstains
     if not any(marker in mapped for marker in OMP_RUNTIME_MARKERS):
         return False  # no OpenMP runtime loaded -> no pool to strand
-    from dace.transformation.layout.isolation import pause_openmp_pools
+    from dace.isolation import pause_openmp_pools
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")  # the return value carries the same verdict as the warning
@@ -194,9 +194,6 @@ _SUITE_DIRS = (
     (os.path.join("tests", "passes", "vectorization"), "vectorization"),
     (os.path.join("tests", "passes", "canonicalize"), "canonicalization"),
     (os.path.join("tests", "canonicalize"), "canonicalization"),
-    # 892 combinatorial sweeps over layout permutations. Marked so the general selection skips them
-    # and the dedicated `layout` job is the only thing that runs them.
-    (os.path.join("tests", "transformations", "layout"), "layout"),
     # Needs a real MPI launcher (the heterogeneous runner runs these under ``mpirun -n 2``), so mark
     # the directory rather than rely on each file remembering the marker -- three did not.
     (os.path.join("tests", "library", "mpi"), "mpi"),

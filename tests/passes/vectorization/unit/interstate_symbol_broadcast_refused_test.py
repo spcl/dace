@@ -31,12 +31,12 @@ import numpy as np
 import pytest
 
 import dace
+from dace.isolation import set_openmp_thread_count
 from dace.libraries.standard.nodes.copy.common import INPUT_CONNECTOR_NAME
 from dace.libraries.tileops import MaskedCopyLibraryNode, TileBinop, TileGather
 from dace.libraries.tileops.dispatch import detect_host_isa
 from dace.libraries.tileops.ops import BINARY_OPS
 from dace.sdfg import nodes as nd
-from dace.transformation.layout.isolation import set_openmp_thread_count
 from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.enums import BranchMode, RemainderStrategy
