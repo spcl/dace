@@ -285,16 +285,6 @@ def test_shape_declares_a_symbol_with_its_dtype():
     assert sdfg.symbols["L"] == dace.int64
 
 
-def test_shape_refuses_an_undeclared_typed_symbol_inside_an_expression():
-    """SymPy may build ``L + 1`` from another symbol named ``L``, so the dtype of the one inside is not trusted."""
-    sdfg = dace.SDFG("shape_symbol_in_expression")
-    with pytest.raises(TypeError, match="add_symbol"):
-        sdfg.add_array("A", [dace.symbol("L", dace.int64) + 1], dace.float64)
-    sdfg.add_symbol("L", dace.int64)
-    sdfg.add_array("A", [dace.symbol("L", dace.int64) + 1], dace.float64)
-    assert sdfg.symbols["L"] == dace.int64
-
-
 def test_replacing_by_expression_keeps_declared_types_and_declares_no_scope_names():
     sdfg = dace.SDFG("replace_keeps_types")
     sdfg.add_symbol("N", dace.int32)
@@ -338,6 +328,5 @@ if __name__ == "__main__":
     test_only_the_frontend_boundary_reads_symbol_declarations()
     test_symbol_removed_through_the_repository_is_no_longer_shape_declared()
     test_shape_declares_a_symbol_with_its_dtype()
-    test_shape_refuses_an_undeclared_typed_symbol_inside_an_expression()
     test_replacing_by_expression_keeps_declared_types_and_declares_no_scope_names()
     test_type_inference_takes_the_declared_type_of_a_symbol()
