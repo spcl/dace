@@ -4,6 +4,7 @@
 import copy
 import warnings
 from collections import defaultdict
+from collections.abc import Iterator
 
 import sympy as sp
 from ordered_set import OrderedSet
@@ -15,7 +16,16 @@ from dace.sdfg import SDFG, SDFGState, dealias
 from dace.sdfg import graph as gr
 from dace.sdfg import utils as sdutil
 from dace.sdfg.analysis import cfg as cfg_analysis
-from dace.sdfg.state import BreakBlock, ConditionalBlock, ContinueBlock, ControlFlowRegion, LoopRegion, ReturnBlock
+from dace.sdfg.state import (
+    AbstractControlFlowRegion,
+    BreakBlock,
+    ConditionalBlock,
+    ContinueBlock,
+    ControlFlowBlock,
+    ControlFlowRegion,
+    LoopRegion,
+    ReturnBlock,
+)
 from dace.sdfg.type_inference import infer_expr_type
 from dace.transformation import helpers
 from dace.transformation import transformation as xf
@@ -65,7 +75,7 @@ def _nested_writes_iter_indexed(
     """Every write to ``conn`` inside ``nsdfg_node`` is ``a*i+b``-indexed; the connector memlet is
     the union over the loop, so read the inner subsets through ``symbol_mapping``."""
     found = False
-    for state in nsdfg_node.sdfg.all_states():
+    for state in nsdfg_node.sdfg.states():
         for dn in state.data_nodes():
             if dn.data != conn or state.in_degree(dn) == 0:
                 continue
@@ -92,7 +102,7 @@ def _nested_reads_match_writes(
 ) -> bool:
     """Every read of ``conn`` inside ``nsdfg_node`` matches the writes' ``a*i+b`` or is
     loop-invariant; write uniqueness alone lets ``a[i] = a[i+1]`` race."""
-    for state in nsdfg_node.sdfg.all_states():
+    for state in nsdfg_node.sdfg.states():
         for dn in state.data_nodes():
             if dn.data != conn or state.out_degree(dn) == 0:
                 continue
@@ -194,7 +204,7 @@ def loop_varying_symbols(loop: LoopRegion) -> OrderedSet[str]:
     for cfr in loop.all_control_flow_regions(recursive=True):
         if isinstance(cfr, LoopRegion) and cfr is not loop and cfr.loop_variable:
             varying.add(cfr.loop_variable)
-    for state in loop.all_states():
+    for state in loop.states():
         for node in state.nodes():
             if isinstance(node, nodes.MapEntry):
                 varying.update(node.map.params)
@@ -300,14 +310,48 @@ def _writes_may_overlap(
     return True
 
 
+def _own_reads(block) -> set[str]:
+    """The symbols ``block`` reads itself: a state's dataflow, a conditional's branch conditions, a loop's init,
+    condition and update. A region's ``free_symbols`` also hold what its nested blocks read, possibly after a nested
+    assignment; a recursive walk visits those blocks on their own."""
+    if isinstance(block, SDFGState):
+        return {str(s) for s in block.free_symbols}
+    if isinstance(block, ConditionalBlock):
+        return {
+            str(s) for condition, _ in block.branches if condition is not None for s in condition.get_free_symbols()
+        }
+    if isinstance(block, LoopRegion):
+        codes = (block.init_statement, block.loop_condition, block.update_statement)
+        return {str(s) for code in codes if code is not None for s in code.get_free_symbols()} - {block.loop_variable}
+    return set()
+
+
+def _blocks_then_exits(loop: LoopRegion) -> Iterator[tuple[ControlFlowBlock, bool]]:
+    """``(block, False)`` for each block of ``loop`` in execution order, and ``(block, True)`` once everything nested in
+    it has run: a region's out-edges are taken after its body, so a value its branches assign reaches them."""
+    order = list(cfg_analysis.blockorder_topological_sort(loop, recursive=True, ignore_nonstate_blocks=False))
+    position = {block: i for i, block in enumerate(order)}
+    exits_at: dict[int, list[ControlFlowBlock]] = defaultdict(list)
+    for i, block in enumerate(order):
+        nested = block.all_control_flow_blocks() if isinstance(block, AbstractControlFlowRegion) else ()
+        exits_at[max((position[b] for b in nested if b in position), default=i)].append(block)
+    for i, block in enumerate(order):
+        yield block, False
+        # Innermost first: a region closes after the regions nested in it
+        for closing in reversed(exits_at[i]):
+            yield closing, True
+
+
 def symbols_assigned_before_use(loop: LoopRegion, itervar: str) -> set[str] | None:
     """The symbols ``loop``'s body assigns, plus ``itervar``; ``None`` if an iteration reads one before assigning it."""
     symbols_that_may_be_used: set[str] = {itervar}
     used_before_assignment: set[str] = set()
     # Blocks are visited in order, so a symbol not yet assigned in this iteration comes from the previous one.
-    for block in cfg_analysis.blockorder_topological_sort(loop, recursive=True, ignore_nonstate_blocks=False):
-        # ``read_symbols()`` sees only interstate-edge reads; a read in the block's dataflow (``b[im]``) counts too.
-        used_before_assignment |= {str(s) for s in block.free_symbols} - symbols_that_may_be_used
+    for block, leaving in _blocks_then_exits(loop):
+        if not leaving:
+            # ``read_symbols()`` sees only interstate-edge reads; a read in the block's dataflow (``b[im]``) counts too.
+            used_before_assignment |= _own_reads(block) - symbols_that_may_be_used
+            continue
         for e in block.parent_graph.out_edges(block):
             used_before_assignment |= e.data.read_symbols() - symbols_that_may_be_used
             assigned_symbols = set()
@@ -378,7 +422,7 @@ class LoopToMap(xf.MultiStateTransformation):
         if range_syms & body_assigned_syms:
             return False
 
-        loop_states = set(self.loop.all_states())
+        loop_states = set(self.loop.states())
         all_loop_blocks = set(self.loop.all_control_flow_blocks())
 
         # Cannot have StructView in loop body
@@ -416,10 +460,7 @@ class LoopToMap(xf.MultiStateTransformation):
                         symbols_that_may_be_used |= per_branch[0].intersection(*per_branch[1:])
 
                 # ``read_symbols()`` misses the block's own dataflow reads, which come first.
-                try:
-                    block_reads = OrderedSet(str(s) for s in block.free_symbols)
-                except Exception:
-                    block_reads = OrderedSet()
+                block_reads = OrderedSet(_own_reads(block))
                 used_before_assignment |= block_reads - symbols_that_may_be_used
                 for e in block.parent_graph.out_edges(block):
                     read_symbols = e.data.read_symbols()
@@ -440,9 +481,10 @@ class LoopToMap(xf.MultiStateTransformation):
                         return False
 
                     symbols_that_may_be_used |= e.data.assignments.keys()
-        symbols_that_may_be_used |= symbols_assigned_before_use(self.loop, itervar)
-        if symbols_that_may_be_used is None:
+        assigned_before_use = symbols_assigned_before_use(self.loop, itervar)
+        if assigned_before_use is None:
             return False
+        symbols_that_may_be_used |= assigned_before_use
 
         # Get access nodes from other states to isolate local loop variables
         other_access_nodes: set[str] = set()
@@ -728,10 +770,10 @@ class LoopToMap(xf.MultiStateTransformation):
         nsdfg = None
 
         # Nest loop-body states
-        states = set(self.loop.all_states())
+        states = set(self.loop.states())
         # Find read/write sets
         read_set, write_set = set(), set()
-        for state in self.loop.all_states():
+        for state in self.loop.states():
             rset, wset = state.read_and_write_sets()
             read_set |= rset
             write_set |= wset
@@ -774,8 +816,11 @@ class LoopToMap(xf.MultiStateTransformation):
 
         # Find NestedSDFG's / Loop's unique data
         rw_set = read_set | write_set
+        # A constant array is declared in every nested SDFG it inherits ``constants_prop`` into: copied
+        # in, never a connector, never moved out of the parent (other blocks may still read it).
+        constant_set = {name for name in rw_set if name in sdfg.constants_prop}
         unique_set = set()
-        for name in rw_set:
+        for name in rw_set - constant_set:
             if not sdfg.arrays[name].transient:
                 continue
             found = False
@@ -800,8 +845,8 @@ class LoopToMap(xf.MultiStateTransformation):
 
         # Do not route views through the NestedSDFG
         view_set = set(view_to_data.keys())
-        read_set -= view_set
-        write_set -= view_set
+        read_set -= view_set | constant_set
+        write_set -= view_set | constant_set
 
         # Create NestedSDFG and add the loop contents to it. Gather symbols defined in it.
         fsymbols = set(sdfg.free_symbols)
@@ -824,7 +869,7 @@ class LoopToMap(xf.MultiStateTransformation):
                 name = root_data_name
             nsdfg.arrays[name] = copy.deepcopy(sdfg.arrays[name])
             nsdfg.arrays[name].transient = False
-        for name in unique_set | view_set:
+        for name in unique_set | view_set | constant_set:
             if "." in name:
                 root_data_name = name.split(".")[0]
                 name = root_data_name

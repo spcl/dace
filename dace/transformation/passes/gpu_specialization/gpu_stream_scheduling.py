@@ -391,7 +391,7 @@ def classify_state_top_level(state: SDFGState) -> NodeKind:
 
 def classify_sdfg(sdfg: SDFG) -> NodeKind:
     """Classify an SDFG by folding every top-level block (states + CF region payload)."""
-    kinds: list[NodeKind] = [classify_state_top_level(state) for state in sdfg.all_states()]
+    kinds: list[NodeKind] = [classify_state_top_level(state) for state in sdfg.states()]
     # Codeblock meta on regions (loop init/cond/update, branch conditions) only runs on the
     # host and adds no GPU compute; treated as NEUTRAL for MIXED detection so its CPU work can
     # pair with surrounding states.

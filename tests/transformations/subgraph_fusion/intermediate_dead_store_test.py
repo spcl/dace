@@ -72,7 +72,7 @@ def _vadv_dcol_sdfg(copy_back: bool) -> dace.SDFG:
 
 
 def _fuse_first_state(sdfg: dace.SDFG) -> dace.SDFGState:
-    state = sdfg.states()[0]
+    state = next(iter(sdfg.states()))
     subgraph = SubgraphView(state, state.nodes())
     fusion = SubgraphFusion()
     fusion.setup_match(subgraph, sdfg.cfg_id, sdfg.node_id(state))
