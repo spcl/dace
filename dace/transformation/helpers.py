@@ -381,14 +381,22 @@ def nest_state_subgraph(
 
     # Collect data used in access nodes within subgraph (will be referenced in
     # full upon nesting)
-    input_arrays = {}
+    input_arrays = set()
     output_arrays = {}
     for node in subgraph.nodes():
         if isinstance(node, nodes.AccessNode) and node.data not in subgraph_transients:
             if node.has_reads(state):
-                input_arrays[node.data] = None
+                input_arrays.add(node.data)
             if node.has_writes(state):
                 output_arrays[node.data] = state.in_edges(node)[0].data.wcr
+    # One container, one connector: a container a boundary edge already moves in a direction needs no
+    # full-array interface in that direction, and its boundary connector takes the container's own name
+    # (below). A second interface binds the same outer container twice, and its writebacks are unordered
+    # with the boundary one's.
+    for edge in inputs:
+        input_arrays.discard(edge.data.data)
+    for edge in outputs:
+        output_arrays.pop(edge.data.data, None)
 
     # Create the nested SDFG
     nsdfg = SDFG(name or "nested_" + state.label)
@@ -399,7 +407,7 @@ def nest_state_subgraph(
 
     # Input/output data that are not source/sink nodes are added to the graph
     # as non-transients
-    for name in dict.fromkeys([*input_arrays, *output_arrays]):
+    for name in input_arrays | output_arrays.keys():
         datadesc = copy.deepcopy(sdfg.arrays[name])
         datadesc.transient = False
         nsdfg.add_datadesc(name, datadesc)
@@ -408,7 +416,7 @@ def nest_state_subgraph(
     # descriptors in nested SDFG
     input_names = {}
     output_names = {}
-    nested_names: dict[str, str] = {}
+    nested_names: dict[str, str] = {name: name for name in input_arrays | output_arrays.keys()}
     for edge in inputs:
         if edge.data.data is None:  # Skip edges with an empty memlet
             continue
@@ -480,9 +488,7 @@ def nest_state_subgraph(
 
     # Add nested SDFG node to the input state
     nested_sdfg = state.add_nested_sdfg(
-        nsdfg,
-        dict.fromkeys([*input_names.values(), *input_arrays]),
-        dict.fromkeys([*output_names.values(), *output_arrays]),
+        nsdfg, set(input_names.values()) | input_arrays, set(output_names.values()) | output_arrays.keys()
     )
 
     # Reconnect memlets to nested SDFG
