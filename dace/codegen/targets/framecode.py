@@ -588,7 +588,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
     def generate_states(self, sdfg: SDFG, global_stream: CodeIOStream, callsite_stream: CodeIOStream) -> set[SDFGState]:
         states_generated = set()
 
-        opbar = progress.OptionalProgressBar(len(sdfg.states()), title=f"Generating code (SDFG {sdfg.cfg_id})")
+        opbar = progress.OptionalProgressBar(sdfg.num_states(), title=f"Generating code (SDFG {sdfg.cfg_id})")
 
         # Create closure + function for state dispatcher
         def dispatch_state(state: SDFGState) -> str:
@@ -658,8 +658,8 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
         fsyms = {}
         reachability = StateReachability().apply_pass(top_sdfg, {})
         access_instances: dict[int, dict[str, list[tuple[SDFGState, nodes.AccessNode]]]] = {}
-        # Per SDFG, built on its first container that needs a common (post)dominator
-        dominance: dict[int, tuple[_DominatorTree, _DominatorTree]] = {}
+        # Per SDFG cfg_id, built on first need
+        dominance: dict[int, tuple[DominatorTree, DominatorTree]] = {}
         for sdfg in top_sdfg.all_sdfgs_recursive():
             shared_transients[sdfg.cfg_id] = sdfg.shared_transients(check_toplevel=False, include_nested_data=True)
             fsyms[sdfg.cfg_id] = self.symbols_and_constants(sdfg)
@@ -907,7 +907,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
 
                     if any(inst not in reachability[sdfg.cfg_id][first_state_instance] for inst in instances):
                         if sdfg.cfg_id not in dominance:
-                            dominance[sdfg.cfg_id] = _dominator_trees(sdfg)
+                            dominance[sdfg.cfg_id] = dominator_trees(sdfg)
                         first_state_instance, last_state_instance = _get_dominator_and_postdominator(
                             instances, *dominance[sdfg.cfg_id]
                         )
@@ -1127,7 +1127,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
         #######################################################################
 
         # Sanity check
-        if len(states_generated) != len(sdfg.states()):
+        if len(states_generated) != sdfg.num_states():
             raise RuntimeError(
                 f"Not all states were generated in SDFG {sdfg.label}!\n  Generated: {[s.label for s in states_generated]}\n  Missing: {[s.label for s in (set(sdfg.states()) - states_generated)]}"
             )
@@ -1227,7 +1227,7 @@ def allocation_block(state: SDFGState, desc: data.Data, access_states: set[SDFGS
     def accesses(block: ControlFlowBlock) -> bool:
         if isinstance(block, SDFGState):
             return block in access_states
-        return any(inner in access_states for inner in block.all_states())
+        return any(inner in access_states for inner in block.states())
 
     def assigns_inside(block: ControlFlowBlock) -> bool:
         return isinstance(block, AbstractControlFlowRegion) and any(
@@ -1250,10 +1250,9 @@ def allocation_block(state: SDFGState, desc: data.Data, access_states: set[SDFGS
     return block
 
 
-class _DominatorTree:
-    """The tree of ``immediate`` (a root maps to itself), numbered by a DFS: ``a`` dominates ``b`` iff ``b``'s
-    entry/exit interval lies within ``a``'s. One walk answers every query, where the transitive closure of the tree is
-    quadratic in its depth."""
+class DominatorTree:
+    """The tree of ``immediate`` (a root maps to itself) with DFS entry/exit times: ``a`` dominates ``b`` iff ``b``'s
+    interval lies within ``a``'s, so no transitive closure is built."""
 
     def __init__(self, immediate: dict[ControlFlowBlock, ControlFlowBlock]) -> None:
         self.immediate = immediate
@@ -1289,16 +1288,16 @@ class _DominatorTree:
         return self.entry[a] <= self.entry[b] and self.exit[b] <= self.exit[a]
 
 
-def _dominator_trees(sdfg: SDFG) -> tuple[_DominatorTree, _DominatorTree]:
+def dominator_trees(sdfg: SDFG) -> tuple[DominatorTree, DominatorTree]:
     """The dominator and post-dominator trees of the blocks of ``sdfg``, across its control flow regions."""
     idom: dict[ControlFlowBlock, ControlFlowBlock] = {}
     ipostdom: dict[ControlFlowBlock, ControlFlowBlock] = {}
     utils.get_control_flow_block_dominators(sdfg, idom, None, ipostdom, None)
-    return _DominatorTree(idom), _DominatorTree(ipostdom)
+    return DominatorTree(idom), DominatorTree(ipostdom)
 
 
 def _get_dominator_and_postdominator(
-    accesses: list[tuple[SDFGState, nodes.AccessNode]], dom: _DominatorTree, postdom: _DominatorTree
+    accesses: list[tuple[SDFGState, nodes.AccessNode]], dom: DominatorTree, postdom: DominatorTree
 ):
     """
     Gets the closest common dominator and post-dominator for a list of states.

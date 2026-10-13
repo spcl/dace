@@ -71,7 +71,7 @@ def test_replace_memlet(filter_type: str) -> None:
 
 def _perform_non_lin_delin_test(sdfg: dace.SDFG, edge: graph.MultiConnectorEdge) -> None:
     assert sdfg.number_of_nodes() == 1
-    state: dace.SDFGState = sdfg.states()[0]
+    state: dace.SDFGState = next(iter(sdfg.states()))
     assert state.number_of_nodes() == 2
     assert state.number_of_edges() == 1
     assert all(isinstance(node, dace.nodes.AccessNode) for node in state.nodes())

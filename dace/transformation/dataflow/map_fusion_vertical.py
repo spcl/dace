@@ -135,6 +135,12 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         category="Applicability",
         desc="If `True` all outputs of the first Map must be intermediate, i.e., going into the second Map.",
     )
+    allow_intermediates_with_symbolic_size = properties.Property(
+        dtype=bool,
+        default=False,
+        category="Applicability",
+        desc="If `True` then intermediates with symbolic sizes are allowed. Set to `False` to avoid dynamic memory allocations inside Maps.",
+    )
 
     never_consolidate_edges = properties.Property(
         dtype=bool,
@@ -157,6 +163,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         assume_always_shared: bool | None = None,
         require_exclusive_intermediates: bool | None = None,
         require_all_intermediates: bool | None = None,
+        allow_intermediates_with_symbolic_size: bool | None = None,
         consolidate_edges_only_if_not_extending: bool | None = None,
         never_consolidate_edges: bool | None = None,
         **kwargs: Any,
@@ -182,6 +189,8 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             self.require_exclusive_intermediates = require_exclusive_intermediates
         if require_all_intermediates is not None:
             self.require_all_intermediates = require_all_intermediates
+        if allow_intermediates_with_symbolic_size is not None:
+            self.allow_intermediates_with_symbolic_size = allow_intermediates_with_symbolic_size
         if never_consolidate_edges is not None:
             self.never_consolidate_edges = never_consolidate_edges
         if consolidate_edges_only_if_not_extending is not None:
@@ -568,6 +577,13 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                 _, reduced_inter_shape, _ = self.compute_reduced_intermediate(
                     producer_subset=producer_edge.data.dst_subset, inter_desc=intermediate_desc
                 )
+
+                # If the fused Map would create a new intermediate with symbolic size,
+                #  dynamic memory allocation may be required. Prevent this unless the
+                #  user explicitly opted in via `allow_intermediates_with_symbolic_size`.
+                if isinstance(intermediate_desc, dace.data.Array) and not self.allow_intermediates_with_symbolic_size:
+                    if not all(str(dim).isdigit() for dim in reduced_inter_shape):
+                        return None
 
                 # If we reduce the intermediate node then we also change the underlying
                 #  memory layout, i.e. the strides. This change is not captured by the
@@ -1057,7 +1073,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         self,
         producer_subset: subsets.Range,
         inter_desc: dace.data.Data,
-    ) -> tuple[tuple[int, ...], tuple[int, ...], list[int]]:
+    ) -> tuple[tuple[dace.symbolic.SymbolicType, ...], tuple[dace.symbolic.SymbolicType, ...], list[int]]:
         """Compute the size of the new (reduced) intermediate.
 
         `MapFusionVertical` does not only fuses Map, but, depending on the situation, also
@@ -1068,7 +1084,8 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             * The raw shape of the reduced intermediate.
             * The cleared shape of the reduced intermediate, essentially the raw shape
                 with all shape 1 dimensions removed.
-            * Which dimensions of the raw shape have been removed to get the cleared shape.
+            * Indexes of the squeezed dimensions, i.e., the dimensions that were removed
+                from the raw shape to get the cleared shape.
 
         :param producer_subset: The subset that was used to write into the intermediate.
         :param inter_desc: The data descriptor for the intermediate.
@@ -1082,7 +1099,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         inter_shape = inter_desc.shape
         if not self.strict_dataflow:
             squeezed_dims: list[int] = []  # These are the dimensions we removed.
-            new_inter_shape: list[int] = []  # This is the final shape of the new intermediate.
+            new_inter_shape: list[dace.symbolic.SymbolicType] = []  # This is the final shape of the new intermediate.
             for dim, (proposed_dim_size, full_dim_size) in enumerate(zip(new_inter_shape_raw, inter_shape)):
                 if full_dim_size == 1:  # Must be kept!
                     new_inter_shape.append(proposed_dim_size)
@@ -1763,7 +1780,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             # which also restates the views of it whose rank matches the reduced intermediate, with or without its
             # degenerate dimensions (depending on `strict_dataflow`). A view of a single element has no strides.
             allowed_view_ranks = {len(reduced_intermediate_shape), sum(1 for s in reduced_intermediate_shape if s != 1)}
-            for inner_state in inner_sdfg.all_states():
+            for inner_state in inner_sdfg.states():
                 for inner_node in inner_state.data_nodes():
                     if inner_node.data != inner_data:
                         continue

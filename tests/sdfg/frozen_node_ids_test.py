@@ -7,7 +7,7 @@ import dace
 from dace.sdfg.graph import NodeNotFoundError, frozen_node_ids
 
 
-def chain(length: int) -> dace.SDFG:
+def chain(length: int) -> dace.SDFGState:
     sdfg = dace.SDFG("chain")
     sdfg.add_array("A", [length + 1], dace.float64)
     state = sdfg.add_state()
@@ -17,19 +17,19 @@ def chain(length: int) -> dace.SDFG:
         state.add_edge(previous, None, tasklet, "x", dace.Memlet(f"A[{i}]"))
         previous = state.add_access("A")
         state.add_edge(tasklet, "y", previous, None, dace.Memlet(f"A[{i + 1}]"))
-    return sdfg
+    return state
 
 
 def test_frozen_node_ids_match_the_scan():
-    state = chain(5).start_block
+    state = chain(5)
     scanned = [state.node_id(n) for n in state.nodes()]
     with frozen_node_ids():
         assert [state.node_id(n) for n in state.nodes()] == scanned
 
 
 def test_a_foreign_node_is_not_found_while_frozen():
-    state = chain(1).start_block
-    foreign = chain(1).start_block.nodes()[0]
+    state = chain(1)
+    foreign = chain(1).nodes()[0]
     with frozen_node_ids(), pytest.raises(NodeNotFoundError):
         state.node_id(foreign)
 

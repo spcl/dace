@@ -738,7 +738,7 @@ namespace dace
                                                     T>::type;
                 if constexpr (std::is_signed<U>::value)
                 {
-                    if (b < 0) return R(1) / ipow(R(a), 0u - static_cast<unsigned int>(b));
+                    if (b < 0) return R(R(1) / ipow(R(a), 0u - static_cast<unsigned int>(b)));
                 }
                 return ipow(R(a), static_cast<unsigned int>(b));
             }
@@ -747,10 +747,9 @@ namespace dace
                 return std::pow(a, b);
             }
         }
-#ifdef __CUDACC__
         // std::pow has no half overload, so a half argument makes the float/double/long double
         // overloads equally good (ambiguous).
-                template<typename T, std::enable_if_t<std::is_floating_point<T>::value>* = nullptr>
+        template<typename T, std::enable_if_t<std::is_floating_point<T>::value>* = nullptr>
         DACE_HDFI auto pow(const dace::float16& a, const T& b)
         {
             return std::pow(T(a), b);
@@ -764,7 +763,6 @@ namespace dace
         {
             return dace::float16(std::pow(float(a), float(b)));
         }
-#endif
 
         template<typename T, typename std::enable_if<std::is_integral<T>::value>::type* = nullptr>
         DACE_CONSTEXPR DACE_HDFI T ifloor(const T& a)

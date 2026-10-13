@@ -4,7 +4,6 @@
 import abc
 import ast
 import collections
-import contextvars
 import copy
 import inspect
 import itertools
@@ -51,6 +50,7 @@ from dace.sdfg.graph import (
     OrderedDiGraph,
     OrderedMultiDiConnectorGraph,
     SubgraphView,
+    frozen_node_ids,
     generate_element_id,
 )
 from dace.sdfg.replace import replace_in_codeblock
@@ -81,7 +81,6 @@ def _get_debug_info(explicit_lineinfo: dtypes.DebugInfo | None) -> dtypes.DebugI
         return explicit_lineinfo
 
     if dace.Config.get("compiler", "lineinfo") == "inspect":
-        # Two frames up is this function's caller's caller; ``inspect.stack()`` would resolve every frame to the root
         lineno, filename = caller_position(sys._getframe(2))
         return dtypes.DebugInfo(lineno, 0, lineno, 0, filename)
 
@@ -124,13 +123,6 @@ def _make_iterators(ndrange):
     map_range = sbs.Range(ranges)
 
     return params, map_range
-
-
-#: Per-state :meth:`~SDFGState.defined_symbols` for the library expansions of one
-#: :meth:`~dace.sdfg.SDFG.expand_library_nodes` sweep; ``None`` outside a sweep.
-EXPANSION_DEFINED_SYMBOLS: contextvars.ContextVar[dict["SDFGState", tuple[int, dict[str, dt.Data]]] | None] = (
-    contextvars.ContextVar("EXPANSION_DEFINED_SYMBOLS", default=None)
-)
 
 
 class BlockGraphView:
@@ -820,19 +812,10 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
             start_block = None
         if isinstance(start_block, AbstractControlFlowRegion):
             update_if_not_none(defined_syms, start_block.new_symbols(defined_syms))
-        # ``new_symbols(sdfg, ...)`` rebuilds this type environment (the symbols overridden by every array's dtype)
-        # per edge; keep it alongside ``defined_syms`` instead.
-        array_types = {k: v.dtype for k, v in sdfg.arrays.items()}
-        environment = {**defined_syms, **array_types}
         for edge in sdfg.all_interstate_edges():
-            if edge.data.assignments:
-                defined = {k: v for k, v in edge.data.new_symbols(None, environment).items() if v is not None}
-                defined_syms.update(defined)
-                environment.update((k, array_types.get(k, v)) for k, v in defined.items())
+            update_if_not_none(defined_syms, edge.data.new_symbols(sdfg, defined_syms))
             if isinstance(edge.dst, AbstractControlFlowRegion):
-                defined = {k: v for k, v in edge.dst.new_symbols(defined_syms).items() if v is not None}
-                defined_syms.update(defined)
-                environment.update((k, array_types.get(k, v)) for k, v in defined.items())
+                update_if_not_none(defined_syms, edge.dst.new_symbols(defined_syms))
         regions = []
         region = state.parent_graph
         while region is not None and region is not sdfg:
@@ -1436,8 +1419,7 @@ class ControlFlowBlock(BlockGraphView, abc.ABC):
     @label.setter
     def label(self, label: str):
         self._label = label
-        # A rename in place is the one way, besides ``add_node``, that a name becomes live in the
-        # parent region, so it is recorded there too (see ``_ensure_unique_block_name``).
+        # An in-place rename reserves the new name in the parent region too
         if self._parent_graph is not None:
             self._parent_graph._labels.add(label)
 
@@ -1631,7 +1613,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
                     else:
                         authority_by_node[child] = authority
 
-            _open_scope(None, self.sdfg.symbols)  # read-only: a copy per state is quadratic in large SDFGs
+            _open_scope(None, dict(self.sdfg.symbols))
         except (RuntimeError, ValueError, KeyError):
             authority_by_node = {}
 
@@ -2030,30 +2012,12 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
             s.symbol_mapping = symbol_mapping
 
             # Add new global symbols to nested SDFG
-            undeclared = [(sym, symval) for sym, symval in s.symbol_mapping.items() if sym not in sdfg.symbols]
-            if undeclared:
-                defined_symbols = self._defined_symbols_for_nesting()
-                for sym, symval in undeclared:
+            defined_symbols = self.defined_symbols() if self.sdfg is not None else {}
+            for sym, symval in s.symbol_mapping.items():
+                if sym not in sdfg.symbols:
                     sdfg.add_symbol(sym, infer_expr_type(symval, defined_symbols) or dtypes.typeclass(int))
 
         return s
-
-    def _defined_symbols_for_nesting(self) -> dict[str, dt.Data]:
-        """:meth:`defined_symbols` of this state, memoized for the library expansions of one
-        :meth:`~dace.sdfg.SDFG.expand_library_nodes` sweep.
-
-        The walk covers the whole parent SDFG, and an expansion only adds nodes inside a state, so every expansion in
-        the state would otherwise repeat it. A symbol an expansion declares in the parent SDFG asks again.
-        """
-        if self.sdfg is None:
-            return {}
-        memo = EXPANSION_DEFINED_SYMBOLS.get()
-        if memo is None:
-            return self.defined_symbols()
-        cached = memo.get(self)
-        if cached is None or cached[0] != len(self.sdfg.symbols):
-            cached = memo[self] = (len(self.sdfg.symbols), self.defined_symbols())
-        return cached[1]
 
     def add_map(
         self,
@@ -3052,7 +3016,6 @@ class AbstractControlFlowRegion(
         """
         # TODO: Refactor
         sub_cfg_list = self._cfg_list
-        # Below the root every level hands its parent the whole shared list: an identity set keeps that linear.
         if cfg_list is not sub_cfg_list:
             present = {id(g) for g in sub_cfg_list}
             for g in cfg_list:
@@ -3176,8 +3139,7 @@ class AbstractControlFlowRegion(
         return super().add_edge(src, dst, data)
 
     def _ensure_unique_block_name(self, proposed: str | None = None) -> str:
-        # Every name ever issued here: ``add_node`` and the ``label`` setter record them. A removed block keeps its
-        # name reserved, as an inlined reference may still point at it.
+        # ``add_node`` and the ``label`` setter record every name; a removed block keeps its name reserved
         return dt.find_new_name(proposed or "block", self._labels)
 
     def add_node(
@@ -3345,10 +3307,9 @@ class AbstractControlFlowRegion(
             yield self
 
     def control_flow_regions_preorder(self, recursive: bool, load_ext: bool) -> Iterator["AbstractControlFlowRegion"]:
-        """``all_control_flow_regions(parent_first=True)`` with an explicit stack: a generator per nesting level costs
-        every region its depth in resumes. Each ``nodes()`` list is taken when its owner is reached."""
+        """``all_control_flow_regions(parent_first=True)`` with an explicit stack instead of one generator per level."""
         yield self
-        # (remaining items, the state they belong to or None for a region's blocks)
+        # (remaining items, their state, or None for a region's blocks)
         stack: list[tuple[Iterator[Any], SDFGState | None]] = [(iter(self.nodes()), None)]
         while stack:
             items, owner = stack[-1]
@@ -3375,13 +3336,18 @@ class AbstractControlFlowRegion(
             if isinstance(cfg, dace.SDFG):
                 yield cfg
 
-    def all_states(self) -> Iterator[SDFGState]:
-        """Iterate over all states in this control flow graph."""
+    def states(self) -> Iterator[SDFGState]:
+        """Iterate over all states in this control flow graph, recursing into nested control flow regions."""
         for block in self.nodes():
             if isinstance(block, SDFGState):
                 yield block
             elif isinstance(block, AbstractControlFlowRegion):
-                yield from block.all_states()
+                yield from block.states()
+
+    def num_states(self) -> int:
+        """The number of states in this control flow graph, nested control flow regions included."""
+        # ``len(list(self.states()))`` would build a list of every state only to count it
+        return sum(1 for _ in self.states())
 
     def all_control_flow_blocks(self, recursive=False) -> Iterator[ControlFlowBlock]:
         """Iterate over all control flow blocks in this control flow graph."""
@@ -3467,7 +3433,8 @@ class AbstractControlFlowRegion(
         return free_syms, defined_syms, used_before_assignment
 
     def to_json(self, parent=None):
-        graph_json = OrderedDiGraph.to_json(self)
+        with frozen_node_ids():
+            graph_json = OrderedDiGraph.to_json(self)
         block_json = ControlFlowBlock.to_json(self, parent)
         graph_json.update(block_json)
 
@@ -4419,9 +4386,10 @@ class ConditionalBlock(AbstractControlFlowRegion):
                 replace_in_codeblock(cond, repl)
 
     def to_json(self, parent=None):
-        json = super().to_json(parent)
-        del json["nodes"]
-        del json["edges"]
+        # Not ``super().to_json``: its nodes are the branches, so every nested conditional would serialize them twice
+        json = {"type": type(self).__name__, "attributes": None, **ControlFlowBlock.to_json(self, parent)}
+        json["cfg_list_id"] = int(self.cfg_id)
+        json["start_block"] = self._start_block
         json["branches"] = [
             (condition.to_json() if condition is not None else None, cfg.to_json()) for condition, cfg in self._branches
         ]
