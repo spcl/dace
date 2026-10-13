@@ -1,10 +1,9 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""``numpy.roll``, which lowers onto the ``CShift`` library node.
+"""``numpy.roll``, which lowers onto the ``CShift`` library node in the numpy direction.
 
-``CShift`` is Fortran ``CSHIFT`` and rotates the OTHER WAY, so the node carries ``-shift``. That
-sign is the whole risk in this replacement: getting it backwards yields an array of the right
-shape, dtype and even the right multiset of values, so only a value comparison against numpy --
-and the structural assertion on the node's own ``shift`` property -- can catch it.
+``CShift`` defaults to Fortran ``CSHIFT``, which rotates the OTHER WAY. Getting the direction backwards
+yields an array of the right shape, dtype and even the right multiset of values, so only a value
+comparison against numpy and the structural assertion on the node's ``direction`` can catch it.
 """
 
 import numpy as np

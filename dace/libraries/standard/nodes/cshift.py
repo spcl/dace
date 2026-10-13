@@ -1,165 +1,84 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""``CShift`` library node -- circular shift, in either the Fortran or the numpy direction.
+"""``CShift``: a circular shift by ``shift`` positions along ``dim``, in the Fortran or the numpy direction.
 
-Fortran ``CSHIFT(arr, shift [, dim])`` produces an array of the same
-shape as ``arr`` whose element along ``dim`` (default 1) at position
-``i`` is ``arr(MODULO(i - 1 + shift, n) + 1)``.  Operates on the
-whole array: a rank-R input rotates each (R-1)-cross-section
-perpendicular to ``dim`` independently.
-
-``numpy.roll`` is the SAME rotation run the other way -- ``roll(x, s)[i]``
-reads ``x[(i - s) % n]`` where ``CSHIFT(x, s)(i)`` reads ``x(mod(i + s, n))``
--- so :class:`ShiftDirection` selects which one a node means and the
-expansion carries the sign.  Both directions are wrong-looking-but-valid
-in the same way: a node built with the wrong one produces an array of the
-right shape, dtype and even the right multiset of values, so nothing
-downstream can catch it.  Naming the direction on the node keeps the flip
-in one place instead of in every caller.
-
-The modulus is FLOORED in both directions and is not selectable.  A
-truncating modulus (the C ``%``) returns a NEGATIVE index for a negative
-operand, which is an out-of-bounds read rather than a different
-convention, so there is no second mode to offer.
-
-Callers: the HLFIR frontend routes ``hlfir.cshift`` here, and the Python
-frontend lowers ``numpy.roll`` here (``replacements/array_manipulation.py``).
+Fortran ``CSHIFT(ARRAY, SHIFT [, DIM])`` reads element ``MODULO(i + SHIFT, n)`` of the input at position ``i``;
+``numpy.roll`` runs the same rotation the other way. Every section perpendicular to ``dim`` rotates on its own.
 """
 
 import enum
-from typing import TYPE_CHECKING
 
 import dace
-import dace.library
-import dace.properties
-import dace.sdfg.nodes
-from dace import SDFG, SDFGState, symbolic
-from dace import memlet as mm
-from dace.frontend.common import op_repository as oprepo
+from dace import SDFG, library, properties
+from dace.sdfg import nodes
+from dace.sdfg import utils as sdutil
 from dace.transformation.transformation import ExpandTransformation
-
-if TYPE_CHECKING:
-    from dace.frontend.python.newast import ProgramVisitor
 
 
 class ShiftDirection(enum.Enum):
     """Which way a :class:`CShift` rotates."""
 
-    #: ``out(i) = x(mod(i + shift, n))`` -- Fortran ``CSHIFT``.
+    #: ``out(i) = x(mod(i + shift, n))``, Fortran ``CSHIFT``.
     FORTRAN = "fortran"
-    #: ``out[i] = x[mod(i - shift, n)]`` -- ``numpy.roll``.
+    #: ``out[i] = x[mod(i - shift, n)]``, ``numpy.roll``.
     NUMPY = "numpy"
 
 
-@dace.library.expansion
+def connector_array(sdfg: SDFG, name: str, memlet: dace.Memlet, outer: SDFG) -> list:
+    """Adds to ``sdfg`` the array ``name`` that the expansion reads or writes through ``memlet`` of ``outer``: its
+    shape is the subset's and its strides the container's, scaled by the subset's steps. Returns the shape."""
+    desc = outer.arrays[memlet.data]
+    shape = memlet.subset.size()
+    strides = [stride * dim_range[2] for stride, dim_range in zip(desc.strides, memlet.subset)]
+    sdfg.add_array(name, shape, desc.dtype, desc.storage, strides=strides)
+    return shape
+
+
+@library.expansion
 class ExpandCShiftPure(ExpandTransformation):
-    """Pure expansion of :class:`CShift` -- a single Map that reads
-    ``_x`` at the circularly-rotated index and writes ``_out``.
-
-    Fortran ``CSHIFT(arr, shift)`` along ``dim`` (1-based) yields
-    ``out(i) = arr(MODULO(i - 1 + shift, n) + 1)``.  In 0-based Map
-    iterators that is ``_out[i] = _x[FtnModulo(i + shift, n)]`` along ``dim``,
-    with every other axis passed through unchanged.
-
-    ``numpy.roll`` runs the same rotation the other way, so a
-    :attr:`ShiftDirection.NUMPY` node negates ``shift`` before building
-    the subset; everything below is otherwise identical.
-
-    ``FtnModulo`` is the floored modulo, so a negative ``shift`` stays in ``[0, n)``.
-
-    The tasklet body is just ``__out = __in`` -- the rotation lives
-    entirely in the source memlet's subset, so no runtime helper is
-    needed.
-    """
+    """One map reading the input at the rotated index."""
 
     environments: list[type] = []
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, **kwargs):
-        desc_x, desc_out, dim_zero = node.validate(parent_sdfg, parent_state)
-        dtype = desc_x.dtype.base_type
-        shape = list(desc_x.shape)
-        rank = len(shape)
-        n = shape[dim_zero]
-        # ``shift`` must be a concrete amount -- either a compile-time
-        # constant or a symbol the surrounding SDFG already declares +
-        # binds.  We do NOT invent a fallback symbol here: a fabricated
-        # ``__shift`` would appear in the source memlet's subset but
-        # never be assigned, leaking as an unbound free symbol (the
-        # SDFG would then demand it as a call argument and ``arglist``
-        # would ``KeyError``).  Fail loud instead so a caller that
-        # forgot to set ``shift`` gets a clear message, not a cryptic
-        # free-symbol error downstream.
         if node.shift is None:
-            raise ValueError(
-                f"CShift '{node.label}': shift is None.  The shift amount must "
-                "be set on the node (a constant or an SDFG-bound symbol) before "
-                "expansion -- the bridge supplies it from the Fortran "
-                "CSHIFT(arr, shift) argument."
-            )
-        # The direction lives on the NODE, so the one place the sign can be got wrong is here.
+            raise ValueError(f"{node.label}: the shift must be set before expansion")
+        sdfg = SDFG(f"{node.label}_sdfg")
+        shape = connector_array(sdfg, "_x", sdutil.in_edge_with_name(node, parent_state, "_x").data, parent_sdfg)
+        connector_array(sdfg, "_out", sdutil.out_edge_with_name(node, parent_state, "_out").data, parent_sdfg)
+        axis = node.dim - 1
+        # The direction lives on the node, so this is the one place the sign is chosen
         shift = node.shift if node.direction is ShiftDirection.FORTRAN else -node.shift
-
-        sdfg = dace.SDFG(node.label + "_sdfg")
-        # Carry the operands' STRIDES and storage, not just their shape. A compact declaration is
-        # right only for a compact operand: rolling a strided view (``a[:, 0:2*h:2]``) then indexes
-        # it as ``d0*h + d1`` where the data really steps ``d0*N + 2*d1``, so the node reads the
-        # wrong elements and returns a plausible array of the right shape and dtype.
-        sdfg.add_array("_x", shape, dtype, strides=desc_x.strides, storage=desc_x.storage)
-        sdfg.add_array("_out", shape, dtype, strides=desc_out.strides, storage=desc_out.storage)
-
-        state = sdfg.add_state()
-        map_rng = {f"__i{d}": f"0:{shape[d]}" for d in range(rank)}
-        # Source subset: rotate along ``dim_zero``, pass the rest through.
-        in_subs = []
-        for d in range(rank):
-            if d == dim_zero:
-                in_subs.append(f"FtnModulo(__i{d} + ({shift}), {n})")
-            else:
-                in_subs.append(f"__i{d}")
-        in_sub = ", ".join(in_subs)
-        out_sub = ", ".join(f"__i{d}" for d in range(rank))
-        state.add_mapped_tasklet(
-            name="_cshift",
-            map_ranges=map_rng,
-            inputs={"__in": dace.Memlet(f"_x[{in_sub}]")},
-            code="__out = __in",
-            outputs={"__out": dace.Memlet(f"_out[{out_sub}]")},
+        element = [f"__i{d}" for d in range(len(shape))]
+        # ``FtnModulo`` is Fortran's MODULO: a negative shift wraps into range, where ``%`` would not
+        rotated = [f"FtnModulo(__i{d} + ({shift}), {shape[d]})" if d == axis else i for d, i in enumerate(element)]
+        sdfg.add_state().add_mapped_tasklet(
+            "cshift",
+            {f"__i{d}": f"0:{size}" for d, size in enumerate(shape)},
+            {"__in": dace.Memlet(f"_x[{', '.join(rotated)}]")},
+            "__out = __in",
+            {"__out": dace.Memlet(f"_out[{', '.join(element)}]")},
             external_edges=True,
         )
         return sdfg
 
 
-@dace.library.node
-class CShift(dace.sdfg.nodes.LibraryNode):
-    """Fortran ``CSHIFT(arr, shift [, dim])`` -- circular shift along ``dim``.
+@library.node
+class CShift(nodes.LibraryNode):
+    """Rotates ``_x`` by ``shift`` positions along ``dim`` into ``_out``.
 
-    Whole-array operation: a rank-R input rotates every
-    (R-1)-cross-section perpendicular to ``dim`` by ``shift``
-    positions, with elements falling off one end wrapping around to
-    the other.
-
-    ``shift`` is symbolic so a single library-node instance handles
-    any combination of compile-time-constant shifts and runtime
-    symbols.  ``None`` (the default) leaves the lib node ready for a
-    bridge-supplied shift expression at lowering time.
+    ``direction`` says which way: :attr:`ShiftDirection.FORTRAN` is ``CSHIFT``, :attr:`ShiftDirection.NUMPY` is
+    ``numpy.roll``. A node rotated the wrong way still has the right shape, dtype and multiset of values, so the
+    direction is named on the node instead of negated by each caller.
     """
 
     implementations = {"pure": ExpandCShiftPure}
     default_implementation = "pure"
 
-    dim = dace.properties.Property(
-        dtype=int, default=1, desc="Fortran 1-based axis to rotate along (CSHIFT default 1)."
-    )
-    shift = dace.properties.SymbolicProperty(
-        allow_none=True, default=None, desc="Shift amount; ``None`` means use the symbol ``__shift``."
-    )
-    direction = dace.properties.EnumProperty(
-        dtype=ShiftDirection,
-        default=ShiftDirection.FORTRAN,
-        desc="Which way to rotate: FORTRAN is CSHIFT's "
-        "``out(i) = x(mod(i + shift, n))``, NUMPY is roll's "
-        "``out[i] = x[mod(i - shift, n)]``. The expansion carries the "
-        "sign so a caller never has to negate its own shift.",
+    dim = properties.Property(dtype=int, default=1, desc="Fortran 1-based axis to rotate along.")
+    shift = properties.SymbolicProperty(allow_none=True, default=None, desc="Positions to shift by, set by expansion.")
+    direction = properties.EnumProperty(
+        dtype=ShiftDirection, default=ShiftDirection.FORTRAN, desc="Fortran CSHIFT or numpy.roll rotation."
     )
 
     def __init__(self, name, *, dim=1, shift=None, direction=ShiftDirection.FORTRAN, **kwargs):
@@ -169,33 +88,9 @@ class CShift(dace.sdfg.nodes.LibraryNode):
         self.direction = direction
 
     def validate(self, sdfg, state):
-        """:returns: ``(desc_x, desc_out, dim_zero)``.
-
-        :raises ValueError: if shapes don't match or dim is out of range.
-        """
-        in_edges = state.in_edges(self)
-        out_edges = state.out_edges(self)
-        if len(in_edges) != 1 or in_edges[0].dst_conn != "_x":
-            raise ValueError("CShift requires an `_x` input")
-        if len(out_edges) != 1 or out_edges[0].src_conn != "_out":
-            raise ValueError("CShift requires an `_out` output")
-        desc_x = sdfg.arrays[in_edges[0].data.data]
-        desc_out = sdfg.arrays[out_edges[0].data.data]
-        rank = len(desc_x.shape)
-        if not (1 <= self.dim <= rank):
-            raise ValueError(f"CShift: dim={self.dim} out of range for rank-{rank} input")
-        if not symbolic.shapes_equal(desc_out.shape, desc_x.shape):
-            raise ValueError(f"CShift: input shape {list(desc_x.shape)} != output shape {list(desc_out.shape)}")
-        return desc_x, desc_out, self.dim - 1
-
-
-@oprepo.replaces("dace.libraries.standard.cshift")
-@oprepo.replaces("dace.libraries.standard.CShift")
-def cshift_libnode(pv: "ProgramVisitor", sdfg: SDFG, state: SDFGState, x, out, *, dim=1):
-    x_in = state.add_read(x)
-    w = state.add_write(out)
-    node = CShift("cshift", dim=dim)
-    state.add_node(node)
-    state.add_edge(x_in, None, node, "_x", mm.Memlet(x))
-    state.add_edge(node, "_out", w, None, mm.Memlet(out))
-    return []
+        x = sdutil.in_edge_with_name(self, state, "_x").data.subset
+        out = sdutil.out_edge_with_name(self, state, "_out").data.subset
+        if not 1 <= self.dim <= x.dims():
+            raise ValueError(f"{self.label}: dim={self.dim} is out of range for a rank-{x.dims()} input")
+        if x.size() != out.size():
+            raise ValueError(f"{self.label}: _x has the shape {x.size()} and _out {out.size()}")
