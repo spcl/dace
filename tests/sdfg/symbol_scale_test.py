@@ -4,6 +4,7 @@ from the scales checked when the program is called."""
 
 import numpy as np
 import pytest
+import sympy
 
 import dace
 from dace import symbolic
@@ -121,6 +122,17 @@ def test_init_refuses_values_that_break_an_assumed_order():
     assert init(ctypes.c_longlong(10), ctypes.c_longlong(8), ctypes.c_longlong(8)) is None
 
 
+def test_a_cached_proof_records_its_assumption_in_every_sdfg():
+    """Equal facts share cached proofs, but each SDFG still records the order its result relies on."""
+    first, second = scaled_sdfg("scale_cache_first"), scaled_sdfg("scale_cache_second")
+    for sdfg in (first, second):
+        assert symbolic.simplify(sympy.Max(n1, N), sdfg.facts()) == N
+        assert Relation(RelationKind.LT, n1, N) in sdfg.symbol_repo.runtime_assumptions
+    facts = first.facts()
+    unrecorded = symbolic.Facts(facts.relations, facts.integers, facts.small, facts.parameters)
+    assert symbolic.simplify(sympy.Max(n1, N), unrecorded) == sympy.Max(n1, N)
+
+
 if __name__ == "__main__":
     test_small_symbols_are_much_less_than_default_ones()
     test_scales_prove_nothing_without_a_place_to_record()
@@ -130,3 +142,4 @@ if __name__ == "__main__":
     test_loop_over_a_default_symbol_becomes_a_map()
     test_call_checks_the_assumed_orders()
     test_init_refuses_values_that_break_an_assumed_order()
+    test_a_cached_proof_records_its_assumption_in_every_sdfg()

@@ -263,6 +263,31 @@ def test_only_the_frontend_boundary_reads_symbol_declarations():
     assert {r for r in readers if not r.startswith("frontend/python/")} <= boundary
 
 
+def test_symbol_removed_through_the_repository_is_no_longer_shape_declared():
+    sdfg = dace.SDFG("repo_removed_shape_symbol")
+    sdfg.add_transient("t", [symbolic.pystr_to_symbolic("i")], dace.float64)
+    sdfg.symbol_repo.remove("i")
+    sdfg.add_node(LoopRegion("loop", "i < 10", "i", "i = 0", "i = i + 1"), is_start_block=True)
+    assert "i" not in sdfg.symbols
+
+
+def test_shape_declares_a_symbol_with_its_dtype():
+    sdfg = dace.SDFG("shape_symbol_dtype")
+    sdfg.add_array("A", [dace.symbol("L", dace.int64)], dace.float64)
+    assert sdfg.symbols["L"] == dace.int64
+
+
+def test_replacing_by_expression_keeps_declared_types_and_declares_no_scope_names():
+    sdfg = dace.SDFG("replace_keeps_types")
+    sdfg.add_symbol("N", dace.int32)
+    sdfg.add_symbol("M", dace.int64)
+    sdfg.add_array("A", ["N"], dace.float64)
+    state = sdfg.add_state(is_start_block=True)
+    state.add_map("m", {"j": "0:N"})
+    sdfg.replace_dict({"N": "M + j"})
+    assert sdfg.symbols == {"M": dace.int64}
+
+
 if __name__ == "__main__":
     test_loop_variable_cannot_be_added_as_symbol()
     test_scope_takes_over_a_symbol_a_shape_declared()
@@ -288,3 +313,6 @@ if __name__ == "__main__":
     test_sdfg_without_facts_serializes_no_fact_keys()
     test_validation_rejects_facts_on_undeclared_symbols()
     test_only_the_frontend_boundary_reads_symbol_declarations()
+    test_symbol_removed_through_the_repository_is_no_longer_shape_declared()
+    test_shape_declares_a_symbol_with_its_dtype()
+    test_replacing_by_expression_keeps_declared_types_and_declares_no_scope_names()

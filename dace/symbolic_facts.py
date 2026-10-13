@@ -2,8 +2,9 @@
 """Facts about symbols (sign predicates and relations) and the prover that answers questions under them."""
 
 import enum
-from collections.abc import Iterable
-from typing import NamedTuple, cast
+import functools
+from collections.abc import Callable, Iterable
+from typing import Generic, NamedTuple, TypeVar, cast
 
 import sympy
 from ordered_set import OrderedSet
@@ -140,12 +141,7 @@ class Facts:
         self.small = small
         self.parameters = parameters
         self.assumed = assumed
-        self.substitution, self.slacks, self.residuals = eliminate(self.relations, integers)
-        self.nonzero = tuple(
-            reduced(relation, integers, self.substitution)
-            for relation in self.relations
-            if relation.kind is RelationKind.NE
-        )
+        self.substitution, self.slacks, self.residuals, self.nonzero = solve(self.relations, integers)
 
     @classmethod
     def none(cls) -> "Facts":
@@ -155,9 +151,18 @@ class Facts:
         """These facts with more relations, the same scales, recording into the same assumptions."""
         return Facts((*self.relations, *relations), self.integers, self.small, self.parameters, self.assumed)
 
-    # Determined by what it assumes, so equal facts share cached proofs; where proofs are recorded is no part of it
+    def recording(self, assumed: OrderedSet[Relation] | None) -> "Facts":
+        """These facts, recording into ``assumed`` instead."""
+        copy = object.__new__(Facts)
+        for name in Facts.__slots__:
+            setattr(copy, name, getattr(self, name))
+        copy.assumed = assumed
+        return copy
+
+    # Determined by what it proves, so equal facts share cached proofs; where proofs are recorded is no part of it,
+    # but whether they may be (scales prove nothing without) is
     def key(self) -> tuple[object, ...]:
-        return (self.relations, self.integers, self.small, self.parameters)
+        return (self.relations, self.integers, self.small, self.parameters, self.assumed is not None)
 
     def __eq__(self, other: object) -> bool:
         return isinstance(other, Facts) and self.key() == other.key()
@@ -179,6 +184,32 @@ class Facts:
                 assumed[sign] = True
                 break
         return assumed
+
+
+Result = TypeVar("Result")
+
+
+class cached_proof(Generic[Result]):
+    """``lru_cache`` for ``function(expr, facts)`` that keeps what the proofs assumed with the result, and records it
+    into ``facts.assumed`` on every call, a cache hit included."""
+
+    def __init__(self, function: Callable[[sympy.Expr, Facts], Result]) -> None:
+        functools.update_wrapper(self, function)
+
+        @functools.lru_cache(maxsize=2048, typed=True)
+        def cached(expr: sympy.Expr, facts: Facts) -> tuple[Result, tuple[Relation, ...]]:
+            assumed: OrderedSet[Relation] | None = None if facts.assumed is None else OrderedSet()
+            return function(expr, facts.recording(assumed)), tuple(assumed or ())
+
+        self.cached = cached
+        self.cache_info = cached.cache_info
+        self.cache_clear = cached.cache_clear
+
+    def __call__(self, expr: sympy.Expr, facts: Facts) -> Result:
+        result, assumed = self.cached(expr, facts)
+        if facts.assumed is not None:
+            facts.assumed.update(assumed)
+        return result
 
 
 def relation_names(relation: Relation) -> set[str]:
@@ -254,6 +285,21 @@ def split_extrema(relation: Relation) -> list[Relation]:
     return [relation]
 
 
+@functools.lru_cache(maxsize=1024)
+def solve(
+    relations: tuple[Relation, ...], integers: frozenset[str]
+) -> tuple[
+    dict[sympy.Symbol, sympy.Expr], dict[sympy.Dummy, sympy.Expr], tuple[sympy.Expr, ...], tuple[sympy.Expr, ...]
+]:
+    """What ``Facts`` solves its relations into, shared by equal facts and never modified: the substitution, slacks and
+    residuals ``eliminate`` gives, and the ``!=`` facts reduced through the substitution."""
+    substitution, slacks, residuals = eliminate(relations, integers)
+    nonzero = tuple(
+        reduced(relation, integers, substitution) for relation in relations if relation.kind is RelationKind.NE
+    )
+    return substitution, slacks, residuals, nonzero
+
+
 def eliminate(
     relations: Iterable[Relation], integers: frozenset[str]
 ) -> tuple[dict[sympy.Symbol, sympy.Expr], dict[sympy.Dummy, sympy.Expr], tuple[sympy.Expr, ...]]:
@@ -266,7 +312,9 @@ def eliminate(
     substitution: dict[sympy.Symbol, sympy.Expr] = {}
     slacks: dict[sympy.Dummy, sympy.Expr] = {}
     residuals: list[sympy.Expr] = []
-    for relation in (split for relation in relations for split in split_extrema(relation)):
+    splits = [split for relation in relations for split in split_extrema(relation)]
+    # A divisibility fact last: solved first, it rewrites its multiple in a quotient no later order on it can bound
+    for relation in sorted(splits, key=lambda relation: relation.kind is RelationKind.DIVIDES):
         # SymPy rewrites a ``Mod`` it is substituted into by Python's rounding (``Mod(x + 2, 2)`` is ``Mod(x, 2)``),
         # which C's ``%`` does not share; leaving such a fact out only proves less
         if relation.kind is RelationKind.NE or any(

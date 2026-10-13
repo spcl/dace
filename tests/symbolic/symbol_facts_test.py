@@ -201,6 +201,12 @@ def test_simplify_keeps_names_of_its_scope():
     assert symbolic.simplify(2 * N + 1 - N, facts) == N + 1
 
 
+def test_divisibility_keeps_the_order_facts_of_its_multiple():
+    facts = facts_of(Relation(RelationKind.DIVIDES, sympy.Integer(4), N), Relation(RelationKind.LT, ZERO, N))
+    assert ask(Relation(RelationKind.LE, ZERO, N), facts) is Truth.TRUE
+    assert ask(Relation(RelationKind.DIVIDES, sympy.Integer(4), N), facts) is Truth.TRUE
+
+
 if __name__ == "__main__":
     test_positive_integer_is_at_least_one()
     test_strict_relation_implies_weak()
@@ -225,3 +231,4 @@ if __name__ == "__main__":
     test_exact_division_folds()
     test_numeric_divisibility_is_decided()
     test_simplify_keeps_names_of_its_scope()
+    test_divisibility_keeps_the_order_facts_of_its_multiple()

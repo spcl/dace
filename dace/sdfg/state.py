@@ -2788,7 +2788,8 @@ class SymbolResolver:
                     (
                         region,
                         region.new_symbols(sdfg.symbols),
-                        [(region.loop_variable, *bounds)] if None not in bounds else [],
+                        # The body of an inverted loop runs once before its condition is checked
+                        [(region.loop_variable, *bounds)] if None not in bounds and not region.inverted else [],
                     )
                 )
             region = region.parent_graph

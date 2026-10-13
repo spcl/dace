@@ -44,18 +44,16 @@ class Subset:
 
     def covers(self, other: "Subset", facts: symbolic.Facts) -> bool:
         """Returns True if the bounding box of this subset provably covers that of another under ``facts``."""
+        # Subsets of different dimensionality never cover each other
         if self.dims() != other.dims():
-            raise ValueError(
-                f"A subset of dimensionality {self.dims()} cannot test covering a subset of dimensionality {other.dims()}"
-            )
+            return False
         return bounding_box_covers(self, other, facts, approximation=True)
 
     def covers_precise(self, other: "Subset", facts: symbolic.Facts) -> bool:
         """Returns True if this subset provably contains every element of another under ``facts``."""
+        # Subsets of different dimensionality never cover each other
         if self.dims() != other.dims():
-            raise ValueError(
-                f"A subset of dimensionality {self.dims()} cannot test covering a subset of dimensionality {other.dims()}"
-            )
+            return False
         if not bounding_box_covers(self, other, facts, approximation=False):
             return False
         if not isinstance(self, Range):
@@ -70,8 +68,10 @@ class Subset:
 
         # Every element of ``other`` lies on this range's lattice: its step divides the distance from its start
         return all(
-            divides(step, ostep) and divides(step, ostart - start)
-            for (start, _, step), (ostart, _, ostep) in zip(self.ranges, other.ranges)
+            divides(_expr(step), _expr(ostep)) and divides(_expr(step), ostart - start)
+            for (_, _, step), (_, _, ostep), start, ostart in zip(
+                self.ranges, other.ranges, self.min_element(), other.min_element()
+            )
         )
 
     def __repr__(self):

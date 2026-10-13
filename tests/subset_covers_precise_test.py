@@ -1,7 +1,7 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 
 from dace.subsets import Range
-from dace.symbolic import Facts, Relation, RelationKind, symbol
+from dace.symbolic import Facts, Relation, RelationKind, SymExpr, symbol
 
 # Nothing is assumed about the symbols
 NO_FACTS = Facts.none()
@@ -187,6 +187,20 @@ def test_symbolic_step_divides_under_facts():
     assert subset2.covers_precise(subset1, divides) is False
 
 
+def test_approximated_start_is_compared_by_its_exact_bound():
+    exact = Range([(symbol("i"), symbol("i") + 4, 1)])
+    approximated = Range([(SymExpr(symbol("i"), 0), symbol("i") + 4, 1)])
+    assert approximated.covers_precise(exact, NO_FACTS)
+    assert exact.covers_precise(approximated, NO_FACTS)
+
+
+def test_subsets_of_other_dimensionality_do_not_cover():
+    subset1 = Range.from_string("0:10, 0:10")
+    subset2 = Range.from_string("0:10")
+    assert subset1.covers(subset2, NO_FACTS) is False
+    assert subset1.covers_precise(subset2, NO_FACTS) is False
+
+
 if __name__ == "__main__":
     test_integer_overlap_same_step_no_cover()
     test_integer_bounding_box_cover_coprime_step()
@@ -196,3 +210,5 @@ if __name__ == "__main__":
     test_range_indices()
     test_index_index()
     test_symbolic_step_divides_under_facts()
+    test_approximated_start_is_compared_by_its_exact_bound()
+    test_subsets_of_other_dimensionality_do_not_cover()

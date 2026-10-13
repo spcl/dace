@@ -5,7 +5,7 @@ import re
 from collections import Counter
 from collections.abc import Callable, Iterable, Mapping
 from functools import cache, lru_cache
-from typing import TYPE_CHECKING, Any, NamedTuple, Union
+from typing import TYPE_CHECKING, Any, NamedTuple, TypeAlias, Union
 
 import numpy
 import packaging.version as packaging_version
@@ -25,6 +25,7 @@ from dace.symbolic_facts import (  # noqa: F401
     Scale,
     Truth,
     ask,
+    cached_proof,
     comparison_relation,
     is_small,
     predicate_relation,
@@ -586,7 +587,7 @@ def _typed_constant_to_string(expr: TypedConstant) -> str:
 
 
 # Type hint for symbolic expressions
-SymbolicType = sympy.Basic | SymExpr
+SymbolicType: TypeAlias = sympy.Basic | SymExpr
 
 
 # http://stackoverflow.com/q/3844948/
@@ -2446,7 +2447,7 @@ def _pystr_to_symbolic_uncached(expr, symbol_map=None, simplify=None) -> sympy.B
     return sympy_to_dace(result, symbol_map)
 
 
-@lru_cache(maxsize=2048, typed=True)
+@cached_proof
 def fold_extrema(expr: sympy.Expr, facts: Facts) -> sympy.Expr:
     """``expr`` with every argument of a ``Min``/``Max`` that the facts prove is not the extremum dropped."""
 
@@ -2464,7 +2465,7 @@ def fold_extrema(expr: sympy.Expr, facts: Facts) -> sympy.Expr:
     return expr.replace(lambda node: isinstance(node, (sympy.Min, sympy.Max)), fold)
 
 
-@lru_cache(maxsize=2048, typed=True)
+@cached_proof
 def simplify(expr: SymbolicType, facts: Facts) -> SymbolicType:
     """Simplifies ``expr`` under ``facts``. Each symbol a relation solves for is rewritten in nonnegative slacks
     (``N = s + 5`` for ``N > 4``), every other symbol carries the integrality and sign the facts prove, and the result

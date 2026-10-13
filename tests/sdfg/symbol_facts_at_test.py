@@ -108,6 +108,16 @@ def test_unsigned_symbol_is_nonnegative():
     assert symbolic.ask(le("0", "U"), SymbolResolver().facts_at(sdfg)) is symbolic.Truth.TRUE
 
 
+def test_inverted_loop_body_does_not_know_the_iterator_range():
+    """The body of an inverted loop runs before its condition is checked, so the iterator may leave the range."""
+    sdfg = dace.SDFG("facts_at_inverted_loop")
+    sdfg.add_symbol("N", dace.int64)
+    loop = LoopRegion("loop", "i < N", "i", "i = 0", "i = i + 1", inverted=True, update_before_condition=False)
+    sdfg.add_node(loop, is_start_block=True)
+    loop.add_state("body", is_start_block=True)
+    assert symbolic.ask(le("i", "N - 1"), SymbolResolver().facts_at(loop)) is symbolic.Truth.UNKNOWN
+
+
 if __name__ == "__main__":
     test_loop_body_knows_the_iterator_range()
     test_loop_header_does_not_know_the_iterator_range()
@@ -118,3 +128,4 @@ if __name__ == "__main__":
     test_nested_sdfg_assumption_provable_from_the_mapping_is_valid()
     test_nested_sdfg_assumption_unprovable_from_the_mapping_is_invalid()
     test_unsigned_symbol_is_nonnegative()
+    test_inverted_loop_body_does_not_know_the_iterator_range()

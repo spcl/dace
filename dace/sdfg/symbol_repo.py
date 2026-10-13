@@ -2,7 +2,7 @@
 """The symbol repository of an SDFG: the dtypes and facts of its parameters and of the names its scopes open."""
 
 import enum
-from collections.abc import Iterable, Iterator, Mapping
+from collections.abc import Collection, Iterable, Iterator, Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, NamedTuple, Union
 
@@ -186,13 +186,15 @@ class SymbolRepo:
     enclose a point, and the facts holding there, come from the graph (``SymbolResolver.facts_at``).
 
     ``small`` names the parameters of ``Scale.SMALL``; ``runtime_assumptions`` are the orders proofs took from the
-    scales, which the compiled program checks on every call.
+    scales, which the compiled program checks on every call. ``shape_declared`` names the parameters only a data
+    descriptor's shape declared, which a scope binding the name takes over.
     """
 
     params: Scope = field(default_factory=Scope)
     scopes: dict[ScopeOwner, Scope] = field(default_factory=dict)
     small: OrderedSet[str] = field(default_factory=lambda: OrderedSet[str]([]))
     runtime_assumptions: OrderedSet[Relation] = field(default_factory=lambda: OrderedSet[Relation]([]))
+    shape_declared: OrderedSet[str] = field(default_factory=lambda: OrderedSet[str]([]))
 
     def scope(self, at: ScopeOwner | None) -> Scope:
         """The declarations of ``at`` (``None``: the parameters), created empty on first use."""
@@ -300,11 +302,15 @@ class SymbolRepo:
         del scope.types[name]
         if at is None:
             self.small.discard(name)
+            self.shape_declared.discard(name)
 
-    def replace(self, names: dict[str, str], replacements: Mapping[str, symbolic.SymbolicType]) -> None:
+    def replace(
+        self, names: dict[str, str], replacements: Mapping[str, symbolic.SymbolicType], reserved: Collection[str]
+    ) -> None:
         """Renames declared names (``names``) in every scope, as ``SDFG.replace_dict`` does in the whole graph, and
-        rewrites the relations. A name replaced by an expression becomes relations over it; a parameter's free symbols
-        are declared with its dtype."""
+        rewrites the relations. A name replaced by an expression becomes relations over it; the free symbols of a
+        parameter's expression that are not declared yet, nor ``reserved`` (data and scope-bound names), are declared
+        with its dtype."""
         self.runtime_assumptions = OrderedSet(
             Relation(
                 relation.kind,
@@ -316,6 +322,9 @@ class SymbolRepo:
         # A parameter replaced by an expression has the scale of the expression
         self.small = OrderedSet(
             names.get(name, name) for name in self.small if name not in names or validate_name(names[name])
+        )
+        self.shape_declared = OrderedSet(
+            names.get(name, name) for name in self.shape_declared if name not in names or validate_name(names[name])
         )
         for owner, scope in [(None, self.params), *self.scopes.items()]:
             scope.relations = OrderedSet(
@@ -340,7 +349,9 @@ class SymbolRepo:
                 if not isinstance(replacement, sympy.Basic):
                     raise TypeError(f'Cannot replace symbol "{name}" by {replacement}')
                 if owner is None:
-                    scope.types.update({str(free): dtype for free in replacement.free_symbols})
+                    for free in sorted(str(free) for free in replacement.free_symbols):
+                        if free not in scope.types and free not in reserved:
+                            scope.types[free] = dtype
                 scope.relations.update(
                     [
                         predicate_relation(predicate, as_expr(replacement))
@@ -382,6 +393,8 @@ class SymbolRepo:
             result["small"] = list(self.small)
         if self.runtime_assumptions:
             result["runtime_assumptions"] = [relation_to_json(relation) for relation in self.runtime_assumptions]
+        if self.shape_declared:
+            result["shape_declared"] = list(self.shape_declared)
         keys = {owner: key for key, owner in scope_owners(sdfg)} if self.scopes else {}
         live = [(keys[owner], scope) for owner, scope in self.scopes.items() if owner in keys]
         if live:
@@ -404,6 +417,7 @@ class SymbolRepo:
             {owner_at(scope["owner"]): scope_from_json(scope, context) for scope in obj.get("scopes", [])},
             OrderedSet(obj.get("small", [])),
             OrderedSet(relation_from_json(relation) for relation in obj.get("runtime_assumptions", [])),
+            OrderedSet(obj.get("shape_declared", [])),
         )
 
 
@@ -417,12 +431,14 @@ def program_assumptions(sdfg: "SDFG") -> list[Relation]:
                 continue
             mapped = {name: symbolic.pystr_to_symbolic(value) for name, value in node.symbol_mapping.items()}
             assumptions.update(
-                Relation(
-                    relation.kind,
-                    symbolic.replace_symbols(relation.lhs, mapped),
-                    symbolic.replace_symbols(relation.rhs, mapped),
-                )
-                for relation in program_assumptions(node.sdfg)
+                [
+                    Relation(
+                        relation.kind,
+                        symbolic.replace_symbols(relation.lhs, mapped),
+                        symbolic.replace_symbols(relation.rhs, mapped),
+                    )
+                    for relation in program_assumptions(node.sdfg)
+                ]
             )
     constants = {name: value for name, value in sdfg.constants.items() if name not in sdfg.arrays}
     return [
