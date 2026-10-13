@@ -8,6 +8,10 @@ one: the value of a find-first is that the range past the answer is never read, 
 ``i if cond(i) else N`` array cannot give -- that form pays a whole extra array and three full
 sweeps to compute what one cancelling sweep already knows.
 
+The predicate is a Python expression; the C++ expansions spell it in C++ and linearize each array
+subscript by the array's strides, and the ``pure`` expansion tests it in a Python tasklet inside a
+sequential loop that breaks at the first hit.
+
 The CPU expansions call :cpp:func:`dace::find_first_index` (``dace/runtime/include/dace/detect.h``)
 and differ only in whether the chunks go to OpenMP; the CUDA expansion calls
 :cpp:func:`dace::find_first_index_device` (``dace/runtime/include/dace/cuda/detect.cuh``), a
@@ -19,12 +23,18 @@ The node is opaque on purpose: the tile vectorizer never looks inside a library 
 search neither perturbs nor is perturbed by the tiling of the Maps around it.
 """
 
+import ast
+
 import dace
 from dace import library, properties, symbolic
 from dace.codegen.common import global_code_id
+from dace.codegen.cppunparse import pyexpr2cpp
 from dace.libraries.standard.helper import schedule_dispatch
+from dace.libraries.standard.pure_components import chain, counted_loop, operand_array, tasklet_state
+from dace.memlet import Memlet
 from dace.optionals import required
 from dace.sdfg import nodes
+from dace.sdfg.state import BreakBlock, ConditionalBlock, ControlFlowRegion
 from dace.transformation.transformation import ExpandTransformation
 
 #: The index the predicate expression is written against.
@@ -34,20 +44,80 @@ INDEX_NAME = "__i"
 OUTPUT_CONNECTOR_NAME = "_out_idx"
 
 
-def find_first_code(node: "FindFirst", parallel: bool) -> str:
-    """The expansion body: one :cpp:func:`dace::find_first_index` call over ``node.predicate``.
+class Linearize(ast.NodeTransformer):
+    """Rewrites each subscript of an array connector into one offset from its base pointer."""
 
-    The predicate becomes the body of a ``[&]`` lambda taking :data:`INDEX_NAME`, so it reads its
-    arrays through the node's own in-connectors -- the pointer arrives on a connector and the
-    subscript is generated here, inside the library expansion, which is the one place a hand-written
-    index belongs."""
+    def __init__(self, strides: dict[str, tuple]) -> None:
+        self.strides = strides
+
+    def visit_Subscript(self, node: ast.Subscript) -> ast.expr:
+        self.generic_visit(node)
+        if not isinstance(node.value, ast.Name) or node.value.id not in self.strides:
+            return node
+        strides = self.strides[node.value.id]
+        index = node.slice.elts if isinstance(node.slice, ast.Tuple) else [node.slice]
+        if len(index) != len(strides):
+            raise ValueError(f"the predicate subscripts {node.value.id} with {len(index)} of its {len(strides)} dims")
+        if len(index) == 1 and strides[0] == 1:
+            return node
+        flat = " + ".join(
+            f"({ast.unparse(dim)}) * ({symbolic.symstr(stride, cpp_mode=False)})" for dim, stride in zip(index, strides)
+        )
+        return ast.Subscript(node.value, ast.parse(flat, mode="eval").body, node.ctx)
+
+
+class ElementReads(ast.NodeTransformer):
+    """Rewrites each subscript of an array connector into a connector of its own, read through an element memlet."""
+
+    def __init__(self, arrays: set[str]) -> None:
+        self.arrays = arrays
+        self.memlets: dict[str, Memlet] = {}
+
+    def visit_Subscript(self, node: ast.Subscript) -> ast.expr:
+        self.generic_visit(node)
+        if not isinstance(node.value, ast.Name) or node.value.id not in self.arrays:
+            return node
+        index = node.slice.elts if isinstance(node.slice, ast.Tuple) else [node.slice]
+        name = f"__ff_read{len(self.memlets)}"
+        self.memlets[name] = Memlet(f"{node.value.id}[{', '.join(ast.unparse(dim) for dim in index)}]")
+        return ast.Name(name, ast.Load())
+
+
+def parenthesized(cpp: str) -> str:
+    """``cpp`` inside one pair of parentheses: as given when one pair already encloses all of it."""
+    depth = 0
+    for position, char in enumerate(cpp):
+        depth += {"(": 1, ")": -1}.get(char, 0)
+        if depth == 0 and position < len(cpp) - 1:
+            return f"({cpp})"
+    return cpp if cpp.startswith("(") else f"({cpp})"
+
+
+def cpp_predicate(node: "FindFirst", state: dace.SDFGState, sdfg: dace.SDFG) -> str:
+    """``node.predicate`` in C++, parenthesized, each array subscript one offset by the array's strides.
+
+    The pointer arrives on a connector and the subscript is generated here, inside the library
+    expansion, which is the one place a hand-written index belongs."""
+    strides = {
+        edge.dst_conn: tuple(sdfg.arrays[required(edge.data.data)].strides)
+        for edge in state.in_edges(node)
+        if edge.dst_conn is not None and not isinstance(sdfg.arrays[required(edge.data.data)], dace.data.Scalar)
+    }
+    tree = Linearize(strides).visit(ast.parse(node.predicate, mode="eval"))
+    return parenthesized(pyexpr2cpp(ast.unparse(tree)))
+
+
+def find_first_code(node: "FindFirst", state: dace.SDFGState, sdfg: dace.SDFG, parallel: bool) -> str:
+    """The expansion body: one :cpp:func:`dace::find_first_index` call over the predicate, which becomes
+    the body of a ``[&]`` lambda taking :data:`INDEX_NAME` and reads its arrays through the node's own
+    in-connectors."""
     from dace.codegen.targets.cpp import sym2cpp
 
     begin, end = sym2cpp(node.begin), sym2cpp(node.end)
     par = "true" if parallel else "false"
     return (
         f"{OUTPUT_CONNECTOR_NAME} = dace::find_first_index(({begin}), ({end}), "
-        f"[&](long long {INDEX_NAME}) -> bool {{ return ({node.predicate}); }}, {par});"
+        f"[&](long long {INDEX_NAME}) -> bool {{ return {cpp_predicate(node, state, sdfg)}; }}, {par});"
     )
 
 
@@ -118,9 +188,52 @@ class ExpandFindFirstCPU(ExpandTransformation):
             f"{node.label}_openmp",
             find_first_connectors(node, state, sdfg),
             {OUTPUT_CONNECTOR_NAME: None},
-            find_first_code(node, parallel=parallel),
+            find_first_code(node, state, sdfg, parallel=parallel),
             language=dace.dtypes.Language.CPP,
         )
+
+
+@library.expansion
+class ExpandFindFirstPure(ExpandTransformation):
+    """The sequential search as SDFG components: the answer starts at ``end``, and a loop over
+    ``[begin, end)`` tests the predicate in a Python tasklet, writing the index and breaking at the first hit.
+    Each array is the whole container, and each element the predicate reads arrives through its own memlet."""
+
+    environments: list[type] = []
+
+    @staticmethod
+    def expansion(node: "FindFirst", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> dace.SDFG:
+        node.validate(parent_sdfg, parent_state)
+        refuse_wrong_machine(node, parent_state, parent_sdfg, want_device=False)
+        nsdfg = dace.SDFG(f"{node.label}_pure")
+        scalars: dict[str, Memlet] = {}
+        for edge in parent_state.in_edges(node):
+            if edge.dst_conn is None:
+                continue
+            desc = parent_sdfg.arrays[required(edge.data.data)]
+            if isinstance(desc, dace.data.Scalar):
+                operand_array(nsdfg, edge.dst_conn, edge, parent_sdfg)
+                scalars[edge.dst_conn] = Memlet(f"{edge.dst_conn}[0]")
+            else:
+                nsdfg.add_array(edge.dst_conn, desc.shape, desc.dtype, strides=desc.strides, storage=desc.storage)
+        elements = ElementReads(set(nsdfg.arrays) - set(scalars))
+        predicate = ast.unparse(elements.visit(ast.parse(node.predicate, mode="eval")))
+        out_edge = next(e for e in parent_state.out_edges(node) if e.src_conn == OUTPUT_CONNECTOR_NAME)
+        operand_array(nsdfg, OUTPUT_CONNECTOR_NAME, out_edge, parent_sdfg)
+        nsdfg.add_scalar("__ff_hit", dace.bool_, transient=True)
+        answer = {"o": Memlet(f"{OUTPUT_CONNECTOR_NAME}[0]")}
+        end = symbolic.symstr(node.end, cpp_mode=False)
+        none = tasklet_state(nsdfg, "no_hit", f"o = {end}", {}, answer)
+        reads = {**scalars, **elements.memlets}
+        test = tasklet_state(nsdfg, "test", f"hit = {predicate}", reads, {"hit": Memlet("__ff_hit[0]")})
+        found = ControlFlowRegion("found")
+        chain(found, [tasklet_state(nsdfg, "hit", f"o = {INDEX_NAME}", {}, answer), BreakBlock("stop")])
+        branch = ConditionalBlock("on_hit")
+        branch.add_branch("__ff_hit", found)
+        loop = counted_loop("search", INDEX_NAME, symbolic.symstr(node.begin, cpp_mode=False), end)
+        chain(loop, [test, branch])
+        chain(nsdfg, [none, loop])
+        return nsdfg
 
 
 @library.expansion
@@ -192,7 +305,7 @@ class ExpandFindFirstCUDA(ExpandTransformation):
             f"struct __ff_pred_{idstr} {{\n"
             f"{members}\n"
             f"    __device__ __forceinline__ bool operator()(long long {INDEX_NAME}) const "
-            f"{{ return ({node.predicate}); }}\n"
+            f"{{ return {cpp_predicate(node, state, sdfg)}; }}\n"
             f"}};\n"
             f"{prototype}\n"
             f"gpuError_t __dace_findfirst_{idstr}({params}, long long __ff_begin, long long __ff_end, "
@@ -224,13 +337,14 @@ class FindFirst(nodes.LibraryNode):
     """Smallest ``i`` in ``[begin, end)`` with ``predicate`` true, or ``begin >= end``'s ``end``.
 
     :cvar implementations: ``"Auto"`` (picks by schedule, the default), ``"CPU"`` (chunked OpenMP
-        search) and ``"CUDA"`` (the device search).
+        search), ``"CUDA"`` (the device search) and ``"pure"`` (a sequential loop of SDFG components).
     """
 
     implementations = {
         "Auto": ExpandFindFirstAuto,
         "CPU": ExpandFindFirstCPU,
         "CUDA": ExpandFindFirstCUDA,
+        "pure": ExpandFindFirstPure,
     }
     default_implementation = "Auto"
 
@@ -247,7 +361,8 @@ class FindFirst(nodes.LibraryNode):
     predicate = properties.Property(
         dtype=str,
         default="false",
-        desc=f"C++ predicate over the in-connectors, indexed by '{INDEX_NAME}'. True at the index the search returns.",
+        desc=f"Python predicate over the in-connectors, indexed by '{INDEX_NAME}'; an array is subscripted per "
+        "dimension. True at the index the search returns.",
     )
     symbols = properties.ListProperty(
         element_type=str, default=[], desc="Symbols the predicate reads by name, so they reach the node's scope."
