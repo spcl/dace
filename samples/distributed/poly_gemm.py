@@ -1,19 +1,22 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" Explicitly distributed Gemm sample with block distribution."""
-import dace as dc
-import numpy as np
+"""Explicitly distributed Gemm sample with block distribution."""
+
 import os
 import sys
 import timeit
-from dace.sdfg.utils import load_precompiled_sdfg
+
+import numpy as np
 from mpi4py import MPI
 
-lNI = dc.symbol('lNI', dtype=dc.int64, integer=True, positive=True)
-lNJ = dc.symbol('lNJ', dtype=dc.int64, integer=True, positive=True)
-lNKa = dc.symbol('lNKa', dtype=dc.int64, integer=True, positive=True)
-lNKb = dc.symbol('lNKb', dtype=dc.int64, integer=True, positive=True)
-Px = dc.symbol('Px', dtype=dc.int32, integer=True, positive=True)
-Py = dc.symbol('Py', dtype=dc.int32, integer=True, positive=True)
+import dace as dc
+from dace.sdfg.utils import load_precompiled_sdfg
+
+lNI = dc.symbol("lNI", dtype=dc.int64, integer=True, positive=True)
+lNJ = dc.symbol("lNJ", dtype=dc.int64, integer=True, positive=True)
+lNKa = dc.symbol("lNKa", dtype=dc.int64, integer=True, positive=True)
+lNKb = dc.symbol("lNKb", dtype=dc.int64, integer=True, positive=True)
+Px = dc.symbol("Px", dtype=dc.int32, integer=True, positive=True)
+Py = dc.symbol("Py", dtype=dc.int32, integer=True, positive=True)
 
 NI = lNI * Px
 NJ = lNJ * Py
@@ -25,15 +28,17 @@ def relerr(ref, val):
 
 
 @dc.program(auto_optimize=True)
-def gemm_shared(alpha: dc.float64, beta: dc.float64, C: dc.float64[NI, NJ], A: dc.float64[NI, NK], B: dc.float64[NK,
-                                                                                                                 NJ]):
+def gemm_shared(
+    alpha: dc.float64, beta: dc.float64, C: dc.float64[NI, NJ], A: dc.float64[NI, NK], B: dc.float64[NK, NJ]
+):
 
     C[:] = alpha * A @ B + beta * C
 
 
 @dc.program
-def gemm_distr(alpha: dc.float64, beta: dc.float64, C: dc.float64[NI, NJ], A: dc.float64[NI, NK], B: dc.float64[NK,
-                                                                                                                NJ]):
+def gemm_distr(
+    alpha: dc.float64, beta: dc.float64, C: dc.float64[NI, NJ], A: dc.float64[NI, NK], B: dc.float64[NK, NJ]
+):
 
     lA = np.empty((lNI, lNKa), dtype=A.dtype)
     lB = np.empty((lNKb, lNJ), dtype=B.dtype)
@@ -58,8 +63,9 @@ def gemm_distr(alpha: dc.float64, beta: dc.float64, C: dc.float64[NI, NJ], A: dc
 
 
 @dc.program
-def gemm_distr2(alpha: dc.float64, beta: dc.float64, C: dc.float64[lNI, lNJ], A: dc.float64[lNI, lNKa],
-                B: dc.float64[lNKb, lNJ]):
+def gemm_distr2(
+    alpha: dc.float64, beta: dc.float64, C: dc.float64[lNI, lNJ], A: dc.float64[lNI, lNKa], B: dc.float64[lNKb, lNJ]
+):
 
     tmp = distr.MatMult(A, B, (lNI * Px, lNJ * Py, NK))
     C[:] = alpha * tmp + beta * C
@@ -84,7 +90,6 @@ def time_to_ms(raw):
 grid = {1: (1, 1), 2: (2, 1), 4: (2, 2), 8: (4, 2), 16: (4, 4)}
 
 if __name__ == "__main__":
-
     # Initialization
     NI, NJ, NK = 4000, 4600, 5200
 
@@ -94,12 +99,14 @@ if __name__ == "__main__":
 
     if size not in grid:
         if rank == 0:
-            print("This sample is designed to run with 1, 2, 4, 8, or 16 MPI ranks. "
-                  "If you would like to run with a different number of ranks, "
-                  "please edit this file and insert the rows and columns of the "
-                  "desired grid in the 'grid' dictionary. Please note that, if the "
-                  "grid sizes do not divide evenly the matrix sizes, the sample may "
-                  "not work properly.")
+            print(
+                "This sample is designed to run with 1, 2, 4, 8, or 16 MPI ranks. "
+                "If you would like to run with a different number of ranks, "
+                "please edit this file and insert the rows and columns of the "
+                "desired grid in the 'grid' dictionary. Please note that, if the "
+                "grid sizes do not divide evenly the matrix sizes, the sample may "
+                "not work properly."
+            )
         sys.exit(0)
 
     Px, Py = grid[size]
@@ -141,27 +148,29 @@ if __name__ == "__main__":
         mpi_func = mpi_sdfg.compile()
     comm.Barrier()
     if rank > 0:
-        build_folder = dc.Config.get('default_build_folder')
+        build_folder = dc.Config.get("default_build_folder")
         mpi_func = load_precompiled_sdfg(os.path.join(build_folder, gemm_distr2.name))
 
     ldict = locals()
 
     comm.Barrier()
 
-    mpi_func(A=lA,
-             B=lB,
-             C=tC,
-             alpha=alpha,
-             beta=beta,
-             NI=NI,
-             NJ=NJ,
-             NK=NK,
-             lNI=lNI,
-             lNJ=lNJ,
-             lNKa=lNKa,
-             lNKb=lNKb,
-             Px=Px,
-             Py=Py)
+    mpi_func(
+        A=lA,
+        B=lB,
+        C=tC,
+        alpha=alpha,
+        beta=beta,
+        NI=NI,
+        NJ=NJ,
+        NK=NK,
+        lNI=lNI,
+        lNJ=lNJ,
+        lNKa=lNKa,
+        lNKb=lNKb,
+        Px=Px,
+        Py=Py,
+    )
 
     comm.Gather(tC, C2)
     if rank == 0:
@@ -169,9 +178,11 @@ if __name__ == "__main__":
 
     comm.Barrier()
 
-    stmt = ("mpi_func(A=lA, B=lB, C=tC, alpha=alpha, beta=beta, "
-            "NI=NI, NJ=NJ, NK=NK, lNI=lNI, lNJ=lNJ, lNKa=lNKa, lNKb=lNKb, "
-            "Px=Px, Py=Py)")
+    stmt = (
+        "mpi_func(A=lA, B=lB, C=tC, alpha=alpha, beta=beta, "
+        "NI=NI, NJ=NJ, NK=NK, lNI=lNI, lNJ=lNJ, lNKa=lNKa, lNKb=lNKb, "
+        "Px=Px, Py=Py)"
+    )
     setup = "tC = np.copy(lC); comm.Barrier()"
     repeat = 10
 
@@ -182,25 +193,27 @@ if __name__ == "__main__":
 
     if rank == 0:
         ms_time = time_to_ms(raw_time)
-        print("Median is {}ms".format(ms_time))
+        print(f"Median is {ms_time}ms")
 
         alpha, beta, refC, refA, refB = init_data(NI, NJ, NK, np.float64)
         shared_sdfg = gemm_shared.compile()
-        shared_sdfg(A=refA,
-                    B=refB,
-                    C=refC,
-                    alpha=alpha,
-                    beta=beta,
-                    NI=NI,
-                    NJ=NJ,
-                    NK=NK,
-                    lNI=lNI,
-                    lNJ=lNJ,
-                    lNKa=lNKa,
-                    lNKb=lNKb,
-                    Px=Px,
-                    Py=Py)
+        shared_sdfg(
+            A=refA,
+            B=refB,
+            C=refC,
+            alpha=alpha,
+            beta=beta,
+            NI=NI,
+            NJ=NJ,
+            NK=NK,
+            lNI=lNI,
+            lNJ=lNJ,
+            lNKa=lNKa,
+            lNKb=lNKb,
+            Px=Px,
+            Py=Py,
+        )
 
         print("=======Validation=======")
-        assert (np.allclose(refC, C))
+        assert np.allclose(refC, C)
         print("OK")

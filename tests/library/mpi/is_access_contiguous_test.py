@@ -6,6 +6,7 @@ memory slots. The check must therefore read the array strides -- a leading-singl
 access such as ``A[k, :, :]`` is contiguous in C but not in Fortran, and vice versa for ``A[:, :, k]``.
 Each case is cross-checked against a direct memory-offset oracle over concrete strides.
 """
+
 import itertools
 
 import dace
@@ -136,6 +137,7 @@ def test_symbolic_full_and_point():
 
 def test_other_subset_raises():
     import pytest
+
     desc = dace.data.Array(dace.float64, (4, 4), strides=(4, 1))
     m = dace.Memlet(data="x", subset=dace.subsets.Range([(0, 3, 1), (0, 3, 1)]))
     m.other_subset = dace.subsets.Range([(0, 3, 1), (0, 3, 1)])

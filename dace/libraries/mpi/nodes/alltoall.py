@@ -1,14 +1,13 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 import dace.library
 import dace.sdfg.nodes
-from dace.transformation.transformation import ExpandTransformation
-from .. import environments
+from dace.libraries.mpi import environments
 from dace.libraries.mpi.nodes.node import MPINode, expanded_input_connectors, input_descriptor_name
+from dace.transformation.transformation import ExpandTransformation
 
 
 @dace.library.expansion
 class ExpandAlltoallMPI(ExpandTransformation):
-
     environments = [environments.mpi.MPI]
 
     @staticmethod
@@ -21,7 +20,7 @@ class ExpandAlltoallMPI(ExpandTransformation):
             raise (NotImplementedError)
 
         comm = "MPI_COMM_WORLD"
-        grid = input_descriptor_name(node, parent_state, '_grid')
+        grid = input_descriptor_name(node, parent_state, "_grid")
         if grid:
             comm = "_grid"
 
@@ -33,17 +32,18 @@ class ExpandAlltoallMPI(ExpandTransformation):
                         _outbuffer, sendrecv_amt, {out_mpi_dtype_str}, \
                         {comm});
             """
-        tasklet = dace.sdfg.nodes.Tasklet(node.name,
-                                          expanded_input_connectors(node, parent_state),
-                                          node.out_connectors,
-                                          code,
-                                          language=dace.dtypes.Language.CPP)
+        tasklet = dace.sdfg.nodes.Tasklet(
+            node.name,
+            expanded_input_connectors(node, parent_state),
+            node.out_connectors,
+            code,
+            language=dace.dtypes.Language.CPP,
+        )
         return tasklet
 
 
 @dace.library.node
 class Alltoall(MPINode):
-
     # Global properties
     implementations = {
         "MPI": ExpandAlltoallMPI,
@@ -70,11 +70,11 @@ class Alltoall(MPINode):
         in_count_str = "XXX"
         out_count_str = "XXX"
         for _, src_conn, _, _, data in state.out_edges(self):
-            if src_conn == '_outbuffer':
+            if src_conn == "_outbuffer":
                 dims = [str(e) for e in data.subset.size_exact()]
                 out_count_str = "*".join(dims)
         for _, _, _, dst_conn, data in state.in_edges(self):
-            if dst_conn == '_inbuffer':
+            if dst_conn == "_inbuffer":
                 dims = [str(e) for e in data.subset.size_exact()]
                 in_count_str = "*".join(dims)
 

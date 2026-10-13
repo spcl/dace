@@ -1,15 +1,17 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" Tests preprocessing of SDFG call tree and (nested) closure. """
-import dace
-import numpy as np
+"""Tests preprocessing of SDFG call tree and (nested) closure."""
+
 import os
 import tempfile
+
+import numpy as np
+
+import dace
 
 
 def test_nested_objects_same_name():
 
     class ObjA:
-
         def __init__(self, q) -> None:
             self.q = np.full([20], q)
 
@@ -18,7 +20,6 @@ def test_nested_objects_same_name():
             return A + self.q
 
     class ObjB:
-
         def __init__(self, q) -> None:
             self.q = np.full([20], q)
             self.obja = ObjA(q * 2)
@@ -41,9 +42,9 @@ def test_nested_objects_same_name():
     # Get closure
     # Verify obj's closure is `self.q`: obj.q
     assert len(obj.outer.resolver.closure_arrays) == len(closure.closure_arrays)
-    assert closure.closure_arrays['__g_self_q'][2]() is obj.q
+    assert closure.closure_arrays["__g_self_q"][2]() is obj.q
     # Verify obj.obja.__call__'s closure is `self.q`: obj.obja.q
-    assert closure.closure_arrays['__g_self_q_0'][2]() is obj.obja.q
+    assert closure.closure_arrays["__g_self_q_0"][2]() is obj.obja.q
 
     # Load SDFG
     A = np.random.rand(20)
@@ -67,7 +68,6 @@ def test_nested_objects_same_name():
 def test_calltree():
 
     class ObjA:
-
         def __init__(self, q) -> None:
             self.q = np.full([20], q)
 
@@ -76,7 +76,6 @@ def test_calltree():
             return A + self.q
 
     class ObjB:
-
         def __init__(self, q) -> None:
             self.q = np.full([20], q)
             self.obja = ObjA(q * 2)
@@ -96,16 +95,16 @@ def test_same_function_different_closure():
 
     @dace.program
     def nested(A: dace.float64[20], dir: dace.compiletime):
-        if dir == 'x':
+        if dir == "x":
             return A + arrx
-        elif dir == 'y':
+        elif dir == "y":
             return A * arry
         return A + 3
 
     @dace.program
     def mainprog(A: dace.float64[20]):
-        B = nested(A, 'x')
-        return nested(B, 'y')
+        B = nested(A, "x")
+        return nested(B, "y")
 
     closure = mainprog.closure_resolver(None, None)
     assert closure.call_tree_length() == 3
@@ -128,7 +127,7 @@ def test_program_kwargs():
     tester.to_sdfg()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_nested_objects_same_name()
     test_calltree()
     test_same_function_different_closure()

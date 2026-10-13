@@ -3,13 +3,15 @@
 Tests for numpy advanced indexing syntax. See also:
 https://numpy.org/devdocs/reference/arrays.indexing.html
 """
-import dace
-from dace.frontend.python.common import DaceSyntaxError
+
 import numpy as np
 import pytest
 
-N = dace.symbol('N')
-M = dace.symbol('M')
+import dace
+from dace.frontend.python.common import DaceSyntaxError
+
+N = dace.symbol("N")
+M = dace.symbol("M")
 
 # The nanobind interface requires numpy arrays for array arguments; unlike the
 # ctypes marshaller it does not coerce a Python list to an array (that would tax
@@ -31,7 +33,7 @@ def test_flat():
 
 
 def test_flat_noncontiguous():
-    with dace.config.set_temporary('compiler', 'allow_view_arguments', value=True):
+    with dace.config.set_temporary("compiler", "allow_view_arguments", value=True):
 
         @dace.program
         def indexing_test(A):
@@ -368,31 +370,27 @@ def test_out_index_intarr_multidim_range():
     assert np.allclose(A, ref)
 
 
-@pytest.mark.parametrize('tuple_index', (False, True))
+@pytest.mark.parametrize("tuple_index", (False, True))
 def test_advanced_indexing_syntax(tuple_index):
 
     @dace.program
     def indexing_test(A: dace.float64[N, N, N]):
         if tuple_index:
-            A[
-                (1, 2, 3),
-            ] = 2
+            A[(1, 2, 3),] = 2
         else:
             A[[1, 2, 3]] = 2
         A[(1, 2, 3)] = 1
 
     A = np.random.rand(20, 20, 20)
     ref = np.copy(A)
-    ref[
-        (1, 2, 3),
-    ] = 2
+    ref[(1, 2, 3),] = 2
     ref[(1, 2, 3)] = 1
     indexing_test(A)
 
     assert np.allclose(A, ref)
 
 
-@pytest.mark.parametrize('contiguous', (False, True))
+@pytest.mark.parametrize("contiguous", (False, True))
 def test_multidim_tuple_index(contiguous):
 
     if contiguous:
@@ -407,7 +405,7 @@ def test_multidim_tuple_index(contiguous):
             return A[:, (1, 3, 0)]
 
     sdfg = indexing_test.to_sdfg()
-    assert tuple(sdfg.arrays['__return'].shape) == (N, 3)
+    assert tuple(sdfg.arrays["__return"].shape) == (N, 3)
 
     A = np.random.rand(20, 10)
     if contiguous:
@@ -427,7 +425,7 @@ def test_multidim_tuple_index_longer():
         return A[:, (1, 2, 3, 4, 5, 7)]
 
     sdfg = indexing_test.to_sdfg()
-    assert tuple(sdfg.arrays['__return'].shape) == (N, 6)
+    assert tuple(sdfg.arrays["__return"].shape) == (N, 6)
 
     A = np.random.rand(20, 10)
     ref = A[:, (1, 2, 3, 4, 5, 7)]
@@ -438,7 +436,7 @@ def test_multidim_tuple_index_longer():
 
 
 def test_multidim_tuple_multidim_index():
-    with pytest.raises(IndexError, match='could not be broadcast together'):
+    with pytest.raises(IndexError, match="could not be broadcast together"):
 
         @dace.program
         def indexing_test(A: dace.float64[N, M, N]):
@@ -449,7 +447,7 @@ def test_multidim_tuple_multidim_index():
 
 @pytest.mark.skip("Combined basic and advanced indexing with writes is not supported")
 def test_multidim_tuple_multidim_index_write():
-    with pytest.raises(IndexError, match='could not be broadcast together'):
+    with pytest.raises(IndexError, match="could not be broadcast together"):
 
         @dace.program
         def indexing_test(A: dace.float64[N, M, N]):
@@ -465,7 +463,7 @@ def test_advanced_index_broadcasting():
         return A[indices, (1, 2, 4), :]
 
     sdfg = indexing_test.to_sdfg()
-    assert tuple(sdfg.arrays['__return'].shape) == (3, 3, N)
+    assert tuple(sdfg.arrays["__return"].shape) == (3, 3, N)
 
     A = np.random.rand(20, 10, 20)
     indices = np.array([[1, 2, 3], [4, 5, 6], [7, 8, 9]], dtype=np.int32)
@@ -490,7 +488,7 @@ def test_combining_basic_and_advanced_indexing():
 
     # Advanced indexing dimensions should be prepended to the shape
     sdfg = indexing_test.to_sdfg()
-    assert tuple(sdfg.arrays['__return'].shape) == (3, 3, 3, 5, N, N, 2)
+    assert tuple(sdfg.arrays["__return"].shape) == (3, 3, 3, 5, N, N, 2)
 
     res = indexing_test(A, indices, indices2)
 
@@ -531,7 +529,7 @@ def test_combining_basic_and_advanced_indexing_with_newaxes():
 
     # Advanced indexing dimensions should be prepended to the shape
     sdfg = indexing_test.to_sdfg()
-    assert tuple(sdfg.arrays['__return'].shape) == (3, 3, 3, 1, 5, N, N, 2, 1)
+    assert tuple(sdfg.arrays["__return"].shape) == (3, 3, 3, 1, 5, N, N, 2, 1)
 
     res = indexing_test(A, indices, indices2)
 
@@ -552,14 +550,14 @@ def test_combining_basic_and_advanced_indexing_with_newaxes_2():
 
     # Advanced indexing dimensions should be prepended to the shape
     sdfg = indexing_test.to_sdfg()
-    assert tuple(sdfg.arrays['__return'].shape) == (1, 5, 3, 3, 3, N, N, N, 2, 1)
+    assert tuple(sdfg.arrays["__return"].shape) == (1, 5, 3, 3, 3, N, N, N, 2, 1)
 
     res = indexing_test(A, indices, indices2)
 
     assert np.allclose(res, ref)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_flat()
     test_flat_noncontiguous()
     test_ellipsis()

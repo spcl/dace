@@ -1,8 +1,9 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
 import pytest
-
 from common import compare_numpy_output
+
+import dace
+
 """
 Test CUDA code generation for a subset of numpy-like functions on GPU target.
 
@@ -21,5 +22,5 @@ def test_floordiv(A: dace.int64[5, 5], B: dace.int64[5, 5]):
     return A // B
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_floordiv()

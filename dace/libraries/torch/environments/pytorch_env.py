@@ -9,8 +9,7 @@ except ImportError as e:
     raise ImportError("PyTorch is required for torch integration. Install with: pip install dace[ml]") from e
 
 import dace.library
-
-from dace.codegen.common import platform_library_name, get_gpu_backend
+from dace.codegen.common import get_gpu_backend, platform_library_name
 
 
 def torch_cpp_extension():
@@ -20,6 +19,7 @@ def torch_cpp_extension():
     something imported this module (a wedged driver turns that probe into a hang).
     """
     import torch.utils.cpp_extension  # noqa: PLC0415  -- deferred on purpose, see docstring
+
     return torch.utils.cpp_extension
 
 
@@ -95,7 +95,7 @@ class PyTorchGPU:
         :raises RuntimeError: If a required library cannot be found.
         """
         backend = get_gpu_backend()
-        if backend == 'hip':
+        if backend == "hip":
             library_names = ["c10", "torch", "torch_cpu", "torch_hip", "torch_python", "c10_hip"]
             runtime_lib = "amdhip64"
         else:

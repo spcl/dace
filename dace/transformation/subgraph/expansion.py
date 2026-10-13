@@ -1,21 +1,17 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
-""" This module contains classes that implement the expansion transformation.
-"""
-
-from dace import dtypes, symbolic, subsets
-from dace.sdfg import nodes
-from dace.sdfg import replace, SDFG, dynamic_map_inputs
-from dace.sdfg.state import SDFGState, StateSubgraphView
-from dace.transformation import transformation
-from dace.properties import make_properties, Property
-from dace.transformation.subgraph import helpers
-from collections import defaultdict
-
-from copy import deepcopy as dcpy
+"""This module contains classes that implement the expansion transformation."""
 
 import itertools
-
 import warnings
+from collections import defaultdict
+from copy import deepcopy as dcpy
+
+from dace import dtypes, subsets, symbolic
+from dace.properties import Property, make_properties
+from dace.sdfg import SDFG, dynamic_map_inputs, nodes, replace
+from dace.sdfg.state import SDFGState, StateSubgraphView
+from dace.transformation import transformation
+from dace.transformation.subgraph import helpers
 
 
 def offset_map(state, map_entry):
@@ -24,7 +20,7 @@ def offset_map(state, map_entry):
     for i, (p, r) in enumerate(zip(map_entry.map.params, map_entry.map.range.min_element())):
         if r != 0:
             offsets.append(r)
-            replace(subgraph, str(p), f'{p}+{r}')
+            replace(subgraph, str(p), f"{p}+{r}")
 
         else:
             offsets.append(0)
@@ -43,20 +39,26 @@ class MultiExpansion(transformation.SubgraphTransformation):
     Map access variables and memlets are changed accordingly
     """
 
-    debug = Property(dtype=bool, desc="Debug Mode", default=False)
-    sequential_innermaps = Property(dtype=bool,
-                                    desc="Make all inner maps that are"
-                                    "created during expansion sequential",
-                                    default=False)
+    debug = Property(dtype=bool, category="Diagnostics", desc="Debug Mode", default=False)
+    sequential_innermaps = Property(
+        dtype=bool,
+        category="Scheduling",
+        desc="Make all inner maps that arecreated during expansion sequential",
+        default=False,
+    )
 
-    check_contiguity = Property(dtype=bool,
-                                desc="Don't allow expansion if last (contiguous)"
-                                "dimension is partially split",
-                                default=False)
+    check_contiguity = Property(
+        dtype=bool,
+        category="Applicability",
+        desc="Don't allow expansion if last (contiguous)dimension is partially split",
+        default=False,
+    )
 
-    permutation_only = Property(dtype=bool, desc="Only allow permutations without inner splits", default=False)
+    permutation_only = Property(
+        dtype=bool, category="Applicability", desc="Only allow permutations without inner splits", default=False
+    )
 
-    allow_offset = Property(dtype=bool, desc="Offset ranges to zero", default=True)
+    allow_offset = Property(dtype=bool, category="Parameters", desc="Offset ranges to zero", default=True)
 
     def can_be_applied(self, sdfg: SDFG, subgraph: StateSubgraphView) -> bool:
         # get lowest scope maps of subgraph
@@ -99,9 +101,8 @@ class MultiExpansion(transformation.SubgraphTransformation):
                     # check every memlet for access
                     for e in itertools.chain(graph.out_edges(map_entry), graph.in_edges(graph.exit_node(map_entry))):
                         subset = dcpy(e.data.subset)
-                        subset.pop([i for i in range(subset.dims() - 1)])
+                        subset.pop(list(range(subset.dims() - 1)))
                         for s in subset.free_symbols:
-
                             if reassignment[map_entry][map_entry.map.params.index(s)] != -1:
                                 warnings.warn("MultiExpansion::Contiguity fusion violation detected")
                                 return False
@@ -141,7 +142,7 @@ class MultiExpansion(transformation.SubgraphTransformation):
         maps = [entry.map for entry in map_entries]
 
         # in case of maps where all params and ranges already conincide, we can skip the whole process
-        if all([m.params == maps[0].params for m in maps]) and all([m.range == maps[0].range for m in maps]):
+        if all(m.params == maps[0].params for m in maps) and all(m.range == maps[0].range for m in maps):
             return
 
         if self.allow_offset:
@@ -183,7 +184,6 @@ class MultiExpansion(transformation.SubgraphTransformation):
                         # nothing to do
                         pass
                     else:
-
                         current_var = map.params[i]
                         current_assignment = params_dict_map[current_var]
                         target_assignment = map_base_variables[reassignment]
@@ -221,15 +221,15 @@ class MultiExpansion(transformation.SubgraphTransformation):
                 for firstp, secondp in params_dict_map.items():
                     # change all inner parameters to avoid naming conflicts
                     if secondp in inner_params:
-                        replace(map_scope, secondp, secondp + '_inner')
+                        replace(map_scope, secondp, secondp + "_inner")
                     # replace in outer maps as well if not coincidental
                     if firstp != secondp:
-                        replace(map_scope, firstp, '__' + firstp + '_fused')
+                        replace(map_scope, firstp, "__" + firstp + "_fused")
 
                 # second pass
                 for firstp, secondp in params_dict_map.items():
                     if firstp != secondp:
-                        replace(map_scope, '__' + firstp + '_fused', secondp)
+                        replace(map_scope, "__" + firstp + "_fused", secondp)
 
             if self.debug:
                 print("MultiExpansion::Params replaced")
@@ -270,14 +270,14 @@ class MultiExpansion(transformation.SubgraphTransformation):
 
             params_inner = init_params_inner
             ranges_inner = subsets.Range(init_ranges_inner)
-            inner_map = nodes.Map(label = map.label + '_inner',
-                                  params = params_inner,
-                                  ndrange = ranges_inner,
-                                  schedule = dtypes.ScheduleType.Sequential \
-                                             if self.sequential_innermaps \
-                                             else dtypes.ScheduleType.Default)
+            inner_map = nodes.Map(
+                label=map.label + "_inner",
+                params=params_inner,
+                ndrange=ranges_inner,
+                schedule=dtypes.ScheduleType.Sequential if self.sequential_innermaps else dtypes.ScheduleType.Default,
+            )
 
-            map.label = map.label + '_outer'
+            map.label = map.label + "_outer"
             map.params = params_outer
             map.range = ranges_outer
 
@@ -288,12 +288,14 @@ class MultiExpansion(transformation.SubgraphTransformation):
             # analogously to Map_Expansion
             for edge in graph.out_edges(map_entry):
                 graph.remove_edge(edge)
-                graph.add_memlet_path(map_entry,
-                                      map_entry_inner,
-                                      edge.dst,
-                                      src_conn=edge.src_conn,
-                                      memlet=edge.data,
-                                      dst_conn=edge.dst_conn)
+                graph.add_memlet_path(
+                    map_entry,
+                    map_entry_inner,
+                    edge.dst,
+                    src_conn=edge.src_conn,
+                    memlet=edge.data,
+                    dst_conn=edge.dst_conn,
+                )
 
             dynamic_edges = dynamic_map_inputs(graph, map_entry)
             for edge in dynamic_edges:
@@ -306,17 +308,12 @@ class MultiExpansion(transformation.SubgraphTransformation):
                 for mapnode in [map_entry, map_entry_inner]:
                     path.append(mapnode)
                     if any(edge.dst_conn in map(str, symbolic.symlist(r)) for r in mapnode.map.range):
-                        graph.add_memlet_path(edge.src,
-                                              *path,
-                                              memlet=edge.data,
-                                              src_conn=edge.src_conn,
-                                              dst_conn=edge.dst_conn)
+                        graph.add_memlet_path(
+                            edge.src, *path, memlet=edge.data, src_conn=edge.src_conn, dst_conn=edge.dst_conn
+                        )
 
             for edge in graph.in_edges(map_exit):
                 graph.remove_edge(edge)
-                graph.add_memlet_path(edge.src,
-                                      map_exit_inner,
-                                      map_exit,
-                                      memlet=edge.data,
-                                      src_conn=edge.src_conn,
-                                      dst_conn=edge.dst_conn)
+                graph.add_memlet_path(
+                    edge.src, map_exit_inner, map_exit, memlet=edge.data, src_conn=edge.src_conn, dst_conn=edge.dst_conn
+                )

@@ -1,6 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
 import random
+
+import dace
 
 
 def test_python_min1():
@@ -11,7 +12,7 @@ def test_python_min1():
 
     for _ in range(100):
         a = random.randint(-10, 10)
-        assert (python_min1(a)[0] == a)
+        assert python_min1(a)[0] == a
 
 
 def test_python_max1():
@@ -22,7 +23,7 @@ def test_python_max1():
 
     for _ in range(100):
         a = random.randint(-10, 10)
-        assert (python_max1(a)[0] == a)
+        assert python_max1(a)[0] == a
 
 
 def test_python_min2():
@@ -34,7 +35,7 @@ def test_python_min2():
     for _ in range(100):
         a = random.randint(-10, 10)
         b = random.randint(-10, 10)
-        assert (python_min2(a, b)[0] == min(a, b))
+        assert python_min2(a, b)[0] == min(a, b)
 
 
 def test_python_max2():
@@ -46,7 +47,7 @@ def test_python_max2():
     for _ in range(100):
         a = random.randint(-10, 10)
         b = random.randint(-10, 10)
-        assert (python_max2(a, b)[0] == max(a, b))
+        assert python_max2(a, b)[0] == max(a, b)
 
 
 def test_python_min3():
@@ -59,7 +60,7 @@ def test_python_min3():
         a = random.randint(-10, 10)
         b = random.randint(-10, 10)
         c = random.randint(-10, 10)
-        assert (python_min3(a, b, c)[0] == min(a, b, c))
+        assert python_min3(a, b, c)[0] == min(a, b, c)
 
 
 def test_python_max3():
@@ -72,7 +73,7 @@ def test_python_max3():
         a = random.randint(-10, 10)
         b = random.randint(-10, 10)
         c = random.randint(-10, 10)
-        assert (python_max3(a, b, c)[0] == max(a, b, c))
+        assert python_max3(a, b, c)[0] == max(a, b, c)
 
 
 def test_python_abs():

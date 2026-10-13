@@ -1,12 +1,13 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import pytest
 import numpy as np
+import pytest
 
 
 @pytest.mark.tensorflow
 def test_fused_batch_norm():
     import tensorflow as tf
     from tensorflow.python.ops import gen_nn_ops
+
     from dace.frontend.ml.tensorflow import TFSession
 
     num_channels = 3
@@ -47,9 +48,11 @@ def test_fused_batch_norm():
     )
 
     try:
-        assert (tf.linalg.norm(outputs_tf[0] - outputs_dace[0]).eval(session=sess_tf) < 1e-1
-                and tf.linalg.norm(outputs_dace[2] - outputs_tf[2]).eval(session=sess_tf) < 1e-4
-                and tf.linalg.norm(outputs_dace[1] - outputs_tf[1]).eval(session=sess_tf) < 1e-4)
+        assert (
+            tf.linalg.norm(outputs_tf[0] - outputs_dace[0]).eval(session=sess_tf) < 1e-1
+            and tf.linalg.norm(outputs_dace[2] - outputs_tf[2]).eval(session=sess_tf) < 1e-4
+            and tf.linalg.norm(outputs_dace[1] - outputs_tf[1]).eval(session=sess_tf) < 1e-4
+        )
     except:
         print("FBN test failed")
         print(tf.linalg.norm(outputs_tf[0] - outputs_dace[0]).eval(session=sess_tf))
@@ -58,13 +61,9 @@ def test_fused_batch_norm():
 
     ################# FBN GRADIENT TEST ###############################
     outputGrad = tf.placeholder(tf.float32, size)
-    x_grad, gamma_grad, beta_grad, _, _ = gen_nn_ops.fused_batch_norm_grad(outputGrad,
-                                                                           inp,
-                                                                           scale,
-                                                                           outputs[1],
-                                                                           var_sqrt,
-                                                                           epsilon=0.1,
-                                                                           is_training=True)
+    x_grad, gamma_grad, beta_grad, _, _ = gen_nn_ops.fused_batch_norm_grad(
+        outputGrad, inp, scale, outputs[1], var_sqrt, epsilon=0.1, is_training=True
+    )
     gradients = [x_grad, gamma_grad, beta_grad]
     test_outputgrad = np.random.uniform(size=size).astype(np.float32)
     outputs_dace = sess_dace.run(
@@ -82,7 +81,7 @@ def test_fused_batch_norm():
         inp,
         scale,
         outputs[1],
-        tf.math.rsqrt(outputs[2] + float(0.1)) if tf.test.is_built_with_cuda() else outputs[2],
+        tf.math.rsqrt(outputs[2] + 0.1) if tf.test.is_built_with_cuda() else outputs[2],
         epsilon=0.1,
         is_training=True,
     )
@@ -98,9 +97,11 @@ def test_fused_batch_norm():
         },
     )
     try:
-        assert (tf.linalg.norm(outputs_tf[0] - outputs_dace[0]).eval(session=sess_tf) < 1e-1
-                and tf.linalg.norm(outputs_dace[2] - outputs_tf[2]).eval(session=sess_tf) < 10
-                and tf.linalg.norm(outputs_dace[1] - outputs_tf[1]).eval(session=sess_tf) < 10)
+        assert (
+            tf.linalg.norm(outputs_tf[0] - outputs_dace[0]).eval(session=sess_tf) < 1e-1
+            and tf.linalg.norm(outputs_dace[2] - outputs_tf[2]).eval(session=sess_tf) < 10
+            and tf.linalg.norm(outputs_dace[1] - outputs_tf[1]).eval(session=sess_tf) < 10
+        )
     except:
         print("FBN Gradient test failed")
         print(tf.linalg.norm(outputs_tf[0] - outputs_dace[0]).eval(session=sess_tf))
@@ -109,7 +110,7 @@ def test_fused_batch_norm():
         print(tf.linalg.norm(outputs_tf[2] - np.sum(test_outputgrad, axis=(0, 1, 2))).eval(session=sess_tf))
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     try:
         test_fused_batch_norm()
     except ImportError:

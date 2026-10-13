@@ -5,7 +5,6 @@ import dace
 
 
 class ArrayWrapper:
-
     def __init__(self, array, **kwargs):
         self.array = array
 

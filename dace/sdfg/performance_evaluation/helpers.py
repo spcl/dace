@@ -1,9 +1,8 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-""" Helper functions shared by the SDFG performance analyses: element UUIDs, fixed-point symbol
-substitution, and static-symbol detection. """
+"""Helper functions shared by the SDFG performance analyses: element UUIDs, fixed-point symbol
+substitution, and static-symbol detection."""
 
 import re
-from typing import Dict
 
 import sympy as sp
 
@@ -11,12 +10,11 @@ from dace import SDFG, SDFGState, dtypes, nodes
 from dace.sdfg.state import BreakBlock, ContinueBlock, ReturnBlock, UnstructuredControlFlow
 from dace.symbolic import pystr_to_symbolic, symbol
 
-UUID_SEPARATOR = '/'
+UUID_SEPARATOR = "/"
 
 
 def ids_to_string(cfg_id, state_id=-1, node_id=-1, edge_id=-1):
-    return (str(cfg_id) + UUID_SEPARATOR + str(state_id) + UUID_SEPARATOR + str(node_id) + UUID_SEPARATOR +
-            str(edge_id))
+    return str(cfg_id) + UUID_SEPARATOR + str(state_id) + UUID_SEPARATOR + str(node_id) + UUID_SEPARATOR + str(edge_id)
 
 
 def get_uuid(element, state=None):
@@ -52,7 +50,7 @@ def has_unstructured_control_flow(sdfg: SDFG) -> bool:
     return False
 
 
-def subs_till_fixed_point(expr: sp.Expr, symbol_map: Dict[sp.Expr, sp.Expr]) -> sp.Expr:
+def subs_till_fixed_point(expr: sp.Expr, symbol_map: dict[sp.Expr, sp.Expr]) -> sp.Expr:
     """
     Apply a symbol mapping to a symbolic expression repeatedly until a fixed point is reached.
 
@@ -72,7 +70,7 @@ def subs_till_fixed_point(expr: sp.Expr, symbol_map: Dict[sp.Expr, sp.Expr]) -> 
     return curr
 
 
-def get_static_symbols(sdfg: SDFG) -> Dict[str, sp.Expr]:
+def get_static_symbols(sdfg: SDFG) -> dict[str, sp.Expr]:
     """
     Find the symbols that are assigned at exactly one point in the SDFG (i.e., statically known).
 
@@ -88,11 +86,11 @@ def get_static_symbols(sdfg: SDFG) -> Dict[str, sp.Expr]:
     # not interfere with the symbolic parse below. The DaCe type names are derived from
     # ``dace.dtypes`` (rather than hard-coded), and matched longest-first so ``dace.float64`` wins
     # over ``float``.
-    cast_names = {'int', 'float', 'complex', 'bool'}
-    cast_names |= {f'dace.{name}' for name in dir(dtypes) if isinstance(getattr(dtypes, name), dtypes.typeclass)}
+    cast_names = {"int", "float", "complex", "bool"}
+    cast_names |= {f"dace.{name}" for name in dir(dtypes) if isinstance(getattr(dtypes, name), dtypes.typeclass)}
     type_regex = re.compile("|".join(re.escape(name) for name in sorted(cast_names, key=len, reverse=True)))
 
-    static_symbol_mapping: Dict[sp.Symbol, sp.Expr] = {symbol(a): symbol(a) for a in sdfg.arg_names}
+    static_symbol_mapping: dict[sp.Symbol, sp.Expr] = {symbol(a): symbol(a) for a in sdfg.arg_names}
     non_static_symbols = set()
     for node, containing_state in sdfg.all_nodes_recursive():
         if not isinstance(node, nodes.AccessNode):
@@ -127,7 +125,7 @@ def get_static_symbols(sdfg: SDFG) -> Dict[str, sp.Expr]:
             if len(lines) > 1:
                 non_static_symbols.add(node.data)
                 continue
-            lhs, rhs = lines[0].split('=', 1)
+            lhs, rhs = lines[0].split("=", 1)
             lhs = lhs.strip()
             rhs = type_regex.sub("", rhs.strip())
             lhs_sympy = pystr_to_symbolic(lhs).subs(out_map)

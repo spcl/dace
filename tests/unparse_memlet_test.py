@@ -1,8 +1,9 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
 import numpy as np
 
-N = dace.symbol('N')
+import dace
+
+N = dace.symbol("N")
 
 
 @dace.program
@@ -23,12 +24,12 @@ def test():
     floor_div(A, B)
 
     if N % 2 == 0:
-        expected = 2.0 * np.sum(A[0:N // 2])
+        expected = 2.0 * np.sum(A[0 : N // 2])
     else:
-        expected = 2.0 * np.sum(A[0:N // 2]) + A[N // 2]
+        expected = 2.0 * np.sum(A[0 : N // 2]) + A[N // 2]
     actual = np.sum(B)
     diff = abs(actual - expected)
-    print('Difference:', diff)
+    print("Difference:", diff)
     assert diff <= 1e-5
 
 

@@ -2,6 +2,7 @@
 """
 Root pytest configuration file.
 """
+
 import os
 import subprocess
 
@@ -13,19 +14,19 @@ def parse_worker_index(worker_id: str) -> int:
 
     Falls back to 0 for text with no digits (e.g. the non-xdist 'master' worker id).
     """
-    digits = ''.join(char for char in worker_id if char.isdigit())
+    digits = "".join(char for char in worker_id if char.isdigit())
     return int(digits) if digits else 0
 
 
 def list_cuda_devices() -> list:
     """Enumerate CUDA device indices via `nvidia-smi -L`, without touching CUDA in this process."""
     try:
-        result = subprocess.run(['nvidia-smi', '-L'], capture_output=True, text=True, timeout=10)
+        result = subprocess.run(["nvidia-smi", "-L"], capture_output=True, text=True, timeout=10)
     except (OSError, subprocess.TimeoutExpired):
         return []
     if result.returncode != 0:
         return []
-    device_lines = [line for line in result.stdout.splitlines() if line.startswith('GPU ')]
+    device_lines = [line for line in result.stdout.splitlines() if line.startswith("GPU ")]
     return [str(index) for index in range(len(device_lines))]
 
 
@@ -42,28 +43,29 @@ def resolve_worker_id() -> str:
     (dace.sdfg.sdfg.LAUNCHER_RANK_VARS, the same list dace itself reads for per-rank build
     folders), else '' if this process is neither an xdist worker nor an MPI rank.
     """
-    xdist_worker = os.environ.get('PYTEST_XDIST_WORKER')
+    xdist_worker = os.environ.get("PYTEST_XDIST_WORKER")
     if xdist_worker is not None:
         return xdist_worker
     from dace.sdfg.sdfg import LAUNCHER_RANK_VARS
+
     for var in LAUNCHER_RANK_VARS:
         rank = os.environ.get(var)
         if rank:
             return rank
-    return ''
+    return ""
 
 
 def visible_device_pool() -> list:
     """Devices this process may be placed on: its CUDA_VISIBLE_DEVICES, else every node device."""
-    preset = os.environ.get('CUDA_VISIBLE_DEVICES', '')
+    preset = os.environ.get("CUDA_VISIBLE_DEVICES", "")
     if preset.strip():
-        return [entry.strip() for entry in preset.split(',') if entry.strip()]
+        return [entry.strip() for entry in preset.split(",") if entry.strip()]
     return list_cuda_devices()
 
 
 def is_xdist_controller(config: pytest.Config) -> bool:
     """True in the xdist process that only spawns workers, and therefore runs no test itself."""
-    return bool(getattr(config.option, 'numprocesses', None)) and 'PYTEST_XDIST_WORKER' not in os.environ
+    return bool(getattr(config.option, "numprocesses", None)) and "PYTEST_XDIST_WORKER" not in os.environ
 
 
 def pin_worker_to_gpu(controller: bool = False) -> None:
@@ -80,12 +82,12 @@ def pin_worker_to_gpu(controller: bool = False) -> None:
         # look pinnable (SLURM_PROCID=0 is set for the CI's single task), and narrowing here would
         # hand each worker a one-device pool -- the whole rotation below would then never happen.
         # Republishing the pool also spares each worker an nvidia-smi of its own.
-        os.environ['CUDA_VISIBLE_DEVICES'] = ','.join(device_pool)
+        os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(device_pool)
         return
     worker_id = resolve_worker_id()
     if not worker_id:
         return
-    os.environ['CUDA_VISIBLE_DEVICES'] = pick_gpu_worker_device(worker_id, device_pool)
+    os.environ["CUDA_VISIBLE_DEVICES"] = pick_gpu_worker_device(worker_id, device_pool)
 
 
 def pytest_configure(config: pytest.Config) -> None:

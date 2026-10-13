@@ -4,7 +4,6 @@ import dace.library
 
 @dace.library.environment
 class cuFFT:
-
     cmake_minimum_version = None
     cmake_packages = ["CUDA"]
     cmake_variables = {}
@@ -14,7 +13,7 @@ class cuFFT:
     cmake_link_flags = []
     cmake_files = []
 
-    headers = {'frame': ["cufft.h", "cufftXt.h"], 'cuda': ["cufft.h", "cufftXt.h"]}
+    headers = {"frame": ["cufft.h", "cufftXt.h"], "cuda": ["cufft.h", "cufftXt.h"]}
     state_fields = []
     init_code = ""
     finalize_code = ""

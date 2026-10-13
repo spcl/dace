@@ -1,16 +1,18 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests LoopLocalMemoryReduction transformation."""
 
-import numpy as np
 import copy
+from typing import Any
+
+import numpy as np
+
 import dace
-from dace.sdfg.state import LoopRegion, CodeBlock
+from dace.sdfg.state import CodeBlock, LoopRegion
 from dace.transformation.passes import LoopLocalMemoryReduction
-from typing import Any, Dict
 
 
 # Checks if LoopLocalMemoryReduction applied at least N times and if memory footprint was reduced for a specific option
-def check_transformation_option(orig_sdfg: dace.SDFG, N: int, options: Dict[str, Any]):
+def check_transformation_option(orig_sdfg: dace.SDFG, N: int, options: dict[str, Any]):
     # Apply and validate
     orig_sdfg.validate()
     llmr_sdfg = copy.deepcopy(orig_sdfg)
@@ -43,10 +45,7 @@ def check_transformation_option(orig_sdfg: dace.SDFG, N: int, options: Dict[str,
             input_data_orig[argName] = argType.dtype.type(32)
             continue
 
-        shape = []
-        for entry in argType.shape:
-            shape.append(dace.symbolic.evaluate(entry, {**orig_sdfg.constants, **sym_data}))
-        shape = tuple(shape)
+        shape = tuple(dace.symbolic.evaluate(entry, {**orig_sdfg.constants, **sym_data}) for entry in argType.shape)
         arr = dace.ndarray(shape=shape, dtype=argType.dtype)
         arr[:] = np.random.rand(*arr.shape).astype(arr.dtype)
         input_data_orig[argName] = arr
@@ -56,9 +55,13 @@ def check_transformation_option(orig_sdfg: dace.SDFG, N: int, options: Dict[str,
     llmr_sdfg(**input_data_llmr)
 
     # No difference should be observable
-    assert (sum(not np.array_equal(input_data_orig[argName], input_data_llmr[argName])
-                for argName, argType in llmr_sdfg.arglist().items()) == 0
-            ), f"Output differs after transformation! Options: {options}"
+    assert (
+        sum(
+            not np.array_equal(input_data_orig[argName], input_data_llmr[argName])
+            for argName, argType in llmr_sdfg.arglist().items()
+        )
+        == 0
+    ), f"Output differs after transformation! Options: {options}"
 
     # Memory footprint should be reduced
     orig_mem = sum(np.prod(arrType.shape) for arrName, arrType in orig_sdfg.arrays.items())
@@ -72,13 +75,9 @@ def check_transformation_option(orig_sdfg: dace.SDFG, N: int, options: Dict[str,
 def check_transformation(sdfg: dace.SDFG, N: int, aps: bool = False):
     for bitmask in [False, True]:
         for np2 in [False, True]:
-            check_transformation_option(sdfg,
-                                        N,
-                                        options={
-                                            "bitmask_indexing": bitmask,
-                                            "next_power_of_two": np2,
-                                            "assume_positive_symbols": aps
-                                        })
+            check_transformation_option(
+                sdfg, N, options={"bitmask_indexing": bitmask, "next_power_of_two": np2, "assume_positive_symbols": aps}
+            )
 
 
 def test_simple():
@@ -884,7 +883,7 @@ def test_conditional6():
 
 def test_symbolic_offset():
 
-    N = dace.symbol('N')
+    N = dace.symbol("N")
 
     @dace.program
     def tester(b: dace.float64[32], c: dace.float64[32], d: dace.int64[1]):
@@ -902,7 +901,7 @@ def test_symbolic_offset():
 
 def test_symbolic_sizes():
 
-    N = dace.symbol('N')
+    N = dace.symbol("N")
 
     @dace.program
     def tester(b: dace.float64[N], c: dace.float64[N]):
@@ -919,7 +918,7 @@ def test_symbolic_sizes():
 
 def test_symbolic_k():
 
-    N = dace.symbol('N')
+    N = dace.symbol("N")
 
     @dace.program
     def tester(b: dace.float64[64], c: dace.float64[64]):
@@ -938,10 +937,23 @@ def test_symbolic_k():
 def test_cloudsc():
 
     @dace.program
-    def tester(pt: dace.float64[100000], tendency_tmp_t: dace.float64[100000], ptsphy: dace.float64, r2es: dace.float64,
-               rtice: dace.float64, rtwat: dace.float64, rtwat_rtice_r: dace.float64, r3les: dace.float64,
-               r4les: dace.float64, r3ies: dace.float64, r4ies: dace.float64, rtt: dace.float64,
-               pap: dace.float64[100000], zqx: dace.float64, zsolqa: dace.float64[100000]):
+    def tester(
+        pt: dace.float64[100000],
+        tendency_tmp_t: dace.float64[100000],
+        ptsphy: dace.float64,
+        r2es: dace.float64,
+        rtice: dace.float64,
+        rtwat: dace.float64,
+        rtwat_rtice_r: dace.float64,
+        r3les: dace.float64,
+        r4les: dace.float64,
+        r3ies: dace.float64,
+        r4ies: dace.float64,
+        rtt: dace.float64,
+        pap: dace.float64[100000],
+        zqx: dace.float64,
+        zsolqa: dace.float64[100000],
+    ):
         ztp1 = dace.define_local([100000], dace.float64)
         zfoeewmt = dace.define_local([100000], dace.float64)
         zlevap = dace.define_local([100000], dace.float64)
@@ -953,10 +965,18 @@ def test_cloudsc():
         for jk in range(2, 100000):
             ztp1[jk] = pt[jk] + ptsphy * tendency_tmp_t[jk]
             zfoeewmt[jk] = min(
-                ((r2es * ((min(1.0, ((max(rtice, min(rtwat, ztp1[jk])) - rtice) * rtwat_rtice_r)**2)) *
-                          ((r3les * (ztp1[jk] - rtt)) / (ztp1[jk] - r4les)) +
-                          (1.0 - (min(1.0, ((max(rtice, min(rtwat, ztp1[jk])) - rtice) * rtwat_rtice_r)**2))) *
-                          ((r3ies * (ztp1[jk] - rtt)) / (ztp1[jk] - r4ies))))) / pap[jk], 0.5)
+                (
+                    r2es
+                    * (
+                        (min(1.0, ((max(rtice, min(rtwat, ztp1[jk])) - rtice) * rtwat_rtice_r) ** 2))
+                        * ((r3les * (ztp1[jk] - rtt)) / (ztp1[jk] - r4les))
+                        + (1.0 - (min(1.0, ((max(rtice, min(rtwat, ztp1[jk])) - rtice) * rtwat_rtice_r) ** 2)))
+                        * ((r3ies * (ztp1[jk] - rtt)) / (ztp1[jk] - r4ies))
+                    )
+                )
+                / pap[jk],
+                0.5,
+            )
             zlevap[jk] = zfoeewmt[jk - 1] + max(zqx, 0.0)
             zsolqa[jk] = zsolqa[jk] + zlevap[jk - 1] * zlevap[jk - 2]
 

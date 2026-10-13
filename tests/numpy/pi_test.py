@@ -1,7 +1,9 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
-import numpy as np
 import math
+
+import numpy as np
+
+import dace
 
 
 def test_pi_tasklet():
@@ -39,7 +41,7 @@ def test_piarray_numpy():
     assert np.allclose(a, np.array([math.pi] * 20))
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_pi_tasklet()
     test_pi_numpy()
     test_piarray_numpy()

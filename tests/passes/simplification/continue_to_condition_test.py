@@ -1,11 +1,12 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import numpy as np
+
 import dace
 from dace import nodes
-from dace.transformation.passes.simplification.continue_to_condition import ContinueToCondition
-from dace.sdfg.state import ContinueBlock, LoopRegion, ConditionalBlock, ControlFlowRegion
 from dace.properties import CodeBlock
+from dace.sdfg.state import ConditionalBlock, ContinueBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.pass_pipeline import FixedPointPipeline
+from dace.transformation.passes.simplification.continue_to_condition import ContinueToCondition
 
 
 def test_regular_loop():
@@ -342,7 +343,7 @@ def test_nested_loops():
     assert len(cont_nodes) == 1
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_regular_loop()
     test_flipped()
     test_no_condition()

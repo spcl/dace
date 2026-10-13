@@ -1,6 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
 import numpy as np
+
+import dace
 
 
 @dace.program
@@ -48,7 +49,7 @@ def onetest(program):
     sdfg(A=A, B=B)
 
     diff = np.linalg.norm(expected - B)
-    print('Difference:', diff)
+    print("Difference:", diff)
     assert diff < 1e-5
 
 
@@ -66,7 +67,7 @@ def onetest_subrange_of_subrange(program):
     sdfg(A=A, B=B)
 
     diff = np.linalg.norm(expected - B)
-    print('Difference:', diff)
+    print("Difference:", diff)
     assert diff < 1e-5
 
 
@@ -94,7 +95,7 @@ def test_subrange_of_subrange_nested():
     onetest_subrange_of_subrange(subrange_of_subrange_nested)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_nested_subrange()
     test_subrange1()
     test_subrange2()

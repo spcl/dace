@@ -1,10 +1,10 @@
-import os
-import math
-import dace
 import itertools
+import math
+import os
+
 import numpy as np
 
-from typing import Dict
+import dace
 
 
 def measure(sdfg, dreport=None, repetitions=30, print_report: bool = False):
@@ -28,9 +28,9 @@ def measure(sdfg, dreport=None, repetitions=30, print_report: bool = False):
                 arguments[dnode.data] = dace.data.make_array_from_descriptor(array, np.random.rand(*array.shape))
 
     try:
-        with dace.config.set_temporary('debugprint', value=True):
-            with dace.config.set_temporary('instrumentation', 'report_each_invocation', value=False):
-                with dace.config.set_temporary('compiler', 'allow_view_arguments', value=True):
+        with dace.config.set_temporary("debugprint", value=True):
+            with dace.config.set_temporary("instrumentation", "report_each_invocation", value=False):
+                with dace.config.set_temporary("compiler", "allow_view_arguments", value=True):
                     csdfg = sdfg.compile()
 
                     for _ in range(repetitions):
@@ -54,33 +54,33 @@ def partition(it, size):
 
 
 def get_world_rank():
-    if 'MV2_COMM_WORLD_RANK' in os.environ:
-        return int(os.environ['MV2_COMM_WORLD_RANK'])
-    elif 'OMPI_COMM_WORLD_RANK' in os.environ:
-        return int(os.environ['OMPI_COMM_WORLD_RANK'])
-    elif 'SLURM_PROCID' in os.environ:
-        return int(os.environ['SLURM_PROCID'])
+    if "MV2_COMM_WORLD_RANK" in os.environ:
+        return int(os.environ["MV2_COMM_WORLD_RANK"])
+    elif "OMPI_COMM_WORLD_RANK" in os.environ:
+        return int(os.environ["OMPI_COMM_WORLD_RANK"])
+    elif "SLURM_PROCID" in os.environ:
+        return int(os.environ["SLURM_PROCID"])
     else:
-        print('Cannot get world rank, running in sequential mode')
+        print("Cannot get world rank, running in sequential mode")
         return 0
 
 
 def get_world_size():
-    if 'MV2_COMM_WORLD_SIZE' in os.environ:
-        return int(os.environ['MV2_COMM_WORLD_SIZE'])
-    elif 'OMPI_COMM_WORLD_SIZE' in os.environ:
-        return int(os.environ['OMPI_COMM_WORLD_SIZE'])
-    elif 'SLURM_NTASKS' in os.environ:
-        return int(os.environ['SLURM_NTASKS'])
+    if "MV2_COMM_WORLD_SIZE" in os.environ:
+        return int(os.environ["MV2_COMM_WORLD_SIZE"])
+    elif "OMPI_COMM_WORLD_SIZE" in os.environ:
+        return int(os.environ["OMPI_COMM_WORLD_SIZE"])
+    elif "SLURM_NTASKS" in os.environ:
+        return int(os.environ["SLURM_NTASKS"])
     else:
-        print('Cannot get world size, running in sequential mode')
+        print("Cannot get world size, running in sequential mode")
         return 1
 
 
+import multiprocessing as mp
 import traceback
 
-import multiprocessing as mp
-if __name__ == '__main__':
+if __name__ == "__main__":
     mp.set_start_method("spawn")
 
 
@@ -108,7 +108,7 @@ def subprocess_measure(cutout: dace.SDFG, dreport, repetitions: int = 30, timeou
     return runtime
 
 
-def _subprocess_measure(cutout_json: Dict, dreport, repetitions: int, q: mp.Queue) -> float:
+def _subprocess_measure(cutout_json: dict, dreport, repetitions: int, q: mp.Queue) -> float:
     cutout = dace.SDFG.from_json(cutout_json)
 
     arguments = {}
@@ -135,9 +135,9 @@ def _subprocess_measure(cutout_json: Dict, dreport, repetitions: int, q: mp.Queu
         if not name in arguments:
             del cutout.arrays[name]
 
-    with dace.config.set_temporary('debugprint', value=False):
-        with dace.config.set_temporary('instrumentation', 'report_each_invocation', value=False):
-            with dace.config.set_temporary('compiler', 'allow_view_arguments', value=True):
+    with dace.config.set_temporary("debugprint", value=False):
+        with dace.config.set_temporary("instrumentation", "report_each_invocation", value=False):
+            with dace.config.set_temporary("compiler", "allow_view_arguments", value=True):
                 cutout.build_folder = "/dev/shm"
                 csdfg = cutout.compile()
                 for _ in range(repetitions):
@@ -151,7 +151,6 @@ def _subprocess_measure(cutout_json: Dict, dreport, repetitions: int, q: mp.Queu
 
 
 class MeasureProcess(mp.Process):
-
     def __init__(self, *args, **kwargs):
         mp.Process.__init__(self, *args, **kwargs)
         self._pconn, self._cconn = mp.Pipe()

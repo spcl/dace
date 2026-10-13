@@ -34,16 +34,19 @@ The HLFIR Fortran frontend uses ``ConvertLengthOneArraysToScalars`` as a post-ge
 ``Scalar`` data on the SDFG signature binds to a plain Python ``int`` / ``float`` whereas a length-1
 ``Array`` needs a 1-element numpy buffer.
 """
+
 import ast
 import itertools
-from typing import Callable, Dict, List, Optional, Set, Tuple
+from collections.abc import Callable
 
 import dace
 from dace import Memlet, dtypes, properties, subsets
 from dace.properties import CodeBlock
-from dace.sdfg import SDFG, SDFGState, InterstateEdge, nodes, utils as sdutil
+from dace.sdfg import SDFG, InterstateEdge, SDFGState, nodes
+from dace.sdfg import utils as sdutil
 from dace.sdfg.state import ConditionalBlock, LoopRegion
-from dace.transformation import pass_pipeline as ppl, transformation
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation import transformation
 
 #: Rewrites one source-text slot; see :func:`rewrite_code_slots`.
 CodeSlotRewriter = Callable[[str], str]
@@ -87,8 +90,9 @@ def rewrite_code_slots(sdfg: SDFG, rewrite: CodeSlotRewriter) -> None:
             if isinstance(block.init_statement, CodeBlock):
                 block.init_statement = CodeBlock(rewrite(block.init_statement.as_string), block.init_statement.language)
             if isinstance(block.update_statement, CodeBlock):
-                block.update_statement = CodeBlock(rewrite(block.update_statement.as_string),
-                                                   block.update_statement.language)
+                block.update_statement = CodeBlock(
+                    rewrite(block.update_statement.as_string), block.update_statement.language
+                )
             if isinstance(block.loop_condition, CodeBlock):
                 block.loop_condition = CodeBlock(rewrite(block.loop_condition.as_string), block.loop_condition.language)
 
@@ -109,13 +113,17 @@ class ScalarRefRewriter(ast.NodeTransformer):
     :param rename: Mapping from each rewritten descriptor's old name to its new name.
     """
 
-    def __init__(self, rename: Dict[str, str]):
+    def __init__(self, rename: dict[str, str]):
         self.rename = rename
 
     def visit_Subscript(self, node: ast.Subscript):
         index = node.slice.value if isinstance(node.slice, ast.Index) else node.slice
-        if (isinstance(node.value, ast.Name) and node.value.id in self.rename and isinstance(index, ast.Constant)
-                and index.value == 0):
+        if (
+            isinstance(node.value, ast.Name)
+            and node.value.id in self.rename
+            and isinstance(index, ast.Constant)
+            and index.value == 0
+        ):
             return ast.copy_location(ast.Name(id=self.rename[node.value.id], ctx=node.ctx), node)
         return self.generic_visit(node)
 
@@ -131,7 +139,7 @@ class ElementRefRewriter(ast.NodeTransformer):
     :param rename: Mapping from each rewritten descriptor's old name to its new name.
     """
 
-    def __init__(self, rename: Dict[str, str]):
+    def __init__(self, rename: dict[str, str]):
         self.rename = rename
 
     def visit_Subscript(self, node: ast.Subscript):
@@ -145,9 +153,9 @@ class ElementRefRewriter(ast.NodeTransformer):
     def visit_Name(self, node: ast.Name):
         if node.id not in self.rename:
             return node
-        element = ast.Subscript(value=ast.Name(id=self.rename[node.id], ctx=ast.Load()),
-                                slice=ast.Constant(value=0),
-                                ctx=node.ctx)
+        element = ast.Subscript(
+            value=ast.Name(id=self.rename[node.id], ctx=ast.Load()), slice=ast.Constant(value=0), ctx=node.ctx
+        )
         return ast.fix_missing_locations(ast.copy_location(element, node))
 
 
@@ -167,7 +175,7 @@ def _rewrite_with(expr: str, rewriter: ast.NodeTransformer) -> str:
     return ast.unparse(rewriter.visit(tree))
 
 
-def rewrite_refs(expr: str, rename: Dict[str, str]) -> str:
+def rewrite_refs(expr: str, rename: dict[str, str]) -> str:
     """Collapse each rewritten descriptor's redundant ``old[0]`` accessor and rename it to ``new``.
 
     An attribute (``obj.old``) is never a descriptor reference, and a name inside a string literal is
@@ -180,7 +188,7 @@ def rewrite_refs(expr: str, rename: Dict[str, str]) -> str:
     return _rewrite_with(expr, ScalarRefRewriter(rename))
 
 
-def rewrite_refs_to_element(expr: str, rename: Dict[str, str]) -> str:
+def rewrite_refs_to_element(expr: str, rename: dict[str, str]) -> str:
     """Inverse of :func:`rewrite_refs`: point a bare reference at element 0 of a now-length-1 array.
 
     :param expr: Source expression to rewrite.
@@ -190,7 +198,7 @@ def rewrite_refs_to_element(expr: str, rename: Dict[str, str]) -> str:
     return _rewrite_with(expr, ElementRefRewriter(rename))
 
 
-def repoint_memlet_to_element(edge: 'dace.sdfg.graph.MultiConnectorEdge', rename: Dict[str, str]) -> None:
+def repoint_memlet_to_element(edge: "dace.sdfg.graph.MultiConnectorEdge", rename: dict[str, str]) -> None:
     """Re-point one edge's memlet at the rewritten descriptors, collapsing each rewritten side's subset
     to the single element ``0``.
 
@@ -210,17 +218,18 @@ def repoint_memlet_to_element(edge: 'dace.sdfg.graph.MultiConnectorEdge', rename
         return
     if mem.data in rename:
         mem.data = rename[mem.data]
-        mem.subset = subsets.Range.from_string('0')
+        mem.subset = subsets.Range.from_string("0")
     # The other side collapses only when IT is a rewritten descriptor, else validation rejects the rank.
     if mem.other_subset is not None and any(
-            isinstance(n, nodes.AccessNode) and n.data in rename.values() and n.data != mem.data
-            for n in (edge.src, edge.dst)):
-        mem.other_subset = subsets.Range.from_string('0')
+        isinstance(n, nodes.AccessNode) and n.data in rename.values() and n.data != mem.data
+        for n in (edge.src, edge.dst)
+    ):
+        mem.other_subset = subsets.Range.from_string("0")
 
 
 def descriptor_is_read(sdfg: SDFG, name: str) -> bool:
     """True if ``name`` is read anywhere in ``sdfg`` (some AccessNode of it has an out-edge)."""
-    for state in sdfg.all_states():
+    for state in sdfg.states():
         for node in state.nodes():
             if isinstance(node, nodes.AccessNode) and node.data == name and state.out_degree(node) > 0:
                 return True
@@ -229,7 +238,7 @@ def descriptor_is_read(sdfg: SDFG, name: str) -> bool:
 
 def descriptor_is_written(sdfg: SDFG, name: str) -> bool:
     """True if ``name`` is written anywhere in ``sdfg`` (some AccessNode of it has an in-edge)."""
-    for state in sdfg.all_states():
+    for state in sdfg.states():
         for node in state.nodes():
             if isinstance(node, nodes.AccessNode) and node.data == name and state.in_degree(node) > 0:
                 return True
@@ -238,13 +247,13 @@ def descriptor_is_written(sdfg: SDFG, name: str) -> bool:
 
 def _copyin_state(sdfg: SDFG) -> SDFGState:
     """A new start state to hold copy-IN edges (prepended before the current start)."""
-    return sdfg.add_state_before(sdfg.start_state, 'stage_copyin', is_start_block=True)
+    return sdfg.add_state_before(sdfg.start_state, "stage_copyin", is_start_block=True)
 
 
 def _copyout_state(sdfg: SDFG) -> SDFGState:
     """A new sink state to hold copy-OUT edges (all current top-level sinks lead into it)."""
     sinks = [n for n in sdfg.nodes() if sdfg.out_degree(n) == 0]
-    out = sdfg.add_state('stage_copyout')
+    out = sdfg.add_state("stage_copyout")
     for s in sinks:
         sdfg.add_edge(s, out, InterstateEdge())
     return out
@@ -281,34 +290,48 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
         would force an expensive round-trip through the host scalar ABI.
     """
 
-    recursive = properties.Property(dtype=bool, default=True, desc="Recurse into nested SDFGs (transient-only there).")
+    recursive = properties.Property(
+        dtype=bool, default=True, category="Applicability", desc="Recurse into nested SDFGs (transient-only there)."
+    )
     preserve_abi = properties.Property(
         dtype=bool,
         default=False,
+        category="Applicability",
         desc="Convert non-transient length-1 arrays too, keeping the ABI intact by staging them into "
         "fresh transient scalars (copy-in/out) instead of rewriting the signature array. Default only "
-        "scalarizes transients.")
+        "scalarizes transients.",
+    )
     filter = properties.SetProperty(
         element_type=str,
         default=None,
         allow_none=True,
+        category="Applicability",
         desc="Optional whitelist restricting which top-level descriptors are eligible. ``None`` -- no "
         "restriction. A set -- only named descriptors that are ALSO eligible under the other gates are "
-        "rewritten; an empty set rewrites nothing. Does not gate the nested-SDFG recursion.")
+        "rewritten; an empty set rewrites nothing. Does not gate the nested-SDFG recursion.",
+    )
     single_element = properties.Property(
         dtype=bool,
         default=False,
+        category="Applicability",
         desc="Also rewrite a higher-rank single-element array (every dim == 1, e.g. a (1, 1) map-fusion "
-        "scratch buffer), not just a rank-1 length-1 array.")
+        "scratch buffer), not just a rank-1 length-1 array.",
+    )
     skip_gpu_outputs = properties.Property(
-        dtype=bool, default=False, desc="Leave length-1 arrays that are outputs of GPU-scheduled maps as arrays.")
+        dtype=bool,
+        default=False,
+        category="Applicability",
+        desc="Leave length-1 arrays that are outputs of GPU-scheduled maps as arrays.",
+    )
 
-    def __init__(self,
-                 recursive: bool = True,
-                 preserve_abi: bool = False,
-                 filter: 'Optional[Set[str]]' = None,
-                 single_element: bool = False,
-                 skip_gpu_outputs: bool = False):
+    def __init__(
+        self,
+        recursive: bool = True,
+        preserve_abi: bool = False,
+        filter: "set[str] | None" = None,
+        single_element: bool = False,
+        skip_gpu_outputs: bool = False,
+    ):
         super().__init__()
         self.recursive = recursive
         self.preserve_abi = preserve_abi
@@ -322,10 +345,10 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def _blocked_sources(self, sdfg: SDFG) -> Set[str]:
+    def _blocked_sources(self, sdfg: SDFG) -> set[str]:
         """Descriptor names that must stay ``Array`` regardless of shape: a ``View`` cannot carry the
         ``views`` alias edge, and a length-1 array that BACKS a view must stay an aliasable source."""
-        blocked: Set[str] = set()
+        blocked: set[str] = set()
         for state in sdfg.states():
             for node in state.nodes():
                 if not isinstance(node, nodes.AccessNode):
@@ -339,7 +362,7 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
                         blocked.add(other.data)
         return blocked
 
-    def _blocked_by_unscalarizable_neighbors(self, sdfg: SDFG) -> Set[str]:
+    def _blocked_by_unscalarizable_neighbors(self, sdfg: SDFG) -> set[str]:
         """Descriptor names that must stay ``Array`` because a neighbor generates code we cannot
         rewrite from ``buf[0]`` to ``buf``: an unexpanded library node, a non-Python (C++) tasklet,
         or a GPU-scheduled map that uses the buffer as a multi-thread collective.
@@ -347,7 +370,7 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
         For GPU maps we only block the *input* side (edges into a ``MapEntry``) and the *partial* side
         (edges from an inside node into a ``MapExit``). A ``MapExit``-to-outside edge is a normal map
         output; it can be scalarized and is widened back by ``PromoteGPUScalarsToArrays`` when needed."""
-        blocked: Set[str] = set()
+        blocked: set[str] = set()
         for state in sdfg.states():
             for node in state.nodes():
                 if not isinstance(node, nodes.AccessNode):
@@ -386,8 +409,9 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
                             break
         return blocked
 
-    def _is_eligible(self, sdfg: SDFG, arr_name: str, arr: 'dace.data.Data', blocked: Set[str],
-                     apply_filter: bool) -> bool:
+    def _is_eligible(
+        self, sdfg: SDFG, arr_name: str, arr: "dace.data.Data", blocked: set[str], apply_filter: bool
+    ) -> bool:
         """Whether a descriptor is a length-1 (or, with ``single_element``, all-ones) array we may
         rewrite: not a View / view source / opaque, and passing the filter."""
         # ``ArrayReference`` derives from ``Array``, so it reaches here like any other array. Rewriting
@@ -397,7 +421,7 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
             return False
         if arr_name in blocked:
             return False
-        is_len1 = arr.shape == (1, ) or arr.shape == [1]
+        is_len1 = arr.shape == (1,) or arr.shape == [1]
         is_single = self.single_element and len(arr.shape) >= 1 and all(d == 1 for d in arr.shape)
         if not (is_len1 or is_single):
             return False
@@ -407,7 +431,7 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
             return False
         return True
 
-    def _rewrite(self, sdfg: SDFG, apply_filter: bool, stage_nontransients: bool) -> Set[str]:
+    def _rewrite(self, sdfg: SDFG, apply_filter: bool, stage_nontransients: bool) -> set[str]:
         """Scalarize length-1 arrays in ``sdfg`` (modified in place).
 
         Transient arrays are scalarized in place (same name). If ``stage_nontransients``, each
@@ -423,40 +447,44 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
         # rename[old] = the name the body should reference after the rewrite (== old for a transient
         # scalarized in place; a fresh scalar name for a staged non-transient). staged carries the
         # kept signature array plus its read/write direction so copy-in/out can be wired afterwards.
-        rename: Dict[str, str] = {}
-        staged: List[Tuple[str, str, bool, bool]] = []  # (array_name, scalar_name, is_read, is_written)
+        rename: dict[str, str] = {}
+        staged: list[tuple[str, str, bool, bool]] = []  # (array_name, scalar_name, is_read, is_written)
 
         for arr_name, arr in list(sdfg.arrays.items()):
             if not self._is_eligible(sdfg, arr_name, arr, blocked, apply_filter):
                 continue
             if arr.transient:
                 sdfg.remove_data(arr_name, validate=False)
-                sdfg.add_scalar(arr_name,
-                                dtype=arr.dtype,
-                                storage=arr.storage,
-                                transient=True,
-                                lifetime=arr.lifetime,
-                                debuginfo=arr.debuginfo,
-                                find_new_name=False)
+                sdfg.add_scalar(
+                    arr_name,
+                    dtype=arr.dtype,
+                    storage=arr.storage,
+                    transient=True,
+                    lifetime=arr.lifetime,
+                    debuginfo=arr.debuginfo,
+                    find_new_name=False,
+                )
                 rename[arr_name] = arr_name
             elif stage_nontransients:
                 is_read = descriptor_is_read(sdfg, arr_name)
                 is_written = descriptor_is_written(sdfg, arr_name)
                 # Fresh name every time (find_new_name): a re-run over an already-staged array never
                 # collides with the scalar an earlier run created.
-                scal_name, _ = sdfg.add_scalar(f'scal_{arr_name}',
-                                               dtype=arr.dtype,
-                                               storage=arr.storage,
-                                               transient=True,
-                                               lifetime=arr.lifetime,
-                                               debuginfo=arr.debuginfo,
-                                               find_new_name=True)
+                scal_name, _ = sdfg.add_scalar(
+                    f"scal_{arr_name}",
+                    dtype=arr.dtype,
+                    storage=arr.storage,
+                    transient=True,
+                    lifetime=arr.lifetime,
+                    debuginfo=arr.debuginfo,
+                    find_new_name=True,
+                )
                 rename[arr_name] = scal_name
                 staged.append((arr_name, scal_name, is_read, is_written))
 
         # Rewrite every body reference of a rewritten descriptor to its target name, collapsing the
         # length-1 subset to the scalar element.
-        for state in sdfg.all_states():
+        for state in sdfg.states():
             for node in state.nodes():
                 if isinstance(node, nodes.AccessNode) and node.data in rename:
                     node.data = rename[node.data]
@@ -473,24 +501,24 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
                 if is_read:
                     a = copyin.add_read(arr_name)
                     s = copyin.add_write(scal_name)
-                    copyin.add_nedge(a, s, Memlet(data=arr_name, subset='0'))
+                    copyin.add_nedge(a, s, Memlet(data=arr_name, subset="0"))
                 if is_written:
                     s = copyout.add_read(scal_name)
                     a = copyout.add_write(arr_name)
-                    copyout.add_nedge(s, a, Memlet(data=arr_name, subset='0'))
+                    copyout.add_nedge(s, a, Memlet(data=arr_name, subset="0"))
 
         # Offset / dimension symbols carried purely for the rewritten arrays are now dead; drop them so
         # the signature shrinks. ``used_symbols(all_symbols=True)`` covers every reference site.
-        referenced: Set[str] = {str(s) for s in sdfg.used_symbols(all_symbols=True)}
+        referenced: set[str] = {str(s) for s in sdfg.used_symbols(all_symbols=True)}
         for nm in list(sdfg.symbols):
             if nm in referenced:
                 continue
-            prefixes = [f'offset_{a}_d' for a in rename] + [f'{a}_d' for a in rename]
+            prefixes = [f"offset_{a}_d" for a in rename] + [f"{a}_d" for a in rename]
             if any(nm.startswith(p) for p in prefixes):
                 sdfg.symbols.pop(nm, None)
 
         if self.recursive:
-            for state in sdfg.all_states():
+            for state in sdfg.states():
                 for node in state.nodes():
                     if isinstance(node, nodes.NestedSDFG):
                         # Nested-SDFG recursion is transient-only (a non-transient inner arg belongs to
@@ -500,7 +528,7 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
 
         return set(rename)
 
-    def apply_pass(self, sdfg: SDFG, _: dict) -> Optional[Set[str]]:
+    def apply_pass(self, sdfg: SDFG, _: dict) -> set[str] | None:
         rewritten = self._rewrite(sdfg, apply_filter=True, stage_nontransients=self.preserve_abi)
         return rewritten or None
 
@@ -524,21 +552,27 @@ class ConvertScalarsToLengthOneArrays(ppl.Pass):
         forward pass). ``None`` (default) -- no restriction; an empty set rewrites nothing.
     """
 
-    recursive = properties.Property(dtype=bool, default=True, desc="Recurse into nested SDFGs (transient-only there).")
+    recursive = properties.Property(
+        dtype=bool, default=True, category="Applicability", desc="Recurse into nested SDFGs (transient-only there)."
+    )
     preserve_abi = properties.Property(
         dtype=bool,
         default=False,
+        category="Applicability",
         desc="Convert non-transient scalars too, keeping the ABI intact by staging them into fresh "
         "transient length-1 arrays (copy-in/out) instead of rewriting the signature scalar. Default "
-        "only arrayizes transients.")
+        "only arrayizes transients.",
+    )
     filter = properties.SetProperty(
         element_type=str,
         default=None,
         allow_none=True,
+        category="Applicability",
         desc="Optional whitelist restricting which top-level descriptors are eligible. ``None`` -- no "
-        "restriction; an empty set rewrites nothing. Does not gate the nested-SDFG recursion.")
+        "restriction; an empty set rewrites nothing. Does not gate the nested-SDFG recursion.",
+    )
 
-    def __init__(self, recursive: bool = True, preserve_abi: bool = False, filter: 'Optional[Set[str]]' = None):
+    def __init__(self, recursive: bool = True, preserve_abi: bool = False, filter: "set[str] | None" = None):
         super().__init__()
         self.recursive = recursive
         self.preserve_abi = preserve_abi
@@ -550,7 +584,7 @@ class ConvertScalarsToLengthOneArrays(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def _rewrite(self, sdfg: SDFG, apply_filter: bool, stage_nontransients: bool) -> Set[str]:
+    def _rewrite(self, sdfg: SDFG, apply_filter: bool, stage_nontransients: bool) -> set[str]:
         """Arrayize scalars in ``sdfg`` (modified in place); mirror of the forward ``_rewrite``.
 
         :param sdfg: SDFG to rewrite.
@@ -558,8 +592,8 @@ class ConvertScalarsToLengthOneArrays(ppl.Pass):
         :param stage_nontransients: Whether to stage non-transient scalars (top level only).
         :returns: Names of the descriptors that are now array-referenced in the body.
         """
-        rename: Dict[str, str] = {}
-        staged: List[Tuple[str, str, bool, bool]] = []  # (scalar_name, array_name, is_read, is_written)
+        rename: dict[str, str] = {}
+        staged: list[tuple[str, str, bool, bool]] = []  # (scalar_name, array_name, is_read, is_written)
 
         for name, desc in list(sdfg.arrays.items()):
             if not isinstance(desc, dace.data.Scalar) or isinstance(desc.dtype, dace.dtypes.opaque):
@@ -568,14 +602,16 @@ class ConvertScalarsToLengthOneArrays(ppl.Pass):
                 continue
             if desc.transient:
                 sdfg.remove_data(name, validate=False)
-                sdfg.add_array(name,
-                               shape=(1, ),
-                               dtype=desc.dtype,
-                               storage=desc.storage,
-                               transient=True,
-                               lifetime=desc.lifetime,
-                               debuginfo=desc.debuginfo,
-                               find_new_name=False)
+                sdfg.add_array(
+                    name,
+                    shape=(1,),
+                    dtype=desc.dtype,
+                    storage=desc.storage,
+                    transient=True,
+                    lifetime=desc.lifetime,
+                    debuginfo=desc.debuginfo,
+                    find_new_name=False,
+                )
                 rename[name] = name
             elif stage_nontransients:
                 is_read = descriptor_is_read(sdfg, name)
@@ -583,18 +619,20 @@ class ConvertScalarsToLengthOneArrays(ppl.Pass):
                 # ``find_new_name`` makes add_array return ``(name, desc)``; binding the tuple as the
                 # name leaves every rename target a tuple and the first Memlet built from it raises
                 # ``Invalid type "tuple" for property data``. The forward pass unpacks the same way.
-                arr_name, _ = sdfg.add_array(f'arr_{name}',
-                                             shape=(1, ),
-                                             dtype=desc.dtype,
-                                             storage=desc.storage,
-                                             transient=True,
-                                             lifetime=desc.lifetime,
-                                             debuginfo=desc.debuginfo,
-                                             find_new_name=True)
+                arr_name, _ = sdfg.add_array(
+                    f"arr_{name}",
+                    shape=(1,),
+                    dtype=desc.dtype,
+                    storage=desc.storage,
+                    transient=True,
+                    lifetime=desc.lifetime,
+                    debuginfo=desc.debuginfo,
+                    find_new_name=True,
+                )
                 rename[name] = arr_name
                 staged.append((name, arr_name, is_read, is_written))
 
-        for state in sdfg.all_states():
+        for state in sdfg.states():
             for node in state.nodes():
                 if isinstance(node, nodes.AccessNode) and node.data in rename:
                     node.data = rename[node.data]
@@ -611,19 +649,19 @@ class ConvertScalarsToLengthOneArrays(ppl.Pass):
                 if is_read:
                     s = copyin.add_read(scal_name)
                     a = copyin.add_write(arr_name)
-                    copyin.add_nedge(s, a, Memlet(data=arr_name, subset='0'))
+                    copyin.add_nedge(s, a, Memlet(data=arr_name, subset="0"))
                 if is_written:
                     a = copyout.add_read(arr_name)
                     s = copyout.add_write(scal_name)
-                    copyout.add_nedge(a, s, Memlet(data=arr_name, subset='0'))
+                    copyout.add_nedge(a, s, Memlet(data=arr_name, subset="0"))
 
         if self.recursive:
-            for state in sdfg.all_states():
+            for state in sdfg.states():
                 for node in state.nodes():
                     if isinstance(node, nodes.NestedSDFG):
                         self._rewrite(node.sdfg, apply_filter=False, stage_nontransients=False)
         return set(rename)
 
-    def apply_pass(self, sdfg: SDFG, _: dict) -> Optional[Set[str]]:
+    def apply_pass(self, sdfg: SDFG, _: dict) -> set[str] | None:
         rewritten = self._rewrite(sdfg, apply_filter=True, stage_nontransients=self.preserve_abi)
         return rewritten or None

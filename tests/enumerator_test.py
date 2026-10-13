@@ -1,18 +1,18 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-from dace.transformation.estimator.enumeration.brute_force_enumerator import BruteForceEnumerator
-from dace.transformation.estimator.enumeration.connected_enumerator import ConnectedEnumerator
-import dace
 import numpy as np
 import pytest
 
-from dace.transformation.estimator import GreedyEnumerator
-from dace.transformation.subgraph.composite import CompositeFusion
+import dace
 from dace.sdfg.graph import SubgraphView
 from dace.transformation.dataflow.reduce_expansion import ReduceExpansion
+from dace.transformation.estimator import GreedyEnumerator
+from dace.transformation.estimator.enumeration.brute_force_enumerator import BruteForceEnumerator
+from dace.transformation.estimator.enumeration.connected_enumerator import ConnectedEnumerator
+from dace.transformation.subgraph.composite import CompositeFusion
 
-W = dace.symbol('W')
-H = dace.symbol('H')
-B = dace.symbol('B')
+W = dace.symbol("W")
+H = dace.symbol("H")
+B = dace.symbol("B")
 
 
 @dace.program
@@ -26,7 +26,7 @@ def p1(in1: dace.float32[W, H, B], in2: dace.float32[W, H], out: dace.float32[W,
             c = a + b * 2
 
     tmp2 = np.ndarray([W, H, B], dtype=dace.float32)
-    #tmp3 = np.ndarray([W, H], dtype=dace.float32)
+    # tmp3 = np.ndarray([W, H], dtype=dace.float32)
 
     for i, j, k in dace.map[0:W, 0:H, 0:B]:
         with dace.tasklet:

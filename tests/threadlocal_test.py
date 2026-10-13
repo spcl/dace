@@ -1,6 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
 import numpy as np
+
+import dace
 
 
 @dace.program
@@ -27,12 +28,12 @@ def test_threadlocal():
 
     # Add OpenMP include
     sdfg = tlarray.to_sdfg()
-    sdfg.set_global_code('#include <omp.h>')
+    sdfg.set_global_code("#include <omp.h>")
 
     sdfg(A=A)
     assert np.all(A >= 0)
-    print('OK. Detected threads:', np.max(A) + 1)
+    print("OK. Detected threads:", np.max(A) + 1)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_threadlocal()

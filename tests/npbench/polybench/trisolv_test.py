@@ -1,17 +1,19 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 # Original application code: NPBench - https://github.com/spcl/npbench
-import dace.dtypes
-import numpy as np
-import dace as dc
-import pytest
 import argparse
-from dace.transformation.auto.auto_optimize import auto_optimize
+
+import numpy as np
+import pytest
+
+import dace as dc
+import dace.dtypes
 from dace.autodiff import add_backward_pass
+from dace.transformation.auto.auto_optimize import auto_optimize
 
 # Data set sizes
 # N
 sizes = {"mini": 40, "small": 120, "medium": 400, "large": 2000, "extra-large": 4000}
-N = dc.symbol('N', dtype=dc.int64)
+N = dc.symbol("N", dtype=dc.int64)
 
 
 @dc.program
@@ -22,8 +24,8 @@ def trisolv_kernel(L: dc.float64[N, N], x: dc.float64[N], b: dc.float64[N]):
 
 def initialize(N, datatype=np.float64):
     L = np.fromfunction(lambda i, j: (i + N - j + 1) * 2 / N, (N, N), dtype=datatype)
-    x = np.full((N, ), -999, dtype=datatype)
-    b = np.fromfunction(lambda i: i, (N, ), dtype=datatype)
+    x = np.full((N,), -999, dtype=datatype)
+    b = np.fromfunction(lambda i: i, (N,), dtype=datatype)
     return L, x, b
 
 
@@ -47,10 +49,10 @@ def ground_truth(L, x, b):
 
 
 def run_trisolv(device_type: dace.dtypes.DeviceType):
-    '''
+    """
     Runs trisolv for the given device
     :return: the SDFG
-    '''
+    """
 
     # Initialize data (polybench mini size)
     N = sizes["mini"]
@@ -71,7 +73,7 @@ def run_trisolv(device_type: dace.dtypes.DeviceType):
 def run_trisolv_autodiff():
     import jax
     import jax.numpy as jnp
-    import jax.lax as lax
+    from jax import lax
 
     # Initialize data (polybench mini size)
     N = sizes["mini"]
@@ -79,7 +81,7 @@ def run_trisolv_autodiff():
 
     # Initialize gradient computation data
     gradient_L = np.zeros_like(L)
-    gradient___return = np.ones((1, ), dtype=np.float64)
+    gradient___return = np.ones((1,), dtype=np.float64)
 
     # Define sum reduction for the output
     @dc.program
@@ -119,9 +121,8 @@ def test_autodiff():
 
 
 if __name__ == "__main__":
-
     parser = argparse.ArgumentParser()
-    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu'], help='Target platform')
+    parser.add_argument("-t", "--target", default="cpu", choices=["cpu", "gpu"], help="Target platform")
 
     args = vars(parser.parse_args())
     target = args["target"]

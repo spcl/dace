@@ -1,7 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 
-B, C, E, F = (dace.symbol(s) for s in 'BCEF')
+B, C, E, F = (dace.symbol(s) for s in "BCEF")
 
 
 @dace.program
@@ -21,11 +21,11 @@ def test_inline_symbol():
     #   to `True`. However, since the SDFG is also valid when `validate_undefs` is set to `False`,
     #   as it can be seen below, this test actually does not serves any meaning. It would be more
     #   meaningful if one of the cases, probably the `validate_undefs=True` case, would fail.
-    with dace.config.set_temporary('experimental', 'validate_undefs', value=False):
+    with dace.config.set_temporary("experimental", "validate_undefs", value=False):
         sdfg.validate()
-    with dace.config.set_temporary('experimental', 'validate_undefs', value=True):
+    with dace.config.set_temporary("experimental", "validate_undefs", value=True):
         sdfg.validate()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_inline_symbol()

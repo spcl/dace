@@ -1,13 +1,12 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
 import numpy as np
-
-from dace.sdfg.graph import SubgraphView
-
-from dace.transformation.subgraph import SubgraphFusion
 from util import expand_maps, expand_reduce, fusion
 
-N, M, O = [dace.symbol(s) for s in ['N', 'M', 'O']]
+import dace
+from dace.sdfg.graph import SubgraphView
+from dace.transformation.subgraph import SubgraphFusion
+
+N, M, O = [dace.symbol(s) for s in ["N", "M", "O"]]
 
 A = np.random.rand(50).astype(np.float64)
 B = np.random.rand(60).astype(np.float64)
@@ -18,8 +17,14 @@ out3 = np.ndarray((50, 60, 70), np.float64)
 
 
 @dace.program
-def subgraph_fusion_complex(A: dace.float64[N], B: dace.float64[M], C: dace.float64[O], out1: dace.float64[N, M],
-                            out2: dace.float64[1], out3: dace.float64[N, M, O]):
+def subgraph_fusion_complex(
+    A: dace.float64[N],
+    B: dace.float64[M],
+    C: dace.float64[O],
+    out1: dace.float64[N, M],
+    out2: dace.float64[1],
+    out3: dace.float64[N, M, O],
+):
 
     tmp1 = np.ndarray([N, M, O], dtype=dace.float64)
     tmp2 = np.ndarray([N, M, O], dtype=dace.float64)
@@ -106,7 +111,7 @@ def _test_quantitatively(sdfg, graph):
 
     expand_reduce(sdfg, graph)
     expand_maps(sdfg, graph)
-    subgraph = SubgraphView(graph, [node for node in graph.nodes()])
+    subgraph = SubgraphView(graph, list(graph.nodes()))
     sf = SubgraphFusion()
     sf.setup_match(subgraph)
     assert sf.can_be_applied(sdfg, subgraph) == True
@@ -119,7 +124,7 @@ def _test_quantitatively(sdfg, graph):
     assert np.allclose(out1, out1_base)
     assert np.allclose(out2, out2_base)
     assert np.allclose(out3, out3_base)
-    print('PASS')
+    print("PASS")
 
 
 def test_complex():

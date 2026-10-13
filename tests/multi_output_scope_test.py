@@ -1,8 +1,9 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
 import numpy as np
 
-W = dace.symbol('W')
+import dace
+
+W = dace.symbol("W")
 
 
 @dace.program
@@ -31,7 +32,7 @@ def test():
 
     mean = stats[0] / W
     variance = stats[1] / W - mean * mean
-    print("Mean: %f, Variance: %f" % (mean, variance))
+    print(f"Mean: {mean:f}, Variance: {variance:f}")
 
     diff_mean = abs(mean - np.mean(A))
     print("Difference (mean):", diff_mean)

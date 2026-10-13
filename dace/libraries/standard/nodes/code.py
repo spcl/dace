@@ -1,34 +1,34 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 from copy import deepcopy
+
+import dace.library
 from dace import dtypes
 from dace.data import Data
-from dace.properties import Property
-from dace.sdfg.nodes import Node, Tasklet, LibraryNode
-import dace.library
 from dace.memlet import Memlet
+from dace.properties import Property
 from dace.sdfg import SDFG, SDFGState
+from dace.sdfg.nodes import LibraryNode, Node, Tasklet
 from dace.transformation.transformation import ExpandTransformation
-from typing import Dict, Tuple
 
 
 def _dataview(data: Data, memlet: Memlet) -> Data:
-    """ Returns a data descriptor view of a data descriptor and a memlet. """
+    """Returns a data descriptor view of a data descriptor and a memlet."""
     result = deepcopy(data)
     result.shape = memlet.subset.size()
     return result
 
 
-def _get_inputs_and_outputs(sdfg: SDFG, state: SDFGState, node: Node) -> Tuple[Dict[str, Data], Dict[str, Data]]:
-    """ Returns two dictionaries that map from input/output connectors to data
-        descriptors.
+def _get_inputs_and_outputs(sdfg: SDFG, state: SDFGState, node: Node) -> tuple[dict[str, Data], dict[str, Data]]:
+    """Returns two dictionaries that map from input/output connectors to data
+    descriptors.
 
-        :return: Tuple of (input memlet mapping, output memlet mapping).
+    :return: Tuple of (input memlet mapping, output memlet mapping).
     """
-    inputs: Dict[str, Data] = {}
+    inputs: dict[str, Data] = {}
     for edge in state.in_edges(node):
         inputs[edge.dst_conn] = _dataview(sdfg.arrays[edge.data.data], edge.data)
 
-    outputs: Dict[str, Data] = {}
+    outputs: dict[str, Data] = {}
     for edge in state.out_edges(node):
         outputs[edge.src_conn] = _dataview(sdfg.arrays[edge.data.data], edge.data)
 
@@ -37,44 +37,44 @@ def _get_inputs_and_outputs(sdfg: SDFG, state: SDFGState, node: Node) -> Tuple[D
 
 @dace.library.node
 class CodeLibraryNode(LibraryNode):
-    """ A convenience interface for nodes to generate specific code given
-        properties. """
+    """A convenience interface for nodes to generate specific code given
+    properties."""
 
     # Global properties
     implementations = {}
     default_implementation = None
 
-    inputdict = Property(dtype=dict, default={})
-    outputdict = Property(dtype=dict, default={})
+    inputdict = Property(dtype=dict, default={}, category="General")
+    outputdict = Property(dtype=dict, default={}, category="General")
 
     def has_side_effects(self, sdfg) -> bool:
         # By default, assume code library nodes have side effects unless said otherwise
         return True
 
-    def generate_code(self, inputs: Dict[str, Data], outputs: Dict[str, Data]) -> str:
-        """ Method that is responsible for generating the code related to
-            this node.
+    def generate_code(self, inputs: dict[str, Data], outputs: dict[str, Data]) -> str:
+        """Method that is responsible for generating the code related to
+        this node.
 
-            :param inputs: A dictionary mapping input names (on node connectors)
-                           to data descriptors based on incoming memlets.
-            :param outputs: A dictionary mapping output names (on node connectors)
-                           to data descriptors based on outgoing memlets.
-            :return: A string representing C++ code to be injected instead
-                     of this node.
-            :note: This method must be overridden by subclasses.
+        :param inputs: A dictionary mapping input names (on node connectors)
+                       to data descriptors based on incoming memlets.
+        :param outputs: A dictionary mapping output names (on node connectors)
+                       to data descriptors based on outgoing memlets.
+        :return: A string representing C++ code to be injected instead
+                 of this node.
+        :note: This method must be overridden by subclasses.
         """
-        raise NotImplementedError('Must be overridden by subclasses')
+        raise NotImplementedError("Must be overridden by subclasses")
 
-    def __init__(self, input_names, output_names, *args, name='Custom Code', **kwargs):
+    def __init__(self, input_names, output_names, *args, name="Custom Code", **kwargs):
         # Store connector types, if given
         if isinstance(input_names, dict):
             self.inputdict = input_names
         else:
-            self.inputdict = {k: None for k in set(input_names)}
+            self.inputdict = dict.fromkeys(set(input_names))
         if isinstance(output_names, dict):
             self.outputdict = output_names
         else:
-            self.outputdict = {k: None for k in set(output_names)}
+            self.outputdict = dict.fromkeys(set(output_names))
 
         super().__init__(name, *args, inputs=set(input_names), outputs=set(output_names), **kwargs)
 
@@ -90,8 +90,8 @@ class Expansion(ExpandTransformation):
         # Generate the appropriate code
         code = node.generate_code(inputs, outputs)
         # Replace this node with a C++ tasklet
-        return Tasklet('custom_code', node.inputdict, node.outputdict, code, language=dtypes.Language.CPP)
+        return Tasklet("custom_code", node.inputdict, node.outputdict, code, language=dtypes.Language.CPP)
 
 
-CodeLibraryNode.register_implementation('default', Expansion)
-CodeLibraryNode.default_implementation = 'default'
+CodeLibraryNode.register_implementation("default", Expansion)
+CodeLibraryNode.default_implementation = "default"

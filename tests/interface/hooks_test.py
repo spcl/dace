@@ -3,9 +3,11 @@
 Tests hooks that can be used to extend DaCe functionality.
 """
 
-import dace
-import numpy as np
 from contextlib import contextmanager
+
+import numpy as np
+
+import dace
 
 
 def test_hooks():
@@ -16,25 +18,25 @@ def test_hooks():
         pass
 
     def before(_):
-        called_list.append('before')
+        called_list.append("before")
 
     def after(_):
-        called_list.append('after')
+        called_list.append("after")
 
     def before2(_):
-        called_list.append('before2')
+        called_list.append("before2")
 
     def after2(_):
-        called_list.append('after2')
+        called_list.append("after2")
 
     def before_csdfg(*args):
-        called_list.append('before_csdfg')
+        called_list.append("before_csdfg")
 
     @contextmanager
     def ctxmgr(sdfg):
-        called_list.append('ctxmgr-before-' + sdfg.name[-6:])
+        called_list.append("ctxmgr-before-" + sdfg.name[-6:])
         yield
-        called_list.append('ctxmgr-after')
+        called_list.append("ctxmgr-after")
 
     with dace.hooks.on_call(before=before, after=after):
         with dace.hooks.on_compiled_sdfg_call(before=before_csdfg):
@@ -44,7 +46,13 @@ def test_hooks():
 
     # Ensure hooks are called in the right order
     assert called_list == [
-        'before', 'before2', 'ctxmgr-before-tester', 'before_csdfg', 'ctxmgr-after', 'after2', 'after'
+        "before",
+        "before2",
+        "ctxmgr-before-tester",
+        "before_csdfg",
+        "ctxmgr-after",
+        "after2",
+        "after",
     ]
     called_list.clear()
 
@@ -77,10 +85,10 @@ def test_profile():
     assert len(prof.times) == 2
     assert len(prof.times[0][1]) == 10
     assert len(prof.times[1][1]) == 10
-    assert prof.times[0][0].name.endswith('test2')
-    assert prof.times[1][0].name.endswith('test1')
+    assert prof.times[0][0].name.endswith("test2")
+    assert prof.times[1][0].name.endswith("test1")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_hooks()
     test_profile()

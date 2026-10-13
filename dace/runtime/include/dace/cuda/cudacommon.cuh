@@ -52,6 +52,20 @@ typedef cudaError_t gpuError_t;
     }                                                                          \
   } while (0)
 
+// Allows a kernel to use more dynamic shared memory than the device grants by
+// default. If the device cannot provide it, reports the kernel's request and
+// the device's limit, records the error, and returns from the calling
+// (launching) function.
+#define DACE_KERNEL_REQUEST_DYNAMIC_SHARED_MEMORY(kernel, kernel_name, bytes) \
+  do {                                                                         \
+    gpuError_t __dace_smem_err = dace::cuda::request_dynamic_shared_memory(    \
+        (const void *)(kernel), (kernel_name), (bytes));                       \
+    if (__dace_smem_err != (gpuError_t)0) {                                    \
+      __state->gpu_context->record_error(__dace_smem_err);                     \
+      return;                                                                  \
+    }                                                                          \
+  } while (0)
+
 namespace dace {
 namespace cuda {
 struct Context {
@@ -81,6 +95,40 @@ struct Context {
     }
   }
 };
+
+// Allows ``kernel`` to be launched with ``bytes`` of dynamic shared memory,
+// beyond the amount devices grant without opting in. On failure, prints the
+// request and the most the current device can grant a thread-block.
+static inline gpuError_t request_dynamic_shared_memory(const void *kernel,
+                                                       const char *kernel_name,
+                                                       size_t bytes) {
+#if defined(__HIPCC__) || defined(WITH_HIP)
+  gpuError_t err = hipFuncSetAttribute(
+      kernel, hipFuncAttributeMaxDynamicSharedMemorySize, (int)bytes);
+  const auto optin_attribute = hipDeviceAttributeSharedMemPerBlockOptin;
+#else
+  gpuError_t err = cudaFuncSetAttribute(
+      kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, (int)bytes);
+  const auto optin_attribute = cudaDevAttrMaxSharedMemoryPerBlockOptin;
+#endif
+  if (err != (gpuError_t)0) {
+    int device = 0, max_bytes = -1;
+#if defined(__HIPCC__) || defined(WITH_HIP)
+    if (hipGetDevice(&device) == hipSuccess)
+      (void)hipDeviceGetAttribute(&max_bytes, optin_attribute, device);
+#else
+    if (cudaGetDevice(&device) == cudaSuccess)
+      (void)cudaDeviceGetAttribute(&max_bytes, optin_attribute, device);
+#endif
+    printf(
+        "ERROR launching kernel %s: it requests %zu bytes of dynamic shared "
+        "memory, but device %d allows at most %d bytes of shared memory per "
+        "thread-block: %s (%d).\n",
+        kernel_name, bytes, device, max_bytes, gpuGetErrorString(err),
+        (int)err);
+  }
+  return err;
+}
 
 }  // namespace cuda
 }  // namespace dace

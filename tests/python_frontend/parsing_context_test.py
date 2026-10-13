@@ -1,6 +1,7 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
 import numpy as np
+
+import dace
 
 
 def test_parsing_context():
@@ -21,5 +22,5 @@ def test_parsing_context():
     assert np.allclose(second, 1)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_parsing_context()

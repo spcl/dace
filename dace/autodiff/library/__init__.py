@@ -15,6 +15,7 @@ from . import library
 try:
     from . import torch_integration
     from dace.frontend.python.replacements import torch_autodiff
+
     TORCH_INTEGRATION_AVAILABLE = True
 except ImportError:
     torch_integration = None
@@ -28,4 +29,4 @@ __all__ = [
 ]
 
 if TORCH_INTEGRATION_AVAILABLE:
-    __all__.extend(["torch_integration", "torch_autodiff"])
+    __all__ += ["torch_integration", "torch_autodiff"]

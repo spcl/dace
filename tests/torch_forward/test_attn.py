@@ -5,7 +5,6 @@ pytest.importorskip("torch", reason="PyTorch not installed. Please install with:
 import torch
 
 from dace.ml import DaceModule
-
 from tests.utils import torch_tensors_close
 
 
@@ -22,10 +21,12 @@ def test_attn(use_cpp_dispatcher: bool):
     pt_outputs = ptmodel(Q, K, V)
 
     dispatcher_suffix = "cpp" if use_cpp_dispatcher else "ctypes"
-    dace_model = DaceModule(ptmodel,
-                            sdfg_name=f"test_attn_{dispatcher_suffix}",
-                            compile_torch_extension=use_cpp_dispatcher,
-                            auto_optimize=False)
+    dace_model = DaceModule(
+        ptmodel,
+        sdfg_name=f"test_attn_{dispatcher_suffix}",
+        compile_torch_extension=use_cpp_dispatcher,
+        auto_optimize=False,
+    )
 
     dace_outputs = dace_model(Q, K, V)
 

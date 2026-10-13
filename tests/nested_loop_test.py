@@ -1,6 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
 import numpy as np
+
+import dace
 
 
 @dace.program
@@ -22,7 +23,7 @@ def test_loop_loop_indirect():
                 A[i, j] = j
 
     A = np.random.rand(20, 20)
-    ind = np.random.randint(low=0, high=19, size=(20, ), dtype=np.int64)
+    ind = np.random.randint(low=0, high=19, size=(20,), dtype=np.int64)
     expected = A.copy()
 
     loop_with_value(A, ind)
@@ -40,7 +41,7 @@ def test_map_loop_indirect():
                 A[i, j] = j
 
     A = np.random.rand(20, 20)
-    ind = np.random.randint(low=0, high=19, size=(20, ), dtype=np.int64)
+    ind = np.random.randint(low=0, high=19, size=(20,), dtype=np.int64)
     expected = A.copy()
 
     loop_with_value(A, ind)
@@ -58,7 +59,7 @@ def test_map_loop_indirect_2():
                 A[i, j] = j
 
     A = np.random.rand(20, 20)
-    ind = np.random.randint(low=0, high=19, size=(20, ), dtype=np.int64)
+    ind = np.random.randint(low=0, high=19, size=(20,), dtype=np.int64)
     expected = A.copy()
 
     loop_with_value(A, ind)
@@ -72,11 +73,11 @@ def test_map_map_indirect():
     @dace.program
     def loop_with_value(A: dace.float64[20, 20], ind: dace.int64[20]):
         for i in dace.map[0:20]:
-            for j in dace.map[0:ind[i]]:
+            for j in dace.map[0 : ind[i]]:
                 A[i, j] = j
 
     A = np.random.rand(20, 20)
-    ind = np.random.randint(low=0, high=19, size=(20, ), dtype=np.int64)
+    ind = np.random.randint(low=0, high=19, size=(20,), dtype=np.int64)
     expected = A.copy()
 
     loop_with_value(A, ind)
@@ -90,11 +91,11 @@ def test_map_map_indirect_2():
     @dace.program
     def loop_with_value(A: dace.float64[20, 20], ind: dace.int64[20]):
         for i in dace.map[0:20]:
-            for j in dace.map[ind[i]:ind[i] + 1]:
+            for j in dace.map[ind[i] : ind[i] + 1]:
                 A[i, j] = j
 
     A = np.random.rand(20, 20)
-    ind = np.random.randint(low=0, high=19, size=(20, ), dtype=np.int64)
+    ind = np.random.randint(low=0, high=19, size=(20,), dtype=np.int64)
     expected = A.copy()
 
     loop_with_value(A, ind)

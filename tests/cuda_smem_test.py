@@ -1,20 +1,21 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 
-import dace
-from dace.transformation.dataflow import GPUTransformMap, InLocalStorage
 import numpy as np
 import pytest
 
-N = dace.symbol('N')
+import dace
+from dace.transformation.dataflow import GPUTransformMap, InLocalStorage
+
+N = dace.symbol("N")
 
 
 @dace.program
 def cudahello(A: dace.float64[N], Vout: dace.float64[N]):
 
-    @dace.mapscope(_[0:ceiling(N / 32)])
+    @dace.mapscope(_[0 : ceiling(N / 32)])
     def multiplication(i):
 
-        @dace.map(_[i * 32:min(N, (i + 1) * 32)])
+        @dace.map(_[i * 32 : min(N, (i + 1) * 32)])
         def mult_block(bi):
             in_V << A[bi]
             out >> Vout[bi]
@@ -24,7 +25,7 @@ def cudahello(A: dace.float64[N], Vout: dace.float64[N]):
 def _test(sdfg):
     N = 144
 
-    print('Vector double CUDA (shared memory) %d' % (N))
+    print("Vector double CUDA (shared memory) %d" % (N))
 
     V = dace.ndarray([N], dace.float64)
     Vout = dace.ndarray([N], dace.float64)
@@ -52,7 +53,7 @@ def test_gpu():
 @pytest.mark.gpu
 def test_gpu_localstorage():
     sdfg = cudahello.to_sdfg()
-    assert sdfg.apply_transformations([GPUTransformMap, InLocalStorage], options=[{}, {'array': 'gpu_A'}]) == 2
+    assert sdfg.apply_transformations([GPUTransformMap, InLocalStorage], options=[{}, {"array": "gpu_A"}]) == 2
     _test(sdfg)
 
 

@@ -1,18 +1,20 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """TensorTranspose library node and its pure / HPTT / cuTENSOR expansions."""
-import dace
+
 import multiprocessing
-from dace import library, nodes, properties
-from dace.transformation.transformation import ExpandTransformation
-from dace.libraries.blas import blas_helpers
-from numbers import Number
-from dace.libraries.linalg import environments
 import warnings
+from numbers import Number
+
+import dace
+from dace import library, nodes, properties
+from dace.libraries.blas import blas_helpers
+from dace.libraries.linalg import environments
+from dace.transformation.transformation import ExpandTransformation
 
 
 @library.expansion
 class ExpandPure(ExpandTransformation):
-    """ Implements the pure expansion of TensorTranspose library node. """
+    """Implements the pure expansion of TensorTranspose library node."""
 
     environments = []
 
@@ -21,16 +23,12 @@ class ExpandPure(ExpandTransformation):
         inp_tensor, out_tensor = node.validate(parent_sdfg, parent_state)
 
         sdfg = dace.SDFG(f"{node.label}_sdfg")
-        _, inp_arr = sdfg.add_array("_inp_tensor",
-                                    inp_tensor.shape,
-                                    inp_tensor.dtype,
-                                    inp_tensor.storage,
-                                    strides=inp_tensor.strides)
-        _, out_arr = sdfg.add_array("_out_tensor",
-                                    out_tensor.shape,
-                                    out_tensor.dtype,
-                                    out_tensor.storage,
-                                    strides=out_tensor.strides)
+        _, inp_arr = sdfg.add_array(
+            "_inp_tensor", inp_tensor.shape, inp_tensor.dtype, inp_tensor.storage, strides=inp_tensor.strides
+        )
+        _, out_arr = sdfg.add_array(
+            "_out_tensor", out_tensor.shape, out_tensor.dtype, out_tensor.storage, strides=out_tensor.strides
+        )
 
         state = sdfg.add_state(f"{node.label}_state")
         map_params = [f"__i{i}" for i in range(len(inp_arr.shape))]
@@ -65,10 +63,10 @@ class ExpandHPTT(ExpandTransformation):
         from dace.codegen.common import sym2cpp  # Avoid import loop
 
         inp_tensor, out_tensor = node.validate(parent_sdfg, parent_state)
-        axes = ','.join([sym2cpp(a) for a in node.axes])
-        shape = ','.join([sym2cpp(s) for s in inp_tensor.shape])
+        axes = ",".join([sym2cpp(a) for a in node.axes])
+        shape = ",".join([sym2cpp(s) for s in inp_tensor.shape])
         dchar = blas_helpers.to_blastype(inp_tensor.dtype.type).lower()
-        if dchar not in ('s', 'd', 'c', 'z'):
+        if dchar not in ("s", "d", "c", "z"):
             raise TypeError("HPTT supports only single and double (and corresponding complex) FP datatypes")
         alpha = sym2cpp(node.alpha)
         beta = sym2cpp(node.beta)
@@ -78,11 +76,9 @@ class ExpandHPTT(ExpandTransformation):
             {dchar}TensorTranspose(perm, {len(inp_tensor.shape)}, {alpha}, _inp_tensor, size, NULL, {beta}, _out_tensor, NULL, {multiprocessing.cpu_count()}, 1);
         """
 
-        tasklet = nodes.Tasklet(node.name,
-                                node.in_connectors,
-                                node.out_connectors,
-                                code,
-                                language=dace.dtypes.Language.CPP)
+        tasklet = nodes.Tasklet(
+            node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
+        )
 
         return tasklet
 
@@ -114,8 +110,10 @@ class ExpandCuTensor(ExpandTransformation):
         inp_tensor, out_tensor = node.validate(parent_sdfg, parent_state)
 
         if node.beta != 0:
-            raise NotImplementedError("cuTENSOR v2 cutensorPermute does not support beta != 0. "
-                                      "Use the 'pure' expansion or implement via cutensorElementwiseBinary.")
+            raise NotImplementedError(
+                "cuTENSOR v2 cutensorPermute does not support beta != 0. "
+                "Use the 'pure' expansion or implement via cutensorElementwiseBinary."
+            )
 
         ndim = len(inp_tensor.shape)
         dtype = inp_tensor.dtype.base_type
@@ -135,12 +133,12 @@ class ExpandCuTensor(ExpandTransformation):
         # Output modes: the permutation   [axes[0], axes[1], ...]
         modes_c = list(node.axes)
 
-        modes_a_str = ', '.join(str(m) for m in modes_a)
-        modes_c_str = ', '.join(str(m) for m in modes_c)
-        extent_a_str = ', '.join(sym2cpp(s) for s in inp_tensor.shape)
-        extent_c_str = ', '.join(sym2cpp(s) for s in out_tensor.shape)
-        stride_a_str = ', '.join(sym2cpp(s) for s in inp_tensor.strides)
-        stride_c_str = ', '.join(sym2cpp(s) for s in out_tensor.strides)
+        modes_a_str = ", ".join(str(m) for m in modes_a)
+        modes_c_str = ", ".join(str(m) for m in modes_c)
+        extent_a_str = ", ".join(sym2cpp(s) for s in inp_tensor.shape)
+        extent_c_str = ", ".join(sym2cpp(s) for s in out_tensor.shape)
+        stride_a_str = ", ".join(sym2cpp(s) for s in inp_tensor.strides)
+        stride_c_str = ", ".join(sym2cpp(s) for s in out_tensor.strides)
 
         code = f"""\
 {environments.cuTensor.handle_setup_code(node)}
@@ -199,28 +197,28 @@ class ExpandCuTensor(ExpandTransformation):
 }}
 """
 
-        tasklet = nodes.Tasklet(node.name,
-                                node.in_connectors,
-                                node.out_connectors,
-                                code,
-                                language=dace.dtypes.Language.CPP)
+        tasklet = nodes.Tasklet(
+            node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
+        )
         return tasklet
 
 
 @library.node
 class TensorTranspose(nodes.LibraryNode):
-    """ Implements out-of-place tensor transpositions. """
+    """Implements out-of-place tensor transpositions."""
 
     implementations = {
         "pure": ExpandPure,
         "HPTT": ExpandHPTT,
         "cuTENSOR": ExpandCuTensor,
     }
-    default_implementation = 'pure'
+    default_implementation = "pure"
 
-    axes = properties.ListProperty(element_type=int, default=[], desc="Permutation of input tensor's modes")
-    alpha = properties.Property(dtype=Number, default=1, desc="Input tensor scaling factor")
-    beta = properties.Property(dtype=Number, default=0, desc="Output tensor scaling factor")
+    axes = properties.ListProperty(
+        element_type=int, default=[], category="Semantics", desc="Permutation of input tensor's modes"
+    )
+    alpha = properties.Property(dtype=Number, default=1, category="Semantics", desc="Input tensor scaling factor")
+    beta = properties.Property(dtype=Number, default=0, category="Semantics", desc="Output tensor scaling factor")
 
     def __init__(self, name, axes=[], alpha=1, beta=0, *args, **kwargs):
         super().__init__(name, *args, inputs={"_inp_tensor"}, outputs={"_out_tensor"}, **kwargs)

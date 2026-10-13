@@ -1,8 +1,10 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+import unittest
+
+import numpy as np
+
 import dace
 from dace.transformation.dataflow import MapTilingWithOverlap
-import unittest
-import numpy as np
 
 I = dace.symbol("I")
 J = dace.symbol("J")
@@ -19,7 +21,6 @@ def copy(inp: dace.float32[I, J], out: dace.float32[I, J]):
 
 
 class MapTilingWithOverlapTest(unittest.TestCase):
-
     def semantic_eq(self, tile_sizes):
         A = np.random.rand(16, 16).astype(np.float32)
         B1 = np.zeros((16, 16), dtype=np.float32)
@@ -28,12 +29,9 @@ class MapTilingWithOverlapTest(unittest.TestCase):
         sdfg = copy.to_sdfg()
         sdfg(inp=A, out=B1, I=A.shape[0], J=A.shape[1])
 
-        count = sdfg.apply_transformations(MapTilingWithOverlap,
-                                           options={
-                                               'tile_sizes': tile_sizes,
-                                               'lower_overlap': (1, 2),
-                                               'upper_overlap': (1, 2)
-                                           })
+        count = sdfg.apply_transformations(
+            MapTilingWithOverlap, options={"tile_sizes": tile_sizes, "lower_overlap": (1, 2), "upper_overlap": (1, 2)}
+        )
         self.assertGreater(count, 0)
         sdfg(inp=A, out=B2, I=A.shape[0], J=A.shape[1])
 
@@ -46,5 +44,5 @@ class MapTilingWithOverlapTest(unittest.TestCase):
         self.semantic_eq([1, 1])
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

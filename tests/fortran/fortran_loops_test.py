@@ -42,5 +42,5 @@ def test_fortran_frontend_loop_region_basic_loop():
     assert np.allclose(c_test, validate)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_fortran_frontend_loop_region_basic_loop()

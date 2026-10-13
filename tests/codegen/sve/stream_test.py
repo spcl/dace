@@ -2,7 +2,7 @@
 import dace
 from tests.codegen.sve.common import get_code
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 def test_stream_push():
@@ -20,5 +20,5 @@ def test_stream_push():
 
     code = get_code(program)
 
-    assert 'stream.push' in code
-    assert 'svcompact' in code
+    assert "stream.push" in code
+    assert "svcompact" in code

@@ -1,13 +1,16 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import pytest
-import numpy as np
 from importlib.util import find_spec
+
+import numpy as np
+import pytest
 
 
 @pytest.mark.tensorflow
 def test_pooling():
     import tensorflow as tf
+
     from dace.frontend.ml.tensorflow import TFSession
+
     size_in = [1, 112, 112, 3]
     # size_in = [4, 4, 4, 4]
     np.random.seed(0)
@@ -66,17 +69,11 @@ def test_pooling():
     grads_max = tf.gradients(max_pool_outp, input_placeholder, grad_ys=loss_placeholder)
     dace_output = sess_dace.run(
         grads_max,
-        feed_dict={
-            input_placeholder: input_tensor,
-            loss_placeholder: loss_tensor
-        },
+        feed_dict={input_placeholder: input_tensor, loss_placeholder: loss_tensor},
     )
     tf_output = sess_tf.run(
         grads_max,
-        feed_dict={
-            input_placeholder: input_tensor,
-            loss_placeholder: loss_tensor
-        },
+        feed_dict={input_placeholder: input_tensor, loss_placeholder: loss_tensor},
     )
     try:
         assert tf.norm(dace_output[0] - tf_output[0]).eval(session=sess_tf) < 1e-5
@@ -87,6 +84,6 @@ def test_pooling():
         raise AssertionError("max pool gradient test failed")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     if find_spec("tensorflow"):
         test_pooling()

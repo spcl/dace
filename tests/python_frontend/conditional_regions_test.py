@@ -1,7 +1,8 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 
-import dace
 import numpy as np
+
+import dace
 from dace.sdfg.state import ConditionalBlock
 
 
@@ -20,7 +21,7 @@ def test_dataflow_if_check():
 
     assert any(isinstance(x, ConditionalBlock) for x in sdfg.nodes())
 
-    A = np.zeros((10, ), np.int32)
+    A = np.zeros((10,), np.int32)
     A[4] = 10
     A[5] = 100
     assert sdfg(A, 0)[0] == 0
@@ -35,17 +36,14 @@ def test_nested_if_chain():
     def nested_if_chain(i: dace.int64):
         if i < 2:
             return 0
+        elif i < 4:
+            return 1
+        elif i < 6:
+            return 2
+        elif i < 8:
+            return 3
         else:
-            if i < 4:
-                return 1
-            else:
-                if i < 6:
-                    return 2
-                else:
-                    if i < 8:
-                        return 3
-                    else:
-                        return 4
+            return 4
 
     nested_if_chain.use_explicit_cf = True
     sdfg = nested_if_chain.to_sdfg()
@@ -86,7 +84,7 @@ def test_elif_chain():
     assert elif_chain(15)[0] == 4
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_dataflow_if_check()
     test_nested_if_chain()
     test_elif_chain()

@@ -1,20 +1,18 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
-import math
 import copy
-
-from typing import Generator, Dict, List, Tuple
+import math
 from collections import Counter
+from collections.abc import Generator
 
+import dace
 from dace import SDFG, dtypes
 from dace.optimization import cutout_tuner
+from dace.optimization import utils as optim_utils
 from dace.sdfg.analysis.cutout import SDFGCutout
-
+from dace.transformation import helpers as xfh
 from dace.transformation import subgraph as sg
 from dace.transformation.estimator import enumeration as en
 from dace.transformation.subgraph import helpers
-from dace.transformation import helpers as xfh
-from dace.optimization import utils as optim_utils
 
 try:
     from tqdm import tqdm
@@ -23,12 +21,9 @@ except (ImportError, ModuleNotFoundError):
 
 
 class OnTheFlyMapFusionTuner(cutout_tuner.CutoutTuner):
-
-    def __init__(self,
-                 sdfg: SDFG,
-                 i,
-                 j,
-                 measurement: dtypes.InstrumentationType = dtypes.InstrumentationType.Timer) -> None:
+    def __init__(
+        self, sdfg: SDFG, i, j, measurement: dtypes.InstrumentationType = dtypes.InstrumentationType.Timer
+    ) -> None:
         super().__init__(task="OnTheFlyMapFusion", sdfg=sdfg, i=i, j=j)
         self.instrument = measurement
 
@@ -44,7 +39,7 @@ class OnTheFlyMapFusionTuner(cutout_tuner.CutoutTuner):
                 except AttributeError:
                     continue
 
-    def config_from_key(self, key: str, cutout: dace.SDFG, **kwargs) -> Tuple[int, List[int]]:
+    def config_from_key(self, key: str, cutout: dace.SDFG, **kwargs) -> tuple[int, list[int]]:
         fusion_id = int(key)
         if fusion_id == 0:
             return (0, [])
@@ -52,23 +47,21 @@ class OnTheFlyMapFusionTuner(cutout_tuner.CutoutTuner):
         sp = list(self.space(cutout=cutout))
         return sp[fusion_id]
 
-    def space(self, cutout: dace.SDFG) -> Generator[List[bool], None, None]:
+    def space(self, cutout: dace.SDFG) -> Generator[list[bool], None, None]:
         subgraphs = en.ConnectedEnumerator(cutout, cutout.start_state)
         yield 0, []
 
         for i, (subgraph, score) in enumerate(subgraphs):
-            yield i + 1, list(map(lambda m: cutout.start_state.node_id(m), subgraph))
+            yield i + 1, [cutout.start_state.node_id(m) for m in subgraph]
 
-    def pre_evaluate(self, cutout: dace.SDFG, measurements: int, **kwargs) -> Dict:
+    def pre_evaluate(self, cutout: dace.SDFG, measurements: int, **kwargs) -> dict:
         cutout.start_state.instrument = self.instrument
 
         new_kwargs = {
-            "space_kwargs": {
-                "cutout": cutout
-            },
+            "space_kwargs": {"cutout": cutout},
             "cutout": cutout.to_json(),
             "measurements": measurements,
-            "key": lambda point: str(point[0])
+            "key": lambda point: str(point[0]),
         }
         return new_kwargs
 
@@ -104,7 +97,7 @@ class OnTheFlyMapFusionTuner(cutout_tuner.CutoutTuner):
 
         return self.measure(candidate, dreport, measurements)
 
-    def apply(self, config: Tuple[int, List[int]], label: str, **kwargs) -> None:
+    def apply(self, config: tuple[int, list[int]], label: str, **kwargs) -> None:
         if config[0] == 0:
             return
 
@@ -126,7 +119,7 @@ class OnTheFlyMapFusionTuner(cutout_tuner.CutoutTuner):
             fuse_counter = map_fusion.apply(state, sdfg)
             print(f"Fusing {fuse_counter} maps")
 
-    def _extract_patterns(self, configs: List[Tuple[str, List[int]]]):
+    def _extract_patterns(self, configs: list[tuple[str, list[int]]]):
         # Describe successful fusions as set of map descriptors
         subgraph_patterns = []
         for label, config in configs:
@@ -149,7 +142,7 @@ class OnTheFlyMapFusionTuner(cutout_tuner.CutoutTuner):
 
             subgraph_patterns.append(pattern_desc)
 
-        subgraph_patterns = [dict(s) for s in set(frozenset(d.items()) for d in subgraph_patterns)]
+        subgraph_patterns = [dict(s) for s in {frozenset(d.items()) for d in subgraph_patterns}]
         subgraph_patterns = [Counter(s) for s in subgraph_patterns]
 
         return subgraph_patterns
@@ -170,10 +163,11 @@ class OnTheFlyMapFusionTuner(cutout_tuner.CutoutTuner):
             for state in nsdfg.states():
                 i = i + 1
 
-                top_maps = []
-                for node in state.nodes():
-                    if isinstance(node, dace.nodes.MapEntry) and xfh.get_parent_map(state, node) is None:
-                        top_maps.append(node)
+                top_maps = [
+                    node
+                    for node in state.nodes()
+                    if isinstance(node, dace.nodes.MapEntry) and xfh.get_parent_map(state, node) is None
+                ]
 
                 if len(top_maps) < 2:
                     continue
@@ -188,10 +182,11 @@ class OnTheFlyMapFusionTuner(cutout_tuner.CutoutTuner):
                     best_pattern = None
                     best_pattern_runtime = math.inf
                     for j, pattern in enumerate(subgraph_patterns):
-                        maps = []
-                        for node in state.nodes():
-                            if isinstance(node, dace.nodes.MapEntry) and xfh.get_parent_map(state, node) is None:
-                                maps.append(node)
+                        maps = [
+                            node
+                            for node in state.nodes()
+                            if isinstance(node, dace.nodes.MapEntry) and xfh.get_parent_map(state, node) is None
+                        ]
 
                         if len(maps) < 2:
                             continue
@@ -246,19 +241,20 @@ class OnTheFlyMapFusionTuner(cutout_tuner.CutoutTuner):
                         # Apply
                         experiment_sdfg_ = SDFGCutout.singlestate_cutout(state, *(state.nodes()), make_copy=False)
                         experiment_state_ = experiment_sdfg_.start_state
-                        experiment_maps_ids = list(map(lambda me: experiment_state_.node_id(me), subgraph_maps))
+                        experiment_maps_ids = [experiment_state_.node_id(me) for me in subgraph_maps]
                         experiment_sdfg = copy.deepcopy(experiment_sdfg_)
                         experiment_state = experiment_sdfg.start_state
                         experiment_state.instrument = dace.InstrumentationType.GPU_Events
 
-                        experiment_maps = list(map(lambda m_id: experiment_state.node(m_id), experiment_maps_ids))
-                        experiment_subgraph = helpers.subgraph_from_maps(sdfg=experiment_sdfg,
-                                                                         graph=experiment_state,
-                                                                         map_entries=experiment_maps)
+                        experiment_maps = [experiment_state.node(m_id) for m_id in experiment_maps_ids]
+                        experiment_subgraph = helpers.subgraph_from_maps(
+                            sdfg=experiment_sdfg, graph=experiment_state, map_entries=experiment_maps
+                        )
 
                         map_fusion = sg.SubgraphOTFFusion()
-                        map_fusion.setup_match(experiment_subgraph, experiment_sdfg.cfg_id,
-                                               experiment_sdfg.node_id(experiment_state))
+                        map_fusion.setup_match(
+                            experiment_subgraph, experiment_sdfg.cfg_id, experiment_sdfg.node_id(experiment_state)
+                        )
                         if map_fusion.can_be_applied(experiment_state, experiment_sdfg):
                             try:
                                 experiment_fuse_counter = map_fusion.apply(experiment_state, experiment_sdfg)
@@ -301,8 +297,9 @@ class OnTheFlyMapFusionTuner(cutout_tuner.CutoutTuner):
 
     @staticmethod
     def map_descriptor(state: dace.SDFGState, map_entry: dace.nodes.MapEntry) -> str:
-        tasklets = filter(lambda node: isinstance(node, dace.nodes.Tasklet),
-                          map(lambda edge: edge.dst, state.out_edges(map_entry)))
+        tasklets = filter(
+            lambda node: isinstance(node, dace.nodes.Tasklet), (edge.dst for edge in state.out_edges(map_entry))
+        )
         tasklets = set(tasklets)
 
         desc = []

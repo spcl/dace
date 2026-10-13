@@ -1,8 +1,9 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
-from dace.sdfg import utils
 import numpy as np
 import pytest
+
+import dace
+from dace.sdfg import utils
 
 
 @pytest.mark.mpi
@@ -19,7 +20,7 @@ def test_redistribute_matrix_2d_2d():
     |_____|_____|_____|_____|       |___________|___________|
     """
 
-    P = dace.symbol('P', dace.int32)
+    P = dace.symbol("P", dace.int32)
 
     @dace.program
     def matrix_2d_2d(A: dace.int32[4 * P, 16]):
@@ -37,6 +38,7 @@ def test_redistribute_matrix_2d_2d():
         return B
 
     from mpi4py import MPI
+
     commworld = MPI.COMM_WORLD
     rank = commworld.Get_rank()
     size = commworld.Get_size()
@@ -56,10 +58,10 @@ def test_redistribute_matrix_2d_2d():
     if rank < even_size:
         B = func(A=lA[rank // (even_size // 2), rank % (even_size // 2)].copy(), P=even_size)
     else:
-        B = func(A=np.zeros((1, ), dtype=np.int32), P=even_size)
+        B = func(A=np.zeros((1,), dtype=np.int32), P=even_size)
 
     if rank < even_size:
-        assert (np.array_equal(B, lB[rank // 2, rank % 2]))
+        assert np.array_equal(B, lB[rank // 2, rank % 2])
 
 
 @pytest.mark.mpi
@@ -76,7 +78,7 @@ def test_redistribute_matrix_2d_2d_2():
     |_____|_____|_____|_____|       |_______________________|
     """
 
-    P = dace.symbol('P', dace.int32)
+    P = dace.symbol("P", dace.int32)
 
     @dace.program
     def matrix_2d_2d_2(A: dace.int32[4 * P, 16]):
@@ -94,6 +96,7 @@ def test_redistribute_matrix_2d_2d_2():
         return B
 
     from mpi4py import MPI
+
     commworld = MPI.COMM_WORLD
     rank = commworld.Get_rank()
     size = commworld.Get_size()
@@ -113,10 +116,10 @@ def test_redistribute_matrix_2d_2d_2():
     if rank < even_size:
         B = func(A=lA[rank // (even_size // 2), rank % (even_size // 2)].copy(), P=even_size)
     else:
-        B = func(A=np.zeros((1, ), dtype=np.int32), P=even_size)
+        B = func(A=np.zeros((1,), dtype=np.int32), P=even_size)
 
     if rank < even_size:
-        assert (np.array_equal(B, lB[rank, 0]))
+        assert np.array_equal(B, lB[rank, 0])
 
 
 @pytest.mark.mpi
@@ -142,7 +145,7 @@ def test_redistribute_matrix_2d_2d_3():
                                     |_____|_____|
     """
 
-    P = dace.symbol('P', dace.int32)
+    P = dace.symbol("P", dace.int32)
 
     @dace.program
     def matrix_2d_2d_3(A: dace.int32[4 * P, 16]):
@@ -160,6 +163,7 @@ def test_redistribute_matrix_2d_2d_3():
         return B
 
     from mpi4py import MPI
+
     commworld = MPI.COMM_WORLD
     rank = commworld.Get_rank()
     size = commworld.Get_size()
@@ -179,10 +183,10 @@ def test_redistribute_matrix_2d_2d_3():
     if rank < even_size:
         B = func(A=lA[rank // (even_size // 2), rank % (even_size // 2)].copy(), P=even_size)
     else:
-        B = func(A=np.zeros((1, ), dtype=np.int32), P=even_size)
+        B = func(A=np.zeros((1,), dtype=np.int32), P=even_size)
 
     if rank < even_size:
-        assert (np.array_equal(B, lB[rank // 2, rank % 2]))
+        assert np.array_equal(B, lB[rank // 2, rank % 2])
 
 
 @pytest.mark.mpi
@@ -196,7 +200,7 @@ def test_redistribute_vector_2d_2d():
                                                                |3____|zero_|
     """
 
-    P = dace.symbol('P', dace.int32)
+    P = dace.symbol("P", dace.int32)
 
     @dace.program
     def vector_2d_2d(A: dace.int32[8 * P]):
@@ -208,15 +212,16 @@ def test_redistribute_vector_2d_2d():
         b_scatter_grid = dace.comm.Cart_sub(b_grid, [True, False], exact_grid=0)
         b_bcast_grid = dace.comm.Cart_sub(b_grid, [False, True])
 
-        lA = np.empty_like(A, shape=(16, ))
+        lA = np.empty_like(A, shape=(16,))
         a_subarr = dace.comm.BlockScatter(A, lA, a_scatter_grid, a_bcast_grid)
-        lB = np.zeros_like(A, shape=(16, ))
-        b_subarr = dace.comm.Subarray((8 * P, ), lB, process_grid=b_scatter_grid)
+        lB = np.zeros_like(A, shape=(16,))
+        b_subarr = dace.comm.Subarray((8 * P,), lB, process_grid=b_scatter_grid)
         redistr = dace.comm.Redistribute(lA, a_subarr, lB, b_subarr)
 
         return lB
 
     from mpi4py import MPI
+
     commworld = MPI.COMM_WORLD
     rank = commworld.Get_rank()
     size = commworld.Get_size()
@@ -235,13 +240,13 @@ def test_redistribute_vector_2d_2d():
     if rank < even_size:
         lB = func(A=A, P=even_size)
     else:
-        lB = func(A=np.zeros((1, ), dtype=np.int32), P=even_size)
+        lB = func(A=np.zeros((1,), dtype=np.int32), P=even_size)
 
     if rank < even_size:
         if rank % 2 == 0:
-            assert (np.array_equal(lB, lB_ref[rank // 2]))
+            assert np.array_equal(lB, lB_ref[rank // 2])
         else:
-            assert (np.array_equal(lB, np.zeros_like(lB)))
+            assert np.array_equal(lB, np.zeros_like(lB))
 
 
 if __name__ == "__main__":

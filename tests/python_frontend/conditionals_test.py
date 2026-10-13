@@ -1,6 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
 import numpy as np
+
+import dace
 
 
 @dace.program
@@ -23,7 +24,7 @@ def simple_if(A: dace.int32[10]):
 
 
 def test_simple_if():
-    A = np.random.randint(1, 10, size=(10, ), dtype=np.int32)
+    A = np.random.randint(1, 10, size=(10,), dtype=np.int32)
     ref = np.copy(A)
     for i in range(10):
         if i % 2 == 0:
@@ -31,7 +32,7 @@ def test_simple_if():
         else:
             ref[i] += 3 * i
     simple_if(A)
-    assert (np.array_equal(A, ref))
+    assert np.array_equal(A, ref)
 
 
 @dace.program
@@ -44,7 +45,7 @@ def call_if(A: dace.int32[10]):
 
 
 def test_call_if():
-    A = np.random.randint(1, 10, size=(10, ), dtype=np.int32)
+    A = np.random.randint(1, 10, size=(10,), dtype=np.int32)
     ref = np.copy(A)
     for i in range(10):
         if i % 2 == 0:
@@ -53,7 +54,7 @@ def test_call_if():
             ref[i] += 3 * i
     sdfg = call_if.to_sdfg()
     call_if(A)
-    assert (np.array_equal(A, ref))
+    assert np.array_equal(A, ref)
 
 
 @dace.program
@@ -71,7 +72,7 @@ def call_if2(A: dace.int32[10]):
 
 
 def test_call_if2():
-    A = np.random.randint(1, 10, size=(10, ), dtype=np.int32)
+    A = np.random.randint(1, 10, size=(10,), dtype=np.int32)
     ref = np.copy(A)
     ref[0] = 0
     i = 1
@@ -81,7 +82,7 @@ def test_call_if2():
         fib += ref[i]
         i += 1
     call_if2(A)
-    assert (np.array_equal(A, ref))
+    assert np.array_equal(A, ref)
 
 
 @dace.program
@@ -93,12 +94,12 @@ def simple_while(A: dace.int32[10]):
 
 
 def test_simple_while():
-    A = np.random.randint(1, 10, size=(10, ), dtype=np.int32)
+    A = np.random.randint(1, 10, size=(10,), dtype=np.int32)
     ref = np.copy(A)
     for i in range(10):
         ref[i] += 2 * i
     simple_while(A)
-    assert (np.array_equal(A, ref))
+    assert np.array_equal(A, ref)
 
 
 @dace.program
@@ -113,7 +114,7 @@ def call_while(A: dace.int32[10]):
 
 
 def test_call_while():
-    A = np.random.randint(1, 10, size=(10, ), dtype=np.int32)
+    A = np.random.randint(1, 10, size=(10,), dtype=np.int32)
     ref = np.copy(A)
     ref[0] = 0
     i = 1
@@ -123,7 +124,7 @@ def test_call_while():
         fib += ref[i]
         i += 1
     call_while(A)
-    assert (np.array_equal(A, ref))
+    assert np.array_equal(A, ref)
 
 
 def test_if_return_both():

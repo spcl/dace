@@ -4,11 +4,12 @@ These tests are mostly from daceml, testing that the einsums for the BERT encode
 nodes.
 """
 
-import pytest
 import numpy as np
+import pytest
+
 import dace
-from dace.library import change_default
 from dace.libraries import blas
+from dace.library import change_default
 
 MKL_AND_CUBLAS = [pytest.param("cuBLAS", marks=pytest.mark.gpu), pytest.param("MKL", marks=pytest.mark.mkl)]
 
@@ -27,7 +28,7 @@ def test_change_default():
 def assert_used_environment(sdfg, impl):
     implementation_to_env = {
         "MKL": blas.environments.IntelMKL.full_class_path(),
-        "cuBLAS": blas.environments.cuBLAS.full_class_path()
+        "cuBLAS": blas.environments.cuBLAS.full_class_path(),
     }
     all_tasklets = (n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.Tasklet))
     environments = {env for n in all_tasklets for env in n.environments}

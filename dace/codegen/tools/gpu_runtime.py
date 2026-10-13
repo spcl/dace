@@ -2,8 +2,8 @@
 """
 GPU runtime testing functionality. Used for checking error codes after GPU-capable SDFG execution.
 """
+
 import ctypes
-from typing import Optional
 
 
 class GPURuntime:
@@ -16,18 +16,18 @@ class GPURuntime:
         self.library = ctypes.CDLL(path)
 
         # Prefetch runtime functions
-        self._geterrorstring = getattr(self.library, f'{self.backend}GetErrorString')
+        self._geterrorstring = getattr(self.library, f"{self.backend}GetErrorString")
         self._geterrorstring.restype = ctypes.c_char_p
-        self._getlasterror = getattr(self.library, f'{self.backend}GetLastError')
+        self._getlasterror = getattr(self.library, f"{self.backend}GetLastError")
 
     def get_error_string(self, err: int) -> str:
         # Obtain the error string
-        return self._geterrorstring(err).decode('utf-8')
+        return self._geterrorstring(err).decode("utf-8")
 
     def get_last_error(self) -> int:
         return self._getlasterror()
 
-    def get_last_error_string(self) -> Optional[str]:
+    def get_last_error_string(self) -> str | None:
         res: int = self._getlasterror()
         if res == 0:
             return None

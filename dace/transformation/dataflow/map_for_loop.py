@@ -1,27 +1,24 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" This module contains classes that implement a map->for loop transformation.
-"""
+"""This module contains classes that implement a map->for loop transformation."""
 
 import dace
 from dace import symbolic
-from dace.sdfg import SDFG, SDFGState
-from dace.sdfg import nodes
+from dace.sdfg import SDFG, SDFGState, nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.state import LoopRegion
 from dace.transformation import transformation
-from typing import Tuple, Optional
 
 
 class MapToForLoop(transformation.SingleStateTransformation):
-    """ Implements the Map to for-loop transformation.
+    """Implements the Map to for-loop transformation.
 
-        Takes a map and enforces a sequential schedule by transforming it into a loop region. Creates a nested SDFG, if
-        necessary.
+    Takes a map and enforces a sequential schedule by transforming it into a loop region. Creates a nested SDFG, if
+    necessary.
     """
 
     map_entry = transformation.PatternNode(nodes.MapEntry)
 
-    loop_region: Optional[LoopRegion] = None
+    loop_region: LoopRegion | None = None
 
     @staticmethod
     def annotates_memlets():
@@ -38,9 +35,9 @@ class MapToForLoop(transformation.SingleStateTransformation):
 
         return True
 
-    def apply(self, graph: SDFGState, sdfg: SDFG) -> Tuple[nodes.NestedSDFG, SDFGState]:
-        """ Applies the transformation and returns a tuple with the new nested
-            SDFG node and the main state in the for-loop. """
+    def apply(self, graph: SDFGState, sdfg: SDFG) -> tuple[nodes.NestedSDFG, SDFGState]:
+        """Applies the transformation and returns a tuple with the new nested
+        SDFG node and the main state in the for-loop."""
 
         # Avoid import loop
         from dace.transformation.helpers import nest_state_subgraph
@@ -61,8 +58,8 @@ class MapToForLoop(transformation.SingleStateTransformation):
         # If map range is dynamic, replace loop expressions with memlets
         param_to_edge = {}
         for edge in nstate.in_edges(map_entry):
-            if edge.dst_conn and not edge.dst_conn.startswith('IN_'):
-                param = '__DACE_P%d' % len(param_to_edge)
+            if edge.dst_conn and not edge.dst_conn.startswith("IN_"):
+                param = "__DACE_P%d" % len(param_to_edge)
                 repldict = {symbolic.pystr_to_symbolic(edge.dst_conn): param}
                 param_to_edge[param] = edge
                 loop_from = loop_from.subs(repldict)
@@ -82,9 +79,13 @@ class MapToForLoop(transformation.SingleStateTransformation):
         # End of dynamic input range
 
         # Create a loop inside the nested SDFG
-        loop_region = LoopRegion('loop_' + map_entry.map.label, '%s < %s' % (loop_idx, replace_param(loop_to + 1)),
-                                 loop_idx, '%s = %s' % (loop_idx, replace_param(loop_from)),
-                                 '%s = %s + %s' % (loop_idx, loop_idx, replace_param(loop_step)))
+        loop_region = LoopRegion(
+            "loop_" + map_entry.map.label,
+            f"{loop_idx} < {replace_param(loop_to + 1)}",
+            loop_idx,
+            f"{loop_idx} = {replace_param(loop_from)}",
+            f"{loop_idx} = {loop_idx} + {replace_param(loop_step)}",
+        )
         nsdfg.add_node(loop_region, is_start_block=True)
         nsdfg.remove_node(nstate)
         loop_region.add_node(nstate, is_start_block=True)

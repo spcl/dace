@@ -1,14 +1,16 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
-import numpy as np
 import re
-from dace.memlet import Memlet
-from dace import dtypes
 from math import ceil
+
+import numpy as np
+
+import dace
+from dace import dtypes
+from dace.memlet import Memlet
 
 
 def add_cublas_cusolver(sdfg: dace.SDFG):
-    """ Add CUBLAS and CUSOLVER handles to the SDFG. """
+    """Add CUBLAS and CUSOLVER handles to the SDFG."""
     sdfg.set_global_code("""
         #include <iostream>
         #include <cublas_v2.h>
@@ -105,7 +107,7 @@ def mm_small(
                 None,
                 tasklet,
                 "j1",
-                Memlet.simple(B_node, ",".join(["i3", "i4"])),
+                Memlet.simple(B_node, "i3,i4"),
             )
     else:
         tasklet = state.add_tasklet("matmul_sequential", {"j0"}, {"out"}, "out=j0*" + B_node + "[i3, i4]")
@@ -132,7 +134,7 @@ def mm_small(
                 None,
                 tasklet,
                 "j0",
-                Memlet.simple(A_node, ",".join(["i2", "i3"])),
+                Memlet.simple(A_node, "i2,i3"),
             )
 
     if C_memlet:
@@ -158,7 +160,7 @@ def mm_small(
             None,
             Memlet.simple(
                 C_node,
-                ",".join(["i2", "i4"]),
+                "i2,i4",
                 wcr_str="lambda a,b:a+b",
                 wcr_conflict=False,
             ),
@@ -223,12 +225,12 @@ def mm(
         name=label + "_" + "mm_tasklet",
         inputs={"a", "b"},
         outputs={"c"},
-        code="""
+        code=f"""
         cublasSetStream(handle, __dace_current_stream);
         cublasStatus_t status = cublasSgemm(
             handle,
-            CUBLAS_OP_{amode}, CUBLAS_OP_{bmode},
-            {m}, {n}, {k},
+            CUBLAS_OP_{A_mode}, CUBLAS_OP_{B_mode},
+            {Cshape[1]}, {Cshape[0]}, {Ashape[kdim_A]},
             const_pone,
             (float*)a, {lda},
             (float*)b, {ldb},
@@ -236,20 +238,8 @@ def mm(
             (float*)c, {ldc}
         );
         if (status)
-            printf("Multiplication {a}*{b}->{c} failed (status %d)\\n", status);
-        """.format(
-            a=A_node.data,
-            b=B_node.data,
-            c=C_node.data,
-            amode=A_mode,
-            bmode=B_mode,
-            m=Cshape[1],
-            n=Cshape[0],
-            k=Ashape[kdim_A],
-            lda=lda,
-            ldb=ldb,
-            ldc=ldc,
-        ),
+            printf("Multiplication {A_node.data}*{B_node.data}->{C_node.data} failed (status %d)\\n", status);
+        """,
         language=dace.dtypes.Language.CPP,
     )
 
@@ -374,8 +364,8 @@ def printer(*inp):
 
 
 def string_builder(string):
-    """ To match DaCe variable naming conventions, replaces all undesired
-        characters with "_".
+    """To match DaCe variable naming conventions, replaces all undesired
+    characters with "_".
     """
     newstring = string
     if string[0].isdigit():
@@ -389,20 +379,20 @@ def winograd_convolution(dace_session, tf_node):
     state = dace_session.state
     add_cublas_cusolver(dace_session.graph)
     #############Add constants for transformation matrices###############
-    dace_session.graph.add_constant('Btrans', bt)
-    dace_session.graph.add_constant('B', b)
-    bNode = 'B'
-    bTransposeNode = 'Btrans'
+    dace_session.graph.add_constant("Btrans", bt)
+    dace_session.graph.add_constant("B", b)
+    bNode = "B"
+    bTransposeNode = "Btrans"
 
-    dace_session.graph.add_constant('G', g)
-    dace_session.graph.add_constant('Gtrans', gt)
-    gNode = 'G'
-    gTransposeNode = 'Gtrans'
+    dace_session.graph.add_constant("G", g)
+    dace_session.graph.add_constant("Gtrans", gt)
+    gNode = "G"
+    gTransposeNode = "Gtrans"
 
-    dace_session.graph.add_constant('Atrans', at)
-    dace_session.graph.add_constant('A', a)
-    aNode = 'A'
-    aTransposeNode = 'Atrans'
+    dace_session.graph.add_constant("Atrans", at)
+    dace_session.graph.add_constant("A", a)
+    aNode = "A"
+    aTransposeNode = "Atrans"
 
     inputNodes = []
     inputParams = []
@@ -454,16 +444,24 @@ def winograd_convolution(dace_session, tf_node):
     ########Tiling the image#################################
     inputViewParams = [
         "i3%" + str(outputShape[0]),
-        "(i3/" + str(outputShape[0]) + ")%"
+        "(i3/"
+        + str(outputShape[0])
+        + ")%"
         # + str(output_shape[0] * ceil(output_shape[1] / OUTPUT_TILE_SIZE))
-        + str(ceil(outputShape[2] / OUTPUT_TILE_SIZE)) + "*" + str(OUTPUT_TILE_SIZE) + "+i0",
+        + str(ceil(outputShape[2] / OUTPUT_TILE_SIZE))
+        + "*"
+        + str(OUTPUT_TILE_SIZE)
+        + "+i0",
         # + str(
         #    ceil(output_shape[1] / OUTPUT_TILE_SIZE)
         #    * ceil(output_shape[2] / OUTPUT_TILE_SIZE)
         # ),
         "int_floor(i3,"
         # + str(ceil(output_shape[1] / OUTPUT_TILE_SIZE))
-        + str(outputShape[0] * ceil(outputShape[2] / OUTPUT_TILE_SIZE)) + ")*" + str(OUTPUT_TILE_SIZE) + "+i1",
+        + str(outputShape[0] * ceil(outputShape[2] / OUTPUT_TILE_SIZE))
+        + ")*"
+        + str(OUTPUT_TILE_SIZE)
+        + "+i1",
         "i2",
     ]
     inputView = state.add_transient(
@@ -480,7 +478,7 @@ def winograd_convolution(dace_session, tf_node):
     dace_session.add_in_memlets([inputNodes[0]], mapEntry, tasklet, [inputDims[0]], [inputViewParams])
     dace_session.add_out_memlets([inputView], mapExit, tasklet, [inputViewDims], [inputParams[0]])
     ##################Transforming all input tiles#########################
-    #[TODO] try to re-use memory
+    # [TODO] try to re-use memory
     vNode = state.add_transient(
         "V_output" + "_".join([str(_s) for _s in inputViewShape]),
         inputViewShape,
@@ -705,10 +703,18 @@ def winograd_convolution(dace_session, tf_node):
     ###################Un-Tile the output to NHWC format###################
     outputParams = [
         "i3%" + str(outputShape[0]),
-        "(i3/" + str(outputShape[0]) + ")%" + str(ceil(outputShape[2] / OUTPUT_TILE_SIZE)) + "*" +
-        str(OUTPUT_TILE_SIZE) + "+i0",
-        "int_floor(i3," + str(outputShape[0] * ceil(outputShape[2] / OUTPUT_TILE_SIZE)) + ")*" + str(OUTPUT_TILE_SIZE) +
-        "+i1",
+        "(i3/"
+        + str(outputShape[0])
+        + ")%"
+        + str(ceil(outputShape[2] / OUTPUT_TILE_SIZE))
+        + "*"
+        + str(OUTPUT_TILE_SIZE)
+        + "+i0",
+        "int_floor(i3,"
+        + str(outputShape[0] * ceil(outputShape[2] / OUTPUT_TILE_SIZE))
+        + ")*"
+        + str(OUTPUT_TILE_SIZE)
+        + "+i1",
         "i2",
     ]
     mapRange = ["0:" + str(_s) for _s in transformedOutputNode.desc(dace_session.graph).shape]
@@ -729,11 +735,13 @@ def winograd_convolution(dace_session, tf_node):
         language=dace.dtypes.Language.CPP,
     )
     for _n, _conn in zip(debugNodes, taskletInputs):
-        _n_cpu = state.add_transient(_n.data + "_cpucopy",
-                                     _n.desc(dace_session.graph).shape,
-                                     _n.desc(dace_session.graph).dtype,
-                                     storage=dace.StorageType.CPU_Heap,
-                                     lifetime=dtypes.AllocationLifetime.SDFG)
+        _n_cpu = state.add_transient(
+            _n.data + "_cpucopy",
+            _n.desc(dace_session.graph).shape,
+            _n.desc(dace_session.graph).dtype,
+            storage=dace.StorageType.CPU_Heap,
+            lifetime=dtypes.AllocationLifetime.SDFG,
+        )
         state.add_edge(_n, None, _n_cpu, None, Memlet.from_array(_n, _n.desc(dace_session.graph)))
         state.add_edge(
             _n_cpu,
@@ -742,9 +750,8 @@ def winograd_convolution(dace_session, tf_node):
             _conn,
             Memlet.from_array(_n_cpu, _n_cpu.desc(dace_session.graph)),
         )
-    callback_input_types = []
-    for somenode in debugNodes:
-        callback_input_types.append(somenode.desc(dace_session.graph))
+    callback_input_types = [somenode.desc(dace_session.graph) for somenode in debugNodes]
     dace_session.callbackFunctionDict[string_builder(tf_node.name) + "_printer"] = printer
     dace_session.callbackTypeDict[string_builder(tf_node.name) + "_printer"] = dace.data.Scalar(
-        dace.callback(None, *callback_input_types))
+        dace.callback(None, *callback_input_types)
+    )

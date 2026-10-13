@@ -1,8 +1,8 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 
-import dace
 import numpy as np
 
+import dace
 from dace.properties import make_properties
 
 
@@ -21,5 +21,5 @@ def test_replacement_subclass():
     assert np.allclose(tester(aa), aa + 1)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_replacement_subclass()

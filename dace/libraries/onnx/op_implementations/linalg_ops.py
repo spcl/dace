@@ -11,18 +11,14 @@ This module contains implementations of linear algebra operations including:
 
 import copy
 import itertools
-import typing
 
 import dace
-from dace import SDFG, SDFGState, nodes
-from dace.sdfg.nodes import Node
-from dace.sdfg.utils import in_desc_with_name, out_desc_with_name
-
-from dace import config
+from dace import SDFG, SDFGState, config, nodes
+from dace.frontend.common import create_einsum_sdfg
 from dace.libraries.onnx.forward_implementation_abc import ONNXForward
 from dace.libraries.onnx.nodes import onnx_op
 from dace.libraries.onnx.op_implementations.utils import in_desc_with_name, op_implementation, out_desc_with_name
-from dace.frontend.common import create_einsum_sdfg
+from dace.sdfg.nodes import Node
 
 # ============================================================================
 # Matrix Multiplication
@@ -31,7 +27,6 @@ from dace.frontend.common import create_einsum_sdfg
 
 @op_implementation(op="MatMul", name="pure")
 class PureMatMul(ONNXForward):
-
     @staticmethod
     def forward_can_be_applied(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> bool:
         input0_dim = len(in_desc_with_name(node, state, sdfg, "A").shape)
@@ -42,7 +37,7 @@ class PureMatMul(ONNXForward):
         return True
 
     @staticmethod
-    def forward(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
+    def forward(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> Node | SDFG:
         from dace.libraries.onnx.nodes.onnx_op_registry import ONNXEinsum  # avoid import loop
 
         A_desc = in_desc_with_name(node, state, sdfg, "A")
@@ -52,31 +47,31 @@ class PureMatMul(ONNXForward):
         input1_dim = B_desc.shape
 
         # list containing letters from z-a
-        letters = [chr(ord('z') - i) for i in range(26)]
+        letters = [chr(ord("z") - i) for i in range(26)]
         # i j k are used for the last dimensions
-        letters = [l for l in letters if l not in ['i', 'j', 'k']]
+        letters = [l for l in letters if l not in ["i", "j", "k"]]
 
         if len(input0_dim) == 1:
             if len(input1_dim) != 2:
                 raise ValueError("invalid dimensions")
-            arg1 = 'k'
-            arg2 = 'kj'
-            result = 'j'
+            arg1 = "k"
+            arg2 = "kj"
+            result = "j"
         elif len(input1_dim) == 1:
             if len(input0_dim) != 2:
                 raise ValueError("invalid dimensions")
-            arg1 = 'ik'
-            arg2 = 'k'
-            result = 'i'
+            arg1 = "ik"
+            arg2 = "k"
+            result = "i"
         else:
             # build the einsum. The last two dimensions are always just the matrix multiply einsum
             # dace will later specialize to a batched matmul if possible
-            arg1 = 'ik'
-            arg2 = 'kj'
-            result = 'ij'
+            arg1 = "ik"
+            arg2 = "kj"
+            result = "ij"
             if input0_dim[-2] != input0_dim[-1]:
                 if dace.symbolic.issymbolic(input0_dim[-2]):
-                    if config.Config.get_bool('debugprint'):
+                    if config.Config.get_bool("debugprint"):
                         print(
                             f"Warning: overriding symbol {input0_dim[-2]} with value {input1_dim[-1]} in descriptor of input A of node {node}"
                         )
@@ -84,7 +79,7 @@ class PureMatMul(ONNXForward):
                     new_shape[-1] = input1_dim[-2]
                     A_desc.shape = new_shape
                 elif dace.symbolic.issymbolic(input1_dim[-1]):
-                    if config.Config.get_bool('debugprint'):
+                    if config.Config.get_bool("debugprint"):
                         print(
                             f"Warning: overriding symbol {input0_dim[-1]} with value {input0_dim[-2]} in descriptor of input B of node {node}"
                         )
@@ -111,7 +106,7 @@ class PureMatMul(ONNXForward):
                     arg2 = letter + arg2
                     result = letter + result
 
-        einsum_str = '{},{}->{}'.format(arg1, arg2, result)
+        einsum_str = f"{arg1},{arg2}->{result}"
 
         # we lower to an ONNXEinsum node instead straight to the dace einsum to
         # make the autodiff simpler
@@ -143,7 +138,6 @@ class PureMatMul(ONNXForward):
 
 @op_implementation(op="Einsum", name="pure")
 class PureEinsum(ONNXForward):
-
     @staticmethod
     def forward_can_be_applied(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> bool:
         if "..." in node.equation:
@@ -151,7 +145,7 @@ class PureEinsum(ONNXForward):
         return True
 
     @staticmethod
-    def forward(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
+    def forward(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> Node | SDFG:
         nsdfg = dace.SDFG(node.label + "_expansion")
         nstate = nsdfg.add_state()
 
@@ -170,12 +164,14 @@ class PureEinsum(ONNXForward):
         assert len(output_edge) == 1, "Einsum node should have exactly one output edge"
         output_edge = output_edge[0]
         beta = 1 if output_edge.data.wcr else 0
-        create_einsum_sdfg(nsdfg,
-                           nstate,
-                           node.equation.replace(" ", ""),
-                           *(e.dst_conn for e in node.iter_inputs_in_onnx_order(state)),
-                           output="Output",
-                           beta=beta)
+        create_einsum_sdfg(
+            nsdfg,
+            nstate,
+            node.equation.replace(" ", ""),
+            *(e.dst_conn for e in node.iter_inputs_in_onnx_order(state)),
+            output="Output",
+            beta=beta,
+        )
         return nsdfg
 
 
@@ -186,14 +182,14 @@ class PureEinsum(ONNXForward):
 
 @op_implementation(op="Gemm", name="pure")
 class PureGemm(ONNXForward):
-
     @staticmethod
     def forward_can_be_applied(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> bool:
         return True
 
     @staticmethod
-    def forward(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
+    def forward(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> Node | SDFG:
         from dace.libraries.onnx.nodes.onnx_op_registry import ONNXEinsum  # avoid import loop
+
         A_desc = in_desc_with_name(node, state, sdfg, "A")
         B_desc = in_desc_with_name(node, state, sdfg, "B")
         Y_desc = out_desc_with_name(node, state, sdfg, "Y")
@@ -201,31 +197,31 @@ class PureGemm(ONNXForward):
         input1_dim = B_desc.shape
 
         # list containing letters from z-a
-        letters = [chr(ord('z') - i) for i in range(26)]
+        letters = [chr(ord("z") - i) for i in range(26)]
         # i j k are used for the last dimensions
-        letters = [l for l in letters if l not in ['i', 'j', 'k']]
+        letters = [l for l in letters if l not in ["i", "j", "k"]]
 
         if len(input0_dim) == 1:
             if len(input1_dim) != 2:
                 raise ValueError("invalid dimensions")
-            arg1 = 'k'
-            arg2 = 'kj'
-            result = 'j'
+            arg1 = "k"
+            arg2 = "kj"
+            result = "j"
         elif len(input1_dim) == 1:
             if len(input0_dim) != 2:
                 raise ValueError("invalid dimensions")
-            arg1 = 'ik'
-            arg2 = 'k'
-            result = 'i'
+            arg1 = "ik"
+            arg2 = "k"
+            result = "i"
         else:
             # build the einsum. The last two dimensions are always just the matrix multiply einsum
             # dace will later specialize to a batched matmul if possible
-            arg1 = 'ik'
-            arg2 = 'kj'
-            result = 'ij'
+            arg1 = "ik"
+            arg2 = "kj"
+            result = "ij"
             if input0_dim[-2] != input0_dim[-1]:
                 if dace.symbolic.issymbolic(input0_dim[-2]):
-                    if config.Config.get_bool('debugprint'):
+                    if config.Config.get_bool("debugprint"):
                         print(
                             f"Warning: overriding symbol {input0_dim[-2]} with value {input1_dim[-1]} in descriptor of input A of node {node}"
                         )
@@ -233,7 +229,7 @@ class PureGemm(ONNXForward):
                     new_shape[-1] = input1_dim[-2]
                     A_desc.shape = new_shape
                 elif dace.symbolic.issymbolic(input1_dim[-1]):
-                    if config.Config.get_bool('debugprint'):
+                    if config.Config.get_bool("debugprint"):
                         print(
                             f"Warning: overriding symbol {input0_dim[-1]} with value {input0_dim[-2]} in descriptor of input B of node {node}"
                         )
@@ -261,11 +257,11 @@ class PureGemm(ONNXForward):
                     result = letter + result
 
         if node.transA == 1:
-            arg1 = ''.join(reversed(arg1))
+            arg1 = "".join(reversed(arg1))
         if node.transB == 1:
-            arg2 = ''.join(reversed(arg2))
+            arg2 = "".join(reversed(arg2))
 
-        einsum_str = '{},{}->{}'.format(arg1, arg2, result)
+        einsum_str = f"{arg1},{arg2}->{result}"
 
         # we lower to an ONNXEinsum node instead straight to the dace einsum to
         # make the autodiff simpler
@@ -312,14 +308,11 @@ class PureGemm(ONNXForward):
         # Multiply by alpha: mm_result -> scal_result
         if node.alpha != 1:
             nstate.add_mapped_tasklet(
-                node.label + '_alphascale',
-                {
-                    k: f'0:{Ytmp_desc.shape[i]}'
-                    for i, k in enumerate(result)
-                },
-                dict(a=dace.Memlet(data=mm_result, subset=','.join(result))),
-                f'o = a * dace.{Ytmp_desc.dtype}({node.alpha})',
-                dict(o=dace.Memlet(data=scal_result, subset=','.join(result))),
+                node.label + "_alphascale",
+                {k: f"0:{Ytmp_desc.shape[i]}" for i, k in enumerate(result)},
+                dict(a=dace.Memlet(data=mm_result, subset=",".join(result))),
+                f"o = a * dace.{Ytmp_desc.dtype}({node.alpha})",
+                dict(o=dace.Memlet(data=scal_result, subset=",".join(result))),
                 external_edges=True,
                 input_nodes=dict(a=mm_result_node),
             )
@@ -329,29 +322,28 @@ class PureGemm(ONNXForward):
             C_desc = in_desc_with_name(node, state, sdfg, "C")
             nsdfg.add_datadesc("C", copy.deepcopy(C_desc))
             nsdfg.arrays["C"].transient = False
-            scal_result_node = next(n for n in nstate.sink_nodes()
-                                    if isinstance(n, dace.nodes.AccessNode) and n.data == scal_result)
-            beta_scale_code = f'o = s + c * dace.{C_desc.dtype}({node.beta})'
+            scal_result_node = next(
+                n for n in nstate.sink_nodes() if isinstance(n, dace.nodes.AccessNode) and n.data == scal_result
+            )
+            beta_scale_code = f"o = s + c * dace.{C_desc.dtype}({node.beta})"
             if node.beta == 1:
-                beta_scale_code = f'o = s + c'
+                beta_scale_code = "o = s + c"
 
             # Support broadcasting in C -> Y
-            c_index = result[-len(C_desc.shape):]
+            c_index = result[-len(C_desc.shape) :]
             for c_shp, y_shp in zip(reversed(C_desc.shape), reversed(Y_desc.shape)):
                 if c_shp != y_shp:
-                    raise ValueError('Could not broadcast dimensions from C '
-                                     'to Y in ONNXGemm')
+                    raise ValueError("Could not broadcast dimensions from C to Y in ONNXGemm")
 
             nstate.add_mapped_tasklet(
-                node.label + '_betascale',
-                {
-                    k: f'0:{Y_desc.shape[i]}'
-                    for i, k in enumerate(result)
-                },
-                dict(s=dace.Memlet(data=scal_result, subset=','.join(result)),
-                     c=dace.Memlet(data="C", subset=','.join(c_index))),
+                node.label + "_betascale",
+                {k: f"0:{Y_desc.shape[i]}" for i, k in enumerate(result)},
+                dict(
+                    s=dace.Memlet(data=scal_result, subset=",".join(result)),
+                    c=dace.Memlet(data="C", subset=",".join(c_index)),
+                ),
                 beta_scale_code,
-                dict(o=dace.Memlet(data="Y", subset=','.join(result))),
+                dict(o=dace.Memlet(data="Y", subset=",".join(result))),
                 external_edges=True,
                 input_nodes={scal_result: scal_result_node},
             )

@@ -1,11 +1,12 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
 import copy
-import pytest
-import numpy as np
 
-from dace.libraries.sparse import CSRMV
+import numpy as np
+import pytest
 from scipy.sparse import csr_matrix
+
+import dace
+from dace.libraries.sparse import CSRMV
 
 N = dace.symbol("N")
 M = dace.symbol("M")
@@ -14,11 +15,11 @@ NNZ = dace.symbol("NNZ")
 
 def make_sdfg(alpha: float, beta: float, implementation: str, dtype) -> dace.SDFG:
     sdfg = dace.SDFG(name="CSRMV")
-    sdfg.add_array("A_val", shape=(NNZ, ), dtype=dtype, transient=False)
-    sdfg.add_array("A_row", shape=(N + 1, ), dtype=dace.int32, transient=False)
-    sdfg.add_array("A_col", shape=(NNZ, ), dtype=dace.int32, transient=False)
-    sdfg.add_array("C", shape=(N, ), dtype=dtype, transient=False)
-    sdfg.add_array("B", shape=(M, ), dtype=dtype, transient=False)
+    sdfg.add_array("A_val", shape=(NNZ,), dtype=dtype, transient=False)
+    sdfg.add_array("A_row", shape=(N + 1,), dtype=dace.int32, transient=False)
+    sdfg.add_array("A_col", shape=(NNZ,), dtype=dace.int32, transient=False)
+    sdfg.add_array("C", shape=(N,), dtype=dtype, transient=False)
+    sdfg.add_array("B", shape=(M,), dtype=dtype, transient=False)
 
     state = sdfg.add_state("state", is_start_block=True)
     a_row_node = state.add_access("A_row")
@@ -48,26 +49,29 @@ def make_sdfg(alpha: float, beta: float, implementation: str, dtype) -> dace.SDF
     return sdfg
 
 
-@pytest.mark.parametrize("alpha, beta, implementation, dtype", [
-    pytest.param(1.0, 0.0, "pure", dace.float64),
-    pytest.param(1.0, 1.0, "pure", dace.float32),
-    pytest.param(1.0, 0.0, "pure", dace.float32),
-    pytest.param(1.0, 1.0, "pure", dace.float64),
-    pytest.param(2.0, 2.0, "pure", dace.float32),
-    pytest.param(2.0, 2.0, "pure", dace.float64),
-    pytest.param(1.0, 0.0, "MKL", dace.float32, marks=pytest.mark.mkl),
-    pytest.param(1.0, 0.0, "MKL", dace.float64, marks=pytest.mark.mkl),
-    pytest.param(1.0, 1.0, "MKL", dace.float32, marks=pytest.mark.mkl),
-    pytest.param(1.0, 1.0, "MKL", dace.float64, marks=pytest.mark.mkl),
-    pytest.param(2.0, 1.0, "MKL", dace.float32, marks=pytest.mark.mkl),
-    pytest.param(2.0, 1.0, "MKL", dace.float64, marks=pytest.mark.mkl),
-    pytest.param(1.0, 0.0, "cuSPARSE", dace.float32, marks=pytest.mark.gpu),
-    pytest.param(1.0, 0.0, "cuSPARSE", dace.float64, marks=pytest.mark.gpu),
-    pytest.param(1.0, 1.0, "cuSPARSE", dace.float32, marks=pytest.mark.gpu),
-    pytest.param(1.0, 1.0, "cuSPARSE", dace.float64, marks=pytest.mark.gpu),
-    pytest.param(2.0, 1.0, "cuSPARSE", dace.float32, marks=pytest.mark.gpu),
-    pytest.param(2.0, 1.0, "cuSPARSE", dace.float64, marks=pytest.mark.gpu),
-])
+@pytest.mark.parametrize(
+    "alpha, beta, implementation, dtype",
+    [
+        pytest.param(1.0, 0.0, "pure", dace.float64),
+        pytest.param(1.0, 1.0, "pure", dace.float32),
+        pytest.param(1.0, 0.0, "pure", dace.float32),
+        pytest.param(1.0, 1.0, "pure", dace.float64),
+        pytest.param(2.0, 2.0, "pure", dace.float32),
+        pytest.param(2.0, 2.0, "pure", dace.float64),
+        pytest.param(1.0, 0.0, "MKL", dace.float32, marks=pytest.mark.mkl),
+        pytest.param(1.0, 0.0, "MKL", dace.float64, marks=pytest.mark.mkl),
+        pytest.param(1.0, 1.0, "MKL", dace.float32, marks=pytest.mark.mkl),
+        pytest.param(1.0, 1.0, "MKL", dace.float64, marks=pytest.mark.mkl),
+        pytest.param(2.0, 1.0, "MKL", dace.float32, marks=pytest.mark.mkl),
+        pytest.param(2.0, 1.0, "MKL", dace.float64, marks=pytest.mark.mkl),
+        pytest.param(1.0, 0.0, "cuSPARSE", dace.float32, marks=pytest.mark.gpu),
+        pytest.param(1.0, 0.0, "cuSPARSE", dace.float64, marks=pytest.mark.gpu),
+        pytest.param(1.0, 1.0, "cuSPARSE", dace.float32, marks=pytest.mark.gpu),
+        pytest.param(1.0, 1.0, "cuSPARSE", dace.float64, marks=pytest.mark.gpu),
+        pytest.param(2.0, 1.0, "cuSPARSE", dace.float32, marks=pytest.mark.gpu),
+        pytest.param(2.0, 1.0, "cuSPARSE", dace.float64, marks=pytest.mark.gpu),
+    ],
+)
 def test_csrmv(alpha, beta, implementation, dtype):
     sdfg = make_sdfg(alpha, beta, implementation, dtype)
 
@@ -75,8 +79,8 @@ def test_csrmv(alpha, beta, implementation, dtype):
     m = 8
 
     A = np.random.random((n, m)).astype(dtype.as_numpy_dtype())
-    B = np.random.random((m)).astype(dtype.as_numpy_dtype())
-    C = np.random.random((n)).astype(dtype.as_numpy_dtype())
+    B = np.random.random(m).astype(dtype.as_numpy_dtype())
+    C = np.random.random(n).astype(dtype.as_numpy_dtype())
     C_ = copy.deepcopy(C)
 
     A_csr = csr_matrix(A)

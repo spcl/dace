@@ -1,15 +1,17 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 # Original application code: NPBench - https://github.com/spcl/npbench
 
-import dace.dtypes
-import numpy as np
-import dace as dc
-import pytest
 import argparse
-from dace.transformation.auto.auto_optimize import auto_optimize
-from dace.autodiff import add_backward_pass
 
-N = dc.symbol('N', dtype=dc.int32)
+import numpy as np
+import pytest
+
+import dace as dc
+import dace.dtypes
+from dace.autodiff import add_backward_pass
+from dace.transformation.auto.auto_optimize import auto_optimize
+
+N = dc.symbol("N", dtype=dc.int32)
 
 
 @dc.program
@@ -115,7 +117,7 @@ def run_lu(device_type: dace.dtypes.DeviceType):
 def run_lu_autodiff():
     import jax
     import jax.numpy as jnp
-    import jax.lax as lax
+    from jax import lax
 
     # Initialize data (polybench mini size)
     N = 5
@@ -124,7 +126,7 @@ def run_lu_autodiff():
 
     # Initialize gradient computation data
     gradient_A = np.zeros_like(A)
-    gradient___return = np.ones((1, ), dtype=np.float32)
+    gradient___return = np.ones((1,), dtype=np.float32)
 
     # Define sum reduction for the output
     @dc.program
@@ -160,9 +162,8 @@ def test_autodiff():
 
 
 if __name__ == "__main__":
-
     parser = argparse.ArgumentParser()
-    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu'], help='Target platform')
+    parser.add_argument("-t", "--target", default="cpu", choices=["cpu", "gpu"], help="Target platform")
 
     args = vars(parser.parse_args())
     target = args["target"]

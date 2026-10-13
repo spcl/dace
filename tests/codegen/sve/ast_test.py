@@ -1,12 +1,13 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-from dace.codegen.targets.sve.util import NotSupportedError
-import dace
-import dace.dtypes
-from tests.codegen.sve.common import get_code
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import pytest
 
-N = dace.symbol('N')
-M = dace.symbol('M')
+import dace
+import dace.dtypes
+from dace.codegen.targets.sve.util import NotSupportedError
+from tests.codegen.sve.common import get_code
+
+N = dace.symbol("N")
+M = dace.symbol("M")
 
 
 def test_assign_scalar():
@@ -22,8 +23,8 @@ def test_assign_scalar():
     code = get_code(program)
 
     # Scalar must be duplicated and brought into right type
-    assert 'svdup_f32' in code
-    assert f'({dace.float32})' in code
+    assert "svdup_f32" in code
+    assert f"({dace.float32})" in code
 
 
 def test_assign_pointer():
@@ -53,7 +54,7 @@ def test_compare_scalar_vector():
 
     code = get_code(program)
 
-    assert 'svcmplt' in code
+    assert "svcmplt" in code
 
 
 def test_if_block():
@@ -72,7 +73,7 @@ def test_if_block():
     code = get_code(program)
 
     # Accumulator must be used for predicates
-    assert '__pg_acc' in code
+    assert "__pg_acc" in code
 
 
 def test_assign_new_variable():
@@ -92,8 +93,8 @@ def test_assign_new_variable():
     code = get_code(program)
 
     # c will be once defined as vector, once as scalar (locally)
-    assert 'svfloat64_t c = ' in code
-    assert f'{dace.int64} c = ' in code
+    assert "svfloat64_t c = " in code
+    assert f"{dace.int64} c = " in code
 
 
 def test_math_functions():
@@ -111,13 +112,13 @@ def test_math_functions():
     code = get_code(program)
 
     # Vectorized max
-    assert 'svmax' in code
+    assert "svmax" in code
     # Vectorized sqrt
-    assert 'svsqrt' in code
+    assert "svsqrt" in code
     # Regular max (on scalars)
-    assert 'dace::math::max' in code
+    assert "dace::math::max" in code
     # Assigning scalar max to vector
-    assert 'svdup' in code
+    assert "svdup" in code
 
 
 def test_fused_operations():
@@ -137,10 +138,20 @@ def test_fused_operations():
     code = get_code(program)
 
     # All fused ops
-    assert 'svmad' in code
-    assert 'svmla' in code
-    assert 'svmls' in code
-    assert 'svmsb' in code
+    assert "svmad" in code
+    assert "svmla" in code
+    assert "svmls" in code
+    assert "svmsb" in code
 
     # No fusion if less than 2 vectors
-    assert 'svadd' in code
+    assert "svadd" in code
+
+
+if __name__ == "__main__":
+    test_assign_scalar()
+    test_assign_pointer()
+    test_compare_scalar_vector()
+    test_if_block()
+    test_assign_new_variable()
+    test_math_functions()
+    test_fused_operations()

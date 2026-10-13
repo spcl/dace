@@ -1,11 +1,12 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
 import polybench
 
-M = dace.symbol('M')
-N = dace.symbol('N')
+import dace
 
-#datatypes = [dace.float64, dace.int32, dace.float32]
+M = dace.symbol("M")
+N = dace.symbol("N")
+
+# datatypes = [dace.float64, dace.int32, dace.float32]
 datatype = dace.float64
 
 # Dataset sizes
@@ -17,7 +18,7 @@ args = [
     ([1], datatype),
 ]
 
-outputs = [(1, 'B')]
+outputs = [(1, "B")]
 
 
 def init_array(A, B, alpha, n, m):
@@ -47,7 +48,7 @@ def trmm(A: datatype[M, M], B: datatype[M, N], alpha: datatype[1]):
                 out = 0
 
             @dace.map
-            def compute_elem(k: _[i + 1:M]):
+            def compute_elem(k: _[i + 1 : M]):
                 ia << A[k, i]
                 ib << B[k, j]
                 ob >> tmp(1, lambda a, b: a + b)
@@ -62,5 +63,5 @@ def trmm(A: datatype[M, M], B: datatype[M, N], alpha: datatype[1]):
                 ob = ialpha * (ib + itmp)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     polybench.main(sizes, args, outputs, init_array, trmm)

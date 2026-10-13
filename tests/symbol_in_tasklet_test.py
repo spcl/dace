@@ -1,8 +1,9 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
 import numpy as np
 
-value = dace.symbol('value', dtype=dace.float32)
+import dace
+
+value = dace.symbol("value", dtype=dace.float32)
 
 
 @dace.program
@@ -29,6 +30,6 @@ def test_explicit():
     assert out[0] == np.float32(1.5)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_numpy()
     test_explicit()

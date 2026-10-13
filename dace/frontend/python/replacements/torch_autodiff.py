@@ -3,31 +3,31 @@
 Integration with the dace python frontend
 """
 
-from typing import Optional, Union, Sequence
 import itertools
+from collections.abc import Sequence
 
-from dace import SDFG, SDFGState, data
 import dace.sdfg.sdfg
-from dace.frontend.python import common
-from dace.frontend.common import op_repository
-from dace.frontend.python import newast
-from dace.transformation.passes.fusion_inline import InlineControlFlowRegions
-from dace.data import find_new_name
-from dace.sdfg.utils import expand_nodes
-from dace.libraries.onnx.op_implementations.common import iterables_equal
+from dace import SDFG, SDFGState, data
 from dace.autodiff import analysis as autodiff_analysis
+from dace.autodiff.library.library import BackwardPass, ParameterArray
+from dace.data import find_new_name
+from dace.frontend.common import op_repository
+from dace.frontend.python import common, newast
+from dace.libraries.onnx.op_implementations.common import iterables_equal
+from dace.sdfg.utils import expand_nodes
+from dace.transformation.passes.fusion_inline import InlineControlFlowRegions
 
-from dace.autodiff.library.library import ParameterArray, BackwardPass
-
-TensorOrTensors = Union[str, Sequence[str]]
+TensorOrTensors = str | Sequence[str]
 
 
-@op_repository.replaces('torch.autograd.backward')
-def backward(pv: newast.ProgramVisitor,
-             sdfg: SDFG,
-             state: SDFGState,
-             tensors: TensorOrTensors,
-             grads: Optional[TensorOrTensors] = None):
+@op_repository.replaces("torch.autograd.backward")
+def backward(
+    pv: newast.ProgramVisitor,
+    sdfg: SDFG,
+    state: SDFGState,
+    tensors: TensorOrTensors,
+    grads: TensorOrTensors | None = None,
+):
     """
     Adds a backward pass node to the SDFG.
 
@@ -37,12 +37,14 @@ def backward(pv: newast.ProgramVisitor,
 
     # First, remove function call regions
     transformation = InlineControlFlowRegions()
-    transformation.set_opts({
-        'no_inline_function_call_regions': False,
-        'no_inline_named_regions': False,
-        'no_inline_loops': True,
-        'no_inline_conditional': True
-    })
+    transformation.set_opts(
+        {
+            "no_inline_function_call_regions": False,
+            "no_inline_named_regions": False,
+            "no_inline_loops": True,
+            "no_inline_conditional": True,
+        }
+    )
     transformation.apply_pass(sdfg, {})
 
     if isinstance(tensors, str):
@@ -70,22 +72,20 @@ def backward(pv: newast.ProgramVisitor,
 
     for grad, tensor in zip(grads, tensors):
         if grad not in sdfg.arrays and grad not in sdfg.constants_prop:
-            raise common.DaceSyntaxError(pv, None, "Gradient {} is not an array".format(grad))
+            raise common.DaceSyntaxError(pv, None, f"Gradient {grad} is not an array")
         if tensor not in sdfg.arrays:
-            raise common.DaceSyntaxError(pv, None, "Tensor {} is not an array".format(tensor))
+            raise common.DaceSyntaxError(pv, None, f"Tensor {tensor} is not an array")
 
         grad_desc = sdfg.arrays[grad] if grad in sdfg.arrays else sdfg.constants_prop[grad][0]
 
         if not iterables_equal(grad_desc.shape, sdfg.arrays[tensor].shape):
-            raise common.DaceSyntaxError(pv, None,
-                                         "Gradient {} and tensor {} have different shapes".format(grad, tensor))
+            raise common.DaceSyntaxError(pv, None, f"Gradient {grad} and tensor {tensor} have different shapes")
 
     given_gradients = dict(zip(grads, tensors))
 
-    bwd_node = BackwardPass('backward',
-                            inputs=set(itertools.chain(tensors, grads)),
-                            outputs=set(),
-                            given_gradients=given_gradients)
+    bwd_node = BackwardPass(
+        "backward", inputs=set(itertools.chain(tensors, grads)), outputs=set(), given_gradients=given_gradients
+    )
     state.add_node(bwd_node)
 
     for inp in itertools.chain(tensors, grads):
@@ -97,7 +97,8 @@ def backward(pv: newast.ProgramVisitor,
     to_compute = {
         dependency
         for tensor in tensors
-        for dependency in dependencies[tensor] if isinstance(sdfg.arrays[dependency], ParameterArray)
+        for dependency in dependencies[tensor]
+        if isinstance(sdfg.arrays[dependency], ParameterArray)
     }
 
     for param in to_compute:
@@ -112,8 +113,8 @@ def backward(pv: newast.ProgramVisitor,
         state.add_edge(bwd_node, conn_name, write_an, None, sdfg.make_array_memlet(grad_name))
 
 
-@op_repository.replaces_attribute('ParameterArray', 'grad')
-def grad(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, arr: str) -> str:
+@op_repository.replaces_attribute("ParameterArray", "grad")
+def grad(pv: "ProgramVisitor", sdfg: SDFG, state: SDFGState, arr: str) -> str:
     """
     Returns the name of the gradient buffer of the given array.
 
@@ -122,18 +123,21 @@ def grad(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, arr: str) -> str:
     """
 
     if arr not in sdfg.arrays:
-        raise common.DaceSyntaxError(pv, None, "Array {} is not defined".format(arr))
+        raise common.DaceSyntaxError(pv, None, f"Array {arr} is not defined")
     desc = sdfg.arrays[arr]
     if not isinstance(desc, ParameterArray):
         raise common.DaceSyntaxError(
-            pv, None, "Called .grad on an Array that was not a Parameter. Convert it to a parameter "
-            " first using .requires_grad_()")
+            pv,
+            None,
+            "Called .grad on an Array that was not a Parameter. Convert it to a parameter "
+            " first using .requires_grad_()",
+        )
 
     return desc.gradient
 
 
-@op_repository.replaces_method('Array', 'requires_grad_')
-@op_repository.replaces_method('Scalar', 'requires_grad_')
+@op_repository.replaces_method("Array", "requires_grad_")
+@op_repository.replaces_method("Scalar", "requires_grad_")
 def requires_grad_(pv: newast.ProgramVisitor, sdfg: SDFG, state: SDFGState, self: str):
     """
     Converts a array to a ParameterArray. This creates a descriptor for
@@ -141,13 +145,13 @@ def requires_grad_(pv: newast.ProgramVisitor, sdfg: SDFG, state: SDFGState, self
     """
 
     if self not in sdfg.arrays:
-        raise common.DaceSyntaxError(pv, None, "Array {} is not defined".format(self))
+        raise common.DaceSyntaxError(pv, None, f"Array {self} is not defined")
     ParameterArray.make_parameter(sdfg, self)
 
 
-@op_repository.replaces_method('Array', 'backward')
-@op_repository.replaces_method('Scalar', 'backward')
-def backward_method(pv: newast.ProgramVisitor, sdfg: SDFG, state: SDFGState, self: str, grad: Optional[str] = None):
+@op_repository.replaces_method("Array", "backward")
+@op_repository.replaces_method("Scalar", "backward")
+def backward_method(pv: newast.ProgramVisitor, sdfg: SDFG, state: SDFGState, self: str, grad: str | None = None):
     """
     Alias for ``torch.autograd.backward(self)``
     """

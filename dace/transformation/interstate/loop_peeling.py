@@ -1,13 +1,12 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
-""" Loop peeling transformation """
+"""Loop peeling transformation"""
 
 import sympy as sp
-from typing import List, Optional
 
 from dace import sdfg as sd
 from dace import symbolic
+from dace.properties import CodeBlock, Property, make_properties
 from dace.sdfg.state import ControlFlowRegion
-from dace.properties import Property, make_properties, CodeBlock
 from dace.symbolic import pystr_to_symbolic
 from dace.transformation.interstate.loop_unroll import LoopUnroll
 from dace.transformation.passes.analysis import loop_analysis
@@ -24,7 +23,8 @@ class LoopPeeling(LoopUnroll):
     begin = Property(
         dtype=bool,
         default=True,
-        desc='If True, peels loop from beginning (first `count` iterations), otherwise peels last `count` iterations.',
+        category="Parameters",
+        desc="If True, peels loop from beginning (first `count` iterations), otherwise peels last `count` iterations.",
     )
 
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
@@ -36,30 +36,30 @@ class LoopPeeling(LoopUnroll):
         condition = pystr_to_symbolic(condition.as_string)
         itersym = pystr_to_symbolic(var)
         # Find condition by matching expressions
-        end: Optional[sp.Expr] = None
-        a = sp.Wild('a')
-        op = ''
+        end: sp.Expr | None = None
+        a = sp.Wild("a")
+        op = ""
         match = condition.match(itersym < a)
         if match:
-            op = '<'
+            op = "<"
             end = match[a] - self.count * step
         if end is None:
             match = condition.match(itersym <= a)
             if match:
-                op = '<='
+                op = "<="
                 end = match[a] - self.count * step
         if end is None:
             match = condition.match(itersym > a)
             if match:
-                op = '>'
+                op = ">"
                 end = match[a] - self.count * step
         if end is None:
             match = condition.match(itersym >= a)
             if match:
-                op = '>='
+                op = ">="
                 end = match[a] - self.count * step
         if len(op) == 0:
-            raise ValueError('Cannot match loop condition for peeling')
+            raise ValueError("Cannot match loop condition for peeling")
 
         res = str(itersym) + op + str(end)
         return res
@@ -72,7 +72,7 @@ class LoopPeeling(LoopUnroll):
 
         if self.begin:
             # Create states for loop subgraph
-            peeled_iterations: List[ControlFlowRegion] = []
+            peeled_iterations: list[ControlFlowRegion] = []
             for i in range(self.count):
                 # `i` is non-negative here, so it doubles as the label-safety fallback index.
                 current_index = start + (i * stride)
@@ -91,10 +91,10 @@ class LoopPeeling(LoopUnroll):
                 graph.add_edge(peeled_iterations[-1], self.loop, sd.InterstateEdge())
 
                 new_start = symbolic.evaluate(start + (self.count * stride), sdfg.constants)
-                self.loop.init_statement = CodeBlock(f'{self.loop.loop_variable} = {new_start}')
+                self.loop.init_statement = CodeBlock(f"{self.loop.loop_variable} = {new_start}")
         else:
             # Create states for loop subgraph
-            peeled_iterations: List[ControlFlowRegion] = []
+            peeled_iterations: list[ControlFlowRegion] = []
             for i in reversed(range(self.count)):
                 # `i` is non-negative here too, so it doubles as the label-safety fallback index.
                 current_index = pystr_to_symbolic(self.loop.loop_variable) + (i * stride)

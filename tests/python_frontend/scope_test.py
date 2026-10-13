@@ -1,9 +1,10 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
-""" Tests related to scopes and variable lifetime. """
+"""Tests related to scopes and variable lifetime."""
 
-import dace
 import numpy as np
 import pytest
+
+import dace
 from dace.frontend.python.common import DaceSyntaxError
 
 rng = np.random.default_rng(42)
@@ -91,7 +92,7 @@ def test_reassignment_while():
     def reassignment_while(a: dace.float64[3, 3], b: dace.float64[3, 3]) -> dace.float64[3, 3]:
         out = np.copy(a)
         i = 0
-        while (i < 10):
+        while i < 10:
             out = out - b
             i += 1
         return out
@@ -113,14 +114,14 @@ def test_reassignment_view():
     """
     Tests the disallowed behavior of reassigning to a view
     """
-    anarray = np.ones((3, ))
-    anotherarray = np.ones((3, ))
+    anarray = np.ones((3,))
+    anotherarray = np.ones((3,))
 
     @dace.program
     def func(new_sym):
         new_sym[...] = 7.0
 
-    func = func.to_sdfg(new_sym=dace.data.Array(shape=(3, ), dtype=dace.float64))
+    func = func.to_sdfg(new_sym=dace.data.Array(shape=(3,), dtype=dace.float64))
 
     @dace.program
     def testf(maybe_none=None):
@@ -142,7 +143,6 @@ def test_reassignment_view():
 
 
 if __name__ == "__main__":
-
     test_reassignment_simple()
     test_reassignment_if()
     test_reassignment_for()

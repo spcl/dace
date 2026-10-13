@@ -1,17 +1,19 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
-""" Tests the scalar fission pass. """
+"""Tests the scalar fission pass."""
 
 import numpy as np
 import pytest
 
 import dace
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
+from dace.transformation.interstate import LoopToMap
 from dace.transformation.pass_pipeline import Pipeline
 from dace.transformation.passes.scalar_fission import ScalarFission
 from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising
 from dace.transformation.passes.simplification.prune_empty_conditional_branches import PruneEmptyConditionalBranches
 
 
-@pytest.mark.parametrize('with_raising', (False, True))
+@pytest.mark.parametrize("with_raising", (False, True))
 def test_scalar_fission(with_raising):
     """
     Test the scalar fission pass.
@@ -20,84 +22,84 @@ def test_scalar_fission(with_raising):
     :see: ``tests.passes.scalar_write_shadow_scopes_test``
     """
     # Construct the SDFG.
-    sdfg = dace.SDFG('scalar_isedge')
+    sdfg = dace.SDFG("scalar_isedge")
 
-    N = dace.symbol('N')
-    sdfg.add_array('A', [N], dace.int32)
-    sdfg.add_array('B', [N], dace.int32)
-    sdfg.add_array('tmp', [1], dace.int32, transient=True)
+    N = dace.symbol("N")
+    sdfg.add_array("A", [N], dace.int32)
+    sdfg.add_array("B", [N], dace.int32)
+    sdfg.add_array("tmp", [1], dace.int32, transient=True)
 
-    init_state = sdfg.add_state('init')
-    guard_1 = sdfg.add_state('guard_1')
-    loop_1_1 = sdfg.add_state('loop_1_1')
-    loop_1_2 = sdfg.add_state('loop_1_2')
-    intermediate = sdfg.add_state('intermediate')
-    guard_2 = sdfg.add_state('guard_2')
-    loop_2_1 = sdfg.add_state('loop_2_1')
-    loop_2_2 = sdfg.add_state('loop_2_2')
-    end_state = sdfg.add_state('end')
+    init_state = sdfg.add_state("init")
+    guard_1 = sdfg.add_state("guard_1")
+    loop_1_1 = sdfg.add_state("loop_1_1")
+    loop_1_2 = sdfg.add_state("loop_1_2")
+    intermediate = sdfg.add_state("intermediate")
+    guard_2 = sdfg.add_state("guard_2")
+    loop_2_1 = sdfg.add_state("loop_2_1")
+    loop_2_2 = sdfg.add_state("loop_2_2")
+    end_state = sdfg.add_state("end")
 
-    init_tasklet = init_state.add_tasklet('init', {}, {'out'}, 'out = 0')
-    init_write = init_state.add_write('tmp')
-    init_state.add_edge(init_tasklet, 'out', init_write, None, dace.Memlet('tmp[0]'))
+    init_tasklet = init_state.add_tasklet("init", {}, {"out"}, "out = 0")
+    init_write = init_state.add_write("tmp")
+    init_state.add_edge(init_tasklet, "out", init_write, None, dace.Memlet("tmp[0]"))
 
-    tmp1_tasklet = loop_1_1.add_tasklet('tmp1', {'a', 'b'}, {'out'}, 'out = a * b')
-    tmp1_write = loop_1_1.add_write('tmp')
-    a1_read = loop_1_1.add_read('A')
-    b1_read = loop_1_1.add_read('B')
-    loop_1_1.add_edge(a1_read, None, tmp1_tasklet, 'a', dace.Memlet('A[i]'))
-    loop_1_1.add_edge(b1_read, None, tmp1_tasklet, 'b', dace.Memlet('B[i]'))
-    loop_1_1.add_edge(tmp1_tasklet, 'out', tmp1_write, None, dace.Memlet('tmp[0]'))
+    tmp1_tasklet = loop_1_1.add_tasklet("tmp1", {"a", "b"}, {"out"}, "out = a * b")
+    tmp1_write = loop_1_1.add_write("tmp")
+    a1_read = loop_1_1.add_read("A")
+    b1_read = loop_1_1.add_read("B")
+    loop_1_1.add_edge(a1_read, None, tmp1_tasklet, "a", dace.Memlet("A[i]"))
+    loop_1_1.add_edge(b1_read, None, tmp1_tasklet, "b", dace.Memlet("B[i]"))
+    loop_1_1.add_edge(tmp1_tasklet, "out", tmp1_write, None, dace.Memlet("tmp[0]"))
 
-    loop1_tasklet_1 = loop_1_2.add_tasklet('loop1_1', {'ap', 't'}, {'a'}, 'a = ap + 2 * t')
-    loop1_tasklet_2 = loop_1_2.add_tasklet('loop1_2', {'bp', 't'}, {'b'}, 'b = bp - 2 * t')
-    loop1_read_tmp = loop_1_2.add_read('tmp')
-    loop1_read_a = loop_1_2.add_read('A')
-    loop1_read_b = loop_1_2.add_read('B')
-    loop1_write_a = loop_1_2.add_write('A')
-    loop1_write_b = loop_1_2.add_write('B')
-    loop_1_2.add_edge(loop1_read_tmp, None, loop1_tasklet_1, 't', dace.Memlet('tmp[0]'))
-    loop_1_2.add_edge(loop1_read_tmp, None, loop1_tasklet_2, 't', dace.Memlet('tmp[0]'))
-    loop_1_2.add_edge(loop1_read_a, None, loop1_tasklet_1, 'ap', dace.Memlet('A[i + 1]'))
-    loop_1_2.add_edge(loop1_read_b, None, loop1_tasklet_2, 'bp', dace.Memlet('B[i + 1]'))
-    loop_1_2.add_edge(loop1_tasklet_1, 'a', loop1_write_a, None, dace.Memlet('A[i]'))
-    loop_1_2.add_edge(loop1_tasklet_2, 'b', loop1_write_b, None, dace.Memlet('B[i]'))
+    loop1_tasklet_1 = loop_1_2.add_tasklet("loop1_1", {"ap", "t"}, {"a"}, "a = ap + 2 * t")
+    loop1_tasklet_2 = loop_1_2.add_tasklet("loop1_2", {"bp", "t"}, {"b"}, "b = bp - 2 * t")
+    loop1_read_tmp = loop_1_2.add_read("tmp")
+    loop1_read_a = loop_1_2.add_read("A")
+    loop1_read_b = loop_1_2.add_read("B")
+    loop1_write_a = loop_1_2.add_write("A")
+    loop1_write_b = loop_1_2.add_write("B")
+    loop_1_2.add_edge(loop1_read_tmp, None, loop1_tasklet_1, "t", dace.Memlet("tmp[0]"))
+    loop_1_2.add_edge(loop1_read_tmp, None, loop1_tasklet_2, "t", dace.Memlet("tmp[0]"))
+    loop_1_2.add_edge(loop1_read_a, None, loop1_tasklet_1, "ap", dace.Memlet("A[i + 1]"))
+    loop_1_2.add_edge(loop1_read_b, None, loop1_tasklet_2, "bp", dace.Memlet("B[i + 1]"))
+    loop_1_2.add_edge(loop1_tasklet_1, "a", loop1_write_a, None, dace.Memlet("A[i]"))
+    loop_1_2.add_edge(loop1_tasklet_2, "b", loop1_write_b, None, dace.Memlet("B[i]"))
 
-    tmp2_tasklet = loop_2_1.add_tasklet('tmp2', {'a', 'b'}, {'out'}, 'out = a / b')
-    tmp2_write = loop_2_1.add_write('tmp')
-    a2_read = loop_2_1.add_read('A')
-    b2_read = loop_2_1.add_read('B')
-    loop_2_1.add_edge(a2_read, None, tmp2_tasklet, 'a', dace.Memlet('A[i + 1]'))
-    loop_2_1.add_edge(b2_read, None, tmp2_tasklet, 'b', dace.Memlet('B[i + 1]'))
-    loop_2_1.add_edge(tmp2_tasklet, 'out', tmp2_write, None, dace.Memlet('tmp[0]'))
+    tmp2_tasklet = loop_2_1.add_tasklet("tmp2", {"a", "b"}, {"out"}, "out = a / b")
+    tmp2_write = loop_2_1.add_write("tmp")
+    a2_read = loop_2_1.add_read("A")
+    b2_read = loop_2_1.add_read("B")
+    loop_2_1.add_edge(a2_read, None, tmp2_tasklet, "a", dace.Memlet("A[i + 1]"))
+    loop_2_1.add_edge(b2_read, None, tmp2_tasklet, "b", dace.Memlet("B[i + 1]"))
+    loop_2_1.add_edge(tmp2_tasklet, "out", tmp2_write, None, dace.Memlet("tmp[0]"))
 
-    loop2_tasklet_1 = loop_2_2.add_tasklet('loop2_1', {'ap', 't'}, {'a'}, 'a = ap + t * t')
-    loop2_tasklet_2 = loop_2_2.add_tasklet('loop2_2', {'bp', 't'}, {'b'}, 'b = bp - t * t')
-    loop2_read_tmp = loop_2_2.add_read('tmp')
-    loop2_read_a = loop_2_2.add_read('A')
-    loop2_read_b = loop_2_2.add_read('B')
-    loop2_write_a = loop_2_2.add_write('A')
-    loop2_write_b = loop_2_2.add_write('B')
-    loop_2_2.add_edge(loop2_read_tmp, None, loop2_tasklet_1, 't', dace.Memlet('tmp[0]'))
-    loop_2_2.add_edge(loop2_read_tmp, None, loop2_tasklet_2, 't', dace.Memlet('tmp[0]'))
-    loop_2_2.add_edge(loop2_read_a, None, loop2_tasklet_1, 'ap', dace.Memlet('A[i]'))
-    loop_2_2.add_edge(loop2_read_b, None, loop2_tasklet_2, 'bp', dace.Memlet('B[i]'))
-    loop_2_2.add_edge(loop2_tasklet_1, 'a', loop2_write_a, None, dace.Memlet('A[i + 1]'))
-    loop_2_2.add_edge(loop2_tasklet_2, 'b', loop2_write_b, None, dace.Memlet('B[i + 1]'))
+    loop2_tasklet_1 = loop_2_2.add_tasklet("loop2_1", {"ap", "t"}, {"a"}, "a = ap + t * t")
+    loop2_tasklet_2 = loop_2_2.add_tasklet("loop2_2", {"bp", "t"}, {"b"}, "b = bp - t * t")
+    loop2_read_tmp = loop_2_2.add_read("tmp")
+    loop2_read_a = loop_2_2.add_read("A")
+    loop2_read_b = loop_2_2.add_read("B")
+    loop2_write_a = loop_2_2.add_write("A")
+    loop2_write_b = loop_2_2.add_write("B")
+    loop_2_2.add_edge(loop2_read_tmp, None, loop2_tasklet_1, "t", dace.Memlet("tmp[0]"))
+    loop_2_2.add_edge(loop2_read_tmp, None, loop2_tasklet_2, "t", dace.Memlet("tmp[0]"))
+    loop_2_2.add_edge(loop2_read_a, None, loop2_tasklet_1, "ap", dace.Memlet("A[i]"))
+    loop_2_2.add_edge(loop2_read_b, None, loop2_tasklet_2, "bp", dace.Memlet("B[i]"))
+    loop_2_2.add_edge(loop2_tasklet_1, "a", loop2_write_a, None, dace.Memlet("A[i + 1]"))
+    loop_2_2.add_edge(loop2_tasklet_2, "b", loop2_write_b, None, dace.Memlet("B[i + 1]"))
 
-    sdfg.add_edge(init_state, guard_1, dace.InterstateEdge(assignments={'i': 0}))
-    sdfg.add_edge(guard_1, loop_1_1, dace.InterstateEdge(condition='i < (N - 1)'))
-    tmp1_edge = dace.InterstateEdge(assignments={'j': 'tmp'})
+    sdfg.add_edge(init_state, guard_1, dace.InterstateEdge(assignments={"i": 0}))
+    sdfg.add_edge(guard_1, loop_1_1, dace.InterstateEdge(condition="i < (N - 1)"))
+    tmp1_edge = dace.InterstateEdge(assignments={"j": "tmp"})
     sdfg.add_edge(loop_1_1, loop_1_2, tmp1_edge)
-    sdfg.add_edge(loop_1_2, guard_1, dace.InterstateEdge(assignments={'i': 'i + 1'}))
-    sdfg.add_edge(guard_1, intermediate, dace.InterstateEdge(condition='i >= (N - 1)'))
+    sdfg.add_edge(loop_1_2, guard_1, dace.InterstateEdge(assignments={"i": "i + 1"}))
+    sdfg.add_edge(guard_1, intermediate, dace.InterstateEdge(condition="i >= (N - 1)"))
 
-    sdfg.add_edge(intermediate, guard_2, dace.InterstateEdge(assignments={'i': 0}))
-    sdfg.add_edge(guard_2, loop_2_1, dace.InterstateEdge(condition='i < (N - 1)'))
-    tmp2_edge = dace.InterstateEdge(assignments={'j': 'tmp'})
+    sdfg.add_edge(intermediate, guard_2, dace.InterstateEdge(assignments={"i": 0}))
+    sdfg.add_edge(guard_2, loop_2_1, dace.InterstateEdge(condition="i < (N - 1)"))
+    tmp2_edge = dace.InterstateEdge(assignments={"j": "tmp"})
     sdfg.add_edge(loop_2_1, loop_2_2, tmp2_edge)
-    sdfg.add_edge(loop_2_2, guard_2, dace.InterstateEdge(assignments={'i': 'i + 1'}))
-    sdfg.add_edge(guard_2, end_state, dace.InterstateEdge(condition='i >= (N - 1)'))
+    sdfg.add_edge(loop_2_2, guard_2, dace.InterstateEdge(assignments={"i": "i + 1"}))
+    sdfg.add_edge(guard_2, end_state, dace.InterstateEdge(condition="i >= (N - 1)"))
 
     if with_raising:
         Pipeline([ControlFlowRaising(), PruneEmptyConditionalBranches()]).apply_pass(sdfg, {})
@@ -111,36 +113,36 @@ def test_scalar_fission(with_raising):
     # There should now be 5 arrays in the SDFG, i.e. 2 more than before since two isolated scopes of tmp exist.
     assert len(sdfg.arrays.keys()) == 5
     # Assert all accesses per scope are identical.
-    assert all([n.data == list(tmp1_edge.assignments.values())[0] for n in [tmp1_write, loop1_read_tmp]])
-    assert all([n.data == list(tmp2_edge.assignments.values())[0] for n in [tmp2_write, loop2_read_tmp]])
+    assert all(n.data == list(tmp1_edge.assignments.values())[0] for n in [tmp1_write, loop1_read_tmp])
+    assert all(n.data == list(tmp2_edge.assignments.values())[0] for n in [tmp2_write, loop2_read_tmp])
 
 
-@pytest.mark.parametrize('with_raising', (False, True))
+@pytest.mark.parametrize("with_raising", (False, True))
 def test_branch_subscopes_nofission(with_raising):
-    sdfg = dace.SDFG('branch_subscope_fission')
-    sdfg.add_symbol('i', dace.int32)
-    sdfg.add_array('A', [2], dace.int32)
-    sdfg.add_array('B', [1], dace.int32, transient=True)
-    sdfg.add_array('C', [1], dace.int32)
-    init_state = sdfg.add_state('init')
-    guard_1 = sdfg.add_state('guard_1')
-    guard_2 = sdfg.add_state('guard_2')
-    right1_state = sdfg.add_state('right1')
-    right2_state = sdfg.add_state('right2')
-    left2_state = sdfg.add_state('left2')
-    merge_1 = sdfg.add_state('merge_1')
-    merge_2 = sdfg.add_state('merge_2')
-    guard_after = sdfg.add_state('guard_after')
-    left_after = sdfg.add_state('left_after')
-    right_after = sdfg.add_state('right_after')
-    merge_after = sdfg.add_state('merge_after')
-    first_assign = dace.InterstateEdge(assignments={'i': 'A[0]'})
+    sdfg = dace.SDFG("branch_subscope_fission")
+    sdfg.add_symbol("i", dace.int32)
+    sdfg.add_array("A", [2], dace.int32)
+    sdfg.add_array("B", [1], dace.int32, transient=True)
+    sdfg.add_array("C", [1], dace.int32)
+    init_state = sdfg.add_state("init")
+    guard_1 = sdfg.add_state("guard_1")
+    guard_2 = sdfg.add_state("guard_2")
+    right1_state = sdfg.add_state("right1")
+    right2_state = sdfg.add_state("right2")
+    left2_state = sdfg.add_state("left2")
+    merge_1 = sdfg.add_state("merge_1")
+    merge_2 = sdfg.add_state("merge_2")
+    guard_after = sdfg.add_state("guard_after")
+    left_after = sdfg.add_state("left_after")
+    right_after = sdfg.add_state("right_after")
+    merge_after = sdfg.add_state("merge_after")
+    first_assign = dace.InterstateEdge(assignments={"i": "A[0]"})
     sdfg.add_edge(init_state, guard_1, first_assign)
-    combined_assign_cond = dace.InterstateEdge(assignments={'i': 'A[1]'}, condition='i > 0')
+    combined_assign_cond = dace.InterstateEdge(assignments={"i": "A[1]"}, condition="i > 0")
     sdfg.add_edge(guard_1, guard_2, combined_assign_cond)
-    right_cond = dace.InterstateEdge(condition='i <= 0')
-    left_2_cond = dace.InterstateEdge(condition='i <= 0')
-    right_2_cond = dace.InterstateEdge(condition='i > 0')
+    right_cond = dace.InterstateEdge(condition="i <= 0")
+    left_2_cond = dace.InterstateEdge(condition="i <= 0")
+    right_2_cond = dace.InterstateEdge(condition="i > 0")
     sdfg.add_edge(guard_1, right1_state, right_cond)
     sdfg.add_edge(guard_2, right2_state, right_2_cond)
     sdfg.add_edge(guard_2, left2_state, left_2_cond)
@@ -149,85 +151,85 @@ def test_branch_subscopes_nofission(with_raising):
     sdfg.add_edge(left2_state, merge_2, dace.InterstateEdge())
     sdfg.add_edge(merge_2, merge_1, dace.InterstateEdge())
     sdfg.add_edge(merge_1, guard_after, dace.InterstateEdge())
-    after_cond_left = dace.InterstateEdge(condition='i <= 0')
-    after_cond_right = dace.InterstateEdge(condition='i > 0')
+    after_cond_left = dace.InterstateEdge(condition="i <= 0")
+    after_cond_right = dace.InterstateEdge(condition="i > 0")
     sdfg.add_edge(guard_after, left_after, after_cond_left)
     sdfg.add_edge(guard_after, right_after, after_cond_right)
     sdfg.add_edge(left_after, merge_after, dace.InterstateEdge())
     sdfg.add_edge(right_after, merge_after, dace.InterstateEdge())
 
-    t1 = guard_1.add_tasklet('t1', {}, {'b'}, 'b = 1')
-    a1 = guard_1.add_access('B')
-    guard_1.add_edge(t1, 'b', a1, None, dace.Memlet('B[0]'))
+    t1 = guard_1.add_tasklet("t1", {}, {"b"}, "b = 1")
+    a1 = guard_1.add_access("B")
+    guard_1.add_edge(t1, "b", a1, None, dace.Memlet("B[0]"))
 
-    t0 = guard_2.add_tasklet('t1', {}, {'b'}, 'b = 0')
-    a0 = guard_2.add_access('B')
-    guard_2.add_edge(t0, 'b', a0, None, dace.Memlet('B[0]'))
+    t0 = guard_2.add_tasklet("t1", {}, {"b"}, "b = 0")
+    a0 = guard_2.add_access("B")
+    guard_2.add_edge(t0, "b", a0, None, dace.Memlet("B[0]"))
 
-    a2 = left2_state.add_access('B')
-    t2 = left2_state.add_tasklet('t2', {'b'}, {'c'}, 'c = b')
-    a3 = left2_state.add_access('C')
-    left2_state.add_edge(a2, None, t2, 'b', dace.Memlet('B[0]'))
-    left2_state.add_edge(t2, 'c', a3, None, dace.Memlet('C[0]'))
+    a2 = left2_state.add_access("B")
+    t2 = left2_state.add_tasklet("t2", {"b"}, {"c"}, "c = b")
+    a3 = left2_state.add_access("C")
+    left2_state.add_edge(a2, None, t2, "b", dace.Memlet("B[0]"))
+    left2_state.add_edge(t2, "c", a3, None, dace.Memlet("C[0]"))
 
-    a4 = right2_state.add_access('B')
-    t3 = right2_state.add_tasklet('t3', {'b'}, {'c'}, 'c = b + 1')
-    a5 = right2_state.add_access('C')
-    right2_state.add_edge(a4, None, t3, 'b', dace.Memlet('B[0]'))
-    right2_state.add_edge(t3, 'c', a5, None, dace.Memlet('C[0]'))
+    a4 = right2_state.add_access("B")
+    t3 = right2_state.add_tasklet("t3", {"b"}, {"c"}, "c = b + 1")
+    a5 = right2_state.add_access("C")
+    right2_state.add_edge(a4, None, t3, "b", dace.Memlet("B[0]"))
+    right2_state.add_edge(t3, "c", a5, None, dace.Memlet("C[0]"))
 
-    a6 = right1_state.add_access('B')
-    t4 = right1_state.add_tasklet('t4', {'b'}, {'c'}, 'c = b - 1')
-    a7 = right1_state.add_access('C')
-    right1_state.add_edge(a6, None, t4, 'b', dace.Memlet('B[0]'))
-    right1_state.add_edge(t4, 'c', a7, None, dace.Memlet('C[0]'))
+    a6 = right1_state.add_access("B")
+    t4 = right1_state.add_tasklet("t4", {"b"}, {"c"}, "c = b - 1")
+    a7 = right1_state.add_access("C")
+    right1_state.add_edge(a6, None, t4, "b", dace.Memlet("B[0]"))
+    right1_state.add_edge(t4, "c", a7, None, dace.Memlet("C[0]"))
 
-    a8 = left_after.add_access('B')
-    t5 = left_after.add_tasklet('t5', {'b'}, {'c'}, 'c = b * 2')
-    a9 = left_after.add_access('C')
-    left_after.add_edge(a8, None, t5, 'b', dace.Memlet('B[0]'))
-    left_after.add_edge(t5, 'c', a9, None, dace.Memlet('C[0]'))
+    a8 = left_after.add_access("B")
+    t5 = left_after.add_tasklet("t5", {"b"}, {"c"}, "c = b * 2")
+    a9 = left_after.add_access("C")
+    left_after.add_edge(a8, None, t5, "b", dace.Memlet("B[0]"))
+    left_after.add_edge(t5, "c", a9, None, dace.Memlet("C[0]"))
 
-    a10 = right_after.add_access('B')
-    t6 = right_after.add_tasklet('t6', {'b'}, {'c'}, 'c = b * 3')
-    a11 = right_after.add_access('C')
-    right_after.add_edge(a10, None, t6, 'b', dace.Memlet('B[0]'))
-    right_after.add_edge(t6, 'c', a11, None, dace.Memlet('C[0]'))
+    a10 = right_after.add_access("B")
+    t6 = right_after.add_tasklet("t6", {"b"}, {"c"}, "c = b * 3")
+    a11 = right_after.add_access("C")
+    right_after.add_edge(a10, None, t6, "b", dace.Memlet("B[0]"))
+    right_after.add_edge(t6, "c", a11, None, dace.Memlet("C[0]"))
 
     if with_raising:
         Pipeline([ControlFlowRaising(), PruneEmptyConditionalBranches()]).apply_pass(sdfg, {})
 
     Pipeline([ScalarFission()]).apply_pass(sdfg, {})
 
-    assert set(sdfg.arrays.keys()) == {'A', 'B', 'C'}
+    assert set(sdfg.arrays.keys()) == {"A", "B", "C"}
 
 
-@pytest.mark.parametrize('with_raising', (False, True))
+@pytest.mark.parametrize("with_raising", (False, True))
 def test_branch_subscopes_fission(with_raising):
-    sdfg = dace.SDFG('branch_subscope_fission')
-    sdfg.add_symbol('i', dace.int32)
-    sdfg.add_array('A', [2], dace.int32)
-    sdfg.add_array('B', [1], dace.int32, transient=True)
-    sdfg.add_array('C', [1], dace.int32)
-    init_state = sdfg.add_state('init')
-    guard_1 = sdfg.add_state('guard_1')
-    guard_2 = sdfg.add_state('guard_2')
-    right1_state = sdfg.add_state('right1')
-    right2_state = sdfg.add_state('right2')
-    left2_state = sdfg.add_state('left2')
-    merge_1 = sdfg.add_state('merge_1')
-    merge_2 = sdfg.add_state('merge_2')
-    guard_after = sdfg.add_state('guard_after')
-    left_after = sdfg.add_state('left_after')
-    right_after = sdfg.add_state('right_after')
-    merge_after = sdfg.add_state('merge_after')
-    first_assign = dace.InterstateEdge(assignments={'i': 'A[0]'})
+    sdfg = dace.SDFG("branch_subscope_fission")
+    sdfg.add_symbol("i", dace.int32)
+    sdfg.add_array("A", [2], dace.int32)
+    sdfg.add_array("B", [1], dace.int32, transient=True)
+    sdfg.add_array("C", [1], dace.int32)
+    init_state = sdfg.add_state("init")
+    guard_1 = sdfg.add_state("guard_1")
+    guard_2 = sdfg.add_state("guard_2")
+    right1_state = sdfg.add_state("right1")
+    right2_state = sdfg.add_state("right2")
+    left2_state = sdfg.add_state("left2")
+    merge_1 = sdfg.add_state("merge_1")
+    merge_2 = sdfg.add_state("merge_2")
+    guard_after = sdfg.add_state("guard_after")
+    left_after = sdfg.add_state("left_after")
+    right_after = sdfg.add_state("right_after")
+    merge_after = sdfg.add_state("merge_after")
+    first_assign = dace.InterstateEdge(assignments={"i": "A[0]"})
     sdfg.add_edge(init_state, guard_1, first_assign)
-    combined_assign_cond = dace.InterstateEdge(assignments={'i': 'A[1]'}, condition='i > 0')
+    combined_assign_cond = dace.InterstateEdge(assignments={"i": "A[1]"}, condition="i > 0")
     sdfg.add_edge(guard_1, guard_2, combined_assign_cond)
-    right_cond = dace.InterstateEdge(condition='i <= 0')
-    left_2_cond = dace.InterstateEdge(condition='i <= 0')
-    right_2_cond = dace.InterstateEdge(condition='i > 0')
+    right_cond = dace.InterstateEdge(condition="i <= 0")
+    left_2_cond = dace.InterstateEdge(condition="i <= 0")
+    right_2_cond = dace.InterstateEdge(condition="i > 0")
     sdfg.add_edge(guard_1, right1_state, right_cond)
     sdfg.add_edge(guard_2, right2_state, right_2_cond)
     sdfg.add_edge(guard_2, left2_state, left_2_cond)
@@ -236,76 +238,67 @@ def test_branch_subscopes_fission(with_raising):
     sdfg.add_edge(left2_state, merge_2, dace.InterstateEdge())
     sdfg.add_edge(merge_2, merge_1, dace.InterstateEdge())
     sdfg.add_edge(merge_1, guard_after, dace.InterstateEdge())
-    after_cond_left = dace.InterstateEdge(condition='i <= 0')
-    after_cond_right = dace.InterstateEdge(condition='i > 0')
+    after_cond_left = dace.InterstateEdge(condition="i <= 0")
+    after_cond_right = dace.InterstateEdge(condition="i > 0")
     sdfg.add_edge(guard_after, left_after, after_cond_left)
     sdfg.add_edge(guard_after, right_after, after_cond_right)
     sdfg.add_edge(left_after, merge_after, dace.InterstateEdge())
     sdfg.add_edge(right_after, merge_after, dace.InterstateEdge())
 
-    t1 = guard_1.add_tasklet('t1', {}, {'b'}, 'b = 1')
-    a1 = guard_1.add_access('B')
-    guard_1.add_edge(t1, 'b', a1, None, dace.Memlet('B[0]'))
+    t1 = guard_1.add_tasklet("t1", {}, {"b"}, "b = 1")
+    a1 = guard_1.add_access("B")
+    guard_1.add_edge(t1, "b", a1, None, dace.Memlet("B[0]"))
 
-    t0 = guard_2.add_tasklet('t1', {}, {'b'}, 'b = 0')
-    a0 = guard_2.add_access('B')
-    guard_2.add_edge(t0, 'b', a0, None, dace.Memlet('B[0]'))
+    t0 = guard_2.add_tasklet("t1", {}, {"b"}, "b = 0")
+    a0 = guard_2.add_access("B")
+    guard_2.add_edge(t0, "b", a0, None, dace.Memlet("B[0]"))
 
-    a2 = left2_state.add_access('B')
-    t2 = left2_state.add_tasklet('t2', {'b'}, {'c'}, 'c = b')
-    a3 = left2_state.add_access('C')
-    left2_state.add_edge(a2, None, t2, 'b', dace.Memlet('B[0]'))
-    left2_state.add_edge(t2, 'c', a3, None, dace.Memlet('C[0]'))
+    a2 = left2_state.add_access("B")
+    t2 = left2_state.add_tasklet("t2", {"b"}, {"c"}, "c = b")
+    a3 = left2_state.add_access("C")
+    left2_state.add_edge(a2, None, t2, "b", dace.Memlet("B[0]"))
+    left2_state.add_edge(t2, "c", a3, None, dace.Memlet("C[0]"))
 
-    a4 = right2_state.add_access('B')
-    t3 = right2_state.add_tasklet('t3', {'b'}, {'c'}, 'c = b + 1')
-    a5 = right2_state.add_access('C')
-    right2_state.add_edge(a4, None, t3, 'b', dace.Memlet('B[0]'))
-    right2_state.add_edge(t3, 'c', a5, None, dace.Memlet('C[0]'))
+    a4 = right2_state.add_access("B")
+    t3 = right2_state.add_tasklet("t3", {"b"}, {"c"}, "c = b + 1")
+    a5 = right2_state.add_access("C")
+    right2_state.add_edge(a4, None, t3, "b", dace.Memlet("B[0]"))
+    right2_state.add_edge(t3, "c", a5, None, dace.Memlet("C[0]"))
 
-    a6 = right1_state.add_access('B')
-    t4 = right1_state.add_tasklet('t4', {'b'}, {'c'}, 'c = b - 1')
-    a7 = right1_state.add_access('C')
-    right1_state.add_edge(a6, None, t4, 'b', dace.Memlet('B[0]'))
-    right1_state.add_edge(t4, 'c', a7, None, dace.Memlet('C[0]'))
+    a6 = right1_state.add_access("B")
+    t4 = right1_state.add_tasklet("t4", {"b"}, {"c"}, "c = b - 1")
+    a7 = right1_state.add_access("C")
+    right1_state.add_edge(a6, None, t4, "b", dace.Memlet("B[0]"))
+    right1_state.add_edge(t4, "c", a7, None, dace.Memlet("C[0]"))
 
-    t7 = guard_after.add_tasklet('t7', {}, {'b'}, 'b = 5')
-    a12 = guard_after.add_access('B')
-    guard_after.add_edge(t7, 'b', a12, None, dace.Memlet('B[0]'))
+    t7 = guard_after.add_tasklet("t7", {}, {"b"}, "b = 5")
+    a12 = guard_after.add_access("B")
+    guard_after.add_edge(t7, "b", a12, None, dace.Memlet("B[0]"))
 
-    a8 = left_after.add_access('B')
-    t5 = left_after.add_tasklet('t5', {'b'}, {'c'}, 'c = b * 2')
-    a9 = left_after.add_access('C')
-    left_after.add_edge(a8, None, t5, 'b', dace.Memlet('B[0]'))
-    left_after.add_edge(t5, 'c', a9, None, dace.Memlet('C[0]'))
+    a8 = left_after.add_access("B")
+    t5 = left_after.add_tasklet("t5", {"b"}, {"c"}, "c = b * 2")
+    a9 = left_after.add_access("C")
+    left_after.add_edge(a8, None, t5, "b", dace.Memlet("B[0]"))
+    left_after.add_edge(t5, "c", a9, None, dace.Memlet("C[0]"))
 
-    a10 = right_after.add_access('B')
-    t6 = right_after.add_tasklet('t6', {'b'}, {'c'}, 'c = b * 3')
-    a11 = right_after.add_access('C')
-    right_after.add_edge(a10, None, t6, 'b', dace.Memlet('B[0]'))
-    right_after.add_edge(t6, 'c', a11, None, dace.Memlet('C[0]'))
+    a10 = right_after.add_access("B")
+    t6 = right_after.add_tasklet("t6", {"b"}, {"c"}, "c = b * 3")
+    a11 = right_after.add_access("C")
+    right_after.add_edge(a10, None, t6, "b", dace.Memlet("B[0]"))
+    right_after.add_edge(t6, "c", a11, None, dace.Memlet("C[0]"))
 
-    a13 = merge_1.add_access('B')
-    t8 = merge_1.add_tasklet('t8', {'b'}, {'c'}, 'c = b + 1')
-    a14 = merge_1.add_access('C')
-    merge_1.add_edge(a13, None, t8, 'b', dace.Memlet('B[0]'))
-    merge_1.add_edge(t8, 'c', a14, None, dace.Memlet('C[0]'))
+    a13 = merge_1.add_access("B")
+    t8 = merge_1.add_tasklet("t8", {"b"}, {"c"}, "c = b + 1")
+    a14 = merge_1.add_access("C")
+    merge_1.add_edge(a13, None, t8, "b", dace.Memlet("B[0]"))
+    merge_1.add_edge(t8, "c", a14, None, dace.Memlet("C[0]"))
 
     if with_raising:
         Pipeline([ControlFlowRaising(), PruneEmptyConditionalBranches()]).apply_pass(sdfg, {})
 
     Pipeline([ScalarFission()]).apply_pass(sdfg, {})
 
-    assert set(sdfg.arrays.keys()) == {'A', 'B', 'C', 'B_0', 'B_1'}
-
-
-if __name__ == '__main__':
-    test_scalar_fission(False)
-    test_branch_subscopes_nofission(False)
-    test_branch_subscopes_fission(False)
-    test_scalar_fission(True)
-    test_branch_subscopes_nofission(True)
-    test_branch_subscopes_fission(True)
+    assert set(sdfg.arrays.keys()) == {"A", "B", "C", "B_0", "B_1"}
 
 
 def ordering_edge_between_writes_sdfg() -> dace.SDFG:
@@ -314,35 +307,35 @@ def ordering_edge_between_writes_sdfg() -> dace.SDFG:
     The empty memlets transfer nothing, so that node is a READ of the preceding write, not a
     dominating write of its own.
     """
-    sdfg = dace.SDFG('ordering_edge_between_writes')
-    sdfg.add_array('A', [1], dace.float64)
-    sdfg.add_array('out', [1], dace.float64)
-    sdfg.add_scalar('s', dace.float64, transient=True)
-    sdfg.add_scalar('order', dace.float64, transient=True)
+    sdfg = dace.SDFG("ordering_edge_between_writes")
+    sdfg.add_array("A", [1], dace.float64)
+    sdfg.add_array("out", [1], dace.float64)
+    sdfg.add_scalar("s", dace.float64, transient=True)
+    sdfg.add_scalar("order", dace.float64, transient=True)
 
-    state = sdfg.add_state('main', is_start_block=True)
-    a_read = state.add_read('A')
-    written = state.add_access('s')
-    ordered = state.add_access('s')
-    order_src = state.add_access('order')
+    state = sdfg.add_state("main", is_start_block=True)
+    a_read = state.add_read("A")
+    written = state.add_access("s")
+    ordered = state.add_access("s")
+    order_src = state.add_access("order")
 
-    init = state.add_tasklet('init', {'i'}, {'o'}, 'o = i * 2.0')
-    side = state.add_tasklet('side', {'i'}, {'o'}, 'o = i')
-    consumer = state.add_tasklet('consumer', {'i'}, {'o'}, 'o = i + 1.0')
+    init = state.add_tasklet("init", {"i"}, {"o"}, "o = i * 2.0")
+    side = state.add_tasklet("side", {"i"}, {"o"}, "o = i")
+    consumer = state.add_tasklet("consumer", {"i"}, {"o"}, "o = i + 1.0")
 
-    state.add_edge(a_read, None, init, 'i', dace.Memlet('A[0]'))
-    state.add_edge(init, 'o', written, None, dace.Memlet('s[0]'))
-    state.add_edge(a_read, None, side, 'i', dace.Memlet('A[0]'))
-    state.add_edge(side, 'o', order_src, None, dace.Memlet('order[0]'))
+    state.add_edge(a_read, None, init, "i", dace.Memlet("A[0]"))
+    state.add_edge(init, "o", written, None, dace.Memlet("s[0]"))
+    state.add_edge(a_read, None, side, "i", dace.Memlet("A[0]"))
+    state.add_edge(side, "o", order_src, None, dace.Memlet("order[0]"))
     state.add_edge(written, None, ordered, None, dace.Memlet())
     state.add_edge(order_src, None, ordered, None, dace.Memlet())
-    state.add_edge(ordered, None, consumer, 'i', dace.Memlet('s[0]'))
-    state.add_edge(consumer, 'o', state.add_write('out'), None, dace.Memlet('out[0]'))
+    state.add_edge(ordered, None, consumer, "i", dace.Memlet("s[0]"))
+    state.add_edge(consumer, "o", state.add_write("out"), None, dace.Memlet("out[0]"))
 
-    second = sdfg.add_state_after(state, 'second')
-    tail = second.add_tasklet('tail', {'i'}, {'o'}, 'o = i')
-    second.add_edge(second.add_read('s'), None, tail, 'i', dace.Memlet('s[0]'))
-    second.add_edge(tail, 'o', second.add_write('out'), None, dace.Memlet('out[0]'))
+    second = sdfg.add_state_after(state, "second")
+    tail = second.add_tasklet("tail", {"i"}, {"o"}, "o = i")
+    second.add_edge(second.add_read("s"), None, tail, "i", dace.Memlet("s[0]"))
+    second.add_edge(tail, "o", second.add_write("out"), None, dace.Memlet("out[0]"))
     return sdfg
 
 
@@ -365,12 +358,150 @@ def test_ordering_edge_does_not_start_a_version():
                 continue
             endpoints = [n.data for n in (edge.src, edge.dst) if isinstance(n, dace.nodes.AccessNode)]
             assert not endpoints or edge.data.data in endpoints, (
-                f'{state.label}: memlet {edge.data.data} on {edge.src} -> {edge.dst} names no endpoint')
+                f"{state.label}: memlet {edge.data.data} on {edge.src} -> {edge.dst} names no endpoint"
+            )
 
     minted = set(sdfg.arrays.keys()) - before
-    assert not minted, f'the ordering edge is not a write, so nothing may be versioned: {sorted(minted)}'
+    assert not minted, f"the ordering edge is not a write, so nothing may be versioned: {sorted(minted)}"
 
     A = np.array([3.0], dtype=np.float64)
     out = np.zeros(1, dtype=np.float64)
     sdfg(A=A, out=out)
-    assert out[0] == 6.0, f'got {out[0]}'
+    assert out[0] == 6.0, f"got {out[0]}"
+
+
+def _branchy_loop(sdfg: dace.SDFG, name: str, threshold: float, then_value: str, out: str, scale: float) -> LoopRegion:
+    """``for i: if A[i] > threshold: t = then_value else: t = A[i]; out[i] = scale * t``."""
+    loop = LoopRegion(name, "i < N", "i", "i = 0", "i = i + 1")
+    cond = ConditionalBlock(f"{name}_if")
+    for condition, value in ((f"A[i] > {threshold}", then_value), (None, "a")):
+        branch = ControlFlowRegion(f"{name}_branch_{len(cond.branches)}")
+        state = branch.add_state(is_start_block=True)
+        write = state.add_tasklet("set_t", {"a"} if value == "a" else set(), {"o"}, f"o = {value}")
+        if value == "a":
+            state.add_edge(state.add_read("A"), None, write, "a", dace.Memlet("A[i]"))
+        state.add_edge(write, "o", state.add_write("t"), None, dace.Memlet("t[0]"))
+        cond.add_branch(None if condition is None else dace.properties.CodeBlock(condition), branch)
+    loop.add_node(cond, is_start_block=True)
+    use = loop.add_state(f"{name}_use")
+    loop.add_edge(cond, use, dace.InterstateEdge())
+    consume = use.add_tasklet("use_t", {"x"}, {"o"}, f"o = {scale} * x")
+    use.add_edge(use.add_read("t"), None, consume, "x", dace.Memlet("t[0]"))
+    use.add_edge(consume, "o", use.add_write(out), None, dace.Memlet(f"{out}[i]"))
+    return loop
+
+
+def test_scalar_written_in_every_branch_is_private_to_each_loop():
+    """Two loops each set the scalar ``t`` in both arms of an if/else and then read it, as CloudSC's ``ZFAC`` is.
+
+    Every path through each conditional writes ``t``, so its reads see that iteration's write: each loop gets its own
+    version, and both loops map. Treated as live-in, ``t`` stayed one container shared by the loops and neither mapped.
+    """
+    sdfg = dace.SDFG("scalar_written_in_every_branch")
+    sdfg.add_symbol("N", dace.int64)
+    for name in ("A", "B", "C"):
+        sdfg.add_array(name, ["N"], dace.float64)
+    sdfg.add_scalar("t", dace.float64, transient=True)
+    first = _branchy_loop(sdfg, "first", 0.5, "1.0", "B", 2.0)
+    second = _branchy_loop(sdfg, "second", 0.25, "3.0", "C", 1.0)
+    sdfg.add_node(first, is_start_block=True)
+    sdfg.add_node(second)
+    sdfg.add_edge(first, second, dace.InterstateEdge())
+    sdfg.validate()
+
+    Pipeline([ScalarFission()]).apply_pass(sdfg, {})
+    sdfg.validate()
+    assert sdfg.apply_transformations_repeated(LoopToMap) == 2, "each loop owns its version of t and maps"
+
+    A = np.arange(16, dtype=np.float64) / 15.0
+    B, C = np.zeros_like(A), np.zeros_like(A)
+    sdfg(A=A, B=B, C=C, N=A.size)
+    assert np.array_equal(B, 2.0 * np.where(A > 0.5, 1.0, A))
+    assert np.array_equal(C, np.where(A > 0.25, 3.0, A))
+
+
+def test_scalar_read_by_a_branch_condition_is_private_to_each_loop():
+    """Two loops each set the guard ``c = A[i] > 0.5`` and branch on it, as CloudSC's demoted ``if_cond`` scalars do.
+
+    The condition reads ``c`` on entry to the conditional, after that iteration's write: each loop gets its own version,
+    and both loops map. Without the condition counted as a read, the writes shadowed nothing and ``c`` stayed one
+    container shared by the loops.
+    """
+    sdfg = dace.SDFG("scalar_read_by_a_branch_condition")
+    sdfg.add_symbol("N", dace.int64)
+    for name in ("A", "B", "C"):
+        sdfg.add_array(name, ["N"], dace.float64)
+    sdfg.add_scalar("c", dace.bool, transient=True)
+    previous = None
+    for out, value in (("B", "1.0"), ("C", "2.0")):
+        loop = LoopRegion(f"loop_{out}", "i < N", "i", "i = 0", "i = i + 1")
+        sdfg.add_node(loop, is_start_block=previous is None)
+        if previous is not None:
+            sdfg.add_edge(previous, loop, dace.InterstateEdge())
+        guard = loop.add_state(f"guard_{out}", is_start_block=True)
+        test = guard.add_tasklet("test", {"a"}, {"o"}, "o = a > 0.5")
+        guard.add_edge(guard.add_read("A"), None, test, "a", dace.Memlet("A[i]"))
+        guard.add_edge(test, "o", guard.add_write("c"), None, dace.Memlet("c[0]"))
+        cond = ConditionalBlock(f"if_{out}")
+        branch = ControlFlowRegion(f"then_{out}")
+        body = branch.add_state(f"set_{out}", is_start_block=True)
+        store = body.add_tasklet("store", {}, {"o"}, f"o = {value}")
+        body.add_edge(store, "o", body.add_write(out), None, dace.Memlet(f"{out}[i]"))
+        cond.add_branch(dace.properties.CodeBlock("c"), branch)
+        loop.add_node(cond)
+        loop.add_edge(guard, cond, dace.InterstateEdge())
+        previous = loop
+    sdfg.validate()
+
+    assert Pipeline([ScalarFission()]).apply_pass(sdfg, {})["ScalarFission"]["c"] == {"c_0", "c_1"}
+    sdfg.validate()
+    assert sdfg.apply_transformations_repeated(LoopToMap) == 2, "each loop owns its version of c and maps"
+
+    A = np.arange(16, dtype=np.float64) / 15.0
+    B, C = np.zeros_like(A), np.zeros_like(A)
+    sdfg(A=A, B=B, C=C, N=A.size)
+    assert np.array_equal(B, np.where(A > 0.5, 1.0, 0.0))
+    assert np.array_equal(C, np.where(A > 0.5, 2.0, 0.0))
+
+
+def test_an_access_in_two_write_scopes_leaves_the_scalar_whole():
+    """A read the analysis files under two writes (CloudSC's ``llo1``, read after a conditional whose branches write it
+    inside nested loops) can carry only one version's name, so it would read one branch's value after the other ran.
+    ScalarFission must then leave the container whole."""
+    sdfg = dace.SDFG("access_in_two_scopes")
+    sdfg.add_array("R", [1], dace.float64)
+    sdfg.add_scalar("t", dace.float64, transient=True)
+    writes = []
+    previous = None
+    for value in ("1.0", "2.0"):
+        state = sdfg.add_state(f"write_{value[0]}", is_start_block=previous is None)
+        if previous is not None:
+            sdfg.add_edge(previous, state, dace.InterstateEdge())
+        tasklet = state.add_tasklet("w", {}, {"o"}, f"o = {value}")
+        node = state.add_write("t")
+        state.add_edge(tasklet, "o", node, None, dace.Memlet("t[0]"))
+        writes.append((state, node))
+        previous = state
+    end = sdfg.add_state_after(previous, "end")
+    read = end.add_read("t")
+    tasklet = end.add_tasklet("r", {"x"}, {"o"}, "o = x")
+    end.add_edge(read, None, tasklet, "x", dace.Memlet("t[0]"))
+    end.add_edge(tasklet, "o", end.add_write("R"), None, dace.Memlet("R[0]"))
+    scopes = {"t": {writes[0]: {writes[0], (end, read)}, writes[1]: {writes[1], (end, read)}}}
+
+    renamed = ScalarFission().apply_pass(sdfg, {"ScalarWriteShadowScopes": {sdfg.cfg_id: scopes}})
+    assert not renamed, f"an access shared by two scopes must not be versioned, got {renamed}"
+    assert read.data == "t" and all(node.data == "t" for _, node in writes)
+
+
+if __name__ == "__main__":
+    test_scalar_fission(False)
+    test_branch_subscopes_nofission(False)
+    test_branch_subscopes_fission(False)
+    test_scalar_fission(True)
+    test_branch_subscopes_nofission(True)
+    test_branch_subscopes_fission(True)
+    test_ordering_edge_does_not_start_a_version()
+    test_scalar_written_in_every_branch_is_private_to_each_loop()
+    test_scalar_read_by_a_branch_condition_is_private_to_each_loop()
+    test_an_access_in_two_write_scopes_leaves_the_scalar_whole()

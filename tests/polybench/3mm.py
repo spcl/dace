@@ -6,47 +6,23 @@ try:
 except ImportError:
     polybench = None
 
-NI = dace.symbol('NI')
-NJ = dace.symbol('NJ')
-NK = dace.symbol('NK')
-NL = dace.symbol('NL')
-NM = dace.symbol('NM')
+NI = dace.symbol("NI")
+NJ = dace.symbol("NJ")
+NK = dace.symbol("NK")
+NL = dace.symbol("NL")
+NM = dace.symbol("NM")
 
-#datatypes = [dace.float64, dace.int32, dace.float32]
+# datatypes = [dace.float64, dace.int32, dace.float32]
 datatype = dace.float64
 
 # Dataset sizes
-sizes = [{
-    NI: 16,
-    NJ: 18,
-    NK: 20,
-    NL: 22,
-    NM: 24
-}, {
-    NI: 40,
-    NJ: 50,
-    NK: 60,
-    NL: 70,
-    NM: 80
-}, {
-    NI: 180,
-    NJ: 190,
-    NK: 200,
-    NL: 210,
-    NM: 220
-}, {
-    NI: 800,
-    NJ: 900,
-    NK: 1000,
-    NL: 1100,
-    NM: 1200
-}, {
-    NI: 1600,
-    NJ: 1800,
-    NK: 2000,
-    NL: 2200,
-    NM: 2400
-}]
+sizes = [
+    {NI: 16, NJ: 18, NK: 20, NL: 22, NM: 24},
+    {NI: 40, NJ: 50, NK: 60, NL: 70, NM: 80},
+    {NI: 180, NJ: 190, NK: 200, NL: 210, NM: 220},
+    {NI: 800, NJ: 900, NK: 1000, NL: 1100, NM: 1200},
+    {NI: 1600, NJ: 1800, NK: 2000, NL: 2200, NM: 2400},
+]
 
 args = [([NI, NK], datatype), ([NK, NJ], datatype), ([NJ, NM], datatype), ([NM, NL], datatype), ([NI, NL], datatype)]
 
@@ -93,9 +69,9 @@ def k3mm(A: datatype[NI, NK], B: datatype[NK, NJ], C: datatype[NJ, NM], D: datat
         out = in_a * in_b
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     if polybench:
-        polybench.main(sizes, args, [(4, 'G')], init_array, k3mm)
+        polybench.main(sizes, args, [(4, "G")], init_array, k3mm)
     else:
         init_array(*args, **{str(k).lower(): v for k, v in sizes[2].items()})
         k3mm(*args)

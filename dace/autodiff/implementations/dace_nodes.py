@@ -1,35 +1,34 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 """
-    Class for defining the reversal of pure SDFG nodes: AccessNode, Tasklet, MapEntry/Exit, NestedSDFG
-    Each method should return a tuple (reversed_node, BackwardResult)
+Class for defining the reversal of pure SDFG nodes: AccessNode, Tasklet, MapEntry/Exit, NestedSDFG
+Each method should return a tuple (reversed_node, BackwardResult)
 """
+
 import ast
 import collections
 import copy
 import numbers
+from typing import TYPE_CHECKING
+
 import astunparse
 import sympy as sp
-from typing import List, Tuple, TYPE_CHECKING
 
 # DaCe imports
 import dace
-import dace.sdfg.nodes as nodes
+import dace.autodiff.utils as ad_utils
 from dace import dtypes
-from dace.data import Reference, Structure
-from dace.sdfg import SDFGState
-from dace.data import find_new_name
 
 # Autodiff imports
-from dace.autodiff.base_abc import BackwardResult, AutoDiffException
-import dace.autodiff.utils as ad_utils
+from dace.autodiff.base_abc import AutoDiffException, BackwardResult
+from dace.data import Reference, Structure, find_new_name
+from dace.sdfg import SDFGState, nodes
 
 if TYPE_CHECKING:
     from dace.autodiff.backward_pass_generator import BackwardPassGenerator
 
 
 class DaceNodeBackwardImplementations:
-
-    def __init__(self, backward_pass_generator: 'BackwardPassGenerator'):
+    def __init__(self, backward_pass_generator: "BackwardPassGenerator"):
         self.bwd_engine = backward_pass_generator
         pass
 
@@ -38,9 +37,9 @@ class DaceNodeBackwardImplementations:
         forward_state: SDFGState,
         backward_state: SDFGState,
         node: nodes.NestedSDFG,
-        given_gradients: List[str],
-        required_gradients: List[str],
-    ) -> Tuple[nodes.Node, BackwardResult]:
+        given_gradients: list[str],
+        required_gradients: list[str],
+    ) -> tuple[nodes.Node, BackwardResult]:
         reverse_nsdfg = dace.SDFG(node.sdfg.name + "_backward")
 
         gen = self.bwd_engine.create_child_generator(
@@ -55,7 +54,7 @@ class DaceNodeBackwardImplementations:
         # sdfg fails otherwise
         deferred_edges = []
 
-        inputs = set(backward_result.given_grad_names[name] for name in sorted(given_gradients))
+        inputs = {backward_result.given_grad_names[name] for name in sorted(given_gradients)}
         # loop through the arrays that we need from the forward pass
         for name, desc in sorted(backward_input_arrays.items()):
             # if the name is not already passed to the reverse SDFG node ...
@@ -75,8 +74,7 @@ class DaceNodeBackwardImplementations:
                 # (1)
                 new_name = find_new_name(name + "_forwarded", self.bwd_engine.sdfg.arrays)
                 if new_name in self.bwd_engine.sdfg.arrays or new_name in self.bwd_engine.backward_input_arrays:
-                    raise AutoDiffException(
-                        "Attempted to create array with name '{}', but it already existed".format(new_name))
+                    raise AutoDiffException(f"Attempted to create array with name '{new_name}', but it already existed")
 
                 self.bwd_engine.sdfg.add_datadesc(new_name, copy.deepcopy(desc))
                 self.bwd_engine.backward_input_arrays[new_name] = copy.deepcopy(desc)
@@ -96,15 +94,18 @@ class DaceNodeBackwardImplementations:
                 # (3)
                 read = backward_state.add_read(new_name)
                 deferred_edges.append(
-                    dict(u=read,
-                         u_connector=None,
-                         v_connector=name,
-                         memlet=self.bwd_engine.backward_sdfg.make_array_memlet(new_name)))
+                    dict(
+                        u=read,
+                        u_connector=None,
+                        v_connector=name,
+                        memlet=self.bwd_engine.backward_sdfg.make_array_memlet(new_name),
+                    )
+                )
                 inputs.add(name)
             else:
                 inputs.add(name)
 
-        outputs = set(backward_result.required_grad_names[name] for name in required_gradients)
+        outputs = {backward_result.required_grad_names[name] for name in required_gradients}
 
         for inp in inputs:
             if inp in reverse_nsdfg.arrays:
@@ -123,7 +124,7 @@ class DaceNodeBackwardImplementations:
         )
 
         # If any input connectors point to symbols
-        for conn, _ in nsdfg.in_connectors.items():
+        for conn in nsdfg.in_connectors.keys():
             if conn in nsdfg.sdfg.symbols:
                 # We need to add a new symbol and create a mapping
                 new_symbol = find_new_name(conn, nsdfg.sdfg.symbols)
@@ -137,17 +138,18 @@ class DaceNodeBackwardImplementations:
             edge_args["v"] = nsdfg
             backward_state.add_edge(**edge_args)
 
-        return nsdfg, BackwardResult(required_grad_names=backward_result.required_grad_names,
-                                     given_grad_names=backward_result.given_grad_names)
+        return nsdfg, BackwardResult(
+            required_grad_names=backward_result.required_grad_names, given_grad_names=backward_result.given_grad_names
+        )
 
     def _reverse_AccessNode(
         self,
         forward_state: SDFGState,
         backward_state: SDFGState,
         node: nodes.AccessNode,
-        given_gradients: List[str],
-        required_gradients: List[str],
-    ) -> Tuple[nodes.Node, BackwardResult]:
+        given_gradients: list[str],
+        required_gradients: list[str],
+    ) -> tuple[nodes.Node, BackwardResult]:
 
         desc = self.bwd_engine.sdfg.arrays[node.data]
         if isinstance(desc, Reference):
@@ -175,9 +177,9 @@ class DaceNodeBackwardImplementations:
         forward_state: SDFGState,
         backward_state: SDFGState,
         node: nodes.MapEntry,
-        given_gradients: List[str],
-        required_gradients: List[str],
-    ) -> Tuple[nodes.Node, BackwardResult]:
+        given_gradients: list[str],
+        required_gradients: list[str],
+    ) -> tuple[nodes.Node, BackwardResult]:
 
         required_grad_names = {n: ad_utils.invert_map_connector(n) for n in required_gradients}
         given_grad_names = {n: ad_utils.invert_map_connector(n) for n in given_gradients}
@@ -200,8 +202,8 @@ class DaceNodeBackwardImplementations:
         forward_state: SDFGState,
         backward_state: SDFGState,
         node: nodes.MapExit,
-        given_gradients: List[str],
-        required_gradients: List[str],
+        given_gradients: list[str],
+        required_gradients: list[str],
     ):
         self.bwd_engine.reverse_map[node.map] = copy.deepcopy(node.map)
 
@@ -215,7 +217,7 @@ class DaceNodeBackwardImplementations:
             assert added
 
         backward_state.add_node(rev)
-        # yapf: disable
+        # fmt: off
         return (
             rev,
             BackwardResult(required_grad_names={
@@ -227,18 +229,18 @@ class DaceNodeBackwardImplementations:
                     for n in given_gradients
                 }),
         )
-        # yapf: enable
+        # fmt: on
 
     def _reverse_Tasklet(
         self,
         state: SDFGState,
         backward_state: SDFGState,
         tasklet: nodes.Tasklet,
-        given_gradients: List[str],
-        required_gradients: List[str],
-    ) -> Tuple[nodes.Node, BackwardResult]:
+        given_gradients: list[str],
+        required_gradients: list[str],
+    ) -> tuple[nodes.Node, BackwardResult]:
         if tasklet.language is not dtypes.Language.Python:
-            raise AutoDiffException("Expected tasklet with language Python, got language {}".format(tasklet.language))
+            raise AutoDiffException(f"Expected tasklet with language Python, got language {tasklet.language}")
 
         # tasklets should have scalar inputs (can be relaxed)
         for _, _, _, _, memlet in state.in_edges(tasklet):
@@ -247,7 +249,8 @@ class DaceNodeBackwardImplementations:
                     ad_utils.is_int_eq_value(memlet.subset.num_elements(), 1)
                 except AutoDiffException as e:
                     raise AutoDiffException(
-                        "Autodiff only supported for tasklets with scalar inputs and outputs") from e
+                        "Autodiff only supported for tasklets with scalar inputs and outputs"
+                    ) from e
 
         for _, _, _, _, memlet in state.out_edges(tasklet):
             if memlet.data is not None:
@@ -255,7 +258,8 @@ class DaceNodeBackwardImplementations:
                     ad_utils.is_int_eq_value(memlet.subset.num_elements(), 1)
                 except AutoDiffException as e:
                     raise AutoDiffException(
-                        "Autodiff only supported for tasklets with scalar inputs and outputs") from e
+                        "Autodiff only supported for tasklets with scalar inputs and outputs"
+                    ) from e
 
         code_str = tasklet.code.as_string
 
@@ -265,11 +269,13 @@ class DaceNodeBackwardImplementations:
             if_expression, else_expression, conditional = ad_utils.extract_conditional_expressions(tasklet)
 
             if_code, if_rev_inputs, if_rev_outputs, if_result = self._differentiate_code_symbolically(
-                self.bwd_engine.sdfg, if_expression, state, tasklet, given_gradients, required_gradients)
+                self.bwd_engine.sdfg, if_expression, state, tasklet, given_gradients, required_gradients
+            )
 
             if else_expression:
                 else_code, else_rev_inputs, else_rev_outputs, else_result = self._differentiate_code_symbolically(
-                    self.bwd_engine.sdfg, else_expression, state, tasklet, given_gradients, required_gradients)
+                    self.bwd_engine.sdfg, else_expression, state, tasklet, given_gradients, required_gradients
+                )
                 assert else_rev_inputs == if_rev_inputs
                 assert if_rev_outputs == else_rev_outputs
                 assert else_result == if_result
@@ -295,21 +301,26 @@ class DaceNodeBackwardImplementations:
             if len(if_rev_outputs) == 0:
                 if_rev_outputs = {"__zero_out_conn__"}
 
-            rev = nodes.Tasklet("_" + tasklet.label + "_reverse_",
-                                inputs=if_rev_inputs,
-                                outputs=if_rev_outputs,
-                                code=joint_code,
-                                debuginfo=tasklet.debuginfo)
+            rev = nodes.Tasklet(
+                "_" + tasklet.label + "_reverse_",
+                inputs=if_rev_inputs,
+                outputs=if_rev_outputs,
+                code=joint_code,
+                debuginfo=tasklet.debuginfo,
+            )
 
             result = if_result
         else:
             code, rev_inputs, rev_outputs, result = self._differentiate_code_symbolically(
-                self.bwd_engine.sdfg, code_str, state, tasklet, given_gradients, required_gradients)
-            rev = nodes.Tasklet("_" + tasklet.label + "_reverse_",
-                                inputs=rev_inputs,
-                                outputs=rev_outputs,
-                                code=code,
-                                debuginfo=tasklet.debuginfo)
+                self.bwd_engine.sdfg, code_str, state, tasklet, given_gradients, required_gradients
+            )
+            rev = nodes.Tasklet(
+                "_" + tasklet.label + "_reverse_",
+                inputs=rev_inputs,
+                outputs=rev_outputs,
+                code=code,
+                debuginfo=tasklet.debuginfo,
+            )
             backward_state.add_node(rev)
         return rev, result
 
@@ -319,8 +330,8 @@ class DaceNodeBackwardImplementations:
         code_str: str,
         forward_state: SDFGState,
         tasklet: nodes.Tasklet,
-        given_gradients: List[str],
-        required_gradients: List[str],
+        given_gradients: list[str],
+        required_gradients: list[str],
     ):
         """Performs symbolic differentiation on tasklet code to generate the backward-pass tasklet.
 
@@ -374,7 +385,6 @@ class DaceNodeBackwardImplementations:
         code = ""
 
         for output_conn in sorted(given_gradients):
-
             # special case for conditional tasklets with constant assignment
             if len(required_gradients) == 0:
                 # for this we need to assing a zero to the gradient output
@@ -383,7 +393,7 @@ class DaceNodeBackwardImplementations:
                 result.given_grad_names[output_conn] = rev_input_grad_name
 
                 # zero out the gradient
-                code = f"\n__zero_out_conn__ = 0.0"
+                code = "\n__zero_out_conn__ = 0.0"
                 rev_outputs = {}
                 rev_inputs = {rev_input_grad_name}
 
@@ -413,7 +423,8 @@ class DaceNodeBackwardImplementations:
                     occurrences = [s for s in output_expr.free_symbols if str(s) == inp]
                 else:
                     occurrences = [
-                        a for a in output_expr.atoms(sp.Indexed)
+                        a
+                        for a in output_expr.atoms(sp.Indexed)
                         if str(a.base) == inp and tuple(str(i) for i in a.indices) == tuple(indices)
                     ]
                 inp_expr = min(occurrences, key=str) if occurrences else ad_utils.connector_symbol(inp)
@@ -428,8 +439,7 @@ class DaceNodeBackwardImplementations:
 
                 if diff_expr.atoms(sp.Derivative):
                     # the final result contains a call to sp.Derivative
-                    raise AutoDiffException("Unable to symbolically differentiate expression: {}".format(
-                        diff_expr.expr))
+                    raise AutoDiffException(f"Unable to symbolically differentiate expression: {diff_expr.expr}")
 
                 if output_conn not in result.given_grad_names:
                     # pick a name for the input gradient
@@ -438,9 +448,9 @@ class DaceNodeBackwardImplementations:
                 else:
                     rev_input_grad_name = result.given_grad_names[output_conn]
 
-                input_symbols = diff_expr.free_symbols\
-                    .union(s for _, e in sub_expressions for s in e.free_symbols)\
-                    .difference(e for e, _ in sub_expressions)
+                input_symbols = diff_expr.free_symbols.union(
+                    s for _, e in sub_expressions for s in e.free_symbols
+                ).difference(e for e, _ in sub_expressions)
 
                 string_symbols = {str(symb) for symb in input_symbols}
 
@@ -449,27 +459,31 @@ class DaceNodeBackwardImplementations:
                 string_symbols = string_symbols.difference(set(sdfg.symbols.keys()))
                 rev_inputs |= string_symbols | {rev_input_grad_name}
 
-                diff_code_str = "{input} * ({diff_expr})".format(input=rev_input_grad_name, diff_expr=str(diff_expr))
+                diff_code_str = f"{rev_input_grad_name} * ({str(diff_expr)})"
                 # small hack: our heaviside is lowercase
                 diff_code_str = diff_code_str.replace("Heaviside", "heaviside")
 
                 diff_code_str = astunparse.unparse(ad_utils.SympyCleaner().visit(ast.parse(diff_code_str)))
 
-                sub_expression_code_strs = "\n".join(f"{target} = {expression}"
-                                                     for target, expression in sub_expressions)
+                sub_expression_code_strs = "\n".join(
+                    f"{target} = {expression}" for target, expression in sub_expressions
+                )
 
                 # get the the final type of the gradient: this is just the type of the input connector we creating the
                 # gradient for
                 cands = list(forward_state.in_edges_by_connector(tasklet, inp))
                 if len(cands) != 1:
-                    raise AutoDiffException(f"Unexpected graph structure, could not find input edge for connector {inp}"
-                                            f" on tasklet {tasklet}")
+                    raise AutoDiffException(
+                        f"Unexpected graph structure, could not find input edge for connector {inp}"
+                        f" on tasklet {tasklet}"
+                    )
 
                 converted_code = ad_utils.cast_consts_to_type(diff_code_str, sdfg.arrays[cands[0].data.data].dtype)
                 converted_code = converted_code.replace("\n", " ")
 
-                converted_sub_expressions = ad_utils.cast_consts_to_type(sub_expression_code_strs,
-                                                                         sdfg.arrays[cands[0].data.data].dtype)
+                converted_sub_expressions = ad_utils.cast_consts_to_type(
+                    sub_expression_code_strs, sdfg.arrays[cands[0].data.data].dtype
+                )
 
                 # If there is indirection in the input
                 if inp in indexed_objects_map:
@@ -483,7 +497,8 @@ class DaceNodeBackwardImplementations:
                             if idx not in tasklet.in_connectors:
                                 raise AutoDiffException(
                                     f"Expected index {idx} to be an input connector of the tasklet {tasklet}, "
-                                    f"but it is not. This is required for the backward pass to work correctly.")
+                                    f"but it is not. This is required for the backward pass to work correctly."
+                                )
                             rev_inputs.add(idx)
                 else:
                     output_code = rev_output_grad_name

@@ -1,39 +1,49 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" Contains classes that implement the vectorization transformation. """
-from dace import data, dtypes, symbolic, subsets
-from dace.sdfg import nodes, SDFG, SDFGState, propagation
+"""Contains classes that implement the vectorization transformation."""
+
+from dace import data, dtypes, subsets, symbolic
+from dace.properties import Property, make_properties
+from dace.sdfg import SDFG, SDFGState, nodes, propagation
 from dace.sdfg import utils as sdutil
 from dace.sdfg.scope import ScopeSubgraphView
 from dace.transformation import transformation
 from dace.transformation.helpers import replicate_scope
-from dace.properties import Property, make_properties
 
 
 @make_properties
 class Vectorization(transformation.SingleStateTransformation):
-    """ Implements the vectorization transformation.
+    """Implements the vectorization transformation.
 
-        Vectorization matches when all the input and output memlets of a
-        tasklet inside a map access the inner-most loop variable in their last
-        dimension. The transformation changes the step of the inner-most loop
-        to be equal to the length of the vector and vectorizes the memlets.
-  """
+    Vectorization matches when all the input and output memlets of a
+    tasklet inside a map access the inner-most loop variable in their last
+    dimension. The transformation changes the step of the inner-most loop
+    to be equal to the length of the vector and vectorizes the memlets.
+    """
 
-    vector_len = Property(desc="Vector length", dtype=int, default=4)
-    propagate_parent = Property(desc="Propagate vector length through "
-                                "parent SDFGs", dtype=bool, default=False)
-    strided_map = Property(desc="Use strided map range (jump by vector length)"
-                           " instead of modifying memlets",
-                           dtype=bool,
-                           default=True)
-    preamble = Property(dtype=bool,
-                        default=None,
-                        allow_none=True,
-                        desc='Force creation or skipping a preamble map without vectors')
-    postamble = Property(dtype=bool,
-                         default=None,
-                         allow_none=True,
-                         desc='Force creation or skipping a postamble map without vectors')
+    vector_len = Property(category="Parameters", desc="Vector length", dtype=int, default=4)
+    propagate_parent = Property(
+        category="Parameters", desc="Propagate vector length through parent SDFGs", dtype=bool, default=False
+    )
+    strided_map = Property(
+        category="Parameters",
+        desc="Use strided map range (jump by vector length) instead of modifying memlets",
+        dtype=bool,
+        default=True,
+    )
+    preamble = Property(
+        dtype=bool,
+        default=None,
+        allow_none=True,
+        category="Parameters",
+        desc="Force creation or skipping a preamble map without vectors",
+    )
+    postamble = Property(
+        dtype=bool,
+        default=None,
+        allow_none=True,
+        category="Parameters",
+        desc="Force creation or skipping a postamble map without vectors",
+    )
 
     map_entry = transformation.PatternNode(nodes.MapEntry)
 
@@ -52,7 +62,7 @@ class Vectorization(transformation.SingleStateTransformation):
         if not isinstance(tasklet, nodes.Tasklet):
             return False
 
-        param = symbolic.pystr_to_symbolic(map_entry.map.params[-1])
+        param = map_entry.map.params[-1]
         found = False
 
         # Strided maps cannot be vectorized
@@ -62,7 +72,6 @@ class Vectorization(transformation.SingleStateTransformation):
         # Check if all edges, adjacent to the tasklet,
         # use the parameter in their contiguous dimension.
         for e, conntype in graph.all_edges_and_connectors(tasklet):
-
             # Cases that do not matter for vectorization
             if e.data.data is None:  # Empty memlets
                 continue
@@ -86,7 +95,7 @@ class Vectorization(transformation.SingleStateTransformation):
                         for ex in expr:
                             ex = symbolic.pystr_to_symbolic(ex)
                             symbols = ex.free_symbols
-                            if param in symbols:
+                            if any(str(sym) == param for sym in symbols):
                                 if array.strides[idx] == 1:
                                     found = True
                                 else:
@@ -94,7 +103,7 @@ class Vectorization(transformation.SingleStateTransformation):
                     else:
                         expr = symbolic.pystr_to_symbolic(expr)
                         symbols = expr.free_symbols
-                        if param in symbols:
+                        if any(str(sym) == param for sym in symbols):
                             if array.strides[idx] == 1:
                                 found = True
                             else:
@@ -117,14 +126,13 @@ class Vectorization(transformation.SingleStateTransformation):
         if self.preamble is not None:
             create_preamble = self.preamble
         else:
-            create_preamble = not ((dim_from % vector_size == 0) == True or dim_from == 0)
+            create_preamble = not symbolic.is_multiple(dim_from, vector_size)
         if self.postamble is not None:
             create_postamble = self.postamble
+        elif isinstance(dim_to, symbolic.SymExpr):
+            create_postamble = not symbolic.is_multiple(dim_to.approx + 1, vector_size)
         else:
-            if isinstance(dim_to, symbolic.SymExpr):
-                create_postamble = (((dim_to.approx + 1) % vector_size == 0) == False)
-            else:
-                create_postamble = (((dim_to + 1) % vector_size == 0) == False)
+            create_postamble = not symbolic.is_multiple(dim_to + 1, vector_size)
 
         # Determine new range for vectorized map
         if self.strided_map:
@@ -134,7 +142,8 @@ class Vectorization(transformation.SingleStateTransformation):
             # sympy splits into separately-truncating terms once the floor is dropped by sym2cpp.
             new_range = [
                 symbolic.int_floor(dim_from, vector_size),
-                symbolic.int_floor(dim_to + 1, vector_size) - 1, dim_skip
+                symbolic.int_floor(dim_to + 1, vector_size) - 1,
+                dim_skip,
             ]
 
         # Create preamble non-vectorized map (replacing the original map)
@@ -160,7 +169,7 @@ class Vectorization(transformation.SingleStateTransformation):
 
         # Vectorize connectors adjacent to the tasklet.
         for edge in graph.all_edges(tasklet):
-            connectors = (tasklet.in_connectors if edge.dst == tasklet else tasklet.out_connectors)
+            connectors = tasklet.in_connectors if edge.dst == tasklet else tasklet.out_connectors
             conn = edge.dst_conn if edge.dst == tasklet else edge.src_conn
 
             if edge.data.data is None:  # Empty memlets
@@ -186,7 +195,7 @@ class Vectorization(transformation.SingleStateTransformation):
 
             # Vector to scalar WCR edge: change connector and continue
             lastedge = graph.memlet_path(edge)[-1]
-            if (lastedge.data.subset.num_elements() == 1 and edge.data.wcr is not None):
+            if lastedge.data.subset.num_elements() == 1 and edge.data.wcr is not None:
                 connectors[conn] = dtypes.vector(oldtype, vector_size)
                 continue
 
@@ -244,6 +253,8 @@ class Vectorization(transformation.SingleStateTransformation):
                     if nsdfg is None:
                         break
                     tstate = cursdfg.parent
-                    curedge = ([e for e in tstate.in_edges(nsdfg) if e.dst_conn == arrname] +
-                               [e for e in tstate.out_edges(nsdfg) if e.src_conn == arrname])[0]
+                    curedge = (
+                        [e for e in tstate.in_edges(nsdfg) if e.dst_conn == arrname]
+                        + [e for e in tstate.out_edges(nsdfg) if e.src_conn == arrname]
+                    )[0]
                     cursdfg = cursdfg.parent_sdfg

@@ -1,18 +1,21 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
-""" DaCe Python parsing functionality and entry point to Python frontend. """
+"""DaCe Python parsing functionality and entry point to Python frontend."""
+
 import collections
-import itertools
-import tempfile
 import copy
+import itertools
 import os
-from typing import Any, Callable, Dict, OrderedDict, List, Optional, Set, Tuple, Union
+import tempfile
+from collections import OrderedDict
+from collections.abc import Callable
+from typing import Any
 
 # Try importing ML dependencies
 try:
     import torch
-    from torch import Tensor
-    import torch.nn as nn
+    from torch import Tensor, nn
     from torch.onnx import TrainingMode
+
     TORCH_AVAILABLE = True
 except ImportError:
     torch = None
@@ -23,6 +26,7 @@ except ImportError:
 
 try:
     import onnx
+
     ONNX_AVAILABLE = True
 except ImportError:
     onnx = None
@@ -30,16 +34,16 @@ except ImportError:
 
 from dace import config, data
 from dace.codegen import compiled_sdfg
-from dace.sdfg import SDFG, nodes
-from dace.frontend.python import common as pycommon
 from dace.data import find_new_name
+from dace.frontend.python import common as pycommon
+from dace.sdfg import SDFG, nodes
 
 if TORCH_AVAILABLE and ONNX_AVAILABLE:
-    from dace.libraries.onnx.converters import clean_onnx_name
-    from dace.libraries.torch import dispatchers
     from dace.autodiff import torch as torch_autodiff
     from dace.autodiff.library import library as autodiff_library
     from dace.frontend.ml.onnx import ONNXModel
+    from dace.libraries.onnx.converters import clean_onnx_name
+    from dace.libraries.torch import dispatchers
     from dace.transformation.onnx import auto_optimize_onnx as auto_opt
 else:
     clean_onnx_name = None
@@ -51,7 +55,7 @@ else:
 
 if TORCH_AVAILABLE and ONNX_AVAILABLE:
 
-    def _onnx_delete_initializers(model: onnx.ModelProto, names: Set[str]) -> None:
+    def _onnx_delete_initializers(model: onnx.ModelProto, names: set[str]) -> None:
         """
         Delete the given initializers from the given onnx model.
 
@@ -68,61 +72,63 @@ if TORCH_AVAILABLE and ONNX_AVAILABLE:
             model.graph.initializer.pop(i)
 
     class DaceModule(nn.Module, pycommon.SDFGConvertible):
-        """ A wrapper that converts a PyTorch ``nn.Module`` to a PyTorch compatible data-centric ``nn.Module``.
+        """A wrapper that converts a PyTorch ``nn.Module`` to a PyTorch compatible data-centric ``nn.Module``.
 
-            :param module: the model to wrap.
-            :param dummy_inputs: a tuple of tensors to use as input when tracing ``model``.
-            :param cuda: if ``True``, the module will execute using CUDA. If ``None``, it will be detected from the
-                        ``module``.
-            :param training: whether to use train mode when tracing ``model``.
-            :param backward: whether to enable the backward pass.
-            :param inputs_to_skip: if provided, a list of inputs to skip computing gradients for.
-                                (only relevant when the backward pass is enabled)
-            :param onnx_simplify: whether to apply onnx simplification using onnxsim.
-            :param simplify: whether to apply simplification transforms after conversion (this generally improves performance,
-                            but can be slow).
-            :param sdfg_name: the name to give to the sdfg (defaults to moduleclass name).
-            :param auto_optimize: whether to apply automatic optimizations.
-            :param compile_torch_extension: if True, a torch C++ extension will be compiled and used for this module.
-                                            Otherwise, a python ctypes implementation will be used.
-            :param debug_transients: if True, the module will have all transients as outputs.
+        :param module: the model to wrap.
+        :param dummy_inputs: a tuple of tensors to use as input when tracing ``model``.
+        :param cuda: if ``True``, the module will execute using CUDA. If ``None``, it will be detected from the
+                    ``module``.
+        :param training: whether to use train mode when tracing ``model``.
+        :param backward: whether to enable the backward pass.
+        :param inputs_to_skip: if provided, a list of inputs to skip computing gradients for.
+                            (only relevant when the backward pass is enabled)
+        :param onnx_simplify: whether to apply onnx simplification using onnxsim.
+        :param simplify: whether to apply simplification transforms after conversion (this generally improves performance,
+                        but can be slow).
+        :param sdfg_name: the name to give to the sdfg (defaults to moduleclass name).
+        :param auto_optimize: whether to apply automatic optimizations.
+        :param compile_torch_extension: if True, a torch C++ extension will be compiled and used for this module.
+                                        Otherwise, a python ctypes implementation will be used.
+        :param debug_transients: if True, the module will have all transients as outputs.
 
-            :Example:
-                >>> from dace.frontend.ml.torch import DaceModule
-                >>> class MyModule(nn.Module):
-                ...     def forward(self, x):
-                ...        x = torch.log(x)
-                ...        x = torch.sqrt(x)
-                ...        return x
-                >>> module = MyModule()
-                >>> module(torch.ones(2))
-                tensor([0., 0.])
-                >>> dace_module = DaceModule(module)
-                >>> dace_module(torch.ones(2))
-                tensor([0., 0.])
+        :Example:
+            >>> from dace.frontend.ml.torch import DaceModule
+            >>> class MyModule(nn.Module):
+            ...     def forward(self, x):
+            ...        x = torch.log(x)
+            ...        x = torch.sqrt(x)
+            ...        return x
+            >>> module = MyModule()
+            >>> module(torch.ones(2))
+            tensor([0., 0.])
+            >>> dace_module = DaceModule(module)
+            >>> dace_module(torch.ones(2))
+            tensor([0., 0.])
         """
 
-        def __init__(self,
-                     module: nn.Module,
-                     dummy_inputs: Optional[Tuple[torch.Tensor, ...]] = None,
-                     cuda: Optional[bool] = None,
-                     training: bool = False,
-                     backward: bool = False,
-                     inputs_to_skip: Optional[List[str]] = None,
-                     onnx_simplify: bool = True,
-                     simplify: bool = True,
-                     auto_optimize: bool = False,
-                     debug_transients: bool = False,
-                     compile_torch_extension: bool = True,
-                     sdfg_name: Optional[str] = None):
+        def __init__(
+            self,
+            module: nn.Module,
+            dummy_inputs: tuple[torch.Tensor, ...] | None = None,
+            cuda: bool | None = None,
+            training: bool = False,
+            backward: bool = False,
+            inputs_to_skip: list[str] | None = None,
+            onnx_simplify: bool = True,
+            simplify: bool = True,
+            auto_optimize: bool = False,
+            debug_transients: bool = False,
+            compile_torch_extension: bool = True,
+            sdfg_name: str | None = None,
+        ):
 
-            super(DaceModule, self).__init__()
+            super().__init__()
 
             self.backward = backward
             self.model = module
-            self.dace_model: Optional[ONNXModel] = None
+            self.dace_model: ONNXModel | None = None
             self.training = training
-            self.sdfg: Optional[SDFG] = None
+            self.sdfg: SDFG | None = None
             self.use_cuda = cuda
             self.sdfg_name = sdfg_name or type(module).__name__
             self.auto_optimize = auto_optimize
@@ -133,7 +139,7 @@ if TORCH_AVAILABLE and ONNX_AVAILABLE:
             self.inputs_to_skip = inputs_to_skip or []
 
             self.function = None
-            self._gradient_buffers: Optional[List[str]] = None
+            self._gradient_buffers: list[str] | None = None
 
             #: hooks that are executed after onnx graph is imported to an SDFG
             self.post_onnx_hooks: OrderedDict[str, Callable[[DaceModule], None]] = collections.OrderedDict()
@@ -142,16 +148,20 @@ if TORCH_AVAILABLE and ONNX_AVAILABLE:
             self.post_autodiff_hooks: OrderedDict[str, Callable[[SDFG, SDFG], None]] = collections.OrderedDict()
 
             #: hooks that are executed after the sdfg is compiled
-            self.post_compile_hooks: OrderedDict[str, Callable[[compiled_sdfg.CompiledSDFG],
-                                                               None]] = collections.OrderedDict()
+            self.post_compile_hooks: OrderedDict[str, Callable[[compiled_sdfg.CompiledSDFG], None]] = (
+                collections.OrderedDict()
+            )
             # setup debug hook
             if self.debug_transients:
 
                 def transients_outputs(module):
                     for state in module.sdfg.nodes():
                         for node in state.nodes():
-                            if (isinstance(node, nodes.AccessNode) and node.desc(module.sdfg).transient
-                                    and not isinstance(node.desc(module.sdfg), data.Scalar)):
+                            if (
+                                isinstance(node, nodes.AccessNode)
+                                and node.desc(module.sdfg).transient
+                                and not isinstance(node.desc(module.sdfg), data.Scalar)
+                            ):
                                 if "mean" not in node.data and "std" not in node.data:
                                     module.dace_model.outputs.append(node.data)
                                     node.desc(module.sdfg).transient = False
@@ -169,8 +179,11 @@ if TORCH_AVAILABLE and ONNX_AVAILABLE:
                     self.append_post_autodiff_hook("auto_optimize", auto_optimize_backward)
                 else:
                     self.append_post_onnx_hook(
-                        "auto_optimize", lambda dace_module: auto_opt(
-                            dace_module.dace_model.sdfg, self.use_cuda, simplify=self.simplify))
+                        "auto_optimize",
+                        lambda dace_module: auto_opt(
+                            dace_module.dace_model.sdfg, self.use_cuda, simplify=self.simplify
+                        ),
+                    )
             elif self.simplify:
                 if self.backward:
 
@@ -217,9 +230,11 @@ if TORCH_AVAILABLE and ONNX_AVAILABLE:
             :param func: Callable to execute after ONNX import.
             """
             if self.function is not None:
-                if config.Config.get_bool('debugprint'):
-                    print(f"Warning: Added a hook after the model was already initialized. This hook "
-                          f"(with name {name}) will not be executed!")
+                if config.Config.get_bool("debugprint"):
+                    print(
+                        f"Warning: Added a hook after the model was already initialized. This hook "
+                        f"(with name {name}) will not be executed!"
+                    )
             name = find_new_name(name, self.post_onnx_hooks)
             self.post_onnx_hooks[name] = func
             self.post_onnx_hooks.move_to_end(name, last=False)
@@ -232,9 +247,11 @@ if TORCH_AVAILABLE and ONNX_AVAILABLE:
             :param func: Callable to execute after ONNX import.
             """
             if self.function is not None:
-                if config.Config.get_bool('debugprint'):
-                    print(f"Warning: Added a hook after the model was already initialized. This hook "
-                          f"(with name {name}) will not be executed!")
+                if config.Config.get_bool("debugprint"):
+                    print(
+                        f"Warning: Added a hook after the model was already initialized. This hook "
+                        f"(with name {name}) will not be executed!"
+                    )
             name = find_new_name(name, self.post_onnx_hooks)
             self.post_onnx_hooks[name] = func
 
@@ -246,9 +263,11 @@ if TORCH_AVAILABLE and ONNX_AVAILABLE:
             :param func: Callable to execute after autodiff, receiving forward and backward SDFGs.
             """
             if self.function is not None:
-                if config.Config.get_bool('debugprint'):
-                    print(f"Warning: Added a hook after the model was already initialized. This hook "
-                          f"(with name {name}) will not be executed!")
+                if config.Config.get_bool("debugprint"):
+                    print(
+                        f"Warning: Added a hook after the model was already initialized. This hook "
+                        f"(with name {name}) will not be executed!"
+                    )
             name = find_new_name(name, self.post_autodiff_hooks)
             self.post_autodiff_hooks[name] = func
             self.post_autodiff_hooks.move_to_end(name, last=False)
@@ -261,9 +280,11 @@ if TORCH_AVAILABLE and ONNX_AVAILABLE:
             :param func: Callable to execute after autodiff, receiving forward and backward SDFGs.
             """
             if self.function is not None:
-                if config.Config.get_bool('debugprint'):
-                    print(f"Warning: Added a hook after the model was already initialized. This hook "
-                          f"(with name {name}) will not be executed!")
+                if config.Config.get_bool("debugprint"):
+                    print(
+                        f"Warning: Added a hook after the model was already initialized. This hook "
+                        f"(with name {name}) will not be executed!"
+                    )
             name = find_new_name(name, self.post_autodiff_hooks)
             self.post_autodiff_hooks[name] = func
 
@@ -275,9 +296,11 @@ if TORCH_AVAILABLE and ONNX_AVAILABLE:
             :param func: Callable to execute after compilation, receiving the compiled SDFG.
             """
             if self.function is not None:
-                if config.Config.get_bool('debugprint'):
-                    print(f"Warning: Added a hook after the model was already initialized. This hook "
-                          f"(with name {name}) will not be executed!")
+                if config.Config.get_bool("debugprint"):
+                    print(
+                        f"Warning: Added a hook after the model was already initialized. This hook "
+                        f"(with name {name}) will not be executed!"
+                    )
             name = find_new_name(name, self.post_compile_hooks)
             self.post_compile_hooks[name] = func
             self.post_compile_hooks.move_to_end(name, last=False)
@@ -290,9 +313,11 @@ if TORCH_AVAILABLE and ONNX_AVAILABLE:
             :param func: Callable to execute after compilation, receiving the compiled SDFG.
             """
             if self.function is not None:
-                if config.Config.get_bool('debugprint'):
-                    print(f"Warning: Added a hook after the model was already initialized. This hook "
-                          f"(with name {name}) will not be executed!")
+                if config.Config.get_bool("debugprint"):
+                    print(
+                        f"Warning: Added a hook after the model was already initialized. This hook "
+                        f"(with name {name}) will not be executed!"
+                    )
             name = find_new_name(name, self.post_compile_hooks)
             self.post_compile_hooks[name] = func
 
@@ -320,7 +345,7 @@ if TORCH_AVAILABLE and ONNX_AVAILABLE:
                     self.model,
                     dummy_inputs,
                     export_name,
-                    verbose=config.Config.get_bool('debugprint'),
+                    verbose=config.Config.get_bool("debugprint"),
                     # Some models will require training even when we don't want to train:
                     # when training is set to EVAL, pytorch currently performs an optimization pass ("onnx_eval_peephole")
                     # that renames weights and thus breaks the model in some settings.
@@ -332,7 +357,8 @@ if TORCH_AVAILABLE and ONNX_AVAILABLE:
                     # anymore, so we disable this. Our CF is more flexible.
                     do_constant_folding=False,
                     keep_initializers_as_inputs=True,
-                    dynamo=False)
+                    dynamo=False,
+                )
                 self.load_state_dict(state)
                 onnx_model_exported = onnx.load(export_name)
 
@@ -349,22 +375,25 @@ if TORCH_AVAILABLE and ONNX_AVAILABLE:
 
                 # save the parameters as they are now for later access
                 self._exported_parameters = dict(
-                    (n, p) for n, p in itertools.chain(self.model.named_parameters(), self.model.named_buffers()))
+                    itertools.chain(self.model.named_parameters(), self.model.named_buffers())
+                )
 
                 _onnx_delete_initializers(onnx_model_exported, input_names)
 
                 # load using importer
-                dace_model = ONNXModel(self.sdfg_name,
-                                       onnx_model_exported,
-                                       onnx_simplify=self.onnx_simplify,
-                                       cuda=self.use_cuda,
-                                       auto_optimize=self.auto_optimize)
+                dace_model = ONNXModel(
+                    self.sdfg_name,
+                    onnx_model_exported,
+                    onnx_simplify=self.onnx_simplify,
+                    cuda=self.use_cuda,
+                    auto_optimize=self.auto_optimize,
+                )
                 self.sdfg = dace_model.sdfg
                 self.dace_model = dace_model
 
                 self.sdfg.validate()
 
-                for _, hook in self.post_onnx_hooks.items():
+                for hook in self.post_onnx_hooks.values():
                     hook(self)
 
                 # choose the backend that will generate the function to call during
@@ -375,23 +404,25 @@ if TORCH_AVAILABLE and ONNX_AVAILABLE:
                     function_generator = dispatchers.get_ctypes_dispatcher
 
                 if self.backward:
-
                     # Determine what grads we need
                     # For now: we want gradients for all inputs that are not pytorch buffers
                     named_buffers = {n for n, _ in self.model.named_buffers()}
                     required_gradients = [
-                        clean_onnx_name(name) for name in self.dace_model.inputs
+                        clean_onnx_name(name)
+                        for name in self.dace_model.inputs
                         if name not in named_buffers and name not in self.inputs_to_skip
                     ]
                     named_parameters = dict(self.model.named_parameters())
                     required_gradients.extend(
-                        clean_onnx_name(name) for name, param in named_parameters.items() if param.requires_grad)
+                        clean_onnx_name(name) for name, param in named_parameters.items() if param.requires_grad
+                    )
                     required_gradients = list(set(required_gradients))
 
-                    self.forward_sdfg, self.backward_sdfg, self._ad_result, self._ad_inp_arrs = torch_autodiff.make_backward_function(
-                        dace_model, required_gradients)
+                    self.forward_sdfg, self.backward_sdfg, self._ad_result, self._ad_inp_arrs = (
+                        torch_autodiff.make_backward_function(dace_model, required_gradients)
+                    )
 
-                    for _, hook in self.post_autodiff_hooks.items():
+                    for hook in self.post_autodiff_hooks.values():
                         hook(self.forward_sdfg, self.backward_sdfg)
                     self.compiled_function = function_generator(self, dummy_inputs)
                 else:
@@ -405,7 +436,7 @@ if TORCH_AVAILABLE and ONNX_AVAILABLE:
 
                 return forward
 
-        def _call_params(self) -> Tuple[Union[Tensor, nn.parameter.Parameter], ...]:
+        def _call_params(self) -> tuple[Tensor | nn.parameter.Parameter, ...]:
             """
             Get the parameters that we need to pass to the model, in the correct order.
 
@@ -447,15 +478,17 @@ if TORCH_AVAILABLE and ONNX_AVAILABLE:
             :raises ValueError: If the model has not been initialized yet.
             """
             if self.sdfg is None:
-                raise ValueError("Using a PyTorch model in a DaceProgram requires that the model is initialized first. "
-                                 "Either call this model using some inputs, or pass 'dummy_inputs' to the constructor.")
+                raise ValueError(
+                    "Using a PyTorch model in a DaceProgram requires that the model is initialized first. "
+                    "Either call this model using some inputs, or pass 'dummy_inputs' to the constructor."
+                )
             for name, param in self._exported_parameters.items():
                 onnx_name = clean_onnx_name(name)
                 if param.requires_grad:
                     autodiff_library.ParameterArray.make_parameter(self.sdfg, onnx_name)
             return self.sdfg
 
-        def _add_gradient_buffers(self) -> List[str]:
+        def _add_gradient_buffers(self) -> list[str]:
             """
             Allocate gradient buffers for all parameters, and add their descriptors to the SDFG.
 
@@ -513,7 +546,7 @@ if TORCH_AVAILABLE and ONNX_AVAILABLE:
             t.requires_grad = param.requires_grad
             return t
 
-        def __sdfg_closure__(self, reevaluate: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+        def __sdfg_closure__(self, reevaluate: dict[str, str] | None = None) -> dict[str, Any]:
             """
             Get the SDFG closure (SDFGConvertible interface).
 
@@ -532,10 +565,12 @@ if TORCH_AVAILABLE and ONNX_AVAILABLE:
 
             return result
 
-        def closure_resolver(self,
-                             constant_args: Dict[str, Any],
-                             given_args: Set[str],
-                             parent_closure: Optional[pycommon.SDFGClosure] = None) -> pycommon.SDFGClosure:
+        def closure_resolver(
+            self,
+            constant_args: dict[str, Any],
+            given_args: set[str],
+            parent_closure: pycommon.SDFGClosure | None = None,
+        ) -> pycommon.SDFGClosure:
             """
             Resolve closure for SDFG execution (SDFGConvertible interface).
 
@@ -565,8 +600,12 @@ if TORCH_AVAILABLE and ONNX_AVAILABLE:
                     assert desc.gradient, "Expected gradient descriptor to be present"
                     grad_name = desc.gradient
                     # also add the gradient to the closure, because we need to write to it
-                    result.closure_arrays[grad_name] = (grad_name, self.sdfg.arrays[grad_name],
-                                                        TensorClosure(param.grad), False)
+                    result.closure_arrays[grad_name] = (
+                        grad_name,
+                        self.sdfg.arrays[grad_name],
+                        TensorClosure(param.grad),
+                        False,
+                    )
 
                 result.closure_arrays[onnx_name] = (name, desc, TensorClosure(self._tensor_from_param(param)), False)
             return result

@@ -1,7 +1,8 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
 import numpy as np
 from common import compare_numpy_output
+
+import dace
 
 ### Left #####################################################################
 
@@ -193,7 +194,7 @@ def test_gter(A: dace.int64, B: dace.int64[5, 5]):
     return A >= B
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     # generate this with
     # cat binop_with_scalars_test.py | grep -oP '(?<=f ).*(?=\()' | awk '{print $0 "()"}'
     test_addl()

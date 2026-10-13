@@ -4,7 +4,6 @@ import dace.library
 
 @dace.library.environment
 class cuSolverDn:
-
     cmake_minimum_version = None
     cmake_packages = ["CUDA"]
     cmake_variables = {}
@@ -14,7 +13,7 @@ class cuSolverDn:
     cmake_link_flags = []
     cmake_files = []
 
-    headers = {'frame': ["../include/dace_cusolverdn.h"], 'cuda': ["../include/dace_cusolverdn.h"]}
+    headers = {"frame": ["../include/dace_cusolverdn.h"], "cuda": ["../include/dace_cusolverdn.h"]}
     state_fields = ["dace::lapack::CusolverDnHandle cusolverDn_handle;"]
     init_code = ""
     finalize_code = ""
@@ -22,6 +21,9 @@ class cuSolverDn:
 
     @staticmethod
     def handle_setup_code(node):
-        return dace.library.reject_gpu_location(node) + """\
+        return (
+            dace.library.reject_gpu_location(node)
+            + """\
 cusolverDnHandle_t &__dace_cusolverDn_handle = __state->cusolverDn_handle.Get();
 cusolverDnSetStream(__dace_cusolverDn_handle, __dace_current_stream);\n"""
+        )

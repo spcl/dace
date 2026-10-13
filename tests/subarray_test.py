@@ -1,8 +1,9 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import dace as dp
 import numpy as np
 
-W = dp.symbol('W')
+import dace as dp
+
+W = dp.symbol("W")
 
 
 @dp.program

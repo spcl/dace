@@ -1,8 +1,9 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
-from dace.transformation.passes.pattern_matching import match_patterns
-from dace.transformation.dataflow import MapTiling
 import numpy as np
+
+import dace
+from dace.transformation.dataflow import MapTiling
+from dace.transformation.passes.pattern_matching import match_patterns
 
 
 @dace.program
@@ -13,10 +14,10 @@ def tile_twice_test(a: dace.float64[200]):
 def test():
     sdfg = tile_twice_test.to_sdfg()
     sdfg.simplify()
-    sdfg.apply_transformations(MapTiling, options={'tile_sizes': (5, )})
+    sdfg.apply_transformations(MapTiling, options={"tile_sizes": (5,)})
     for i, match in enumerate(match_patterns(sdfg, MapTiling, states=[sdfg.node(0)])):
         if i == 0:  # Match the first map again
-            match.tile_sizes = (4, )
+            match.tile_sizes = (4,)
             match.apply_pattern(sdfg)
 
     A = np.random.rand(200)
@@ -25,7 +26,7 @@ def test():
     sdfg(a=A)
 
     diff = np.linalg.norm(A - expected)
-    print('Difference:', diff)
+    print("Difference:", diff)
     assert diff <= 1e-8
 
 

@@ -1,17 +1,17 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
-import inspect
 import copy
-from typing import Dict, Tuple, Optional, Callable, Union, Any
+import inspect
 import textwrap
+from collections.abc import Callable
+from typing import Any
 
 import dace
-from dace import SDFGState, SDFG, dtypes, nodes
+from dace import SDFG, SDFGState, dtypes, nodes
 from dace.frontend.python.parser import DaceProgram
-from dace.registry import autoregister
-
-from dace.libraries.onnx.nodes import onnx_op
 from dace.libraries.onnx.forward_implementation_abc import ONNXForward
+from dace.libraries.onnx.nodes import onnx_op
 from dace.libraries.onnx.nodes.node_utils import parse_variadic_param
+from dace.registry import autoregister
 from dace.sdfg.utils import in_desc_with_name, out_desc_with_name
 
 
@@ -26,26 +26,22 @@ def op_implementation(op, name):
 
     def dec(cls):
         if cls.__doc__ is not None:
-            cls.__doc__ +=\
+            cls.__doc__ += f"""
+                :Implementation name: ``"{name}"``
                 """
-                :Implementation name: ``"{}"``
-                """.format(name)
         else:
-            cls.__doc__ =\
+            cls.__doc__ = f"""
+                :Implementation name: ``"{name}"``
                 """
-                :Implementation name: ``"{}"``
-                """.format(name)
 
         return autoregister(cls, op=op, name=name)
 
     return dec
 
 
-def program_for_node(program,
-                     sdfg: SDFG,
-                     state: SDFGState,
-                     node: onnx_op.ONNXOp,
-                     extra_vars: Optional[Dict[str, Any]] = None) -> SDFG:
+def program_for_node(
+    program, sdfg: SDFG, state: SDFGState, node: onnx_op.ONNXOp, extra_vars: dict[str, Any] | None = None
+) -> SDFG:
     """Expand a function to a DaCe program.
 
     The dtypes for the arguments will be extracted by matching the parameter names to edges.
@@ -62,6 +58,7 @@ def program_for_node(program,
     """
 
     from dace.transformation.onnx import constant_folding  # avoid import loop
+
     input_names = node.schema.non_variadic_inputs()
     variadic_input_names = node.schema.variadic_inputs()
 
@@ -70,20 +67,21 @@ def program_for_node(program,
 
     if set(input_names).intersection(output_names):
         # This is currently the case for only one ONNX op
-        raise ValueError("program_for_node cannot be applied on nodes of this type;"
-                         " '{}' are both an input and an output".format(set(input_names).intersection(output_names)))
+        raise ValueError(
+            f"program_for_node cannot be applied on nodes of this type; '{set(input_names).intersection(output_names)}' are both an input and an output"
+        )
 
     params = inspect.signature(program).parameters
     connectors_to_remove = set(input_names).difference(params)
 
     annotations = {}
-    for name, param in params.items():
+    for name in params.keys():
         if name in input_names or ("__" in name and parse_variadic_param(name)[0] in variadic_input_names):
             annotations[name] = in_desc_with_name(node, state, sdfg, name)
         elif name in output_names or ("__" in name and parse_variadic_param(name)[0] in variadic_output_names):
             annotations[name] = out_desc_with_name(node, state, sdfg, name)
         else:
-            raise ValueError("'{}' was not found as an input or output for {}".format(name, node.schema.name))
+            raise ValueError(f"'{name}' was not found as an input or output for {node.schema.name}")
 
     program.__annotations__ = annotations
 
@@ -104,10 +102,8 @@ def program_for_node(program,
 
 
 def empty_sdfg_for_node(
-        sdfg: SDFG,
-        state: SDFGState,
-        node: onnx_op.ONNXOp,
-        add_access_nodes=True) -> Tuple[SDFG, SDFGState, Dict[str, nodes.AccessNode], Dict[str, nodes.AccessNode]]:
+    sdfg: SDFG, state: SDFGState, node: onnx_op.ONNXOp, add_access_nodes=True
+) -> tuple[SDFG, SDFGState, dict[str, nodes.AccessNode], dict[str, nodes.AccessNode]]:
     """Given a node, return an SDFG that can be used as a nested SDFG expansion for that node.
 
     The dtypes for the arguments will be extracted by matching the parameter names to edges.
@@ -140,7 +136,7 @@ def empty_sdfg_for_node(
 
 
 @dace.dtypes.paramdec
-def python_pure_op_implementation(func, **compute: Dict[str, Callable]):
+def python_pure_op_implementation(func, **compute: dict[str, Callable]):
     """A decorator that registers a Python op implementation.
 
     The name of the function will be the name of the op that is being replaced.
@@ -174,9 +170,8 @@ def python_pure_op_implementation(func, **compute: Dict[str, Callable]):
 
     @op_implementation(op=func.__name__, name="pure")
     class PureImpl(ONNXForward):
-
         @staticmethod
-        def forward(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> Union[nodes.Node, SDFG]:
+        def forward(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> nodes.Node | SDFG:
 
             def compute_argument_resolver(arg: str):
                 if arg == "node":
@@ -186,14 +181,15 @@ def python_pure_op_implementation(func, **compute: Dict[str, Callable]):
                 elif arg in node.out_connectors:
                     return out_desc_with_name(node, state, sdfg, arg)
                 else:
-                    raise ValueError("Got unknown compute argument {}."
-                                     " Arguments to compute can be either 'node',"
-                                     " or the name of a connector of the node".format(arg))
+                    raise ValueError(
+                        f"Got unknown compute argument {arg}."
+                        " Arguments to compute can be either 'node',"
+                        " or the name of a connector of the node"
+                    )
 
             extra_vars = {}
             if compute is not None:
                 for var_name, function in compute.items():
-
                     # Get the names of the lambda
                     argument_names = list(inspect.signature(function).parameters)
 
@@ -204,8 +200,7 @@ def python_pure_op_implementation(func, **compute: Dict[str, Callable]):
 
             return program_for_node(func, sdfg, state, node, extra_vars=extra_vars)
 
-    doc = \
-    """
+    doc = """
 Pure implementation parsed with
 :func:`~dace.libraries.onnx.op_implementations.utils.python_pure_op_implementation`.
 

@@ -3,16 +3,16 @@
 Contains utility functions and types for replacements in the DaCe Python frontend.
 """
 
-from dace import data, dtypes, symbolic
-from dace import Memlet, SDFG, SDFGState
-from dace.frontend.python import astutils
-
 import itertools
-from numbers import Number, Integral
-from typing import List, Sequence, Tuple, TYPE_CHECKING, Union
+from collections.abc import Sequence
+from numbers import Integral, Number
+from typing import TYPE_CHECKING
 
 import numpy as np
 import sympy as sp
+
+from dace import SDFG, Memlet, SDFGState, data, dtypes, symbolic
+from dace.frontend.python import astutils
 
 ########################################################################
 # Type hint definitions
@@ -21,25 +21,22 @@ import sympy as sp
 if TYPE_CHECKING:
     from dace.frontend.python.newast import ProgramVisitor
 else:
-    ProgramVisitor = 'dace.frontend.python.newast.ProgramVisitor'
+    ProgramVisitor = "dace.frontend.python.newast.ProgramVisitor"
 
-Size = Union[int, symbolic.symbol]
+Size = int | symbolic.symbol
 Shape = Sequence[Size]
-UfuncInput = Union[str, Number, sp.Basic]
-UfuncOutput = Union[str, None]
+UfuncInput = str | Number | sp.Basic
+UfuncOutput = str | None
 
 ########################################################################
 # Helper functions
 ########################################################################
 
 
-def simple_call(pv: 'ProgramVisitor',
-                sdfg: SDFG,
-                state: SDFGState,
-                inpname: str,
-                func: str,
-                restype: dtypes.typeclass = None):
-    """ Implements a simple call of the form `out = func(inp)`. """
+def simple_call(
+    pv: "ProgramVisitor", sdfg: SDFG, state: SDFGState, inpname: str, func: str, restype: dtypes.typeclass = None
+):
+    """Implements a simple call of the form `out = func(inp)`."""
     create_input = True
     if isinstance(inpname, (list, tuple)):  # TODO investigate this
         inpname = inpname[0]
@@ -47,7 +44,7 @@ def simple_call(pv: 'ProgramVisitor',
         # Constant parameter
         cst = inpname
         inparr = data.create_datadescriptor(cst)
-        inpname = sdfg._find_new_name('constant')
+        inpname = sdfg._find_new_name("constant")
         inparr.transient = True
         sdfg.add_constant(inpname, cst, inparr)
         sdfg.add_datadesc(inpname, inparr)
@@ -66,27 +63,26 @@ def simple_call(pv: 'ProgramVisitor',
     if num_elements == 1:
         if create_input:
             inp = state.add_read(inpname)
-            inconn_name = '__inp'
+            inconn_name = "__inp"
         else:
             inconn_name = symbolic.symstr(inpname)
 
         out = state.add_write(outname)
-        tasklet = state.add_tasklet(func, {'__inp'} if create_input else {}, {'__out'},
-                                    f'__out = {func}({inconn_name})')
+        tasklet = state.add_tasklet(
+            func, {"__inp"} if create_input else {}, {"__out"}, f"__out = {func}({inconn_name})"
+        )
         if create_input:
-            state.add_edge(inp, None, tasklet, '__inp', Memlet.from_array(inpname, inparr))
-        state.add_edge(tasklet, '__out', out, None, Memlet.from_array(outname, outarr))
+            state.add_edge(inp, None, tasklet, "__inp", Memlet.from_array(inpname, inparr))
+        state.add_edge(tasklet, "__out", out, None, Memlet.from_array(outname, outarr))
     else:
         state.add_mapped_tasklet(
             name=func,
-            map_ranges={
-                '__i%d' % i: '0:%s' % n
-                for i, n in enumerate(inparr.shape)
-            },
-            inputs={'__inp': Memlet.simple(inpname, ','.join(['__i%d' % i for i in range(len(inparr.shape))]))},
-            code='__out = {f}(__inp)'.format(f=func),
-            outputs={'__out': Memlet.simple(outname, ','.join(['__i%d' % i for i in range(len(inparr.shape))]))},
-            external_edges=True)
+            map_ranges={"__i%d" % i: f"0:{n}" for i, n in enumerate(inparr.shape)},
+            inputs={"__inp": Memlet.simple(inpname, ",".join(["__i%d" % i for i in range(len(inparr.shape))]))},
+            code=f"__out = {func}(__inp)",
+            outputs={"__out": Memlet.simple(outname, ",".join(["__i%d" % i for i in range(len(inparr.shape))]))},
+            external_edges=True,
+        )
 
     return outname
 
@@ -96,12 +92,12 @@ def simple_call(pv: 'ProgramVisitor',
 ########################################################################
 
 
-def normalize_axes(axes: Tuple[int], max_dim: int) -> List[int]:
-    """ Normalize a list of axes by converting negative dimensions to positive.
+def normalize_axes(axes: tuple[int], max_dim: int) -> list[int]:
+    """Normalize a list of axes by converting negative dimensions to positive.
 
-        :param dims: the list of dimensions, possibly containing negative ints.
-        :param max_dim: the total amount of dimensions.
-        :return: a list of dimensions containing only positive ints.
+    :param dims: the list of dimensions, possibly containing negative ints.
+    :param max_dim: the total amount of dimensions.
+    :return: a list of dimensions containing only positive ints.
     """
 
     return [ax if ax >= 0 else max_dim + ax for ax in axes]
@@ -138,7 +134,6 @@ def broadcast_together(arr1_shape, arr2_shape, unidirectional=False):
 
         # if unidirectional, dim2 must also be 1
         elif dim1 == 1 and dim2 is not None and not unidirectional:
-
             a1_idx.append("0")
             # dim2 != 1 must hold here
             a2_idx.append(get_idx(i))
@@ -164,12 +159,10 @@ def broadcast_together(arr1_shape, arr2_shape, unidirectional=False):
             a1_idx.append(get_idx(i))
 
             all_idx_dict[get_idx(i)] = dim1
+        elif unidirectional:
+            raise IndexError(f"could not broadcast input array from shape {arr2_shape} into shape {arr1_shape}")
         else:
-            if unidirectional:
-                raise IndexError(f"could not broadcast input array from shape {arr2_shape} into shape {arr1_shape}")
-            else:
-                raise IndexError("operands could not be broadcast together with shapes {}, {}".format(
-                    arr1_shape, arr2_shape))
+            raise IndexError(f"operands could not be broadcast together with shapes {arr1_shape}, {arr2_shape}")
 
     def to_string(idx):
         return ", ".join(reversed(idx))
@@ -195,7 +188,7 @@ def complex_to_scalar(complex_type: dtypes.typeclass):
         return complex_type
 
 
-def representative_num(dtype: Union[dtypes.typeclass, Number]) -> Number:
+def representative_num(dtype: dtypes.typeclass | Number) -> Number:
     if isinstance(dtype, dtypes.typeclass):
         nptype = dtype.type
     else:
@@ -229,7 +222,7 @@ def np_result_type(nptypes):
     return dtypes.dtype_to_typeclass(restype.type)
 
 
-def sym_type(expr: Union[symbolic.symbol, sp.Basic]) -> dtypes.typeclass:
+def sym_type(expr: symbolic.symbol | sp.Basic) -> dtypes.typeclass:
     if isinstance(expr, symbolic.symbol):
         return expr.dtype
     representative_value = expr.subs([(s, representative_num(s.dtype)) for s in expr.free_symbols])
@@ -243,4 +236,4 @@ def sym_type(expr: Union[symbolic.symbol, sp.Basic]) -> dtypes.typeclass:
 
 
 def cast_str(dtype: dtypes.typeclass) -> str:
-    return dtypes.TYPECLASS_TO_STRING[dtype].replace('::', '.')
+    return dtypes.TYPECLASS_TO_STRING[dtype].replace("::", ".")

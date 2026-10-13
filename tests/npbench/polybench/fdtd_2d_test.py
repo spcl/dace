@@ -1,13 +1,15 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 # Original application code: NPBench - https://github.com/spcl/npbench
 
-import dace.dtypes
-import numpy as np
-import dace as dc
-import pytest
-from dace.transformation.auto.auto_optimize import auto_optimize
 import argparse
+
+import numpy as np
+import pytest
+
+import dace as dc
+import dace.dtypes
 from dace.autodiff import add_backward_pass
+from dace.transformation.auto.auto_optimize import auto_optimize
 
 # Data set sizes
 # TMAX, NX, NY
@@ -16,10 +18,10 @@ sizes = {
     "small": (40, 60, 80),
     "medium": (100, 200, 240),
     "large": (500, 1000, 1200),
-    "extra-large": (1000, 2000, 2600)
+    "extra-large": (1000, 2000, 2600),
 }
 
-TMAX, NX, NY = (dc.symbol(s, dtype=dc.int32) for s in ('TMAX', 'NX', 'NY'))
+TMAX, NX, NY = (dc.symbol(s, dtype=dc.int32) for s in ("TMAX", "NX", "NY"))
 
 
 @dc.program
@@ -36,7 +38,7 @@ def init_data(TMAX, NX, NY):
     ex = np.empty((NX, NY), dtype=np.float32)
     ey = np.empty((NX, NY), dtype=np.float32)
     hz = np.empty((NX, NY), dtype=np.float32)
-    _fict_ = np.empty((TMAX, ), dtype=np.float32)
+    _fict_ = np.empty((TMAX,), dtype=np.float32)
     for i in range(TMAX):
         _fict_[i] = i
     for i in range(NX):
@@ -72,9 +74,11 @@ def ground_truth(TMAX, NX, NY, ex, ey, hz, _fict_):
 
     for t in range(TMAX):
         ey[0, :] = _fict_[t]
-        ey[1:, :] -= 0.5 * (hz[1:, :] - hz[:NX - 1, :])
-        ex[:, 1:] -= 0.5 * (hz[:, 1:] - hz[:, :NY - 1])
-        hz[:NX - 1, :NY - 1] -= 0.7 * (ex[:NX - 1, 1:] - ex[:NX - 1, :NY - 1] + ey[1:, :NY - 1] - ey[:NX - 1, :NY - 1])
+        ey[1:, :] -= 0.5 * (hz[1:, :] - hz[: NX - 1, :])
+        ex[:, 1:] -= 0.5 * (hz[:, 1:] - hz[:, : NY - 1])
+        hz[: NX - 1, : NY - 1] -= 0.7 * (
+            ex[: NX - 1, 1:] - ex[: NX - 1, : NY - 1] + ey[1:, : NY - 1] - ey[: NX - 1, : NY - 1]
+        )
 
 
 def run_fdtd_2d(device_type: dace.dtypes.DeviceType):
@@ -112,7 +116,7 @@ def run_fdtd_2d(device_type: dace.dtypes.DeviceType):
 def run_fdtd_2d_autodiff():
     import jax
     import jax.numpy as jnp
-    import jax.lax as lax
+    from jax import lax
 
     # Initialize data (test size for efficiency)
     TMAX, NX, NY = (2, 10, 12)
@@ -120,12 +124,13 @@ def run_fdtd_2d_autodiff():
 
     # Initialize gradient computation data
     gradient_ex = np.zeros_like(ex)
-    gradient___return = np.ones((1, ), dtype=np.float32)
+    gradient___return = np.ones((1,), dtype=np.float32)
 
     # Define sum reduction for the output using __return pattern
     @dc.program
-    def fdtd_2d_autodiff_kernel(ex: dc.float32[NX, NY], ey: dc.float32[NX, NY], hz: dc.float32[NX, NY],
-                                _fict_: dc.float32[TMAX]):
+    def fdtd_2d_autodiff_kernel(
+        ex: dc.float32[NX, NY], ey: dc.float32[NX, NY], hz: dc.float32[NX, NY], _fict_: dc.float32[TMAX]
+    ):
         kernel(ex, ey, hz, _fict_)
         return np.sum(hz)
 
@@ -158,9 +163,8 @@ def test_autodiff():
 
 
 if __name__ == "__main__":
-
     parser = argparse.ArgumentParser()
-    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu'], help='Target platform')
+    parser.add_argument("-t", "--target", default="cpu", choices=["cpu", "gpu"], help="Target platform")
 
     args = vars(parser.parse_args())
     target = args["target"]

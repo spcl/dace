@@ -10,7 +10,6 @@ def empty():
 
 
 class MyPass(ppl.Pass):
-
     def __init__(self):
         self.applied = 0
 
@@ -34,19 +33,18 @@ def test_simple_pipeline():
     assert p.applied == 1
     result = pipe.apply_pass(sdfg, {})
     assert p.applied == 2
-    assert result == {'MyPass': 1}
+    assert result == {"MyPass": 1}
 
 
 def test_pipeline_with_dependencies():
 
     class PassA(MyPass):
-
         def depends_on(self):
             return [MyPass]
 
         def apply_pass(self, sdfg, pipeline_results):
             res = super().apply_pass(sdfg, pipeline_results)
-            return pipeline_results['MyPass'] + res
+            return pipeline_results["MyPass"] + res
 
     p = PassA()
     pipe = ppl.Pipeline([p])
@@ -54,13 +52,12 @@ def test_pipeline_with_dependencies():
 
     result = pipe.apply_pass(sdfg, {})
     assert p.applied == 1
-    assert result == {'MyPass': 1, 'PassA': 2}
+    assert result == {"MyPass": 1, "PassA": 2}
 
 
 def test_pipeline_modification_rerun():
 
     class MyAnalysis(MyPass):
-
         def should_reapply(self, modified: ppl.Modifies) -> bool:
             return modified & ppl.Modifies.Symbols
 
@@ -68,7 +65,6 @@ def test_pipeline_modification_rerun():
             return ppl.Modifies.Nothing
 
     class PassA(MyPass):
-
         def depends_on(self):
             return [MyAnalysis]
 
@@ -76,7 +72,6 @@ def test_pipeline_modification_rerun():
             return ppl.Modifies.Descriptors
 
     class PassB(MyPass):
-
         def depends_on(self):
             return [MyAnalysis]
 
@@ -84,7 +79,6 @@ def test_pipeline_modification_rerun():
             return ppl.Modifies.Symbols
 
     class PassC(MyPass):
-
         def depends_on(self):
             return [MyAnalysis]
 
@@ -101,7 +95,7 @@ def test_pipeline_modification_rerun():
     assert pa.applied == 1
     assert pb.applied == 1
     assert pc.applied == 1
-    assert result == {'MyAnalysis': 1, 'PassA': 1, 'PassB': 1, 'PassC': 1}
+    assert result == {"MyAnalysis": 1, "PassA": 1, "PassB": 1, "PassC": 1}
 
 
 def test_pipeline_dependency_order():
@@ -110,7 +104,6 @@ def test_pipeline_dependency_order():
     order = []
 
     class RecordingPass(ppl.Pass):
-
         def modifies(self) -> ppl.Modifies:
             return ppl.Modifies.Nothing
 
@@ -131,7 +124,6 @@ def test_pipeline_dependency_order():
         pass
 
     class Dependent(RecordingPass):
-
         def depends_on(self):
             return [DepB, DepC, DepA]
 
@@ -141,10 +133,10 @@ def test_pipeline_dependency_order():
     pipe.apply_pass(sdfg, {})
 
     # Dependencies run in the listed order, before the dependent pass itself.
-    assert order == ['DepB', 'DepC', 'DepA', 'Dependent']
+    assert order == ["DepB", "DepC", "DepA", "Dependent"]
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_simple_pipeline()
     test_pipeline_with_dependencies()
     test_pipeline_modification_rerun()

@@ -46,6 +46,6 @@ def create_vector_ddt(memlet, data):
     ddt = dict()
     ddt["blocklen"] = str(memlet.subset.size_exact()[-1])
     ddt["oldtype"] = str(MPI_DDT(data.dtype))
-    ddt["count"] = "(" + str(memlet.subset.num_elements_exact()) + ")" + "/" + str(ddt['blocklen'])
+    ddt["count"] = "(" + str(memlet.subset.num_elements_exact()) + ")" + "/" + str(ddt["blocklen"])
     ddt["stride"] = str(data.strides[0])
     return ddt

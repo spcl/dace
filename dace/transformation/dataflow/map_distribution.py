@@ -1,21 +1,22 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" Contains classes that distribute Map computations """
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+"""Contains classes that distribute Map computations"""
 
 from copy import deepcopy
+from functools import reduce
 from numbers import Number
-import dace
+
 import sympy
+
+import dace
 from dace import data, subsets, symbolic
-from dace.sdfg import nodes
+from dace.sdfg import dealias, nodes
 from dace.sdfg import utils as sdutil
 from dace.transformation import transformation as pm
 from dace.transformation.subgraph.helpers import subgraph_from_maps
-from functools import reduce
 
 
 class ElementWiseArrayOperation(pm.SingleStateTransformation):
-    """ Distributes element-wise array operations.
-    """
+    """Distributes element-wise array operations."""
 
     map_entry = pm.PatternNode(nodes.MapEntry)
 
@@ -65,9 +66,7 @@ class ElementWiseArrayOperation(pm.SingleStateTransformation):
                         return False
                     indices = a.min_element()
                     unmatched_indices = set(params)
-                    for idx in indices:
-                        if idx in unmatched_indices:
-                            unmatched_indices.remove(idx)
+                    unmatched_indices.difference_update(indices)
                     if len(unmatched_indices) > 0:
                         return False
             else:
@@ -103,7 +102,7 @@ class ElementWiseArrayOperation(pm.SingleStateTransformation):
         map_entry = self.map_entry
         map_exit = graph.exit_node(map_entry)
 
-        sz = dace.symbol('commsize', dtype=dace.int32)
+        sz = dace.symbol("commsize", dtype=dace.int32)
 
         def _prod(sequence):
             return reduce(lambda a, b: a * b, sequence, 1)
@@ -114,19 +113,19 @@ class ElementWiseArrayOperation(pm.SingleStateTransformation):
             ranges = [(0, (e - b + 1) / sz - 1, 1) for b, e, _ in map_entry.map.range]
             strides = [1]
         else:
-            params = ['__iflat']
+            params = ["__iflat"]
             sizes = map_entry.map.range.size_exact()
             total_size = _prod(sizes)
             ranges = [(0, (total_size) / sz - 1, 1)]
-            strides = [_prod(sizes[i + 1:]) for i in range(len(sizes))]
+            strides = [_prod(sizes[i + 1 :]) for i in range(len(sizes))]
 
         root_name = sdfg.temp_data_name()
         sdfg.add_scalar(root_name, dace.int32, transient=True)
         root_node = graph.add_access(root_name)
-        root_tasklet = graph.add_tasklet('_set_root_', {}, {'__out'}, '__out = 0')
-        graph.add_edge(root_tasklet, '__out', root_node, None, dace.Memlet.simple(root_name, '0'))
+        root_tasklet = graph.add_tasklet("_set_root_", {}, {"__out"}, "__out = 0")
+        graph.add_edge(root_tasklet, "__out", root_node, None, dace.Memlet.simple(root_name, "0"))
 
-        from dace.libraries.mpi import Bcast, Scatter, Gather
+        from dace.libraries.mpi import Bcast, Gather, Scatter
 
         inputs = set()
         for src, _, _, _, m in graph.in_edges(map_entry):
@@ -147,28 +146,29 @@ class ElementWiseArrayOperation(pm.SingleStateTransformation):
 
             if isinstance(desc, data.Scalar):
                 local_access = graph.add_access(inp.data)
-                bcast_node = Bcast('_Bcast_')
-                graph.add_edge(inp, None, bcast_node, '_inbuffer', dace.Memlet.from_array(inp.data, desc))
-                graph.add_edge(root_node, None, bcast_node, '_root', dace.Memlet.simple(root_name, '0'))
-                graph.add_edge(bcast_node, '_outbuffer', local_access, None, dace.Memlet.from_array(inp.data, desc))
+                bcast_node = Bcast("_Bcast_")
+                graph.add_edge(inp, None, bcast_node, "_inbuffer", dace.Memlet.from_array(inp.data, desc))
+                graph.add_edge(root_node, None, bcast_node, "_root", dace.Memlet.simple(root_name, "0"))
+                graph.add_edge(bcast_node, "_outbuffer", local_access, None, dace.Memlet.from_array(inp.data, desc))
                 for e in graph.edges_between(inp, map_entry):
                     graph.add_edge(local_access, None, map_entry, e.dst_conn, dace.Memlet.from_array(inp.data, desc))
                     graph.remove_edge(e)
 
             elif isinstance(desc, data.Array):
-
-                local_name, local_arr = sdfg.add_temp_transient([sympy.floor(desc.total_size / sz)],
-                                                                dtype=desc.dtype,
-                                                                storage=desc.storage)
+                local_name, local_arr = sdfg.add_temp_transient(
+                    [sympy.floor(desc.total_size / sz)], dtype=desc.dtype, storage=desc.storage
+                )
                 local_access = graph.add_access(local_name)
-                scatter_node = Scatter('_Scatter_')
-                graph.add_edge(inp, None, scatter_node, '_inbuffer', dace.Memlet.from_array(inp.data, desc))
-                graph.add_edge(root_node, None, scatter_node, '_root', dace.Memlet.simple(root_name, '0'))
-                graph.add_edge(scatter_node, '_outbuffer', local_access, None,
-                               dace.Memlet.from_array(local_name, local_arr))
+                scatter_node = Scatter("_Scatter_")
+                graph.add_edge(inp, None, scatter_node, "_inbuffer", dace.Memlet.from_array(inp.data, desc))
+                graph.add_edge(root_node, None, scatter_node, "_root", dace.Memlet.simple(root_name, "0"))
+                graph.add_edge(
+                    scatter_node, "_outbuffer", local_access, None, dace.Memlet.from_array(local_name, local_arr)
+                )
                 for e in graph.edges_between(inp, map_entry):
-                    graph.add_edge(local_access, None, map_entry, e.dst_conn,
-                                   dace.Memlet.from_array(local_name, local_arr))
+                    graph.add_edge(
+                        local_access, None, map_entry, e.dst_conn, dace.Memlet.from_array(local_name, local_arr)
+                    )
                     graph.remove_edge(e)
                 for e in graph.out_edges(map_entry):
                     if e.data.data == inp.data:
@@ -203,18 +203,20 @@ class ElementWiseArrayOperation(pm.SingleStateTransformation):
             if isinstance(desc, data.Scalar):
                 raise NotImplementedError
             elif isinstance(desc, data.Array):
-                local_name, local_arr = sdfg.add_temp_transient([sympy.floor(desc.total_size / sz)],
-                                                                dtype=desc.dtype,
-                                                                storage=desc.storage)
+                local_name, local_arr = sdfg.add_temp_transient(
+                    [sympy.floor(desc.total_size / sz)], dtype=desc.dtype, storage=desc.storage
+                )
                 local_access = graph.add_access(local_name)
-                scatter_node = Gather('_Gather_')
-                graph.add_edge(local_access, None, scatter_node, '_inbuffer',
-                               dace.Memlet.from_array(local_name, local_arr))
-                graph.add_edge(root_node, None, scatter_node, '_root', dace.Memlet.simple(root_name, '0'))
-                graph.add_edge(scatter_node, '_outbuffer', out, None, dace.Memlet.from_array(out.data, desc))
+                scatter_node = Gather("_Gather_")
+                graph.add_edge(
+                    local_access, None, scatter_node, "_inbuffer", dace.Memlet.from_array(local_name, local_arr)
+                )
+                graph.add_edge(root_node, None, scatter_node, "_root", dace.Memlet.simple(root_name, "0"))
+                graph.add_edge(scatter_node, "_outbuffer", out, None, dace.Memlet.from_array(out.data, desc))
                 for e in graph.edges_between(map_exit, out):
-                    graph.add_edge(map_exit, e.src_conn, local_access, None,
-                                   dace.Memlet.from_array(local_name, local_arr))
+                    graph.add_edge(
+                        map_exit, e.src_conn, local_access, None, dace.Memlet.from_array(local_name, local_arr)
+                    )
                     graph.remove_edge(e)
                 for e in graph.in_edges(map_exit):
                     if e.data.data == out.data:
@@ -227,8 +229,7 @@ class ElementWiseArrayOperation(pm.SingleStateTransformation):
 
 
 class ElementWiseArrayOperation2D(pm.SingleStateTransformation):
-    """ Distributes element-wise array operations.
-    """
+    """Distributes element-wise array operations."""
 
     map_entry = pm.PatternNode(nodes.MapEntry)
 
@@ -273,9 +274,7 @@ class ElementWiseArrayOperation2D(pm.SingleStateTransformation):
                         return False
                     indices = a.min_element()
                     unmatched_indices = set(params)
-                    for idx in indices:
-                        if idx in unmatched_indices:
-                            unmatched_indices.remove(idx)
+                    unmatched_indices.difference_update(indices)
                     if len(unmatched_indices) > 0:
                         return False
             else:
@@ -313,9 +312,9 @@ class ElementWiseArrayOperation2D(pm.SingleStateTransformation):
         map_entry = self.map_entry
         map_exit = graph.exit_node(map_entry)
 
-        sz = dace.symbol('commsize', dtype=dace.int32, integer=True, positive=True)
-        Px = dace.symbol('Px', dtype=dace.int32, integer=True, positive=True)
-        Py = dace.symbol('Py', dtype=dace.int32, integer=True, positive=True)
+        sz = dace.symbol("commsize", dtype=dace.int32, integer=True, positive=True)
+        Px = dace.symbol("Px", dtype=dace.int32, integer=True, positive=True)
+        Py = dace.symbol("Py", dtype=dace.int32, integer=True, positive=True)
 
         from dace.utils import prod as _prod
 
@@ -329,20 +328,20 @@ class ElementWiseArrayOperation2D(pm.SingleStateTransformation):
             ranges[1] = (0, (e - b + 1) / Py - 1, 1)
             strides = [1]
         else:
-            params = ['__iflat']
+            params = ["__iflat"]
             sizes = map_entry.map.range.size_exact()
             total_size = _prod(sizes)
             ranges = [(0, (total_size) / sz - 1, 1)]
-            strides = [_prod(sizes[i + 1:]) for i in range(len(sizes))]
+            strides = [_prod(sizes[i + 1 :]) for i in range(len(sizes))]
 
         root_name = sdfg.temp_data_name()
         sdfg.add_scalar(root_name, dace.int32, transient=True)
         root_node = graph.add_access(root_name)
-        root_tasklet = graph.add_tasklet('_set_root_', {}, {'__out'}, '__out = 0')
-        graph.add_edge(root_tasklet, '__out', root_node, None, dace.Memlet.simple(root_name, '0'))
+        root_tasklet = graph.add_tasklet("_set_root_", {}, {"__out"}, "__out = 0")
+        graph.add_edge(root_tasklet, "__out", root_node, None, dace.Memlet.simple(root_name, "0"))
 
         from dace.libraries.mpi import Bcast
-        from dace.libraries.pblas import BlockCyclicScatter, BlockCyclicGather
+        from dace.libraries.pblas import BlockCyclicGather, BlockCyclicScatter
 
         inputs = set()
         for src, _, _, _, m in graph.in_edges(map_entry):
@@ -363,50 +362,60 @@ class ElementWiseArrayOperation2D(pm.SingleStateTransformation):
 
             if isinstance(desc, data.Scalar):
                 local_access = graph.add_access(inp.data)
-                bcast_node = Bcast('_Bcast_')
-                graph.add_edge(inp, None, bcast_node, '_inbuffer', dace.Memlet.from_array(inp.data, desc))
-                graph.add_edge(root_node, None, bcast_node, '_root', dace.Memlet.simple(root_name, '0'))
-                graph.add_edge(bcast_node, '_outbuffer', local_access, None, dace.Memlet.from_array(inp.data, desc))
+                bcast_node = Bcast("_Bcast_")
+                graph.add_edge(inp, None, bcast_node, "_inbuffer", dace.Memlet.from_array(inp.data, desc))
+                graph.add_edge(root_node, None, bcast_node, "_root", dace.Memlet.simple(root_name, "0"))
+                graph.add_edge(bcast_node, "_outbuffer", local_access, None, dace.Memlet.from_array(inp.data, desc))
                 for e in graph.edges_between(inp, map_entry):
                     graph.add_edge(local_access, None, map_entry, e.dst_conn, dace.Memlet.from_array(inp.data, desc))
                     graph.remove_edge(e)
 
             elif isinstance(desc, data.Array):
-
                 local_name, local_arr = sdfg.add_temp_transient(
-                    [symbolic.int_floor(desc.shape[0], Px),
-                     symbolic.int_floor(desc.shape[1], Py)],
+                    [symbolic.int_floor(desc.shape[0], Px), symbolic.int_floor(desc.shape[1], Py)],
                     dtype=desc.dtype,
-                    storage=desc.storage)
+                    storage=desc.storage,
+                )
                 local_access = graph.add_access(local_name)
-                bsizes_name, bsizes_arr = sdfg.add_temp_transient((2, ), dtype=dace.int32)
+                bsizes_name, bsizes_arr = sdfg.add_temp_transient((2,), dtype=dace.int32)
                 bsizes_access = graph.add_access(bsizes_name)
                 bsizes_tasklet = nodes.Tasklet(
-                    '_set_bsizes_', {}, {'__out'}, "__out[0] = {x}; __out[1] = {y}".format(x=(desc.shape[0]) // Px,
-                                                                                           y=(desc.shape[1]) // Py))
-                graph.add_edge(bsizes_tasklet, '__out', bsizes_access, None,
-                               dace.Memlet.from_array(bsizes_name, bsizes_arr))
-                gdesc_name, gdesc_arr = sdfg.add_temp_transient((9, ), dtype=dace.int32)
+                    "_set_bsizes_",
+                    {},
+                    {"__out"},
+                    f"__out[0] = {(desc.shape[0]) // Px}; __out[1] = {(desc.shape[1]) // Py}",
+                )
+                graph.add_edge(
+                    bsizes_tasklet, "__out", bsizes_access, None, dace.Memlet.from_array(bsizes_name, bsizes_arr)
+                )
+                gdesc_name, gdesc_arr = sdfg.add_temp_transient((9,), dtype=dace.int32)
                 gdesc_access = graph.add_access(gdesc_name)
-                ldesc_name, ldesc_arr = sdfg.add_temp_transient((9, ), dtype=dace.int32)
+                ldesc_name, ldesc_arr = sdfg.add_temp_transient((9,), dtype=dace.int32)
                 ldesc_access = graph.add_access(ldesc_name)
-                scatter_node = BlockCyclicScatter('_Scatter_')
-                graph.add_edge(inp, None, scatter_node, '_inbuffer', dace.Memlet.from_array(inp.data, desc))
-                graph.add_edge(bsizes_access, None, scatter_node, '_block_sizes',
-                               dace.Memlet.from_array(bsizes_name, bsizes_arr))
-                graph.add_edge(scatter_node, '_outbuffer', local_access, None,
-                               dace.Memlet.from_array(local_name, local_arr))
-                graph.add_edge(scatter_node, '_gdescriptor', gdesc_access, None,
-                               dace.Memlet.from_array(gdesc_name, gdesc_arr))
-                graph.add_edge(scatter_node, '_ldescriptor', ldesc_access, None,
-                               dace.Memlet.from_array(ldesc_name, ldesc_arr))
+                scatter_node = BlockCyclicScatter("_Scatter_")
+                graph.add_edge(inp, None, scatter_node, "_inbuffer", dace.Memlet.from_array(inp.data, desc))
+                graph.add_edge(
+                    bsizes_access, None, scatter_node, "_block_sizes", dace.Memlet.from_array(bsizes_name, bsizes_arr)
+                )
+                graph.add_edge(
+                    scatter_node, "_outbuffer", local_access, None, dace.Memlet.from_array(local_name, local_arr)
+                )
+                graph.add_edge(
+                    scatter_node, "_gdescriptor", gdesc_access, None, dace.Memlet.from_array(gdesc_name, gdesc_arr)
+                )
+                graph.add_edge(
+                    scatter_node, "_ldescriptor", ldesc_access, None, dace.Memlet.from_array(ldesc_name, ldesc_arr)
+                )
                 for e in graph.edges_between(inp, map_entry):
-                    graph.add_edge(local_access, None, map_entry, e.dst_conn,
-                                   dace.Memlet.from_array(local_name, local_arr))
+                    graph.add_edge(
+                        local_access, None, map_entry, e.dst_conn, dace.Memlet.from_array(local_name, local_arr)
+                    )
                     graph.remove_edge(e)
                 for e in graph.out_edges(map_entry):
                     if e.data.data == inp.data:
                         e.data.data = local_name
+                        # Connectors reading the array now describe this rank's block
+                        dealias.rebase_reconnected_edges([e])
 
             else:
                 raise NotImplementedError
@@ -438,32 +447,41 @@ class ElementWiseArrayOperation2D(pm.SingleStateTransformation):
                 raise NotImplementedError
             elif isinstance(desc, data.Array):
                 local_name, local_arr = sdfg.add_temp_transient(
-                    [symbolic.int_floor(desc.shape[0], Px),
-                     symbolic.int_floor(desc.shape[1], Py)],
+                    [symbolic.int_floor(desc.shape[0], Px), symbolic.int_floor(desc.shape[1], Py)],
                     dtype=desc.dtype,
-                    storage=desc.storage)
+                    storage=desc.storage,
+                )
                 local_access = graph.add_access(local_name)
-                bsizes_name, bsizes_arr = sdfg.add_temp_transient((2, ), dtype=dace.int32)
+                bsizes_name, bsizes_arr = sdfg.add_temp_transient((2,), dtype=dace.int32)
                 bsizes_access = graph.add_access(bsizes_name)
                 bsizes_tasklet = nodes.Tasklet(
-                    '_set_bsizes_', {}, {'__out'}, "__out[0] = {x}; __out[1] = {y}".format(x=(desc.shape[0]) // Px,
-                                                                                           y=(desc.shape[1]) // Py))
-                graph.add_edge(bsizes_tasklet, '__out', bsizes_access, None,
-                               dace.Memlet.from_array(bsizes_name, bsizes_arr))
-                scatter_node = BlockCyclicGather('_Gather_')
-                graph.add_edge(local_access, None, scatter_node, '_inbuffer',
-                               dace.Memlet.from_array(local_name, local_arr))
-                graph.add_edge(bsizes_access, None, scatter_node, '_block_sizes',
-                               dace.Memlet.from_array(bsizes_name, bsizes_arr))
-                graph.add_edge(scatter_node, '_outbuffer', out, None, dace.Memlet.from_array(out.data, desc))
+                    "_set_bsizes_",
+                    {},
+                    {"__out"},
+                    f"__out[0] = {(desc.shape[0]) // Px}; __out[1] = {(desc.shape[1]) // Py}",
+                )
+                graph.add_edge(
+                    bsizes_tasklet, "__out", bsizes_access, None, dace.Memlet.from_array(bsizes_name, bsizes_arr)
+                )
+                scatter_node = BlockCyclicGather("_Gather_")
+                graph.add_edge(
+                    local_access, None, scatter_node, "_inbuffer", dace.Memlet.from_array(local_name, local_arr)
+                )
+                graph.add_edge(
+                    bsizes_access, None, scatter_node, "_block_sizes", dace.Memlet.from_array(bsizes_name, bsizes_arr)
+                )
+                graph.add_edge(scatter_node, "_outbuffer", out, None, dace.Memlet.from_array(out.data, desc))
 
                 for e in graph.edges_between(map_exit, out):
-                    graph.add_edge(map_exit, e.src_conn, local_access, None,
-                                   dace.Memlet.from_array(local_name, local_arr))
+                    graph.add_edge(
+                        map_exit, e.src_conn, local_access, None, dace.Memlet.from_array(local_name, local_arr)
+                    )
                     graph.remove_edge(e)
                 for e in graph.in_edges(map_exit):
                     if e.data.data == out.data:
                         e.data.data = local_name
+                        # Connectors writing the array describe the block too
+                        dealias.rebase_reconnected_edges([e])
             else:
                 raise NotImplementedError
 
@@ -472,9 +490,9 @@ class ElementWiseArrayOperation2D(pm.SingleStateTransformation):
 
 
 class RedundantComm2D(pm.SingleStateTransformation):
-    """ Implements the redundant communication removal transformation,
-        applied when data are scattered and immediately gathered,
-        but never used anywhere else. """
+    """Implements the redundant communication removal transformation,
+    applied when data are scattered and immediately gathered,
+    but never used anywhere else."""
 
     in_array = pm.PatternNode(nodes.AccessNode)
     gather = pm.PatternNode(nodes.Tasklet)
@@ -488,10 +506,10 @@ class RedundantComm2D(pm.SingleStateTransformation):
 
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
         gather = self.gather
-        if '_block_sizes' not in gather.in_connectors:
+        if "_block_sizes" not in gather.in_connectors:
             return False
         scatter = self.scatter
-        if '_gdescriptor' not in scatter.out_connectors:
+        if "_gdescriptor" not in scatter.out_connectors:
             return False
         in_array = self.in_array
         out_array = self.out_array
@@ -539,8 +557,7 @@ class RedundantComm2D(pm.SingleStateTransformation):
 
 
 class StencilOperation(pm.SingleStateTransformation):
-    """ Detects stencil operations.
-    """
+    """Detects stencil operations."""
 
     map_entry = pm.PatternNode(nodes.MapEntry)
 
@@ -595,8 +612,7 @@ class StencilOperation(pm.SingleStateTransformation):
                             bidx = list(idx.free_symbols)[0]
                         else:
                             return False
-                        if bidx in unmatched_indices:
-                            unmatched_indices.remove(bidx)
+                        unmatched_indices.discard(bidx)
                     if len(unmatched_indices) > 0:
                         return False
             else:
@@ -641,8 +657,7 @@ class StencilOperation(pm.SingleStateTransformation):
 
 
 class OuterProductOperation(pm.SingleStateTransformation):
-    """ Detects outer-product operations.
-    """
+    """Detects outer-product operations."""
 
     map_entry = pm.PatternNode(nodes.MapEntry)
 
@@ -678,8 +693,7 @@ class OuterProductOperation(pm.SingleStateTransformation):
                     for idx in indices:
                         if not isinstance(idx, sympy.Symbol):
                             return False
-                        if idx in unmatched_indices:
-                            unmatched_indices.remove(idx)
+                        unmatched_indices.discard(idx)
                     if len(unmatched_indices) == 0:
                         return False
                     outer_product_found = True
@@ -717,8 +731,7 @@ class OuterProductOperation(pm.SingleStateTransformation):
 
 
 class Reduction1Operation(pm.SingleStateTransformation):
-    """ Detects reduction1 operations.
-    """
+    """Detects reduction1 operations."""
 
     map_entry = pm.PatternNode(nodes.MapEntry)
 
@@ -758,8 +771,7 @@ class Reduction1Operation(pm.SingleStateTransformation):
 
 
 class ReductionNOperation(pm.SingleStateTransformation):
-    """ Detects reductionN operations.
-    """
+    """Detects reductionN operations."""
 
     map_entry = pm.PatternNode(nodes.MapEntry)
 
@@ -808,9 +820,7 @@ class ReductionNOperation(pm.SingleStateTransformation):
                         return False
                     indices = a.min_element()
                     unmatched_indices = set(params)
-                    for idx in indices:
-                        if idx in unmatched_indices:
-                            unmatched_indices.remove(idx)
+                    unmatched_indices.difference_update(indices)
                     if len(unmatched_indices) == len(params):
                         return False
             else:

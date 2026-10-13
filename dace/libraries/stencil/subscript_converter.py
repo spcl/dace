@@ -1,7 +1,6 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
 from collections import defaultdict
-from typing import Tuple
 
 Index = type(None)
 ExtSlice = type(None)
@@ -28,7 +27,7 @@ class SubscriptConverter(ast.NodeTransformer):
     }
     """
 
-    def __init__(self, offset: Tuple[int] = None, dtype=None):
+    def __init__(self, offset: tuple[int] = None, dtype=None):
         """
         :param offset: Apply the given offset tuple to every index found.
         :param dtype: Data type of constants found to enforce that the right
@@ -49,14 +48,14 @@ class SubscriptConverter(ast.NodeTransformer):
             index_tuple = tuple(i + o for i, o in zip(index_tuple, self.offset))
 
         # Remove extraneous symbols
-        index_str = ''.join(c for c in str(index_tuple) if c not in '( )')
+        index_str = "".join(c for c in str(index_tuple) if c not in "( )")
 
         # Replace tuple and negative symbols
-        index_str = index_str.replace(',', '_')
-        index_str = index_str.replace('-', 'm')
+        index_str = index_str.replace(",", "_")
+        index_str = index_str.replace("-", "m")
 
         # Add variable name
-        index_str = varname + '_' + index_str
+        index_str = varname + "_" + index_str
 
         self._mapping[varname][index_tuple] = index_str
 
@@ -64,7 +63,7 @@ class SubscriptConverter(ast.NodeTransformer):
 
     def visit_Subscript(self, node: ast.Subscript):
         if not isinstance(node.value, ast.Name):
-            raise TypeError('Only subscripts of variables are supported')
+            raise TypeError("Only subscripts of variables are supported")
 
         varname = node.value.id
 
@@ -74,7 +73,7 @@ class SubscriptConverter(ast.NodeTransformer):
         if isinstance(index_tuple, (ast.Subscript, Index)):
             index_tuple = index_tuple.value
         if isinstance(index_tuple, ast.Constant):
-            index_tuple = (index_tuple, )
+            index_tuple = (index_tuple,)
         if isinstance(index_tuple, ast.Tuple):
             index_tuple = index_tuple.elts
         index_tuple = tuple(ast.literal_eval(t) for t in index_tuple)

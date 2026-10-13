@@ -1,9 +1,7 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
-from collections import OrderedDict
-import json
 import itertools
-
-from typing import Dict
+import json
+from collections import OrderedDict
 
 from dace.optimization import cutout_tuner as ct
 from dace.optimization import utils as optim_utils
@@ -20,7 +18,7 @@ class DistributedCutoutTuner:
     def __init__(self, tuner: ct.CutoutTuner) -> None:
         self._tuner = tuner
 
-    def optimize(self, measurements: int = 30, **kwargs) -> Dict:
+    def optimize(self, measurements: int = 30, **kwargs) -> dict:
         cutouts = OrderedDict()
         existing_files = set()
         for cutout, cutout_hash in self._tuner.cutouts():
@@ -32,10 +30,7 @@ class DistributedCutoutTuner:
                 existing_files.add(cutout_hash)
 
         # Filter cutouts
-        new_cutouts = []
-        for hash in cutouts:
-            if hash not in existing_files:
-                new_cutouts.append(hash)
+        new_cutouts = [hash for hash in cutouts if hash not in existing_files]
 
         # Split work
         rank = optim_utils.get_world_rank()
@@ -55,7 +50,7 @@ class DistributedCutoutTuner:
             results = self._tuner.search(cutout=cutout, measurements=measurements, **kwargs)
 
             file_name = self._tuner.file_name(hash)
-            with open(file_name, 'w') as fp:
+            with open(file_name, "w") as fp:
                 json.dump(results, fp)
 
 
@@ -65,14 +60,14 @@ class DistributedSpaceTuner:
     def __init__(self, tuner: ct.CutoutTuner) -> None:
         self._tuner = tuner
 
-    def optimize(self, measurements: int = 30, **kwargs) -> Dict:
+    def optimize(self, measurements: int = 30, **kwargs) -> dict:
         rank = optim_utils.get_world_rank()
         num_ranks = optim_utils.get_world_size()
 
         cutouts = OrderedDict()
         existing_files = set()
         for cutout, cutout_hash in self._tuner.cutouts():
-            cutout_hash = f'{cutout_hash}_{rank}'
+            cutout_hash = f"{cutout_hash}_{rank}"
 
             cutouts[cutout_hash] = cutout
             file_name = self._tuner.file_name(cutout_hash)
@@ -81,10 +76,7 @@ class DistributedSpaceTuner:
                 existing_files.add(cutout_hash)
 
         # Filter cutouts
-        new_cutouts = []
-        for hash in cutouts:
-            if hash not in existing_files:
-                new_cutouts.append(hash)
+        new_cutouts = [hash for hash in cutouts if hash not in existing_files]
 
         self._tuner.rank = rank
         self._tuner.num_ranks = num_ranks
@@ -100,7 +92,7 @@ class DistributedSpaceTuner:
             chunk_start = rank * chunk_size
             chunk_end = None if rank == (num_ranks - 1) else ((rank + 1) * chunk_size)
 
-            label = f'{rank + 1}/{num_ranks}: {cutout_hash}'
+            label = f"{rank + 1}/{num_ranks}: {cutout_hash}"
             results = {}
             key = evaluate_kwargs["key"]
             for config in tqdm(list(itertools.islice(configs, chunk_start, chunk_end)), desc=label):
@@ -109,5 +101,5 @@ class DistributedSpaceTuner:
                 results[key(config)] = runtime
 
                 file_name = self._tuner.file_name(cutout_hash)
-                with open(file_name, 'w') as fp:
+                with open(file_name, "w") as fp:
                     json.dump(results, fp)

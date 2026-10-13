@@ -6,27 +6,40 @@ This module contains the base ``Data`` class and all core descriptor classes:
 ``Scalar``, ``Array``, ``ContainerArray``, ``Stream``, ``Structure``,
 ``View``, ``Reference``, and their subclasses.
 """
+
 import copy as cp
 import ctypes
 import dataclasses
-
 from collections import OrderedDict
 from numbers import Integral
-from typing import Any, Dict, List, Set, Tuple, Union
+from typing import Any, Union
 
 import numpy as np
 import sympy as sp
 
-try:
-    from numpy.typing import ArrayLike
-except (ModuleNotFoundError, ImportError):
-    ArrayLike = Any
-
 from dace import dtypes, serialize, symbolic
-from dace.properties import (DebugInfoProperty, DictProperty, EnumProperty, ListProperty, NestedDataClassProperty,
-                             OrderedDictProperty, Property, ShapeProperty, SymbolicProperty, TypeClassProperty,
-                             make_properties)
+from dace.properties import (
+    DebugInfoProperty,
+    DictProperty,
+    EnumProperty,
+    ListProperty,
+    NestedDataClassProperty,
+    OrderedDictProperty,
+    Property,
+    ShapeProperty,
+    SymbolicProperty,
+    TypeClassProperty,
+    make_properties,
+)
 from dace.utils import prod
+
+SymbolMapping = dict[str | sp.Basic, Any]
+
+
+def _restate(expr: Any, replacements: dict[str, sp.Basic] | None) -> Any:
+    """Replaces symbols in a (possibly non-symbolic) descriptor property value, for ``is_equivalent``."""
+    return symbolic.replace_symbols(expr, replacements)
+
 
 # Backward compatibility alias
 _prod = prod
@@ -46,26 +59,33 @@ def _arrays_from_json(obj, context=None):
 
 @make_properties
 class Data:
-    """ Data type descriptors that can be used as references to memory.
-        Examples: Arrays, Streams, custom arrays (e.g., sparse matrices).
+    """Data type descriptors that can be used as references to memory.
+    Examples: Arrays, Streams, custom arrays (e.g., sparse matrices).
     """
 
     def _transient_setter(self, value):
         self._transient = value
         if isinstance(self, Structure):
-            for _, v in self.members.items():
+            for v in self.members.values():
                 if isinstance(v, Data):
                     v.transient = value
 
-    dtype = TypeClassProperty(default=dtypes.int32)
-    shape = ShapeProperty(default=[])
-    transient = Property(dtype=bool, default=False, setter=_transient_setter)
-    storage = EnumProperty(dtype=dtypes.StorageType, desc="Storage location", default=dtypes.StorageType.Default)
-    lifetime = EnumProperty(dtype=dtypes.AllocationLifetime,
-                            desc='Data allocation span',
-                            default=dtypes.AllocationLifetime.Scope)
-    location = DictProperty(key_type=str, value_type=str, desc='Full storage location identifier (e.g., rank, GPU ID)')
-    debuginfo = DebugInfoProperty(allow_none=True)
+    dtype = TypeClassProperty(default=dtypes.int32, category="General")
+    shape = ShapeProperty(default=[], category="General")
+    transient = Property(dtype=bool, default=False, setter=_transient_setter, category="Memory")
+    storage = EnumProperty(
+        dtype=dtypes.StorageType, category="Memory", desc="Storage location", default=dtypes.StorageType.Default
+    )
+    lifetime = EnumProperty(
+        dtype=dtypes.AllocationLifetime,
+        category="Memory",
+        desc="Data allocation span",
+        default=dtypes.AllocationLifetime.Scope,
+    )
+    location = DictProperty(
+        key_type=str, value_type=str, category="Memory", desc="Full storage location identifier (e.g., rank, GPU ID)"
+    )
+    debuginfo = DebugInfoProperty(allow_none=True, category="Frontend")
 
     def __init__(self, dtype, shape, transient, storage, location, lifetime, debuginfo):
         self.dtype = dtype
@@ -82,20 +102,20 @@ class Data:
         return self
 
     def validate(self):
-        """ Validate the correctness of this object.
-            Raises an exception on error. """
+        """Validate the correctness of this object.
+        Raises an exception on error."""
         self._validate()
 
     # Validation of this class is in a separate function, so that this
     # class can call `_validate()` without calling the subclasses'
     # `validate` function.
     def _validate(self):
-        if any(not isinstance(s, (Integral, symbolic.SymExpr, symbolic.symbol, symbolic.sympy.Basic))
-               for s in self.shape):
-            raise TypeError('Shape must be a list or tuple of integer values '
-                            'or symbols')
+        if any(
+            not isinstance(s, (Integral, symbolic.SymExpr, symbolic.symbol, symbolic.sympy.Basic)) for s in self.shape
+        ):
+            raise TypeError("Shape must be a list or tuple of integer values or symbols")
         if any((shp < 0) == True for shp in self.shape):
-            raise TypeError(f'Found negative shape in Data, its shape was {self.shape}')
+            raise TypeError(f"Found negative shape in Data, its shape was {self.shape}")
         return True
 
     def to_json(self):
@@ -109,8 +129,16 @@ class Data:
     def toplevel(self):
         return self.lifetime is not dtypes.AllocationLifetime.Scope
 
-    def is_equivalent(self, other):
-        """ Check for equivalence (shape and type) of two data descriptors. """
+    def is_equivalent(self, other: "Data", symbol_mapping: SymbolMapping | None = None) -> bool:
+        """
+        Check for equivalence (shape and type) of two data descriptors.
+
+        :param other: The other data descriptor to compare against.
+        :param symbol_mapping: A mapping from the symbols of this descriptor to expressions (e.g., the symbol mapping of
+                               a nested SDFG node). If given, this descriptor is compared as if its symbols were
+                               replaced, all at once, by their mapped expressions. See ``symbolic.symbol_replacements``.
+        :return: True if the two descriptors are equivalent.
+        """
         raise NotImplementedError
 
     def __eq__(self, other):
@@ -121,15 +149,23 @@ class Data:
         # Compute hash using serialized value (i.e., with all properties included)
         return hash(serialize.dumps(self))
 
+    def __or__(self, other):
+        """Enables PEP 604 union type hints, e.g., ``dace.float64[N] | None``."""
+        # NOTE: ``self | other`` would recurse into this method
+        return Union[self, other]  # noqa: UP007
+
+    def __ror__(self, other):
+        return Union[other, self]  # noqa: UP007
+
     def as_arg(self, with_types=True, for_call=False, name=None):
-        """Returns a string for a C++ function signature (e.g., `int *A`). """
+        """Returns a string for a C++ function signature (e.g., `int *A`)."""
         raise NotImplementedError
 
     def as_python_arg(self, with_types=True, for_call=False, name=None):
-        """Returns a string for a Data-Centric Python function signature (e.g., `A: dace.int32[M]`). """
+        """Returns a string for a Data-Centric Python function signature (e.g., `A: dace.int32[M]`)."""
         raise NotImplementedError
 
-    def used_symbols(self, all_symbols: bool) -> Set[symbolic.SymbolicType]:
+    def used_symbols(self, all_symbols: bool) -> set[symbolic.SymbolicType]:
         """
         Returns a set of symbols that are used by this data descriptor.
 
@@ -146,12 +182,12 @@ class Data:
         return result
 
     @property
-    def free_symbols(self) -> Set[symbolic.SymbolicType]:
-        """ Returns a set of undefined symbols in this data descriptor. """
+    def free_symbols(self) -> set[symbolic.SymbolicType]:
+        """Returns a set of undefined symbols in this data descriptor."""
         return self.used_symbols(all_symbols=True)
 
     def __repr__(self):
-        return 'Abstract Data Container, DO NOT USE'
+        return "Abstract Data Container, DO NOT USE"
 
     @property
     def veclen(self):
@@ -162,16 +198,22 @@ class Data:
         return self.dtype.ctype
 
     def num_elements(self):
-        """ The number of elements in this data descriptor, i.e., the product of its shape. Unlike ``total_size``,
-        this does not include any pre- or post-padding. """
+        """The number of elements in this data descriptor, i.e., the product of its shape. Unlike ``total_size``,
+        this does not include any pre- or post-padding."""
         return _prod(self.shape)
+
+    @property
+    def total_size_in_bytes(self) -> symbolic.SymbolicType:
+        """The total allocated size of this data descriptor in bytes, i.e., ``total_size`` times the size of its
+        element type, including any padding."""
+        return self.total_size * self.dtype.bytes
 
     def strides_from_layout(
         self,
         *dimensions: int,
         alignment: symbolic.SymbolicType = 1,
         only_first_aligned: bool = False,
-    ) -> Tuple[Tuple[symbolic.SymbolicType], symbolic.SymbolicType]:
+    ) -> tuple[tuple[symbolic.SymbolicType], symbolic.SymbolicType]:
         """
         Returns the absolute strides and total size of this data descriptor,
         according to the given dimension ordering and alignment.
@@ -188,9 +230,9 @@ class Data:
         """
         # Verify dimensions
         if tuple(sorted(dimensions)) != tuple(range(len(self.shape))):
-            raise ValueError('Every dimension must be given and appear once.')
+            raise ValueError("Every dimension must be given and appear once.")
         if (alignment < 1) == True or (alignment < 0) == True:
-            raise ValueError('Invalid alignment value')
+            raise ValueError("Invalid alignment value")
 
         strides = [1] * len(dimensions)
         total_size = 1
@@ -198,9 +240,7 @@ class Data:
         for dim in dimensions:
             strides[dim] = total_size
             if not only_first_aligned or first:
-                # int_ceil, never `//`: `(N + a - 1) // a` builds sympy `floor(...)`, whose argument
-                # sym2cpp prints WITHOUT the floor, truncating each term (N=1, a=8 gives 0, not 8).
-                dimsize = symbolic.int_ceil(self.shape[dim], alignment) * alignment
+                dimsize = symbolic.align(self.shape[dim], alignment)
             else:
                 dimsize = self.shape[dim]
             total_size *= dimsize
@@ -208,10 +248,9 @@ class Data:
 
         return (tuple(strides), total_size)
 
-    def set_strides_from_layout(self,
-                                *dimensions: int,
-                                alignment: symbolic.SymbolicType = 1,
-                                only_first_aligned: bool = False):
+    def set_strides_from_layout(
+        self, *dimensions: int, alignment: symbolic.SymbolicType = 1, only_first_aligned: bool = False
+    ):
         """
         Sets the absolute strides and total size of this data descriptor,
         according to the given dimension ordering and alignment.
@@ -225,9 +264,9 @@ class Data:
                                    with ``alignment``. Otherwise all dimensions
                                    are.
         """
-        strides, totalsize = self.strides_from_layout(*dimensions,
-                                                      alignment=alignment,
-                                                      only_first_aligned=only_first_aligned)
+        strides, totalsize = self.strides_from_layout(
+            *dimensions, alignment=alignment, only_first_aligned=only_first_aligned
+        )
         self.strides = strides
         self.total_size = totalsize
 
@@ -249,25 +288,27 @@ class Data:
 
 @make_properties
 class Scalar(Data):
-    """ Data descriptor of a scalar value. """
+    """Data descriptor of a scalar value."""
 
-    allow_conflicts = Property(dtype=bool, default=False)
+    allow_conflicts = Property(dtype=bool, default=False, category="Code Generation")
 
-    def __init__(self,
-                 dtype,
-                 transient=False,
-                 storage=dtypes.StorageType.Default,
-                 allow_conflicts=False,
-                 location=None,
-                 lifetime=dtypes.AllocationLifetime.Scope,
-                 debuginfo=None):
+    def __init__(
+        self,
+        dtype,
+        transient=False,
+        storage=dtypes.StorageType.Default,
+        allow_conflicts=False,
+        location=None,
+        lifetime=dtypes.AllocationLifetime.Scope,
+        debuginfo=None,
+    ):
         self.allow_conflicts = allow_conflicts
         shape = [1]
-        super(Scalar, self).__init__(dtype, shape, transient, storage, location, lifetime, debuginfo)
+        super().__init__(dtype, shape, transient, storage, location, lifetime, debuginfo)
 
     @staticmethod
     def from_json(json_obj, context=None):
-        if json_obj['type'] != "Scalar":
+        if json_obj["type"] != "Scalar":
             raise TypeError("Invalid data type")
 
         # Create dummy object
@@ -277,11 +318,12 @@ class Scalar(Data):
         return ret
 
     def __repr__(self):
-        return 'Scalar (dtype=%s)' % self.dtype
+        return f"Scalar (dtype={self.dtype})"
 
     def clone(self):
-        return Scalar(self.dtype, self.transient, self.storage, self.allow_conflicts, self.location, self.lifetime,
-                      self.debuginfo)
+        return Scalar(
+            self.dtype, self.transient, self.storage, self.allow_conflicts, self.location, self.lifetime, self.debuginfo
+        )
 
     @property
     def strides(self):
@@ -318,7 +360,12 @@ class Scalar(Data):
     def may_alias(self) -> bool:
         return False
 
-    def is_equivalent(self, other):
+    def is_equivalent(self, other: Data, symbol_mapping: SymbolMapping | None = None) -> bool:
+        # A scalar has no symbols to map
+        # Special case: array of size 1
+        if isinstance(other, Array) and other.shape == (1,) and other.dtype == self.dtype:
+            return True
+
         if not isinstance(other, Scalar):
             return False
         if self.dtype != other.dtype:
@@ -353,7 +400,7 @@ class Scalar(Data):
                 return False
         except TypeError:  # cannot determine truth value of Relational
             pass
-            #print('WARNING: Cannot evaluate relational expression %s, assuming true.' % ((rng[1] - rng[0]) > rng[2]),
+            # print('WARNING: Cannot evaluate relational expression %s, assuming true.' % ((rng[1] - rng[0]) > rng[2]),
             #      'If this expression is false, please refine symbol definitions in the program.')
 
         return True
@@ -419,56 +466,75 @@ class Array(Data):
     """
 
     # Properties
-    allow_conflicts = Property(dtype=bool,
-                               default=False,
-                               desc='If enabled, allows more than one '
-                               'memlet to write to the same memory location without conflict '
-                               'resolution.')
+    allow_conflicts = Property(
+        dtype=bool,
+        default=False,
+        category="Code Generation",
+        desc="If enabled, allows more than one "
+        "memlet to write to the same memory location without conflict "
+        "resolution.",
+    )
 
     strides = ShapeProperty(
         # element_type=symbolic.pystr_to_symbolic,
-        desc='For each dimension, the number of elements to '
-        'skip in order to obtain the next element in '
-        'that dimension.')
+        category="Memory",
+        desc="For each dimension, the number of elements to "
+        "skip in order to obtain the next element in "
+        "that dimension.",
+    )
 
-    total_size = SymbolicProperty(default=0, desc='The total allocated size of the array. Can be used for padding.')
+    total_size = SymbolicProperty(
+        default=0, category="Memory", desc="The total allocated size of the array. Can be used for padding."
+    )
 
-    offset = ShapeProperty(desc='Initial offset to translate all indices by.')
+    offset = ShapeProperty(category="Memory", desc="Initial offset to translate all indices by.")
 
-    may_alias = Property(dtype=bool,
-                         default=False,
-                         desc='This pointer may alias with other pointers in the same function')
+    may_alias = Property(
+        dtype=bool,
+        default=False,
+        category="Memory",
+        desc="This pointer may alias with other pointers in the same function",
+    )
 
-    alignment = Property(dtype=int, default=0, desc='Allocation alignment hint in bytes.')
+    alignment = Property(dtype=int, default=0, category="Memory", desc="Allocation alignment hint in bytes.")
 
-    start_offset = Property(dtype=int, default=0, desc='Allocation offset elements for manual alignment (pre-padding)')
-    optional = Property(dtype=bool,
-                        default=None,
-                        allow_none=True,
-                        desc='Specifies whether this array may have a value of None. '
-                        'If False, the array must not be None. If option is not set, '
-                        'it is inferred by other properties and the OptionalArrayInference pass.')
-    pool = Property(dtype=bool, default=False, desc='Hint to the allocator that using a memory pool is preferred')
+    start_offset = Property(
+        dtype=int, default=0, category="Memory", desc="Allocation offset elements for manual alignment (pre-padding)"
+    )
+    optional = Property(
+        dtype=bool,
+        default=None,
+        allow_none=True,
+        category="General",
+        desc="Specifies whether this array may have a value of None. "
+        "If False, the array must not be None. If option is not set, "
+        "it is inferred by other properties and the OptionalArrayInference pass.",
+    )
+    pool = Property(
+        dtype=bool, default=False, category="Memory", desc="Hint to the allocator that using a memory pool is preferred"
+    )
 
-    def __init__(self,
-                 dtype,
-                 shape,
-                 transient=False,
-                 allow_conflicts=False,
-                 storage=dtypes.StorageType.Default,
-                 location=None,
-                 strides=None,
-                 offset=None,
-                 may_alias=False,
-                 lifetime=dtypes.AllocationLifetime.Scope,
-                 alignment=0,
-                 debuginfo=None,
-                 total_size=None,
-                 start_offset=None,
-                 optional=None,
-                 pool=False):
+    def __init__(
+        self,
+        dtype,
+        shape,
+        transient=False,
+        allow_conflicts=False,
+        storage=dtypes.StorageType.Default,
+        location=None,
+        strides=None,
+        offset=None,
+        may_alias=False,
+        lifetime=dtypes.AllocationLifetime.Scope,
+        alignment=0,
+        debuginfo=None,
+        total_size=None,
+        start_offset=None,
+        optional=None,
+        pool=False,
+    ):
 
-        super(Array, self).__init__(dtype, shape, transient, storage, location, lifetime, debuginfo)
+        super().__init__(dtype, shape, transient, storage, location, lifetime, debuginfo)
 
         self.allow_conflicts = allow_conflicts
         self.may_alias = may_alias
@@ -484,7 +550,7 @@ class Array(Data):
         if strides is not None:
             self.strides = cp.copy(strides)
         else:
-            self.strides = [_prod(shape[i + 1:]) for i in range(len(shape))]
+            self.strides = [_prod(shape[i + 1 :]) for i in range(len(shape))]
 
         if strides is not None and shape is not None and total_size is None:
             # Compute the minimal total_size that could be used with strides and shape
@@ -503,12 +569,27 @@ class Array(Data):
         self.validate()
 
     def __repr__(self):
-        return '%s (dtype=%s, shape=%s)' % (type(self).__name__, self.dtype, self.shape)
+        return f"{type(self).__name__} (dtype={self.dtype}, shape={self.shape})"
 
     def clone(self):
-        return type(self)(self.dtype, self.shape, self.transient, self.allow_conflicts, self.storage, self.location,
-                          self.strides, self.offset, self.may_alias, self.lifetime, self.alignment, self.debuginfo,
-                          self.total_size, self.start_offset, self.optional, self.pool)
+        return type(self)(
+            self.dtype,
+            self.shape,
+            self.transient,
+            self.allow_conflicts,
+            self.storage,
+            self.location,
+            self.strides,
+            self.offset,
+            self.may_alias,
+            self.lifetime,
+            self.alignment,
+            self.debuginfo,
+            self.total_size,
+            self.start_offset,
+            self.optional,
+            self.pool,
+        )
 
     def to_json(self):
         attrs = serialize.all_properties_to_json(self)
@@ -528,7 +609,7 @@ class Array(Data):
             ret.offset = [0] * len(ret.shape)
         if not ret.strides:
             # Default strides are C-ordered
-            ret.strides = [_prod(ret.shape[i + 1:]) for i in range(len(ret.shape))]
+            ret.strides = [_prod(ret.shape[i + 1 :]) for i in range(len(ret.shape))]
         if ret.total_size == 0:
             ret.total_size = _prod(ret.shape)
 
@@ -537,24 +618,27 @@ class Array(Data):
         return ret
 
     def validate(self):
-        super(Array, self).validate()
+        super().validate()
         if len(self.strides) != len(self.shape):
-            raise TypeError('Strides must be the same size as shape')
+            raise TypeError("Strides must be the same size as shape")
         if len(self.offset) != len(self.shape):
-            raise TypeError('Offset must be the same size as shape')
+            raise TypeError("Offset must be the same size as shape")
 
-        if any(not isinstance(s, (Integral, symbolic.SymExpr, symbolic.symbol, symbolic.sympy.Basic))
-               for s in self.strides):
-            raise TypeError('Strides must be a list or tuple of integer values or symbols')
-        if any(not isinstance(off, (Integral, symbolic.SymExpr, symbolic.symbol, symbolic.sympy.Basic))
-               for off in self.offset):
-            raise TypeError('Offset must be a list or tuple of integer values or symbols')
+        if any(
+            not isinstance(s, (Integral, symbolic.SymExpr, symbolic.symbol, symbolic.sympy.Basic)) for s in self.strides
+        ):
+            raise TypeError("Strides must be a list or tuple of integer values or symbols")
+        if any(
+            not isinstance(off, (Integral, symbolic.SymExpr, symbolic.symbol, symbolic.sympy.Basic))
+            for off in self.offset
+        ):
+            raise TypeError("Offset must be a list or tuple of integer values or symbols")
 
         # Actually it would be enough to only enforce the non negativity only if the shape is larger than one.
         if any((stride < 0) == True for stride in self.strides):
-            raise TypeError(f'Found negative strides in array, they were {self.strides}')
+            raise TypeError(f"Found negative strides in array, they were {self.strides}")
         if (self.total_size < 0) == True:
-            raise TypeError(f'The total size of an array must be positive but it was negative {self.total_size}')
+            raise TypeError(f"The total size of an array must be positive but it was negative {self.total_size}")
 
     def covers_range(self, rng):
         if len(rng) != len(self.shape):
@@ -564,7 +648,7 @@ class Array(Data):
             # Shape has to be positive
             if isinstance(s, sp.Basic):
                 olds = s
-                if 'positive' in s.assumptions0:
+                if "positive" in s.assumptions0:
                     s = sp.Symbol(str(s), **s.assumptions0)
                 else:
                     s = sp.Symbol(str(s), positive=True, **s.assumptions0)
@@ -580,20 +664,27 @@ class Array(Data):
                     return False
             except TypeError:  # cannot determine truth value of Relational
                 pass
-                #print('WARNING: Cannot evaluate relational expression %s, assuming true.' % (rb > 0),
+                # print('WARNING: Cannot evaluate relational expression %s, assuming true.' % (rb > 0),
                 #      'If this expression is false, please refine symbol definitions in the program.')
             try:
                 if re > s:  # Beyond shape
                     return False
             except TypeError:  # cannot determine truth value of Relational
                 pass
-                #print('WARNING: Cannot evaluate relational expression %s, assuming true.' % (re < s),
+                # print('WARNING: Cannot evaluate relational expression %s, assuming true.' % (re < s),
                 #      'If this expression is false, please refine symbol definitions in the program.')
 
         return True
 
     # Checks for equivalent shape and type
-    def is_equivalent(self, other):
+    def is_equivalent(self, other: Data, symbol_mapping: SymbolMapping | None = None) -> bool:
+        replacements = symbolic.symbol_replacements(symbol_mapping)
+        shape = tuple(_restate(s, replacements) for s in self.shape)
+
+        # Special case: Scalar
+        if isinstance(other, Scalar) and shape == (1,) and self.dtype == other.dtype:
+            return True
+
         if not isinstance(other, Array):
             return False
 
@@ -602,14 +693,20 @@ class Array(Data):
             return False
 
         # Test dimensionality
-        if len(self.shape) != len(other.shape):
+        if len(shape) != len(other.shape):
             return False
 
         # Test shape
-        for dim, otherdim in zip(self.shape, other.shape):
+        for dim, otherdim in zip(shape, other.shape):
             # Any other case (constant vs. constant), check for equality
             if otherdim != dim:
                 return False
+
+        # Test strides
+        for stride, otherstride in zip(self.strides, other.strides):
+            if otherstride != _restate(stride, replacements):
+                return False
+
         return True
 
     def as_arg(self, with_types=True, for_call=False, name=None):
@@ -618,8 +715,8 @@ class Array(Data):
         if not with_types or for_call:
             return arrname
         if self.may_alias:
-            return str(self.dtype.ctype) + ' *' + arrname
-        return str(self.dtype.ctype) + ' * __restrict__ ' + arrname
+            return str(self.dtype.ctype) + " *" + arrname
+        return str(self.dtype.ctype) + " * __restrict__ " + arrname
 
     def as_python_arg(self, with_types=True, for_call=False, name=None):
         arrname = name
@@ -631,7 +728,7 @@ class Array(Data):
     def sizes(self):
         return [d.name if isinstance(d, symbolic.symbol) else str(d) for d in self.shape]
 
-    def used_symbols(self, all_symbols: bool) -> Set[symbolic.SymbolicType]:
+    def used_symbols(self, all_symbols: bool) -> set[symbolic.SymbolicType]:
         result = super().used_symbols(all_symbols)
         for s in self.strides:
             if isinstance(s, sp.Expr):
@@ -655,12 +752,12 @@ class Array(Data):
         if explicitly provided to the given value. For internal use only.
         """
         if shape is None:
-            raise IndexError('Shape must not be None')
+            raise IndexError("Shape must not be None")
 
         if strides is not None:
             self.strides = cp.copy(strides)
         else:
-            self.strides = [_prod(shape[i + 1:]) for i in range(len(shape))]
+            self.strides = [_prod(shape[i + 1 :]) for i in range(len(shape))]
 
         if strides is not None and shape is not None and total_size is None:
             # Compute the minimal total_size that could be used with strides and shape
@@ -693,7 +790,7 @@ class Array(Data):
         self._set_shape_dependent_properties(new_shape, strides, total_size, offset)
         self.validate()
 
-    def _get_packed_fortran_strides(self) -> Tuple[int]:
+    def _get_packed_fortran_strides(self) -> tuple[int]:
         """Compute packed strides for Fortran-style (column-major) layout."""
         # Strides increase along the leading dimensions
         if self._packed_fortran_strides is None:
@@ -706,7 +803,7 @@ class Array(Data):
             self._packed_fortran_strides = tuple(strides)
         return self._packed_fortran_strides
 
-    def _get_packed_c_strides(self) -> Tuple[int]:
+    def _get_packed_c_strides(self) -> tuple[int]:
         """Compute packed strides for C-style (row-major) layout."""
         # Strides increase along the trailing dimensions
         if self._packed_c_strides is None:
@@ -732,27 +829,29 @@ class Array(Data):
 
 @make_properties
 class ContainerArray(Array):
-    """ An array that may contain other data containers (e.g., Structures, other arrays). """
+    """An array that may contain other data containers (e.g., Structures, other arrays)."""
 
-    stype = NestedDataClassProperty(allow_none=True, default=None)
+    stype = NestedDataClassProperty(allow_none=True, default=None, category="General")
 
-    def __init__(self,
-                 stype: Data,
-                 shape,
-                 transient=False,
-                 allow_conflicts=False,
-                 storage=dtypes.StorageType.Default,
-                 location=None,
-                 strides=None,
-                 offset=None,
-                 may_alias=False,
-                 lifetime=dtypes.AllocationLifetime.Scope,
-                 alignment=0,
-                 debuginfo=None,
-                 total_size=None,
-                 start_offset=None,
-                 optional=None,
-                 pool=False):
+    def __init__(
+        self,
+        stype: Data,
+        shape,
+        transient=False,
+        allow_conflicts=False,
+        storage=dtypes.StorageType.Default,
+        location=None,
+        strides=None,
+        offset=None,
+        may_alias=False,
+        lifetime=dtypes.AllocationLifetime.Scope,
+        alignment=0,
+        debuginfo=None,
+        total_size=None,
+        start_offset=None,
+        optional=None,
+        pool=False,
+    ):
 
         self.stype = stype
         if stype:
@@ -762,9 +861,24 @@ class ContainerArray(Array):
                 dtype = dtypes.pointer(stype.dtype)
         else:
             dtype = dtypes.pointer(dtypes.typeclass(None))  # void*
-        super(ContainerArray,
-              self).__init__(dtype, shape, transient, allow_conflicts, storage, location, strides, offset, may_alias,
-                             lifetime, alignment, debuginfo, total_size, start_offset, optional, pool)
+        super().__init__(
+            dtype,
+            shape,
+            transient,
+            allow_conflicts,
+            storage,
+            location,
+            strides,
+            offset,
+            may_alias,
+            lifetime,
+            alignment,
+            debuginfo,
+            total_size,
+            start_offset,
+            optional,
+            pool,
+        )
 
     @classmethod
     def from_json(cls, json_obj, context=None):
@@ -777,7 +891,7 @@ class ContainerArray(Array):
             ret.offset = [0] * len(ret.shape)
         if not ret.strides:
             # Default strides are C-ordered
-            ret.strides = [_prod(ret.shape[i + 1:]) for i in range(len(ret.shape))]
+            ret.strides = [_prod(ret.shape[i + 1 :]) for i in range(len(ret.shape))]
         if ret.total_size == 0:
             ret.total_size = _prod(ret.shape)
 
@@ -786,36 +900,38 @@ class ContainerArray(Array):
 
 @make_properties
 class Stream(Data):
-    """ Stream (or stream array) data descriptor. """
+    """Stream (or stream array) data descriptor."""
 
     # Properties
-    offset = ListProperty(element_type=sp.Basic)
-    buffer_size = SymbolicProperty(desc="Size of internal buffer.", default=0)
+    offset = ListProperty(element_type=sp.Basic, category="Memory")
+    buffer_size = SymbolicProperty(category="Memory", desc="Size of internal buffer.", default=0)
 
-    def __init__(self,
-                 dtype,
-                 buffer_size,
-                 shape=None,
-                 transient=False,
-                 storage=dtypes.StorageType.Default,
-                 location=None,
-                 offset=None,
-                 lifetime=dtypes.AllocationLifetime.Scope,
-                 debuginfo=None):
+    def __init__(
+        self,
+        dtype,
+        buffer_size,
+        shape=None,
+        transient=False,
+        storage=dtypes.StorageType.Default,
+        location=None,
+        offset=None,
+        lifetime=dtypes.AllocationLifetime.Scope,
+        debuginfo=None,
+    ):
 
         if shape is None:
-            shape = (1, )
+            shape = (1,)
 
         self.buffer_size = buffer_size
 
         if offset is not None:
             if len(offset) != len(shape):
-                raise TypeError('Offset must be the same size as shape')
+                raise TypeError("Offset must be the same size as shape")
             self.offset = cp.copy(offset)
         else:
             self.offset = [0] * len(shape)
 
-        super(Stream, self).__init__(dtype, shape, transient, storage, location, lifetime, debuginfo)
+        super().__init__(dtype, shape, transient, storage, location, lifetime, debuginfo)
 
     def to_json(self):
         attrs = serialize.all_properties_to_json(self)
@@ -833,7 +949,7 @@ class Stream(Data):
         return ret
 
     def __repr__(self):
-        return '%s (dtype=%s, shape=%s)' % (type(self).__name__, self.dtype, self.shape)
+        return f"{type(self).__name__} (dtype={self.dtype}, shape={self.shape})"
 
     @property
     def total_size(self):
@@ -841,7 +957,7 @@ class Stream(Data):
 
     @property
     def strides(self):
-        return [_prod(self.shape[i + 1:]) for i in range(len(self.shape))]
+        return [_prod(self.shape[i + 1 :]) for i in range(len(self.shape))]
 
     @property
     def start_offset(self):
@@ -856,11 +972,20 @@ class Stream(Data):
         return False
 
     def clone(self):
-        return type(self)(self.dtype, self.buffer_size, self.shape, self.transient, self.storage, self.location,
-                          self.offset, self.lifetime, self.debuginfo)
+        return type(self)(
+            self.dtype,
+            self.buffer_size,
+            self.shape,
+            self.transient,
+            self.storage,
+            self.location,
+            self.offset,
+            self.lifetime,
+            self.debuginfo,
+        )
 
     # Checks for equivalent shape and type
-    def is_equivalent(self, other):
+    def is_equivalent(self, other: Data, symbol_mapping: SymbolMapping | None = None) -> bool:
         if not isinstance(other, type(self)):
             return False
 
@@ -873,18 +998,28 @@ class Stream(Data):
             return False
 
         # Test shape
+        replacements = symbolic.symbol_replacements(symbol_mapping)
         for dim, otherdim in zip(self.shape, other.shape):
-            if dim != otherdim:
+            if _restate(dim, replacements) != otherdim:
                 return False
+
+        # Test buffer size
+        if _restate(self.buffer_size, replacements) != other.buffer_size:
+            return False
+
         return True
 
     def as_arg(self, with_types=True, for_call=False, name=None):
-        if not with_types or for_call: return name
+        if not with_types or for_call:
+            return name
         if self.storage in [dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared]:
-            return 'dace::GPUStream<%s, %s> %s' % (str(
-                self.dtype.ctype), 'true' if sp.log(self.buffer_size, 2).is_Integer else 'false', name)
+            return "dace::GPUStream<{}, {}> {}".format(
+                str(self.dtype.ctype),
+                "true" if sp.log(self.buffer_size, 2).is_Integer else "false",
+                name,
+            )
 
-        return 'dace::Stream<%s> %s' % (str(self.dtype.ctype), name)
+        return f"dace::Stream<{str(self.dtype.ctype)}> {name}"
 
     def sizes(self):
         return [d.name if isinstance(d, symbolic.symbol) else str(d) for d in self.shape]
@@ -900,7 +1035,7 @@ class Stream(Data):
             # Shape has to be positive
             if isinstance(s, sp.Basic):
                 olds = s
-                if 'positive' in s.assumptions0:
+                if "positive" in s.assumptions0:
                     s = sp.Symbol(str(s), **s.assumptions0)
                 else:
                     s = sp.Symbol(str(s), positive=True, **s.assumptions0)
@@ -916,19 +1051,19 @@ class Stream(Data):
                     return False
             except TypeError:  # cannot determine truth value of Relational
                 pass
-                #print('WARNING: Cannot evaluate relational expression %s, assuming true.' % (rb > 0),
+                # print('WARNING: Cannot evaluate relational expression %s, assuming true.' % (rb > 0),
                 #      'If this expression is false, please refine symbol definitions in the program.')
             try:
                 if re > s:  # Beyond shape
                     return False
             except TypeError:  # cannot determine truth value of Relational
                 pass
-                #print('WARNING: Cannot evaluate relational expression %s, assuming true.' % (re < s),
+                # print('WARNING: Cannot evaluate relational expression %s, assuming true.' % (re < s),
                 #      'If this expression is false, please refine symbol definitions in the program.')
 
         return True
 
-    def used_symbols(self, all_symbols: bool) -> Set[symbolic.SymbolicType]:
+    def used_symbols(self, all_symbols: bool) -> set[symbolic.SymbolicType]:
         result = super().used_symbols(all_symbols)
         if (self.transient or all_symbols) and isinstance(self.buffer_size, sp.Expr):
             result |= set(self.buffer_size.free_symbols)
@@ -945,22 +1080,27 @@ class Stream(Data):
 
 @make_properties
 class Structure(Data):
-    """ Base class for structures. """
+    """Base class for structures."""
 
-    members = OrderedDictProperty(default=OrderedDict(),
-                                  desc="Dictionary of structure members",
-                                  from_json=_arrays_from_json,
-                                  to_json=_arrays_to_json)
-    name = Property(dtype=str, desc="Structure type name")
+    members = OrderedDictProperty(
+        default=OrderedDict(),
+        category="General",
+        desc="Dictionary of structure members",
+        from_json=_arrays_from_json,
+        to_json=_arrays_to_json,
+    )
+    name = Property(dtype=str, category="General", desc="Structure type name")
 
-    def __init__(self,
-                 members: Union[Dict[str, Data], List[Tuple[str, Data]]],
-                 name: str = 'Structure',
-                 transient: bool = False,
-                 storage: dtypes.StorageType = dtypes.StorageType.Default,
-                 location: Dict[str, str] = None,
-                 lifetime: dtypes.AllocationLifetime = dtypes.AllocationLifetime.Scope,
-                 debuginfo: dtypes.DebugInfo = None):
+    def __init__(
+        self,
+        members: dict[str, Data] | list[tuple[str, Data]],
+        name: str = "Structure",
+        transient: bool = False,
+        storage: dtypes.StorageType = dtypes.StorageType.Default,
+        location: dict[str, str] = None,
+        lifetime: dtypes.AllocationLifetime = dtypes.AllocationLifetime.Scope,
+        debuginfo: dtypes.DebugInfo = None,
+    ):
 
         self.members = OrderedDict(members)
         for k, v in self.members.items():
@@ -1004,12 +1144,12 @@ class Structure(Data):
 
         dtype = dtypes.pointer(dtypes.struct(name, **fields_and_types))
         dtype.base_type.__descriptor__ = self
-        shape = (1, )
-        super(Structure, self).__init__(dtype, shape, transient, storage, location, lifetime, debuginfo)
+        shape = (1,)
+        super().__init__(dtype, shape, transient, storage, location, lifetime, debuginfo)
 
     @staticmethod
     def from_json(json_obj, context=None):
-        if json_obj['type'] != 'Structure':
+        if json_obj["type"] != "Structure":
             raise TypeError("Invalid data type")
 
         # Create dummy object
@@ -1019,7 +1159,7 @@ class Structure(Data):
         return ret
 
     @staticmethod
-    def from_dataclass(cls, **overrides) -> 'Structure':
+    def from_dataclass(cls, **overrides) -> "Structure":
         """
         Creates a Structure data descriptor from a dataclass instance.
 
@@ -1055,10 +1195,10 @@ class Structure(Data):
         return [1]
 
     @property
-    def free_symbols(self) -> Set[symbolic.SymbolicType]:
-        """ Returns a set of undefined symbols in this data descriptor. """
+    def free_symbols(self) -> set[symbolic.SymbolicType]:
+        """Returns a set of undefined symbols in this data descriptor."""
         result = set()
-        for k, v in self.members.items():
+        for v in self.members.values():
             result |= v.free_symbols
         return result
 
@@ -1073,13 +1213,13 @@ class Structure(Data):
         return self.dtype.as_arg(name)
 
     def __getitem__(self, s):
-        """ This is syntactic sugar that allows us to define an array type
-            with the following syntax: ``Structure[N,M]``
-            :return: A ``data.ContainerArray`` data descriptor.
+        """This is syntactic sugar that allows us to define an array type
+        with the following syntax: ``Structure[N,M]``
+        :return: A ``data.ContainerArray`` data descriptor.
         """
         if isinstance(s, list) or isinstance(s, tuple):
             return ContainerArray(self, tuple(s))
-        return ContainerArray(self, (s, ))
+        return ContainerArray(self, (s,))
 
     # NOTE: Like Scalars?
     @property
@@ -1091,16 +1231,40 @@ class Structure(Data):
     def optional(self) -> bool:
         return False
 
+    def is_equivalent(self, other: Data, symbol_mapping: SymbolMapping | None = None) -> bool:
+        """
+        Checks whether two structures describe the same data.
+
+        Two structures are equivalent when they have the same member names and each pair of
+        members is itself equivalent. The structure type name is deliberately not compared: it
+        names the generated C type, not the data, and the same layout reached through different
+        declarations still describes the same memory.
+
+        :param other: The other data descriptor to compare against.
+        :param symbol_mapping: A mapping from the symbols of this descriptor to expressions (e.g., the symbol mapping of
+                               a nested SDFG node). If given, this descriptor is compared as if its symbols were
+                               replaced, all at once, by their mapped expressions. See ``symbolic.symbol_replacements``.
+        :return: True if the two descriptors are equivalent.
+        """
+        if not isinstance(other, Structure):
+            return False
+        if self.members.keys() != other.members.keys():
+            return False
+        # Convert the mapping once rather than in every member
+        replacements = symbolic.symbol_replacements(symbol_mapping)
+        return all(v.is_equivalent(other.members[k], replacements) for k, v in self.members.items())
+
     def keys(self):
         result = self.members.keys()
         for k, v in self.members.items():
             if isinstance(v, Structure):
-                result |= set(map(lambda x: f"{k}.{x}", v.keys()))
+                result |= {f"{k}.{x}" for x in v.keys()}
         return result
 
     def clone(self):
-        return Structure(self.members, self.name, self.transient, self.storage, self.location, self.lifetime,
-                         self.debuginfo)
+        return Structure(
+            self.members, self.name, self.transient, self.storage, self.location, self.lifetime, self.debuginfo
+        )
 
     # NOTE: Like scalars?
     @property
@@ -1117,6 +1281,7 @@ class Structure(Data):
         """
         # Import here to avoid circular import
         from dace.data.ctypes_interop import make_ctypes_argument
+
         struct_type: dtypes.struct = self.dtype.base_type
         struct_ctype = struct_type.as_ctypes()
 
@@ -1127,7 +1292,8 @@ class Structure(Data):
 
         args = {
             field_name: _make_arg(field_value, self.members[field_name], field_name)
-            for field_name, field_value in fields.items() if field_name in self.members
+            for field_name, field_value in fields.items()
+            if field_name in self.members
         }
 
         struct_instance = struct_ctype(**args)
@@ -1181,44 +1347,50 @@ class View:
         debuginfo = debuginfo or viewed_container.debuginfo
         # Construct the right kind of view from the input data container
         if isinstance(viewed_container, Structure):
-            result = StructureView(members=cp.deepcopy(viewed_container.members),
-                                   name=viewed_container.name,
-                                   storage=viewed_container.storage,
-                                   location=viewed_container.location,
-                                   lifetime=dtypes.AllocationLifetime.Scope,
-                                   debuginfo=debuginfo)
+            result = StructureView(
+                members=cp.deepcopy(viewed_container.members),
+                name=viewed_container.name,
+                storage=viewed_container.storage,
+                location=viewed_container.location,
+                lifetime=dtypes.AllocationLifetime.Scope,
+                debuginfo=debuginfo,
+            )
         elif isinstance(viewed_container, ContainerArray):
-            result = ContainerView(stype=cp.deepcopy(viewed_container.stype),
-                                   shape=viewed_container.shape,
-                                   allow_conflicts=viewed_container.allow_conflicts,
-                                   storage=viewed_container.storage,
-                                   location=viewed_container.location,
-                                   strides=viewed_container.strides,
-                                   offset=viewed_container.offset,
-                                   may_alias=viewed_container.may_alias,
-                                   lifetime=dtypes.AllocationLifetime.Scope,
-                                   alignment=viewed_container.alignment,
-                                   debuginfo=debuginfo,
-                                   total_size=viewed_container.total_size,
-                                   start_offset=viewed_container.start_offset,
-                                   optional=viewed_container.optional,
-                                   pool=viewed_container.pool)
+            result = ContainerView(
+                stype=cp.deepcopy(viewed_container.stype),
+                shape=viewed_container.shape,
+                allow_conflicts=viewed_container.allow_conflicts,
+                storage=viewed_container.storage,
+                location=viewed_container.location,
+                strides=viewed_container.strides,
+                offset=viewed_container.offset,
+                may_alias=viewed_container.may_alias,
+                lifetime=dtypes.AllocationLifetime.Scope,
+                alignment=viewed_container.alignment,
+                debuginfo=debuginfo,
+                total_size=viewed_container.total_size,
+                start_offset=viewed_container.start_offset,
+                optional=viewed_container.optional,
+                pool=viewed_container.pool,
+            )
         elif isinstance(viewed_container, (Array, Scalar)):
-            result = ArrayView(dtype=viewed_container.dtype,
-                               shape=viewed_container.shape,
-                               allow_conflicts=viewed_container.allow_conflicts,
-                               storage=viewed_container.storage,
-                               location=viewed_container.location,
-                               strides=viewed_container.strides,
-                               offset=viewed_container.offset,
-                               may_alias=viewed_container.may_alias,
-                               lifetime=dtypes.AllocationLifetime.Scope,
-                               alignment=viewed_container.alignment,
-                               debuginfo=debuginfo,
-                               total_size=viewed_container.total_size,
-                               start_offset=viewed_container.start_offset,
-                               optional=viewed_container.optional,
-                               pool=viewed_container.pool)
+            result = ArrayView(
+                dtype=viewed_container.dtype,
+                shape=viewed_container.shape,
+                allow_conflicts=viewed_container.allow_conflicts,
+                storage=viewed_container.storage,
+                location=viewed_container.location,
+                strides=viewed_container.strides,
+                offset=viewed_container.offset,
+                may_alias=viewed_container.may_alias,
+                lifetime=dtypes.AllocationLifetime.Scope,
+                alignment=viewed_container.alignment,
+                debuginfo=debuginfo,
+                total_size=viewed_container.total_size,
+                start_offset=viewed_container.start_offset,
+                optional=viewed_container.optional,
+                pool=viewed_container.pool,
+            )
         else:
             # In undefined cases, make a container array view of size 1
             result = ContainerView(cp.deepcopy(viewed_container), [1], debuginfo=debuginfo)
@@ -1260,17 +1432,19 @@ class Reference:
         elif isinstance(viewed_container, Array):
             result.__class__ = ArrayReference
         elif isinstance(viewed_container, Scalar):
-            result = ArrayReference(dtype=viewed_container.dtype,
-                                    shape=[1],
-                                    storage=viewed_container.storage,
-                                    lifetime=viewed_container.lifetime,
-                                    alignment=viewed_container.alignment,
-                                    debuginfo=viewed_container.debuginfo,
-                                    total_size=1,
-                                    start_offset=0,
-                                    optional=viewed_container.optional,
-                                    pool=False,
-                                    byval=False)
+            result = ArrayReference(
+                dtype=viewed_container.dtype,
+                shape=[1],
+                storage=viewed_container.storage,
+                lifetime=viewed_container.lifetime,
+                alignment=viewed_container.alignment,
+                debuginfo=viewed_container.debuginfo,
+                total_size=1,
+                start_offset=0,
+                optional=viewed_container.optional,
+                pool=False,
+                byval=False,
+            )
         else:  # In undefined cases, make a container array reference of size 1
             result = ContainerArrayReference(result, [1], debuginfo=debuginfo)
 
@@ -1299,7 +1473,7 @@ class ArrayView(Array, View):
         # We ensure that allocation lifetime is always set to Scope, since the
         # view is generated upon "allocation"
         if self.lifetime != dtypes.AllocationLifetime.Scope:
-            raise ValueError('Only Scope allocation lifetime is supported for Views')
+            raise ValueError("Only Scope allocation lifetime is supported for Views")
 
     def as_array(self):
         copy = cp.deepcopy(self)
@@ -1315,7 +1489,7 @@ class StructureView(Structure, View):
 
     @staticmethod
     def from_json(json_obj, context=None):
-        if json_obj['type'] != 'StructureView':
+        if json_obj["type"] != "StructureView":
             raise TypeError("Invalid data type")
 
         # Create dummy object
@@ -1330,7 +1504,7 @@ class StructureView(Structure, View):
         # We ensure that allocation lifetime is always set to Scope, since the
         # view is generated upon "allocation"
         if self.lifetime != dtypes.AllocationLifetime.Scope:
-            raise ValueError('Only Scope allocation lifetime is supported for Views')
+            raise ValueError("Only Scope allocation lifetime is supported for Views")
 
     def as_structure(self):
         copy = cp.deepcopy(self)
@@ -1345,26 +1519,44 @@ class ContainerView(ContainerArray, View):
     be used to access nested container types without a copy.
     """
 
-    def __init__(self,
-                 stype: Data,
-                 shape=None,
-                 transient=True,
-                 allow_conflicts=False,
-                 storage=dtypes.StorageType.Default,
-                 location=None,
-                 strides=None,
-                 offset=None,
-                 may_alias=False,
-                 lifetime=dtypes.AllocationLifetime.Scope,
-                 alignment=0,
-                 debuginfo=None,
-                 total_size=None,
-                 start_offset=None,
-                 optional=None,
-                 pool=False):
+    def __init__(
+        self,
+        stype: Data,
+        shape=None,
+        transient=True,
+        allow_conflicts=False,
+        storage=dtypes.StorageType.Default,
+        location=None,
+        strides=None,
+        offset=None,
+        may_alias=False,
+        lifetime=dtypes.AllocationLifetime.Scope,
+        alignment=0,
+        debuginfo=None,
+        total_size=None,
+        start_offset=None,
+        optional=None,
+        pool=False,
+    ):
         shape = [1] if shape is None else shape
-        super().__init__(stype, shape, transient, allow_conflicts, storage, location, strides, offset, may_alias,
-                         lifetime, alignment, debuginfo, total_size, start_offset, optional, pool)
+        super().__init__(
+            stype,
+            shape,
+            transient,
+            allow_conflicts,
+            storage,
+            location,
+            strides,
+            offset,
+            may_alias,
+            lifetime,
+            alignment,
+            debuginfo,
+            total_size,
+            start_offset,
+            optional,
+            pool,
+        )
 
     def validate(self):
         super().validate()
@@ -1372,7 +1564,7 @@ class ContainerView(ContainerArray, View):
         # We ensure that allocation lifetime is always set to Scope, since the
         # view is generated upon "allocation"
         if self.lifetime != dtypes.AllocationLifetime.Scope:
-            raise ValueError('Only Scope allocation lifetime is supported for ContainerViews')
+            raise ValueError("Only Scope allocation lifetime is supported for ContainerViews")
 
     def as_array(self):
         copy = cp.deepcopy(self)
@@ -1394,7 +1586,7 @@ class ArrayReference(Array, Reference):
         # We ensure that allocation lifetime is always set to Scope, since the
         # view is generated upon "allocation"
         if self.lifetime != dtypes.AllocationLifetime.Scope:
-            raise ValueError('Only Scope allocation lifetime is supported for References')
+            raise ValueError("Only Scope allocation lifetime is supported for References")
 
     def as_array(self):
         copy = cp.deepcopy(self)
@@ -1416,9 +1608,9 @@ class StructureReference(Structure, Reference):
         # We ensure that allocation lifetime is always set to Scope, since the
         # view is generated upon "allocation"
         if self.lifetime != dtypes.AllocationLifetime.Scope:
-            raise ValueError('Only Scope allocation lifetime is supported for References')
+            raise ValueError("Only Scope allocation lifetime is supported for References")
 
-        if 'set' in self.members:
+        if "set" in self.members:
             raise NameError('A structure that is referenced may not contain a member called "set" (reserved keyword).')
 
     def as_structure(self):
@@ -1442,7 +1634,7 @@ class ContainerArrayReference(ContainerArray, Reference):
         # We ensure that allocation lifetime is always set to Scope, since the
         # view is generated upon "allocation"
         if self.lifetime != dtypes.AllocationLifetime.Scope:
-            raise ValueError('Only Scope allocation lifetime is supported for References')
+            raise ValueError("Only Scope allocation lifetime is supported for References")
 
     def as_array(self):
         copy = cp.deepcopy(self)

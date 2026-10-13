@@ -1,6 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
 import numpy as np
+
+import dace
 from dace import nodes
 
 
@@ -19,21 +20,21 @@ def test_decreasing_propagation():
     me = None
     state = None
     for n, s in sdfg.all_nodes_recursive():
-        if isinstance(n, nodes.MapEntry) and n.map.params[0] == 'j':
+        if isinstance(n, nodes.MapEntry) and n.map.params[0] == "j":
             me = n
             state = s
             break
-    assert (me)
-    assert (state)
+    assert me
+    assert state
     edges = state.in_edges(me)
-    assert (len(edges) == 1)
+    assert len(edges) == 1
     subset = edges[0].data.src_subset
-    assert (subset.ranges == [(3, 6, 1), (15, 17, 1)])
+    assert subset.ranges == [(3, 6, 1), (15, 17, 1)]
 
     copy_nw_corner(q)
     copy_nw_corner.f(ref)
-    assert (np.allclose(q, ref))
+    assert np.allclose(q, ref)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_decreasing_propagation()

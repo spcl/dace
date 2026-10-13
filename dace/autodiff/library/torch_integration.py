@@ -2,17 +2,18 @@
 """
 Hooks for PyTorch tensors to make them compatible with dace
 """
+
 import copy
 
 try:
     import torch
+
     TORCH_AVAILABLE = True
 except ImportError:
     torch = None
     TORCH_AVAILABLE = False
 
 from dace import data
-
 from dace.autodiff.library.library import ParameterArray
 
 if TORCH_AVAILABLE:
@@ -25,7 +26,7 @@ if TORCH_AVAILABLE:
 
         desc = data.create_datadescriptor(self, no_custom_desc=True)
         if not isinstance(desc, data.Array):
-            raise ValueError("Unsupported descriptor: {}".format(desc))
+            raise ValueError(f"Unsupported descriptor: {desc}")
 
         if not self.requires_grad:
             return desc

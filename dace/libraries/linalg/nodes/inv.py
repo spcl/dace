@@ -1,15 +1,17 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
+
+import numpy as np
+
 import dace
 import dace.library
 import dace.properties
 import dace.sdfg.nodes
-import numpy as np
 from dace import Memlet
+from dace.libraries.blas import environments as blas_environments
+from dace.libraries.lapack import environments
 from dace.libraries.lapack.nodes import Getrf, Getri, Getrs
 from dace.transformation.transformation import ExpandTransformation
-from dace.libraries.lapack import environments
-from dace.libraries.blas import environments as blas_environments
 
 
 def _make_sdfg(node, parent_state, parent_sdfg, implementation):
@@ -21,36 +23,36 @@ def _make_sdfg(node, parent_state, parent_sdfg, implementation):
         (in_shape, in_dtype, in_strides, out_shape, out_dtype, out_strides, n) = arr_desc
     dtype = in_dtype
 
-    sdfg = dace.SDFG("{l}_sdfg".format(l=node.label))
+    sdfg = dace.SDFG(f"{node.label}_sdfg")
 
-    a_arr = sdfg.add_array('_ain', in_shape, dtype=in_dtype, strides=in_strides)
+    a_arr = sdfg.add_array("_ain", in_shape, dtype=in_dtype, strides=in_strides)
     if not node.overwrite:
         ain_arr = a_arr
-        a_arr = sdfg.add_array('_aout', out_shape, dtype=out_dtype, strides=out_strides)
-    ipiv_arr = sdfg.add_array('_pivots', [n], dtype=dace.int32, transient=True)
-    info_arr = sdfg.add_array('_info', [1], dtype=dace.int32, transient=True)
+        a_arr = sdfg.add_array("_aout", out_shape, dtype=out_dtype, strides=out_strides)
+    ipiv_arr = sdfg.add_array("_pivots", [n], dtype=dace.int32, transient=True)
+    info_arr = sdfg.add_array("_info", [1], dtype=dace.int32, transient=True)
 
-    state = sdfg.add_state("{l}_state".format(l=node.label))
+    state = sdfg.add_state(f"{node.label}_state")
 
-    getrf_node = Getrf('getrf')
+    getrf_node = Getrf("getrf")
     getrf_node.implementation = implementation
-    getri_node = Getri('getri')
+    getri_node = Getri("getri")
     getri_node.implementation = implementation
 
     if node.overwrite:
-        ain = state.add_read('_ain')
-        ainout = state.add_access('_ain')
-        aout = state.add_write('_ain')
+        ain = state.add_read("_ain")
+        ainout = state.add_access("_ain")
+        aout = state.add_write("_ain")
     else:
-        a = state.add_read('_ain')
-        ain = state.add_read('_aout')
-        ainout = state.add_access('_aout')
-        aout = state.add_write('_aout')
+        a = state.add_read("_ain")
+        ain = state.add_read("_aout")
+        ainout = state.add_access("_aout")
+        aout = state.add_write("_aout")
         state.add_nedge(a, ain, Memlet.from_array(*ain_arr))
 
-    ipiv = state.add_access('_pivots')
-    info1 = state.add_write('_info')
-    info2 = state.add_write('_info')
+    ipiv = state.add_access("_pivots")
+    info1 = state.add_write("_info")
+    info2 = state.add_write("_info")
 
     state.add_memlet_path(ain, getrf_node, dst_conn="_xin", memlet=Memlet.from_array(*a_arr))
     state.add_memlet_path(getrf_node, info1, src_conn="_res", memlet=Memlet.from_array(*info_arr))
@@ -73,52 +75,55 @@ def _make_sdfg_getrs(node, parent_state, parent_sdfg, implementation):
         (in_shape, in_dtype, in_strides, out_shape, out_dtype, out_strides, n) = arr_desc
     dtype = in_dtype
 
-    sdfg = dace.SDFG("{l}_sdfg".format(l=node.label))
+    sdfg = dace.SDFG(f"{node.label}_sdfg")
 
-    a_arr = sdfg.add_array('_ain', in_shape, dtype=in_dtype, strides=in_strides)
+    a_arr = sdfg.add_array("_ain", in_shape, dtype=in_dtype, strides=in_strides)
     if not node.overwrite:
         ain_arr = a_arr
-        a_arr = sdfg.add_array('_ainout', [n, n], dtype=in_dtype, transient=True)
-        b_arr = sdfg.add_array('_aout', out_shape, dtype=out_dtype, strides=out_strides)
+        a_arr = sdfg.add_array("_ainout", [n, n], dtype=in_dtype, transient=True)
+        b_arr = sdfg.add_array("_aout", out_shape, dtype=out_dtype, strides=out_strides)
     else:
-        b_arr = sdfg.add_array('_b', [n, n], dtype=dtype, transient=True)
-    ipiv_arr = sdfg.add_array('_pivots', [n], dtype=dace.int32, transient=True)
-    info_arr = sdfg.add_array('_info', [1], dtype=dace.int32, transient=True)
+        b_arr = sdfg.add_array("_b", [n, n], dtype=dtype, transient=True)
+    ipiv_arr = sdfg.add_array("_pivots", [n], dtype=dace.int32, transient=True)
+    info_arr = sdfg.add_array("_info", [1], dtype=dace.int32, transient=True)
 
-    state = sdfg.add_state("{l}_state".format(l=node.label))
+    state = sdfg.add_state(f"{node.label}_state")
 
-    getrf_node = Getrf('getrf')
+    getrf_node = Getrf("getrf")
     getrf_node.implementation = implementation
-    getrs_node = Getrs('getrs')
+    getrs_node = Getrs("getrs")
     getrs_node.implementation = implementation
 
     if node.overwrite:
-        ain = state.add_read('_ain')
-        ainout = state.add_access('_ain')
-        aout = state.add_write('_ain')
-        bin_name = '_b'
-        bout = state.add_write('_b')
+        ain = state.add_read("_ain")
+        ainout = state.add_access("_ain")
+        aout = state.add_write("_ain")
+        bin_name = "_b"
+        bout = state.add_write("_b")
         state.add_nedge(bout, aout, Memlet.from_array(*a_arr))
     else:
-        a = state.add_read('_ain')
-        ain = state.add_read('_ainout')
-        ainout = state.add_access('_ainout')
+        a = state.add_read("_ain")
+        ain = state.add_read("_ainout")
+        ainout = state.add_access("_ainout")
         # aout = state.add_write('_aout')
         state.add_nedge(a, ain, Memlet.from_array(*ain_arr))
-        bin_name = '_aout'
-        bout = state.add_access('_aout')
+        bin_name = "_aout"
+        bout = state.add_access("_aout")
 
-    _, _, mx = state.add_mapped_tasklet('_eye_',
-                                        dict(__i0="0:n", __i1="0:n"), {},
-                                        '_out = (__i0 == __i1) ? 1 : 0;',
-                                        dict(_out=Memlet.simple(bin_name, '__i0, __i1')),
-                                        language=dace.dtypes.Language.CPP,
-                                        external_edges=True)
+    _, _, mx = state.add_mapped_tasklet(
+        "_eye_",
+        dict(__i0="0:n", __i1="0:n"),
+        {},
+        "_out = (__i0 == __i1) ? 1 : 0;",
+        dict(_out=Memlet.simple(bin_name, "__i0, __i1")),
+        language=dace.dtypes.Language.CPP,
+        external_edges=True,
+    )
     bin = state.out_edges(mx)[0].dst
 
-    ipiv = state.add_access('_pivots')
-    info1 = state.add_write('_info')
-    info2 = state.add_write('_info')
+    ipiv = state.add_access("_pivots")
+    info1 = state.add_write("_info")
+    info2 = state.add_write("_info")
 
     state.add_memlet_path(ain, getrf_node, dst_conn="_xin", memlet=Memlet.from_array(*a_arr))
     state.add_memlet_path(getrf_node, info1, src_conn="_res", memlet=Memlet.from_array(*info_arr))
@@ -135,7 +140,6 @@ def _make_sdfg_getrs(node, parent_state, parent_sdfg, implementation):
 
 @dace.library.expansion
 class ExpandInvPure(ExpandTransformation):
-
     environments = []
 
     @staticmethod
@@ -152,7 +156,6 @@ class ExpandInvPure(ExpandTransformation):
 
 @dace.library.expansion
 class ExpandInvOpenBLAS(ExpandTransformation):
-
     environments = [blas_environments.openblas.OpenBLAS]
 
     @staticmethod
@@ -165,7 +168,6 @@ class ExpandInvOpenBLAS(ExpandTransformation):
 
 @dace.library.expansion
 class ExpandInvMKL(ExpandTransformation):
-
     environments = [blas_environments.intel_mkl.IntelMKL]
 
     @staticmethod
@@ -178,7 +180,6 @@ class ExpandInvMKL(ExpandTransformation):
 
 @dace.library.expansion
 class ExpandInvCuSolverDn(ExpandTransformation):
-
     environments = [environments.cusolverdn.cuSolverDn]
 
     @staticmethod
@@ -188,13 +189,12 @@ class ExpandInvCuSolverDn(ExpandTransformation):
 
 @dace.library.node
 class Inv(dace.sdfg.nodes.LibraryNode):
-
     # Global properties
     implementations = {"OpenBLAS": ExpandInvOpenBLAS, "MKL": ExpandInvMKL, "cuSolverDn": ExpandInvCuSolverDn}
     default_implementation = None
 
-    overwrite = dace.properties.Property(dtype=bool, default=False)
-    use_getri = dace.properties.Property(dtype=bool, default=True)
+    overwrite = dace.properties.Property(dtype=bool, default=False, category="Semantics")
+    use_getri = dace.properties.Property(dtype=bool, default=True, category="Code Generation")
 
     # Object fields
     def __init__(self, name, overwrite_a=False, use_getri=True, *args, **kwargs):
@@ -224,7 +224,10 @@ class Inv(dace.sdfg.nodes.LibraryNode):
         squeezed2 = copy.deepcopy(out_memlet.subset)
         dims2 = squeezed2.squeeze()
 
-        desc_ain, desc_aout = None, None,
+        desc_ain, desc_aout = (
+            None,
+            None,
+        )
         for e in state.in_edges(self):
             if e.dst_conn == "_ain":
                 desc_ain = sdfg.arrays[e.data.data]

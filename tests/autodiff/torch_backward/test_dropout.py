@@ -1,10 +1,12 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
-from typing import Literal, Union
+from typing import Literal
+
 import pytest
 
 pytest.importorskip("torch", reason="PyTorch not installed. Please install with: pip install dace[ml]")
 import torch
 from torch import nn
+
 from dace.ml import DaceModule
 from tests.utils import torch_tensors_close
 
@@ -13,10 +15,9 @@ from tests.utils import torch_tensors_close
 def test_dropout_fwd_training():
     p = 0.5
     module = nn.Dropout(p=p).train()
-    dace_module = DaceModule(module,
-                             sdfg_name="test_dropout_fwd_training",
-                             dummy_inputs=(torch.ones(10, 10), ),
-                             training=True)
+    dace_module = DaceModule(
+        module, sdfg_name="test_dropout_fwd_training", dummy_inputs=(torch.ones(10, 10),), training=True
+    )
 
     # dropout will set some of these to zero
     test_data = torch.randint(1, 10, (10, 10)).float()
@@ -31,14 +32,12 @@ def test_dropout_fwd_training():
 @pytest.mark.torch
 @pytest.mark.autodiff
 @pytest.mark.parametrize("p", [0, 0.99, 0.6, 0.5])
-def test_dropout_bwd(p: Union[float, Literal[0]]):
+def test_dropout_bwd(p: float | Literal[0]):
     module = nn.Dropout(p=p).train()
     sdfg_name = f"test_dropout_{str(p).replace('.', '_')}_bwd"
-    dace_module = DaceModule(module,
-                             sdfg_name=sdfg_name,
-                             dummy_inputs=(torch.ones(10, 10), ),
-                             backward=True,
-                             training=True)
+    dace_module = DaceModule(
+        module, sdfg_name=sdfg_name, dummy_inputs=(torch.ones(10, 10),), backward=True, training=True
+    )
 
     test_data = torch.randint(1, 10, (10, 10)).float()
     test_data.requires_grad = True

@@ -4,7 +4,7 @@ from dace import subsets
 
 
 def test_intersects_symbolic():
-    N, M = dace.symbol('N', positive=True), dace.symbol('M', positive=True)
+    N, M = dace.symbol("N", positive=True), dace.symbol("M", positive=True)
     rng1 = subsets.Range([(0, N - 1, 1), (0, M - 1, 1)])
     rng2 = subsets.Range([(0, 0, 1), (0, 0, 1)])
     rng3_1 = subsets.Range([(N, N, 1), (0, 1, 1)])
@@ -13,7 +13,7 @@ def test_intersects_symbolic():
     rng5 = subsets.Range([(0, 0, 1), (M, M, 1)])
     rng6 = subsets.Range([(0, N, 1), (0, M, 1)])
     rng7 = subsets.Range([(0, N - 1, 1), (N - 1, N, 1)])
-    ind1 = subsets.Indices([0, 1])
+    ind1 = subsets.Range.from_indices([0, 1])
 
     assert subsets.intersects(rng1, rng2) is True
     assert subsets.intersects(rng1, rng3_1) is False
@@ -32,9 +32,9 @@ def test_intersects_constant():
     rng2 = subsets.Range([(3, 4, 1)])
     rng3 = subsets.Range([(1, 5, 1)])
     rng4 = subsets.Range([(5, 7, 1)])
-    ind1 = subsets.Indices([0])
-    ind2 = subsets.Indices([1])
-    ind3 = subsets.Indices([5])
+    ind1 = subsets.Range.from_indices([0])
+    ind2 = subsets.Range.from_indices([1])
+    ind3 = subsets.Range.from_indices([5])
 
     assert subsets.intersects(rng1, rng2) is True
     assert subsets.intersects(rng1, rng3) is True
@@ -45,7 +45,7 @@ def test_intersects_constant():
 
 
 def test_covers_symbolic():
-    N, M = dace.symbol('N', positive=True), dace.symbol('M', positive=True)
+    N, M = dace.symbol("N", positive=True), dace.symbol("M", positive=True)
     rng1 = subsets.Range([(0, N - 1, 1), (0, M - 1, 1)])
     rng2 = subsets.Range([(0, 0, 1), (0, 0, 1)])
     rng3_1 = subsets.Range([(N, N, 1), (0, 1, 1)])
@@ -54,7 +54,7 @@ def test_covers_symbolic():
     rng5 = subsets.Range([(0, 0, 1), (M, M, 1)])
     rng6 = subsets.Range([(0, N, 1), (0, M, 1)])
     rng7 = subsets.Range([(0, N - 1, 1), (N - 1, N, 1)])
-    ind1 = subsets.Indices([0, 1])
+    ind1 = subsets.Range.from_indices([0, 1])
 
     assert rng1.covers(rng2) is True
     assert rng1.covers(rng3_1) is False
@@ -67,12 +67,12 @@ def test_covers_symbolic():
     assert rng1.covers(ind1) is True
     assert ind1.covers(rng1) is False
 
-    rng8 = subsets.Range([(0, dace.symbolic.pystr_to_symbolic('int_ceil(M, N)'), 1)])
+    rng8 = subsets.Range([(0, dace.symbolic.pystr_to_symbolic("int_ceil(M, N)"), 1)])
 
     assert rng8.covers(rng8) is True
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_intersects_symbolic()
     test_intersects_constant()
     test_covers_symbolic()
