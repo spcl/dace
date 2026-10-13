@@ -22,8 +22,9 @@ import pytest
 from dace.sdfg import nodes as nd
 from dace.sdfg import utils as sdutil
 from dace.sdfg.state import LoopRegion
-from dace.transformation.passes.canonicalize.pipeline import build_stages, canonicalize, first_round_stages
+from dace.transformation.passes.canonicalize.pipeline import build_stages, canonicalize
 from dace.transformation.passes.canonicalize.split_statements import SplitStatements
+from tests.canonicalize.first_round import first_round_stages
 from tests.corpus.tsvc import tsvc
 from tests.corpus.tsvc.tsvc_numpy import REFERENCES
 

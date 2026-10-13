@@ -189,7 +189,7 @@ class LoopToConditionalReduce(ppl.Pass):
         if len(non_else) != 1:
             return None
         cond_codeblock, true_branch = non_else[0]
-        for else_condition, br in else_branches:
+        for _, br in else_branches:
             if self._branch_has_content(br):
                 return None
 

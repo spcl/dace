@@ -26,9 +26,10 @@ import dace
 from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.passes.canonicalize import canonicalize
-from dace.transformation.passes.canonicalize.pipeline import build_stages, first_round_stages
+from dace.transformation.passes.canonicalize.pipeline import build_stages
 from dace.transformation.passes.canonicalize.split_statements import SplitStatements
 from dace.transformation.passes.length_one_array_scalar_conversion import ConvertLengthOneArraysToScalars
+from tests.canonicalize.first_round import first_round_stages
 
 N = dace.symbol("N")
 

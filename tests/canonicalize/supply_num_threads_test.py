@@ -18,7 +18,7 @@ import pytest
 import dace
 from dace import dtypes, symbolic
 from dace.codegen.targets import framecode
-from dace.transformation.passes.canonicalize.supply_num_threads import DTYPE, SupplyNumThreads, ensure_in_scope
+from dace.transformation.passes.canonicalize.supply_num_threads import DTYPE, SupplyNumThreads
 
 N = dace.symbol("N", dtype=dace.int64)
 NT = symbolic.pystr_to_symbolic(symbolic.NUM_THREADS_SYMBOL)
@@ -144,54 +144,9 @@ def test_a_nested_sdfg_does_not_declare_its_own():
     assert symbolic.NUM_THREADS_SYMBOL not in nsdfg.sdfg.symbols
 
 
-def test_ensure_in_scope_maps_the_symbol_into_a_nested_sdfg():
-    """A transformation that introduces a USE below the top level must top up the mapping, or the
-    inner graph names a symbol nothing defines -- which validation rejects."""
-    inner = dace.SDFG("inner_scope")
-    inner.add_state()
-    outer = dace.SDFG("outer_scope")
-    state = outer.add_state()
-    nsdfg = state.add_nested_sdfg(inner, {}, {})
-    assert symbolic.NUM_THREADS_SYMBOL not in nsdfg.symbol_mapping
-
-    ensure_in_scope(nsdfg)
-    assert symbolic.NUM_THREADS_SYMBOL in nsdfg.symbol_mapping
-    assert symbolic.NUM_THREADS_SYMBOL in nsdfg.sdfg.symbols
-
-    ensure_in_scope(nsdfg)  # idempotent
-    assert str(nsdfg.symbol_mapping[symbolic.NUM_THREADS_SYMBOL]) == symbolic.NUM_THREADS_SYMBOL
-
-
-def test_ensure_in_scope_is_what_makes_a_nested_use_resolvable():
-    """The defect ``ensure_in_scope`` exists for: a child whose SHAPE names the symbol while the
-    parent maps nothing. That is the "Missing symbols on nested SDFG" failure seen on covariance --
-    declaring the symbol without using it does not reproduce it, which is why this asserts on the
-    use, not on the declaration."""
-    inner = dace.SDFG("inner_use")
-    inner.add_symbol(symbolic.NUM_THREADS_SYMBOL, dtypes.int64)
-    inner.add_array("buf", [NT], dace.float64)
-    outer = dace.SDFG("outer_use")
-    state = outer.add_state()
-    nsdfg = state.add_nested_sdfg(inner, {}, {"buf"})
-
-    used = {str(sym) for sym in inner.free_symbols}
-    assert symbolic.NUM_THREADS_SYMBOL in used, "the child must genuinely use the symbol"
-    # Building the node maps the child's free symbols for you, so the hazard is NOT construction.
-    assert symbolic.NUM_THREADS_SYMBOL in nsdfg.symbol_mapping
-
-    # The real case is a use introduced AFTER the node exists -- a transformation that moves a map
-    # sized per thread into an existing nested SDFG. Nothing re-derives the mapping then, and the
-    # graph fails codegen with "Missing symbols on nested SDFG".
-    del nsdfg.symbol_mapping[symbolic.NUM_THREADS_SYMBOL]
-    ensure_in_scope(nsdfg)
-    assert symbolic.NUM_THREADS_SYMBOL in nsdfg.symbol_mapping, (
-        "a use added after construction is only resolvable once the mapping is topped up"
-    )
-
-
 def test_a_nested_per_thread_buffer_sees_the_definition():
     """A nested SDFG is inlined into the same program function, so the one frame-code definition
-    covers a buffer the CHILD sizes -- which is the arrangement ``ensure_in_scope`` sets up."""
+    covers a buffer the CHILD sizes once the child maps the symbol in."""
     inner = dace.SDFG("inner_nt")
     inner.add_symbol(symbolic.NUM_THREADS_SYMBOL, dtypes.int64)
     inner.add_array("o", [1], dace.float64)
@@ -209,7 +164,7 @@ def test_a_nested_per_thread_buffer_sees_the_definition():
     state = outer.add_state()
     nsdfg = state.add_nested_sdfg(inner, {}, {"o"})
     state.add_edge(nsdfg, "o", state.add_access("out"), None, dace.Memlet("out[0]"))
-    ensure_in_scope(nsdfg)
+    nsdfg.symbol_mapping[symbolic.NUM_THREADS_SYMBOL] = symbolic.pystr_to_symbolic(symbolic.NUM_THREADS_SYMBOL)
     SupplyNumThreads().apply_pass(outer, {})
     outer.validate()
 

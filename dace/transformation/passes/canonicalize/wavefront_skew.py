@@ -441,7 +441,7 @@ def snapshot_reads_forward(snap_reads: list[SnapRead], carrier: "Carrier", u: st
     dependence, sits on a non-carrier array, or has an undecidable distance."""
     if not snap_reads:
         return True
-    arr, wmap, dependences = carrier
+    arr, wmap, _ = carrier
     if wmap is None:
         return False  # a reduced (one-axis) carrier does not name the writing iteration
     for state, snap_node, edge, ridx, src_name, window in snap_reads:

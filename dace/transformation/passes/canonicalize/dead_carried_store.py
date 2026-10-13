@@ -44,17 +44,13 @@ class CarriedStore(NamedTuple):
     """A store whose value a later iteration overwrites unread.
 
     :ivar name: the array both stores address.
-    :ivar dead_edge: the write edge to drop (offset :attr:`dead_offset` on :attr:`axis`).
-    :ivar dead_offset: constant ``c`` in the dead store's subscript ``i + c``.
-    :ivar kill_offset: constant ``d`` in the killing store's subscript ``i + d``; ``d < c``.
-    :ivar distance: ``c - d`` -- how many iterations later the kill lands, and so how many
+    :ivar dead_edge: the write edge to drop, the dead store ``i + c``.
+    :ivar distance: ``c - d``, with ``i + d`` (``d < c``) the killing store -- how many iterations later the kill lands, and so how many
         iterations must be peeled off the tail to keep the stores the loop really makes.
     """
 
     name: str
     dead_edge: MultiConnectorEdge[Memlet]
-    dead_offset: int
-    kill_offset: int
     distance: int
 
 
@@ -184,8 +180,6 @@ def find_killed_store(loop: LoopRegion, body: list[SDFGState], stride: int) -> t
                 return dead_state, CarriedStore(
                     name=name,
                     dead_edge=dead_edge,
-                    dead_offset=dead_off,
-                    kill_offset=kill_off,
                     distance=(dead_off - kill_off) // stride,
                 )
     return None

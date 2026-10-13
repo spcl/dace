@@ -33,9 +33,10 @@ from dace.libraries.standard.nodes.scan import Scan
 from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
 from dace.transformation.interstate.loop_to_map import LoopToMap
-from dace.transformation.passes.canonicalize.pipeline import build_stages, canonicalize, first_round_stages
+from dace.transformation.passes.canonicalize.pipeline import build_stages, canonicalize
 from dace.transformation.passes.canonicalize.split_statements import SplitStatements
 from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
+from tests.canonicalize.first_round import first_round_stages
 from tests.corpus.tsvc_2_5 import tsvc_2_5, tsvc_2_5_numpy
 
 

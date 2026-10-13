@@ -38,9 +38,8 @@ are exactly axis parameters or ``0``, rectangular full ranges, non-scalar output
 **Tier 2 -- the probe** (:meth:`LoopToEinsum._probe`, fallback only). Trial
 normalization: deep-copy the loop into a throwaway SDFG, run a small canonicalization
 pipeline on the copy and see whether one ``Einsum`` falls out. It is kept so a shape
-the direct matcher has not been taught cannot silently stop lifting; ``FALLBACK_LIFTS``
-counts how often it was the one that fired. It costs SECONDS per candidate, which is
-why it is no longer the primary matcher.
+the direct matcher has not been taught cannot silently stop lifting. It costs SECONDS per
+candidate, which is why it is no longer the primary matcher.
 
 The probe works as follows:
 
@@ -1052,11 +1051,6 @@ class LoopToEinsum(ppl.Pass):
 
     CATEGORY: str = "Canonicalization"
 
-    #: How often the direct matcher declined but the fallback probe still lifted. Any
-    #: non-zero count is a shape the direct matcher has not been taught -- see the
-    #: module docstring. Cumulative across runs, for auditing.
-    FALLBACK_LIFTS: int = 0
-
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.CFG | ppl.Modifies.Nodes | ppl.Modifies.Memlets
 
@@ -1142,10 +1136,7 @@ class LoopToEinsum(ppl.Pass):
         spec = _match_nest(_nest_of(loop), root)
         if spec is not None:
             return spec
-        spec = self._probe(loop, root, referenced, live, written)
-        if spec is not None:
-            LoopToEinsum.FALLBACK_LIFTS += 1
-        return spec
+        return self._probe(loop, root, referenced, live, written)
 
     def _probe(
         self, loop: LoopRegion, root: SDFG, referenced: dict[str, None], live: dict[str, None], written: dict[str, None]

@@ -1550,7 +1550,7 @@ def plan_rotation(
         #     dead-end here rather than being mistaken for a delay.
         cur_si, cur_node, cur_sub = wsi, write_edge.src, _subset_at(write_edge, write_edge.src)
         src_subset = None
-        for chase_step in range(ROTATION_CHASE_LIMIT):
+        for _ in range(ROTATION_CHASE_LIMIT):
             if not isinstance(cur_node, nodes.AccessNode) or cur_sub is None:
                 return None
             cdesc = sdfg.arrays.get(cur_node.data)
@@ -1564,13 +1564,13 @@ def plan_rotation(
             staged = _body_writes(chain, cur_node.data)
             if len(staged) != 1:
                 return None
-            ssi, staged_state, snode, sedge = staged[0]
+            ssi, _, snode, sedge = staged[0]
             if ssi > cur_si or (ssi == cur_si and snode is not cur_node):
                 return None  # written LATER in the body -> a carried value, not this iteration's
             if _one_elem(_subset_at(sedge, snode)) != 1:
                 return None
             # The whole staging container dies with the update; (6) below proves nothing else reads it.
-            chase.extend((st, n) for chain_index, st, n in _body_nodes(chain, cur_node.data))
+            chase.extend((st, n) for _, st, n in _body_nodes(chain, cur_node.data))
             touched[cur_node.data] = None
             cur_si, cur_node, cur_sub = ssi, sedge.src, _subset_at(sedge, sedge.src)
         if src_data is None:
@@ -1620,7 +1620,7 @@ def plan_rotation(
     for container in touched:
         if container in (accum, src_data):
             continue
-        if sum(len(value_edges(st.out_edges(n))) for chain_index, st, n in _body_nodes(chain, container)) != 1:
+        if sum(len(value_edges(st.out_edges(n))) for _, st, n in _body_nodes(chain, container)) != 1:
             return None
         if _read_after_loop(parent, loop, sdfg, container):
             return None

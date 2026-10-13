@@ -15,7 +15,7 @@ it through ``symbol_mapping`` like any other symbol.
 
 from typing import Any
 
-from dace import SDFG, dtypes, nodes, properties, symbolic
+from dace import SDFG, dtypes, properties, symbolic
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 
@@ -62,18 +62,3 @@ class SupplyNumThreads(ppl.Pass):
         # contract, so the accidental narrower declaration is corrected rather than deferred to.
         sdfg.symbols[name] = DTYPE
         return 1
-
-
-def ensure_in_scope(nsdfg_node: nodes.NestedSDFG) -> None:
-    """Make ``__dace_num_threads`` resolvable inside ``nsdfg_node``.
-
-    A symbol reaches a nested SDFG only through its ``symbol_mapping``, so a transformation that
-    introduces a USE of the thread count below the top level must top the mapping up or the inner
-    graph names a symbol nothing defines. Idempotent, so calling it twice is free.
-    """
-    name = symbolic.NUM_THREADS_SYMBOL
-    if name not in nsdfg_node.symbol_mapping:
-        nsdfg_node.symbol_mapping[name] = symbolic.pystr_to_symbolic(name)
-    inner = nsdfg_node.sdfg
-    if inner is not None and name not in inner.symbols:
-        inner.add_symbol(name, DTYPE)

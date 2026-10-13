@@ -672,21 +672,6 @@ class PhaseFixpoint(ppl.Pass):
         return rounds or None
 
 
-def first_round_stages(stages: Stages) -> Stages:
-    """``stages`` with each top-level ``PhaseFixpoint`` replaced by one round of its units, under the same label.
-
-    A test that stops right after one pass (``SplitStatements``) or slices the recipe at one reads its output
-    there, and that pass may run inside a fixpoint.
-    """
-    flat: Stages = []
-    for label, unit in stages:
-        if isinstance(unit, PhaseFixpoint):
-            flat += [(label, inner) for inner in prepared(unit.factory())]
-        else:
-            flat.append((label, unit))
-    return flat
-
-
 def rail() -> Stages:
     """The between-phase cleanup: flatten single-state bodies (an un-inlined body reports whole-array memlets),
     then the structural cleanup."""
@@ -725,7 +710,7 @@ def loop_to_map_units() -> list[ppl.Pass]:
     ]
 
 
-def statement_round(target: str) -> list[ppl.Pass]:
+def statement_round() -> list[ppl.Pass]:
     """One round of statement normalization: IV substitution, split, privatize, invariant motion, WCR
     normalization, dead dataflow. Split and privatization precede invariant motion: it hoists whole statements,
     and a temporary rewritten every iteration must not be hoisted."""
@@ -804,7 +789,7 @@ def normalize_statements(
     s += [
         (
             label,
-            PhaseFixpoint("statements", lambda: statement_round(target), NORMALIZE_ROUNDS, drivers=NORMALIZE_DRIVERS),
+            PhaseFixpoint("statements", statement_round, NORMALIZE_ROUNDS, drivers=NORMALIZE_DRIVERS),
         )
     ]
     s += [(label, MaterializeLoopExitSymbols()), (label, CascadeInterstateEdgeAssignmentsUp())]
@@ -986,7 +971,7 @@ def recompose(lift: bool, lift_copy: bool, target: str) -> Stages:
 def finish() -> Stages:
     """The terminal bookkeeping: symbols, derived annotations, assumption guard, hints; the views inlining minted."""
     s: Stages = rail()
-    for symbol_round in range(TERMINAL_SYMBOL_ROUNDS):
+    for _ in range(TERMINAL_SYMBOL_ROUNDS):
         s += [(CLEANUP, SymbolDedup()), (CLEANUP, SymbolPropagation()), (CLEANUP, ConstantPropagation())]
     s += [
         (CLEANUP, RemoveUnusedSymbols()),
