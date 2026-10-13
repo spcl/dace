@@ -207,6 +207,15 @@ def test_divisibility_keeps_the_order_facts_of_its_multiple():
     assert ask(Relation(RelationKind.DIVIDES, sympy.Integer(4), N), facts) is Truth.TRUE
 
 
+def test_simplify_writes_a_divisibility_quotient_back():
+    facts = facts_of(Relation(RelationKind.DIVIDES, sympy.Integer(4), N))
+    assert {str(free) for free in sympy.sympify(symbolic.simplify(N / 4, facts)).free_symbols} == {"N"}
+
+
+def test_inequality_of_identical_expressions_is_false():
+    assert ask(Relation(RelationKind.NE, N, N), Facts.none()) is Truth.FALSE
+
+
 if __name__ == "__main__":
     test_positive_integer_is_at_least_one()
     test_strict_relation_implies_weak()
@@ -232,3 +241,5 @@ if __name__ == "__main__":
     test_numeric_divisibility_is_decided()
     test_simplify_keeps_names_of_its_scope()
     test_divisibility_keeps_the_order_facts_of_its_multiple()
+    test_simplify_writes_a_divisibility_quotient_back()
+    test_inequality_of_identical_expressions_is_false()

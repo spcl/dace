@@ -2477,8 +2477,9 @@ def simplify(expr: SymbolicType, facts: Facts) -> SymbolicType:
     plain = {s for s in rewritten.free_symbols if isinstance(s, sympy.Symbol) and not isinstance(s, sympy.Dummy)}
     assumed = {s: sympy.Symbol(s.name, **facts.assumptions(s.name)) for s in plain}
     result = sympy.simplify(rewritten.xreplace(assumed)).xreplace(facts.slacks)
-    # A renamed outer symbol (its name holds ':') has no name inside the scope: keep the expression as it was
-    if any(":" in s.name for s in result.free_symbols if isinstance(s, sympy.Symbol)):
+    # A renamed outer symbol (its name holds ':') or a variable of the facts has no name inside the scope: keep the
+    # expression as it was
+    if any(":" in s.name or isinstance(s, sympy.Dummy) for s in result.free_symbols if isinstance(s, sympy.Symbol)):
         return expr
     return result.xreplace(
         {

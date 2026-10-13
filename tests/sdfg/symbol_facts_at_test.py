@@ -7,6 +7,7 @@ import sympy
 import dace
 from dace import symbolic
 from dace.sdfg.state import LoopRegion, SymbolResolver
+from dace.transformation.interstate import LoopToMap
 
 ZERO = symbolic.pystr_to_symbolic("0")
 
@@ -118,6 +119,27 @@ def test_inverted_loop_body_does_not_know_the_iterator_range():
     assert symbolic.ask(le("i", "N - 1"), SymbolResolver().facts_at(loop)) is symbolic.Truth.UNKNOWN
 
 
+def test_nothing_is_assumed_of_a_symbol_an_edge_reassigns():
+    """``N`` is positive on entry, but ``N = N - 5`` may make it negative after."""
+    sdfg = dace.SDFG("facts_at_reassigned")
+    sdfg.add_symbol("N", dace.int64, predicates=frozenset({symbolic.Predicate.POSITIVE}))
+    first = sdfg.add_state(is_start_block=True)
+    second = sdfg.add_state_after(first, assignments={"N": "N - 5"})
+    assert symbolic.ask(le("1", "N"), SymbolResolver().facts_at(second)) is symbolic.Truth.UNKNOWN
+
+
+def test_loop_with_a_step_of_unknown_sign_stays_a_loop():
+    sdfg = dace.SDFG("facts_at_unknown_step")
+    sdfg.add_symbol("S", dace.int64)
+    sdfg.add_array("A", [100], dace.float64)
+    loop = LoopRegion("loop", "i < 100", "i", "i = 0", "i = i + S")
+    sdfg.add_node(loop, is_start_block=True)
+    body = loop.add_state("body", is_start_block=True)
+    tasklet = body.add_tasklet("set", {}, {"a"}, "a = 1.0")
+    body.add_edge(tasklet, "a", body.add_write("A"), None, dace.Memlet("A[i]"))
+    assert sdfg.apply_transformations(LoopToMap) == 0
+
+
 if __name__ == "__main__":
     test_loop_body_knows_the_iterator_range()
     test_loop_header_does_not_know_the_iterator_range()
@@ -129,3 +151,5 @@ if __name__ == "__main__":
     test_nested_sdfg_assumption_unprovable_from_the_mapping_is_invalid()
     test_unsigned_symbol_is_nonnegative()
     test_inverted_loop_body_does_not_know_the_iterator_range()
+    test_nothing_is_assumed_of_a_symbol_an_edge_reassigns()
+    test_loop_with_a_step_of_unknown_sign_stays_a_loop()

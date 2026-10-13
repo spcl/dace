@@ -405,7 +405,16 @@ class LoopToMap(xf.MultiStateTransformation):
         if not t in dtypes.INTEGER_TYPES:
             return False
 
-        if self.keep_small_loops_sequential and symbolic.is_small(end - start, SymbolResolver().facts_at(self.loop)):
+        facts = SymbolResolver().facts_at(self.loop)
+        if self.keep_small_loops_sequential and symbolic.is_small(end - start, facts):
+            return False
+
+        # A map runs its range upwards: a loop is mapped only when the sign of its step is known
+        zero = sp.Integer(0)
+        if all(
+            symbolic.ask(symbolic.Relation(symbolic.RelationKind.LT, *sides), facts) is not symbolic.Truth.TRUE
+            for sides in ((zero, sp.sympify(step)), (sp.sympify(step), zero))
+        ):
             return False
 
         # Loops containing break, continue, or returns may not be turned into a map.
@@ -781,11 +790,6 @@ class LoopToMap(xf.MultiStateTransformation):
             symbolic.Relation(symbolic.RelationKind.LT, sp.sympify(step), sp.Integer(0)),
             SymbolResolver().facts_at(self.loop),
         )
-        if negative_step is symbolic.Truth.UNKNOWN:
-            warnings.warn(
-                f"LoopToMap: the sign of step {step} of loop {self.loop.label} is not provable, assuming it is "
-                "positive; declare its symbols' signs to prove it."
-            )
 
         nsdfg = None
 

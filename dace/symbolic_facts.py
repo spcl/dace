@@ -92,7 +92,7 @@ class Facts:
     Relations that may be assumed, and which symbol names are integers (from their dtypes). Passed explicitly to every
     proof; ``Facts.none()`` assumes nothing. The relations are solved once, on construction, into ``substitution``,
     which rewrites a symbol as an expression of nonnegative slack variables; ``slacks`` gives each slack as the difference
-    of its relation, ``residuals`` the bounds (expressions ``>= 0``) of slacks solved away, and ``nonzero`` keeps the
+    of its relation (and each divisibility quotient as the quotient of its sides), ``residuals`` the bounds (expressions ``>= 0``) of slacks solved away, and ``nonzero`` keeps the
     ``!=`` facts.
 
     ``small`` names the ``SMALL`` symbols and ``parameters`` the symbols a check at program entry can read; an order
@@ -329,8 +329,11 @@ def eliminate(
                 if not (multiple.is_zero if divisor.is_zero else (multiple / divisor).is_integer):
                     raise InconsistentAssumptionsError("relations", [f"{relation.lhs} DIVIDES {relation.rhs}"])
                 continue
-            difference = sympy.expand(multiple - divisor * sympy.Dummy("quotient", integer=True))
+            quotient = sympy.Dummy("quotient", integer=True)
+            difference = sympy.expand(multiple - divisor * quotient)
             kind = RelationKind.EQ
+            # Written back like a slack, as the quotient of the original sides
+            slacks[quotient] = with_integers(cast(sympy.Expr, sympy.sympify(relation.rhs / relation.lhs)), integers)
         else:
             difference = reduced(relation, integers, substitution)
         original = with_integers(cast(sympy.Expr, sympy.sympify(relation.rhs - relation.lhs)), integers)
@@ -592,7 +595,9 @@ def prove(query: Relation, facts: Facts) -> Truth:
     if query.kind is RelationKind.EQ:
         answer = difference.is_zero
     elif query.kind is RelationKind.NE:
-        answer = difference.is_nonzero or (difference in facts.nonzero or -difference in facts.nonzero or None)
+        answer = difference.is_nonzero
+        if answer is None and (difference in facts.nonzero or -difference in facts.nonzero):
+            answer = True
     else:
         strict = query.kind is RelationKind.LT
         # A difference that is at least a residual (or nothing) has the residual's sign

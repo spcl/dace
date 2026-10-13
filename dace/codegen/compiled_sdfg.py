@@ -613,12 +613,14 @@ with open(r"{temp_path}", "wb") as f:
         :note: This is an advanced interface.
         :note: In previous versions this function also called ``convert_return_values()``.
         """
-        if self._check_assumptions is not None:
-            self._raise_on_broken_assumption(initargs)
         try:
             # Call initializer function if necessary, then SDFG
             if self._initialized is False:
                 self._lib.load()
+            # Checked with the library loaded: a failed call unloads it
+            if self._check_assumptions is not None:
+                self._raise_on_broken_assumption(initargs)
+            if self._initialized is False:
                 self._initialize(initargs)
 
             with hooks.invoke_compiled_sdfg_call_hooks(self, callargs):

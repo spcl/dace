@@ -9,7 +9,6 @@ import dace
 from dace import symbolic
 from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion, SymbolResolver
-from dace.sdfg.validation import InvalidSDFGError
 
 POSITIVE = frozenset({symbolic.Predicate.POSITIVE})
 
@@ -125,14 +124,19 @@ def test_nested_sdfg_round_trips_its_own_repo():
     assert json.dumps(loaded.to_json()) == json.dumps(sdfg.to_json())
 
 
-def test_validation_rejects_scopes_that_do_not_match_their_owners():
+def test_scopes_of_removed_owners_are_ignored():
+    """A transformation that removes a scope's owner removes its names with it; nothing else has to clean up."""
     sdfg = loop_in_loop_sdfg()
     outer, inner, entry = scope_owners(sdfg)
     with pytest.raises(ValueError, match="does not bind"):
         sdfg.symbol_repo.add("k2", dace.int64, at=entry)
+    edge = outer.edges()[0].data
     outer.remove_node(inner)
-    with pytest.raises(InvalidSDFGError, match="no owner in the SDFG"):
-        sdfg.validate()
+    sdfg.validate()
+    # A failed change to an owner that declares nothing leaves no scope behind
+    with pytest.raises(KeyError):
+        sdfg.symbol_repo.set_type("k", dace.int32, at=edge)
+    assert edge not in sdfg.symbol_repo.scopes
     # Saving leaves out the scopes of removed owners
     loaded = reloaded(sdfg)
     assert list(loaded.symbol_repo.scopes) == [loaded.start_block]
@@ -173,6 +177,6 @@ if __name__ == "__main__":
     test_inner_scope_shadows_outer_after_round_trip()
     test_deepcopy_keys_scopes_by_the_copied_owners()
     test_nested_sdfg_round_trips_its_own_repo()
-    test_validation_rejects_scopes_that_do_not_match_their_owners()
+    test_scopes_of_removed_owners_are_ignored()
     test_edge_scopes_declare_no_facts()
     test_dynamic_map_range_round_trips()

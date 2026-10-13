@@ -1535,8 +1535,9 @@ class ProgramVisitor(ExtNodeVisitor):
 
     def _copy_out_iterator(self, name: str, node: ast.AST) -> symbolic.symbol:
         """Makes a loop iterator readable after its loop, as in Python: the loop body copies it at the start of every
-        iteration, so the copy holds the last iterated value, also after a ``break``. A loop that may not run would
-        leave the iterator unbound, so it is refused."""
+        iteration, so the copy holds the last iterated value, also after a ``break``. A loop that never runs leaves
+        the iterator unbound, so it is refused; one that may not run leaves the copy undefined, as Python leaves the
+        iterator unbound."""
         loop, start, stop, step = self.ended_loops[name]
         zero = sympy.Integer(0)
         facts = self.facts()
@@ -1546,9 +1547,9 @@ class ProgramVisitor(ExtNodeVisitor):
             runs = symbolic.ask(symbolic.Relation(symbolic.RelationKind.LT, stop, start), facts)
         else:
             runs = symbolic.Truth.UNKNOWN
-        if runs is not symbolic.Truth.TRUE:
+        if runs is symbolic.Truth.FALSE:
             raise DaceSyntaxError(
-                self, node, f'Loop iterator "{name}" is read after a loop that may not run, which leaves it unbound'
+                self, node, f'Loop iterator "{name}" is read after a loop that never runs, which leaves it unbound'
             )
         copy = symbolic.symbol(self.sdfg.find_new_symbol(f"{name}_last"), loop.new_symbols(self.sdfg.symbols)[name])
         first = loop.start_block

@@ -35,7 +35,7 @@ def test_iterator_after_break_holds_break_value():
     assert A[0] == 4
 
 
-def test_iterator_after_loop_that_may_not_run_raises():
+def test_iterator_after_loop_that_may_not_run_holds_last_value():
 
     @dace.program
     def maybe_empty(A: dace.int64[1]):
@@ -43,11 +43,25 @@ def test_iterator_after_loop_that_may_not_run_raises():
             pass
         A[0] = i
 
-    with pytest.raises(DaceSyntaxError, match="may not run"):
-        maybe_empty.to_sdfg()
+    A = np.zeros(1, dtype=np.int64)
+    maybe_empty(A, N=5)
+    assert A[0] == 4
+
+
+def test_iterator_after_loop_that_never_runs_raises():
+
+    @dace.program
+    def empty(A: dace.int64[1]):
+        for i in range(3, 0):
+            pass
+        A[0] = i
+
+    with pytest.raises(DaceSyntaxError, match="never runs"):
+        empty.to_sdfg()
 
 
 if __name__ == "__main__":
     test_iterator_after_loop_holds_last_value()
     test_iterator_after_break_holds_break_value()
-    test_iterator_after_loop_that_may_not_run_raises()
+    test_iterator_after_loop_that_may_not_run_holds_last_value()
+    test_iterator_after_loop_that_never_runs_raises()

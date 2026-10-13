@@ -1197,8 +1197,18 @@ class SDFG(ControlFlowRegion):
 
     def facts(self) -> symbolic.Facts:
         """The facts assumed about this SDFG's symbols, and that a symbol a data descriptor's dimension is equal to is
-        nonnegative, for explicit use in proofs."""
+        nonnegative, for explicit use in proofs. What is assumed of a symbol holds for its value on entry only, so
+        nothing is assumed of one an interstate edge assigns."""
         own = self._symbol_repo.facts()
+        assigned = interstate_bound_names(self)
+        if assigned:
+            own = symbolic.Facts(
+                [relation for relation in own.relations if not symbolic.relation_names(relation) & assigned],
+                own.integers,
+                own.small - assigned,
+                own.parameters - assigned,
+                own.assumed,
+            )
         extents = sorted(
             {
                 dim.name
@@ -1208,6 +1218,7 @@ class SDFG(ControlFlowRegion):
                 if isinstance(dim, symbolic.symbol)
                 and not isinstance(dim, symbolic.UndefinedSymbol)
                 and dim.name in self.symbols
+                and dim.name not in assigned
             }
         )
         if not extents:
@@ -2549,15 +2560,31 @@ class SDFG(ControlFlowRegion):
             # A shape may name a scoped symbol (e.g. a transient sized by a map parameter) or one an interstate edge
             # assigns, which are not SDFG symbols
             scoped = scope_bound_names(sdfg) | interstate_bound_names(sdfg) | bound_names
-            # The dtype comes with the symbol object; its facts are no part of a shape
+            # A dimension that is a symbol is the caller's object, declared with its dtype. Inside an expression it may
+            # be any symbol of that name SymPy cached the expression with, so only the default type is taken from it.
+            whole = {dim.name: dim for dim in getattr(desc, "shape", ()) if isinstance(dim, symbolic.symbol)}
             for sym in new:
-                if sym.name not in scoped:
-                    sdfg.add_symbol(sym.name, sym.declaration.dtype)
-                    sdfg.symbol_repo.shape_declared.add(sym.name)
+                if sym.name in scoped:
+                    continue
+                if sym.name in whole:
+                    dtype = whole[sym.name].declaration.dtype
+                elif sym.declaration.dtype == symbolic.DEFAULT_SYMBOL_TYPE:
+                    dtype = symbolic.DEFAULT_SYMBOL_TYPE
+                else:
+                    raise TypeError(
+                        f'Symbol "{sym.name}" of {sym.declaration.dtype} appears in data descriptor "{name}" only '
+                        "inside an expression; declare it with add_symbol first"
+                    )
+                sdfg.add_symbol(sym.name, dtype)
+                sdfg.symbol_repo.shape_declared.add(sym.name)
 
         # Add the data descriptor to the SDFG and all symbols that are not yet known.
         self._arrays[name] = datadesc
-        _add_symbols(self, datadesc)
+        try:
+            _add_symbols(self, datadesc)
+        except TypeError:
+            del self._arrays[name]
+            raise
 
         return name
 

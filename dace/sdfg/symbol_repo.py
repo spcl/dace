@@ -202,6 +202,12 @@ class SymbolRepo:
             return self.params
         return self.scopes.setdefault(at, Scope())
 
+    def declared(self, at: ScopeOwner | None) -> Scope:
+        """The declarations of ``at`` (``None``: the parameters), empty and not stored if it declares nothing."""
+        if at is None:
+            return self.params
+        return self.scopes.get(at, Scope())
+
     def facts(self) -> Facts:
         """The facts of the parameters, for explicit use in proofs; orders proven from scales are recorded here."""
         own = scope_facts(self.params)
@@ -254,7 +260,7 @@ class SymbolRepo:
 
     def set_type(self, name: str, dtype: dtypes.typeclass, at: ScopeOwner | None = None) -> None:
         """Changes the dtype of a declared name, keeping its facts."""
-        scope = self.scope(at)
+        scope = self.declared(at)
         if name not in scope.types:
             raise KeyError(f'Symbol "{name}" is not declared in this scope')
         scope_facts(Scope({**scope.types, name: dtype}, scope.predicates, scope.relations))
@@ -262,7 +268,7 @@ class SymbolRepo:
 
     def set_predicates(self, name: str, predicates: frozenset[Predicate], at: ScopeOwner | None = None) -> None:
         """Replaces the sign predicates of a declared name."""
-        scope = self.scope(at)
+        scope = self.declared(at)
         if name not in scope.types:
             raise KeyError(f'Symbol "{name}" is not declared in this scope')
         candidate = {**scope.predicates, name: predicates}
@@ -292,7 +298,7 @@ class SymbolRepo:
 
         :raise ValueError: If a relation of the same scope still names it.
         """
-        scope = self.scope(at)
+        scope = self.declared(at)
         if name not in scope.types:
             raise KeyError(f'Symbol "{name}" is not declared in this scope')
         mentioning = [relation for relation in scope.relations if name in relation_names(relation)]
@@ -367,7 +373,7 @@ class SymbolRepo:
         bound = {name for _, owner in owned for name in bound_names(owner)}
         for owner, scope in [(None, self.params), *self.scopes.items()]:
             if owner is not None and owner not in owners:
-                raise InvalidSDFGError(f"The symbol scope of {owner} has no owner in the SDFG", sdfg, None)
+                continue  # A transformation removed the owner, and its names with it; serialization drops the scope
             if owner is not None and not scope.types.keys() <= bound_names(owner):
                 raise InvalidSDFGError(
                     f"{owner} does not bind the symbols {sorted(scope.types)} its scope declares", sdfg, None
