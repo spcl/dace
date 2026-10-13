@@ -116,6 +116,39 @@ def test_a_guard_alone_inside_another_folds_into_it():
     assert [run(sdfg, c)[0] for c in (0, 3, 7)] == [0.0, 1.0, 0.0]
 
 
+def arm(label: str, value: str) -> ControlFlowRegion:
+    """A branch body writing ``R[0] = value``."""
+    body = ControlFlowRegion(label)
+    state = body.add_state(is_start_block=True)
+    write = state.add_tasklet(f"{label}_write", set(), {"o"}, f"o = {value}")
+    state.add_edge(write, "o", state.add_write("R"), None, dace.Memlet("R[0]"))
+    return body
+
+
+def test_a_guard_alone_in_an_else_becomes_elif_arms():
+    sdfg = dace.SDFG("merge_guards_else_ladder")
+    sdfg.add_symbol("c", dace.int64)
+    sdfg.add_array("R", [1], dace.float64)
+    sdfg.add_array("S", [1], dace.float64)
+    inner = ConditionalBlock("inner", sdfg=sdfg)
+    inner.add_branch(CodeBlock("c > 2"), arm("middle", "2.0"))
+    inner.add_branch(None, arm("low", "3.0"))
+    otherwise = ControlFlowRegion("otherwise")
+    otherwise.add_node(inner, is_start_block=True)
+    outer = ConditionalBlock("outer", sdfg=sdfg)
+    outer.add_branch(CodeBlock("c > 5"), arm("high", "1.0"))
+    outer.add_branch(None, otherwise)
+    sdfg.add_node(outer, is_start_block=True)
+    sdfg.validate()
+
+    assert MergeGuards().apply_pass(sdfg, {}) == 1
+    sdfg.validate()
+
+    (block,) = conditionals(sdfg)
+    assert [c.as_string if c is not None else None for c, body in block.branches] == ["(c > 5)", "(c > 2)", None]
+    assert [run(sdfg, c)[0] for c in (7, 3, 0)] == [1.0, 2.0, 3.0]
+
+
 if __name__ == "__main__":
     test_equal_guards_merge_into_one_branch()
     test_opposite_guards_become_an_if_else()
@@ -123,3 +156,4 @@ if __name__ == "__main__":
     test_a_second_guard_reading_what_the_first_body_writes_stays_apart()
     test_a_link_with_assignments_keeps_its_guards_apart()
     test_a_guard_alone_inside_another_folds_into_it()
+    test_a_guard_alone_in_an_else_becomes_elif_arms()

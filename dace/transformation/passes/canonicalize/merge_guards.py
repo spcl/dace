@@ -1,12 +1,13 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Merge guards that test the same predicate, so the bodies they keep apart meet in one branch.
 
-Two shapes merge, and nothing else does:
+Three shapes merge, and nothing else does:
 
 * consecutive guards with the same predicate (``if c: A`` then ``if c: B`` becomes ``if c: A; B``) or with
   opposite predicates (``if c: A`` then ``if not c: B`` becomes ``if c: A else: B``), when nothing between the two
   tests changes what the second reads;
-* a guard alone in the only branch of another (``if a: if b: X`` becomes ``if (a) and (b): X``).
+* a guard alone in the only branch of another (``if a: if b: X`` becomes ``if (a) and (b): X``);
+* a guard alone in the ``else`` of another (``if a: X else: if b: Y else: Z`` becomes ``if a: X elif b: Y else: Z``).
 
 Every body moves; none is copied. Guards that test different predicates stay apart: merging them takes one copy
 of a body per combination of branches, and the copies keep their transients' names, so a scratch transient of a
@@ -94,6 +95,22 @@ def flatten_nested(inner: ConditionalBlock) -> bool:
     return True
 
 
+def flatten_else(inner: ConditionalBlock) -> bool:
+    """Lift ``inner``'s branches into the guard around it when ``inner`` is alone in that guard's ``else``."""
+    branch = inner.parent_graph
+    outer = branch.parent_graph if branch is not None else None
+    if not isinstance(outer, ConditionalBlock) or branch.number_of_nodes() != 1:
+        return False
+    if outer.branches[-1][1] is not branch or outer.branches[-1][0] is not None:
+        return False
+    outer.remove_branch(branch)
+    for condition, body in list(inner.branches):
+        inner.remove_branch(body)
+        outer.add_branch(condition, body)
+    rehome_claimed_block(outer, outer.sdfg)
+    return True
+
+
 def merge_one(sdfg: SDFG) -> bool:
     """Apply the first merge found in ``sdfg``'s own control flow, consecutive guards before nested ones."""
     for region in sdfg.all_control_flow_regions(recursive=True):
@@ -107,14 +124,15 @@ def merge_one(sdfg: SDFG) -> bool:
                 and merge_consecutive(block, successors[0])
             ):
                 return True
-            if flatten_nested(block):
+            if flatten_nested(block) or flatten_else(block):
                 return True
     return False
 
 
 @transformation.explicit_cf_compatible
 class MergeGuards(ppl.Pass):
-    """Merge consecutive guards with equal or opposite predicates and fold a guard nested alone in another."""
+    """Merge consecutive guards with equal or opposite predicates and fold a guard nested alone in another's only
+    branch or ``else``."""
 
     CATEGORY: str = "Canonicalization"
 

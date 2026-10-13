@@ -41,6 +41,8 @@ def spy_on_sympy_simplify(monkeypatch: pytest.MonkeyPatch) -> list[object]:
 
     monkeypatch.setattr(sympy, "simplify", recording_simplify)
     dace.symbolic.simplify.cache_clear()
+    # the reference answer reads SymPy's global cache too, which earlier tests in the worker filled
+    sympy.core.cache.clear_cache()
     return calls
 
 

@@ -652,8 +652,10 @@ def test_fuse_move_ifs_fuses_both_guarded_nests_into_one_predicated_map():
         for cond, _branch in cfr.branches
         if cond is not None
     ]
-    assert guards == [{"K", row_guards[0]}] * 3, (
-        f"the three live guard combinations must each test BOTH sunk guards, got {guards}"
+    # The two guards test different predicates, so MergeGuards keeps them apart rather than copy a body per
+    # combination: each sunk guard gates its own store.
+    assert sorted(guards, key=sorted) == sorted([{"K"}, {row_guards[0]}], key=sorted), (
+        f"each sunk guard must stay its own predicate, got {guards}"
     )
 
 

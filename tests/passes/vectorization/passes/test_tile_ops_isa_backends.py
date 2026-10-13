@@ -108,7 +108,8 @@ def compile_check(compiler: str, language: str, source: str, *flags: str) -> Non
         path = os.path.join(tmpdir, "functions." + ("c" if language == "c" else "cpp"))
         with open(path, "w") as unit:
             unit.write(source)
-        standard = "-std=c23" if language == "c" else f"-std=c++{CPP_STANDARD}"
+        # c2x: the C23 spelling every gcc >= 9 takes (the Ubuntu 24.04 aarch64 cross gcc 13 refuses c23)
+        standard = "-std=c2x" if language == "c" else f"-std=c++{CPP_STANDARD}"
         proc = subprocess.run(
             [compiler, standard, "-fsyntax-only", "-Werror=implicit-function-declaration", *flags, path],
             check=False,

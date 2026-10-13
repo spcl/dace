@@ -92,12 +92,9 @@ def test_coexisting_index_guards_collapse_to_single_nest():
     with it OFF the two nests share a single iteration space and the
     guards coexist inside it.
 
-    Once collapsed the two guards are consecutive, so ``ConditionFusion``
-    folds them into ONE ``ConditionalBlock`` whose branches are their cross
-    product -- ``i even and j%3``, ``not i even and j%3``, ``i even and not
-    j%3``. Neither guard is lost: the fourth case does no work, so it
-    correctly has no branch. Counting ``ConditionalBlock`` objects would
-    therefore punish the merge; what must hold is that both guard
+    Once collapsed the two guards are consecutive but test different
+    predicates, so ``MergeGuards`` keeps them apart: merging them would copy
+    a body per combination of branches. What must hold is that both guard
     predicates still gate their own store, i.e. the surviving conditions
     together depend on exactly the two map parameters."""
     rng = np.random.default_rng(42)
@@ -110,8 +107,7 @@ def test_coexisting_index_guards_collapse_to_single_nest():
     assert _nmaps(sdfg) == 1
 
     cbs = _conds(sdfg)
-    assert len(cbs) == 1, f"the collapsed nest must carry one merged guard, got {len(cbs)}"
-    assert len(cbs[0].branches) == 3, f"cross product of the two guards minus the empty case: {len(cbs[0].branches)}"
+    assert [len(cb.branches) for cb in cbs] == [1, 1], f"each guard stays one single-branch block, got {cbs}"
     assert _guard_symbols(sdfg) == _map_params(sdfg), (
         f"both guards must survive on their own index: {_guard_symbols(sdfg)} vs {_map_params(sdfg)}"
     )
