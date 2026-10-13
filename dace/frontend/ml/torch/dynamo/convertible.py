@@ -310,8 +310,37 @@ def _source_evaluator(
 
 
 def _warn_on_symbolic_assumptions(program: CapturedProgram, what: str) -> None:
-    """Warns if Dynamo specialized the graph on relations between the user's symbolic sizes."""
+    """
+    Warns if Dynamo specialized the graph on relations between the user's symbolic sizes, naming the model line and
+    torch function that introduced each relation and the value range it leaves to the symbols.
+    """
     user_symbols = set(program.symbol_names.values())
-    for relation in program.shape_guards:
-        if isinstance(relation, sympy.Basic) and free_symbol_names(relation) & user_symbols:
-            warnings.warn(f"{what}: the captured graph assumes {relation}; results are only valid when it holds")
+    for assumption in program.assumptions:
+        relation = assumption.relation
+        if not isinstance(relation, sympy.Basic):
+            continue
+        involved = sorted(free_symbol_names(relation) & user_symbols)
+        if not involved:
+            continue
+        message = f"{what}: the captured graph assumes {relation}"
+        if assumption.origin:
+            message += f", introduced by {assumption.origin}"
+        narrowed = [_range_text(name, *program.symbol_ranges[name]) for name in involved if _narrowed(program, name)]
+        if narrowed:
+            message += f"; it restricts {', '.join(narrowed)}"
+        warnings.warn(message + "; results are only valid when the assumption holds")
+
+
+#: Dynamo's default value range of a symbolic size: sizes 0 and 1 are specialized, so a symbol stands for 2 and more
+_DEFAULT_LOWER_BOUND = 2
+
+
+def _narrowed(program: CapturedProgram, name: str) -> bool:
+    lower, upper = program.symbol_ranges.get(name, (None, None))
+    return upper is not None or (lower is not None and lower > _DEFAULT_LOWER_BOUND)
+
+
+def _range_text(name: str, lower: Any, upper: Any) -> str:
+    if upper is None:
+        return f"{name} >= {lower}"
+    return f"{name} to [{lower}, {upper}]"

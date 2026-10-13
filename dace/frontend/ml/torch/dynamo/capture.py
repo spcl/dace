@@ -9,6 +9,7 @@ used inside a ``@dace.program``). The ``dace`` ``torch.compile`` backend describ
 come from.
 """
 
+import contextlib
 import dataclasses
 import inspect
 import re
@@ -28,7 +29,14 @@ from . import shapes
 from .backend import CAPTURE_CONFIG, DaceBackend, DaceBackendOptions
 from .importer import GraphImporter, ImportResult
 from .runtime import CompiledGraph
-from .sources import CapturedGuard, GraphDescription, SourceRef, shape_assumptions, symbol_names_from_sources
+from .sources import (
+    CapturedGuard,
+    GraphDescription,
+    ShapeAssumption,
+    SourceRef,
+    shape_assumptions,
+    symbol_names_from_sources,
+)
 
 
 class CaptureError(RuntimeError):
@@ -58,6 +66,8 @@ class CapturedProgram:
     signature: inspect.Signature | None = None  #: Signature of the captured callable (``forward`` for modules)
     global_vars: dict[str, Any] = dataclasses.field(default_factory=dict)  #: Globals of the captured callable
     import_result: ImportResult | None = None  #: The most recent result of :meth:`import_graph`
+    #: :attr:`shape_guards` with the location (model line and torch function) that introduced each of them
+    assumptions: list[ShapeAssumption] = dataclasses.field(default_factory=list)
 
     def input_names(self) -> list[str | None]:
         return GraphDescription(self.inputs, self.symbol_names, self.guards).input_names()
@@ -145,7 +155,7 @@ class _CaptureBackend(DaceBackend):
         if len(inputs) != len(example_inputs):
             # AOTAutograd changed the inputs (e.g., deduplicated aliased arguments): sources are not positional
             inputs = [SourceRef("unknown", None, (), node.name) for node in gm.graph.nodes if node.op == "placeholder"]
-        relations, ranges = shape_assumptions(description.symbol_names)
+        assumptions, ranges = shape_assumptions(description.symbol_names)
         raise _CaptureComplete(
             CapturedProgram(
                 gm,
@@ -153,10 +163,11 @@ class _CaptureBackend(DaceBackend):
                 inputs,
                 description.symbol_names,
                 description.guards,
-                relations,
+                [assumption.relation for assumption in assumptions],
                 ranges,
                 self.last_dynamo_graph,
                 self.options,
+                assumptions=assumptions,
             )
         )
 
@@ -214,7 +225,11 @@ def capture(
     if spec is not None:
         shapes.mark_arguments(signature.bind(*args, **kwargs), spec, static_by_default=spec != shapes.ALL)
     try:
-        with torch.no_grad(), torch._dynamo.config.patch(specialize_float=specialize_float, **CAPTURE_CONFIG):
+        with (
+            torch.no_grad(),
+            torch._dynamo.config.patch(specialize_float=specialize_float, **CAPTURE_CONFIG),
+            without_conv_backend_guards(),
+        ):
             compiled(*args, **kwargs)
     except BackendCompilerFailed as ex:
         if isinstance(ex.inner_exception, _CaptureComplete):
@@ -227,6 +242,41 @@ def capture(
     except Exception as ex:
         raise _capture_error(fn, ex, backend, spec, signature) from _without_internal_frames(ex)
     raise RuntimeError("TorchDynamo did not compile the callable (it may have been skipped); nothing was captured")
+
+
+# ---------------------------------------------------------------------------------------------- tracing heuristics
+@contextlib.contextmanager
+def without_conv_backend_guards() -> Iterator[None]:
+    """
+    Keeps ATen's convolution backend selection from recording shape guards while tracing.
+
+    ``FakeTensorMode`` runs ``torch._C._select_conv_backend`` on the fake operands of every convolution, only to infer
+    the memory format of the output. The CPU heuristics of the selection (``ConvParams::use_mkldnn`` in ATen's
+    ``Convolution.cpp``) compare the batch size with constants (``input.size(0) >= 16``), so a symbolic batch turns the
+    comparison into a shape guard that specializes the traced graph (``N < 16``) and narrows the symbol's value range,
+    although every backend computes the same values and, for operands that are not channels-last, the same memory
+    format. The selection therefore runs with guards suppressed. Nothing is lost: the shape checks it performs are
+    repeated by the meta kernel of the convolution (``calc_conv_nd_return_shape``), which records them, and a check
+    that fails for the example sizes still raises.
+    """
+    original = torch._C._select_conv_backend
+    if getattr(original, "__wrapped__", None) is not None:  # Nested use
+        yield
+        return
+
+    def select(input, weight, *args, **kwargs):
+        shape_env = _shape_env_of(input)
+        if shape_env is None:
+            return original(input, weight, *args, **kwargs)
+        with shape_env.suppress_guards():
+            return original(input, weight, *args, **kwargs)
+
+    select.__wrapped__ = original
+    torch._C._select_conv_backend = select
+    try:
+        yield
+    finally:
+        torch._C._select_conv_backend = original
 
 
 # ---------------------------------------------------------------------------------------------- error reporting

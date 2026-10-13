@@ -94,6 +94,19 @@ class CapturedGuard:
     source: SourceRef | None  #: The guarded value, or ``None`` for global state (grad mode, default device, ...)
 
 
+@dataclasses.dataclass(frozen=True)
+class ShapeAssumption:
+    """A relation between shape symbols that Dynamo or AOTAutograd assumed while tracing (a shape guard)."""
+
+    relation: Any  #: The relation as a DaCe expression where translatable, as a string otherwise
+    #: Where the assumption was made: the model's line of code and the torch function that evaluated the relation, as
+    #: Dynamo records them (e.g., ``"return F.conv2d(  # nn/modules/conv.py:560 in _conv_forward (...)"``)
+    origin: str = ""
+
+    def __str__(self) -> str:
+        return f"{self.relation} (from {self.origin})" if self.origin else str(self.relation)
+
+
 @dataclasses.dataclass
 class GraphDescription:
     """What the backend knows about a Dynamo-level graph before AOTAutograd lowers it to ATen."""
@@ -227,32 +240,34 @@ def describe_graph(gm: torch.fx.GraphModule, signature: inspect.Signature | None
     return GraphDescription(inputs, symbol_names_for_graph(gm, spec, signature), guards)
 
 
-def shape_assumptions(symbol_names: dict[str, str]) -> tuple[list[Any], dict[str, tuple[Any, Any]]]:
+def shape_assumptions(symbol_names: dict[str, str]) -> tuple[list[ShapeAssumption], dict[str, tuple[Any, Any]]]:
     """
-    Returns the symbol relations Dynamo and AOTAutograd assumed so far (as DaCe expressions where translatable, as
-    strings otherwise) and the value ranges of all symbols, from the shape environment of the current compilation.
+    Returns the symbol relations Dynamo and AOTAutograd assumed so far, each with the location that introduced it, and
+    the value ranges of all symbols, from the shape environment of the current compilation.
     """
     context = TracingContext.try_get()
     if context is None or context.fake_mode is None or context.fake_mode.shape_env is None:
         return [], {}
     shape_env = context.fake_mode.shape_env
     symtab = SymbolTable(names=symbol_names)
-    relations = []
+    assumptions = []
     for guard in shape_env.guards:
         # Apply the symbol replacements Dynamo found later (e.g., two sizes unified into one symbol)
         expr = shape_env.simplify(guard.expr)
         if expr == sympy.true:
             continue
         try:
-            relations.append(symtab.to_dace(expr))
+            relation = symtab.to_dace(expr)
         except UnsupportedSymbolicExpression:
-            relations.append(str(expr))
+            relation = str(expr)
+        sloc = getattr(guard, "sloc", None)
+        assumptions.append(ShapeAssumption(relation, str(sloc) if sloc is not None else ""))
     ranges = {}
     for sym, value_range in shape_env.var_to_range.items():
         if sym in shape_env.replacements:
             continue
         ranges[symbol_names.get(str(sym), str(sym))] = (_bound(value_range.lower), _bound(value_range.upper))
-    return relations, ranges
+    return assumptions, ranges
 
 
 def _bound(value) -> int | None:
