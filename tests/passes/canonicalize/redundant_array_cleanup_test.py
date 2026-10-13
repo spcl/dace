@@ -123,7 +123,7 @@ def _shape(sdfg: dace.SDFG) -> tuple[list[tuple[str, str]], list[tuple[str, str,
 
 def test_the_stage_is_wired_in_once_after_maximal_fusion():
     labels = [label for label, unit in canon_pipeline.build_stages() if _is_cleanup_stage(unit)]
-    assert labels == ["recompose"], labels
+    assert labels == ["after_fusion"], labels
 
 
 def test_heat3d_loses_the_copy_out_buffer():

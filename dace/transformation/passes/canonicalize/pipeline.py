@@ -601,7 +601,9 @@ FIND_FIRST_CHUNK: dict[str, int] = {"cpu": 1 << 20, "gpu": 1 << 21}
 #   specialization.
 #
 # Units whose matcher needs a shape another phase destroys stay where that shape exists but carry the
-# ``lift_semantics`` label, so ``stage_labels`` shows every out-of-phase placement.
+# ``lift_semantics`` label, so ``stage_labels`` shows every out-of-phase placement; past maximal fusion they carry
+# ``after_fusion`` instead. No label before ``fuse`` recurs after it, so ``stages`` sliced at ``fuse`` (or any
+# phase) runs exactly the recipe prefix and suffix.
 
 Stages = list[tuple[str, ppl.Pass]]
 
@@ -609,8 +611,14 @@ NORMALIZE_STATEMENTS = "normalize_statements"
 LIFT_SEMANTICS = "lift_semantics"
 DERIVE_PARALLELISM = "derive_parallelism"
 RECOMPOSE = "recompose"
+#: Maximal fusion alone, so a caller can own the fusion decisions (NestForge stage 2).
+FUSE = "fuse"
+#: Everything recompose does once fusion settled, out-of-phase lifts included.
+AFTER_FUSION = "after_fusion"
 #: The between-phase rail, and the cleanup of the raised input.
 CLEANUP = "cleanup"
+#: The terminal bookkeeping.
+FINISH = "finish"
 
 #: Round cap of the statement fixpoint; another round only when invariant motion changed the graph.
 NORMALIZE_ROUNDS = 3
@@ -672,10 +680,10 @@ class PhaseFixpoint(ppl.Pass):
         return rounds or None
 
 
-def rail() -> Stages:
+def rail(label: str = CLEANUP) -> Stages:
     """The between-phase cleanup: flatten single-state bodies (an un-inlined body reports whole-array memlets),
     then the structural cleanup."""
-    return [*_inline_single_state(CLEANUP), (CLEANUP, StructuralCleanup())]
+    return [*_inline_single_state(label), (label, StructuralCleanup())]
 
 
 def unique_iterators() -> ppl.Pass:
@@ -954,13 +962,14 @@ def recompose(lift: bool, lift_copy: bool, target: str) -> Stages:
     ]
     s += [*_inline_single_state(label), (label, StructuralCleanup())]
 
-    s += [(label, maximal_fusion(target))]
+    s += [(FUSE, maximal_fusion(target))]
+    label = AFTER_FUSION
     # Out of phase: these matchers need the fused map form (contractions split over maps, durbin's unary copy).
     if lift_copy:
-        s += [(LIFT_SEMANTICS, AssignmentAndCopyKernelToMemsetAndMemcpy())]
-        s += _inline_single_state(LIFT_SEMANTICS)
+        s += [(label, AssignmentAndCopyKernelToMemsetAndMemcpy())]
+        s += _inline_single_state(label)
     if lift:
-        s += [(LIFT_SEMANTICS, PatternApplyOnceEverywhere([LiftEinsum()]))]
+        s += [(label, PatternApplyOnceEverywhere([LiftEinsum()]))]
     s += [(label, NormalizeWCRSource()), (label, RelaxIntegerPowers())]
     s += [(label, ppl.FixedPointPipeline([DeadDataflowElimination(), ArrayElimination()]))]
     s += [*_inline_single_state(label), (label, PruneEmptyConditionalBranches())]
@@ -970,20 +979,20 @@ def recompose(lift: bool, lift_copy: bool, target: str) -> Stages:
 
 def finish() -> Stages:
     """The terminal bookkeeping: symbols, derived annotations, assumption guard, hints; the views inlining minted."""
-    s: Stages = rail()
+    s: Stages = rail(FINISH)
     for _ in range(TERMINAL_SYMBOL_ROUNDS):
-        s += [(CLEANUP, SymbolDedup()), (CLEANUP, SymbolPropagation()), (CLEANUP, ConstantPropagation())]
+        s += [(FINISH, SymbolDedup()), (FINISH, SymbolPropagation()), (FINISH, ConstantPropagation())]
     s += [
-        (CLEANUP, RemoveUnusedSymbols()),
-        (CLEANUP, OptionalArrayInference()),
-        (CLEANUP, ConvertLengthOneArraysToScalars()),
-        (CLEANUP, RevertNonReductionWCR()),
-        (CLEANUP, PruneUnreferencedTransients()),
-        (CLEANUP, InlineControlFlowRegions()),
-        (CLEANUP, AssumeSymbolConstraints()),
-        (CLEANUP, NormalizeFloorDivision()),
-        (CLEANUP, AnnotateLoopKinds()),
-        (CLEANUP, ppl.Pipeline([ArrayElimination()])),
+        (FINISH, RemoveUnusedSymbols()),
+        (FINISH, OptionalArrayInference()),
+        (FINISH, ConvertLengthOneArraysToScalars()),
+        (FINISH, RevertNonReductionWCR()),
+        (FINISH, PruneUnreferencedTransients()),
+        (FINISH, InlineControlFlowRegions()),
+        (FINISH, AssumeSymbolConstraints()),
+        (FINISH, NormalizeFloorDivision()),
+        (FINISH, AnnotateLoopKinds()),
+        (FINISH, ppl.Pipeline([ArrayElimination()])),
     ]
     return s
 

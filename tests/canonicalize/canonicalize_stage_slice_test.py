@@ -87,6 +87,29 @@ def test_stopping_before_recompose_leaves_the_two_maps_unfused():
     assert np.allclose(b_split, b_full)
 
 
+def test_a_caller_owns_fusion_by_splitting_around_the_fuse_stage():
+    """Everything before 'fuse' leaves both maps standing, 'fuse' alone fuses them, and the stages after it finish
+    the run: the three pieces reach the full run's map count and values."""
+    labels = stage_labels()
+    idx = labels.index("fuse")
+
+    sdfg_full = producer_consumer.to_sdfg(simplify=False)
+    canonicalize(sdfg_full, validate=True)
+    full_maps = count_top_level_maps(sdfg_full)
+    b_full = run(sdfg_full)[1]
+
+    sdfg_split = producer_consumer.to_sdfg(simplify=False)
+    canonicalize(sdfg_split, validate=True, stages=labels[:idx])
+    assert count_top_level_maps(sdfg_split) > full_maps
+    canonicalize(sdfg_split, validate=True, stages=["fuse"])
+    assert count_top_level_maps(sdfg_split) == full_maps
+    canonicalize(sdfg_split, validate=True, stages=labels[idx + 1 :])
+    assert count_top_level_maps(sdfg_split) == full_maps
+    a_split, b_split = run(sdfg_split)
+    assert np.allclose(b_split, b_full)
+    assert np.allclose(b_split, a_split * 2.0 + 1.0)
+
+
 def test_unknown_stage_label_raises():
     """A typo in stages must not silently run nothing."""
     sdfg = producer_consumer.to_sdfg(simplify=False)
@@ -98,4 +121,5 @@ if __name__ == "__main__":
     test_stage_labels_are_duplicate_free_and_recompose_has_a_predecessor()
     test_prefix_and_suffix_split_at_recompose_reproduces_the_full_run()
     test_stopping_before_recompose_leaves_the_two_maps_unfused()
+    test_a_caller_owns_fusion_by_splitting_around_the_fuse_stage()
     test_unknown_stage_label_raises()
