@@ -1,12 +1,14 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 
-import dace
-import numpy as np
-import pytest
-import re
 import os
+import re
 import shutil
 import time
+
+import numpy as np
+import pytest
+
+import dace
 
 # ctypes-pinned here: an already-imported extension module cannot be reloaded in-process after a same-path
 # recompile; ctypes supports this via ReloadableDLL (unload + reload).
@@ -14,15 +16,15 @@ import time
 
 
 def _program_name(function) -> str:
-    """ Replicates the behavior of DaCe in determining the SDFG label. """
-    result = ''
-    if function.__module__ is not None and function.__module__ != '__main__':
-        result += function.__module__.replace('.', '_') + '_'
+    """Replicates the behavior of DaCe in determining the SDFG label."""
+    result = ""
+    if function.__module__ is not None and function.__module__ != "__main__":
+        result += function.__module__.replace(".", "_") + "_"
     return result + function.__name__
 
 
 def _build_folder(name: str) -> str:
-    """ Replicates the behavior of DaCe in determining the build folder. """
+    """Replicates the behavior of DaCe in determining the build folder."""
     return dace.SDFG(name).build_folder
 
 
@@ -45,15 +47,15 @@ def test_recreate_sdfg():
     a = np.random.rand(10)
     assert np.allclose(a + 1, very_unique_program_321(a))
 
-    assert os.path.exists(os.path.join(build_folder, 'program.sdfgz'))
-    sdfg = dace.SDFG.from_file(os.path.join(build_folder, 'program.sdfgz'))
+    assert os.path.exists(os.path.join(build_folder, "program.sdfgz"))
+    sdfg = dace.SDFG.from_file(os.path.join(build_folder, "program.sdfgz"))
 
     # Replace the SDFG with the one we just created
     for node, _ in sdfg.all_nodes_recursive():
         if isinstance(node, dace.nodes.Tasklet):
-            node.code.as_string = re.sub(r'\b1\b', '2', node.code.as_string)
+            node.code.as_string = re.sub(r"\b1\b", "2", node.code.as_string)
 
-    sdfg.save(os.path.join(build_folder, 'program.sdfgz'), compress=True)
+    sdfg.save(os.path.join(build_folder, "program.sdfgz"), compress=True)
 
     # Now run the same program again, but this time with the SDFG already created
     @dace.program(recreate_sdfg=False)
@@ -64,14 +66,13 @@ def test_recreate_sdfg():
     assert np.allclose(a + 2, very_unique_program_321(a))
 
 
-@pytest.mark.usefixtures('ctypes_interface')
+@pytest.mark.usefixtures("ctypes_interface")
 def test_regenerate_code():
     # This test edits the generated sources on disk, which only exist in the
     # development folder mode. The environment only seeds configuration
     # defaults at load time, so a CI-side production export is overridden
     # through the API, which always wins over the environment.
-    with dace.config.set_temporary('compiler', 'build_folder_mode', value='development'):
-
+    with dace.config.set_temporary("compiler", "build_folder_mode", value="development"):
         # Get the program name, regardless of running directly or through pytest
         def very_unique_program_432():
             pass
@@ -91,18 +92,18 @@ def test_regenerate_code():
         assert np.allclose(a + 3, very_unique_program_432(a))
 
         # Source code
-        source_filename = os.path.join(build_folder, 'src', 'cpu', program_name + '.cpp')
+        source_filename = os.path.join(build_folder, "src", "cpu", program_name + ".cpp")
         assert os.path.exists(source_filename)
 
         # Rewrite source code
-        with open(source_filename, 'r') as f:
+        with open(source_filename) as f:
             source = f.read()
-            source = re.sub(r'\b3\b', '4', source)
+            source = re.sub(r"\b3\b", "4", source)
 
         # Make sure file sets to be "changed on disk"
         time.sleep(2)
 
-        with open(source_filename, 'w') as f:
+        with open(source_filename, "w") as f:
             f.write(source)
 
         # Now run the same program again, but this time with the modified code (ensures it is recompiled)
@@ -114,6 +115,6 @@ def test_regenerate_code():
         assert np.allclose(a + 4, very_unique_program_432(a))
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_recreate_sdfg()
     test_regenerate_code()

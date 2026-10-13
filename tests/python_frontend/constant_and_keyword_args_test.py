@@ -1,11 +1,12 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" Tests constants, optional, and keyword arguments. """
+"""Tests constants, optional, and keyword arguments."""
+
 from types import SimpleNamespace
-from typing import Optional
-import dace
+
 import numpy as np
 import pytest
 
+import dace
 from dace.frontend.python.common import DaceSyntaxError, SDFGConvertible
 from dace.transformation.pass_pipeline import FixedPointPipeline
 
@@ -87,7 +88,7 @@ def test_var_kwargs_jit():
 
     @dace.program
     def kwarg_jit(**kwargs):
-        return kwargs['A'] + kwargs['B']
+        return kwargs["A"] + kwargs["B"]
 
     A = np.random.rand(20)
     B = np.random.rand(20)
@@ -101,7 +102,7 @@ def test_var_kwargs_aot():
 
         @dace.program
         def kwarg_aot(**kwargs: dace.float64[20]):
-            return kwargs['A'] + kwargs['B']
+            return kwargs["A"] + kwargs["B"]
 
         kwarg_aot.compile()
 
@@ -109,7 +110,7 @@ def test_var_kwargs_aot():
 def test_none_arrays():
 
     @dace.program
-    def myprog_na(maybe_A: Optional[dace.float64[20]], maybe_B: Optional[dace.float64[20]]):
+    def myprog_na(maybe_A: dace.float64[20] | None, maybe_B: dace.float64[20] | None):
         result = np.zeros([20], dtype=dace.float64)
         if maybe_B is None:
             if maybe_A is not None:
@@ -193,7 +194,6 @@ def test_none_convertibles_2():
     myfunc = None
 
     class AConvertible(SDFGConvertible):
-
         def __sdfg__(self):
 
             @dace.program
@@ -248,7 +248,7 @@ def test_optional_argument_jit():
 
     @dace.program
     def linear(x, w, bias):
-        """ Linear layer with weights w applied to x, and optional bias. """
+        """Linear layer with weights w applied to x, and optional bias."""
         if bias is not None:
             return x @ w.T + bias
         else:
@@ -269,7 +269,7 @@ def test_optional_argument_jit_kwarg():
 
     @dace.program
     def linear(x, w, bias=None):
-        """ Linear layer with weights w applied to x, and optional bias. """
+        """Linear layer with weights w applied to x, and optional bias."""
         if bias is not None:
             return np.dot(x, w.T) + bias
         else:
@@ -290,7 +290,7 @@ def test_optional_argument():
 
     @dace.program
     def linear(x: dace.float64[13, 14], w: dace.float64[10, 14], bias: dace.float64[10] = None):
-        """ Linear layer with weights w applied to x, and optional bias. """
+        """Linear layer with weights w applied to x, and optional bias."""
         if bias is not None:
             return np.dot(x, w.T) + bias
         else:
@@ -321,7 +321,7 @@ def test_constant_argument_simple():
 
     # Test code for folding
     code = const_prog.to_sdfg(cst).generate_code()[0].clean_code
-    assert 'cst' not in code
+    assert "cst" not in code
 
 
 def test_constant_argument_default():
@@ -347,7 +347,7 @@ def test_constant_argument_default():
 
     # Test code for folding
     code = const_prog.to_sdfg().generate_code()[0].clean_code
-    assert 'cst' not in code
+    assert "cst" not in code
 
 
 def test_constant_argument_object():
@@ -356,7 +356,6 @@ def test_constant_argument_object():
     """
 
     class MyConfiguration:
-
         def __init__(self, parameter):
             self.p = parameter * 2
             self.q = parameter * 4
@@ -388,7 +387,6 @@ def test_constant_argument_object():
 def test_none_field():
 
     class ClassA:
-
         def __init__(self, field_or_none):
             self.field_or_none = field_or_none
 
@@ -399,12 +397,12 @@ def test_none_field():
             if (self.field_or_none is not None) and (self.field_or_none is not None):
                 A[...] += self.field_or_none
 
-    A = np.ones((10, ))
+    A = np.ones((10,))
     obja = ClassA(None)
     obja.method(A)
     assert np.allclose(A, 7.0)
-    A = np.ones((10, ))
-    obja = ClassA(np.ones((10, )))
+    A = np.ones((10,))
+    obja = ClassA(np.ones((10,)))
     obja.method(A)
     assert np.allclose(A, 2.0)
 
@@ -412,16 +410,15 @@ def test_none_field():
 def test_array_by_str_key():
 
     class AClass:
-
         def __init__(self):
-            self.adict = dict(akey=7.0 * np.ones((10, )))
+            self.adict = dict(akey=7.0 * np.ones((10,)))
 
         @dace.method
         def __call__(self, A):
-            A[...] = self.adict['akey']
+            A[...] = self.adict["akey"]
 
     aobj = AClass()
-    arr = np.empty((10, ))
+    arr = np.empty((10,))
     aobj(arr)
     assert np.allclose(7.0, arr)
 
@@ -454,7 +451,7 @@ def test_boolglobal():
             tmp = 1
         A[...] = tmp
 
-    a = np.empty((10, ))
+    a = np.empty((10,))
     func(a)
     assert np.allclose(a, 1)
 
@@ -471,7 +468,7 @@ def test_intglobal():
                 tmp = 0
         A[...] = tmp
 
-    func(np.empty((10, )))
+    func(np.empty((10,)))
 
 
 def test_numpynumber_condition():
@@ -542,8 +539,9 @@ def test_constant_propagation():
 
     # Ensure condition was folded
     sdfg = conditional_val.to_sdfg(val=3, simplify=True)
-    from dace.transformation.passes.dead_state_elimination import DeadStateElimination
     from dace.transformation.passes.constant_propagation import ConstantPropagation
+    from dace.transformation.passes.dead_state_elimination import DeadStateElimination
+
     simp_pipeline = FixedPointPipeline([ConstantPropagation(), DeadStateElimination()])
     res = dict()
     simp_pipeline.apply_pass(sdfg, res)
@@ -569,24 +567,27 @@ def test_constant_propagation_with_normal_argument():
     a = np.random.rand(20)
     sdfg = conditional_val_with_access.to_sdfg(a, 3, simplify=True, use_cache=True)
     from dace.transformation.passes.constant_propagation import ConstantPropagation
+
     res = dict()
-    ConstantPropagation().apply_pass(sdfg, res, {'val': 3})
+    ConstantPropagation().apply_pass(sdfg, res, {"val": 3})
     sdfg.simplify()
     assert sdfg.number_of_nodes() == 1
     sdfg_tasklets = [
         tasklet for tasklet, _ in sdfg.all_nodes_recursive() if isinstance(tasklet, dace.sdfg.nodes.Tasklet)
     ]
     assert len(sdfg_tasklets) == 1
-    assert sdfg_tasklets[0].code == '__out = (3 + 1)'
+    assert sdfg_tasklets[0].code == "__out = (3 + 1)"
     conditional_val_with_access(a, 3)
     assert np.allclose(a, 4)
     conditional_val_with_access(a, 7)  # correct value of `a` should be 8
     assert np.allclose(
-        a, 4)  # the value of `a` will be set to 4 again since we've substituted `val` with the 3 in the cached SDFG
+        a, 4
+    )  # the value of `a` will be set to 4 again since we've substituted `val` with the 3 in the cached SDFG
 
 
 def test_constant_propagation_pass():
-    from dace.transformation.passes import constant_propagation as cprop, dead_state_elimination as dse
+    from dace.transformation.passes import constant_propagation as cprop
+    from dace.transformation.passes import dead_state_elimination as dse
 
     @dace.program
     def conditional_val(A: dace.float64[20], val: dace.compiletime):
@@ -655,7 +656,7 @@ def test_constant_proper_use():
 
 
 def test_constant_proper_use_2():
-    """ Stress test constants with strings. """
+    """Stress test constants with strings."""
 
     @dace.program
     def good_function(cfg: dace.compiletime, cfg2: dace.compiletime, arr):
@@ -665,13 +666,13 @@ def test_constant_proper_use_2():
     @dace.program
     def program(arr, cfg: dace.compiletime):
         arr[:] = arr[:] * scal
-        good_function(cfg, 'cfg2', arr)
+        good_function(cfg, "cfg2", arr)
 
     arr = np.ones((12), np.float64)
     scal = 2
 
     with pytest.warns(match="Automatically creating callback"):
-        program(arr, 'cfg')
+        program(arr, "cfg")
 
     assert np.allclose(arr, 2)
 
@@ -714,7 +715,7 @@ def test_constant_field():
         program(arr, ns)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_kwargs()
     test_kwargs_jit()
     test_kwargs_with_default()

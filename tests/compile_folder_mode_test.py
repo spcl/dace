@@ -234,7 +234,7 @@ def _test_build_with_scheme_one_and_then_switch_impl(
     _run_sdfg(csdfg2)
 
 
-@pytest.mark.usefixtures('ctypes_interface')
+@pytest.mark.usefixtures("ctypes_interface")
 def test_build_with_scheme_one_and_then_switch():
     _test_build_with_scheme_one_and_then_switch_impl(
         version1="development",
@@ -364,7 +364,7 @@ def test_folder_mode_file_is_never_observed_incomplete(tmp_path):
     assert [p.name for p in build_folder.iterdir() if p.name.startswith("FOLDER_MODE")] == ["FOLDER_MODE"]
 
 
-@pytest.mark.usefixtures('ctypes_interface')
+@pytest.mark.usefixtures("ctypes_interface")
 def test_already_loaded_and_comple_again():
     _test_build_with_scheme_one_and_then_switch_impl(
         version1="development",

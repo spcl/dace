@@ -2765,7 +2765,8 @@ class SDFG(ControlFlowRegion):
             is set to `hash`, but this might have side effects as it is unstable.
         """
         # Avoid import loops
-        from dace.codegen import ctypes_compiled_sdfg as cs, compiler
+        from dace.codegen import compiler
+        from dace.codegen import ctypes_compiled_sdfg as cs
 
         # @CLAUDE: Why is the interface deleted? (my guess is to squash an 'unused argument'). In any case remove it or add an explanation why.
         # `interface` is accepted for call-site symmetry but does not narrow the
@@ -2833,7 +2834,7 @@ class SDFG(ControlFlowRegion):
         #  be performed on it, not on `self`. If it is `None` then it means it was not
         #  yet created, i.e. deepcopied from `self`. Note if it is not `None` then client
         #  code can expect `load_external_nsdfgs()` was called on it.
-        sdfg: Optional[SDFG] = None
+        sdfg: SDFG | None = None
 
         # Decide the Python interface for THIS SDFG once. Everything below -
         #  reuse, collision handling, folder generation - keys off the decided
@@ -2846,7 +2847,7 @@ class SDFG(ControlFlowRegion):
             sdfg = copy.deepcopy(self)
             sdfg.load_external_nsdfgs()
         interface = compiler.resolve_compiler_interface(sdfg)
-        nanobind_interface = interface == 'nanobind'
+        nanobind_interface = interface == "nanobind"
 
         # Content-verified module reuse (nanobind; compiler.nanobind_reuse_loaded,
         # default on): if THIS identity (build folder, name) is already loaded and
@@ -2856,8 +2857,7 @@ class SDFG(ControlFlowRegion):
         # rename-and-rebuild below), never a wrong reuse; only an actual hash
         # collision between different contents could, which we accept everywhere.
         source_hash = None
-        if nanobind_interface and Config.get_bool('compiler', 'nanobind_reuse_loaded'):
-
+        if nanobind_interface and Config.get_bool("compiler", "nanobind_reuse_loaded"):
             # `hash_sdfg()` does not consider the instrumentation (at any level), but
             #  we have to, because it leads to different code. However, for that we
             #  have to make sure that all external nested SDFGs are loaded.
@@ -2866,10 +2866,15 @@ class SDFG(ControlFlowRegion):
                 sdfg.load_external_nsdfgs()
 
             # @CLAUDE: The source hash does not include the configuration, i.e. `dace.Config`, thus changed configuration will not be recorded. We should add this. This has become simpler as now, since [PR#2602](https://github.com/spcl/dace/pull/2602) was merged, all configuration variables are present.
-            instr_sig = ','.join([sdfg.instrument.name] + [
-                n.instrument.name for n, _ in sdfg.all_nodes_recursive() if getattr(n, 'instrument', None) is not None
-            ])
-            source_hash = f'{sdfg.hash_sdfg()}:{md5(instr_sig.encode("utf-8")).hexdigest()}'
+            instr_sig = ",".join(
+                [sdfg.instrument.name]
+                + [
+                    n.instrument.name
+                    for n, _ in sdfg.all_nodes_recursive()
+                    if getattr(n, "instrument", None) is not None
+                ]
+            )
+            source_hash = f"{sdfg.hash_sdfg()}:{md5(instr_sig.encode('utf-8')).hexdigest()}"
             # The folder must still hold a nanobind artifact: a ctypes rebuild
             #  of the same (folder, name) identity - routine under the 'auto'
             #  default, when ctypes-pinned compiles interleave with auto ones -
@@ -2878,15 +2883,18 @@ class SDFG(ControlFlowRegion):
             #  other interface (loading by marker would even return a ctypes
             #  object). Refused reuse falls through to the rename loop.
             module = sys.modules.get(compiler.nanobind_qualified_module_name(build_folder, self.name))
-            if (module is not None and getattr(module, 'source_sdfg_hash', None) == source_hash
-                    and os.path.isdir(build_folder) and compiler.get_program_interface(build_folder) == 'nanobind'):
+            if (
+                module is not None
+                and getattr(module, "source_sdfg_hash", None) == source_hash
+                and os.path.isdir(build_folder)
+                and compiler.get_program_interface(build_folder) == "nanobind"
+            ):
                 if return_program_handle:
                     sdfg.build_folder = build_folder  # See compile loop below.
                     return compiler.load_precompiled_sdfg(folder=build_folder, sdfg=sdfg)
                 return
 
         if self.regenerate_code or not os.path.isdir(build_folder):
-
             # Clone SDFG as the other modules may modify its contents
             if sdfg is None:
                 sdfg = copy.deepcopy(self)
@@ -2909,12 +2917,15 @@ class SDFG(ControlFlowRegion):
 
             # Rename SDFG to avoid runtime issues with clashing names
             if nanobind_interface and sdfg.is_loaded(folder_mode=folder_mode, interface=interface):
-                collision_mode = Config.get('compiler', 'nanobind_name_collision')
-                assert collision_mode in ('rename', 'error'), \
+                collision_mode = Config.get("compiler", "nanobind_name_collision")
+                assert collision_mode in ("rename", "error"), (
                     f'Invalid value "{collision_mode}" for compiler.nanobind_name_collision (expected "rename" or "error").'
-                if collision_mode == 'error':
-                    raise ValueError(f"SDFG name '{sdfg.name}' is already loaded in this process and "
-                                     "compiler.nanobind_name_collision is set to 'error'.")
+                )
+                if collision_mode == "error":
+                    raise ValueError(
+                        f"SDFG name '{sdfg.name}' is already loaded in this process and "
+                        "compiler.nanobind_name_collision is set to 'error'."
+                    )
 
             # An explicitly set build folder behaves like `cache` set to `single` and
             #  an explicitly set `default_build_folder`. Thus a collision renamed
@@ -2926,7 +2937,7 @@ class SDFG(ControlFlowRegion):
             folder_was_explicit = self._build_folder is not None
             index = 0
             while sdfg.is_loaded(folder_mode=folder_mode, interface=interface):
-                sdfg.name = f'{self.name}_{index}'
+                sdfg.name = f"{self.name}_{index}"
                 index += 1
                 if nanobind_interface and not folder_was_explicit:
                     # If `self` has an explicitly set `build_folder` then it will build
@@ -2946,10 +2957,12 @@ class SDFG(ControlFlowRegion):
                 build_folder = sdfg.build_folder
                 folder_mode = compiler.get_folder_mode(build_folder, probe=True)
                 if folder_mode is None:
-                    folder_mode = Config.get('compiler', 'build_folder_mode')
-                if Config.get_bool('debugprint'):
-                    print(f"SDFG '{self.name}' is already loaded by another object, recompiling under a different "
-                          f"name '{sdfg.name}'.")
+                    folder_mode = Config.get("compiler", "build_folder_mode")
+                if Config.get_bool("debugprint"):
+                    print(
+                        f"SDFG '{self.name}' is already loaded by another object, recompiling under a different "
+                        f"name '{sdfg.name}'."
+                    )
 
             try:
                 # Fill in scope entry/exit connectors
@@ -2965,11 +2978,9 @@ class SDFG(ControlFlowRegion):
                 raise
 
             # Generate the program folder and write the source files
-            program_folder = compiler.generate_program_folder(sdfg,
-                                                              program_objects,
-                                                              build_folder,
-                                                              folder_mode=folder_mode,
-                                                              interface=interface)
+            program_folder = compiler.generate_program_folder(
+                sdfg, program_objects, build_folder, folder_mode=folder_mode, interface=interface
+            )
         else:
             # The code was already generated, just load the program folder
             program_folder = build_folder
@@ -3076,7 +3087,8 @@ class SDFG(ControlFlowRegion):
             explicitly and call ``safe_call()`` on the returned object.
         """
         from dace.codegen import compiler
-        if compiler.resolve_compiler_interface(self) == 'nanobind':
+
+        if compiler.resolve_compiler_interface(self) == "nanobind":
             # NOTE: The reason why we do not support this function under ``nanobind`` is
             #   because we can not guarantee that it a recompilation does not happen. If
             #   a recompilation happens then the reports are written to a different build
@@ -3084,8 +3096,10 @@ class SDFG(ControlFlowRegion):
             #   main reason is that it does not work, but that `SDFG.get_latest_report`
             #   does not find the right folder. Some tricks to avoid that would be setting
             #   `compiler.use_cache` to True.
-            raise NotImplementedError('SDFG.safe_call() is not supported on the nanobind interface. '
-                                      'Use sdfg.compile() and CompiledSDFG.safe_call() instead.')
+            raise NotImplementedError(
+                "SDFG.safe_call() is not supported on the nanobind interface. "
+                "Use sdfg.compile() and CompiledSDFG.safe_call() instead."
+            )
         with hooks.invoke_sdfg_call_hooks(self) as sdfg:
             binaryobj = sdfg.compile()
 

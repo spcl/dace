@@ -45,7 +45,7 @@ def test_external_mem(symbolic):
     csdfg = sdfg.compile()
     # Keyed off the compiled object, not the config: under 'auto' the config
     #  value does not say which interface was selected.
-    ws_args = extra_args if hasattr(csdfg, '_handle') else {}
+    ws_args = extra_args if hasattr(csdfg, "_handle") else {}
     csdfg.initialize(a, **extra_args)
     sizes = csdfg.get_workspace_sizes(**ws_args)
     assert sizes == {dace.StorageType.CPU_Heap: 20 * 8}
@@ -81,7 +81,7 @@ def test_external_twobuffers():
 
     # See test_external_mem: nanobind takes the symbols per call.
     # See test_external_mem: keyed off the compiled object, not the config.
-    ws_args = dict(N=20) if hasattr(csdfg, '_handle') else {}
+    ws_args = dict(N=20) if hasattr(csdfg, "_handle") else {}
 
     # Test workspace size
     a = np.random.rand(20)
@@ -115,7 +115,7 @@ def test_external_memory_detection_with_gpu_arrays():
     # This probes the CTYPES CompiledSDFG scan and needs the ctypes build
     # layout (stub library + program library); the nanobind interface builds
     # an extension module without the stub, so the interface is pinned.
-    with set_temporary('compiler', 'interface', value='ctypes'):
+    with set_temporary("compiler", "interface", value="ctypes"):
         _external_memory_detection_with_gpu_arrays_body(CompiledSDFG, ReloadableDLL, compiler)
 
 

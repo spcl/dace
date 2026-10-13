@@ -141,7 +141,7 @@ def test_multiple_newaxis():
     assert np.allclose(A[np.newaxis, :, np.newaxis, np.newaxis, :, np.newaxis, :, np.newaxis], res)
 
 
-@pytest.mark.usefixtures('ctypes_interface')
+@pytest.mark.usefixtures("ctypes_interface")
 def test_index_intarr_1d():
 
     @dace.program
@@ -272,7 +272,7 @@ def test_index_boolarr_inline():
     assert np.allclose(regression, A)
 
 
-@pytest.mark.usefixtures('ctypes_interface')
+@pytest.mark.usefixtures("ctypes_interface")
 def test_out_index_intarr():
 
     @dace.program
@@ -288,7 +288,7 @@ def test_out_index_intarr():
     assert np.allclose(A, ref)
 
 
-@pytest.mark.usefixtures('ctypes_interface')
+@pytest.mark.usefixtures("ctypes_interface")
 def test_out_index_intarr_bcast():
 
     @dace.program
@@ -305,7 +305,7 @@ def test_out_index_intarr_bcast():
     assert np.allclose(A, ref)
 
 
-@pytest.mark.usefixtures('ctypes_interface')
+@pytest.mark.usefixtures("ctypes_interface")
 def test_out_index_intarr_aug():
 
     @dace.program
@@ -321,7 +321,7 @@ def test_out_index_intarr_aug():
     assert np.allclose(A, ref)
 
 
-@pytest.mark.usefixtures('ctypes_interface')
+@pytest.mark.usefixtures("ctypes_interface")
 def test_out_index_intarr_aug_bcast():
 
     @dace.program
@@ -338,7 +338,7 @@ def test_out_index_intarr_aug_bcast():
     assert np.allclose(A, ref)
 
 
-@pytest.mark.usefixtures('ctypes_interface')
+@pytest.mark.usefixtures("ctypes_interface")
 def test_out_index_intarr_multidim():
 
     @dace.program
@@ -354,7 +354,7 @@ def test_out_index_intarr_multidim():
     assert np.allclose(A, ref)
 
 
-@pytest.mark.usefixtures('ctypes_interface')
+@pytest.mark.usefixtures("ctypes_interface")
 def test_out_index_intarr_multidim_range():
 
     @dace.program

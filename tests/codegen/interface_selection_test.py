@@ -1,6 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests for ``compiler.interface=auto``: per-SDFG selection between the nanobind
 and the ctypes interface, decided by ``compiler.resolve_compiler_interface``."""
+
 import numpy as np
 import pytest
 
@@ -11,38 +12,38 @@ from dace.config import Config, set_temporary
 def _supported_sdfg(name: str) -> dace.SDFG:
     """A trivially nanobind-supported SDFG: one primitive array, one scalar."""
     sdfg = dace.SDFG(name)
-    sdfg.add_array('A', [10], dace.float64)
-    sdfg.add_scalar('alpha', dace.float64)
+    sdfg.add_array("A", [10], dace.float64)
+    sdfg.add_scalar("alpha", dace.float64)
     state = sdfg.add_state()
-    t = state.add_tasklet('t', {'a_in', 's_in'}, {'a_out'}, 'a_out = a_in + s_in')
-    state.add_edge(state.add_read('A'), None, t, 'a_in', dace.Memlet('A[0]'))
-    state.add_edge(state.add_read('alpha'), None, t, 's_in', dace.Memlet('alpha[0]'))
-    state.add_edge(t, 'a_out', state.add_write('A'), None, dace.Memlet('A[0]'))
+    t = state.add_tasklet("t", {"a_in", "s_in"}, {"a_out"}, "a_out = a_in + s_in")
+    state.add_edge(state.add_read("A"), None, t, "a_in", dace.Memlet("A[0]"))
+    state.add_edge(state.add_read("alpha"), None, t, "s_in", dace.Memlet("alpha[0]"))
+    state.add_edge(t, "a_out", state.add_write("A"), None, dace.Memlet("A[0]"))
     return sdfg
 
 
 def _callback_sdfg(name: str) -> dace.SDFG:
     """An SDFG with a callback argument - out of the nanobind interface's scope."""
     sdfg = dace.SDFG(name)
-    sdfg.add_array('A', [10], dace.float64)
-    sdfg.add_symbol('cb', dace.callback(dace.float64, dace.float64))
+    sdfg.add_array("A", [10], dace.float64)
+    sdfg.add_symbol("cb", dace.callback(dace.float64, dace.float64))
     state = sdfg.add_state()
-    t = state.add_tasklet('t', {}, {'o'}, 'o = cb(1.0)')
-    state.add_edge(t, 'o', state.add_write('A'), None, dace.Memlet('A[0]'))
+    t = state.add_tasklet("t", {}, {"o"}, "o = cb(1.0)")
+    state.add_edge(t, "o", state.add_write("A"), None, dace.Memlet("A[0]"))
     return sdfg
 
 
 def _structure_sdfg(name: str) -> dace.SDFG:
     """An SDFG with a Structure argument - out of the nanobind interface's scope."""
-    csr = dace.data.Structure(dict(data=dace.float32[4]), name='OnlyData')
+    csr = dace.data.Structure(dict(data=dace.float32[4]), name="OnlyData")
     sdfg = dace.SDFG(name)
-    sdfg.add_datadesc('A', csr)
+    sdfg.add_datadesc("A", csr)
     sdfg.add_state()
     return sdfg
 
 
 def test_interface_default_is_auto():
-    assert Config.get_default('compiler', 'interface') == 'auto'
+    assert Config.get_default("compiler", "interface") == "auto"
 
 
 def test_resolve_compiler_interface():
@@ -50,23 +51,23 @@ def test_resolve_compiler_interface():
     inspects the SDFG, and no SDFG means the ctypes-compatible answer."""
     from dace.codegen.compiler import resolve_compiler_interface
 
-    supported = _supported_sdfg('resolve_supported_probe')
-    unsupported = _callback_sdfg('resolve_callback_probe')
+    supported = _supported_sdfg("resolve_supported_probe")
+    unsupported = _callback_sdfg("resolve_callback_probe")
 
-    with set_temporary('compiler', 'interface', value='auto'):
-        assert resolve_compiler_interface(supported) == 'nanobind'
-        assert resolve_compiler_interface(unsupported) == 'ctypes'
-        assert resolve_compiler_interface(None) == 'ctypes'
-    with set_temporary('compiler', 'interface', value='ctypes'):
-        assert resolve_compiler_interface(supported) == 'ctypes'
-        assert resolve_compiler_interface(unsupported) == 'ctypes'
-    with set_temporary('compiler', 'interface', value='nanobind'):
+    with set_temporary("compiler", "interface", value="auto"):
+        assert resolve_compiler_interface(supported) == "nanobind"
+        assert resolve_compiler_interface(unsupported) == "ctypes"
+        assert resolve_compiler_interface(None) == "ctypes"
+    with set_temporary("compiler", "interface", value="ctypes"):
+        assert resolve_compiler_interface(supported) == "ctypes"
+        assert resolve_compiler_interface(unsupported) == "ctypes"
+    with set_temporary("compiler", "interface", value="nanobind"):
         # Explicit nanobind is a demand, not a hint: the decision function
         # honors it and the codegen refusal (fail-fast) is the backstop.
-        assert resolve_compiler_interface(supported) == 'nanobind'
-        assert resolve_compiler_interface(unsupported) == 'nanobind'
-    with set_temporary('compiler', 'interface', value='no_such_interface'):
-        with pytest.raises(ValueError, match='compiler.interface'):
+        assert resolve_compiler_interface(supported) == "nanobind"
+        assert resolve_compiler_interface(unsupported) == "nanobind"
+    with set_temporary("compiler", "interface", value="no_such_interface"):
+        with pytest.raises(ValueError, match="compiler.interface"):
             resolve_compiler_interface(supported)
 
 
@@ -78,15 +79,15 @@ def test_auto_falls_back_to_ctypes_without_nanobind_package(monkeypatch):
 
     from dace.codegen import compiler
 
-    monkeypatch.setattr(compiler, '_nanobind_available', lambda: False)
+    monkeypatch.setattr(compiler, "_nanobind_available", lambda: False)
     compiler._warn_nanobind_unavailable.cache_clear()
-    supported = _supported_sdfg('no_nanobind_probe')
-    with set_temporary('compiler', 'interface', value='auto'):
-        with pytest.warns(UserWarning, match='nanobind package is not installed'):
-            assert compiler.resolve_compiler_interface(supported) == 'ctypes'
+    supported = _supported_sdfg("no_nanobind_probe")
+    with set_temporary("compiler", "interface", value="auto"):
+        with pytest.warns(UserWarning, match="nanobind package is not installed"):
+            assert compiler.resolve_compiler_interface(supported) == "ctypes"
         with warnings.catch_warnings():
-            warnings.simplefilter('error')  # the warning fires once per process, not per compile
-            assert compiler.resolve_compiler_interface(supported) == 'ctypes'
+            warnings.simplefilter("error")  # the warning fires once per process, not per compile
+            assert compiler.resolve_compiler_interface(supported) == "ctypes"
     compiler._warn_nanobind_unavailable.cache_clear()
 
 
@@ -95,16 +96,16 @@ def test_explicit_nanobind_ignores_availability_probe(monkeypatch):
     through unchanged, and the hard CompilerConfigurationError at compile time is the backstop."""
     from dace.codegen import compiler
 
-    monkeypatch.setattr(compiler, '_nanobind_available', lambda: False)
-    with set_temporary('compiler', 'interface', value='nanobind'):
-        assert compiler.resolve_compiler_interface(_supported_sdfg('demand_probe')) == 'nanobind'
+    monkeypatch.setattr(compiler, "_nanobind_available", lambda: False)
+    with set_temporary("compiler", "interface", value="nanobind"):
+        assert compiler.resolve_compiler_interface(_supported_sdfg("demand_probe")) == "nanobind"
 
 
 def test_auto_selects_nanobind_for_supported_sdfg():
     from dace.codegen.nanobind_compiled_sdfg import NanobindCompiledSDFG
 
-    with set_temporary('compiler', 'interface', value='auto'):
-        csdfg = _supported_sdfg('auto_supported_prog').compile()
+    with set_temporary("compiler", "interface", value="auto"):
+        csdfg = _supported_sdfg("auto_supported_prog").compile()
         assert isinstance(csdfg, NanobindCompiledSDFG)
         a = np.zeros(10)
         csdfg(A=a, alpha=2.0)
@@ -114,8 +115,8 @@ def test_auto_selects_nanobind_for_supported_sdfg():
 def test_auto_falls_back_to_ctypes_for_callbacks():
     from dace.codegen.ctypes_compiled_sdfg import CtypesCompiledSDFG
 
-    with set_temporary('compiler', 'interface', value='auto'):
-        csdfg = _callback_sdfg('auto_callback_prog').compile()
+    with set_temporary("compiler", "interface", value="auto"):
+        csdfg = _callback_sdfg("auto_callback_prog").compile()
         assert isinstance(csdfg, CtypesCompiledSDFG)
         a = np.zeros(10)
         csdfg(A=a, cb=lambda x: x + 41.0)
@@ -125,24 +126,24 @@ def test_auto_falls_back_to_ctypes_for_callbacks():
 def test_auto_falls_back_to_ctypes_for_structures():
     from dace.codegen.ctypes_compiled_sdfg import CtypesCompiledSDFG
 
-    with set_temporary('compiler', 'interface', value='auto'):
+    with set_temporary("compiler", "interface", value="auto"):
         # Compile only (no execution: a Structure call needs a built ctypes
         # object; the selection is what is under test).
-        csdfg = _structure_sdfg('auto_structure_prog').compile()
+        csdfg = _structure_sdfg("auto_structure_prog").compile()
         assert isinstance(csdfg, CtypesCompiledSDFG)
 
 
 def test_explicit_nanobind_refuses_unsupported_sdfg():
-    with set_temporary('compiler', 'interface', value='nanobind'):
-        with pytest.raises(NotImplementedError, match='ctypes'):
-            _callback_sdfg('explicit_nanobind_callback_prog').compile()
+    with set_temporary("compiler", "interface", value="nanobind"):
+        with pytest.raises(NotImplementedError, match="ctypes"):
+            _callback_sdfg("explicit_nanobind_callback_prog").compile()
 
 
 def test_explicit_ctypes_still_ctypes():
     from dace.codegen.ctypes_compiled_sdfg import CtypesCompiledSDFG
 
-    with set_temporary('compiler', 'interface', value='ctypes'):
-        csdfg = _supported_sdfg('explicit_ctypes_prog').compile()
+    with set_temporary("compiler", "interface", value="ctypes"):
+        csdfg = _supported_sdfg("explicit_ctypes_prog").compile()
         assert isinstance(csdfg, CtypesCompiledSDFG)
 
 
@@ -154,14 +155,14 @@ def test_auto_nanobind_renames_when_ctypes_holds_the_identity():
     the link map), which surfaces as ``ImportError: ... PyInit_<name>``."""
     from dace.codegen.nanobind_compiled_sdfg import NanobindCompiledSDFG
 
-    with set_temporary('cache', value='unique'):
-        with set_temporary('compiler', 'interface', value='ctypes'):
-            c1 = _supported_sdfg('resident_tester').compile()
+    with set_temporary("cache", value="unique"):
+        with set_temporary("compiler", "interface", value="ctypes"):
+            c1 = _supported_sdfg("resident_tester").compile()
             a1 = np.zeros(10)
             c1(A=a1, alpha=3.0)  # Actually load the ctypes DLL into the process.
             assert a1[0] == 3.0
-        with set_temporary('compiler', 'interface', value='auto'):
-            c2 = _supported_sdfg('resident_tester').compile()
+        with set_temporary("compiler", "interface", value="auto"):
+            c2 = _supported_sdfg("resident_tester").compile()
             assert isinstance(c2, NanobindCompiledSDFG)
             a2 = np.zeros(10)
             c2(A=a2, alpha=5.0)
@@ -170,7 +171,7 @@ def test_auto_nanobind_renames_when_ctypes_holds_the_identity():
         assert a1[0] == 3.0
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_resolve_compiler_interface()
     test_auto_selects_nanobind_for_supported_sdfg()
     test_auto_falls_back_to_ctypes_for_callbacks()

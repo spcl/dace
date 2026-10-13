@@ -5,12 +5,12 @@ Loading (importlib under the ``dace.generated.*`` namespace) lives in
 ``dace.codegen.compiler``; this module only contains the wrapper class.
 """
 
-from typing import Union, List, Any, Tuple, Dict, Optional, Callable
-from types import ModuleType
+import ctypes
 import pathlib
 import warnings
-
-import ctypes
+from collections.abc import Callable
+from types import ModuleType
+from typing import Any
 
 import numpy as np
 
@@ -19,8 +19,7 @@ from dace import dtypes, hooks
 from dace.codegen import compiler
 
 
-def _unwrap_array_likes(args: Tuple[Any, ...], kwargs: Dict[str,
-                                                            Any]) -> Optional[Tuple[Tuple[Any, ...], Dict[str, Any]]]:
+def _unwrap_array_likes(args: tuple[Any, ...], kwargs: dict[str, Any]) -> tuple[tuple[Any, ...], dict[str, Any]] | None:
     """Swaps array-like WRAPPER objects for zero-copy ndarray views, or ``None``.
 
     The ctypes marshaller accepted any object implementing the array-interface
@@ -38,10 +37,11 @@ def _unwrap_array_likes(args: Tuple[Any, ...], kwargs: Dict[str,
     def _view(value):
         if isinstance(value, np.ndarray) or not dtypes.is_array(value):
             return None
-        if hasattr(value, '__cuda_array_interface__'):
+        if hasattr(value, "__cuda_array_interface__"):
             import cupy
+
             return cupy.asarray(value)
-        if hasattr(value, '__array_interface__'):
+        if hasattr(value, "__array_interface__"):
             return np.asarray(value)
         return None
 
@@ -110,10 +110,10 @@ class NanobindCompiledSDFG:
     :note: This class will not unload the module.
     """
 
-    def __init__(self, sdfg: "dace.SDFG", module: ModuleType, arg_names: List[str], gpu_error_check: bool = True):
-        self._sdfg: "dace.SDFG" = sdfg
+    def __init__(self, sdfg: "dace.SDFG", module: ModuleType, arg_names: list[str], gpu_error_check: bool = True):
+        self._sdfg: dace.SDFG = sdfg
         self._module: ModuleType = module
-        self._arg_names: List[str] = list(arg_names or [])
+        self._arg_names: list[str] = list(arg_names or [])
         self._handle: Any = module.make_compiled_sdfg()  # TODO: create a protocol for it.
         #: When True, calls skip the program execution (argument processing and
         #: hooks still run). Toggled by hooks such as ``dace.profile``, which
@@ -125,7 +125,7 @@ class NanobindCompiledSDFG:
         # allocation, the single-value-vs-tuple convention and buffer-override
         # validation all live in the binding too; the names remain exposed for
         # introspection.
-        self._return_values: Tuple[str, ...] = tuple(self._handle.return_names)
+        self._return_values: tuple[str, ...] = tuple(self._handle.return_names)
 
         # Static per module; used to translate __dace_exit codes in _get_error_text.
         self._has_gpu_code: bool = bool(self._handle.has_gpu_code)
@@ -145,8 +145,7 @@ class NanobindCompiledSDFG:
 
     @property
     def filename(self) -> str:
-        """The resolved absolute path to the loaded extension module (the built .so).
-        """
+        """The resolved absolute path to the loaded extension module (the built .so)."""
         return str(pathlib.Path(self._module.__file__).resolve())
 
     @property
@@ -218,11 +217,13 @@ class NanobindCompiledSDFG:
         # the cold entry points call), inlined to keep the hot path free of
         # the extra call - keep the two in sync.
         if args:
-            if (multiple_names := kwargs.keys() & set(self._arg_names[:len(args)])):
+            if multiple_names := kwargs.keys() & set(self._arg_names[: len(args)]):
                 raise TypeError(f"Argument(s) {sorted(multiple_names)} passed both positionally and as keywords.")
             if len(args) > len(self._arg_names):
-                warnings.warn(f"SDFG '{self._sdfg.name}': {len(args) - len(self._arg_names)} extra positional "
-                              f"argument(s) beyond arg_names are ignored (ctypes-interface parity).")
+                warnings.warn(
+                    f"SDFG '{self._sdfg.name}': {len(args) - len(self._arg_names)} extra positional "
+                    f"argument(s) beyond arg_names are ignored (ctypes-interface parity)."
+                )
             kwargs.update(zip(self._arg_names, args, strict=False))
 
         # Fast path - no hooks: hand the arguments straight to the compiled
@@ -243,7 +244,7 @@ class NanobindCompiledSDFG:
 
         return self._call_handle_with_hooks(kwargs)
 
-    def _call_handle_with_hooks(self, kwargs: Dict[str, Any]) -> Any:
+    def _call_handle_with_hooks(self, kwargs: dict[str, Any]) -> Any:
         """Runs the handle inside the registered compiled-SDFG call hooks.
 
         On this interface a hook's ``args`` parameter is a 1-tuple holding the
@@ -260,7 +261,7 @@ class NanobindCompiledSDFG:
         # here, since the binding allocates fresh return arrays per call.
         self._hook_result: Any = None
         result = None
-        with hooks.invoke_compiled_sdfg_call_hooks(self, (kwargs, )):
+        with hooks.invoke_compiled_sdfg_call_hooks(self, (kwargs,)):
             # Checked inside the hook context: a hook may toggle the flag
             # (dace.profile does) before the program call would run.
             if self.do_not_execute is False:
@@ -295,7 +296,7 @@ class NanobindCompiledSDFG:
         self._handle.initialize(**self._named_call_arguments(args, kwargs))
         return ctypes.c_void_p(self._handle.state_pointer)
 
-    def _named_call_arguments(self, args: Tuple[Any, ...], kwargs: Dict[str, Any]) -> Dict[str, Any]:
+    def _named_call_arguments(self, args: tuple[Any, ...], kwargs: dict[str, Any]) -> dict[str, Any]:
         """Adds the positional arguments to ``kwargs`` (in ``arg_names`` order).
 
         Positional arguments bind by ``arg_names`` ONLY - never by the
@@ -308,11 +309,13 @@ class NanobindCompiledSDFG:
         positional would win silently).
         """
         if args:
-            if (multiple_names := kwargs.keys() & set(self._arg_names[:len(args)])):
+            if multiple_names := kwargs.keys() & set(self._arg_names[: len(args)]):
                 raise TypeError(f"Argument(s) {sorted(multiple_names)} passed both positionally and as keywords.")
             if len(args) > len(self._arg_names):
-                warnings.warn(f"SDFG '{self._sdfg.name}': {len(args) - len(self._arg_names)} extra positional "
-                              f"argument(s) beyond arg_names are ignored (ctypes-interface parity).")
+                warnings.warn(
+                    f"SDFG '{self._sdfg.name}': {len(args) - len(self._arg_names)} extra positional "
+                    f"argument(s) beyond arg_names are ignored (ctypes-interface parity)."
+                )
             kwargs.update(zip(self._arg_names, args, strict=False))
         return kwargs
 
@@ -327,18 +330,21 @@ class NanobindCompiledSDFG:
         if rc != 0:
             raise RuntimeError(f'An error was detected after running "{self._sdfg.name}": {self._get_error_text(rc)}')
 
-    def _get_error_text(self, result: Union[int, str]) -> str:
+    def _get_error_text(self, result: int | str) -> str:
         """Translates a ``__dace_exit`` code into text (ctypes ``_get_error_text`` parity).
 
         With GPU code the numeric code is a GPU error code and goes through the
         GPU runtime's ``get_error_string``; without, it is reported as-is.
         """
         from dace.codegen import common  # Circular import
+
         if self._has_gpu_code:
             if isinstance(result, int):
                 result = common.get_gpu_runtime().get_error_string(result)
-            return (f'{result}. Consider enabling synchronous debugging mode (environment variable: '
-                    'DACE_compiler_cuda_syncdebug=1) to see where the issue originates from.')
+            return (
+                f"{result}. Consider enabling synchronous debugging mode (environment variable: "
+                "DACE_compiler_cuda_syncdebug=1) to see where the issue originates from."
+            )
         else:
             return result
 
@@ -350,7 +356,7 @@ class NanobindCompiledSDFG:
         """
         return compiler.safe_call_precompiled(self._sdfg, args, kwargs)
 
-    def get_workspace_sizes(self, *args: Any, **kwargs: Any) -> Dict[dtypes.StorageType, int]:
+    def get_workspace_sizes(self, *args: Any, **kwargs: Any) -> dict[dtypes.StorageType, int]:
         """Returns the external-memory sizes per storage type.
 
         Unlike the version provided by ``CompiledSDFG`` the symbolic sizes must be provided.
@@ -359,7 +365,7 @@ class NanobindCompiledSDFG:
         kwargs = self._named_call_arguments(args, kwargs)
         return {getattr(dtypes.StorageType, k): v for k, v in self._handle.get_workspace_sizes(**kwargs).items()}
 
-    def set_workspace(self, storage: Union[str, dtypes.StorageType], workspace: int, *args: Any, **kwargs: Any):
+    def set_workspace(self, storage: str | dtypes.StorageType, workspace: int, *args: Any, **kwargs: Any):
         """Sets the workspace for the given storage type to the given buffer.
 
         As with :meth:`get_workspace_sizes`, the symbol values the external
@@ -370,8 +376,7 @@ class NanobindCompiledSDFG:
         self._handle.set_workspace(name, workspace, **self._named_call_arguments(args, kwargs))
 
     def state_fields(self) -> list[str]:
-        """Names of the pointer fields in the state struct.
-        """
+        """Names of the pointer fields in the state struct."""
         return list(self._handle.state_fields())
 
     def get_state_struct(self) -> ctypes.Structure:
@@ -388,10 +393,10 @@ class NanobindCompiledSDFG:
         # ``state_pointer`` raises if the state is uninitialized or finalized.
         ptr = self._handle.state_pointer
         fields = [(name, ctypes.c_void_p) for name in self._handle.state_fields()]
-        state_struct_t = type('State', (ctypes.Structure, ), {'_fields_': fields})
+        state_struct_t = type("State", (ctypes.Structure,), {"_fields_": fields})
         return state_struct_t.from_address(ptr)
 
-    def get_exported_function(self, name: str, restype=None) -> Optional[Callable]:
+    def get_exported_function(self, name: str, restype=None) -> Callable | None:
         """Returns an arbitrary exported symbol as a callable, or None if absent.
 
         Resolved with ``ctypes.CDLL`` on the already-imported module file

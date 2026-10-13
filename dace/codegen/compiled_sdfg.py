@@ -1,19 +1,24 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" Backend-independent surface of a compiled SDFG.
+"""Backend-independent surface of a compiled SDFG.
 
-    :class:`CompiledSDFGProtocol` captures the interface both the ctypes and the
-    nanobind backends provide. The concrete ctypes implementation was renamed to
-    :class:`~dace.codegen.ctypes_compiled_sdfg.CtypesCompiledSDFG` (and moved to
-    ``dace.codegen.ctypes_compiled_sdfg``); the ``CompiledSDFG`` name is kept here
-    as a deprecated alias for backward compatibility.
+:class:`CompiledSDFGProtocol` captures the interface both the ctypes and the
+nanobind backends provide. The concrete ctypes implementation was renamed to
+:class:`~dace.codegen.ctypes_compiled_sdfg.CtypesCompiledSDFG` (and moved to
+``dace.codegen.ctypes_compiled_sdfg``); the ``CompiledSDFG`` name is kept here
+as a deprecated alias for backward compatibility.
 """
+
 import warnings
-from typing import Any, Callable, Dict, Optional, Protocol, runtime_checkable
+from collections.abc import Callable
+from typing import Any, Protocol, runtime_checkable
 
 from dace import dtypes
 
 # Re-exported for backward compatibility (they used to be defined in this module).
-from dace.codegen.ctypes_compiled_sdfg import CtypesCompiledSDFG, ReloadableDLL  # noqa: F401 [unused-import]  # Compatibility reexport.
+from dace.codegen.ctypes_compiled_sdfg import (  # noqa: F401 [unused-import]  # Compatibility reexport.
+    CtypesCompiledSDFG,
+    ReloadableDLL,
+)
 
 
 @runtime_checkable
@@ -51,40 +56,29 @@ class CompiledSDFGProtocol(Protocol):
         ...
 
     @property
-    def filename(self) -> str:
-        ...
+    def filename(self) -> str: ...
 
     @property
-    def has_gpu_code(self) -> bool:
-        ...
+    def has_gpu_code(self) -> bool: ...
 
     @property
-    def is_initialized(self) -> bool:
-        ...
+    def is_initialized(self) -> bool: ...
 
-    def __call__(self, *args: Any, **kwargs: Any) -> Any:
-        ...
+    def __call__(self, *args: Any, **kwargs: Any) -> Any: ...
 
-    def safe_call(self, *args: Any, **kwargs: Any) -> Any:
-        ...
+    def safe_call(self, *args: Any, **kwargs: Any) -> Any: ...
 
-    def initialize(self, *args: Any, **kwargs: Any) -> Any:
-        ...
+    def initialize(self, *args: Any, **kwargs: Any) -> Any: ...
 
-    def finalize(self) -> None:
-        ...
+    def finalize(self) -> None: ...
 
-    def get_exported_function(self, name: str, restype=None) -> Optional[Callable[..., Any]]:
-        ...
+    def get_exported_function(self, name: str, restype=None) -> Callable[..., Any] | None: ...
 
-    def get_state_struct(self) -> Any:
-        ...
+    def get_state_struct(self) -> Any: ...
 
-    def get_workspace_sizes(self) -> Dict[dtypes.StorageType, int]:
-        ...
+    def get_workspace_sizes(self) -> dict[dtypes.StorageType, int]: ...
 
-    def set_workspace(self, storage: dtypes.StorageType, workspace: Any) -> None:
-        ...
+    def set_workspace(self, storage: dtypes.StorageType, workspace: Any) -> None: ...
 
 
 class CompiledSDFG(CtypesCompiledSDFG):
@@ -99,6 +93,6 @@ class CompiledSDFG(CtypesCompiledSDFG):
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         """Deprecated: use :class:`~dace.codegen.ctypes_compiled_sdfg.CtypesCompiledSDFG` instead."""
         super().__init__(*args, **kwargs)
-        warnings.warn('CompiledSDFG is deprecated, please use CtypesCompiledSDFG instead.',
-                      DeprecationWarning,
-                      stacklevel=2)
+        warnings.warn(
+            "CompiledSDFG is deprecated, please use CtypesCompiledSDFG instead.", DeprecationWarning, stacklevel=2
+        )

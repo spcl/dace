@@ -6,6 +6,7 @@ under ``ctypes`` and once under ``nanobind``; the fixture also drops the
 ``DACE_compiler_interface`` environment variable, which would otherwise
 override the per-test configuration (the CI matrix sets it globally).
 """
+
 import numpy as np
 import pytest
 
@@ -13,9 +14,9 @@ import dace
 from dace.config import set_temporary
 
 
-@pytest.fixture(params=['ctypes', 'nanobind'])
+@pytest.fixture(params=["ctypes", "nanobind"])
 def compiler_interface(request):
-    with set_temporary('compiler', 'interface', value=request.param):
+    with set_temporary("compiler", "interface", value=request.param):
         yield request.param
 
 
@@ -31,16 +32,18 @@ def test_vector_return_exotic_strides(compiler_interface):
     memcpy and never exercise the per-dimension addressing that must agree
     with the returned array's strides."""
     vec2 = dace.vector(dace.float64, 2)
-    sdfg = dace.SDFG(f'vec_ret_exotic_{compiler_interface}')
-    sdfg.add_array('A', [2, 3, 4], vec2, strides=[12, 4, 1], total_size=24)
-    sdfg.add_array('__return', [2, 3, 4], vec2, strides=[3, 1, 12], total_size=48)
+    sdfg = dace.SDFG(f"vec_ret_exotic_{compiler_interface}")
+    sdfg.add_array("A", [2, 3, 4], vec2, strides=[12, 4, 1], total_size=24)
+    sdfg.add_array("__return", [2, 3, 4], vec2, strides=[3, 1, 12], total_size=48)
     state = sdfg.add_state()
-    state.add_mapped_tasklet('copy',
-                             dict(i='0:2', j='0:3', k='0:4'),
-                             dict(inp=dace.Memlet('A[i, j, k]')),
-                             'out = inp',
-                             dict(out=dace.Memlet('__return[i, j, k]')),
-                             external_edges=True)
+    state.add_mapped_tasklet(
+        "copy",
+        dict(i="0:2", j="0:3", k="0:4"),
+        dict(inp=dace.Memlet("A[i, j, k]")),
+        "out = inp",
+        dict(out=dace.Memlet("__return[i, j, k]")),
+        external_edges=True,
+    )
 
     csdfg = sdfg.compile()
 
@@ -64,12 +67,12 @@ def test_is_initialized_lifecycle(compiler_interface):
     interfaces: False after compile, True after ``initialize()``, False after
     ``finalize()``. Library code (e.g. the torch dispatchers) consults it
     instead of the ctypes-private ``_initialized`` attribute."""
-    sdfg = dace.SDFG(f'is_init_prog_{compiler_interface}')
-    sdfg.add_array('A', [4], dace.float64)
+    sdfg = dace.SDFG(f"is_init_prog_{compiler_interface}")
+    sdfg.add_array("A", [4], dace.float64)
     state = sdfg.add_state()
-    t = state.add_tasklet('t', {'i'}, {'o'}, 'o = i + 1.0')
-    state.add_edge(state.add_read('A'), None, t, 'i', dace.Memlet('A[0]'))
-    state.add_edge(t, 'o', state.add_write('A'), None, dace.Memlet('A[0]'))
+    t = state.add_tasklet("t", {"i"}, {"o"}, "o = i + 1.0")
+    state.add_edge(state.add_read("A"), None, t, "i", dace.Memlet("A[0]"))
+    state.add_edge(t, "o", state.add_write("A"), None, dace.Memlet("A[0]"))
 
     csdfg = sdfg.compile()
     assert csdfg.is_initialized is False
@@ -79,7 +82,7 @@ def test_is_initialized_lifecycle(compiler_interface):
     assert csdfg.is_initialized is False
 
 
-if __name__ == '__main__':
-    for interface in ('ctypes', 'nanobind'):
-        with set_temporary('compiler', 'interface', value=interface):
+if __name__ == "__main__":
+    for interface in ("ctypes", "nanobind"):
+        with set_temporary("compiler", "interface", value=interface):
             test_vector_return_exotic_strides(interface)

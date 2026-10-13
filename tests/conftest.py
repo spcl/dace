@@ -46,6 +46,7 @@ def ctypes_interface(monkeypatch):
     the reload -- see tests/compile_folder_mode_test.py.
     """
     import dace
-    monkeypatch.delenv('DACE_compiler_interface', raising=False)
-    with dace.config.set_temporary('compiler', 'interface', value='ctypes'):
+
+    monkeypatch.delenv("DACE_compiler_interface", raising=False)
+    with dace.config.set_temporary("compiler", "interface", value="ctypes"):
         yield

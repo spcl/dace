@@ -1,13 +1,14 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests that a GPU failure inside a compiled SDFG reaches the caller, and reaches the right caller."""
+
 import numpy as np
 import pytest
 
 import dace
 from dace.codegen import common
 
-N = dace.symbol('N')
-M = dace.symbol('M')
+N = dace.symbol("N")
+M = dace.symbol("M")
 
 GRID_Y_LIMIT = 65535
 
@@ -36,10 +37,10 @@ def build_doubler():
 
 def arguments(m):
     return {
-        'A': np.ones((m, 2), dtype=np.float64),
-        'B': np.zeros((m, 2), dtype=np.float64),
-        'N': 2,
-        'M': m,
+        "A": np.ones((m, 2), dtype=np.float64),
+        "B": np.zeros((m, 2), dtype=np.float64),
+        "N": 2,
+        "M": m,
     }
 
 
@@ -51,7 +52,7 @@ def unchecked_call(csdfg, m):
     the ``gpu_error_check`` toggle off - the check (and thus the record read)
     lives in the compiled binding, gated by that toggle.
     """
-    if hasattr(csdfg, 'fast_call'):
+    if hasattr(csdfg, "fast_call"):
         callargs, initargs = csdfg.construct_arguments(**arguments(m))
         csdfg.fast_call(callargs, initargs, do_gpu_check=False)
     else:
@@ -65,7 +66,7 @@ def unchecked_call(csdfg, m):
 
 def checked_call(csdfg, m):
     """A call that reads the SDFG's error record and raises what it holds."""
-    if hasattr(csdfg, 'fast_call'):
+    if hasattr(csdfg, "fast_call"):
         callargs, initargs = csdfg.construct_arguments(**arguments(m))
         csdfg.fast_call(callargs, initargs, do_gpu_check=True)
     else:
@@ -75,7 +76,7 @@ def checked_call(csdfg, m):
 @pytest.mark.gpu
 def test_failed_launch_reaches_caller():
     csdfg = build_doubler()
-    with pytest.raises(RuntimeError, match='gpu_error_doubler'):
+    with pytest.raises(RuntimeError, match="gpu_error_doubler"):
         csdfg(**arguments(FAILING_M))
 
     # Reporting the failure consumed it, so tearing down finds nothing left to complain about.
@@ -94,7 +95,7 @@ def test_failure_is_not_charged_to_an_innocent_sdfg():
     innocent.finalize()
 
     # The failure is still charged to the SDFG that actually caused it.
-    with pytest.raises(RuntimeError, match='gpu_error_doubler'):
+    with pytest.raises(RuntimeError, match="gpu_error_doubler"):
         failing.finalize()
 
 
@@ -108,7 +109,7 @@ def test_failure_survives_a_drained_runtime_slot():
     common.get_gpu_runtime().get_last_error()
 
     # This launch is valid, so only the record the generated code kept can still report the failure.
-    with pytest.raises(RuntimeError, match='gpu_error_doubler'):
+    with pytest.raises(RuntimeError, match="gpu_error_doubler"):
         checked_call(csdfg, WORKING_M)
 
     csdfg.finalize()
@@ -118,7 +119,7 @@ def test_failure_survives_a_drained_runtime_slot():
 def test_reported_failure_is_not_reported_again():
     csdfg = build_doubler()
 
-    with pytest.raises(RuntimeError, match='gpu_error_doubler'):
+    with pytest.raises(RuntimeError, match="gpu_error_doubler"):
         checked_call(csdfg, FAILING_M)
 
     checked_call(csdfg, WORKING_M)
@@ -126,7 +127,7 @@ def test_reported_failure_is_not_reported_again():
     csdfg.finalize()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_failed_launch_reaches_caller()
     test_failure_is_not_charged_to_an_innocent_sdfg()
     test_failure_survives_a_drained_runtime_slot()

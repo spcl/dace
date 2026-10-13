@@ -3,6 +3,7 @@
 each test asserts the cache ENGAGES -- a declined header or unreplayed recording looks like a
 correct build save for wall-clock time.
 """
+
 import contextlib
 import glob
 import json
@@ -17,7 +18,7 @@ import pytest
 import dace
 from dace.codegen import command_db, compiler
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 @dace.program
@@ -36,13 +37,13 @@ def private_cache(tmp_path, monkeypatch):
     build of a shape. Warming keeps the keys stable, preserving the "second build replays" semantics
     these tests assert. The warmup's own recordings are dropped so the first measured build still
     runs CMake."""
-    monkeypatch.setattr(compiler, 'build_cache_root', lambda: str(tmp_path / 'cache'))
-    with dace.config.set_temporary('compiler', 'precompiled_header', value=False):
+    monkeypatch.setattr(compiler, "build_cache_root", lambda: str(tmp_path / "cache"))
+    with dace.config.set_temporary("compiler", "precompiled_header", value=False):
         # 'auto' (the default) selects nanobind for these plain probe
         #  programs, so the archive warmup applies there too.
-        if dace.Config.get('compiler', 'interface') in ('nanobind', 'auto'):
-            build_and_check(tmp_path, 'archwarmup')
-            shutil.rmtree(os.path.join(str(tmp_path / 'cache'), 'commands'), ignore_errors=True)
+        if dace.Config.get("compiler", "interface") in ("nanobind", "auto"):
+            build_and_check(tmp_path, "archwarmup")
+            shutil.rmtree(os.path.join(str(tmp_path / "cache"), "commands"), ignore_errors=True)
         yield
 
 
@@ -68,9 +69,9 @@ def own_build_folder(tmp_path, name):
     shares one directory across SDFGs and these tests need a fresh folder. Pins the development
     folder mode too: these tests inspect ``build/`` after compiling, and the production mode CI runs
     under deletes it."""
-    with dace.config.set_temporary('compiler', 'build_folder_mode', value='development'):
-        with dace.config.set_temporary('default_build_folder', value=str(tmp_path / name)):
-            with dace.config.set_temporary('cache', value='name'):
+    with dace.config.set_temporary("compiler", "build_folder_mode", value="development"):
+        with dace.config.set_temporary("default_build_folder", value=str(tmp_path / name)):
+            with dace.config.set_temporary("cache", value="name"):
                 yield
 
 
@@ -85,140 +86,141 @@ def build_and_check(tmp_path, name, gpu=False):
 
 
 def ran_cmake(build_folder):
-    return os.path.exists(os.path.join(build_folder, 'build', 'CMakeCache.txt'))
+    return os.path.exists(os.path.join(build_folder, "build", "CMakeCache.txt"))
 
 
 def test_configure_cache_seeds_a_working_build(tmp_path, private_cache):
     """A second program reuses the first's configure and still builds. Command cache off, or it would
     replay and never reach the configure. (CMake aborts on a cache not retargeted to its folder.)"""
-    with dace.config.set_temporary('compiler', 'command_cache', value=False):
-        build_and_check(tmp_path, 'seedfirst')
-        build_and_check(tmp_path, 'seedsecond')
+    with dace.config.set_temporary("compiler", "command_cache", value=False):
+        build_and_check(tmp_path, "seedfirst")
+        build_and_check(tmp_path, "seedsecond")
 
 
-@pytest.mark.skipif(os.name != 'posix', reason='recorded builds need the Ninja generator')
+@pytest.mark.skipif(os.name != "posix", reason="recorded builds need the Ninja generator")
 def test_recorded_build_is_replayed(tmp_path, private_cache):
     """The second program of a shape must reuse the first one's commands instead of running CMake."""
-    assert ran_cmake(build_and_check(tmp_path, 'recordfirst'))
-    assert not ran_cmake(build_and_check(tmp_path, 'recordsecond'))
+    assert ran_cmake(build_and_check(tmp_path, "recordfirst"))
+    assert not ran_cmake(build_and_check(tmp_path, "recordsecond"))
 
 
-@pytest.mark.skipif(os.name != 'posix', reason='recorded builds need the Ninja generator')
+@pytest.mark.skipif(os.name != "posix", reason="recorded builds need the Ninja generator")
 def test_unusable_recording_falls_back_to_cmake(tmp_path, private_cache):
     """A recording that misdescribes the program costs speed, not correctness. Here it names a TU the
     program lacks -- staleness where every path still substitutes to something plausible."""
-    build_and_check(tmp_path, 'staleprime')
+    build_and_check(tmp_path, "staleprime")
     root = compiler.build_cache_root()
-    key = os.path.splitext(os.listdir(os.path.join(root, 'commands'))[0])[0]
+    key = os.path.splitext(os.listdir(os.path.join(root, "commands"))[0])[0]
     poisoned = command_db.load(root, key)
-    poisoned.append(dict(poisoned[0], file=poisoned[0]['file'].replace('$NAME', '$NAME_extra')))
+    poisoned.append(dict(poisoned[0], file=poisoned[0]["file"].replace("$NAME", "$NAME_extra")))
     command_db.drop(root, key)
     command_db.publish(root, key, poisoned)
 
-    assert ran_cmake(build_and_check(tmp_path, 'stalevictim'))
-    assert not ran_cmake(build_and_check(tmp_path, 'stalerecovered')), 'the bad recording was not replaced'
+    assert ran_cmake(build_and_check(tmp_path, "stalevictim"))
+    assert not ran_cmake(build_and_check(tmp_path, "stalerecovered")), "the bad recording was not replaced"
 
 
-@pytest.mark.skipif(os.name != 'posix', reason='precompiled headers are only wired up for GCC/Clang')
+@pytest.mark.skipif(os.name != "posix", reason="precompiled headers are only wired up for GCC/Clang")
 def test_precompiled_header_is_actually_used(tmp_path):
     """The generated TU must really consume the cached header. A PCH is honored only when its flags
     match the TU's; on drift the compiler ignores it silently. ``-Werror=invalid-pch`` makes that a
     failure. Command cache off so CMake runs and exports the compile line to inspect."""
-    with dace.config.set_temporary('compiler', 'command_cache', value=False):
-        build_folder = build_and_check(tmp_path, 'pchused')
-    database = os.path.join(build_folder, 'build', 'compile_commands.json')
-    assert os.path.isfile(database), 'no compilation database was exported'
+    with dace.config.set_temporary("compiler", "command_cache", value=False):
+        build_folder = build_and_check(tmp_path, "pchused")
+    database = os.path.join(build_folder, "build", "compile_commands.json")
+    assert os.path.isfile(database), "no compilation database was exported"
     with open(database) as fp:
-        generated = [e for e in json.load(fp) if 'pchused' in e['file']]
-    assert generated, 'no compile command recorded for the generated source'
+        generated = [e for e in json.load(fp) if "pchused" in e["file"]]
+    assert generated, "no compile command recorded for the generated source"
     # Every generated host TU must consume the header -- under the nanobind interface that is the
     # frame TU and the bindings TU, whose compile lines carry nanobind's extra module flags.
     for entry in generated:
-        command = entry['command']
-        assert 'dace_prewarm.h' in command, f'the precompiled header never reached {entry["file"]}'
-        checked = command.replace(' -c ', ' -Winvalid-pch -Werror=invalid-pch -c ')
-        result = subprocess.run(checked, shell=True, cwd=entry['directory'], capture_output=True, text=True)
-        assert result.returncode == 0, \
-            f'the compiler refused the precompiled header for {entry["file"]}:\n{result.stderr}'
-    if any(e['file'].endswith('_nanobind.cpp') for e in generated):
+        command = entry["command"]
+        assert "dace_prewarm.h" in command, f"the precompiled header never reached {entry['file']}"
+        checked = command.replace(" -c ", " -Winvalid-pch -Werror=invalid-pch -c ")
+        result = subprocess.run(checked, shell=True, cwd=entry["directory"], capture_output=True, text=True)
+        assert result.returncode == 0, (
+            f"the compiler refused the precompiled header for {entry['file']}:\n{result.stderr}"
+        )
+    if any(e["file"].endswith("_nanobind.cpp") for e in generated):
         # A nanobind build must precompile the bindings' share too, not just <dace/dace.h>.
-        prewarm = re.search(r'-I(\S+)\s+-include\s+dace_prewarm\.h', generated[0]['command'])
-        assert prewarm, 'no prewarm include directory on the compile line'
-        with open(os.path.join(prewarm.group(1), 'dace_prewarm.h')) as fp:
-            assert '#include <dace/nanobind.h>' in fp.read(), 'the binary header misses the nanobind umbrella'
+        prewarm = re.search(r"-I(\S+)\s+-include\s+dace_prewarm\.h", generated[0]["command"])
+        assert prewarm, "no prewarm include directory on the compile line"
+        with open(os.path.join(prewarm.group(1), "dace_prewarm.h")) as fp:
+            assert "#include <dace/nanobind.h>" in fp.read(), "the binary header misses the nanobind umbrella"
 
 
-@pytest.mark.skipif(os.name != 'posix', reason='precompiled headers are only wired up for GCC/Clang')
+@pytest.mark.skipif(os.name != "posix", reason="precompiled headers are only wired up for GCC/Clang")
 def test_prewarm_header_carries_nanobind_when_present(tmp_path, monkeypatch):
     """With nanobind importable, the composed binary header includes the runtime umbrella, so the
     bindings' share of the compile is precompiled too."""
-    monkeypatch.setattr(compiler, 'build_cache_root', lambda: str(tmp_path / 'cache'))
-    pch = compiler.prepare_precompiled_header({'cpu'})
-    assert pch, 'no precompiled header was produced'
-    with open(os.path.join(pch, 'dace_prewarm.h')) as fp:
-        assert '#include <dace/nanobind.h>' in fp.read()
+    monkeypatch.setattr(compiler, "build_cache_root", lambda: str(tmp_path / "cache"))
+    pch = compiler.prepare_precompiled_header({"cpu"})
+    assert pch, "no precompiled header was produced"
+    with open(os.path.join(pch, "dace_prewarm.h")) as fp:
+        assert "#include <dace/nanobind.h>" in fp.read()
 
 
-@pytest.mark.skipif(os.name != 'posix', reason='precompiled headers are only wired up for GCC/Clang')
+@pytest.mark.skipif(os.name != "posix", reason="precompiled headers are only wired up for GCC/Clang")
 def test_prewarm_header_stays_plain_without_nanobind(tmp_path, monkeypatch):
     """Without nanobind the composed header and its cache key match today's plain-dace.h behavior; a
     key that ignored the augmentation would hand one environment the other's binary header."""
-    monkeypatch.setattr(compiler, 'build_cache_root', lambda: str(tmp_path / 'cache'))
-    augmented = compiler.prepare_precompiled_header({'cpu'})
-    monkeypatch.setattr(compiler, '_nanobind_pch_identity', lambda: None)
-    plain = compiler.prepare_precompiled_header({'cpu'})
-    assert augmented and plain, 'no precompiled header was produced'
-    assert plain != augmented, 'the nanobind identity must enter the cache key'
-    with open(os.path.join(plain, 'dace_prewarm.h')) as fp:
-        assert '<dace/nanobind.h>' not in fp.read()
+    monkeypatch.setattr(compiler, "build_cache_root", lambda: str(tmp_path / "cache"))
+    augmented = compiler.prepare_precompiled_header({"cpu"})
+    monkeypatch.setattr(compiler, "_nanobind_pch_identity", lambda: None)
+    plain = compiler.prepare_precompiled_header({"cpu"})
+    assert augmented and plain, "no precompiled header was produced"
+    assert plain != augmented, "the nanobind identity must enter the cache key"
+    with open(os.path.join(plain, "dace_prewarm.h")) as fp:
+        assert "<dace/nanobind.h>" not in fp.read()
 
 
-@pytest.mark.skipif(os.name != 'posix', reason='precompiled headers are only wired up for GCC/Clang')
+@pytest.mark.skipif(os.name != "posix", reason="precompiled headers are only wired up for GCC/Clang")
 def test_precompiled_header_separates_source_trees(tmp_path, monkeypatch):
     """Two checkouts sharing a compiler must not share one .gch. The mtime guard cannot catch it: it
     walks THIS tree's runtime and compares against a header built from the other's, so a stale header
     passes while the TU compiles against foreign declarations."""
-    monkeypatch.setattr(compiler, 'build_cache_root', lambda: str(tmp_path / 'cache'))
-    mine = compiler.prepare_precompiled_header({'cpu'})
-    assert mine, 'no precompiled header was produced'
+    monkeypatch.setattr(compiler, "build_cache_root", lambda: str(tmp_path / "cache"))
+    mine = compiler.prepare_precompiled_header({"cpu"})
+    assert mine, "no precompiled header was produced"
 
-    clone = tmp_path / 'clone' / 'dace'
+    clone = tmp_path / "clone" / "dace"
     real = os.path.dirname(os.path.dirname(os.path.abspath(compiler.__file__)))
-    shutil.copytree(os.path.join(real, 'runtime', 'include'), clone / 'runtime' / 'include')
-    shutil.copytree(os.path.join(real, 'external'), clone / 'external')  # stream.h reaches into it
+    shutil.copytree(os.path.join(real, "runtime", "include"), clone / "runtime" / "include")
+    shutil.copytree(os.path.join(real, "external"), clone / "external")  # stream.h reaches into it
     # The runtime path is derived from this module's location, so relocating it is what a second
     # checkout looks like.
-    monkeypatch.setattr(compiler, '__file__', str(clone / 'codegen' / 'compiler.py'))
-    theirs = compiler.prepare_precompiled_header({'cpu'})
+    monkeypatch.setattr(compiler, "__file__", str(clone / "codegen" / "compiler.py"))
+    theirs = compiler.prepare_precompiled_header({"cpu"})
 
-    assert theirs, 'no precompiled header was produced for the second tree'
-    assert mine != theirs, 'both trees were handed the same precompiled header'
+    assert theirs, "no precompiled header was produced for the second tree"
+    assert mine != theirs, "both trees were handed the same precompiled header"
 
 
-@pytest.mark.skipif(os.name != 'posix', reason='precompiled headers are only wired up for GCC/Clang')
+@pytest.mark.skipif(os.name != "posix", reason="precompiled headers are only wired up for GCC/Clang")
 def test_vanished_precompiled_header_is_not_included(tmp_path, monkeypatch):
     """A build configured with a precompiled header must still build once that header is gone (e.g., it
     lived in /dev/shm before a reboot) and no new one is made: the configured path must not linger."""
-    monkeypatch.setattr(compiler, 'build_cache_root', lambda: str(tmp_path / 'cache'))
-    with dace.config.set_temporary('compiler', 'command_cache', value=False):
-        build_folder = build_and_check(tmp_path, 'pchvanished')
-        shutil.rmtree(tmp_path / 'cache' / 'pch')
+    monkeypatch.setattr(compiler, "build_cache_root", lambda: str(tmp_path / "cache"))
+    with dace.config.set_temporary("compiler", "command_cache", value=False):
+        build_folder = build_and_check(tmp_path, "pchvanished")
+        shutil.rmtree(tmp_path / "cache" / "pch")
         # Keep only the configured cache, so the program is compiled again against it
-        cmake_folder = os.path.join(build_folder, 'build')
+        cmake_folder = os.path.join(build_folder, "build")
         for entry in os.listdir(cmake_folder):
-            if entry != 'CMakeCache.txt':
+            if entry != "CMakeCache.txt":
                 path = os.path.join(cmake_folder, entry)
                 shutil.rmtree(path) if os.path.isdir(path) else os.remove(path)
-        with dace.config.set_temporary('compiler', 'precompiled_header', value=False):
-            build_and_check(tmp_path, 'pchvanished')
+        with dace.config.set_temporary("compiler", "precompiled_header", value=False):
+            build_and_check(tmp_path, "pchvanished")
 
 
 def test_caches_disabled_still_builds(tmp_path):
     """With every cache off the build must still work -- they are optimizations, not requirements."""
-    with dace.config.set_temporary('compiler', 'precompiled_header', value=False):
-        with dace.config.set_temporary('compiler', 'configure_cache', value=False):
-            with dace.config.set_temporary('compiler', 'command_cache', value=False):
-                build_and_check(tmp_path, 'nocaches')
+    with dace.config.set_temporary("compiler", "precompiled_header", value=False):
+        with dace.config.set_temporary("compiler", "configure_cache", value=False):
+            with dace.config.set_temporary("compiler", "command_cache", value=False):
+                build_and_check(tmp_path, "nocaches")
 
 
 def test_wrongly_named_nanobind_archive_is_ignored(tmp_path, monkeypatch):
@@ -228,18 +230,19 @@ def test_wrongly_named_nanobind_archive_is_ignored(tmp_path, monkeypatch):
     interchangeable. The planted candidate is garbage on purpose -- linking it would fail the
     build, so a passing build proves it was ignored -- and the build must then heal the cache by
     publishing the real archive under its own name."""
-    monkeypatch.setattr(compiler, 'build_cache_root', lambda: str(tmp_path / 'cache'))
+    monkeypatch.setattr(compiler, "build_cache_root", lambda: str(tmp_path / "cache"))
     cache_dir = None
-    with dace.config.set_temporary('compiler', 'interface', value='nanobind'):
-        with dace.config.set_temporary('compiler', 'precompiled_header', value=False):
+    with dace.config.set_temporary("compiler", "interface", value="nanobind"):
+        with dace.config.set_temporary("compiler", "precompiled_header", value=False):
             cache_dir = compiler.nanobind_static_cache_dir()
             os.makedirs(cache_dir)
-            with open(os.path.join(cache_dir, 'libnanobind-static-stale.a'), 'wb') as fh:
-                fh.write(b'not an archive')
-            build_and_check(tmp_path, 'staletolerant')
-    published = sorted(os.path.basename(p) for p in glob.glob(os.path.join(cache_dir, 'libnanobind*.a')))
-    assert len(published) == 2 and 'libnanobind-static-stale.a' in published, \
-        f'the build did not publish the real archive next to the stale one: {published}'
+            with open(os.path.join(cache_dir, "libnanobind-static-stale.a"), "wb") as fh:
+                fh.write(b"not an archive")
+            build_and_check(tmp_path, "staletolerant")
+    published = sorted(os.path.basename(p) for p in glob.glob(os.path.join(cache_dir, "libnanobind*.a")))
+    assert len(published) == 2 and "libnanobind-static-stale.a" in published, (
+        f"the build did not publish the real archive next to the stale one: {published}"
+    )
 
 
 @pytest.mark.gpu
@@ -247,10 +250,10 @@ def test_many_sdfgs_in_one_process(tmp_path, private_cache):
     """Five CPU then five CPU+GPU programs, back to back. The GPU half is a different shape (adds a
     ``.cu``), so it records separately; within each half only the first runs CMake, all ten stay
     correct."""
-    for device in ('cpu', 'gpu'):
-        folders = [build_and_check(tmp_path, f'seq{device}{i}', gpu=device == 'gpu') for i in range(5)]
+    for device in ("cpu", "gpu"):
+        folders = [build_and_check(tmp_path, f"seq{device}{i}", gpu=device == "gpu") for i in range(5)]
         assert ran_cmake(folders[0])
-        assert not any(ran_cmake(f) for f in folders[1:]), f'{device} builds did not replay the recording'
+        assert not any(ran_cmake(f) for f in folders[1:]), f"{device} builds did not replay the recording"
 
 
 @pytest.mark.mpi
@@ -260,12 +263,13 @@ def test_distributed_and_local_builds_interleave(tmp_path, private_cache):
     other ranks load from its folder -- the one case a folder is read by processes that did not write
     it. The interleaved local build covers the reverse: it replays rank 0's recipe."""
     from mpi4py import MPI
+
     from dace.sdfg import utils
 
     comm = MPI.COMM_WORLD
     rank = comm.Get_rank()
     if comm.Get_size() < 2:
-        raise ValueError('run this test with at least two processes')
+        raise ValueError("run this test with at least two processes")
 
     def distributed(name, gpu):
         """Build on rank 0, load on the rest, and have every rank run the result."""
@@ -277,24 +281,24 @@ def test_distributed_and_local_builds_interleave(tmp_path, private_cache):
             check(utils.distributed_compile(sdfg, comm))
             return sdfg.build_folder
 
-    cpu_folder = distributed('mpicpu', gpu=False)
+    cpu_folder = distributed("mpicpu", gpu=False)
     comm.Barrier()
 
     # A local build of the same shape, between the two distributed ones.
     if rank == 0:
-        assert not ran_cmake(build_and_check(tmp_path, 'mpilocal')), 'the local build ignored rank 0 recording'
+        assert not ran_cmake(build_and_check(tmp_path, "mpilocal")), "the local build ignored rank 0 recording"
     comm.Barrier()
 
-    gpu_folder = distributed('mpigpu', gpu=True)
+    gpu_folder = distributed("mpigpu", gpu=True)
     comm.Barrier()
 
     if rank == 0:
-        assert ran_cmake(cpu_folder), 'the first distributed build should have configured'
-        assert ran_cmake(gpu_folder), 'the CPU+GPU shape records separately from the CPU one'
+        assert ran_cmake(cpu_folder), "the first distributed build should have configured"
+        assert ran_cmake(gpu_folder), "the CPU+GPU shape records separately from the CPU one"
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-v'])
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])
 
 
 def test_cache_key_separates_hosts(monkeypatch):
@@ -303,15 +307,15 @@ def test_cache_key_separates_hosts(monkeypatch):
     carry ``-march=native``, which the key can only see as a literal string, so identical inputs on
     two different CPUs would otherwise collide and hand one host artifacts built for the other's
     instruction set. The host identity in the key is what turns that into a miss."""
-    monkeypatch.setattr(compiler, 'host_isa_id', lambda: 'cpu-a')
-    on_a = compiler.cache_key('same', 'parts')
-    monkeypatch.setattr(compiler, 'host_isa_id', lambda: 'cpu-b')
-    assert compiler.cache_key('same', 'parts') != on_a
+    monkeypatch.setattr(compiler, "host_isa_id", lambda: "cpu-a")
+    on_a = compiler.cache_key("same", "parts")
+    monkeypatch.setattr(compiler, "host_isa_id", lambda: "cpu-b")
+    assert compiler.cache_key("same", "parts") != on_a
 
 
 def test_host_isa_id_is_stable_and_nonempty():
     """A blank or drifting identity silently restores the collision above -- on every host at once,
     since they would then all agree."""
     first = compiler.host_isa_id()
-    assert first, 'no host identity derived; every CPU would share one cache key'
-    assert compiler.host_isa_id() == first, 'host identity is not stable within a process'
+    assert first, "no host identity derived; every CPU would share one cache key"
+    assert compiler.host_isa_id() == first, "host identity is not stable within a process"

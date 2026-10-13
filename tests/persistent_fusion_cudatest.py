@@ -383,14 +383,16 @@ def _mismatch_report(depth: np.ndarray, reference: np.ndarray) -> str:
     want = reference[mismatch].astype(np.int64)
     both_found = (got >= 0) & (want >= 0)
 
-    return ("Result doesn't match! "
-            f'{mismatch.size}/{depth.size} vertices differ - '
-            f'too deep (round-sync race): {int(np.count_nonzero(both_found & (got > want)))}, '
-            f'never discovered (lost frontier push): {int(np.count_nonzero((got == -1) & (want >= 0)))}, '
-            f'spurious (unreachable but assigned): {int(np.count_nonzero((want == -1) & (got >= 0)))}, '
-            f'too shallow (real bug): {int(np.count_nonzero(both_found & (got < want)))}. '
-            f'First {min(10, mismatch.size)}: indices {mismatch[:10].tolist()}, '
-            f'got {got[:10].tolist()}, expected {want[:10].tolist()}')
+    return (
+        "Result doesn't match! "
+        f"{mismatch.size}/{depth.size} vertices differ - "
+        f"too deep (round-sync race): {int(np.count_nonzero(both_found & (got > want)))}, "
+        f"never discovered (lost frontier push): {int(np.count_nonzero((got == -1) & (want >= 0)))}, "
+        f"spurious (unreachable but assigned): {int(np.count_nonzero((want == -1) & (got >= 0)))}, "
+        f"too shallow (real bug): {int(np.count_nonzero(both_found & (got < want)))}. "
+        f"First {min(10, mismatch.size)}: indices {mismatch[:10].tolist()}, "
+        f"got {got[:10].tolist()}, expected {want[:10].tolist()}"
+    )
 
 
 @pytest.mark.gpu

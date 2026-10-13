@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Both compiled-SDFG backends satisfy the shared ``CompiledSDFGProtocol``."""
+
 import warnings
 
 import numpy as np
@@ -11,7 +12,7 @@ from dace.config import set_temporary
 
 
 def test_compiled_sdfg_protocol_ctypes():
-    N = dace.symbol('N')
+    N = dace.symbol("N")
 
     @dace.program
     def protocol_probe_ctypes(A: dace.float64[N]):
@@ -19,7 +20,7 @@ def test_compiled_sdfg_protocol_ctypes():
 
     # Pin the ctypes interface so this exercises the ctypes backend even when the
     # CI leg exports DACE_compiler_interface=nanobind.
-    with set_temporary('compiler', 'interface', value='ctypes'):
+    with set_temporary("compiler", "interface", value="ctypes"):
         csdfg = protocol_probe_ctypes.to_sdfg().compile()
     assert isinstance(csdfg, CompiledSDFGProtocol)
     assert type(csdfg) is CtypesCompiledSDFG
@@ -31,7 +32,7 @@ def test_ctypes_compiled_sdfg_rename_and_deprecation():
     # The deprecated name is a subclass of the renamed class.
     assert issubclass(CompiledSDFG, CtypesCompiledSDFG)
 
-    N = dace.symbol('N')
+    N = dace.symbol("N")
 
     @dace.program
     def rename_probe(A: dace.float64[N]):
@@ -39,16 +40,16 @@ def test_ctypes_compiled_sdfg_rename_and_deprecation():
 
     # Pin the ctypes interface so this exercises the ctypes rename even when the
     # CI leg exports DACE_compiler_interface=nanobind.
-    with set_temporary('compiler', 'interface', value='ctypes'):
+    with set_temporary("compiler", "interface", value="ctypes"):
         # A normal ctypes compile returns the renamed class and does NOT warn.
         with warnings.catch_warnings():
-            warnings.simplefilter('error', DeprecationWarning)
+            warnings.simplefilter("error", DeprecationWarning)
             csdfg = rename_probe.to_sdfg().compile()
         assert type(csdfg) is CtypesCompiledSDFG
 
         # Constructing the deprecated ``CompiledSDFG`` directly warns.
         csdfg(A=np.zeros(8), N=np.int32(8))  # ensure the library is loaded
-        with pytest.warns(DeprecationWarning, match='CompiledSDFG is deprecated'):
+        with pytest.warns(DeprecationWarning, match="CompiledSDFG is deprecated"):
             deprecated = CompiledSDFG(csdfg.sdfg, csdfg._lib, csdfg.sdfg.arg_names)
         assert isinstance(deprecated, CtypesCompiledSDFG)
 
@@ -63,18 +64,18 @@ def test_ctypes_compiled_sdfg_rename_and_deprecation():
 
 
 def test_compiled_sdfg_protocol_nanobind():
-    N = dace.symbol('N')
+    N = dace.symbol("N")
 
     @dace.program
     def protocol_probe_nanobind(A: dace.float64[N]):
         A[:] = A + 1.0
 
-    with set_temporary('compiler', 'interface', value='nanobind'):
+    with set_temporary("compiler", "interface", value="nanobind"):
         csdfg = protocol_probe_nanobind.to_sdfg().compile()
     assert isinstance(csdfg, CompiledSDFGProtocol)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_compiled_sdfg_protocol_ctypes()
     test_ctypes_compiled_sdfg_rename_and_deprecation()
     test_compiled_sdfg_protocol_nanobind()

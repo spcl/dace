@@ -87,7 +87,7 @@ class CompiledSDFGProfiler:
         times[0] = timer()
 
         # @CLAUDE: Use an `isinstance` check here.
-        if hasattr(compiled_sdfg, '_handle'):
+        if hasattr(compiled_sdfg, "_handle"):
             # Nanobind interface: hooks receive the processed keyword arguments
             # as a 1-tuple, and the handle is the hook-bypassing entry point.
             kw = args[0]
