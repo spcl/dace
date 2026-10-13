@@ -368,6 +368,36 @@ def test_nested_sdfg_inherits_outer_sign_facts():
     assert not inner.arrays["y"].shape[0].atoms(sympy.Pow)
 
 
+def test_a_nested_argument_with_no_access_node_is_relaxed_like_its_outer_descriptor():
+    """A nested SDFG that only passes ``y`` on (its access is one level deeper) has no access node of ``y``;
+    its descriptor must still be relaxed, or it no longer matches the parent's and validation refuses the
+    connection (QE addusxx_g's ``ijtoh[ntyp, nhm, nhm]``)."""
+    N = dace.symbol("N", dtype=dace.int64, integer=True, positive=True)
+
+    def holder(name: str) -> dace.SDFG:
+        sdfg = dace.SDFG(name)
+        sdfg.add_symbol("N", dace.int64)
+        sdfg.add_array("y", [N, N, N], dace.float64)
+        return sdfg
+
+    leaf = holder("leaf")
+    leaf.add_state().add_access("y")
+    middle = holder("middle")  # only a nested SDFG uses y here: no access node of y at this level
+    mid_state = middle.add_state()
+    inner_node = mid_state.add_nested_sdfg(leaf, {"y"}, {}, symbol_mapping={"N": "N"})
+    mid_state.add_edge(mid_state.add_read("y"), None, inner_node, "y", dace.Memlet("y[0:N, 0:N, 0:N]"))
+    mid_state.remove_node(next(n for n in mid_state.data_nodes() if n.data == "y"))
+    outer = holder("outer")
+    state = outer.add_state()
+    nsdfg = state.add_nested_sdfg(middle, {"y"}, {}, symbol_mapping={"N": "N"})
+    state.add_edge(state.add_read("y"), None, nsdfg, "y", dace.Memlet("y[0:N, 0:N, 0:N]"))
+    assert not any(n.data == "y" for n in mid_state.data_nodes())
+
+    RelaxIntegerPowers().apply_pass(outer, {})
+    assert symstr(middle.arrays["y"].strides[0]) == symstr(outer.arrays["y"].strides[0])
+    assert symstr(middle.arrays["y"].total_size) == symstr(outer.arrays["y"].total_size)
+
+
 def test_int64_power_compiles_as_an_integer():
     """A power of int64 symbols the pass proves non-negative lowers to ``ipow`` and stays integral: as a
     double it is neither a legal OpenMP controlling predicate nor a pointer offset."""
@@ -425,5 +455,6 @@ if __name__ == "__main__":
     test_loop_condition_off_by_one_not_relaxed()
     test_relaxes_pow_inside_a_packed_product()
     test_nested_sdfg_inherits_outer_sign_facts()
+    test_a_nested_argument_with_no_access_node_is_relaxed_like_its_outer_descriptor()
     test_int64_power_compiles_as_an_integer()
     test_interstate_assignment_keeps_array_access_and_evaluation_order()

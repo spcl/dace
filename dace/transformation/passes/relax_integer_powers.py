@@ -359,7 +359,17 @@ class PowerRelaxer:
         # ``sdfg.free_symbols`` yields names; the sign / integrality assumptions
         # live on the symbol objects in the array descriptors, so collect those.
         facts = SignFacts.of_sdfg(sdfg)
-        self.visit_region(sdfg, ranges, facts if inherited is None else facts.widened_by(inherited), OrderedSet())
+        if inherited is not None:
+            facts = facts.widened_by(inherited)
+        relaxed_arrays: OrderedSet = OrderedSet()
+        self.visit_region(sdfg, ranges, facts, relaxed_arrays)
+        # Every descriptor, not only those an access node reached: a nested SDFG's argument may have no access node
+        # of its own at this level, and left un-relaxed it no longer matches the parent's relaxed descriptor
+        # (validation compares the two structurally).
+        for name, desc in sdfg.arrays.items():
+            if name not in relaxed_arrays and isinstance(desc, data.Array):
+                relaxed_arrays.add(name)
+                self.relax_descriptor(desc, ranges, facts)
 
     def visit_region(self, region, ranges: Ranges, facts: SignFacts, relaxed_arrays: OrderedSet) -> None:
         # Interstate edges carry symbol assignments + branch conditions that codegen
