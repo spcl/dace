@@ -628,7 +628,15 @@ class ConstantRangeMemlet(MemletPattern):
 
         self.params = variable_context[-1]
 
-        return True
+        # Each point is compared by value: an expression that does not evaluate to a number at the first point (e.g.
+        # an unknown function) cannot be bounded
+        first = {p: dim[0] for p, dim in zip(self.params, node_range)}
+        return all(
+            sympy.sympify(_subexpr(dexpr, first)).is_comparable
+            for expr in expressions
+            for dexpr in expr
+            for dexpr in (dexpr if isinstance(dexpr, tuple) else (dexpr,))
+        )
 
     # TODO: An integer set library should shine here (unify indices)
     def propagate(self, array, expressions, node_range, facts: symbolic.Facts):
