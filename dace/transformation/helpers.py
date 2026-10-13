@@ -389,6 +389,14 @@ def nest_state_subgraph(
                 input_arrays.add(node.data)
             if node.has_writes(state):
                 output_arrays[node.data] = state.in_edges(node)[0].data.wcr
+    # One container, one connector: a container a boundary edge already moves in a direction needs no
+    # full-array interface in that direction, and its boundary connector takes the container's own name
+    # (below). A second interface binds the same outer container twice, and its writebacks are unordered
+    # with the boundary one's.
+    for edge in inputs:
+        input_arrays.discard(edge.data.data)
+    for edge in outputs:
+        output_arrays.pop(edge.data.data, None)
 
     # Create the nested SDFG
     nsdfg = SDFG(name or "nested_" + state.label)
@@ -408,7 +416,7 @@ def nest_state_subgraph(
     # descriptors in nested SDFG
     input_names = {}
     output_names = {}
-    nested_names: dict[str, str] = {}
+    nested_names: dict[str, str] = {name: name for name in input_arrays | output_arrays.keys()}
     for edge in inputs:
         if edge.data.data is None:  # Skip edges with an empty memlet
             continue
@@ -1542,25 +1550,6 @@ def get_parent_map(state: SDFGState, node: nodes.Node | None = None) -> tuple[no
         curscope = cursdfg.parent_nsdfg_node
         cursdfg = cursdfg.parent_sdfg
     return None
-
-
-def get_parent_maps(state: SDFGState, node: nodes.Node) -> list[tuple[nodes.EntryNode, SDFGState]]:
-    """
-    Returns every scope enclosing the node, innermost first, continuing through enclosing nested SDFGs.
-
-    :param state: The state of the node.
-    :param node: The node to test.
-    :return: A list of (entry node, state) tuples, as get_parent_map returns them one at a time.
-    """
-    scopes = []
-    while state is not None:
-        entry = state.entry_node(node)
-        while entry is not None:
-            scopes.append((entry, state))
-            entry = state.entry_node(entry)
-        node = state.sdfg.parent_nsdfg_node
-        state = state.sdfg.parent
-    return scopes
 
 
 def redirect_edge(

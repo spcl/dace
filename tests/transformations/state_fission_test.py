@@ -466,7 +466,7 @@ def test_state_fission():
     sdfg = make_nested_sdfg_cpu()
 
     # state fission
-    state = sdfg.states()[0]
+    state = next(iter(sdfg.states()))
     node_x = state.nodes()[0]
     node_y = state.nodes()[1]
     node_z = state.nodes()[2]
@@ -476,7 +476,7 @@ def test_state_fission():
     helpers.state_fission(subg)
     sdfg.validate()
 
-    assert len(sdfg.states()) == 2
+    assert sdfg.num_states() == 2
 
     # run the program
     vec_add = sdfg.compile()
