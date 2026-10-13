@@ -41,16 +41,11 @@ inline void check_gpu_error(StateT *state, bool enabled, GetLastError &&last_err
             "issue originates from.");
 }
 
-// Boolean scalar arguments need their own caster: nanobind's bool caster only
-// ever accepts an exact Python bool, and the integer-caster detour this
-// interface used to take (binding the parameter as uint8_t) broke when
-// nanobind 2.14 narrowed integer conversion to the __index__ protocol just as
-// numpy removed __index__ from numpy.bool_ (int() still works, index() does
-// not). The caster restores the intended acceptance set - Python bool,
-// numpy.bool_, and integer-like values (Python int, numpy integer scalars) -
-// and nothing more: floats have no __index__ and keep being rejected. Kept as
-// a caster rather than per-argument setup code so it slots uniformly into
-// call() and initialize().
+// Boolean scalar arguments need their own caster: nanobind's bool caster
+// accepts only an exact Python bool, and binding as an integer does not cover
+// numpy.bool_ (which has no __index__). This caster accepts Python bool,
+// numpy.bool_ and integer-like values - and nothing more: floats have no
+// __index__ and stay rejected.
 //
 // The implicit bool conversion is load-bearing: a bool SYMBOL's binding
 // parameter is passed by its raw name into init_impl (and the workspace

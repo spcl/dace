@@ -148,11 +148,9 @@ def test_explicit_ctypes_still_ctypes():
 
 
 def test_auto_nanobind_renames_when_ctypes_holds_the_identity():
-    """A (folder, name) identity resident as a loaded ctypes DLL must drive the
-    rename loop for a nanobind compile of the same identity: rebuilding the same
-    library path hands importlib the resident ctypes mapping instead of the
-    fresh module file (dlopen short-circuits on an exact pathname match against
-    the link map), which surfaces as ``ImportError: ... PyInit_<name>``."""
+    """An identity resident as a loaded ctypes DLL must drive the rename loop
+    for a nanobind compile of the same identity: dlopen short-circuits on the
+    pathname and would hand importlib the stale ctypes mapping."""
     from dace.codegen.nanobind_compiled_sdfg import NanobindCompiledSDFG
 
     with set_temporary("cache", value="unique"):

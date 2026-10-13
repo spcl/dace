@@ -15,15 +15,9 @@ from dace.config import set_temporary
 def nanobind_interface():
     """Pins ``compiler.interface`` to nanobind for the duration of a test.
 
-    Not ``autouse``: a good third of this file only calls
-    ``generate_bindings_code`` and compiles nothing, and those tests should not
-    depend on a config change they never read.
-
-    ``set_temporary`` takes precedence over a ``DACE_compiler_interface``
-    export, which only seeds the configuration default when it is loaded. That
-    is what makes these tests self-sufficient: they exercise the nanobind
-    interface whatever interface the surrounding CI leg selects, so the ctypes
-    legs and the GPU job produce real nanobind coverage.
+    Not ``autouse`` (a good third of this file compiles nothing).
+    ``set_temporary`` beats a ``DACE_compiler_interface`` export, so these
+    tests exercise the nanobind interface in every CI leg.
     """
     with set_temporary("compiler", "interface", value="nanobind"):
         yield
@@ -164,12 +158,9 @@ def test_nanobind_interface_return_override_wrong_dtype_rejected_by_binding(nano
 
 
 def test_nanobind_interface_return_override_too_small_rejected(nanobind_interface):
-    """A caller-provided buffer SMALLER than the symbol-derived return size is
-    rejected (the program writes through the descriptor's shape and strides -
-    a too-small buffer means out-of-bounds writes). A LARGER buffer is a
-    legitimate pattern and passes: the program fills its prefix and the tail
-    stays untouched (the contract local_storage_test's test_uneven relies
-    on)."""
+    """A caller-provided return buffer smaller than the symbol-derived size is
+    rejected (out-of-bounds writes); a LARGER buffer is legitimate and passes,
+    its tail untouched."""
     import pytest
 
     @dace.program
@@ -320,11 +311,8 @@ def test_nanobind_interface_rename_own_build_folder(nanobind_interface):
 
 def test_nanobind_interface_reuse_unchanged_module(nanobind_interface):
     """Recompiling an UNCHANGED SDFG whose identity is already loaded reuses
-    the loaded module - no rename, no rebuild: the module bakes the source
-    SDFG's pre-codegen content hash (`source_sdfg_hash`) and compile()
-    compares against it before entering the rename loop. A CHANGED SDFG
-    still renames-and-rebuilds (the module cannot be reloaded). Gated by
-    ``compiler.nanobind_reuse_loaded`` (default: enabled)."""
+    the loaded module via the baked `source_sdfg_hash`; a CHANGED SDFG still
+    renames-and-rebuilds."""
     import sympy
 
     from dace import symbolic
@@ -364,13 +352,9 @@ def test_nanobind_interface_reuse_unchanged_module(nanobind_interface):
 
 
 def test_nanobind_interface_reuse_refused_after_foreign_rebuild():
-    """A ctypes rebuild of the same (folder, name) identity invalidates the
-    loaded-module reuse: the folder's INTERFACE marker now says ctypes, so a
-    later nanobind compile of the unchanged SDFG must NOT reuse the stale
-    sys.modules entry (loading by marker would even hand back a ctypes
-    object). It renames into its own folder instead. Routine under the
-    ``auto`` default, where ctypes-pinned tests interleave with auto
-    compiles of same-named programs."""
+    """A ctypes rebuild of the same identity flips the folder's INTERFACE
+    marker: a later nanobind compile must NOT reuse the stale sys.modules
+    entry and renames into its own folder instead."""
     import sympy
 
     from dace import symbolic
@@ -415,12 +399,9 @@ def test_nanobind_interface_reuse_refused_after_foreign_rebuild():
 
 
 def test_nanobind_interface_external_nested_sdfg(nanobind_interface):
-    """An SDFG that still carries an UNRESOLVED external nested SDFG
-    (``NestedSDFG.sdfg is None``; the content is only loaded from
-    ``ext_sdfg_path``) compiles, runs, and takes part in content reuse:
-    the reuse key is computed on a resolved deepcopy - ``to_json()``
-    cannot recurse into a missing nested SDFG, and ``self`` must stay
-    unresolved."""
+    """An SDFG carrying an UNRESOLVED external nested SDFG compiles, runs and
+    takes part in content reuse: the reuse key is computed on a resolved
+    deepcopy, while ``self`` must stay unresolved."""
     import os
     import tempfile
 
@@ -473,10 +454,8 @@ def test_nanobind_interface_external_nested_sdfg(nanobind_interface):
 
 def test_nanobind_interface_handle_sdfg_isolated(nanobind_interface):
     """The handle's ``sdfg`` is isolated from the caller's object on EVERY
-    compile() return path - freshly built, content-reuse, use_cache
-    cached-binary, and the regenerate_code=False branch. Passing ``self``
-    (the old behavior of the non-codegen paths) leaked later mutations of
-    the original into the handle."""
+    compile() return path; passing ``self`` leaked later mutations of the
+    original into the handle."""
     # The else-branch leg (c4) rebuilds from the generated sources, which
     # only exist in development folder mode (production trims them) - and
     # an existing folder's FOLDER_MODE marker overrides the config, so the
@@ -594,11 +573,9 @@ def test_nanobind_interface_rename_third_compile_consistent(nanobind_interface):
 
 
 def test_nanobind_interface_report_follows_rename(nanobind_interface):
-    """Instrumentation reports of a collision-renamed program are found via the
-    compiled handle's sdfg (the renamed compile copy, which knows its own
-    folder). The ORIGINAL object keeps looking in its identity-derived folder
-    and finds nothing - the accepted limitation behind refusing
-    SDFG.safe_call() on nanobind."""
+    """Instrumentation reports of a collision-renamed program are found via
+    the compiled handle's sdfg; the ORIGINAL object keeps looking in its
+    identity-derived folder and finds nothing."""
     N = dace.symbol("N")
 
     @dace.program
@@ -639,10 +616,8 @@ def test_nanobind_interface_report_follows_rename(nanobind_interface):
 
 def test_nanobind_interface_perf_folder_only_when_instrumented(nanobind_interface):
     """The perf/ report folder is created exactly when the SDFG is
-    instrumented, in BOTH folder modes. Production mode used to skip it
-    entirely, silently dropping every report (the runtime's report.save()
-    neither creates directories nor reports a failed open); uninstrumented
-    folders stay lean in both modes."""
+    instrumented, in BOTH folder modes (a missing folder would silently drop
+    every report)."""
     import os
 
     N = dace.symbol("N")
@@ -670,11 +645,10 @@ def test_nanobind_interface_perf_folder_only_when_instrumented(nanobind_interfac
 
 
 def test_nanobind_interface_sdfg_safe_call_refused(nanobind_interface):
-    """SDFG.safe_call() is refused on the nanobind interface: it compiles
-    internally and hides the compiled object, so after a collision rename any
-    post-call query on the original SDFG (e.g. get_latest_report()) would
-    silently look in the wrong folder. compile() + CompiledSDFG.safe_call()
-    is the supported route."""
+    """SDFG.safe_call() is refused on the nanobind interface: after a
+    collision rename, post-call queries on the original SDFG would silently
+    look in the wrong folder. compile() + CompiledSDFG.safe_call() is the
+    supported route."""
     sdfg = dace.SDFG("sdfg_safe_call_refuse_probe")
     sdfg.add_array("A", [4], dace.float64)
     with pytest.raises(NotImplementedError, match="safe_call"):
@@ -769,16 +743,9 @@ def test_nanobind_interface_get_exported_function(nanobind_interface):
 
 def test_nanobind_interface_pyobject_array_and_return_binding():
     """pyobject ARRAY arguments and pyobject RETURNS both bind through the
-    array-interface dict, not through nb::ndarray.
-
-    DLPack refuses object arrays outright ("DLPack only supports signed/unsigned
-    integers, float and complex dtypes"), exactly as it refuses the ml_dtypes-backed
-    low-precision types, so both take the same __array_interface__ route: read the
-    dict, check the typestr kind letter, cast the raw pointer. A pyobject return is
-    additionally decayed to the single contained object on the way out, which is what
-    the ctypes interface does (``_return_arrays[i].item()`` whenever the return is a
-    pyobject).
-    """
+    array-interface dict (DLPack refuses object arrays outright); a pyobject
+    return additionally decays to the single contained object (ctypes
+    parity)."""
     from dace import dtypes
     from dace.codegen.nanobind_bindings import generate_bindings_code
 
@@ -800,11 +767,9 @@ def test_nanobind_interface_pyobject_array_and_return_binding():
 
 
 def test_nanobind_interface_pyobject_array_arg_e2e(nanobind_interface):
-    """E2E: every slot of an object array reaches the program as the very
-    address of the caller's Python object (on CPython ``id()`` is that
-    address). The caller's array owns the references and the nb::object
-    parameter keeps it alive across the call - the same lifetime contract as
-    ctypes, which also hands out pointers into the caller's buffer."""
+    """E2E: every slot of an object array reaches the program as the address
+    of the caller's Python object (on CPython ``id()`` is that address); the
+    caller's array owns the references (ctypes lifetime contract)."""
     from dace import dtypes
 
     sdfg = dace.SDFG("pyobject_array_passthrough")
@@ -1230,11 +1195,8 @@ def test_nanobind_interface_symbol_inference_missing(nanobind_interface):
 
 
 def test_nanobind_interface_arg_names_symbol_not_inferred():
-    """A symbol listed in ``SDFG.arg_names`` is an explicit parameter of the
-    user-facing signature: it binds as a plain *required* scalar (no ``__opt``
-    optional, no ``nb::none()`` default, no shape-derived fallback). Only its
-    absence from ``arg_names`` makes a symbol an inference candidate -
-    membership alone drives the split."""
+    """A symbol listed in ``SDFG.arg_names`` binds as a plain REQUIRED scalar;
+    only absence from ``arg_names`` makes a symbol an inference candidate."""
     from dace.codegen.nanobind_bindings import generate_bindings_code
 
     N = dace.symbol("N")
@@ -1264,16 +1226,10 @@ def test_nanobind_interface_arg_names_symbol_not_inferred():
 
 
 def test_nanobind_interface_symbol_inference_cross_symbol(nanobind_interface):
-    """``A[a + b]`` with ``b`` promised as an explicit parameter: ``a`` is
-    inferable as ``A.shape(0) - b``. A dim expression may reference further
-    symbols besides the target, as long as each is itself listed in
-    ``arg_names`` (a plain required parameter, in scope at the fallback).
-
-    Hand-built via the SDFG API: the Python frontend rejects a parameter named
-    like a symbol (``def testee(A: dace.float64[a + b], b: dace.int32)`` dies
-    with ``FileExistsError: Cannot create symbol "b"``), so the explicit-``b``
-    promise is expressed by listing it in ``arg_names``. The memlet must use
-    the symbols - a shape-only symbol does not enter ``arglist()``."""
+    """``A[a + b]`` with ``b`` listed in ``arg_names``: an omitted ``a`` is
+    inferable as ``A.shape(0) - b``. Hand-built via the SDFG API (the frontend
+    rejects a parameter named like a symbol), and the memlet must use the
+    symbols - a shape-only symbol does not enter ``arglist()``."""
     from dace.codegen.nanobind_bindings import generate_bindings_code
 
     def build():
@@ -1306,12 +1262,9 @@ def test_nanobind_interface_symbol_inference_cross_symbol(nanobind_interface):
 
 
 def test_nanobind_interface_bool_scalar_binds_via_caster():
-    """A bool scalar arg binds through the shared dace_bool caster: nanobind's
-    own bool caster accepts only an exact Python bool, and the integer-caster
-    detour (uint8_t) died with nanobind 2.14 (integer conversion narrowed to
-    __index__) x numpy 2.5 (numpy.bool_ lost __index__). The caster lives in
-    the runtime helpers header (<dace/nanobind_helpers.h>), shared by every
-    generated module."""
+    """A bool scalar binds through the shared dace_bool caster in
+    <dace/nanobind_helpers.h>: nanobind's own bool caster accepts only an
+    exact Python bool, and numpy.bool_ has no __index__."""
     import os
 
     from dace.codegen.nanobind_bindings import generate_bindings_code
@@ -1392,12 +1345,8 @@ def test_nanobind_interface_bool_scalar_numpy_input(nanobind_interface):
 
 
 def test_nanobind_interface_string_argument(nanobind_interface):
-    """A ``dtypes.string`` scalar argument marshals a Python ``str`` (and ``None``) into the kernel.
-
-    The kernel reads the first byte of the string, or writes -1 when the pointer
-    is null - so passing a ``str`` observes the bytes, and passing ``None``
-    observes the null-pointer path (matching the ctypes marshaller).
-    """
+    """A ``dtypes.string`` scalar marshals a Python ``str`` into the kernel
+    and ``None`` as a null pointer (ctypes parity)."""
 
     @dace.program
     def string_arg_nanobind(s: str, out: dace.int8[1]):
@@ -1446,13 +1395,9 @@ def test_nanobind_interface_optional_array(nanobind_interface):
 
 
 def test_nanobind_interface_nullable_args_enable_none():
-    """Nullable arguments emit ``nb::arg(...).none()`` in the generated bindings.
-
-    nanobind rejects None-valued arguments unless ``.none()`` is set;
-    ``std::optional`` accepts None implicitly only on some nanobind versions, so
-    the generator must opt in explicitly. This is a version-independent guard
-    (the end-to-end None tests pass regardless of .none() on lenient nanobinds).
-    """
+    """Nullable arguments emit ``nb::arg(...).none()``: nanobind rejects None
+    without it, and ``std::optional``'s implicit None acceptance is
+    version-dependent."""
     from dace import dtypes
     from dace.codegen.nanobind_bindings import generate_bindings_code
 
@@ -1473,11 +1418,9 @@ def test_nanobind_interface_nullable_args_enable_none():
 
 
 def test_nanobind_interface_must_pass_symbols_extracted_first():
-    """Symbols that must be passed explicitly (no inference source, so they are
-    never legitimately None) are extracted at the top of ``call()``, before the
-    inferable-symbol deductions. This fixes the evaluation order so a deduction
-    may later reference an explicitly-passed symbol (e.g. shape ``(a + b,)``
-    with ``a`` promised by the caller and ``b`` deduced from the shape)."""
+    """Must-pass symbols are extracted at the top of ``call()``, before the
+    inferable-symbol deductions, so a deduction may reference an
+    explicitly-passed symbol."""
     from dace.codegen.nanobind_bindings import generate_bindings_code
 
     a = dace.symbol("a")  # inferable from A's shape
@@ -1513,11 +1456,9 @@ def test_nanobind_interface_load_reuses_same_artifact(nanobind_interface):
 
 
 def test_nanobind_interface_load_distinct_artifact_coexists(nanobind_interface):
-    """A distinct artifact under an already-loaded generated name loads as its
-    own module: registration is ``dace.generated.<magic>.<name>`` with
-    ``<magic>`` derived from the SDFG's resolved build folder, so only the
-    same (folder, name) pair reuses a loaded module - artifacts in different
-    folders coexist."""
+    """Artifacts in different folders coexist: the registration magic derives
+    from the build folder, so only the same (folder, name) pair reuses a
+    loaded module."""
     import os
     import shutil
     import tempfile
@@ -1599,11 +1540,10 @@ def test_nanobind_interface_load_unverifiable_module_rejected():
 
 
 def test_nanobind_interface_same_name_different_programs_coexist(nanobind_interface):
-    """Two different programs sharing an SDFG name load side by side and each
-    executes its own code: the sys.modules key carries the build-folder magic, and the
-    generated C++ namespace carries a content hash, so nanobind's process-wide
-    type registry (keyed by type name) cannot conflate their handle types and
-    silently dispatch one program's handle into the other's methods."""
+    """Two different programs sharing an SDFG name load side by side: the
+    sys.modules key carries the folder magic and the C++ namespace a content
+    hash, so nanobind's process-wide type registry cannot conflate their
+    handle types."""
 
     def make(addend):
         sdfg = dace.SDFG("coexist_tester")
@@ -1753,15 +1693,10 @@ def test_nanobind_interface_complex_array(nanobind_interface):
 
 
 def test_nanobind_interface_includes_umbrella_header():
-    """The generated TU includes the runtime umbrella header, which carries the include set.
-
-    The umbrella (<dace/nanobind.h>) is what the binary-header machinery
-    precompiles, so the generated TU must reference it instead of spelling the
-    nanobind includes out itself. The header in turn must provide the dace type
-    headers (the dace:: ndarray scalar aliases resolve only once they are
-    included) and every stl caster header the bindings rely on (casters are
-    opt-in per included header).
-    """
+    """The generated TU includes the precompilable umbrella header
+    (<dace/nanobind.h>) instead of spelling the includes out itself; the
+    umbrella must provide the dace type headers and every opt-in stl caster
+    header the bindings rely on."""
     from dace import dtypes
     from dace.codegen.nanobind_bindings import generate_bindings_code
 
@@ -1796,15 +1731,9 @@ def test_nanobind_interface_includes_umbrella_header():
 
 
 def test_nanobind_interface_generated_tu_is_self_contained(tmp_path):
-    """A representative generated TU syntax-checks under a second compiler.
-
-    GCC's libstdc++ leaks standard headers transitively; LLVM's libc++ does
-    not. The umbrella header lists every std header the generated code uses
-    explicitly, and this gate compiles a TU exercising the string, optional,
-    pyobject, bool and return branches with clang++ (against libc++ where
-    available), so a generated dependency on a transitive include cannot land
-    silently.
-    """
+    """A representative generated TU syntax-checks under clang++ (libc++
+    where available): GCC's libstdc++ leaks std headers transitively, so a
+    generated dependency on a transitive include cannot land silently."""
     import shutil
     import subprocess
     import sysconfig
@@ -1860,17 +1789,9 @@ def test_nanobind_interface_generated_tu_is_self_contained(tmp_path):
 
 
 def test_nanobind_interface_vector_array(nanobind_interface):
-    """A vector (veclen) array binds as its base scalar and copies correctly.
-
-    Reproduces the BLAS veclen failures: the ndarray scalar must be the base
-    type (float), while the pointer handed to the kernel stays dace::vec<float,2>*.
-
-    Both buffers are wrapped in sentinel padding on either side and only the
-    interior is passed, so any access past the intended N vectors is caught as a
-    corrupted guard region. The aligned vector type is wider than a plain scalar,
-    so this keeps a future size miscalculation from silently over-reading or
-    over-writing.
-    """
+    """A vector (veclen) array binds as its base scalar (the kernel pointer
+    stays dace::vec<float,2>*). Sentinel padding around both buffers catches
+    any access past the intended N vectors."""
     N = dace.symbol("N")
     vtype = dace.vector(dace.float32, 2)
 
@@ -1902,11 +1823,8 @@ def test_nanobind_interface_vector_array(nanobind_interface):
 
 
 def test_nanobind_interface_vector_uses_base_scalar():
-    """A vector array's nb::ndarray uses the base scalar; the cast target stays dace::vec.
-
-    Version-independent guard: nb::ndarray needs a real scalar type, not the
-    dace::vec struct, but the pointer passed to the kernel must remain dace::vec*.
-    """
+    """A vector array's nb::ndarray uses the base scalar; the cast target
+    stays dace::vec*."""
     from dace.codegen.nanobind_bindings import generate_bindings_code
 
     sdfg = dace.SDFG("vec_scalar_probe")
@@ -1939,12 +1857,8 @@ def test_nanobind_interface_filename(nanobind_interface):
 
 
 def test_nanobind_interface_single_element_tuple_return(nanobind_interface):
-    """A single-element tuple return comes back as a 1-tuple, not a bare array.
-
-    DaCe names a single value ``__return`` but a one-element tuple ``__return_0``,
-    so the wrapper must distinguish them (a bare ``len == 1`` check would collapse
-    the 1-tuple to the array).
-    """
+    """A one-element tuple return comes back as a 1-tuple, not a bare array
+    (``__return_0`` vs ``__return``; a bare len==1 check would collapse it)."""
     N = dace.symbol("N")
 
     @dace.program
@@ -2081,12 +1995,9 @@ def test_nanobind_interface_gpu_return_binding():
 
 
 def test_nanobind_interface_gpu_error_record_binding():
-    """With a GPU target present, the binding reads the SDFG's OWN error record
-    (``__dace_gpu_last_error``, present exactly when the CUDA target emitted its
-    init/exit pair) after each program call, instead of consulting the
-    process-global CUDA last-error slot - that slot is per-host-thread and
-    shared with every other GPU user in the process, so it can carry
-    third-party state (mirrors the ctypes interface's mechanism)."""
+    """With a GPU target present, the binding reads the SDFG's OWN error
+    record (``__dace_gpu_last_error``) after each call, never the
+    process-global CUDA last-error slot (shared with every other GPU user)."""
     from dace.codegen.nanobind_bindings import generate_bindings_code
 
     sdfg = dace.SDFG("gpu_error_record_probe")
@@ -2201,13 +2112,9 @@ def test_nanobind_interface_gpu_has_gpu_code(nanobind_interface):
 
 @pytest.mark.gpu
 def test_nanobind_interface_gpu_workspace(nanobind_interface):
-    """External-memory workspace in DEVICE memory: the workspace buffer is a
-    CuPy array, and its device pointer is what reaches the state struct.
-
-    ``set_workspace`` binds the buffer as an unconstrained ``nb::ndarray<>``
-    (no device annotation), so this is the test that a device buffer actually
-    survives that path - test_nanobind_interface_workspace only covers
-    ``CPU_Heap``."""
+    """External-memory workspace in DEVICE memory: a CuPy buffer's device
+    pointer survives ``set_workspace``'s unconstrained ``nb::ndarray<>``
+    binding (the CPU_Heap test does not cover this)."""
     cp = pytest.importorskip("cupy")
     N = dace.symbol("N")
 
@@ -2245,11 +2152,9 @@ def test_nanobind_interface_gpu_workspace(nanobind_interface):
 
 @pytest.mark.gpu
 def test_nanobind_interface_gpu_error_check(monkeypatch):
-    """The GPU error check lives in the compiled binding (it reads the SDFG's
-    own error record there, mirroring the ctypes mechanism): its exception
-    propagates unchanged through the wrapper, and the wrapper NEVER consults
-    the process-global GPU runtime slot - that slot is shared with every other
-    GPU user in the process and can carry third-party state."""
+    """The GPU error check lives in the compiled binding: its exception
+    propagates unchanged, and the wrapper NEVER consults the process-global
+    GPU runtime slot."""
     import types
 
     from dace.codegen import common
@@ -2395,11 +2300,8 @@ def test_nanobind_interface_finalize_error_translation(monkeypatch):
 
 
 def test_nanobind_interface_float16_array_binding():
-    """A float16 array binds as nb::ndarray<dace::float16>; the dtype_traits
-    specialization teaching nanobind that dace::float16 is a 16-bit float (its
-    own dtype detection uses std::is_floating_point, false for the dace::half
-    struct) is shared static content in the runtime helpers header, so the
-    generated TU carries none of it."""
+    """A float16 array binds as nb::ndarray<dace::float16> through the shared
+    dtype_traits specialization in the runtime helpers header."""
     import os
 
     from dace.codegen.nanobind_bindings import generate_bindings_code
@@ -2578,12 +2480,10 @@ def test_nanobind_interface_unsupported_reason_predicate():
 
 
 def test_nanobind_interface_array_like_wrapper_arguments(nanobind_interface):
-    """The ctypes marshaller accepted any object implementing
-    ``__array_interface__`` (NDSL's Quantity, GT4Py storages); nanobind's
-    dispatcher ingests numpy/DLPack only, and ``auto`` cannot route around a
-    CALL-TIME type. The wrapper repairs a failed dispatch once by swapping
-    array-likes for zero-copy views (by-reference semantics preserved); the
-    fast path stays a pure passthrough for native types."""
+    """The wrapper repairs a failed dispatch once by swapping array-like
+    wrappers (NDSL Quantity, GT4Py storages) for zero-copy views, preserving
+    by-reference semantics; the fast path stays a pure passthrough for native
+    types."""
 
     @dace.program
     def tester(A: dace.float64[10]):
@@ -2608,13 +2508,10 @@ def test_nanobind_interface_array_like_wrapper_arguments(nanobind_interface):
 
 
 def test_nanobind_interface_positional_arguments_map_to_arg_names(nanobind_interface):
-    """Positional arguments bind by ``arg_names`` (ctypes parity), never by the
-    binding's parameter order: extras beyond ``arg_names`` are dropped with a
-    warning (the ctypes mapping zip-truncates silently), and a name passed
-    both positionally and as a keyword is a clear error. Previously the fast
-    path forwarded positionals raw, so an extra positional fell onto the next
-    binding slot and collided with (or silently replaced) a keyword argument -
-    surfaced by softmax_test's autodiff call ``sdfg(x, out, ..., gradient_x=...)``."""
+    """Positional arguments bind by ``arg_names`` (ctypes parity), never by
+    the binding's parameter order: extras are dropped with a warning, a
+    pos+kw duplicate is an error. A raw passthrough let an extra positional
+    fall onto the next binding slot and silently replace a keyword."""
     sdfg = dace.SDFG("positional_map_prog")
     sdfg.add_array("x", [10], dace.float64)
     sdfg.add_array("g", [10], dace.float64)
@@ -2636,12 +2533,9 @@ def test_nanobind_interface_positional_arguments_map_to_arg_names(nanobind_inter
 
 
 def test_nanobind_interface_return_shape_symbol_not_in_arglist(nanobind_interface):
-    """A symbol appearing only in a return descriptor's shape does not enter
-    ``arglist()`` (nothing in the dataflow 'uses' it), but the in-binding
-    return allocation renders it into C++ - so it must bind as a parameter,
-    and it must NOT be forwarded to the extern "C" program call, whose
-    signature does not take it (surfaced by the distributed pgemv test:
-    ``error: 'GM' was not declared in this scope``)."""
+    """A symbol appearing only in a return descriptor's shape is absent from
+    ``arglist()`` but must bind as a parameter - and must NOT be forwarded to
+    the extern "C" program call, whose signature does not take it."""
     sym = dace.symbol("RETSYM", dace.int64)
     sdfg = dace.SDFG("ret_only_symbol_prog")
     sdfg.add_symbol("RETSYM", dace.int64)

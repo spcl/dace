@@ -2,9 +2,7 @@
 """Tests that must behave identically on BOTH Python <-> C interfaces.
 
 Every test takes the ``compiler_interface`` fixture and therefore runs once
-under ``ctypes`` and once under ``nanobind``; the fixture also drops the
-``DACE_compiler_interface`` environment variable, which would otherwise
-override the per-test configuration (the CI matrix sets it globally).
+under ``ctypes`` and once under ``nanobind``.
 """
 
 import numpy as np
@@ -22,15 +20,11 @@ def compiler_interface(request):
 
 def test_vector_return_exotic_strides(compiler_interface):
     """A vector-dtype return with PERMUTED, padded strides allocates
-    correctly: the lane dimension is appended as a NEW trailing dimension
-    with scalar stride 1, independent of where the vector-stride-1 dimension
-    sits. Descriptor: shape (2, 3, 4), strides (3, 1, 12) in VECTOR elements
-    (stride-1 in the middle, dim 2 padded), total_size 48 vector elements.
-
-    Input and output use DIFFERENT strides (same shape) and the copy goes
-    through a MAP: an identical-layout whole-array copy would lower to one
-    memcpy and never exercise the per-dimension addressing that must agree
-    with the returned array's strides."""
+    correctly: the lane dimension is appended trailing with scalar stride 1,
+    wherever the vector-stride-1 dimension sits. Input and output use
+    DIFFERENT strides and the copy goes through a MAP - an identical-layout
+    copy would lower to one memcpy and never exercise the per-dimension
+    addressing."""
     vec2 = dace.vector(dace.float64, 2)
     sdfg = dace.SDFG(f"vec_ret_exotic_{compiler_interface}")
     sdfg.add_array("A", [2, 3, 4], vec2, strides=[12, 4, 1], total_size=24)

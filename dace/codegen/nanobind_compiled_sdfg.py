@@ -22,16 +22,12 @@ from dace.codegen import compiler
 def _unwrap_array_likes(args: tuple[Any, ...], kwargs: dict[str, Any]) -> tuple[tuple[Any, ...], dict[str, Any]] | None:
     """Swaps array-like WRAPPER objects for zero-copy ndarray views, or ``None``.
 
-    The ctypes marshaller accepted any object implementing the array-interface
-    standards (see ``dtypes.is_array``: NDSL's Quantity, GT4Py storages, ...);
-    nanobind's dispatcher ingests numpy/DLPack objects only, and the ``auto``
-    interface selection cannot route around a call-time type. This repair runs
-    only after a failed dispatch: each array-like that is not already a numpy
-    array is replaced by a zero-copy view of its buffer (``cupy.asarray`` for
-    ``__cuda_array_interface__`` objects), preserving by-reference semantics.
-    Objects speaking DLPack (torch tensors, cupy arrays) never fail dispatch
-    and never reach this. Returns ``None`` when nothing was unwrapped, so the
-    caller re-raises the original dispatch error.
+    The ctypes marshaller accepted any ``dtypes.is_array`` object (NDSL's
+    Quantity, GT4Py storages, ...); nanobind's dispatcher ingests numpy/DLPack
+    objects only. This repair runs only after a failed dispatch and replaces
+    each such wrapper by a zero-copy view of its buffer, preserving
+    by-reference semantics. Returns ``None`` when nothing was unwrapped, so
+    the caller re-raises the original dispatch error.
     """
 
     def _view(value):
@@ -62,52 +58,31 @@ def _unwrap_array_likes(args: tuple[Any, ...], kwargs: dict[str, Any]) -> tuple[
 class NanobindCompiledSDFG:
     """Interface to a compiled SDFG using the ``nanobind`` bindings.
 
-    It allows to call a compiled SDFG binary from Python. Unlike ``CompiledSDFG``
-    it does not use ``ctypes`` but ``nanobind``.
+    It allows to call a compiled SDFG binary from Python; unlike
+    ``CompiledSDFG`` the marshalling happens in the compiled bindings, not in
+    ``ctypes``. It implements the same interface as ``CompiledSDFG``, with
+    these deviations:
 
-    - It ensures that the SDFG object is properly initialized, either by a
-        direct call to ``initialize()`` or the first time it is called.
-    - Marshalling Python arguments into C arguments, such that it can be called.
-        Most of the transformation happens in the bindings and it is thus faster.
+    - The advanced three-step interface (``construct_arguments()`` /
+      ``fast_call()`` / ``convert_return_values()``) is not provided;
+      ``__call__()`` forwards straight to the compiled dispatcher.
+    - Return values are arrays only (a ``pyobject`` return decays to the
+      contained object); Python scalars are never returned. Return arrays are
+      allocated inside the binding; see :meth:`__call__` for buffer overrides
+      and symbol deduction.
+    - There is no caching of the previous call arguments
+      (``CompiledSDFG._lastargs``): :meth:`get_workspace_sizes` and
+      :meth:`set_workspace` take the symbol values they depend on as
+      arguments of that call.
+    - Initialization, ``finalize()`` and the retrieval of GPU errors are not
+      thread safe; calling is thread safe only once initialized and without
+      persistent or external memory.
+    - The module is never unloaded.
 
-    Unlike ``CompiledSDFG`` the advanced three-step interface
-    (``construct_arguments()`` / ``fast_call()`` / ``convert_return_values()``)
-    is not provided; calling happens through ``__call__()``, which forwards
-    straight to the compiled dispatcher. Otherwise it implements the same
-    interface as ``CompiledSDFG``, with some deviations listed below.
-
-    :param sdfg: The ``SDFG`` this wrapper was compiled from; used to evaluate
-                 return-array shapes and exposed via the ``sdfg`` property.
+    :param sdfg: The ``SDFG`` this wrapper was compiled from.
     :param module: The imported nanobind extension module.
-    :param arg_names: The user-facing positional argument order, i.e. ``sdfg.arg_names``,
-                      used to map positional call arguments to their names.
-
-    :note: Return arrays are allocated inside the compiled binding. A caller
-           may pass the special ``__return*`` arguments explicitly to
-           ``__call__()`` to supply their own output buffers; the binding
-           validates them against the symbol-derived return size.
-    :note: Return values are arrays only (a ``pyobject`` return decays to the
-           contained object, as on the ctypes interface); unlike the ctypes
-           ``CompiledSDFG`` the nanobind interface never returns Python scalars.
-    :note: Symbolic arguments that are not listed in ``arg_names`` may be omitted
-           from a call: the bindings deduce their value from the shape or stride
-           expressions of the passed arrays, where only arrays of fundamental
-           types serve as sources. The deduction expression may itself reference
-           symbols that are listed in ``arg_names``, since those are always
-           passed explicitly - with ``A[a + b]`` and ``b`` in ``arg_names``, an
-           omitted ``a`` is computed as ``A.shape(0) - b``. An explicitly passed
-           value always takes precedence, a symbol that can not be deduced must
-           be passed, and symbols needed for the return values have to be
-           provided explicitly.
-    :note: There is no caching of the "previous call arguments"
-           (``CompiledSDFG._lastargs``): :meth:`get_workspace_sizes` and
-           :meth:`set_workspace` take the symbol values they depend on as
-           arguments of that call.
-    :note: Initialization is not thread safe. Calling the SDFG is thread safe only
-           if ``self`` is already initialized and the SDFG does not have persistent
-           or external memory. Furthermore, ``finalize()`` and the retrieval of
-           GPU errors is not thread safe.
-    :note: This class will not unload the module.
+    :param arg_names: The user-facing positional argument order, i.e.
+                      ``sdfg.arg_names``.
     """
 
     def __init__(self, sdfg: "dace.SDFG", module: ModuleType, arg_names: list[str], gpu_error_check: bool = True):
@@ -120,18 +95,13 @@ class NanobindCompiledSDFG:
         #: runs the repetitions itself and then suppresses the hooked call.
         self.do_not_execute: bool = False
 
-        # Codegen-time call metadata comes from the handle: the `__return*`
-        # naming convention lives in the bindings generator, not here. Return
-        # allocation, the single-value-vs-tuple convention and buffer-override
-        # validation all live in the binding too; the names remain exposed for
+        # Return handling (naming convention, allocation, tuple-vs-single,
+        # buffer validation) lives in the binding; the names stay exposed for
         # introspection.
         self._return_values: tuple[str, ...] = tuple(self._handle.return_names)
 
         # Static per module; used to translate __dace_exit codes in _get_error_text.
         self._has_gpu_code: bool = bool(self._handle.has_gpu_code)
-        # The per-call GPU error check runs inside the compiled binding (it
-        # reads the SDFG's own error record there); only the toggle lives on
-        # the handle. See the ``gpu_error_check`` property.
         self._handle.gpu_error_check = bool(gpu_error_check)
 
     @property
@@ -157,11 +127,10 @@ class NanobindCompiledSDFG:
         """Whether the SDFG state is currently initialized.
 
         True after :meth:`initialize` (or the first call) ran and no
-        :meth:`finalize` happened since. The interface-agnostic way for
-        library code to ask; both compiled-SDFG classes provide it.
+        :meth:`finalize` happened since.
         """
-        # The handle deliberately has no non-throwing null-state probe:
-        # state_pointer raises on an uninitialized or finalized state.
+        # state_pointer raises on an uninitialized or finalized state; the
+        # handle has no non-throwing probe.
         try:
             return bool(self._handle.state_pointer)
         except RuntimeError:
@@ -171,13 +140,9 @@ class NanobindCompiledSDFG:
     def gpu_error_check(self) -> bool:
         """Whether each call on a GPU SDFG raises the error its generated code recorded.
 
-        Parity with the ctypes ``fast_call`` ``do_gpu_check``, and the same
-        mechanism: the compiled binding reads the SDFG's OWN error record
-        (``__dace_gpu_last_error``) after each program call - never the
-        process-global CUDA last-error slot, which is shared with every other
-        GPU user in the process. The read is a plain in-library call, so
-        disabling it buys next to nothing; the toggle is kept for parity.
-        Defaults to the constructor argument (``True``). Has no effect on a
+        Same mechanism as the ctypes ``fast_call`` ``do_gpu_check``: the
+        compiled binding reads the SDFG's OWN error record after each program
+        call, never the process-global CUDA last-error slot. No effect on a
         CPU-only SDFG (the check is not even compiled in there).
         """
         return bool(self._handle.gpu_error_check)
@@ -189,33 +154,26 @@ class NanobindCompiledSDFG:
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
         """Execute the compiled SDFG.
 
-        The function will forward the call to compiled executable. The arguments can
-        either be passed as positional, if they are listed in ``arg_names`` or as
-        keyword arguments. If the SDFG is not initialized it will be initialized first.
+        Arguments can be passed positionally (if listed in ``arg_names``) or
+        as keywords; an uninitialized SDFG is initialized first.
 
-        The interface is able to infer some symbolic arguments from other arguments.
-        A symbol that is not listed in ``arg_names`` may be omitted; its value is
-        then deduced from the shape or strides of a passed array, where only arrays
-        of fundamental types are considered as sources, i.e. no arrays of structs
-        or ``ContainerArray``s. The deduction expression may reference symbols that
-        are listed in ``arg_names``, as these are always passed explicitly; for
-        example with ``A[a + b]`` and ``b`` in ``arg_names``, an omitted ``a`` is
-        computed as ``A.shape(0) - b``. An explicitly passed value always takes
-        precedence over the deduction, and a symbol that can not be deduced must be
-        passed - omitting it raises an error naming the symbol.
+        A symbol not listed in ``arg_names`` may be omitted: its value is
+        deduced from the shape or strides of a passed array of fundamental
+        type. The deduction expression may reference symbols listed in
+        ``arg_names`` (always passed explicitly): with ``A[a + b]`` and ``b``
+        in ``arg_names``, an omitted ``a`` is computed as ``A.shape(0) - b``.
+        An explicitly passed value takes precedence; a symbol that cannot be
+        deduced must be passed.
 
-        Return arrays are allocated and returned by the compiled binding itself
-        (after symbol inference, so inferred symbols may size them). A
+        Return arrays are allocated and returned by the compiled binding
+        itself (after symbol inference, so inferred symbols may size them). A
         ``__return*`` buffer passed explicitly is used as the output buffer
-        and returned, validated against the symbol-derived return size (a
-        too-small buffer is rejected; the ctypes interface accepts the same
-        arguments). When :attr:`do_not_execute` suppresses the program run,
-        ``None`` is returned.
+        and returned, validated against the symbol-derived return size (too
+        small is rejected). When :attr:`do_not_execute` suppresses the program
+        run, ``None`` is returned.
         """
-        # Positional arguments bind by arg_names (ctypes parity); keyword-only
-        # calls stay a pure passthrough. This is _named_call_arguments (which
-        # the cold entry points call), inlined to keep the hot path free of
-        # the extra call - keep the two in sync.
+        # This is _named_call_arguments (which the cold entry points call),
+        # inlined to keep the hot path free of the extra call - keep in sync.
         if args:
             if multiple_names := kwargs.keys() & set(self._arg_names[: len(args)]):
                 raise TypeError(f"Argument(s) {sorted(multiple_names)} passed both positionally and as keywords.")
@@ -227,10 +185,8 @@ class NanobindCompiledSDFG:
             kwargs.update(zip(self._arg_names, args, strict=False))
 
         # Fast path - no hooks: hand the arguments straight to the compiled
-        # dispatcher; all marshalling and the return allocation happen there.
-        # A failed dispatch is repaired once by unwrapping array-like wrapper
-        # objects (see _unwrap_array_likes) - native argument types never pay
-        # for this.
+        # dispatcher. A failed dispatch is repaired once by unwrapping
+        # array-like wrappers; native argument types never pay for this.
         if not hooks._COMPILED_SDFG_CALL_HOOKS:
             if self.do_not_execute is False:
                 try:
@@ -249,21 +205,15 @@ class NanobindCompiledSDFG:
 
         On this interface a hook's ``args`` parameter is a 1-tuple holding the
         processed keyword arguments (marshalling happens in compiled code, so
-        there is no ctypes-style C-argument tuple to hand out); re-invoking the
-        program from a hook is ``compiled_sdfg._handle(**args[0])``.
-
-        :return: The binding's return value (the return array(s)), or ``None``
-                 when the program run was suppressed and no hook supplied a
-                 result.
+        there is no ctypes-style C-argument tuple to hand out); re-invoking
+        the program from a hook is ``compiled_sdfg._handle(**args[0])``.
         """
         # A hook that runs the program itself and then suppresses the hooked
-        # call (dace.profile) deposits its last invocation's return value
-        # here, since the binding allocates fresh return arrays per call.
+        # call (dace.profile) deposits its last invocation's return value here.
         self._hook_result: Any = None
         result = None
         with hooks.invoke_compiled_sdfg_call_hooks(self, (kwargs,)):
-            # Checked inside the hook context: a hook may toggle the flag
-            # (dace.profile does) before the program call would run.
+            # Checked inside the hook context: a hook may toggle the flag.
             if self.do_not_execute is False:
                 try:
                     result = self._handle(**kwargs)
@@ -279,19 +229,14 @@ class NanobindCompiledSDFG:
     def initialize(self, *args: Any, **kwargs: Any) -> ctypes.c_void_p:
         """Initializes the SDFG state eagerly, without running it.
 
-        Accepts the same arguments as :meth:`__call__` (positional arguments in
-        ``arg_names`` order and/or keywords); only the values needed to
-        initialize the state (the init symbols) are actually used. Calling
-        this is optional - :meth:`__call__` initializes on demand - but it is
-        required before querying external-memory workspace sizes. Furthermore, it
-        is not thread safe.
+        Accepts the same arguments as :meth:`__call__`; only the init symbols
+        are actually used. Calling this is optional - :meth:`__call__`
+        initializes on demand - but required before querying external-memory
+        workspace sizes. Not thread safe.
 
-        :return: The state pointer, matching the ctypes interface: functions
+        :return: The state pointer (ctypes-interface parity): functions
                  obtained through :meth:`get_exported_function` take it as
-                 their state argument (e.g. ``SDFG.call_with_instrumented_data``
-                 passes it to ``__dace_set_instrumented_data_report``; a
-                 ``None`` return would reach the C side as a null state and
-                 crash there).
+                 their state argument.
         """
         self._handle.initialize(**self._named_call_arguments(args, kwargs))
         return ctypes.c_void_p(self._handle.state_pointer)
@@ -301,12 +246,11 @@ class NanobindCompiledSDFG:
 
         Positional arguments bind by ``arg_names`` ONLY - never by the
         binding's parameter order, which continues past ``arg_names`` with
-        internal ordering (gradient buffers, omittable symbols, returns).
-        Extras beyond ``arg_names`` are dropped with a warning: the ctypes
-        mapping zip-truncates them silently, and callers rely on that. A name
-        passed both positionally and as a keyword is an error (nanobind's
-        trailing kwargs absorber would otherwise swallow the keyword and the
-        positional would win silently).
+        internal ordering. Extras beyond ``arg_names`` are dropped with a
+        warning (ctypes zip-truncates them silently, and callers rely on
+        that); a name passed both positionally and as a keyword is an error
+        (the trailing kwargs absorber would otherwise let the positional win
+        silently).
         """
         if args:
             if multiple_names := kwargs.keys() & set(self._arg_names[: len(args)]):
@@ -382,15 +326,10 @@ class NanobindCompiledSDFG:
     def get_state_struct(self) -> ctypes.Structure:
         """Returns a live, mutable ``ctypes.Structure`` view of the state struct.
 
-        Parity with ``CompiledSDFG.get_state_struct``: the structure overlays the
-        live state memory and exposes the leading pointer fields (as
-        ``c_void_p``) by name, so callers can ``getattr``/``setattr`` them. The
-        state must be initialized; querying it beforehand raises.
-
-        :note: The structure aliases state memory owned by the handle; it must
-               not be used after :meth:`finalize`.
+        The structure overlays the live state memory and exposes the leading
+        pointer fields (as ``c_void_p``) by name. The state must be
+        initialized, and the view must not be used after :meth:`finalize`.
         """
-        # ``state_pointer`` raises if the state is uninitialized or finalized.
         ptr = self._handle.state_pointer
         fields = [(name, ctypes.c_void_p) for name in self._handle.state_fields()]
         state_struct_t = type("State", (ctypes.Structure,), {"_fields_": fields})
@@ -400,13 +339,9 @@ class NanobindCompiledSDFG:
         """Returns an arbitrary exported symbol as a callable, or None if absent.
 
         Resolved with ``ctypes.CDLL`` on the already-imported module file
-        (which returns the same library handle); the wrapper is attached to
-        the returned function as ``__compiled_sdfg__`` to keep the module
-        alive.
-
-        :note: Reaching for this function should be considered a bug - it is a
-               low-level escape hatch that bypasses the typed interface, and
-               anything it is used for is most likely better done another way.
+        (the same library handle); the wrapper is attached to the returned
+        function as ``__compiled_sdfg__`` to keep the module alive. A
+        low-level escape hatch that bypasses the typed interface.
         """
         lib = ctypes.CDLL(self.filename)
         try:

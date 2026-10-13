@@ -2756,14 +2756,12 @@ class SDFG(ControlFlowRegion):
         from dace.codegen import compiler
         from dace.codegen import ctypes_compiled_sdfg as cs
 
-        # Checking BOTH mechanisms (instead of only the decided interface's own) is
-        #  deliberate: the interfaces share the library file name, and dlopen
-        #  short-circuits on an exact pathname match against the link map. Rebuilding
-        #  a path whose previous artifact is still mapped under the OTHER interface
-        #  would therefore hand the loader the stale mapping (a ctypes library
-        #  imported as a module fails with a `PyInit` ImportError; the reverse would
-        #  silently run stale code). Reporting such an identity as loaded makes
-        #  `compile()` rename instead.
+        # Checking BOTH mechanisms is deliberate: the interfaces share the
+        #  library file name, and dlopen short-circuits on an exact pathname
+        #  match against the link map - rebuilding a path whose previous
+        #  artifact is still mapped under the OTHER interface would hand the
+        #  loader the stale mapping. Reporting such an identity as loaded
+        #  makes `compile()` rename instead.
 
         # Nanobind residency: generated modules register in `sys.modules` under a
         #  qualified name derived from (build folder, SDFG name).
@@ -2845,17 +2843,14 @@ class SDFG(ControlFlowRegion):
         # the loaded module was built from an SDFG with the same pre-codegen
         # content hash, mint a fresh handle from it - no rename, no rebuild.
         # hash_sdfg() instability can only produce a false MISmatch (a redundant
-        # rename-and-rebuild below), never a wrong reuse; only an actual hash
-        # collision between different contents could, which we accept everywhere.
+        # rename-and-rebuild below), never a wrong reuse.
         source_hash = None
         if nanobind_interface and Config.get_bool("compiler", "nanobind_reuse_loaded"):
-            # `hash_sdfg()` considers neither the instrumentation (at any level) nor
-            #  the configuration, but both influence the generated code, so they join
-            #  the reuse key. The whole effective configuration is hashed - also
-            #  entries that do not affect codegen - which errs on the side of a
-            #  redundant rebuild, never a wrong reuse. The YAML dump is deterministic
-            #  (keys are sorted) and, with the environment applied at load time,
-            #  covers every configuration source.
+            # `hash_sdfg()` considers neither the instrumentation nor the
+            #  configuration, but both influence the generated code, so they
+            #  join the reuse key. Hashing the WHOLE effective configuration
+            #  (deterministic: sorted YAML keys, env applied at load time)
+            #  errs toward a redundant rebuild, never a wrong reuse.
             instr_sig = ",".join(
                 [sdfg.instrument.name]
                 + [
@@ -2869,12 +2864,10 @@ class SDFG(ControlFlowRegion):
             codegen_sig = f"{instr_sig}:{config_dump.getvalue()}"
             source_hash = f"{sdfg.hash_sdfg()}:{md5(codegen_sig.encode('utf-8')).hexdigest()}"
             # The folder must still hold a nanobind artifact: a ctypes rebuild
-            #  of the same (folder, name) identity - routine under the 'auto'
-            #  default, when ctypes-pinned compiles interleave with auto ones -
-            #  flips the INTERFACE marker, and reusing the stale sys.modules
-            #  entry would hand out a module whose folder now belongs to the
-            #  other interface (loading by marker would even return a ctypes
-            #  object). Refused reuse falls through to the rename loop.
+            #  of the same identity flips the INTERFACE marker, and reusing
+            #  the stale sys.modules entry would hand out a module whose
+            #  folder now belongs to the other interface. Refused reuse falls
+            #  through to the rename loop.
             module = sys.modules.get(compiler.nanobind_qualified_module_name(build_folder, self.name))
             if (
                 module is not None
@@ -2928,12 +2921,10 @@ class SDFG(ControlFlowRegion):
                 sdfg.name = f"{self.name}_{index}"
                 index += 1
                 if nanobind_interface and not folder_was_explicit:
-                    # If `self` has an explicitly set `build_folder` then it will build
-                    #  inplace inside the folder and preserve the ctypes behaviour. We
-                    #  do this because we assume that a user who does this knows what
-                    #  they do. In case it was not explicitly set (on `self`) we must
-                    #  now rederive it. This is to account for the fact that it depends
-                    #  on the name. However for that we need to first clear it.
+                    # The derived build folder depends on the name, so the
+                    #  rename must rederive it (clear first). An explicitly
+                    #  set folder instead builds in place, preserving the
+                    #  ctypes behaviour.
                     sdfg._build_folder = None
                     sdfg.build_folder = sdfg.build_folder
 
@@ -3073,13 +3064,9 @@ class SDFG(ControlFlowRegion):
         from dace.codegen import compiler
 
         if compiler.resolve_compiler_interface(self) == "nanobind":
-            # NOTE: The reason why we do not support this function under ``nanobind`` is
-            #   because we can not guarantee that it a recompilation does not happen. If
-            #   a recompilation happens then the reports are written to a different build
-            #   folder, the one of the explicitly created compiled SDFG below. Thus the
-            #   main reason is that it does not work, but that `SDFG.get_latest_report`
-            #   does not find the right folder. Some tricks to avoid that would be setting
-            #   `compiler.use_cache` to True.
+            # Under nanobind a collision rename may recompile into a different
+            #  build folder, and `SDFG.get_latest_report` would then not find
+            #  the reports - hence unsupported here.
             raise NotImplementedError(
                 "SDFG.safe_call() is not supported on the nanobind interface. "
                 "Use sdfg.compile() and CompiledSDFG.safe_call() instead."

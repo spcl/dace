@@ -34,16 +34,11 @@ def pytest_generate_tests(metafunc):
 def ctypes_interface(monkeypatch):
     """Pins ``compiler.interface`` to ctypes for tests that assert ctypes-specific behavior.
 
-    Under the default ``auto`` these SDFGs would select the nanobind interface,
-    where the asserted behavior differs; a comment at the fixture's use sites
-    names the divergence per file.
-
-    ``DACE_compiler_interface`` is dropped as well, even though the environment
-    no longer overrides ``set_temporary`` on every read: it is re-applied on top
-    whenever the configuration is LOADED, and ``temporary_config()`` restores by
-    loading. A test that opens one inside this fixture would leave the context
-    with the export back in force and this pin gone, so the pin has to outlive
-    the reload -- see tests/compile_folder_mode_test.py.
+    A comment at each use site names the per-file divergence.
+    ``DACE_compiler_interface`` is dropped as well: the environment is
+    re-applied whenever the configuration is LOADED (``temporary_config()``
+    restores by loading), so the pin must outlive such a reload - see
+    tests/compile_folder_mode_test.py.
     """
     import dace
 

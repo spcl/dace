@@ -50,13 +50,11 @@ BUILD_CACHE_FOLDER = "__dace_build_cache"
 GENERATED_NAMESPACE = "dace.generated"
 
 #: Glob for nanobind's helper archive. nanobind derives the library NAME from the options passed
-#: to ``nanobind_add_module()`` (e.g. ``NB_STATIC`` selects ``nanobind-static``, ``PROTECT_STACK``
-#: appends ``-ps`` - variants are compiled differently, so each deliberately gets its own name).
-#: The name is therefore never assumed anywhere: publishing discovers it from what the build
-#: actually produced, and the CMake side verifies a cached candidate against the helper target it
-#: really links before swapping it in (a non-matching candidate is ignored, costing only the
-#: cache benefit). This keeps the cache working - or at worst, harmlessly inactive - when the
-#: option list or nanobind's naming scheme changes.
+#: to ``nanobind_add_module()`` (``NB_STATIC`` -> ``nanobind-static``, ``PROTECT_STACK`` appends
+#: ``-ps``; variants are compiled differently). The name is never assumed anywhere: publishing
+#: discovers it from what the build produced, and the CMake side verifies a cached candidate
+#: against the helper target it really links (a non-matching candidate only costs the cache
+#: benefit).
 NANOBIND_STATIC_GLOB = "libnanobind*.a"
 
 #: A PREDICTION of CMake's ``CMAKE_CXX_FLAGS_<CONFIG>`` defaults, only ever used to build the
@@ -193,20 +191,18 @@ def generate_program_folder(
             "via resolve_compiler_interface)."
         )
     if sdfg is None:
-        # Raw code objects without an SDFG (e.g. helper libraries): no bindings can be
-        # generated, so the folder is a plain ctypes-style artifact regardless of the
-        # configured interface - and the marker must say so, or configure_and_compile
-        # would build a nanobind module without a bindings TU and the ctypes-style
-        # loaders (ReloadableDLL) would refuse the folder.
+        # Raw code objects without an SDFG (e.g. helper libraries): no
+        # bindings can be generated, so the folder is a ctypes-style artifact
+        # regardless of the configured interface, and the marker must say so.
         interface = "ctypes"
     if interface == "nanobind":
         bindings_folder = os.path.join(src_path, "cpu")
         os.makedirs(bindings_folder, exist_ok=True)
         bindings_name = f"{sdfg.name}_nanobind.cpp"
         statestruct = next((obj.statestruct for obj in code_objects if obj.title == "Frame"), None)
-        # The GPU error record accessor exists exactly when the CUDA target emitted its code
-        # object, so the binding's per-call check is gated on that - not on a storage or
-        # schedule heuristic, which would declare a symbol the library may not have.
+        # The GPU error record accessor exists exactly when the CUDA target
+        # emitted its code object; a storage/schedule heuristic could declare
+        # a symbol the library may not have.
         gpu_backend = None
         if any(obj.title == "CUDA" for obj in code_objects):
             from dace.codegen import common
@@ -224,12 +220,10 @@ def generate_program_folder(
     with open(os.path.join(out_path, "INTERFACE"), "w") as interface_file:
         interface_file.write(interface)
 
-    # Create the instrumentation-report folder when reports can actually be
-    # produced: the runtime's report.save() opens `<folder>/perf/report-*.json`
-    # with a bare std::ofstream, which neither creates directories nor reports
-    # a failed open - a missing folder drops every report SILENTLY. Gated on
-    # instrumentation, so uninstrumented folders stay lean in both folder
-    # modes; the production trim list deliberately does not touch `perf`.
+    # The runtime's report.save() opens `<folder>/perf/report-*.json` with a
+    # bare std::ofstream, which neither creates directories nor reports a
+    # failed open - a missing folder drops every report SILENTLY. The
+    # production trim list deliberately does not touch `perf`.
     if sdfg is not None and sdfg.is_instrumented():
         os.makedirs(os.path.join(out_path, "perf"), exist_ok=True)
 
@@ -371,13 +365,8 @@ def load_nanobind_module(
 ) -> ModuleType:
     """Loads the compiled nanobind module of an SDFG and returns it.
 
-    The module is imported once per process, the qualified module path is obtained
-    from :func:`nanobind_qualified_module_name`.
-
-    In case the module is already loaded, i.e. the module's qualified name is already
-    present in ``sys.modules``, the function will check if they refer to the same _path_.
-    This is done by comparing the already loaded modules ``__file__`` attribute with
-    ``library_path``. In case they differ an error is generated.
+    The module is imported once per process under the qualified name from
+    :func:`nanobind_qualified_module_name`.
 
     :param library_path: Path to the compiled shared library (the nanobind
                          extension module) to import.
@@ -390,23 +379,20 @@ def load_nanobind_module(
                         different file (a folder-magic hash collision, or the
                         folder's artifact changed path under a loaded module).
 
-    :note: In case the compiled extension was regenerated between the first and second
-        time this function was called the function will return the same module the
-        first call has returned.
+    :note: If the compiled extension was regenerated after the first call, the
+        function keeps returning the module the first call imported.
     """
     library_path = os.fspath(library_path)
     qualified = nanobind_qualified_module_name(build_folder, module_name)
 
     existing = sys.modules.get(qualified)
     if existing is not None:
-        # A hit should mean the very same artifact - verify it, so a hash
-        # collision between two different folders fails loudly instead of
-        # silently aliasing the artifacts.
+        # A hit must mean the very same artifact - verify, so a hash collision
+        # fails loudly instead of silently aliasing the artifacts. A module
+        # without `__file__` under our key is something we did not load:
+        # treat it as a mismatch too. realpath() keeps relative spellings and
+        # symlinks of the same file from being flagged as collisions.
         existing_file = getattr(existing, "__file__", None)
-        # A module without `__file__` under our key is something we did not load,
-        #  treat it as a mismatch too. The `realpath()` comparison (rather than plain
-        #  string equality) keeps relative vs. absolute spellings and symlinked cache
-        #  folders of the same file from being flagged as collisions.
         if existing_file is None or os.path.realpath(existing_file) != os.path.realpath(library_path):
             raise ValueError(
                 f"Generated-module registry collision: key '{qualified}' is taken by the module "
@@ -441,14 +427,10 @@ def nanobind_static_cache_dir() -> str:
     """Cache directory of nanobind's prebuilt helper archive(s).
 
     The archives are NOT keyed on any DaCe configuration: nanobind compiles its helper library
-    with its own fixed flags, so nothing configurable in DaCe reaches those translation units. If
-    a configuration that DOES influence them is ever introduced (e.g. forwarding configurable
-    flags into ``nanobind_add_module``), it MUST be folded into this path. The interpreter and
-    nanobind versions are part of the path already - the archive embeds the active Python's ABI
-    and the active nanobind's sources, and several virtual environments share one cache root.
-    Within the directory each option-derived variant lives under its own discovered name; the
-    CMake-side verification picks the one matching the current build, so stale variants can
-    coexist without ever being linked.
+    with its own fixed flags. If a configuration that DOES influence them is ever introduced, it
+    MUST be folded into this path. The interpreter and nanobind versions are in the path already -
+    the archive embeds the active Python's ABI and nanobind's sources, and several virtual
+    environments share one cache root.
     """
     import nanobind
 
@@ -805,18 +787,13 @@ def configure_and_compile(
             f'-DDACE_NANOBIND_CMAKE_DIR="{nanobind.cmake_dir()}"',
             f'-DPython_EXECUTABLE="{sys.executable}"',
         ]
-        # Reuse nanobind's helper archive across build folders: its ~12
-        # translation units are byte-identical for every program (nanobind
-        # compiles them with its own fixed flags - no DaCe configuration
-        # reaches them) and dominate a replayed build's remaining cost. The
-        # path carries the interpreter and nanobind versions because the
-        # archive is compiled against the active Python's headers and the
-        # active nanobind's sources - several virtual environments share one
-        # cache root. Advisory like every cache here: a missing archive just
-        # builds (and then publishes) it. Every cached variant is offered as
-        # a candidate; the CMake side links the one matching the helper
-        # target it actually builds, and ignores the rest (variant names
-        # encode HOW nanobind was compiled - see NANOBIND_STATIC_GLOB).
+        # Reuse nanobind's helper archive across build folders: its
+        # translation units are byte-identical for every program (no DaCe
+        # configuration reaches them) and dominate a replayed build's
+        # remaining cost. Advisory: a missing archive just builds (and then
+        # publishes) it. Every cached variant is offered; the CMake side links
+        # the one matching the helper target it actually builds (see
+        # NANOBIND_STATIC_GLOB).
         if CACHES_SUPPORTED:
             nanobind_static_cache = nanobind_static_cache_dir()
             candidates = sorted(glob.glob(os.path.join(nanobind_static_cache, NANOBIND_STATIC_GLOB)))
@@ -1232,19 +1209,17 @@ def _safe_call_subprocess_main(pickle_path: str) -> None:
     with open(pickle_path, "r+b") as channel:
         data = pickle.load(channel)
 
-        # The child was started in a neutral directory so ``import dace``
-        # could not be shadowed; now that imports are done, adopt the parent's
-        # cwd so cwd-relative artifact paths (the instrumentation report)
-        # resolve exactly as they do for the parent.
+        # Imports are done (no more cwd shadowing risk, see the parent side):
+        # adopt the parent's cwd so cwd-relative artifact paths resolve as
+        # they do for the parent.
         os.chdir(data["cwd"])
 
         csdfg = load_precompiled_sdfg(data["folder"], data["sdfg"])
         csdfg(*data["args"], **data["kwargs"])
 
-        # Finalize explicitly: __dace_exit is what saves the instrumentation
-        # report, and on the nanobind interface nothing runs it at process
-        # exit (extension modules are never unloaded, unlike ctypes' DLL
-        # teardown). Deterministic on both interfaces.
+        # Finalize explicitly: __dace_exit saves the instrumentation report,
+        # and on the nanobind interface nothing runs it at process exit
+        # (extension modules are never unloaded).
         csdfg.finalize()
 
         channel.seek(0)
