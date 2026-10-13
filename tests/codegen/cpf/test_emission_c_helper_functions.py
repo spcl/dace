@@ -98,7 +98,7 @@ def find_first_sdfg() -> dace.SDFG:
     sdfg.add_array("k", [N], dace.int32)
     sdfg.add_array("out", [1], dace.int64)
     state = sdfg.add_state()
-    node = FindFirst("ff", predicate="_a[__i] > 0.5 && _k[__i] == 3", begin=0, end=N)
+    node = FindFirst("ff", predicate="_a[__i] > 0.5 and _k[__i] == 3", begin=0, end=N)
     node.add_in_connector("_a", dace.pointer(dace.float64))
     node.add_in_connector("_k", dace.pointer(dace.int32))
     state.add_node(node)

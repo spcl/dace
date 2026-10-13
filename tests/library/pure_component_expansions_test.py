@@ -245,7 +245,7 @@ def test_speed_driven_choices_keep_the_cpp_lowerings(node_type):
     "node_type, lowerings",
     [
         (ArgReduce, {"Auto", "CPU", "pure", "CUDA"}),
-        (FindFirst, {"Auto", "CPU", "CUDA"}),
+        (FindFirst, {"Auto", "CPU", "CUDA", "pure"}),
         (IntegerSort, {"CPU", "isocpp", "CUDA"}),
     ],
 )

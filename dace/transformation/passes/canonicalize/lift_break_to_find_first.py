@@ -39,8 +39,6 @@ import copy
 from typing import Any
 
 from dace import SDFG, InterstateEdge, data, dtypes, properties, subsets, symbolic
-from dace.codegen.cppunparse import pyexpr2cpp
-from dace.codegen.targets.cpp import sym2cpp
 from dace.libraries.standard.nodes.find_first import INDEX_NAME, OUTPUT_CONNECTOR_NAME, FindFirst
 from dace.memlet import Memlet
 from dace.sdfg import nodes
@@ -77,7 +75,7 @@ FIND_FIRST_HINT = (
 
 
 class Match:
-    """One liftable loop: its blocks split around the test, and the predicate in C++."""
+    """One liftable loop: its blocks split around the test, and the predicate in Python."""
 
     def __init__(self, loop: LoopRegion, chain: list[ControlFlowBlock], test: ConditionalBlock) -> None:
         self.loop = loop
@@ -179,7 +177,7 @@ def searched(
 
 
 class PredicateBuilder(ast.NodeTransformer):
-    """Rewrites the test over the loop's symbols into a C++ predicate over FindFirst's connectors."""
+    """Rewrites the test over the loop's symbols into a Python predicate over FindFirst's connectors."""
 
     def __init__(self, sdfg: SDFG, counter: str, bindings: dict[str, ast.expr], match: Match) -> None:
         self.sdfg = sdfg
@@ -216,8 +214,8 @@ class PredicateBuilder(ast.NodeTransformer):
             self.match.symbols.update(str(s) for s in symbolic.pystr_to_symbolic(str(stride)).free_symbols)
         dims = [ast.unparse(self.visit(dim)) for dim in index]
         self.match.reads.setdefault(node.value.id, []).append(dims)
-        flat = " + ".join(f"({dim}) * ({sym2cpp(stride)})" for dim, stride in zip(dims, desc.strides))
-        return ast.parse(f"{self.connector(node.value.id)}[{flat}]", mode="eval").body
+        # FindFirst's C++ expansions linearize the subscript by these strides; the symbols reach its scope
+        return ast.parse(f"{self.connector(node.value.id)}[{', '.join(dims)}]", mode="eval").body
 
 
 @properties.make_properties
@@ -305,7 +303,7 @@ class LiftBreakToFindFirst(ppl.Pass):
         body_assigned = {name for e in match.loop.edges() for name in e.data.assignments}
         if match.symbols & body_assigned:
             return False
-        match.predicate = pyexpr2cpp(ast.unparse(predicate))
+        match.predicate = ast.unparse(predicate)
         return INDEX_NAME in match.predicate
 
     def private_to_loop(self, sdfg: SDFG, match: Match) -> bool:
