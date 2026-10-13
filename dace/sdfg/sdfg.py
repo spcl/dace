@@ -13,7 +13,7 @@ import shutil
 import sys
 import types
 import warnings
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from collections.abc import Set as AbstractSet
 from hashlib import md5, sha256
 from numbers import Integral
@@ -744,6 +744,8 @@ class SDFG(ControlFlowRegion):
         self._propagate = propagate
         self._parent = parent
         self._symbol_repo = SymbolRepo()
+        # Symbols ``add_datadesc`` declared because a shape names them; a scope that binds one later takes it over
+        self._shape_declared_symbols: set[str] = set()
         self._parent_sdfg = None
         self._parent_nsdfg_node = None
         self._arrays = NestedDict()  # type: Dict[str, dt.Array]
@@ -1217,10 +1219,17 @@ class SDFG(ControlFlowRegion):
         :raise ValueError: If an assumed relation still names the symbol.
         """
         self._symbol_repo.remove(name)
+        self._shape_declared_symbols.discard(name)
         # Clean up from symbol mapping if this SDFG is nested
         nsdfg = self.parent_nsdfg_node
         if nsdfg is not None and name in nsdfg.symbol_mapping:
             del nsdfg.symbol_mapping[name]
+
+    def release_scope_bound_symbols(self, names: Iterable[str]) -> None:
+        """Removes the symbols a shape declared that a scope now binds: a loop or map iterator is never an SDFG
+        symbol. A symbol declared explicitly stays, so validation reports the collision."""
+        for name in sorted(self._shape_declared_symbols.intersection(names)):
+            self.remove_symbol(name)
 
     @property
     def start_state(self):
@@ -2533,6 +2542,7 @@ class SDFG(ControlFlowRegion):
                     and sym.name not in scoped
                 ):
                     sdfg.add_symbol(sym.name, symbolic.DEFAULT_SYMBOL_TYPE)
+                    sdfg._shape_declared_symbols.add(sym.name)
 
         # Add the data descriptor to the SDFG and all symbols that are not yet known.
         self._arrays[name] = datadesc

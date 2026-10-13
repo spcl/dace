@@ -1516,6 +1516,11 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
             node.sdfg.parent = self
             node.sdfg.parent_sdfg = self.sdfg
             node.sdfg.parent_nsdfg_node = node
+        if self.sdfg is not None:
+            if isinstance(node, nd.MapEntry):
+                self.sdfg.release_scope_bound_symbols(node.map.params)
+            elif isinstance(node, nd.ConsumeEntry):
+                self.sdfg.release_scope_bound_symbols([node.consume.pe_index])
         self._clear_scopedict_cache()
         return super().add_node(node)
 
@@ -3228,6 +3233,12 @@ class AbstractControlFlowRegion(
         if isinstance(node, AbstractControlFlowRegion):
             for n in node.all_control_flow_blocks():
                 n.sdfg = sdfg
+            if sdfg is not None:
+                sdfg.release_scope_bound_symbols(
+                    region.loop_variable
+                    for region in node.all_control_flow_regions()
+                    if isinstance(region, LoopRegion) and region.loop_variable and region.init_statement is not None
+                )
             # ``cfg_id`` is a position in ``cfg_list``, so a region that is not in the list
             # reports 0 -- the same id as the root and as every other unregistered region.
             # Appending instead would assign positions in insertion order while this assigns

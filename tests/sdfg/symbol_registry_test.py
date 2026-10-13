@@ -176,6 +176,24 @@ def test_loop_variable_cannot_be_added_as_symbol():
         sdfg.add_symbol("i", dace.int64)
 
 
+def test_scope_takes_over_a_symbol_a_shape_declared():
+    sdfg = dace.SDFG("shape_declared_iterators")
+    sdfg.add_transient("t", [symbolic.pystr_to_symbolic("i + j")], dace.float64)
+    assert {"i", "j"} <= set(sdfg.symbols)
+    loop = LoopRegion("loop", "i < 10", "i", "i = 0", "i = i + 1")
+    sdfg.add_node(loop, is_start_block=True)
+    loop.add_state("body", is_start_block=True).add_map("m", {"j": "0:i"})
+    assert "i" not in sdfg.symbols and "j" not in sdfg.symbols
+
+
+def test_scope_keeps_an_explicitly_declared_symbol():
+    sdfg = dace.SDFG("explicit_iterator_symbol")
+    sdfg.add_symbol("i", dace.int64)
+    sdfg.add_transient("t", [symbolic.pystr_to_symbolic("i")], dace.float64)
+    sdfg.add_node(LoopRegion("loop", "i < 10", "i", "i = 0", "i = i + 1"), is_start_block=True)
+    assert "i" in sdfg.symbols
+
+
 def test_frontend_loop_iterators_are_not_symbols():
     sdfg = loops_program.to_sdfg(simplify=False)
     sdfg.validate()
@@ -247,6 +265,8 @@ def test_only_the_frontend_boundary_reads_symbol_declarations():
 
 if __name__ == "__main__":
     test_loop_variable_cannot_be_added_as_symbol()
+    test_scope_takes_over_a_symbol_a_shape_declared()
+    test_scope_keeps_an_explicitly_declared_symbol()
     test_frontend_loop_iterators_are_not_symbols()
     test_frontend_edge_assigned_names_are_not_symbols()
     test_validation_rejects_symbol_bound_by_a_map()
