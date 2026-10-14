@@ -19,6 +19,7 @@ from torch.fx.node import map_arg
 
 from dace import dtypes
 from dace import symbolic as dsym
+from dace.libraries.comm import schedule as comm_schedule
 from dace.properties import CodeBlock
 from dace.sdfg import SDFG
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
@@ -145,11 +146,7 @@ class GraphImporter:
             arg_names=arg_names,
             children=ctx.root_children,
         )
-        if getattr(self.options, "verbose", False):
-            print(stree.as_string())
-        sdfg = stree.as_sdfg(
-            validate=getattr(self.options, "validate", True), simplify=getattr(self.options, "simplify", True)
-        )
+        sdfg = self._to_sdfg(stree, ctx)
         return ImportResult(sdfg, stree, inputs, outputs, dict(symtab.symbols), dict(ctx.communicators))
 
     def import_joint(
@@ -251,11 +248,7 @@ class GraphImporter:
                 tn.ElseScope(children=backward_children),
             ],
         )
-        if getattr(self.options, "verbose", False):
-            print(stree.as_string())
-        sdfg = stree.as_sdfg(
-            validate=getattr(self.options, "validate", True), simplify=getattr(self.options, "simplify", True)
-        )
+        sdfg = self._to_sdfg(stree, ctx)
         return JointImportResult(
             sdfg,
             stree,
@@ -263,6 +256,16 @@ class GraphImporter:
             PhaseInterface(jt.BACKWARD, backward_inputs, backward_outputs),
             dict(symtab.symbols),
             dict(ctx.communicators),
+        )
+
+    def _to_sdfg(self, stree: tn.ScheduleTreeRoot, ctx: LoweringContext) -> SDFG:
+        """Converts the schedule tree of a graph, overlapping its communication with independent work."""
+        if ctx.communicators and self.options.overlap_communication:
+            comm_schedule.overlap_communication(stree)
+        if getattr(self.options, "verbose", False):
+            print(stree.as_string())
+        return stree.as_sdfg(
+            validate=getattr(self.options, "validate", True), simplify=getattr(self.options, "simplify", True)
         )
 
     @staticmethod

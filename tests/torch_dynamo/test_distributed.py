@@ -26,6 +26,7 @@ from torch.distributed.tensor import DTensor, Replicate, Shard, distribute_tenso
 
 import dace  # noqa: E402
 from dace.frontend.ml.torch.dynamo import DaceBackend  # noqa: E402
+from dace.libraries import comm  # noqa: E402
 
 
 def _init_process_group() -> str:
@@ -83,6 +84,38 @@ def test_all_reduce_in_place(op):
         reduced = {"sum": everyone.sum(0), "avg": everyone.mean(0), "max": everyone.amax(0)}[op]
         torch.testing.assert_close(compiled(_data(rank, n, 3)), reduced + 1)
     assert backend.compile_count == 1
+
+
+@pytest.mark.mpi
+@pytest.mark.parametrize("overlap", [True, False])
+def test_overlap_communication(overlap):
+    """Work independent of a reduction runs between its start and its wait (states in this order); without overlap,
+    the reduction is blocking."""
+    size, rank = dist.get_world_size(), dist.get_rank()
+
+    def f(x, y):
+        reduced = fc.all_reduce(x * 2, "avg", dist.group.WORLD)
+        independent = torch.sin(y) * 3
+        return reduced + independent
+
+    backend = DaceBackend(overlap_communication=overlap)
+    x, y = _data(rank, 4, 3), _data(rank, 4, 3) * 0.1
+    expected = sum(_data(r, 4, 3) * 2 for r in range(size)) / size + torch.sin(y) * 3
+    torch.testing.assert_close(_compile(backend, f)(x, y), expected)
+
+    sdfg = backend.last_sdfg
+    states = list(sdfg.all_states())
+
+    def position(predicate) -> int:
+        return next(i for i, state in enumerate(states) if any(predicate(n) for n in state.nodes()))
+
+    allreduce = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, comm.Allreduce))
+    assert allreduce.nonblocking == overlap
+    if overlap:
+        start = position(lambda n: isinstance(n, comm.Allreduce))
+        sine = position(lambda n: isinstance(n, dace.nodes.Tasklet) and "sin" in n.code.as_string)
+        wait = position(lambda n: isinstance(n, comm.Wait))
+        assert start < sine < wait
 
 
 @pytest.mark.mpi
@@ -305,6 +338,8 @@ if __name__ == "__main__":
     path = _init_process_group()
     for op in ["sum", "avg", "max"]:
         test_all_reduce_in_place(op)
+    for overlap in [True, False]:
+        test_overlap_communication(overlap)
     test_gather_scatter_broadcast()
     test_all_to_all_single()
     test_subgroup()

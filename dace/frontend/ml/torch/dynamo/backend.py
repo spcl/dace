@@ -61,6 +61,9 @@ class DaceBackendOptions:
     #: In ``torch.distributed`` programs, compile on rank 0 and load the build on the other ranks (see
     #: :func:`.distributed.compile_sdfg`); the program may not depend on the rank
     distributed_compilation: bool = False
+    #: Lower ``torch.distributed`` collectives as nonblocking operations, and move independent work between their
+    #: start and their wait (see :func:`dace.libraries.comm.schedule.overlap_communication`)
+    overlap_communication: bool = True
 
 
 class DaceBackend:

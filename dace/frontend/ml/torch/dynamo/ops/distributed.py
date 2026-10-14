@@ -4,10 +4,12 @@ Lowerings of ``torch.distributed`` functional collectives and point-to-point ope
 :mod:`dace.libraries.comm` nodes.
 
 Dynamo rewrites ``dist.all_reduce(t)`` and friends into functional operators (``_c10d_functional.*``) that return a new
-tensor, followed by ``wait_tensor``. Collectives lower to blocking library calls into fresh output containers, so
-``wait_tensor`` of a collective's result is the result itself. Point-to-point operations (``isend``, ``irecv``,
-``batch_p2p_ops``, traced with ``TORCHDYNAMO_ENABLE_P2P_COMPILATION=1``) are nonblocking: their ``wait_tensor`` emits a
-``Wait`` that orders the readers of a received tensor after it.
+tensor, followed by ``wait_tensor``. Every operation is nonblocking: the collective or point-to-point operation
+(``isend``, ``irecv``, ``batch_p2p_ops``, traced with ``TORCHDYNAMO_ENABLE_P2P_COMPILATION=1``) starts it and writes a
+request, and its ``wait_tensor`` emits the ``Wait`` that completes it, which the readers of the result follow.
+:func:`dace.libraries.comm.schedule.overlap_communication` then moves the starts up and the waits down, so that
+independent work runs while the communication is in flight. With ``overlap_communication=False`` (see
+:class:`~.backend.DaceBackendOptions`), collectives are blocking and their ``wait_tensor`` is the result itself.
 
 Every node communicates over a communicator argument of the program, one per process group and implementation (see
 :mod:`..distributed`): ``MPI`` for CPU tensors and ``NCCL`` (RCCL on ROCm) for GPU tensors. Communication buffers are
@@ -32,6 +34,7 @@ from dace.frontend.ml.torch.dynamo.context import (
     sanitize_name,
 )
 from dace.frontend.ml.torch.dynamo.ops import register_lowering, resolve
+from dace.frontend.ml.torch.dynamo.ops.pointwise import emit_elementwise
 from dace.libraries import comm
 from dace.memlet import Memlet
 from dace.sdfg import nodes
@@ -50,13 +53,16 @@ _REDUCE_OPS = {
 
 
 @dataclasses.dataclass
-class PendingP2P:
-    """A nonblocking point-to-point operation whose ``wait_tensor`` has not been lowered yet."""
+class Pending:
+    """A nonblocking operation whose ``wait_tensor`` has not been lowered yet."""
 
     implementation: str
     request: str  #: Request container (an ``MPI_Request`` array, or an integer token for NCCL)
-    buffer: TensorValue  #: The sent or received buffer
-    receive: bool
+    reads: list[TensorValue]  #: Buffers the operation reads, which must not change until the wait
+    result: TensorValue | None  #: The buffer the operation writes (none for a send)
+    #: The value of the ``wait_tensor`` (defaults to ``result``, or the sent buffer)
+    value: TensorValue
+    average_over: int | None = None  #: Divide the result by this (an MPI average, reduced as a sum)
 
 
 # ---------------------------------------------------------------------------------------------- helpers
@@ -145,6 +151,43 @@ def _emit(
     ctx.emit_library_call(libnode, inputs, outputs)
 
 
+def _nonblocking(ctx: LoweringContext) -> bool:
+    return ctx.options.overlap_communication
+
+
+def _start(
+    ctx: LoweringContext,
+    libnode: nodes.LibraryNode,
+    group: distributed.GroupInfo,
+    implementation: str,
+    inputs: dict[str, Memlet],
+    outputs: dict[str, Memlet],
+    reads: list[TensorValue],
+    result: TensorValue,
+    average: bool = False,
+) -> TensorValue:
+    """
+    Emits a collective writing ``result``: a nonblocking one whose ``wait_tensor`` completes it if overlapping
+    communication, else a blocking one. Returns the value the collective lowers to.
+
+    :param reads: The buffers the collective reads.
+    :param average: The collective averages. Nonblocking MPI cannot average: it sums, and the wait divides.
+    """
+    if not _nonblocking(ctx):
+        _emit(ctx, libnode, group, implementation, inputs, outputs)
+        return result
+    average_over = None
+    if average and implementation == "MPI":
+        libnode.op = "sum"
+        average_over = group.size
+    libnode.nonblocking = True
+    request = _request(ctx, implementation)
+    _emit(ctx, libnode, group, implementation, inputs, dict(outputs, _request=Memlet(f"{request}[0]")))
+    value = dataclasses.replace(result)  # A distinct value for wait_tensor to find
+    ctx.pending[id(value)] = Pending(implementation, request, reads, result, result, average_over)
+    return value
+
+
 def _items(value: Any) -> list[Any]:
     return list(value.items) if isinstance(value, TupleValue) else list(value)
 
@@ -158,15 +201,17 @@ def _check_group_size(node, group: distributed.GroupInfo, group_size: Any) -> No
 def _all_reduce(ctx: LoweringContext, node, tensor: TensorValue, val, op: str, group) -> TensorValue:
     tensor = _contiguous(ctx, tensor)
     out = _output(ctx, node, val)
-    _emit(
+    return _start(
         ctx,
         comm.Allreduce(sanitize_name(node.name), op=op),
         group,
         distributed.implementation_for(tensor.device),
         {"_inbuffer": tensor.memlet()},
         {"_outbuffer": out.memlet()},
+        [tensor],
+        out,
+        average=op == "avg",
     )
-    return out
 
 
 @register_lowering(*resolve("_c10d_functional.all_reduce.default"))
@@ -183,15 +228,16 @@ def lower_all_reduce_coalesced(ctx: LoweringContext, node, tensors, reduce_op, g
 def _all_gather(ctx: LoweringContext, node, tensor: TensorValue, val, group) -> TensorValue:
     tensor = _contiguous(ctx, tensor)
     out = _output(ctx, node, val)
-    _emit(
+    return _start(
         ctx,
         comm.Allgather(sanitize_name(node.name)),
         group,
         distributed.implementation_for(tensor.device),
         {"_inbuffer": tensor.memlet()},
         {"_outbuffer": out.memlet()},
+        [tensor],
+        out,
     )
-    return out
 
 
 @register_lowering(
@@ -216,15 +262,17 @@ def lower_all_gather_into_tensor_coalesced(ctx: LoweringContext, node, tensors, 
 def _reduce_scatter(ctx: LoweringContext, node, tensor: TensorValue, val, op: str, group) -> TensorValue:
     tensor = _contiguous(ctx, tensor)
     out = _output(ctx, node, val)
-    _emit(
+    return _start(
         ctx,
         comm.ReduceScatter(sanitize_name(node.name), op=op),
         group,
         distributed.implementation_for(tensor.device),
         {"_inbuffer": tensor.memlet()},
         {"_outbuffer": out.memlet()},
+        [tensor],
+        out,
+        average=op == "avg",
     )
-    return out
 
 
 @register_lowering(
@@ -253,15 +301,16 @@ def lower_broadcast(ctx: LoweringContext, node, tensor: TensorValue, src, group_
     out = _output(ctx, node)
     ctx.emit_copy(tensor, out)
     root = _int_scalar(ctx, "root", src)
-    _emit(
+    return _start(
         ctx,
         comm.Bcast(sanitize_name(node.name)),
         group,
         distributed.implementation_for(tensor.device),
         {"_inbuffer": out.memlet(), "_root": Memlet(f"{root}[0]")},
         {"_outbuffer": out.memlet()},
+        [],
+        out,
     )
-    return out
 
 
 @register_lowering(
@@ -293,8 +342,9 @@ def lower_all_to_all_single(
             send_counts=[s * row for s in in_splits],
             recv_counts=[s * row for s in out_splits],
         )
-    _emit(ctx, libnode, group, implementation, {"_inbuffer": tensor.memlet()}, {"_outbuffer": out.memlet()})
-    return out
+    return _start(
+        ctx, libnode, group, implementation, {"_inbuffer": tensor.memlet()}, {"_outbuffer": out.memlet()}, [tensor], out
+    )
 
 
 # ---------------------------------------------------------------------------------------------- point to point
@@ -325,7 +375,7 @@ def _send(ctx: LoweringContext, name: str, tensor: TensorValue, peer, tag, group
         {"_request": Memlet(f"{request}[0]")},
     )
     result = dataclasses.replace(tensor)  # A distinct value for wait_tensor to find
-    ctx.pending_p2p[id(result)] = PendingP2P(implementation, request, tensor, receive=False)
+    ctx.pending[id(result)] = Pending(implementation, request, [tensor], None, tensor)
     return result
 
 
@@ -346,7 +396,7 @@ def _receive(ctx: LoweringContext, name: str, val, peer, tag, group) -> TensorVa
         },
         {"_buffer": out.memlet(), "_request": Memlet(f"{request}[0]")},
     )
-    ctx.pending_p2p[id(out)] = PendingP2P(implementation, request, out, receive=True)
+    ctx.pending[id(out)] = Pending(implementation, request, [], out, out)
     return out
 
 
@@ -379,13 +429,20 @@ def lower_batch_p2p_ops(ctx: LoweringContext, node, op_list, peer_list, tag_list
     return TupleValue(results)
 
 
-def _wait(ctx: LoweringContext, pending: PendingP2P) -> None:
-    """Emits the ``Wait`` of a pending operation. It reads the buffer, and writes a received one, so that the buffer
-    lives until the wait and the readers of a received tensor follow it."""
+def _wait(ctx: LoweringContext, pending: Pending) -> TensorValue:
+    """
+    Emits the ``Wait`` of a pending operation, and returns the value of its ``wait_tensor``. The wait reads every
+    buffer of the operation and writes its result, so that the buffers live until the wait, nothing writes them
+    before it, and the readers of the result follow it.
+    """
     wait = comm.Wait(ctx.unique("wait"))
-    buffer = pending.buffer
-    inputs = {"_request": Memlet(f"{pending.request}[0]"), "_in_buffer": buffer.memlet()}
-    outputs = {"_out_buffer": buffer.memlet()} if pending.receive else {}
+    inputs = {"_request": Memlet(f"{pending.request}[0]")}
+    outputs = {}
+    for k, buffer in enumerate(pending.reads):
+        inputs[f"_in_read{k}"] = buffer.memlet()
+    if pending.result is not None:
+        inputs["_in_buffer"] = pending.result.memlet()
+        outputs["_out_buffer"] = pending.result.memlet()
     wait.implementation = pending.implementation
     for conn in list(wait.out_connectors):
         wait.remove_out_connector(conn)
@@ -394,20 +451,27 @@ def _wait(ctx: LoweringContext, pending: PendingP2P) -> None:
     for conn in outputs:
         wait.add_out_connector(conn)
     ctx.emit_library_call(wait, inputs, outputs)
+    if pending.average_over is None:
+        return pending.value
+    result = pending.result
+    average = ctx.add_array(result.name + "_average", result.tshape, result.torch_dtype, device=result.device)
+    params = [f"__i{k}" for k in range(result.rank)]
+    emit_elementwise(ctx, average.name, average, [(result, params)], f"__out = __in0 / {pending.average_over}")
+    return average
 
 
 @register_lowering(*resolve("_c10d_functional.wait_tensor.default"))
 def lower_wait_tensor(ctx: LoweringContext, node, tensor):
-    """Collectives are blocking: their results are ready. A point-to-point result waits for its operation."""
-    pending = ctx.pending_p2p.pop(id(tensor), None)
-    if pending is not None:
-        _wait(ctx, pending)
-        return pending.buffer
-    return tensor
+    """Completes the nonblocking operation that produced ``tensor``, if any (a blocking collective's result is
+    ready)."""
+    pending = ctx.pending.pop(id(tensor), None)
+    if pending is None:
+        return tensor
+    return _wait(ctx, pending)
 
 
 def wait_pending(ctx: LoweringContext) -> None:
-    """Emits the waits of point-to-point operations whose ``wait_tensor`` the graph does not contain."""
-    for pending in list(ctx.pending_p2p.values()):
+    """Emits the waits of nonblocking operations whose ``wait_tensor`` the graph does not contain."""
+    for pending in list(ctx.pending.values()):
         _wait(ctx, pending)
-    ctx.pending_p2p.clear()
+    ctx.pending.clear()

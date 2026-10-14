@@ -225,7 +225,11 @@ The program communicates over the communicators of the PyTorch process groups, w
 * **CPU tensors** use MPI. The processes must be MPI processes whose ranks equal their ``torch.distributed`` ranks
   (e.g., ``mpirun`` with a ``gloo`` process group initialized from the MPI ranks).
 
-Collectives are blocking: ``wait_tensor`` of a collective's result is the result itself. Programs captured with
+Communication is nonblocking: a collective or point-to-point operation starts it, and its ``wait_tensor`` completes it.
+:func:`dace.libraries.comm.schedule.overlap_communication` then moves every start, with the work it depends on, ahead
+of other work, and every wait behind the work that does not depend on it, so that independent work runs while the
+communication is in flight (``torch.compile`` only overlaps where the program places its waits, or where Inductor
+reorders them). ``DaceBackend(overlap_communication=False)`` lowers blocking collectives instead. Programs captured with
 ``capture()`` or exported with ``to_sdfg`` expose the communicator arguments; pass them the handles that
 :mod:`dace.libraries.comm.communicators` creates.
 

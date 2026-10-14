@@ -231,8 +231,8 @@ class LoweringContext:
         self.random_streams = 0  #: Number of random operators emitted so far (each gets its own stream offset)
         #: Communicator arguments of the program: container name -> (process group name, implementation)
         self.communicators: dict[str, tuple[str, str]] = {}
-        #: Nonblocking point-to-point operations awaiting their ``wait_tensor``, by the name of their result container
-        self.pending_p2p: dict[str, Any] = {}
+        #: Nonblocking communication awaiting its ``wait_tensor``, by the ``id`` of the value it lowered to
+        self.pending: dict[int, Any] = {}
 
     # ------------------------------------------------------------------ naming / containers
     def new_name(self, prefix: str) -> str:
