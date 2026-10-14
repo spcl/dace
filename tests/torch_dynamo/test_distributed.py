@@ -21,6 +21,8 @@ pytest.importorskip("torch", reason="PyTorch not installed. Please install with:
 import torch  # noqa: E402
 import torch.distributed as dist  # noqa: E402
 import torch.distributed._functional_collectives as fc  # noqa: E402
+from torch.distributed.device_mesh import init_device_mesh  # noqa: E402
+from torch.distributed.tensor import DTensor, Replicate, Shard, distribute_tensor  # noqa: E402
 
 from dace.frontend.ml.torch.dynamo import DaceBackend  # noqa: E402
 
@@ -205,6 +207,27 @@ def test_training_through_collectives():
     torch.testing.assert_close(w.grad, ws[rank].grad)
 
 
+@pytest.mark.mpi
+def test_dtensor_redistribute():
+    """A column-parallel product of DTensors, gathered by ``redistribute``. The graph takes and returns the
+    ``DeviceMesh`` (an opaque object), so that the result is a DTensor again."""
+    size = dist.get_world_size()
+    mesh = init_device_mesh("cpu", (size,))
+    weight = _data(0, 6, 2 * size) * 0.01
+    inputs = _data(1, 8, 6) * 0.01
+    w = distribute_tensor(weight, mesh, [Shard(1)])
+    x = distribute_tensor(inputs, mesh, [Replicate()])
+
+    def f(x, w):
+        return torch.relu(x @ w).redistribute(mesh, [Replicate()]).sum(dim=1)
+
+    backend = DaceBackend()
+    out = _compile(backend, f)(x, w)
+    assert isinstance(out, DTensor)
+    torch.testing.assert_close(out.to_local(), torch.relu(inputs @ weight).sum(dim=1))
+    assert backend.compile_count == 1
+
+
 if __name__ == "__main__":
     # Run under MPI, e.g., ``mpirun -n 2 python tests/torch_dynamo/test_distributed.py``
     path = _init_process_group()
@@ -215,4 +238,5 @@ if __name__ == "__main__":
     test_subgroup()
     test_ring_exchange()
     test_training_through_collectives()
+    test_dtensor_redistribute()
     _destroy_process_group(path)

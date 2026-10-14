@@ -88,6 +88,14 @@ class ConstValue:
     value: Any
 
 
+@dataclasses.dataclass(frozen=True)
+class OpaqueInput:
+    """An opaque object passed into the graph (e.g., the ``DeviceMesh`` of a ``DTensor`` program), held in a
+    :class:`ConstValue`. Programs never read it; returning it returns the argument itself."""
+
+    position: int  #: Index of the placeholder in the flat argument list
+
+
 @dataclasses.dataclass(eq=False)
 class TupleValue:
     items: list[Any]

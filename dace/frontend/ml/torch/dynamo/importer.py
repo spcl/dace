@@ -12,6 +12,7 @@ from typing import Any
 import sympy
 import torch
 import torch.fx
+from torch._library.fake_class_registry import FakeScriptObject
 from torch._subclasses.fake_tensor import unset_fake_temporarily
 from torch.fx.experimental.symbolic_shapes import free_unbacked_symbols
 from torch.fx.node import map_arg
@@ -23,7 +24,16 @@ from dace.sdfg import SDFG
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 
 from . import joint as jt
-from .context import ConstValue, LoweringContext, SymValue, TensorValue, UnsupportedOpError, Value, dense_strides
+from .context import (
+    ConstValue,
+    LoweringContext,
+    OpaqueInput,
+    SymValue,
+    TensorValue,
+    UnsupportedOpError,
+    Value,
+    dense_strides,
+)
 from .symbols import SymbolTable, SymExpr
 
 _SYM_TYPES = (torch.SymInt, torch.SymBool, torch.SymFloat)
@@ -317,6 +327,8 @@ class GraphImporter:
             return ConstValue(val), None
         if val is None:
             return ConstValue(None), None
+        if isinstance(val, (FakeScriptObject, torch.ScriptObject)):
+            return ConstValue(OpaqueInput(position)), None
         raise UnsupportedOpError("placeholder", f"unsupported input type {type(val).__name__} for {name}")
 
     # ------------------------------------------------------------------ walking
@@ -437,6 +449,8 @@ class GraphImporter:
                 specs.append(OutputSpec("scalar", out.name, torch_dtype=dtype, device=out.device))
             elif isinstance(v, SymValue):
                 specs.append(OutputSpec("sym", expr=v.expr))
+            elif isinstance(v, ConstValue) and isinstance(v.value, OpaqueInput):
+                specs.append(OutputSpec("input", position=v.value.position))
             elif isinstance(v, ConstValue):
                 specs.append(OutputSpec("none") if v.value is None else OutputSpec("const", value=v.value))
             elif v is None:
