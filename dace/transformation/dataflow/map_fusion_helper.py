@@ -490,21 +490,16 @@ def dynamic_map_range_source(
 
 def is_written_in_state(state: dace.SDFGState, data_name: str) -> bool:
     """
-    Tests if any node of ``state`` writes ``data_name``, directly or through a View of it.
+    Tests if an access node of ``data_name`` in ``state`` has a non-empty incoming Memlet. A write through a View
+    reaches the viewed node through the View's own edge, so it is caught too.
 
     :param state: The state to scan.
-    :param data_name: The name of the (non-View) data.
+    :param data_name: The name of the data.
     """
-    for node in state.data_nodes():
-        if state.in_degree(node) == 0:
-            continue
-        if isinstance(node.desc(state.sdfg), dace.data.View):
-            viewed = sdutil.get_last_view_node(state, node)
-            if viewed is None or viewed.data == data_name:
-                return True
-        elif node.data == data_name:
-            return True
-    return False
+    return any(
+        node.data == data_name and any(not edge.data.is_empty() for edge in state.in_edges(node))
+        for node in state.data_nodes()
+    )
 
 
 def dynamic_map_ranges_agree(state: dace.SDFGState, first: nodes.MapEntry, second: nodes.MapEntry) -> bool:
