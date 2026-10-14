@@ -590,7 +590,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                 #  data dependency checks. Thus we have to check them separately here.
                 for final_producer_edge in state.memlet_tree(producer_edge).leaves():
                     assert not final_producer_edge.data.is_empty()
-                    final_producer = final_producer_edge.dst
+                    final_producer = final_producer_edge.src
                     if isinstance(final_producer, nodes.NestedSDFG):
                         if not self._check_if_nested_sdfg_can_be_handled(
                             state=state,
@@ -1753,15 +1753,13 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         is_incomming_edge = outer_edge.dst is nsdfg
         assert (is_incomming_edge) or (outer_edge.src is nsdfg)
 
-        intermediate_data_outside: str = intermediate.data
         inner_sdfg = nsdfg.sdfg
         inner_data = outer_edge.dst_conn if is_incomming_edge else outer_edge.src_conn
         assert inner_data in inner_sdfg.arrays
         inner_desc = inner_sdfg.arrays[inner_data]
 
-        # We do not allow that the data is used as input and output.
-        # TODO(phimuell): In this situation it should be enough.
-        if intermediate_data_outside in nsdfg.in_connectors and intermediate_data_outside in nsdfg.out_connectors:
+        # We do not allow that the data is used as input and output; connectors carry the inner name.
+        if inner_data in nsdfg.in_connectors and inner_data in nsdfg.out_connectors:
             return False
 
         # The inner data is an array or a scalar.
