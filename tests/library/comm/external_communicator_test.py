@@ -181,9 +181,87 @@ def test_nccl_world_communicator_bootstraps_over_mpi():
     assert "__state->nccl->Create(MPI_COMM_WORLD);" in sdfg.init_code["frame"].as_string
 
 
+def test_nccl_unique_id_keeps_every_byte():
+    """The unique ID is binary: it must not stop at its first zero byte."""
+    if not comm.NCCL.is_installed():
+        pytest.skip("NCCL is not installed")
+    assert len(communicators.nccl_unique_id()) == communicators.NCCL_UNIQUE_ID_BYTES
+
+
+@pytest.mark.gpu
+def test_nccl_external_communicator_single_process():
+    """Collectives and a self-exchange over an NCCL communicator created in Python, with no MPI in the program."""
+    cp = pytest.importorskip("cupy")
+    if not comm.NCCL.is_installed():
+        pytest.skip("NCCL is not installed")
+    gpu = dace.StorageType.GPU_Global
+    sdfg = dace.SDFG("external_comm_nccl_single")
+    sdfg.add_scalar("comm", dace.int64)
+    for name in ("a", "b", "c", "d"):
+        sdfg.add_array(name, ["n"], dace.float32, storage=gpu)
+    for name in ("peer", "tag", "send_token", "recv_token"):
+        sdfg.add_scalar(name, dace.int32, transient=True)
+
+    init = sdfg.add_state("init")
+    tasklet = init.add_tasklet("init", {}, {"p", "t"}, "p = 0\nt = 0")
+    init.add_edge(tasklet, "p", init.add_write("peer"), None, Memlet("peer[0]"))
+    init.add_edge(tasklet, "t", init.add_write("tag"), None, Memlet("tag[0]"))
+
+    state = sdfg.add_state_after(init, "collectives")
+    allreduce = comm.Allreduce("allreduce", op="avg")
+    state.add_edge(state.add_read("a"), None, allreduce, "_inbuffer", Memlet("a[0:n]"))
+    b = state.add_access("b")
+    state.add_edge(allreduce, "_outbuffer", b, None, Memlet("b[0:n]"))
+    reduce_scatter = comm.ReduceScatter("reduce_scatter")
+    state.add_edge(b, None, reduce_scatter, "_inbuffer", Memlet("b[0:n]"))
+    state.add_edge(reduce_scatter, "_outbuffer", state.add_write("c"), None, Memlet("c[0:n]"))
+
+    p2p = sdfg.add_state_after(state, "exchange")
+    isend, irecv, wait = comm.Isend("isend"), comm.Irecv("irecv"), comm.Wait("wait")
+    peer, tag = p2p.add_read("peer"), p2p.add_read("tag")
+    p2p.add_edge(p2p.add_read("c"), None, isend, "_buffer", Memlet("c[0:n]"))
+    p2p.add_edge(peer, None, isend, "_dest", Memlet("peer[0]"))
+    p2p.add_edge(tag, None, isend, "_tag", Memlet("tag[0]"))
+    p2p.add_edge(peer, None, irecv, "_src", Memlet("peer[0]"))
+    p2p.add_edge(tag, None, irecv, "_tag", Memlet("tag[0]"))
+    send_token, recv_token = p2p.add_access("send_token"), p2p.add_access("recv_token")
+    p2p.add_edge(isend, "_request", send_token, None, Memlet("send_token[0]"))
+    p2p.add_edge(irecv, "_request", recv_token, None, Memlet("recv_token[0]"))
+    received = p2p.add_access("d")
+    p2p.add_edge(irecv, "_buffer", received, None, Memlet("d[0:n]"))
+    wait.remove_out_connector("_stat_tag")
+    wait.remove_out_connector("_stat_source")
+    wait.add_in_connector("_recv_token")
+    wait.add_in_connector("_in_d")
+    wait.add_out_connector("_out_d")
+    p2p.add_edge(send_token, None, wait, "_request", Memlet("send_token[0]"))
+    p2p.add_edge(recv_token, None, wait, "_recv_token", Memlet("recv_token[0]"))
+    p2p.add_edge(received, None, wait, "_in_d", Memlet("d[0:n]"))
+    p2p.add_edge(wait, "_out_d", p2p.add_write("d"), None, Memlet("d[0:n]"))
+    for st, node in ((state, allreduce), (state, reduce_scatter), (p2p, isend), (p2p, irecv)):
+        _add_comm(sdfg, st, node)
+    for node in (allreduce, reduce_scatter, isend, irecv, wait):
+        node.implementation = "NCCL"
+    compiled = sdfg.compile()
+
+    handle = communicators.nccl_init_rank(communicators.nccl_unique_id(), 0, 1)
+    try:
+        n = 1000
+        a = cp.arange(n, dtype=cp.float32)
+        b, c, d = (cp.zeros(n, dtype=cp.float32) for _ in range(3))
+        compiled(a=a, b=b, c=c, d=d, comm=handle, n=n)
+        cp.cuda.runtime.deviceSynchronize()
+        for result in (b, c, d):
+            assert cp.allclose(result, a)
+    finally:
+        communicators.nccl_destroy(handle)
+
+
 if __name__ == "__main__":
     test_allreduce_external_mpi_communicator()
     test_allgather_external_mpi_communicator()
     test_send_recv_external_mpi_communicator()
     test_nccl_external_communicator_needs_no_mpi()
     test_nccl_world_communicator_bootstraps_over_mpi()
+    test_nccl_unique_id_keeps_every_byte()
+    test_nccl_external_communicator_single_process()
