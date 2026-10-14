@@ -903,6 +903,60 @@ def test_dde_keeps_an_ordering_edge_whose_producer_is_live():
     assert np.allclose(B, 100.0)
 
 
+def test_dde_keeps_a_loop_write_after_removing_a_dead_nested_sdfg():
+    """Removing a nested SDFG takes its regions out of the CFG list, which shifts the ``cfg_id`` of every
+    region listed after it. The reachability the pass reads is keyed by the ids it was computed with, so
+    looking the loop up by its new id found another region's table. The loop body then reached nothing,
+    and its write of ``tmp``, which the state after the loop reads, was removed as dead (canon-GPU CloudSC
+    lost every negative-value correction this way)."""
+    sdfg = dace.SDFG("dde_cfg_id_shift")
+    sdfg.add_symbol("N", dace.int64)
+    sdfg.add_array("A", ["N"], dace.float64)
+    sdfg.add_array("B", ["N"], dace.float64)
+    sdfg.add_array("tmp", ["N"], dace.float64, transient=True)
+    sdfg.add_array("dead", [1], dace.float64, transient=True)
+
+    # A nested SDFG whose only output is never read, in a loop the bottom-up walk visits before ``body_loop``:
+    # the pass removes it there, before it reaches ``body_loop``.
+    first_loop = LoopRegion("first_loop", "k < 1", "k", "k = 0", "k = k + 1")
+    sdfg.add_node(first_loop, is_start_block=True)
+    first = first_loop.add_state("first", is_start_block=True)
+    inner = dace.SDFG("dde_cfg_id_shift_inner")
+    inner.add_array("out", [1], dace.float64)
+    inner_state = inner.add_state("inner_state", is_start_block=True)
+    inner_state.add_mapped_tasklet(
+        "fill", dict(j="0:1"), {}, "o = 1.0", dict(o=dace.Memlet("out[j]")), external_edges=True
+    )
+    nested = first.add_nested_sdfg(inner, {}, {"out"})
+    first.add_edge(nested, "out", first.add_write("dead"), None, dace.Memlet("dead[0]"))
+
+    # Listed after the nested SDFG, so its cfg_id moves when the nested SDFG leaves the CFG list.
+    body_loop = LoopRegion("body_loop", "i < N", "i", "i = 0", "i = i + 1")
+    sdfg.add_node(body_loop)
+    sdfg.add_edge(first_loop, body_loop, dace.InterstateEdge())
+    body = body_loop.add_state("body", is_start_block=True)
+    tasklet = body.add_tasklet("double", {"a"}, {"t"}, "t = 2 * a")
+    body.add_edge(body.add_read("A"), None, tasklet, "a", dace.Memlet("A[i]"))
+    body.add_edge(tasklet, "t", body.add_write("tmp"), None, dace.Memlet("tmp[i]"))
+
+    last = sdfg.add_state("last")
+    sdfg.add_edge(body_loop, last, dace.InterstateEdge())
+    last.add_nedge(last.add_read("tmp"), last.add_write("B"), dace.Memlet("tmp[0:N]"))
+    sdfg.validate()
+    loop_id_before = body_loop.cfg_id
+
+    Pipeline([DeadDataflowElimination()]).apply_pass(sdfg, {})
+    sdfg.validate()
+    assert not any(isinstance(n, nodes.NestedSDFG) for n in first.nodes()), "the dead nested SDFG stays"
+    assert body_loop.cfg_id < loop_id_before, "the removal no longer shifts the loop's cfg_id; test is vacuous"
+    assert any(n.data == "tmp" for n in body.data_nodes()), "the loop's write of tmp, read after it, was removed"
+
+    A = np.arange(8, dtype=np.float64)
+    B = np.zeros(8)
+    sdfg(A=A, B=B, N=8)
+    assert np.allclose(B, 2 * A)
+
+
 if __name__ == "__main__":
     test_dse_simple()
     test_dse_unconditional()
@@ -940,3 +994,4 @@ if __name__ == "__main__":
     test_dde_keeps_an_ordering_edge_whose_producer_is_live()
     test_dde_keeps_a_copy_that_a_write_through_a_view_does_not_cover()
     test_dde_removes_a_copy_that_a_write_through_a_view_fully_covers()
+    test_dde_keeps_a_loop_write_after_removing_a_dead_nested_sdfg()

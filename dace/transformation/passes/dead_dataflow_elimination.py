@@ -3,6 +3,7 @@
 import ast
 from collections import defaultdict
 from dataclasses import dataclass
+from typing import Any
 
 from dace import SDFG, Memlet, SDFGState, data, dtypes, properties
 from dace.frontend.python import astutils
@@ -78,6 +79,33 @@ class DeadDataflowElimination(ppl.ControlFlowRegionPass):
     def depends_on(self) -> list[type[ppl.Pass]]:
         return [ap.ControlFlowBlockReachability, ap.AccessSets]
 
+    def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> dict[int, Any] | None:
+        """Visit every region, reading each one's reachability by the region rather than by its ``cfg_id``.
+
+        The reachability is keyed by the ``cfg_id`` each region had when it was computed, but removing a dead
+        nested SDFG takes its regions out of the CFG list and shifts the ``cfg_id`` of every region listed
+        after it. Looked up by the shifted id, a later region reads another region's table, reaches nothing,
+        and every write it makes looks dead. So the tables are tied to their regions before anything is removed.
+        """
+        reachability = pipeline_results.get(ap.ControlFlowBlockReachability.__name__)
+        if reachability is not None:
+            self.reachable_by_region = {
+                cfg: reachability[cfg_id] for cfg_id, cfg in enumerate(sdfg.cfg_list) if cfg_id in reachability
+            }
+        try:
+            return super().apply_pass(sdfg, pipeline_results)
+        finally:
+            self.reachable_by_region = None
+
+    def region_reachability(
+        self, region, pipeline_results: dict[str, Any]
+    ) -> dict[ControlFlowBlock, set[ControlFlowBlock]]:
+        """``region``'s block reachability: the table tied to it at the start of the pass, else by ``cfg_id``."""
+        by_region = getattr(self, "reachable_by_region", None)
+        if by_region is not None and region in by_region:
+            return by_region[region]
+        return pipeline_results[ap.ControlFlowBlockReachability.__name__][region.cfg_id]
+
     def apply(self, region, pipeline_results):
         """
         Removes unreachable dataflow throughout SDFG states.
@@ -92,9 +120,7 @@ class DeadDataflowElimination(ppl.ControlFlowRegionPass):
         #  * Control flow block reachability
         #  * Read/write access sets per block
         sdfg = region if isinstance(region, SDFG) else region.sdfg
-        reachable: dict[ControlFlowBlock, set[ControlFlowBlock]] = pipeline_results[
-            ap.ControlFlowBlockReachability.__name__
-        ][region.cfg_id]
+        reachable: dict[ControlFlowBlock, set[ControlFlowBlock]] = self.region_reachability(region, pipeline_results)
         access_sets: dict[ControlFlowBlock, tuple[set[str], set[str]]] = pipeline_results[ap.AccessSets.__name__]
         result: dict[SDFGState, set[str]] = defaultdict(set)
 
