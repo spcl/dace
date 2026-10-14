@@ -258,7 +258,10 @@ def nccl_request(node: nodes.LibraryNode, sdfg: SDFG, state: SDFGState, tasklet:
     """The code that sets the ``_request`` output of a nonblocking NCCL operation, which has no request, and the
     type of the connector. An ``MPI_Request`` container is set to ``MPI_REQUEST_NULL`` (which needs MPI); any other
     (e.g., an integer token that orders the operation before its ``Wait`` without MPI) to zero. Without a
-    ``_request`` output, there is nothing to set."""
+    ``_request`` output, there is nothing to set.
+
+    A request in host memory makes the host wait for the GPU stream of the operation after it, as for any host
+    output of GPU work; ordering the operation through its GPU buffers instead (ordering connectors) does not."""
     request = next((e for e in state.out_edges(node) if e.src_conn == "_request"), None)
     if request is None:
         return ""
@@ -284,9 +287,9 @@ def nccl_tasklet(
     group of the program; a blocking operation then launches the group, a nonblocking one leaves it to
     the ``Wait`` that completes it.
 
-    A nonblocking collective (:class:`NonblockingCommNode`) is launched right away (NCCL runs it asynchronously to
-    the host): its ``Wait`` synchronizes its stream. Its ``_request`` output, if any, is a token (see
-    :func:`nccl_request`), which needs ``sdfg``."""
+    A collective is launched right away, nonblocking or not: NCCL runs it asynchronously on the stream of its node,
+    and code generation orders its readers after it on the device. The ``_request`` output of a nonblocking one, if
+    connected, is a token (see :func:`nccl_request`), which needs ``sdfg``."""
     code = f"""
         ncclComm_t __comm = {comm};
         __state->nccl->Begin();
@@ -294,9 +297,6 @@ def nccl_tasklet(
         """
     if blocking:
         code += "__state->nccl->Launch();\n"
-    nonblocking_collective = isinstance(node, NonblockingCommNode) and node.nonblocking
-    if nonblocking_collective:
-        code += "__state->nccl->Track(__dace_current_stream);\n"
     tasklet = nodes.Tasklet(
         node.name,
         expanded_input_connectors(node, state),
@@ -305,7 +305,7 @@ def nccl_tasklet(
         language=dtypes.Language.CPP,
         side_effects=True,
     )
-    if nonblocking_collective:
+    if isinstance(node, NonblockingCommNode) and node.nonblocking:
         if sdfg is None:
             raise ValueError("The tasklet of a nonblocking NCCL collective needs its SDFG")
         tasklet.code = properties.CodeBlock(
@@ -351,11 +351,14 @@ class CommNode(nodes.LibraryNode):
 class NonblockingCommNode(CommNode):
     """
     A collective that can also start its operation and return (``nonblocking``), like the ``MPI_I*`` variants of MPI
-    collectives. A nonblocking node writes a request to its ``_request`` output, which a ``Wait`` completes; its
-    buffers must stay untouched until then, and must be contiguous. With MPI, the request is an ``MPI_Request``;
-    with NCCL, which has no requests, any container (e.g., an integer token, which orders the node before its
-    ``Wait``). The average (``avg``) of a reduction cannot be nonblocking with MPI: reduce the sum, and divide after
-    the ``Wait``.
+    collectives. With MPI, a nonblocking node writes an ``MPI_Request`` to its ``_request`` output, which a ``Wait``
+    completes; its buffers must stay untouched until then, and must be contiguous. The average (``avg``) of a
+    reduction cannot be nonblocking with MPI: reduce the sum, and divide after the ``Wait``.
+
+    With NCCL (or RCCL), every collective is asynchronous already: it runs on the GPU stream of its node, and code
+    generation orders the readers of its output after it on the device (with events across streams), while
+    independent work runs on other streams. ``nonblocking`` makes no difference and needs no ``Wait``. A connected
+    ``_request`` output is set to a token, but writing it to host memory makes the host wait for the collective.
     """
 
     nonblocking = properties.Property(
@@ -366,6 +369,6 @@ class NonblockingCommNode(CommNode):
     )
 
     def validate_request(self, state: SDFGState) -> None:
-        """Checks that a nonblocking node has a connected ``_request`` output."""
+        """Checks that a nonblocking node has a connected ``_request`` output (MPI expansions)."""
         if self.nonblocking and not any(e.src_conn == "_request" for e in state.out_edges(self)):
             raise ValueError(f'The nonblocking {type(self).__name__} "{self.label}" has no _request output')

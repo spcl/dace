@@ -7,7 +7,9 @@ completes it. :func:`overlap_communication` moves every start, with the work it 
 before it, and every wait behind the work after it that does not depend on it, so that the work between them runs
 while the communication is in flight. It then puts every
 communication node in a state of its own, so that code generation keeps this order (communication nodes have side
-effects, so state fusion does not merge them with their neighbors).
+effects, so state fusion does not merge them with their neighbors). NCCL (and RCCL) nodes stay in the states of
+their neighbors: they run on GPU streams, which order them with the work around them on the device, while the end of
+a state would make the host wait for them.
 
 The order of the operations that start communication (starts and blocking operations) does not change: collectives
 must start in the same order on every process. Waits may move past them.
@@ -18,6 +20,7 @@ import dataclasses
 import sympy
 
 from dace import data
+from dace.config import Config
 from dace.libraries.comm.nodes import Irecv, Isend, Wait, Waitall
 from dace.libraries.comm.nodes.node import CommNode, NonblockingCommNode
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
@@ -41,6 +44,13 @@ class _Access:
 
 def _is_comm(node: tn.ScheduleTreeNode) -> bool:
     return isinstance(node, tn.LibraryCall) and isinstance(node.node, CommNode)
+
+
+def _on_gpu_streams(node: tn.ScheduleTreeNode) -> bool:
+    """Whether a communication node runs on GPU streams (NCCL or RCCL), which order it with the work around it on
+    the device. A state of its own would make the host wait for it at the end of the state."""
+    implementation = node.node.implementation or Config.get("library", "comm", "default_implementation")
+    return implementation == "NCCL"
 
 
 def is_start(node: tn.ScheduleTreeNode) -> bool:
@@ -119,7 +129,7 @@ def _overlap_in(scope: tn.ScheduleTreeScope, root: tn.ScheduleTreeRoot, aliases:
         pinned.append(node)
 
     for child in children:
-        if _is_comm(child):
+        if _is_comm(child) and not _on_gpu_streams(child):
             boundary(tn.StateBoundaryNode())
             pinned.append(child)
             boundary(tn.StateBoundaryNode())

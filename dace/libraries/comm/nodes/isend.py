@@ -95,6 +95,16 @@ class ExpandIsendNCCL(NcclExpansion):
 
 @dace.library.node
 class Isend(CommNode):
+    """
+    Starts sending a buffer (``_buffer``) to a process (``_dest``) with a tag (``_tag``), and writes a request
+    (``_request``) that a ``Wait`` completes.
+
+    Other output connectors only order the send in the dataflow, like the ordering connectors of ``Wait``: connect
+    the sent buffer through one (e.g., ``_out_buffer``) and into the ``Wait`` to order the send before its wait
+    without a request. NCCL (and RCCL), which have no requests, prefer this for buffers in GPU memory: the order is
+    then one of GPU streams, while writing a request (or a token) to host memory makes the host wait for the stream.
+    """
+
     # Global properties
     implementations = {
         "MPI": ExpandIsendMPI,

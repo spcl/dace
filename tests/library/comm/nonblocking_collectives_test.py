@@ -8,6 +8,8 @@ Run under MPI::
     mpirun -n 2 python -m pytest --with-mpi -m mpi tests/library/comm/nonblocking_collectives_test.py
 """
 
+import warnings
+
 import numpy as np
 import pytest
 
@@ -174,43 +176,74 @@ def test_nonblocking_restrictions():
 
 
 def test_nonblocking_nccl_expansion():
-    """NCCL launches a nonblocking collective right away and tracks its stream for the Wait; an integer token is its
-    request."""
+    """NCCL (or RCCL) collectives run asynchronously on the stream of their node, nonblocking or not: the collective
+    is launched right away, and its Wait orders the stream after it on the device, which is what lets code generation
+    keep it on a stream (a host-side wait would force the default stream)."""
     node = comm.Allreduce("allreduce")
     node.implementation = "NCCL"
     sdfg = _nonblocking_sdfg(
         "nb_nccl_allreduce", node, "n", "n", storage=dace.StorageType.GPU_Global, request_type=dace.int32
     )
     code = _expanded_code(sdfg)
-    launch = code.index("__state->nccl->Launch();")
-    assert code.index("ncclAllReduce(") < launch < code.index("__state->nccl->Track(__dace_current_stream);")
+    assert code.index("ncclAllReduce(") < code.index("__state->nccl->Launch();")
+    assert "Track(" not in code
     assert "_request = 0;" in code
-    assert "__state->nccl->Wait();" in code
+    assert "__state->nccl->Wait(__dace_current_stream);" in code
 
 
 @pytest.mark.gpu
-def test_nonblocking_nccl_single_process():
-    """A nonblocking NCCL allreduce over a communicator created in Python, completed by its Wait."""
+def test_nccl_collective_orders_on_streams():
+    """An NCCL allreduce needs no request or wait: its reader follows it on the device, independent work runs on
+    another stream, and the host never waits for a stream after the collective."""
     cp = pytest.importorskip("cupy")
     if not comm.NCCL.is_installed():
         pytest.skip("NCCL is not installed")
+    gpu = dace.StorageType.GPU_Global
+    sdfg = dace.SDFG("nccl_stream_order")
+    sdfg.add_scalar("comm", dace.int64)
+    for name in ("inbuf", "reduced", "outbuf", "other", "other_out"):
+        sdfg.add_array(name, ["n"], dace.float64, storage=gpu, transient=name == "reduced")
+    state = sdfg.add_state()
     node = comm.Allreduce("allreduce")
     node.implementation = "NCCL"
-    sdfg = _nonblocking_sdfg(
-        "nb_nccl_single", node, "n", "n", storage=dace.StorageType.GPU_Global, request_type=dace.int32
-    )
-    sdfg.add_scalar("comm", dace.int64)
     node.add_in_connector("_comm")
-    sdfg.start_state.add_edge(sdfg.start_state.add_read("comm"), None, node, "_comm", Memlet("comm[0]"))
-    compiled = sdfg.compile()
+    state.add_edge(state.add_read("inbuf"), None, node, "_inbuffer", Memlet("inbuf[0:n]"))
+    state.add_edge(state.add_read("comm"), None, node, "_comm", Memlet("comm[0]"))
+    reduced = state.add_access("reduced")
+    state.add_edge(node, "_outbuffer", reduced, None, Memlet("reduced[0:n]"))
+    state.add_mapped_tasklet(
+        "reader",
+        {"i": "0:n"},
+        {"r": Memlet("reduced[i]")},
+        "o = r + 1",
+        {"o": Memlet("outbuf[i]")},
+        schedule=dace.ScheduleType.GPU_Device,
+        input_nodes={"reduced": reduced},
+        external_edges=True,
+    )
+    state.add_mapped_tasklet(
+        "independent",
+        {"i": "0:n"},
+        {"x": Memlet("other[i]")},
+        "y = 2 * x",
+        {"y": Memlet("other_out[i]")},
+        schedule=dace.ScheduleType.GPU_Device,
+        external_edges=True,
+    )
+    with warnings.catch_warnings():
+        warnings.filterwarnings("error", message=".*not stream-aware.*")
+        compiled = sdfg.compile()
+    code = "\n".join(obj.clean_code for obj in sdfg.generate_code())
+    assert "StreamSynchronize(__dace_current_stream)" not in code
 
     handle = communicators.nccl_init_rank(communicators.nccl_unique_id(), 0, 1)
     try:
         n = 1000
-        inbuf = cp.arange(n, dtype=cp.float64)
-        outbuf = cp.zeros(n, dtype=cp.float64)
-        compiled(inbuf=inbuf, outbuf=outbuf, comm=handle, n=n)
-        assert cp.allclose(outbuf, inbuf)
+        inbuf, other = cp.arange(n, dtype=cp.float64), cp.ones(n, dtype=cp.float64)
+        outbuf, other_out = cp.zeros(n, dtype=cp.float64), cp.zeros(n, dtype=cp.float64)
+        compiled(inbuf=inbuf, outbuf=outbuf, other=other, other_out=other_out, comm=handle, n=n)
+        assert cp.allclose(outbuf, inbuf + 1)
+        assert cp.allclose(other_out, 2)
     finally:
         communicators.nccl_destroy(handle)
 
@@ -221,4 +254,4 @@ if __name__ == "__main__":
     test_nonblocking_mpi_expansion()
     test_nonblocking_restrictions()
     test_nonblocking_nccl_expansion()
-    test_nonblocking_nccl_single_process()
+    test_nccl_collective_orders_on_streams()

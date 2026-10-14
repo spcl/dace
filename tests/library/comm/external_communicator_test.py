@@ -1,6 +1,8 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Communication nodes over a communicator given as an argument (the ``_comm`` connector)."""
 
+import warnings
+
 import numpy as np
 import pytest
 
@@ -190,7 +192,9 @@ def test_nccl_unique_id_keeps_every_byte():
 
 @pytest.mark.gpu
 def test_nccl_external_communicator_single_process():
-    """Collectives and a self-exchange over an NCCL communicator created in Python, with no MPI in the program."""
+    """Collectives and a self-exchange over an NCCL communicator created in Python, with no MPI in the program. The
+    send is ordered before its wait through the sent buffer, not a request: the order is one of GPU streams, and the
+    host never waits for a stream after a communication call."""
     cp = pytest.importorskip("cupy")
     if not comm.NCCL.is_installed():
         pytest.skip("NCCL is not installed")
@@ -199,7 +203,7 @@ def test_nccl_external_communicator_single_process():
     sdfg.add_scalar("comm", dace.int64)
     for name in ("a", "b", "c", "d"):
         sdfg.add_array(name, ["n"], dace.float32, storage=gpu)
-    for name in ("peer", "tag", "send_token", "recv_token"):
+    for name in ("peer", "tag"):
         sdfg.add_scalar(name, dace.int32, transient=True)
 
     init = sdfg.add_state("init")
@@ -218,31 +222,37 @@ def test_nccl_external_communicator_single_process():
 
     p2p = sdfg.add_state_after(state, "exchange")
     isend, irecv, wait = comm.Isend("isend"), comm.Irecv("irecv"), comm.Wait("wait")
+    isend.remove_out_connector("_request")
+    irecv.remove_out_connector("_request")
     peer, tag = p2p.add_read("peer"), p2p.add_read("tag")
     p2p.add_edge(p2p.add_read("c"), None, isend, "_buffer", Memlet("c[0:n]"))
     p2p.add_edge(peer, None, isend, "_dest", Memlet("peer[0]"))
     p2p.add_edge(tag, None, isend, "_tag", Memlet("tag[0]"))
     p2p.add_edge(peer, None, irecv, "_src", Memlet("peer[0]"))
     p2p.add_edge(tag, None, irecv, "_tag", Memlet("tag[0]"))
-    send_token, recv_token = p2p.add_access("send_token"), p2p.add_access("recv_token")
-    p2p.add_edge(isend, "_request", send_token, None, Memlet("send_token[0]"))
-    p2p.add_edge(irecv, "_request", recv_token, None, Memlet("recv_token[0]"))
+    sent = p2p.add_access("c")
+    isend.add_out_connector("_out_buffer")
+    p2p.add_edge(isend, "_out_buffer", sent, None, Memlet("c[0:n]"))
     received = p2p.add_access("d")
     p2p.add_edge(irecv, "_buffer", received, None, Memlet("d[0:n]"))
+    wait.remove_in_connector("_request")
     wait.remove_out_connector("_stat_tag")
     wait.remove_out_connector("_stat_source")
-    wait.add_in_connector("_recv_token")
-    wait.add_in_connector("_in_d")
+    for connector in ("_in_c", "_in_d"):
+        wait.add_in_connector(connector)
     wait.add_out_connector("_out_d")
-    p2p.add_edge(send_token, None, wait, "_request", Memlet("send_token[0]"))
-    p2p.add_edge(recv_token, None, wait, "_recv_token", Memlet("recv_token[0]"))
+    p2p.add_edge(sent, None, wait, "_in_c", Memlet("c[0:n]"))
     p2p.add_edge(received, None, wait, "_in_d", Memlet("d[0:n]"))
     p2p.add_edge(wait, "_out_d", p2p.add_write("d"), None, Memlet("d[0:n]"))
     for st, node in ((state, allreduce), (state, reduce_scatter), (p2p, isend), (p2p, irecv)):
         _add_comm(sdfg, st, node)
     for node in (allreduce, reduce_scatter, isend, irecv, wait):
         node.implementation = "NCCL"
-    compiled = sdfg.compile()
+    with warnings.catch_warnings():
+        warnings.filterwarnings("error", message=".*not stream-aware.*")  # No node is forced onto the default stream
+        compiled = sdfg.compile()
+    code = "\n".join(obj.clean_code for obj in sdfg.generate_code())
+    assert "StreamSynchronize(__dace_current_stream)" not in code
 
     handle = communicators.nccl_init_rank(communicators.nccl_unique_id(), 0, 1)
     try:
