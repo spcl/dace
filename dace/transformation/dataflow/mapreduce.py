@@ -156,21 +156,32 @@ class MapReduceFusion(pm.SingleStateTransformation):
             ),
         )
 
-        # Add initialization state as necessary
-        if not self.no_init and reduce_node.identity is not None:
-            init_state = graph.parent_graph.add_state_before(graph)
-            init_state.add_mapped_tasklet(
-                "freduce_init",
-                [("o%d" % i, f"{r[0]}:{r[1] + 1}:{r[2]}") for i, r in enumerate(array_edge.data.subset)],
-                {},
-                f"__out = {reduce_node.identity}",
-                {
-                    "__out": Memlet.simple(
-                        array_edge.data.data, ",".join(["o%d" % i for i in range(len(array_edge.data.subset))])
-                    )
-                },
-                external_edges=True,
-            )
+        if self.no_init or reduce_node.identity is None:
+            return
+        init_args = (
+            "freduce_init",
+            [("o%d" % i, f"{r[0]}:{r[1] + 1}:{r[2]}") for i, r in enumerate(array_edge.data.subset)],
+            {},
+            f"__out = {reduce_node.identity}",
+            {
+                "__out": Memlet.simple(
+                    array_edge.data.data, ",".join("o%d" % i for i in range(len(array_edge.data.subset)))
+                )
+            },
+        )
+        tmap_entry = graph.entry_node(tmap_exit)
+        scope = graph.entry_node(tmap_entry)
+        if scope is None:
+            graph.parent_graph.add_state_before(graph).add_mapped_tasklet(*init_args, external_edges=True)
+            return
+        # Inside an enclosing map the accumulator is re-initialized every outer iteration, so the identity is written
+        # in that scope, ordered before the fused map; an init state would write it once for all iterations.
+        init_out = graph.add_access(array_edge.data.data)
+        _, init_entry, _ = graph.add_mapped_tasklet(
+            *init_args, external_edges=True, output_nodes={array_edge.data.data: init_out}
+        )
+        graph.add_nedge(scope, init_entry, Memlet())
+        graph.add_nedge(init_out, tmap_entry, Memlet())
 
 
 class MapWCRFusion(pm.SingleStateTransformation):

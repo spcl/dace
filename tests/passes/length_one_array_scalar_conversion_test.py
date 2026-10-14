@@ -685,3 +685,4 @@ def test_a_rewritten_symbol_mapping_stays_symbolic():
     assert isinstance(value, sympy.Basic), f"the mapping came back as {type(value).__name__}: {value!r}"
     assert {str(sym) for sym in value.free_symbols} == {"rows", "cols"}, value
     assert int(value.subs({sympy.Symbol("rows"): 3, sympy.Symbol("cols"): 5})) == 15, value
+    test_control_flow_only_gate_gets_a_copyin()

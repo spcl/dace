@@ -386,6 +386,38 @@ def test_a_second_body_tasklet_does_not_break_the_match():
     sdfg(a=a.copy(), other=other, out=out, N=n)
     assert np.allclose(out[0], (a * 2.0).sum()), f"reduction wrong: {out[0]}"
     assert np.allclose(other, a + 1.0), "the second body tasklet lost its output"
+def test_a_reduction_inside_an_outer_map_is_reinitialized_every_outer_iteration():
+    """The fused WCR accumulates into a transient that lives inside an outer map, so its identity
+    has to be written once per outer iteration. An init state before the whole state writes it once
+    for all of them: every row then sums the rows before it, and the parallel rows race."""
+    n, m = 6, 5
+    sdfg = dace.SDFG("reduce_in_outer_map")
+    sdfg.add_array("a", (N, M), dace.float64)
+    sdfg.add_array("out", (N,), dace.float64)
+    sdfg.add_transient("tmp", (M,), dace.float64)
+    sdfg.add_transient("s", (1,), dace.float64)
+
+    state = sdfg.add_state()
+    ome, omx = state.add_map("rows", dict(b="0:N"))
+    ime, imx = state.add_map("cols", dict(j="0:M"))
+    square = state.add_tasklet("square", {"inp"}, {"o"}, "o = inp * inp")
+    tmp, acc = state.add_access("tmp"), state.add_access("s")
+    state.add_memlet_path(state.add_read("a"), ome, ime, square, dst_conn="inp", memlet=dace.Memlet("a[b, j]"))
+    state.add_memlet_path(square, imx, tmp, src_conn="o", memlet=dace.Memlet("tmp[j]"))
+    red = state.add_reduce("lambda x, y: x + y", None, identity=0)
+    state.add_edge(tmp, None, red, None, dace.Memlet("tmp[0:M]"))
+    state.add_edge(red, None, acc, None, dace.Memlet("s[0]"))
+    store = state.add_tasklet("store", {"inp"}, {"o"}, "o = inp")
+    state.add_edge(acc, None, store, "inp", dace.Memlet("s[0]"))
+    state.add_memlet_path(store, omx, state.add_write("out"), src_conn="o", memlet=dace.Memlet("out[b]"))
+    sdfg.validate()
+
+    assert sdfg.apply_transformations_repeated(MapReduceFusion) == 1
+
+    a = np.random.default_rng(20261013).random((n, m))
+    out = np.zeros(n)
+    sdfg(a=a.copy(), out=out, N=n, M=m)
+    assert np.allclose(out, (a * a).sum(axis=1)), out
 
 
 if __name__ == "__main__":
@@ -398,3 +430,4 @@ if __name__ == "__main__":
     test_mapreduce_twomaps()
     test_fuse_maps_removes_the_reduced_intermediate()
     test_a_second_body_tasklet_does_not_break_the_match()
+    test_a_reduction_inside_an_outer_map_is_reinitialized_every_outer_iteration()
