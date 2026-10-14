@@ -7,6 +7,7 @@ import dace
 from dace import symbolic
 from dace.sdfg import graph, validation
 from dace.sdfg import nodes as nodes
+from dace.sdfg import utils as sdutil
 from dace.transformation import helpers
 
 
@@ -282,8 +283,10 @@ def relocate_nodes(
             dmr_symbol = edge_to_move.dst_conn
 
             if dmr_symbol in to_node.in_connectors:
-                # The same dynamic map range read from the same node (`can_topologically_be_fused()`): drop the duplicate.
+                # Both Maps bind the same value to this dynamic map range (`can_topologically_be_fused()`): drop the duplicate.
                 state.remove_edge(edge_to_move)
+                if state.degree(edge_to_move.src) == 0:
+                    state.remove_node(edge_to_move.src)
             else:
                 if not to_node.add_in_connector(dmr_symbol, force=False):
                     raise RuntimeError(  # Might fail because of out connectors.
@@ -465,10 +468,53 @@ def can_topologically_be_fused(
     return param_repl
 
 
+def dynamic_map_range_source(
+    state: dace.SDFGState, edge: graph.MultiConnectorEdge
+) -> tuple[nodes.AccessNode, nodes.AccessNode] | None:
+    """
+    The access node a dynamic map range binding reads, as ``(root, viewed)``: the root of the binding's Memlet path,
+    and the data node it views if the root is a View (the root itself otherwise). ``None`` if the path does not start
+    at an access node, or the View cannot be resolved.
+
+    :param state: The state containing the binding.
+    :param edge: The edge into the dynamic map range connector.
+    """
+    root = state.memlet_path(edge)[0].src
+    if not isinstance(root, nodes.AccessNode):
+        return None
+    if not isinstance(root.desc(state.sdfg), dace.data.View):
+        return root, root
+    viewed = sdutil.get_last_view_node(state, root)
+    return (root, viewed) if viewed is not None else None
+
+
+def is_written_in_state(state: dace.SDFGState, data_name: str) -> bool:
+    """
+    Tests if any node of ``state`` writes ``data_name``, directly or through a View of it.
+
+    :param state: The state to scan.
+    :param data_name: The name of the (non-View) data.
+    """
+    for node in state.data_nodes():
+        if state.in_degree(node) == 0:
+            continue
+        if isinstance(node.desc(state.sdfg), dace.data.View):
+            viewed = sdutil.get_last_view_node(state, node)
+            if viewed is None or viewed.data == data_name:
+                return True
+        elif node.data == data_name:
+            return True
+    return False
+
+
 def dynamic_map_ranges_agree(state: dace.SDFGState, first: nodes.MapEntry, second: nodes.MapEntry) -> bool:
     """
-    Tests if every dynamic map range both Maps bind is read from the same node, and no other one of the second Map
-    collides with an out connector of the first.
+    Tests if every dynamic map range both Maps bind reads the same value, and no other one of the second Map collides
+    with an out connector of the first.
+
+    Both bindings must read the same element: either through the same root node of their Memlet paths, or from two
+    access nodes of the same data that nothing in the state writes, directly or through a View. Two different View
+    nodes may map the same subset to different elements, so they must be the same node.
 
     :param state: The state containing both Maps.
     :param first: The Map that receives the dynamic map ranges.
@@ -481,12 +527,19 @@ def dynamic_map_ranges_agree(state: dace.SDFGState, first: nodes.MapEntry, secon
         if None in dmr_edges:
             return False
         dmr_source_first, dmr_source_second = dmr_edges
-        # TODO: Also accept two nodes of the same data, once it can be shown that both read the same value.
         if (
-            dmr_source_first.src is not dmr_source_second.src
-            or dmr_source_first.src_conn != dmr_source_second.src_conn
-            or dmr_source_first.data.data != dmr_source_second.data.data
+            dmr_source_first.data.data != dmr_source_second.data.data
             or dmr_source_first.data.subset != dmr_source_second.data.subset
         ):
+            return False
+        roots = [dynamic_map_range_source(state, edge) for edge in dmr_edges]
+        if None in roots:
+            return False
+        (root_first, viewed_first), (root_second, viewed_second) = roots
+        if root_first is root_second:
+            continue
+        if root_first is not viewed_first or root_second is not viewed_second:
+            return False
+        if root_first.data != root_second.data or is_written_in_state(state, root_first.data):
             return False
     return not any(dmr in first.out_connectors for dmr in second_ranges - first_ranges)
