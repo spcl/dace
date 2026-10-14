@@ -10,8 +10,9 @@ passes nor the hoist may take apart.
 import numpy as np
 
 import dace
+from dace.properties import CodeBlock
 from dace.sdfg import nodes
-from dace.sdfg.state import ConditionalBlock, LoopRegion
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.interstate.move_map_invariant_if_up import hoist_invariant_guards
 from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.move_if_into_loop import MoveIfIntoLoop
@@ -105,6 +106,47 @@ def test_the_versioning_guard_survives_push_in_and_hoist():
         assert np.allclose(a, expected)
 
 
+def guard_on_a_device_flag() -> dace.SDFG:
+    """A GPU kernel whose body branches on ``flag[0]``, read in the condition through a connector."""
+    gpu = dace.StorageType.GPU_Global
+    sdfg = dace.SDFG("guard_on_device_flag")
+    for name in ("a", "b"):
+        sdfg.add_array(name, [N], dace.float64, storage=gpu)
+    sdfg.add_array("flag", [1], dace.int32, storage=gpu)
+    inner = dace.SDFG("guard_on_device_flag_body")
+    inner.add_symbol("i", dace.int64)
+    inner.add_array("a", [N], dace.float64, storage=gpu)
+    inner.add_array("b", [N], dace.float64, storage=gpu)
+    inner.add_array("flag", [1], dace.int32, storage=gpu)
+    guard = ConditionalBlock("if_flag", sdfg=inner)
+    inner.add_node(guard, is_start_block=True)
+    branch = ControlFlowRegion("if_flag_body", sdfg=inner)
+    guard.add_branch(CodeBlock("flag[0] > 0"), branch)
+    body = branch.add_state("scale", is_start_block=True)
+    scale = body.add_tasklet("scale", {"x"}, {"y"}, "y = 2.0 * x")
+    body.add_edge(body.add_read("a"), None, scale, "x", dace.Memlet("a[i]"))
+    body.add_edge(scale, "y", body.add_write("b"), None, dace.Memlet("b[i]"))
+    state = sdfg.add_state("main", is_start_block=True)
+    entry, exit_ = state.add_map("kernel", dict(i="0:N"), schedule=dace.ScheduleType.GPU_Device)
+    nest = state.add_nested_sdfg(inner, {"a": None, "flag": None}, {"b": None}, symbol_mapping={"N": N, "i": "i"})
+    state.add_memlet_path(state.add_read("a"), entry, nest, dst_conn="a", memlet=dace.Memlet("a[0:N]"))
+    state.add_memlet_path(state.add_read("flag"), entry, nest, dst_conn="flag", memlet=dace.Memlet("flag[0]"))
+    state.add_memlet_path(nest, exit_, state.add_write("b"), src_conn="b", memlet=dace.Memlet("b[0:N]"))
+    sdfg.validate()
+    return sdfg
+
+
+def test_a_guard_reading_device_memory_stays_in_the_kernel():
+    """A kernel's guard on ``flag[0]`` is map-invariant, but ``flag`` lives in device memory: hoisted out of the
+    kernel, the guard became a host branch dereferencing a device pointer (cloudsc_subsidence_forcing's species
+    guard on ``iphase``, a SIGSEGV on the GPU canon column). It stays inside the kernel."""
+    sdfg = guard_on_a_device_flag()
+    hoist_invariant_guards(sdfg, require_full_hoist=True)
+    sdfg.validate()
+    assert not [b for b in sdfg.nodes() if isinstance(b, ConditionalBlock)], "the guard left the kernel"
+
+
 if __name__ == "__main__":
     test_maps_under_equal_hoisted_guards_are_fused()
     test_the_versioning_guard_survives_push_in_and_hoist()
+    test_a_guard_reading_device_memory_stays_in_the_kernel()

@@ -59,6 +59,7 @@ from dace.sdfg import utils as sdutil
 from dace.sdfg.graph import SubgraphView
 from dace.sdfg.narrowing import as_map_entry
 from dace.sdfg.nodes import AccessNode, MapEntry, MapExit, NestedSDFG
+from dace.sdfg.scope import is_devicelevel_gpu
 from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
@@ -192,6 +193,20 @@ def _condition_invariant(
     defs = _inner_assignments(ns)
     reads = _connector_reads(ns, state)
     mapping = ns.symbol_mapping
+    # The hoisted guard runs where the map entry is. At host level it can only read data the host can.
+    entry = state.entry_node(ns)
+    host_level = entry is not None and not is_devicelevel_gpu(state.sdfg, state, entry)
+
+    def readable_at_guard(conn: str) -> bool:
+        if not host_level:
+            return True
+        for e in state.in_edges_by_connector(ns, conn):
+            source = state.memlet_path(e)[0].src
+            if isinstance(source, AccessNode) and not dtypes.can_access(
+                dtypes.ScheduleType.CPU_Multicore, source.desc(state.sdfg).storage
+            ):
+                return False
+        return True
 
     def qualifies(name: str, depth: int) -> bool:
         if depth > 8:  # pathological definition chain; refuse rather than recurse
@@ -212,7 +227,7 @@ def _condition_invariant(
             # A data container read through a connector: invariant exactly when
             # the memlet that brings it in does not index by a map parameter and
             # the body does not write it.
-            return not (reads[name] & map_params) and name not in ns.out_connectors
+            return not (reads[name] & map_params) and name not in ns.out_connectors and readable_at_guard(name)
         # Not a map parameter and not defined anywhere we can see: it is an
         # outer-scope symbol, constant for the whole map.
         return name not in map_params
