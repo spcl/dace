@@ -536,7 +536,7 @@ class CUDACodeGen(TargetCodeGenerator):
             self._dispatcher.defined_vars.add(dataname, DefinedType.Pointer, ctypedef)
 
             # Strides are left to the user's discretion
-            result_alloc.write(cpp.gpu_alloc_check(f"gpuMallocHost(&{dataname}, {arrsize_malloc})", nodedesc))
+            result_alloc.write(cpp.gpu_alloc_check(f"gpuMallocHost((void**)&{dataname}, {arrsize_malloc})", nodedesc))
             if node.setzero:
                 result_alloc.write(f"memset({dataname}, 0, {arrsize_malloc});\n")
             if nodedesc.start_offset != 0:
