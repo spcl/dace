@@ -3691,7 +3691,7 @@ class AbstractControlFlowRegion(
     ) -> SDFGState:
         """Adds a new SDFG state before an existing state, reconnecting predecessors to it instead.
 
-        :param state: The state to prepend the new state before.
+        :param state: The block to prepend the new state before.
         :param label: State label.
         :param is_start_block: If True, resets scope block starting state to this state.
         :param condition: Transition condition of the newly created edge between state and the new state.
@@ -3719,7 +3719,7 @@ class AbstractControlFlowRegion(
     ) -> SDFGState:
         """Adds a new SDFG state after an existing state, reconnecting it to the successors instead.
 
-        :param state: The state to append the new state after.
+        :param state: The block to append the new state after.
         :param label: State label.
         :param is_start_block: If True, resets scope block starting state to this state.
         :param condition: Transition condition of the newly created edge between state and the new state.
