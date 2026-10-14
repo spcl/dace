@@ -661,6 +661,23 @@ required:
         title: Frontend
         description: Python frontend preferences
         required:
+            torch_dynamo:
+                type: dict
+                title: TorchDynamo frontend
+                description: Defaults for the PyTorch (torch.compile) frontend
+                required:
+                    simplify:
+                        type: bool
+                        title: Simplify generated SDFGs
+                        default: true
+                        description: Run SDFG simplification after converting the captured graph.
+                    onnx_fallback:
+                        type: bool
+                        title: ONNX library fallback
+                        default: true
+                        description: >
+                            Use dace.libraries.onnx expansions (if the onnx package is available) for
+                            operators without a native lowering.
             cache_size:
                 type: int
                 title: Program cache size
@@ -930,6 +947,28 @@ required:
                         default: pure
                         title: Default implementation
                         description: Default implementation for BLAS library nodes.
+
+                    override:
+                        type: bool
+                        default: false
+                        title: Force configured implementation
+                        description: >
+                            Force the default implementation, even if an
+                            implementation has been explicitly set on a node.
+
+            comm:
+                type: dict
+                title: Communication
+                description: Built-in communication (MPI/NCCL) DaCe library.
+                required:
+                    default_implementation:
+                        type: str
+                        default: MPI
+                        title: Default implementation
+                        description: >
+                            Default implementation for communication library nodes:
+                            MPI, or NCCL (RCCL on the HIP backend) for buffers in GPU
+                            memory. Nodes that only MPI implements keep using it.
 
                     override:
                         type: bool

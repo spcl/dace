@@ -1630,6 +1630,11 @@ class LibraryNode(CodeNode):
         default=dtypes.InstrumentationType.No_Instrumentation,
     )
 
+    #: Whether the node legitimately connects containers in different storage types (e.g., a copy between
+    #: host and device, or a communication call with host control values and device buffers). Its default
+    #: schedule is then the GPU one if any container is in GPU memory, instead of a schedule conflict.
+    bridges_storage: bool = False
+
     def __init__(self, name, *args, schedule=None, **kwargs):
         super().__init__(*args, **kwargs)
         self.name = name

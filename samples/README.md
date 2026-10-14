@@ -9,3 +9,4 @@ There are several sub-folders here:
 * **optimization**: Examples that use the transformation and instrumentation API to optimize programs to run fast on CPUs and GPUs
 * **distributed**: Python/NumPy and explicit applications that run on multiple machines
 * **codegen**: Samples showing how to extend the code generator of DaCe to support new platforms (e.g., Tensor Cores)
+* **ml**: Training PyTorch models with DaCe, either through `torch.compile(backend='dace')` (AOTAutograd's backward graph, compiled with the forward graph into one SDFG) or inside a `@dace.program` differentiated by DaCe's automatic differentiation (`dace.ml.training_step`)
