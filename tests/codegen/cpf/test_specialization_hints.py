@@ -28,17 +28,20 @@ import pytest
 import dace
 from dace import cpf_lowering
 from dace.codegen.cpf import CONTRACT_LINES, render
+from dace.codegen.targets.experimental_cpu import map_hint
 from dace.libraries.standard.nodes.copy import CopyLibraryNode
 from dace.libraries.standard.nodes.scan import PARALLEL_SCAN_HINT, SEQUENTIAL_SCAN_HINT, Scan, ScanOp
 from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.canonicalize.annotate_loop_kinds import (
     CONFLICT_MEANING,
-    NEVER_EXAMINED,
+    MAP_DIMENSIONS,
+    NO_COUNTER,
     PARALLEL,
     SEQUENTIAL_PINNED,
     SEQUENTIAL_PROVEN,
     UNSURE,
+    WAVEFRONT_FRONT,
     AnnotateLoopKinds,
     proven_carrying_access,
 )
@@ -295,6 +298,15 @@ def test_a_parallel_map_says_it_is_parallel():
     assert "// " + PARALLEL.splitlines()[0] in rendered
 
 
+def test_a_multi_dimensional_map_names_every_loop_it_renders_as():
+    """One map becomes one nested ``for`` per dimension, with the comment above the outermost only (addusxx_g's
+    reduction nest); the comment names the inner ones too, or they read as loops nobody classified."""
+    entry, _ = dace.SDFG("cpf_kind_map_dims").add_state().add_map("plane", {"i": "0:8", "j": "0:8"})
+    lines = map_hint(entry).splitlines()
+    assert lines[0] == PARALLEL.splitlines()[0]
+    assert lines[-1] == MAP_DIMENSIONS.format(count=2, params="i, j")
+
+
 def test_a_proven_carried_dependence_is_rendered_as_a_proof_and_names_it():
     """The strong half of the sequential case: ``LoopToMap`` proved the dependence, so the order
     is required, and the hint carries the analysis' own words rather than restating the loop."""
@@ -327,7 +339,7 @@ def test_a_loop_that_was_never_examined_says_exactly_that():
     """A while loop has no iteration variable, so nothing ever asked whether it carries a dependence.
     That is as open as a declined test, so it is ``unsure`` too, with the reason saying why."""
     rendered = comment_lines(named(unexamined_sdfg("cpf_kind_unexamined")))
-    assert "// " + UNSURE.format(reason=NEVER_EXAMINED).splitlines()[0] in rendered, rendered
+    assert "// " + UNSURE.format(reason=NO_COUNTER).splitlines()[0] in rendered, rendered
     assert not [line for line in rendered if line.startswith("// sequential -- carried:")]
 
 
@@ -381,15 +393,21 @@ def test_naming_the_loops_does_not_move_a_line_of_code():
         assert any(" -- " in line for line in comment_lines(after)), build.__name__
 
 
-def test_an_already_recorded_hint_is_left_alone():
-    """A pass that set a hint knew which alternative it declined. The generic classifier cannot
-    re-derive that, so it must never overwrite one."""
-    sdfg = carried_sdfg("cpf_kind_no_clobber")
-    for loop in loops_of(sdfg):
-        loop.specialization_hint = MAP_HINT
-    rendered = comment_lines(named(sdfg))
-    assert "// traded a tiled map for a flat one." in rendered
-    assert not any(line.startswith("// sequential --") for line in rendered)
+def test_a_recorded_note_keeps_its_place_below_the_verdict():
+    """A pass's note says what it did (an alternative it declined), not what the loop is: the classifier keeps it
+    and puts the class first, so the reader still learns the verdict of every loop. A hint that already opens with
+    a class is the pass's own verdict and stays as it is."""
+    sdfg = carried_sdfg("cpf_kind_note")
+    loops = loops_of(sdfg)
+    loops[0].specialization_hint = MAP_HINT
+    AnnotateLoopKinds().apply_pass(sdfg, {})
+    lines = loops[0].specialization_hint.splitlines()
+    assert lines[0].startswith("sequential -- carried:"), lines
+    assert MAP_HINT.splitlines()[0] in lines, lines
+
+    loops[0].specialization_hint = WAVEFRONT_FRONT.format(skew="(t = i + j)")
+    AnnotateLoopKinds().apply_pass(sdfg, {})
+    assert loops[0].specialization_hint == WAVEFRONT_FRONT.format(skew="(t = i + j)")
 
 
 def test_the_canonicalize_pipeline_names_the_loops_it_leaves_behind():
@@ -518,4 +536,31 @@ def test_a_pinned_independent_loop_does_not_read_as_parallel():
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    test_the_rendering_states_which_verdicts_are_settled_and_which_are_open()
+    test_a_map_hint_is_rendered_one_comment_line_per_line()
+    test_a_loop_hint_is_rendered()
+    test_a_scan_states_its_trade_although_the_expansion_consumes_the_node()
+    test_a_scan_hint_follows_the_expansion_that_ran("pure", SEQUENTIAL_SCAN_HINT)
+    test_a_scan_hint_follows_the_expansion_that_ran("CPU", PARALLEL_SCAN_HINT)
+    test_no_hint_and_an_empty_hint_render_identically()
+    for hint in (None, "", "   \n\t"):
+        test_hint_comment_is_empty_for_an_empty_hint(hint)
+    test_hint_comment_is_empty_outside_a_standalone_rendering()
+    test_ordinary_codegen_carries_no_hint()
+    test_a_parallel_map_says_it_is_parallel()
+    test_a_multi_dimensional_map_names_every_loop_it_renders_as()
+    test_a_proven_carried_dependence_is_rendered_as_a_proof_and_names_it()
+    test_a_declined_dependence_test_is_not_rendered_as_a_proof()
+    test_a_loop_that_was_never_examined_says_exactly_that()
+    test_a_wavefront_names_its_diagonal_and_its_front()
+    test_a_tiled_wavefront_names_all_three_of_its_axes()
+    test_naming_the_loops_does_not_move_a_line_of_code()
+    test_a_recorded_note_keeps_its_place_below_the_verdict()
+    test_the_canonicalize_pipeline_names_the_loops_it_leaves_behind()
+    test_a_map_a_library_expansion_leaves_is_labelled()
+    test_a_map_codegen_lowers_a_copy_into_is_labelled()
+    test_a_loop_left_unlabelled_by_canonicalize_is_labelled_by_the_rendering()
+    test_a_carried_dependence_behind_a_whole_array_memlet_is_proven()
+    test_a_read_ahead_dependence_is_named_war_not_raw()
+    test_no_carried_dependence_is_claimed_for_independent_elements()
+    test_a_pinned_independent_loop_does_not_read_as_parallel()

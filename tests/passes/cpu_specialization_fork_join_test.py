@@ -153,6 +153,36 @@ def test_map_re_entered_by_symbolic_loop_stays_parallel():
     assert schedules(sdfg)["body_map"] == dtypes.ScheduleType.Default
 
 
+def csr_segment_sdfg(name, in_loop):
+    """A map over ``b:e`` with both ends read from ``indptr`` (a CSR row), in a ``for it in 0:N`` loop or at top level."""
+    sdfg = dace.SDFG(name)
+    sdfg.add_array("indptr", [N + 1], dace.int64)
+    sdfg.add_array("a", [M], dace.float64)
+    for bound in ("b", "e"):
+        sdfg.add_symbol(bound, dace.int64)
+    container = loop(sdfg, "rows", "N") if in_loop else sdfg
+    row = "it" if in_loop else "0"
+    read = container.add_state("read_row", is_start_block=True)
+    body = map_state(container, sdfg, "body", ["b:e"])
+    container.add_edge(read, body, dace.InterstateEdge(assignments={"b": f"indptr[{row}]", "e": f"indptr[{row} + 1]"}))
+    sdfg.validate()
+    return sdfg
+
+
+@pytest.mark.parametrize("in_loop", [True, False])
+def test_a_data_segment_map_in_a_sequential_loop_goes_sequential(in_loop):
+    """ilu0's shape: inside a sequential loop, a map over a range read from data forks once per outer iteration over a
+    few elements (1.5 s against numba's 11 ms). At top level the same map is one region and keeps it."""
+    sdfg = csr_segment_sdfg(f"csr_segment_{in_loop}", in_loop)
+    SequentializeUnprofitableParallelScopes().apply_pass(sdfg, {})
+    entry = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry))
+    if in_loop:
+        assert entry.map.schedule == dtypes.ScheduleType.Sequential
+        assert "run sequentially on CPU -- its range b:e - 1 is read from data" in entry.specialization_hint
+    else:
+        assert entry.map.schedule == dtypes.ScheduleType.Default
+
+
 def test_map_inside_a_conditional_is_decided():
     """A ConditionalBlock is not a ControlFlowRegion, so its branches need their own descent.
 
@@ -402,12 +432,22 @@ def transfer_sdfg(name, loop_end, kind, subset="0:N"):
 
 @pytest.mark.parametrize("kind,implementation", [("copy", "MemcpyCPU"), ("memset", "CPU")])
 def test_re_entered_transfer_collapses_to_libc(kind, implementation):
-    """stockham_fft's inner copy: re-entered -> Sequential, and a contiguous sequential transfer
-    is one libc call, not a serial element loop."""
-    sdfg, node = transfer_sdfg(f"{kind}_in_loop", "N", kind)
+    """stockham_fft's inner copy: re-entered at a size the loop changes -> Sequential, and a contiguous
+    sequential transfer is one libc call, not a serial element loop."""
+    sdfg, node = transfer_sdfg(f"{kind}_in_loop", "N", kind, subset="0:it + 1")
     SpecializeCpuTransfers().apply_pass(sdfg, {})
     assert node.schedule == dtypes.ScheduleType.Sequential
     assert node.implementation == implementation
+
+
+@pytest.mark.parametrize("kind", ["copy", "memset"])
+def test_a_loop_that_keeps_the_transfer_size_does_not_sequentialize_it(kind):
+    """bicgstab's per-iteration ``N``-element memsets: every entry is the same size, so the entry count cancels
+    out of the fork-or-not decision and only the size decides -- not the loop around it."""
+    sdfg, node = transfer_sdfg(f"{kind}_invariant_in_loop", "N", kind)
+    SpecializeCpuTransfers().apply_pass(sdfg, {})
+    assert node.schedule == dtypes.ScheduleType.Default
+    assert node.implementation in (None, "Auto")
 
 
 @pytest.mark.parametrize("kind", ["copy", "memset"])
@@ -428,7 +468,7 @@ def test_passes_are_idempotent():
         assert SequentializeUnprofitableParallelScopes().apply_pass(sdfg, {}) == 1
         assert SequentializeUnprofitableParallelScopes().apply_pass(sdfg, {}) is None
 
-    transfers, _node = transfer_sdfg("idempotent_copy", "N", "copy")
+    transfers, _node = transfer_sdfg("idempotent_copy", "N", "copy", subset="0:it + 1")
     assert SpecializeCpuTransfers().apply_pass(transfers, {}) == 2
     assert SpecializeCpuTransfers().apply_pass(transfers, {}) is None
 
@@ -436,7 +476,7 @@ def test_passes_are_idempotent():
 def test_strided_re_entered_copy_is_sequential_but_not_memcpy():
     """A non-contiguous copy has no single-``memcpy`` form: it is still sequentialized, but the
     implementation is left to the library node's own selector."""
-    sdfg, node = transfer_sdfg("strided_copy_in_loop", "N", "copy", subset="0:N:2")
+    sdfg, node = transfer_sdfg("strided_copy_in_loop", "N", "copy", subset="0:it + 1:2")
     SpecializeCpuTransfers().apply_pass(sdfg, {})
     assert node.schedule == dtypes.ScheduleType.Sequential
     assert node.implementation in (None, "Auto")
@@ -481,6 +521,8 @@ if __name__ == "__main__":
     test_map_above_break_even_stays_parallel()
     test_symbolic_extent_stays_parallel()
     test_map_re_entered_by_symbolic_loop_stays_parallel()
+    for in_loop in [True, False]:
+        test_a_data_segment_map_in_a_sequential_loop_goes_sequential(in_loop)
     test_map_inside_a_conditional_is_decided()
     test_one_trip_map_releases_the_maps_in_its_body()
     test_released_maps_get_their_own_staged_scalars()
@@ -496,7 +538,9 @@ if __name__ == "__main__":
     for kind, implementation in [("copy", "MemcpyCPU"), ("memset", "CPU")]:
         test_re_entered_transfer_collapses_to_libc(kind, implementation)
     for kind in ["copy", "memset"]:
-        test_top_level_transfer_keeps_the_parallel_element_map(kind)
+        test_a_loop_that_keeps_the_transfer_size_does_not_sequentialize_it("copy")
+    test_a_loop_that_keeps_the_transfer_size_does_not_sequentialize_it("memset")
+    test_top_level_transfer_keeps_the_parallel_element_map(kind)
     test_passes_are_idempotent()
     test_strided_re_entered_copy_is_sequential_but_not_memcpy()
     test_converting_re_entered_copy_is_not_memcpy()

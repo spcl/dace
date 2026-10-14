@@ -1424,6 +1424,7 @@ def swalk(expr, enter_functions=False):
 _builtin_userfunctions = {
     "int_floor",
     "int_ceil",
+    "int_sqrt",
     "ipow",
     "fma",
     "abs",
@@ -2095,6 +2096,23 @@ MODULO_FUNCTIONS = {
     "PyFloor": int_floor,
     "Mod": sympy.Mod,
 }
+
+
+class int_sqrt(DaceFunction):
+    """The largest ``r`` with ``r*r <= n`` (the floor of ``sqrt(n)``), and ``-1`` for a negative ``n``: exact on every
+    integer, unlike a floating ``sqrt``, so ``i*i < q`` is ``i < int_sqrt(q - 1) + 1`` for every ``q``."""
+
+    @classmethod
+    def eval(cls, n):
+        if n.is_Integer:
+            return sympy.Integer(math.isqrt(int(n)) if n >= 0 else -1)
+        return None
+
+    def _eval_is_integer(self):
+        return True
+
+    def _eval_is_nonnegative(self):
+        return True if self.args[0].is_nonnegative else None
 
 
 class int_ceil(DaceFunction):
@@ -3464,6 +3482,7 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
         "Le": sympy.Le,
         "int_floor": int_floor,
         "int_ceil": int_ceil,
+        "int_sqrt": int_sqrt,
         "ipow": ipow,
         "IfExpr": IfExpr,
         **MODULO_FUNCTIONS,
@@ -3891,6 +3910,7 @@ _PYSTR2SYM_locals = {
     "int_floor": int_floor,
     "__int_floor": __int_floor,
     "int_ceil": int_ceil,
+    "int_sqrt": int_sqrt,
     "ipow": ipow,
     "IfExpr": IfExpr,
     "ITE": ITE,
@@ -4128,6 +4148,35 @@ def has_rounding(expr) -> bool:
     return bool(expr.atoms(*ROUNDING_FUNCTIONS))
 
 
+def guard_crossing(expr: SymbolicType | str, var: str, bound: SymbolicType | str, strict: bool) -> SymbolicType | None:
+    """The first integer ``var`` at which ``expr < bound`` (``strict``) or ``expr <= bound`` stops holding, for an ``expr``
+    increasing in ``var``: ``a*var + b`` with a positive number ``a`` and a nonnegative rational root, or ``var**2 + d`` (increasing
+    only for ``var >= 0``, which the caller establishes). Over the integers ``expr < bound`` is then ``var < result``,
+    spelled with exact integer rounding (``int_ceil``, ``int_floor``, ``int_sqrt``); ``None`` for any other shape.
+    """
+    difference = sympy.expand(pystr_to_symbolic(expr) - pystr_to_symbolic(bound))
+    symbol = next((s for s in difference.free_symbols if str(s) == var), None)
+    if symbol is None or not difference.is_polynomial(symbol):
+        return None
+    poly = sympy.Poly(difference, symbol)
+    coeffs = poly.all_coeffs()
+    if poly.degree() == 1 and coeffs[0].is_number and coeffs[0] > 0:
+        numerator, denominator = sympy.fraction(sympy.together(-coeffs[1] / coeffs[0]))
+        # The runtime rounds like C division, which is the ceiling / floor only for a nonnegative numerator.
+        if (
+            denominator.is_integer
+            and denominator.is_number
+            and denominator > 0
+            and provably_nonnegative(numerator, assume_symbols_nonnegative=True)
+        ):
+            return int_ceil(numerator, denominator) if strict else int_floor(numerator, denominator) + 1
+        return None
+    if poly.degree() == 2 and coeffs[0] == 1 and coeffs[1] == 0 and (-coeffs[2]).is_integer:
+        square = -coeffs[2]
+        return int_sqrt(square - 1) + 1 if strict else int_sqrt(square) + 1
+    return None
+
+
 def provably_nonnegative(expr, assume_symbols_nonnegative: bool = False) -> bool:
     """Whether ``expr >= 0`` for EVERY value of its free symbols. ``False`` means NOT PROVEN, never
     "negative" -- an undecided expression is reported unproven, so a caller can only ever lose
@@ -4138,7 +4187,8 @@ def provably_nonnegative(expr, assume_symbols_nonnegative: bool = False) -> bool
     that gap by REPLACING each rounding node with a valid bound that makes the whole expression
     smaller, then asking sympy whether the weakened expression is still nonnegative:
     ``floor(t) in (t - 1, t]`` and ``ceiling(t) in [t, t + 1)``, so a rounding node with a negative
-    coefficient takes its upper bound and one with a nonnegative coefficient its lower.
+    coefficient takes its upper bound and one with a nonnegative coefficient its lower; ``int_sqrt``
+    takes its lower bound -1 under a positive coefficient.
 
     Sound because every step only weakens: a nonnegative lower bound proves the original
     nonnegative. Conservative in every other direction -- a rounding node the expression is not
@@ -4165,6 +4215,15 @@ def provably_nonnegative(expr, assume_symbols_nonnegative: bool = False) -> bool
         e = e.subs(
             {sym: sympy.Symbol(sym.name, nonnegative=True, integer=bool(sym.is_integer)) for sym in e.free_symbols}
         )
+    # ``int_sqrt`` is at least -1 everywhere, so a positive multiple of it only weakens when it is replaced by -1.
+    roots = e.atoms(int_sqrt)
+    if roots:
+        coefficients = {root: e.coeff(root, 1) for root in roots}
+        if not all(c.is_number and c > 0 for c in coefficients.values()):
+            return False
+        if (e - sum(c * root for root, c in coefficients.items())).atoms(int_sqrt):
+            return False
+        e = e.subs(dict.fromkeys(roots, -1))
     if e.is_nonnegative is True:
         return True
     atoms = list(e.atoms(sympy.floor, sympy.ceiling))
@@ -4532,6 +4591,7 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
             in (
                 "int_floor",
                 "int_ceil",
+                "int_sqrt",
                 "int_floor_ni",
                 "py_floor",
                 "py_mod",

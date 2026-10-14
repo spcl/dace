@@ -805,6 +805,16 @@ def carried_rows(a: dace.float64[N, N], b: dace.float64[N, N]):
             b[i, k] = a[i, k] * 2.0
 
 
+@dace.program
+def carried_local_cover(x: dace.float64[T, N], y: dace.float64[T, N]):
+    cover = np.ndarray([N], dtype=np.float64)
+    for t in range(T):
+        for i in range(N):
+            y[t, i] = cover[i] + x[t, i]
+        for j in range(N):
+            cover[j] = x[t, j] * 2.0
+
+
 def sweep_with_witnesses(sdfg: dace.SDFG, use_witnesses: bool) -> list[tuple[str, bool]]:
     """Run the sweep, logging every probe verdict; ``use_witnesses=False`` forces the full analysis."""
     real_can = LoopToMap.can_be_applied
@@ -829,7 +839,7 @@ def sweep_with_witnesses(sdfg: dace.SDFG, use_witnesses: bool) -> list[tuple[str
     return log
 
 
-@pytest.mark.parametrize("program", [carried_time_steps, carried_rows])
+@pytest.mark.parametrize("program", [carried_time_steps, carried_rows, carried_local_cover])
 def test_a_witnessed_refusal_decides_every_probe_as_the_full_analysis(program) -> None:
     """A witness is re-checked instead of re-running the analysis; a verdict it got wrong would lift a carried
     loop (a race) or keep a parallel one."""
@@ -842,7 +852,9 @@ def test_a_witnessed_refusal_decides_every_probe_as_the_full_analysis(program) -
     candidate.validate()
 
 
-@pytest.mark.parametrize("program, kind", [(carried_time_steps, "write"), (carried_rows, "read")])
+@pytest.mark.parametrize(
+    "program, kind", [(carried_time_steps, "write"), (carried_rows, "read"), (carried_local_cover, "write")]
+)
 def test_a_loop_refused_around_lifts_is_rechecked_on_its_witness(program, kind: str, monkeypatch) -> None:
     """The loops enclosing each lift are re-probed after it; re-running the whole analysis for a refusal that
     stands on the same site was 1.3 ks of CloudSC's parallelize stage (8 loops, 3051 probes each)."""
@@ -1037,10 +1049,13 @@ if __name__ == "__main__":
     test_the_memoized_control_flow_reads_are_the_walked_ones()
     test_a_witnessed_refusal_decides_every_probe_as_the_full_analysis(carried_time_steps)
     test_a_witnessed_refusal_decides_every_probe_as_the_full_analysis(carried_rows)
+    test_a_witnessed_refusal_decides_every_probe_as_the_full_analysis(carried_local_cover)
     with pytest.MonkeyPatch.context() as mp:
         test_a_loop_refused_around_lifts_is_rechecked_on_its_witness(carried_time_steps, "write", mp)
     with pytest.MonkeyPatch.context() as mp:
         test_a_loop_refused_around_lifts_is_rechecked_on_its_witness(carried_rows, "read", mp)
+    with pytest.MonkeyPatch.context() as mp:
+        test_a_loop_refused_around_lifts_is_rechecked_on_its_witness(carried_local_cover, "write", mp)
     with pytest.MonkeyPatch.context() as mp:
         test_a_disjoint_box_verdict_is_asked_of_z3_once("i, i:M", "i:M, i", mp)
     with pytest.MonkeyPatch.context() as mp:

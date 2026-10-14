@@ -310,6 +310,10 @@ class NormalizeWCR(ppl.Pass):
             priv_desc = self._seed_desc(oc_desc)
             priv = inner.add_datadesc(f"_nnr_priv_{oc}", priv_desc, find_new_name=True)
             priv_node = wcr_state.add_access(priv)
+            # The whole memlet path into the accumulator names it, through every scope the write leaves.
+            for edge in wcr_state.memlet_path(wcr_edge):
+                if edge is not wcr_edge and edge.data.data == oc:
+                    edge.data.data = priv
             new_data = copy.deepcopy(wcr_edge.data)
             new_data.data = priv
             wcr_state.add_edge(wcr_edge.src, wcr_edge.src_conn, priv_node, None, new_data)

@@ -28,7 +28,13 @@ from dace.config import Config
 from dace.libraries.blas.environments import openblas
 from dace.libraries.blas.nodes.dot import Dot
 from dace.libraries.blas.nodes.gemm import Gemm
-from dace.libraries.blas.nodes.matmul import MatMul, _get_matmul_operands, _matrix_operand
+from dace.libraries.blas.nodes.matmul import (
+    MatMul,
+    _get_matmul_operands,
+    _matrix_operand,
+    compile_time_extent,
+    is_gemm_shape,
+)
 from dace.libraries.fft.environments import fftw3
 from dace.libraries.standard.block_reduce import gpu_block_implementation
 from dace.libraries.standard.nodes.scan import Scan
@@ -36,7 +42,7 @@ from dace.libraries.standard.nodes.symmetrize import Symmetrize
 from dace.ordered import OrderedSet
 from dace.sdfg import infer_types, memlet_utils, nodes
 from dace.sdfg.narrowing import as_range
-from dace.sdfg.state import ConditionalBlock, SDFGState
+from dace.sdfg.state import ConditionalBlock, LoopRegion, SDFGState
 from dace.transformation import helpers as xfh
 from dace.transformation.auto.auto_optimize import (
     apply_cpu_library_parallelism,
@@ -79,20 +85,79 @@ SMALL_MATMUL_DIM = 32
 
 
 def _all_matmul_extents_small(state: SDFGState, node: nodes.LibraryNode, limit: int) -> bool:
-    """True iff every operand/output extent of a matmul library ``node`` is a constant
-    at most ``limit`` (the matmul is known-small). A symbolic extent -> not known-small."""
+    """True iff every operand/output extent of a matmul library ``node`` is a compile-time constant
+    (a literal, or a symbol ``SDFG.specialize`` fixed) at most ``limit`` (the matmul is known-small).
+    Any other symbolic extent -> not known-small."""
     saw = False
     for e in list(state.in_edges(node)) + list(state.out_edges(node)):
         if e.data is None or e.data.subset is None:
             continue
         for ext in as_range(e.data.subset).size():
             saw = True
-            try:
-                if int(ext) > limit:
-                    return False
-            except (TypeError, ValueError):
-                return False  # symbolic extent -> unknown size, treat as not-small
+            value = compile_time_extent(ext, state.sdfg)
+            if value is None or value > limit:
+                return False
     return saw
+
+
+def small_gemm_in_repeated_scope(node: nodes.Node, state: SDFGState) -> bool:
+    """A small matrix-matrix product that an enclosing map or loop runs once per iteration.
+
+    The one rule both targets lower small GEMMs by: a ``Gemm``, or a ``MatMul`` that specializes to one, whose
+    every extent is a compile-time constant at most :data:`SMALL_MATMUL_DIM`, under a map or a loop (across
+    nested-SDFG boundaries). Such a product is one iteration's work, so it runs in the thread that runs the
+    iteration, not as a library call per iteration.
+
+    :param node: Any node.
+    :param state: The state holding ``node``.
+    """
+    if isinstance(node, MatMul):
+        try:
+            if not is_gemm_shape(*_get_matmul_operands(node, state, state.sdfg)):
+                return False
+        except ValueError:
+            return False
+    elif not isinstance(node, Gemm):
+        return False
+    if not _all_matmul_extents_small(state, node, SMALL_MATMUL_DIM):
+        return False
+    return any(
+        isinstance(scope, (nodes.MapEntry, LoopRegion))
+        for scope in xfh.get_parent_map_and_loop_scopes(state.sdfg, node, state)
+    )
+
+
+def under_parallel_map(node: nodes.Node, state: SDFGState) -> bool:
+    """Some map enclosing ``node`` (across nested-SDFG boundaries) is parallel, so it can be the kernel."""
+    return any(
+        isinstance(scope, nodes.MapEntry) and scope.map.schedule != dtypes.ScheduleType.Sequential
+        for scope in xfh.get_parent_map_and_loop_scopes(state.sdfg, node, state)
+    )
+
+
+def select_small_gemms(sdfg: SDFG) -> int:
+    """Give each small GEMM under a parallel map (:func:`small_gemm_in_repeated_scope`) the in-thread ``pure``
+    loop, before the device offload decides what is a kernel.
+
+    The offload keeps a map on the host when its body issues a device-wide library call
+    (:func:`~dace.transformation.passes.offloading.taskloop.is_device_wide_libnode`), and a ``MatMul`` with no
+    implementation is one: every iteration of the map would launch a vendor GEMM of a few hundred
+    multiplications. With the loop selected here the map is the kernel and each thread runs its iteration's
+    products. A ``MatMul`` becomes the ``Gemm`` it stands for first. A product under loops alone has no map to
+    be its kernel and keeps the device call.
+
+    :param sdfg: The canonicalized SDFG, before the offload, in place.
+    :returns: How many GEMMs were given the in-thread loop.
+    """
+    for node, state in list(sdfg.all_nodes_recursive()):
+        if isinstance(node, MatMul) and small_gemm_in_repeated_scope(node, state) and under_parallel_map(node, state):
+            node.expand(state)
+    selected = 0
+    for node, state in sdfg.all_nodes_recursive():
+        if isinstance(node, Gemm) and small_gemm_in_repeated_scope(node, state) and under_parallel_map(node, state):
+            node.implementation = "pure"
+            selected += 1
+    return selected
 
 
 def blas_addresses(node: nodes.LibraryNode, state: SDFGState) -> bool:
@@ -217,6 +282,18 @@ def canonicalize_set_fast_implementations(
         # forbids. Pinning it single-core keeps the whole expanded subtree serial.
         if sequential and node.schedule != dtypes.ScheduleType.Sequential:
             node.schedule = dtypes.ScheduleType.Sequential
+
+        # A small product an enclosing map or loop runs once per iteration (``small_gemm_in_repeated_scope``) runs
+        # in that iteration's thread: on the CPU the row-wise loop nest, single-threaded -- not a BLAS call, and
+        # not a parallel region, per iteration; on the GPU the in-thread loop :func:`select_small_gemms` gave it
+        # before the offload.
+        if small_gemm_in_repeated_scope(node, state):
+            if device == dtypes.DeviceType.CPU and "rowwise" in impls:
+                node.implementation = "rowwise"
+                node.schedule = dtypes.ScheduleType.Sequential
+                continue
+            if device == dtypes.DeviceType.GPU and node.implementation == "pure":
+                continue
 
         # Inside a kernel a node that can run as a BLOCK collective does (``Reduce``, ``Dot``, ``Gemm``,
         # ``Scan``): the kernel gets one block per outer iteration, not a per-thread serial loop.
@@ -391,6 +468,11 @@ def finalize_transient_storage(sdfg: SDFG, device: dtypes.DeviceType) -> None:
                 desc.lifetime = dtypes.AllocationLifetime.State
                 desc.storage = dtypes.StorageType.Register
                 continue
+            # The same holds for an array a map accumulates into: ``__state->histw`` is no ``reduction(+:histw[0:n])``
+            # target, so every write falls back to an atomic (azimint_hist: 10^8 contended adds on 1000 bins).
+            if device == dtypes.DeviceType.CPU and map_reduces_into(sd, name):
+                desc.lifetime = dtypes.AllocationLifetime.State
+                continue
             # Hoisting into ``__dace_init`` is sound only where the program would have made the
             # allocation anyway, or where the extent holds for every value the boundary admits: a
             # buffer sized by the very quantity its guard tests (LoopToScan's carry distance) is
@@ -413,6 +495,15 @@ def finalize_transient_storage(sdfg: SDFG, device: dtypes.DeviceType) -> None:
                 desc.lifetime = dtypes.AllocationLifetime.State
     if device == dtypes.DeviceType.CPU:
         force_map_scoped_registers(sdfg)
+
+
+def map_reduces_into(sdfg: SDFG, name: str) -> bool:
+    """Whether a map of ``sdfg`` writes ``name`` through a WCR memlet leaving its scope."""
+    return any(
+        isinstance(edge.src, nodes.MapExit) and edge.data.wcr is not None and edge.data.data == name
+        for state in sdfg.states()
+        for edge in state.edges()
+    )
 
 
 def outermost_map(state: SDFGState, node: nodes.Node) -> nodes.EntryNode | None:
@@ -591,6 +682,8 @@ def offload_to_gpu(sdfg: SDFG) -> None:
     BatchRowScans().apply_pass(sdfg, {})
     expand_gathered_dots(sdfg)
     recompute_fuse_for_gpu(sdfg)
+    # Before the offload reads a map around a small GEMM as a host loop of vendor calls.
+    select_small_gemms(sdfg)
     apply_gpu_storage(sdfg)
     # One validation for the whole offload, after the last step, instead of one per step.
     sdfg.apply_gpu_transformations(validate=False)

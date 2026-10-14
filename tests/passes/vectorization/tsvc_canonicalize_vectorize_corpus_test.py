@@ -54,9 +54,6 @@ UNTILED_KERNELS = frozenset(
         "s13110_d_single",
         "s141_d_single",
         "s161_d_single",
-        # The outer j loop canonicalizes to a genuine sum-over-j reduction (a[i] += ...*c[j]) once InlineSDFG
-        # (7883519d9) exposes the body; a cross-lane reduction is not tileable.
-        "s176_d_single",
         "s2111_d_single",
         "s232_d_single",
         "s257_d_single",

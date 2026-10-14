@@ -268,13 +268,25 @@ def fftw3_call(src: data.Data, out: data.Data, transformed: list[int], is_invers
         if looped
         else f"{prefix}execute(__plan);"
     )
+    # A threaded FFTW plans for the team the program runs (pocketfft's ``workers``); inside a parallel region, one thread.
+    from dace.libraries.fft.environments import fftw3
+
+    team = (
+        f"static const int __threads_ready = {prefix}init_threads(); (void)__threads_ready;\n"
+        f"    {prefix}plan_with_nthreads(omp_in_parallel() ? 1 : omp_get_max_threads());"
+        if fftw3.threaded()
+        else ""
+    )
     code = f"""
     {prefix}iodim64 __dims[{len(dims)}] = {{{", ".join(dims)}}};
     {howmany_decl}
     {prefix}plan __plan;
     #pragma omp critical(dace_fftw_planner)
+    {{
+    {team}
     __plan = {prefix}plan_guru64_dft({len(dims)}, __dims, {len(howmany)}, {"__howmany" if howmany else "NULL"},
                                     ({complex_t} *)__in, ({complex_t} *)__out, {direction}, {flags});
+    }}
     if (!__plan)
         throw std::runtime_error("FFTW returned no plan for this transform layout");
     {execute}

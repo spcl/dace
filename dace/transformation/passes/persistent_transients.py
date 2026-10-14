@@ -142,6 +142,9 @@ class MakeTransientsPersistent(ppl.Pass):
         :param sdfg: The SDFG to modify in-place.
         :return: cfg_id -> names promoted in it, or None if nothing was promoted.
         """
+        # The result is keyed by ``cfg_id``: a stale list can number a nested SDFG like its parent, and its empty entry
+        # then overwrote the parent's promotions, which every caller reads back (finalize's register demotion missed them).
+        sdfg.reset_cfg_list()
         allowed = persistent_size_symbols(sdfg)
         unit_extents: dict[Any, bool] = {}
         result: dict[int, set[str]] = {}

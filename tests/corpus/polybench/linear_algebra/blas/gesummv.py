@@ -10,7 +10,6 @@ datatype = dace.float64
 sizes = [{N: 30}, {N: 90}, {N: 250}, {N: 1300}, {N: 2800}]
 
 #: ported from the npbench bench_info paper row
-paper_sizes = {N: 11200}
 
 args = [
     ([N, N], datatype),

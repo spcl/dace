@@ -8,23 +8,20 @@ None of these need a GPU: they build SDFGs, run the selection pass, and inspect
 import dace
 from dace import dtypes, nodes, subsets
 from dace.transformation.passes.gpu_block_size_selection import (
+    domain_matched_block,
     pick_gpu_block_size,
     select_gpu_device_block_size,
-    warp_width,
 )
 
 N = dace.symbol("N")
 M = dace.symbol("M")
 
-#: The expected shapes, stated in WARPS. A block size written as a thread count is right on one
-#: backend and silently wrong on the other -- a 16-wide ``x`` is half a warp on NVIDIA and a
-#: quarter of a CDNA wavefront -- so the contract these tests hold the pass to is "one warp on the
-#: contiguous dimension", and the numbers follow from the backend rather than being written down.
-WARP = warp_width()
-BLOCK_1D = [WARP * 4, 1, 1]
-BLOCK_2D_SQUARE = [WARP, 4, 1]
-BLOCK_2D_WIDE_X = [WARP * 2, 4, 1]
-BLOCK_2D_WIDE_Y = [WARP, 8, 1]
+#: The expected shapes: a line of 512, a square of 256, rectangles following a skewed domain.
+BLOCK_1D = [512, 1, 1]
+BLOCK_2D_SQUARE = [16, 16, 1]
+#: ``i`` over 256, ``j`` (contiguous, ``x``) over 1024: four times as wide on ``x``.
+BLOCK_2D_WIDE_X = [32, 8, 1]
+BLOCK_2D_WIDE_Y = [8, 32, 1]
 
 
 def make_device_map(params, ranges):
@@ -106,15 +103,46 @@ def test_experimental_codegen_gets_deep_block_with_the_flag_off():
     assert m.gpu_block_size == [512, 1, 1]
 
 
-def test_pick_block_size_2d_mild_ratio_stays_square():
-    # Ratio below the skew threshold (2x) stays square.
+def test_pick_block_size_2d_mild_ratio_leans_toward_the_wider_axis():
     m = make_device_map(["i", "j"], [(0, 599, 1), (0, 1023, 1)])
-    assert pick_gpu_block_size(m) == BLOCK_2D_SQUARE
+    assert pick_gpu_block_size(m) == [16, 16, 1]
+    m = make_device_map(["i", "j"], [(0, 299, 1), (0, 1023, 1)])
+    assert pick_gpu_block_size(m) == [32, 8, 1]
 
 
-def test_pick_block_size_3d_leaves_default():
+def test_pick_block_size_3d_is_a_cube():
     m = make_device_map(["i", "j", "k"], [(0, N - 1, 1), (0, N - 1, 1), (0, N - 1, 1)])
+    assert pick_gpu_block_size(m) == [8, 8, 8]
+
+
+def test_pick_block_size_4d_leaves_default():
+    m = make_device_map(["i", "j", "k", "l"], [(0, N - 1, 1)] * 4)
     assert pick_gpu_block_size(m) is None
+
+
+def test_a_small_axis_hands_its_threads_to_the_unit_stride_axis():
+    """An axis of four takes no thread past a symbolic one; of the two symbolic axes the one indexed at unit stride
+    more often takes the extra doubling."""
+    assert domain_matched_block([N, 4, N], [2, 0, 1]) == [32, 1, 16]
+    assert domain_matched_block([N, 4, N], [1, 0, 2]) == [16, 1, 32]
+
+
+def test_a_domain_smaller_than_the_block_keeps_only_the_threads_it_uses():
+    assert domain_matched_block([100]) == [128, 1, 1]
+    assert domain_matched_block([3, 5]) == [4, 8, 1]
+
+
+def test_every_block_stays_in_the_thread_band():
+    """256 to 512 threads wherever the domain can fill them, at most three axes."""
+    for params, ranges in (
+        (["i"], [(0, N - 1, 1)]),
+        (["i", "j"], [(0, N - 1, 1), (0, M - 1, 1)]),
+        (["i", "j"], [(0, 1023, 1), (0, 7, 1)]),
+        (["i", "j"], [(0, 7, 1), (0, 1023, 1)]),
+        (["i", "j", "k"], [(0, N - 1, 1), (0, 63, 1), (0, 1, 1)]),
+    ):
+        block = pick_gpu_block_size(make_device_map(params, ranges))
+        assert 256 <= block[0] * block[1] * block[2] <= 512, block
 
 
 def build_2d_map_sdfg(schedule):
@@ -239,8 +267,9 @@ def test_pass_still_sizes_a_kernel_over_an_untagged_sequential_map():
     # No tag and no thread-block schedule: nothing under the kernel will ever own the block, so the
     # 1-D domain takes the ordinary default.
     sdfg, kernel, _ = build_kernel_over_inner_map(dtypes.ScheduleType.Sequential)
-    assert select_gpu_device_block_size(sdfg) == {"kernel": BLOCK_1D}
-    assert kernel.gpu_block_size == BLOCK_1D
+    # A 64-iteration kernel keeps the 64 threads it can use.
+    assert select_gpu_device_block_size(sdfg) == {"kernel": [64, 1, 1]}
+    assert kernel.gpu_block_size == [64, 1, 1]
 
 
 def test_a_pending_warp_tile_reaches_codegen_without_a_block_size_conflict():
@@ -276,8 +305,12 @@ if __name__ == "__main__":
     test_pick_block_size_2d_square_constant()
     test_pick_block_size_2d_skewed_last_dim_wide()
     test_pick_block_size_2d_skewed_outer_dim_wide()
-    test_pick_block_size_2d_mild_ratio_stays_square()
-    test_pick_block_size_3d_leaves_default()
+    test_pick_block_size_2d_mild_ratio_leans_toward_the_wider_axis()
+    test_pick_block_size_3d_is_a_cube()
+    test_pick_block_size_4d_leaves_default()
+    test_a_small_axis_hands_its_threads_to_the_unit_stride_axis()
+    test_a_domain_smaller_than_the_block_keeps_only_the_threads_it_uses()
+    test_every_block_stays_in_the_thread_band()
     test_pass_assigns_2d_square()
     test_pass_does_not_override_user_block_size()
     test_pass_ignores_cpu_map()
@@ -293,26 +326,3 @@ if __name__ == "__main__":
     test_wcr_map_uses_default_block_when_tree_reduction_off()
     test_experimental_codegen_gets_deep_block_with_the_flag_off()
     print("OK")
-
-
-def test_the_contiguous_dimension_is_never_narrower_than_a_warp():
-    """The property the whole pass exists for, asserted directly rather than through a constant.
-
-    A block whose ``x`` is a FRACTION of a warp puts lanes of one warp on different rows, which is
-    the strided access this pass was written to prevent -- so a table calibrated on a 32-lane warp
-    reintroduces the bug on a 64-lane CDNA wavefront. ``[16,16,1]`` was that table: sixteen lanes
-    on ``x``, so one gfx942 wavefront spanned four rows and three quarters of it strode.
-    """
-    for params, ranges in (
-        (["i"], [(0, N - 1, 1)]),
-        (["i", "j"], [(0, N - 1, 1), (0, M - 1, 1)]),
-        (["i", "j"], [(0, 1023, 1), (0, 7, 1)]),
-        (["i", "j"], [(0, 7, 1), (0, 1023, 1)]),
-    ):
-        block = pick_gpu_block_size(make_device_map(params, ranges))
-        assert block[0] % WARP == 0, f"{block} puts {block[0]} lanes on x, which is not whole warps"
-        # The band is stated in WARPS, like the table it checks: four warps for a plain block,
-        # eight for a skewed one. A thread count says 256-512 on a 64-lane wavefront and
-        # 128-256 on a 32-lane warp -- the same occupancy, read as two different contracts.
-        warps = (block[0] * block[1] * block[2]) / WARP
-        assert 4 <= warps <= 8, f"{block} is {warps} warps, outside the occupancy band"

@@ -50,11 +50,18 @@ from dace.transformation.passes.loop_to_reduce import loop_to_map_refusal_is_car
 # settled and need no further dependence reasoning, ``unsure`` is the only open one. A role (a
 # wavefront axis, an inner tile) follows the class word as a qualifier, never replaces it.
 
+#: The first words of every loop hint: its class (see the three below).
+CLASS_PREFIXES = ("parallel -- ", "sequential -- ", "unsure -- ")
+
 #: A Map. Data-parallel by construction, whatever schedule it ends up carrying.
 PARALLEL = (
     "parallel -- the iterations are independent\n"
     "settled: proven, no need to re-check; focus: schedule, tiling, vectorization, fusion, data layout"
 )
+
+#: Added under a multi-dimensional Map's class line: the rendering writes one nested ``for`` per dimension and
+#: the comment only above the outermost, so the inner ones are named here.
+MAP_DIMENSIONS = "covers the {count} nested loops over {params}: every one of them is parallel"
 
 #: A loop whose carried dependence was proven. ``{reason}`` is the carrying ACCESS, since that is
 #: the part a reader acts on -- the prose around it repeated on every such loop and said the same
@@ -73,8 +80,10 @@ UNSURE = (
     "indices (a bound, a permutation) settles it"
 )
 
-#: The ``UNSURE`` reason of a loop the dependence test does not apply to (it has no single counter).
+#: The ``UNSURE`` reason of a loop the dependence test never answered for; the specific cause follows a colon.
 NEVER_EXAMINED = "never examined for dependences"
+#: ... because the loop has no single iteration counter to test (a while loop).
+NO_COUNTER = f"{NEVER_EXAMINED}: no single iteration counter (a while loop)"
 
 #: A loop the dependence test finds independent that an earlier pass pinned sequential anyway (the
 #: fallback arm of a specialization). Rendered without a pragma, so it must not read as parallel.
@@ -128,7 +137,7 @@ def tile_label(bi: int, bj: int) -> str:
 
 
 def refusal_reason(loop: LoopRegion) -> str | None:
-    """Why ``LoopToMap`` would refuse ``loop``, ``None`` if it would accept, ``''`` if it cannot say.
+    """Why ``LoopToMap`` would refuse ``loop``, ``None`` if it would accept, ``''`` if it refused without a reason.
 
     Asked with ``pinned_sequential`` set aside. The pin is a schedule decision an earlier pass made,
     and "loop is pinned sequential" is not an answer to the dependence question a reader is asking --
@@ -136,7 +145,7 @@ def refusal_reason(loop: LoopRegion) -> str | None:
     does not touch it.
     """
     if not loop.loop_variable:
-        return ""
+        return NO_COUNTER
     from dace.transformation.interstate.loop_to_map import LoopToMap
 
     probe = LoopToMap()
@@ -145,10 +154,10 @@ def refusal_reason(loop: LoopRegion) -> str | None:
     loop.pinned_sequential = False
     try:
         applicable = probe.can_be_applied(loop.parent_graph, 0, loop.sdfg, permissive=False)
-    except Exception:
+    except Exception as error:  # pylint: disable=broad-exception-caught
         # A comment must not be able to fail the compilation that asked for it. Nothing downstream
         # reads a hint, so a probe with no answer leaves the loop unsure and says so.
-        return ""
+        return f"{NEVER_EXAMINED}: the dependence test failed ({type(error).__name__})"
     finally:
         loop.pinned_sequential = pinned
     return None if applicable else (probe.last_refusal_reason or "")
@@ -393,12 +402,12 @@ def loop_hint(loop: LoopRegion) -> str:
 
 @xf.explicit_cf_compatible
 class AnnotateLoopKinds(ppl.Pass):
-    """Give every unlabelled Map and LoopRegion a ``specialization_hint`` naming its kind.
+    """Open every Map's and LoopRegion's ``specialization_hint`` with its class.
 
-    Runs last in the canonicalize recipe, on the graph the rendering will see. A hint already set
-    is left alone: the pass that set it knew something this one cannot re-derive -- which
-    alternative it declined (``BreakAntiDependence``, ``Scan``) or that a loop is a wavefront axis
-    (``WavefrontSkew``).
+    Runs last in the canonicalize recipe, on the graph the rendering will see. A hint that already
+    opens with a class is left alone: the pass that set it knew something this one cannot re-derive
+    (that a loop is a wavefront axis, ``WavefrontSkew``). Any other hint is a note on what a pass did
+    (``BreakAntiDependence``) and keeps its place below the class line this pass puts first.
     """
 
     CATEGORY: str = "Analysis"
@@ -414,9 +423,14 @@ class AnnotateLoopKinds(ppl.Pass):
         """:returns: The number of loops newly labelled, or ``None`` if none was."""
         labelled = 0
         for node, parent_graph in list(sdfg.all_nodes_recursive()):
-            # A blank hint renders as nothing, so it is no label either.
-            if not isinstance(node, (nodes.MapEntry, LoopRegion)) or (node.specialization_hint or "").strip():
+            if not isinstance(node, (nodes.MapEntry, LoopRegion)):
                 continue
-            node.specialization_hint = PARALLEL if isinstance(node, nodes.MapEntry) else loop_hint(node)
+            hint = (node.specialization_hint or "").strip()
+            if hint.startswith(CLASS_PREFIXES):
+                continue
+            # A note another pass left (an anti-dependence it broke) says what it did, not what the loop is: the
+            # verdict goes first, so every loop still opens with its class.
+            kind = PARALLEL if isinstance(node, nodes.MapEntry) else loop_hint(node)
+            node.specialization_hint = f"{kind}\n{hint}" if hint else kind
             labelled += 1
         return labelled or None

@@ -62,8 +62,7 @@ from tests.corpus.cloudsc.generate_data_for_cloudsc import (
     make_sequential,
 )
 
-#: Tolerance for the MULTICORE check, taken from the ``parallel`` arm of ``cloudsc_canonicalize_test``
-#: and from ``cloudsc_target_pipelines_test``. The candidate runs its Maps as OpenMP regions, so its
+#: Tolerance for the MULTICORE check, taken from ``cloudsc_target_pipelines_test``. The candidate runs its Maps as OpenMP regions, so its
 #: reductions and WCR accumulations fold in a different ORDER than the sequential reference; this
 #: bounds reassociation and nothing else, with the IEEE build strict on both sides.
 RTOL = ATOL = 1e-10

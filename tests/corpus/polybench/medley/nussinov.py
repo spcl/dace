@@ -11,7 +11,6 @@ base = dace.int8
 sizes = [{N: 60}, {N: 180}, {N: 500}, {N: 2500}, {N: 5500}]
 
 #: ported from the npbench bench_info paper row
-paper_sizes = {N: 500}
 
 args = [([N], datatype), ([N, N], datatype)]
 

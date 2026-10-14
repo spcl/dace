@@ -12,6 +12,12 @@ where an arm does not write is only sound when every arm reads and writes nothin
 element (the map parameters, unshifted) or element 0 of a container, and writes only containers the body
 also reads; anything else -- a gather, a shifted read an index guard protects, a library node, a loop --
 leaves the body as it was. A body the lowering cannot flatten completely is left untouched too.
+
+Selects also make every arm's loads unconditional, so the conversion only pays when it adds no memory stream:
+every container an arm of a top-level conditional reads or writes must be touched on every path through it (or
+outside it). s2710's arms both read ``d`` and ``e``, and convert. TSVC ``s442``'s ``if k == 1 .. elif k == 4``
+reads ``b``, ``c``, ``d`` or ``e`` on one path each, and has a path through none of them: as selects every element
+streamed all four and stored ``a`` (40.9 ms against 29.2 ms branchy at preset L), so it keeps its branches.
 """
 
 import ast
@@ -68,12 +74,42 @@ def arm_states(block: ConditionalBlock) -> list[SDFGState]:
     return [s for branch in arms(block) for s in branch.all_control_flow_blocks() if isinstance(s, SDFGState)]
 
 
+def touched(region, body: SDFG, lanes: set[str]) -> set[str]:
+    """The non-transient containers the states of ``region`` (a state or a region) stream: read or write at the lanes'
+    element. Element 0 of a container (``x[0]``) is one value every element shares, not a stream."""
+    states = [region] if isinstance(region, SDFGState) else list(region.all_control_flow_blocks())
+    return {
+        edge.data.data
+        for state in states
+        if isinstance(state, SDFGState)
+        for edge in state.edges()
+        if not edge.data.is_empty()
+        and not body.arrays[edge.data.data].transient
+        and {str(s) for s in edge.data.subset.free_symbols} & lanes
+    }
+
+
+def adds_no_streams(body: SDFG, lanes: set[str]) -> bool:
+    """Whether selecting between the arms of ``body``'s top-level conditionals touches no container a branch would
+    not: what any path touches, every path touches, unless the body touches it outside the conditionals too."""
+    outside = set().union(*(touched(block, body, lanes) for block in body.nodes() if isinstance(block, SDFGState)))
+    for block in body.nodes():
+        if not isinstance(block, ConditionalBlock):
+            continue
+        paths = [touched(branch, body, lanes) for branch in arms(block)]
+        if block.branches[-1][0] is not None:  # no else: the elements no arm takes touch nothing
+            paths.append(set())
+        if set().union(*paths) - set.intersection(*paths) - outside:
+            return False
+    return True
+
+
 def convertible(body: SDFG, lanes: set[str], inputs: set[str]) -> bool:
     """Whether every arm of every conditional in ``body`` touches only the lanes' own element."""
     if any(isinstance(r, LoopRegion) for r in body.all_control_flow_regions()):
         return False
     blocks = [b for b in body.all_control_flow_blocks() if isinstance(b, ConditionalBlock)]
-    if not blocks:
+    if not blocks or not adds_no_streams(body, lanes):
         return False
     for block in blocks:
         for branch in arms(block):

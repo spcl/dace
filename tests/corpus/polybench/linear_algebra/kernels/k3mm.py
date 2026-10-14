@@ -20,7 +20,6 @@ sizes = [
 ]
 
 #: paper dataset row, ported from npbench bench_info/k3mm.json (parameters.paper)
-paper_sizes = {NI: 3200, NJ: 3600, NK: 4000, NL: 4400, NM: 4800}
 
 args = [([NI, NK], datatype), ([NK, NJ], datatype), ([NJ, NM], datatype), ([NM, NL], datatype), ([NI, NL], datatype)]
 

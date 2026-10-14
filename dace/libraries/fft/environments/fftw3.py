@@ -20,6 +20,8 @@ FFTW_ENV_VARS = ("FFTW_ROOT", "FFTW_DIR", "FFTW3_DIR", "FFTW_HOME")
 
 #: The two precisions the expansions call into, ``fftw_*`` and ``fftwf_*``.
 FFTW_LIBRARIES = ("fftw3", "fftw3f")
+#: The companion libraries that add the threaded planner, OpenMP's first so it shares the program's team.
+THREADED_SUFFIXES = ("_omp", "_threads")
 
 #: Where a distro install keeps ``fftw3.h``, on the compiler's default include path.
 SYSTEM_INCLUDE_DIRS = ("/usr/include", "/usr/local/include")
@@ -29,17 +31,32 @@ def prefix_libraries(prefix: str) -> list[str]:
     """Full paths of :data:`FFTW_LIBRARIES` under ``prefix``; ``[]`` without its header or its double library."""
     if not os.path.isfile(os.path.join(prefix, "include", "fftw3.h")):
         return []
-    found = []
-    for lib in FFTW_LIBRARIES:
+
+    def shared(lib: str) -> str | None:
         hits = sorted(
             glob.glob(os.path.join(prefix, "lib", f"lib{lib}.so*"))
             + glob.glob(os.path.join(prefix, "lib64", f"lib{lib}.so*"))
         )
-        if hits:
-            found.append(hits[0])
-        elif lib == "fftw3":
-            return []
+        return hits[0] if hits else None
+
+    found = []
+    for lib in FFTW_LIBRARIES:
+        base = shared(lib)
+        if base is None:
+            if lib == "fftw3":
+                return []
+            continue
+        # The threaded planner lives in a companion library, linked ahead of the one it extends.
+        threaded = next(filter(None, (shared(f"{lib}{suffix}") for suffix in THREADED_SUFFIXES)), None)
+        found += [threaded, base] if threaded else [base]
     return found
+
+
+def threaded() -> bool:
+    """Whether the FFTW3 the build uses carries its threaded planner (``fftw_plan_with_nthreads``)."""
+    return any(
+        any(f"fftw3{suffix}" in os.path.basename(lib) for suffix in THREADED_SUFFIXES) for lib in fftw_install()[1]
+    )
 
 
 def search_path_prefixes() -> list[str]:
@@ -66,7 +83,15 @@ def fftw_install() -> tuple[str | None, tuple[str, ...]]:
         if libraries:
             return os.path.join(prefix, "include"), tuple(libraries)
     if any(os.path.isfile(os.path.join(d, "fftw3.h")) for d in SYSTEM_INCLUDE_DIRS):
-        libraries = tuple(path for path in map(ctypes.util.find_library, FFTW_LIBRARIES) if path)
+        libraries = tuple(
+            path
+            for lib in FFTW_LIBRARIES
+            for path in (
+                next(filter(None, (ctypes.util.find_library(lib + suffix) for suffix in THREADED_SUFFIXES)), None),
+                ctypes.util.find_library(lib),
+            )
+            if path
+        )
         if libraries:
             return None, libraries
     prefix = spack_install_prefix("fftw")

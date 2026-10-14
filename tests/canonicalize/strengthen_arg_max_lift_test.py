@@ -559,6 +559,30 @@ def test_s318_frontend_non_strict_guard_keeps_the_last_extreme():
     _check_s318_frontend_tie(_s318_non_strict, ">=", 4)
 
 
+@dace.program
+def _min_from_first(a: dace.float64[N], result: dace.float64[1]):
+    x = a[0]
+    for i in range(N):
+        if a[i] < x:
+            x = a[i]
+    result[0] = x
+
+
+def test_a_scan_starting_at_the_seed_element_is_lifted():
+    """``x = a[0]; for i in range(N)``: the seed is the loop's own first element rather than ``a[start - 1]``,
+    which does not exist; canonicalize still lifts the scan to a Reduce over ``a[0:N]`` (azimint_hist's range)."""
+    from dace.transformation.passes.canonicalize.pipeline import canonicalize
+
+    sdfg = _min_from_first.to_sdfg(simplify=False)
+    canonicalize(sdfg, validate=True)
+    assert not [r for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion)]
+    assert [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Reduce)]
+    a = np.random.default_rng(11).random(97)
+    result = np.zeros(1)
+    sdfg(a=a, result=result, N=a.size)
+    assert result[0] == a.min()
+
+
 if __name__ == "__main__":
     for _op, _idx in ((">", 0), (">=", 2), ("<", 1), ("<=", 3)):
         test_index_tie_breaking_matches_sequential(_op, _idx)
@@ -567,4 +591,5 @@ if __name__ == "__main__":
         test_strided_abs_index_tie_breaking_s318(_op, _idx)
     test_2d_index_tie_breaking_matches_sequential(">", True)
     test_2d_index_tie_breaking_matches_sequential(">=", False)
+    test_a_scan_starting_at_the_seed_element_is_lifted()
     print("ok")

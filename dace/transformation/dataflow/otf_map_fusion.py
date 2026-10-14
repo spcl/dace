@@ -7,6 +7,7 @@ import copy
 
 import sympy
 
+from dace import data as dt
 from dace import dtypes, nodes, symbolic
 from dace.memlet import Memlet
 from dace.properties import SymbolicProperty, make_properties
@@ -114,6 +115,31 @@ class OTFMapFusion(transformation.SingleStateTransformation):
             or not first_writes.keys().isdisjoint(second_writes)
         ):
             return False
+
+        # Condition: nothing overwrites what the producer reads before the consumer runs. Fusion moves the producer's
+        # reads to the consumer's iterations, so a third node writing one of those containers anywhere but before the
+        # producer would now be read through. Compared on the viewed container: cloudsc's producer read the row view
+        # ``zqsmix_6`` of ``zqsmix``, which a later copy in the same state rewrote.
+        def viewed(node: nds.AccessNode) -> str:
+            if isinstance(sdfg.arrays[node.data], dt.View):
+                last = sdutil.get_last_view_node(graph, node)
+                return node.data if last is None else last.data
+            return node.data
+
+        read_roots = {
+            viewed(source)
+            for edge in graph.in_edges(first_map_entry)
+            if isinstance(source := graph.memlet_path(edge)[0].src, nds.AccessNode)
+        }
+        writers = [
+            n
+            for n in graph.data_nodes()
+            if graph.in_degree(n) > 0 and not isinstance(sdfg.arrays[n.data], dt.View) and n.data in read_roots
+        ]
+        if writers:
+            before = set(sdutil.dfs_conditional(graph, sources=[first_map_entry], reverse=True))
+            if any(w not in before for w in writers):
+                return False
 
         # Condition: Equations solvable (dims(first map) <= dims(second map))
         if len(first_map_entry.map.params) > len(self.second_map_entry.map.params):

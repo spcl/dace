@@ -5,9 +5,9 @@ The canonical lowering of a copy / zero is the parallel element map on every dev
 library node's own ``Auto`` selector may only take that away for a PROVABLY sub-threshold count.
 Every other reason to run a transfer on one core is a CPU scheduling decision and belongs here:
 
-1. A transfer an enclosing parallel map or a not-provably-short loop re-enters would fork a team
-   per entry -- npbench ``stockham_fft``'s inner ``tmp -> D`` copy is entered 349,525 times per
-   call. It is pinned ``Sequential`` (the shared
+1. A transfer an enclosing parallel map, or a not-provably-short loop that varies its size,
+   re-enters would fork a team per entry -- npbench ``stockham_fft``'s inner ``tmp -> D`` copy is
+   entered 349,525 times per call. It is pinned ``Sequential`` (the shared
    :func:`~dace.libraries.standard.helper.is_reentered_cpu_transfer` rule, the same one the map
    cost model uses).
 2. A ``Sequential`` transfer that is contiguous, same-shaped and packed in one major order is one

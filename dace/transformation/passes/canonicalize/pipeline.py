@@ -23,7 +23,7 @@ from dace.transformation.dataflow.map_for_loop import MapToForLoop
 from dace.transformation.dataflow.mapreduce import MapReduceFusion, MapWCRFusion
 from dace.transformation.dataflow.perf_loop_nesting import PerfLoopNesting
 from dace.transformation.dataflow.prune_connectors import PruneConnectors
-from dace.transformation.dataflow.redundant_array import RedundantArray
+from dace.transformation.dataflow.redundant_array import RedundantArray, RedundantMapReadCopy
 from dace.transformation.dataflow.trivial_map_elimination import TrivialMapElimination
 from dace.transformation.interstate.move_if_into_map import MoveIfIntoMap
 from dace.transformation.interstate.trivial_loop_elimination import TrivialLoopElimination
@@ -80,6 +80,7 @@ from dace.transformation.passes.canonicalize.reroll_unrolled_loops import Reroll
 from dace.transformation.passes.canonicalize.reverse_map_traversal import ReverseMapTraversal
 from dace.transformation.passes.canonicalize.revert_nonreduction_wcr import RevertNonReductionWCR
 from dace.transformation.passes.canonicalize.route_ordering_through_data import RouteOrderingThroughData
+from dace.transformation.passes.canonicalize.segment_confined_loops import SegmentConfinedLoops
 from dace.transformation.passes.canonicalize.split_statements import SplitStatements
 from dace.transformation.passes.canonicalize.supply_num_threads import SupplyNumThreads
 from dace.transformation.passes.canonicalize.symbol_dedup import SymbolDedup
@@ -93,6 +94,7 @@ from dace.transformation.passes.clean_tasklet_to_scalar_slice_to_access_node_pat
 )
 from dace.transformation.passes.constant_propagation import ConstantPropagation
 from dace.transformation.passes.dead_dataflow_elimination import DeadDataflowElimination
+from dace.transformation.passes.dead_fill_elimination import DeadFillElimination
 from dace.transformation.passes.dead_state_elimination import DeadStateElimination
 from dace.transformation.passes.demote_non_structural_symbols import DemoteNonStructuralSymbols
 from dace.transformation.passes.empty_loop_elimination import EmptyLoopElimination
@@ -548,8 +550,8 @@ class _PrivatizeArraysStage(_PrivatizeScalarsStage):
 # ``scatter_to_guarded_maps``: sort + duplicate guard, ~1.04x CPU / ~1.03x GPU.
 # ``privatize_scatter_reductions``: whole-buffer map WCR so CPU emits an OpenMP array-section
 #   reduction instead of atomics (azimint_hist ~200x -> ~1x vs numpy). CPU only.
-# ``reconstruct_wavefront_nest``: rebuild seidel_2d's Map+Loop body for ``WavefrontSkew``. Off:
-#   safe but never fires on the corpus yet (range offsets do not line up).
+# ``reconstruct_wavefront_nest``: rebuild seidel_2d's Map+copy+Loop row body into the one loop
+#   ``WavefrontSkew`` needs; commits only where the skew then provably fires. ON for both.
 # ``normalize_loop_and_map_origin``: rebase ranges to 0 keeping the stride (``NormalizeLoopsAndMaps``
 #   folded it and lost TSVC s172's map); see the AB note at its wiring below.
 CPU_DEFAULTS: dict[str, Any] = {
@@ -558,7 +560,7 @@ CPU_DEFAULTS: dict[str, Any] = {
     "break_anti_dependence": True,
     "scatter_to_guarded_maps": True,
     "privatize_scatter_reductions": True,
-    "reconstruct_wavefront_nest": False,
+    "reconstruct_wavefront_nest": True,
     "normalize_loop_and_map_origin": False,
 }
 GPU_DEFAULTS: dict[str, Any] = {
@@ -567,7 +569,7 @@ GPU_DEFAULTS: dict[str, Any] = {
     "break_anti_dependence": True,
     "scatter_to_guarded_maps": True,
     "privatize_scatter_reductions": False,
-    "reconstruct_wavefront_nest": False,
+    "reconstruct_wavefront_nest": True,
     "normalize_loop_and_map_origin": False,
 }
 TARGET_DEFAULTS: dict[str, dict[str, Any]] = {"cpu": CPU_DEFAULTS, "gpu": GPU_DEFAULTS}
@@ -750,9 +752,11 @@ def ingest(target: str) -> Stages:
         (CLEANUP, NormalizeNegativeStride()),
         (CLEANUP, unique_iterators()),
         (CLEANUP, ContinueToCondition()),
-        (CLEANUP, LiftBreakToFindFirst(chunk=FIND_FIRST_CHUNK[target])),
         (CLEANUP, SupplyNumThreads()),
         (CLEANUP, SimplifyPass()),
+        # After simplification: the raised guard of a break still reads its condition through a separate
+        # preparation region before it, which the matcher does not see through.
+        (CLEANUP, LiftBreakToFindFirst(chunk=FIND_FIRST_CHUNK[target])),
     ]
     return s + rail()
 
@@ -973,13 +977,19 @@ def recompose(lift: bool, lift_copy: bool, target: str) -> Stages:
     s += [(label, NormalizeWCRSource()), (label, RelaxIntegerPowers())]
     s += [(label, ppl.FixedPointPipeline([DeadDataflowElimination(), ArrayElimination()]))]
     s += [*_inline_single_state(label), (label, PruneEmptyConditionalBranches())]
-    s += [(label, PatternApplyOnceEverywhere([RedundantArray()])), (label, RematerializeDerivedTemporaries())]
+    s += [
+        (label, PatternApplyOnceEverywhere([RedundantArray()])),
+        (label, RematerializeDerivedTemporaries()),
+    ]
     return s
 
 
 def finish() -> Stages:
     """The terminal bookkeeping: symbols, derived annotations, assumption guard, hints; the views inlining minted."""
     s: Stages = rail(FINISH)
+    # On the settled form: a loop over the segments of a pointer array is lifted behind the entry guard that checks
+    # the data facts its segment confinement rests on (nfa_frontier's components).
+    s += [(FINISH, SegmentConfinedLoops())]
     for _ in range(TERMINAL_SYMBOL_ROUNDS):
         s += [(FINISH, SymbolDedup()), (FINISH, SymbolPropagation()), (FINISH, ConstantPropagation())]
     s += [
@@ -987,11 +997,15 @@ def finish() -> Stages:
         (FINISH, OptionalArrayInference()),
         (FINISH, ConvertLengthOneArraysToScalars()),
         (FINISH, RevertNonReductionWCR()),
+        (FINISH, DeadFillElimination()),
         (FINISH, PruneUnreferencedTransients()),
         (FINISH, InlineControlFlowRegions()),
         (FINISH, AssumeSymbolConstraints()),
         (FINISH, NormalizeFloorDivision()),
         (FINISH, AnnotateLoopKinds()),
+        # A staging copy sits in its readers' map scope, fed from the map entry, only once the terminal inlining has
+        # run; the reclaim stays last for the arrays the fold leaves.
+        (FINISH, PatternApplyOnceEverywhere([RedundantMapReadCopy()])),
         (FINISH, ppl.Pipeline([ArrayElimination()])),
     ]
     return s
@@ -1004,7 +1018,7 @@ def build_stages(
     interchange_carry_with_map: bool = True,
     scatter_to_guarded_maps: bool = True,
     privatize_scatter_reductions: bool = True,
-    reconstruct_wavefront_nest: bool = False,
+    reconstruct_wavefront_nest: bool = True,
     normalize_loop_and_map_origin: bool = False,
     assume_parallel_guards: bool = False,
     perfect_loop_nesting: bool = True,
@@ -1241,10 +1255,10 @@ class CanonicalizationPipeline(ppl.Pass):
     )
     reconstruct_wavefront_nest = properties.Property(
         dtype=bool,
-        default=False,
+        default=True,
         desc="Run ReconstructWavefrontNest right before WavefrontSkew in the loop_fuse stage, rebuilding "
         "an imperfect Map-plus-LoopRegion stencil body into the single loop WavefrontSkew requires. "
-        "Off by default on both targets (unproven corpus benefit; see CPU_DEFAULTS).",
+        "On by default on both targets (see CPU_DEFAULTS).",
     )
     normalize_loop_and_map_origin = properties.Property(
         dtype=bool,
@@ -1337,7 +1351,7 @@ class CanonicalizationPipeline(ppl.Pass):
             target, "privatize_scatter_reductions", privatize_scatter_reductions, fallback=(target == "cpu")
         )
         self.reconstruct_wavefront_nest = _resolve_target_default(
-            target, "reconstruct_wavefront_nest", reconstruct_wavefront_nest, fallback=False
+            target, "reconstruct_wavefront_nest", reconstruct_wavefront_nest, fallback=True
         )
         self.normalize_loop_and_map_origin = _resolve_target_default(
             target, "normalize_loop_and_map_origin", normalize_loop_and_map_origin, fallback=False
@@ -1528,8 +1542,7 @@ def canonicalize(
                                    body (``ReconstructWavefrontNest``) into the single
                                    loop ``WavefrontSkew`` requires, right before it in the
                                    ``loop_fuse`` stage; commits only on a proven skew.
-                                   ``None`` (default) -> per-target preset (off on both
-                                   targets -- unproven corpus benefit).
+                                   ``None`` (default) -> per-target preset (on for both).
     :param normalize_loop_and_map_origin: Rebase every Map range / ``LoopRegion`` counter to a
                                    0-based begin, keeping the stride (``NormalizeLoopAndMapOrigin``),
                                    right before the ``loop_to_x`` stage. ``None`` (default) ->

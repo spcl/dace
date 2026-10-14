@@ -21,15 +21,16 @@ running it several times changes nothing. A tasklet that updates a shared contai
 two ``__syncthreads()`` every lane reaches: the first keeps lane 0 from writing what other lanes still
 read, the second publishes the write. A kernel is left alone when its body outside the strided maps
 accumulates (a write-conflict-resolved memlet), holds a library node (its own lowering may need the
-block), or when a strided map leaves a lane-private container other code reads afterwards (each lane
-would hold only its own share of it).
+block), when a strided map leaves a lane-private container other code reads afterwards (each lane
+would hold only its own share of it), or when code outside the strided maps fills a per-thread buffer of
+runtime size (each lane would allocate and fill all of it).
 """
 
 from typing import Any
 
 from ordered_set import OrderedSet
 
-from dace import SDFG, Memlet, SDFGState, dtypes, properties
+from dace import SDFG, Memlet, SDFGState, data, dtypes, properties
 from dace import graphlib as nx
 from dace.libraries.standard.block_reduce import BLOCK_COLLECTIVE_THREADS
 from dace.optionals import required
@@ -111,6 +112,30 @@ def lane_private_containers(state: SDFGState, kernel: nodes.MapEntry) -> LanePri
         if desc.transient
         and (desc.storage in LANE_PRIVATE_STORAGE or (name not in outside and per_thread_allocation(sdfg, name)))
     )
+
+
+def fills_per_lane_buffer(state: SDFGState, kernel: nodes.MapEntry, strided) -> bool:
+    """Whether code outside the strided maps writes a per-thread buffer of runtime size.
+
+    That code runs on every lane, so each lane would allocate and fill the whole buffer: icon_scatter's staging
+    copies, which the device codegen then hoisted out of the kernel sized for every thread (~54 GB at preset M). A
+    buffer only the strided maps write holds one lane's share and is decided by :func:`strided_map_is_safe`.
+    """
+    striding: set[nodes.Node] = set()
+    for inner_state, entry in strided:
+        for node in inner_state.scope_subgraph(entry).nodes():
+            striding.add(node)
+            if isinstance(node, nodes.NestedSDFG):
+                striding.update(pair[0] for pair in node.sdfg.all_nodes_recursive())
+    for owner, name in lane_private_containers(state, kernel):
+        desc = owner.arrays[name]
+        if not isinstance(desc, data.Array) or not desc.free_symbols:
+            continue
+        for owner_state in owner.states():
+            for node in owner_state.data_nodes():
+                if node.data == name and node not in striding and owner_state.in_degree(node) > 0:
+                    return True
+    return False
 
 
 def reads_outside(sdfg: SDFG, name: str, inner: set[nodes.Node]) -> bool:
@@ -278,6 +303,8 @@ class BlockTileKernels(ppl.Pass):
             if xfh.gpu_map_has_explicit_threadblocks(state, kernel):
                 continue
             strided = strided_maps(state, kernel)
+            if fills_per_lane_buffer(state, kernel, strided):
+                continue
             lanes = single_lane_nodes(state, kernel, strided)
             if lanes is None:
                 continue

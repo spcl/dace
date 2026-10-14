@@ -22,7 +22,6 @@ sizes = [
 #: rows were wildly inconsistent across the stencils (MEDIUM to beyond-EXTRALARGE) and made
 #: two kernels dominate the sweep: heat_3d took 243min and jacobi_2d 139min of a 10h job.
 #: 100 is the value adi and seidel_2d already used, so the six stencils now agree.
-paper_sizes = {tsteps: 100, N: 32000}
 args = [([N], datatype), ([N], datatype)]  # , N, tsteps]
 
 

@@ -675,18 +675,29 @@ class BestEffortLoopPeeling(ppl.Pass):
                 def is_ivar(n):
                     return isinstance(n, ast.Name) and n.id == loop.loop_variable
 
-                if is_ivar(left) and not is_ivar(right):
-                    other, mirrored = right, False
-                elif is_ivar(right) and not is_ivar(left):
-                    other, mirrored = left, True
+                def mentions_ivar(n):
+                    return any(is_ivar(sub) for sub in ast.walk(n))
+
+                if mentions_ivar(left) and not mentions_ivar(right):
+                    varying, other, mirrored = left, right, False
+                elif mentions_ivar(right) and not mentions_ivar(left):
+                    varying, other, mirrored = right, left, True
                 else:
                     continue
                 offset = self._RANGE_GUARD_BOUNDARY.get((type(node.ops[0]), mirrored))
                 if offset is None:
                     continue
                 try:
-                    x = as_expr(symbolic.pystr_to_symbolic(ast.unparse(other))) + offset
+                    if is_ivar(varying):
+                        x = as_expr(symbolic.pystr_to_symbolic(ast.unparse(other))) + offset
+                    else:
+                        # A monotone guard (``i * 8192 < N``, ``i * i < N``) flips where it crosses its bound.
+                        x = symbolic.guard_crossing(
+                            ast.unparse(varying), loop.loop_variable, ast.unparse(other), strict=offset == 0
+                        )
                 except Exception:
+                    continue
+                if x is None:
                     continue
                 if symbolic.free_symbol_like(x, ivar_sym) is None and x not in values:
                     values.append(x)

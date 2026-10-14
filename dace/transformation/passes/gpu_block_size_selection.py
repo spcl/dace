@@ -9,28 +9,21 @@ dimension of a 2-D kernel: a 2-D iteration domain then launches one thread per
 row of the block only, so consecutive threads stride across the outer domain
 dimension instead of the contiguous one.
 
-This pass picks a **2-D thread-block whose shape matches the iteration domain**
-for 2-D device maps, and leaves 1-D maps on the 1-D default. ``threadIdx.x``
-maps to the last (contiguous) map dimension -- codegen reverses the map range
-into grid order -- so ``gpu_block_size`` is stored in CUDA ``(x, y, z)`` order,
-i.e. reversed map-parameter order. Sizes stay in the 256-512 thread band that
-keeps occupancy high without exceeding the per-block thread limit:
+This pass picks a thread-block **shaped like the iteration domain**: the nicest cube, rectangle or
+line of a fixed thread count that the domain can fill. ``threadIdx.x`` maps to the last
+(contiguous) map dimension -- codegen reverses the map range into grid order -- so
+``gpu_block_size`` is stored in CUDA ``(x, y, z)`` order, i.e. reversed map-parameter order.
 
-    * 1-D domain                 -> four warps on ``x``   (``[128,1,1]`` / ``[256,1,1]``)
-    * ~square 2-D domain         -> one warp on ``x``     (``[32,8,1]`` / ``[64,4,1]``, 256)
-    * moderately skewed 2-D      -> twice the depth       (``[32,16,1]`` / ``[64,8,1]``, 512)
+    * 1-D domain              -> a line of 512          (``[512, 1, 1]``)
+    * 2-D domain              -> a square of 256        (``N x N`` -> ``[16, 16, 1]``)
+    * 3-D domain              -> a cube of 512          (``N x N x N`` -> ``[8, 8, 8]``)
 
-Every shape is stated in WARPS rather than in threads, because the whole point of the pass is
-that one warp stays on the contiguous dimension -- and the warp is 32 lanes on NVIDIA and 64 on
-a CDNA wavefront. A table written in threads is right on one of the two and silently wrong on the
-other: ``[16,16,1]`` puts sixteen lanes on ``x``, so on gfx942 a single 64-lane wavefront spans
-FOUR rows of the block and three quarters of it does exactly the strided access this pass exists
-to prevent. ``dace.libraries.standard.nodes.reduce`` already asks the backend the same question.
-
-The heuristic assumes every symbolic extent is large (>> 64) and roughly equal,
-so a symbolic 2-D domain is treated as square. Skew is only acted on when both
-extents are known integer constants and one is at least twice the other; the
-wider block dimension (32) is then assigned to the wider domain dimension.
+The block is grown one doubling at a time, always on the axis with the most domain left to cover
+(``extent / block``), so a skewed domain gets a matching rectangle (``8 x 1024`` ->
+``[32, 8, 1]``) and an axis never exceeds its extent rounded up to a power of two. Symbolic
+extents are taken as large and equal, which keeps the cube. Where axes tie, the one that indexes
+the most accesses at unit stride takes the extra threads first (``[16, 8, 4]`` or ``[32, 4, 4]``
+rather than a cube that cannot be filled evenly), then ``x``.
 
 The pass never overrides a user-set ``gpu_block_size`` and skips any device map
 that already carries an inner ``GPU_ThreadBlock`` / ``GPU_ThreadBlock_Dynamic``
@@ -39,6 +32,7 @@ derive the block size from the thread-block map, and a preset ``gpu_block_size``
 would conflict at codegen.
 """
 
+import math
 from typing import Any
 
 from dace import SDFG, dtypes
@@ -53,13 +47,8 @@ from dace.transformation import transformation
 #: one of these must not also carry a preset ``gpu_block_size``.
 THREADBLOCK_SCHEDULES = (dtypes.ScheduleType.GPU_ThreadBlock, dtypes.ScheduleType.GPU_ThreadBlock_Dynamic)
 
-#: Warps per thread block. Four on ``x`` for a 1-D domain (128 threads on NVIDIA, 256 on a CDNA
-#: wavefront); one on ``x`` for a 2-D domain, with the remaining warps stacked on ``y`` so a
-#: wavefront never straddles two rows.
-WARPS_PER_1D_BLOCK = 4
-WARPS_PER_2D_BLOCK = 4
-#: A skewed 2-D domain gets twice the warps, all of the extra depth on the wider dimension.
-WARPS_PER_SKEWED_2D_BLOCK = 8
+#: Threads per block by domain rank: a line of 512, a square of 256, a cube of 512.
+BLOCK_THREADS_BY_RANK = {1: 512, 2: 256, 3: 512}
 
 
 def warp_width() -> int:
@@ -81,9 +70,6 @@ def warp_width() -> int:
 #: keeps well under the 1024 thread/block limit while roughly halving the atomic traffic.
 TREE_REDUCTION_BLOCK_SIZE = [512, 1, 1]
 
-#: A domain dimension at least this many times larger than the other is "skewed".
-SKEW_RATIO = 2
-
 
 def constant_extent(extent) -> int | None:
     """Return ``extent`` as a positive Python ``int`` if it is a known constant, else ``None``.
@@ -98,46 +84,71 @@ def constant_extent(extent) -> int | None:
     return value if value > 0 else None
 
 
-def domain_matched_2d_block(ext_x, ext_y) -> list[int]:
-    """Choose a 2-D thread-block (CUDA ``x, y`` order) for extents ``ext_x`` (contiguous,
-    last map dimension) and ``ext_y`` (outer map dimension).
+def next_power_of_two(value: int) -> int:
+    """The smallest power of two at least ``value``."""
+    return 1 << max(value - 1, 0).bit_length()
 
-    ``x`` is ALWAYS one full warp, never a fraction of one: a block narrower than a warp puts
-    lanes of the same warp on different rows, which is the strided access the pass exists to
-    avoid. The remaining warps stack on ``y``, four of them by default; when both extents are
-    known constants and one is at least :data:`SKEW_RATIO` times the other, the block doubles
-    to eight warps and the extra depth goes on the wider domain dimension. Total stays in the
-    256-512 thread band.
+
+def domain_matched_block(extents: list, unit_stride: list[int] | None = None) -> list[int]:
+    """A thread block (CUDA ``x, y, z`` order) shaped like ``extents`` (the same order).
+
+    Starts from one thread per axis and doubles, :data:`BLOCK_THREADS_BY_RANK` threads in all, the axis
+    with the most domain left per thread -- ``extent / block``, a symbolic extent counting as larger
+    than any constant -- never past the axis' extent rounded up to a power of two. Ties go to the axis
+    with the most unit-stride accesses (``unit_stride``, same order), then to the lower axis (``x``).
+    A domain smaller than the block keeps only the threads it can use.
     """
-    warp = warp_width()
-    cx = constant_extent(ext_x)
-    cy = constant_extent(ext_y)
-    if cx is not None and cy is not None:
-        if cx >= SKEW_RATIO * cy:
-            # The contiguous dimension is the wide one, so the extra warps widen ``x``.
-            return [warp * 2, WARPS_PER_SKEWED_2D_BLOCK // 2, 1]
-        if cy >= SKEW_RATIO * cx:
-            return [warp, WARPS_PER_SKEWED_2D_BLOCK, 1]
-    return [warp, WARPS_PER_2D_BLOCK, 1]
+    rank = len(extents)
+    threads = BLOCK_THREADS_BY_RANK[rank]
+    unit_stride = unit_stride or [0] * rank
+    constants = [constant_extent(extent) for extent in extents]
+    caps = [next_power_of_two(c) if c is not None else threads for c in constants]
+    block = [1] * rank
+
+    def priority(axis: int) -> tuple:
+        # Most domain left per thread first (a symbolic extent above every constant, and equal to the others), then
+        # the narrower axis, then the one with the most unit-stride accesses, then ``x``.
+        left = float("inf") if constants[axis] is None else constants[axis] / block[axis]
+        return (left, -block[axis], unit_stride[axis], -axis)
+
+    while math.prod(block) < threads:
+        growable = [axis for axis in range(rank) if block[axis] * 2 <= caps[axis]]
+        if not growable:
+            break
+        block[max(growable, key=priority)] *= 2
+    return block + [1] * (3 - rank)
 
 
-def pick_gpu_block_size(gpu_map: nodes.Map) -> list[int] | None:
-    """Domain-matched ``gpu_block_size`` for a ``GPU_Device`` ``map``, in CUDA ``(x, y, z)`` order.
+def unit_stride_counts(sdfg: SDFG, state: SDFGState, map_entry: nodes.MapEntry) -> list[int]:
+    """Per map parameter, in CUDA ``x, y, z`` order, how many accesses in the map's scope it indexes at unit
+    stride: alone, with coefficient one, on the array's stride-1 dimension."""
+    from dace import symbolic
 
-    * 1-D map -> :data:`WARPS_PER_1D_BLOCK` warps on ``x``.
-    * 2-D map -> :func:`domain_matched_2d_block` of its (reversed) range sizes; the reversal
-      puts the last (contiguous) map dimension on ``threadIdx.x`` to match codegen's grid order.
-    * 3-D and higher -> ``None`` (keep the configured 1-D default on ``x``).
-    """
-    ndim = len(gpu_map.params)
-    if ndim <= 1:
-        return [warp_width() * WARPS_PER_1D_BLOCK, 1, 1]
-    if ndim == 2:
-        # ``gpu_block_size`` is read in CUDA (x, y) order, which is reversed map order:
-        # codegen builds ``grid_size = map.range.size()[::-1]`` and zips it with the block.
-        ext_x, ext_y = gpu_map.range.size()[::-1]
-        return domain_matched_2d_block(ext_x, ext_y)
-    return None
+    params = list(map_entry.map.params)[::-1]
+    counts = [0] * len(params)
+    for edge in state.scope_subgraph(map_entry, include_entry=False, include_exit=False).edges():
+        if edge.data.data is None or edge.data.subset is None or edge.data.data not in sdfg.arrays:
+            continue
+        strides = sdfg.arrays[edge.data.data].strides
+        for dim, stride in enumerate(strides):
+            if symbolic.simplify(stride) != 1 or dim >= len(edge.data.subset.ranges):
+                continue
+            begin = symbolic.pystr_to_symbolic(edge.data.subset.ranges[dim][0])
+            for axis, param in enumerate(params):
+                if symbolic.simplify(begin.diff(symbolic.symbol(param))) == 1:
+                    counts[axis] += 1
+    return counts
+
+
+def pick_gpu_block_size(gpu_map: nodes.Map, unit_stride: list[int] | None = None) -> list[int] | None:
+    """Domain-matched ``gpu_block_size`` for a ``GPU_Device`` ``map``, in CUDA ``(x, y, z)`` order
+    (:func:`domain_matched_block` of its reversed range sizes, so the last, contiguous map dimension is
+    ``threadIdx.x``). ``None`` past three dimensions, which keeps the configured default."""
+    if len(gpu_map.params) > 3:
+        return None
+    # ``gpu_block_size`` is read in CUDA (x, y, z) order, which is reversed map order: codegen builds
+    # ``grid_size = map.range.size()[::-1]`` and zips it with the block.
+    return domain_matched_block(gpu_map.range.size()[::-1], unit_stride)
 
 
 def is_block_reduce(node) -> bool:
@@ -241,7 +252,7 @@ class SelectGPUDeviceBlockSize(ppl.Pass):
             if map_is_tree_reduction(state, node):
                 block_size = list(TREE_REDUCTION_BLOCK_SIZE)
             else:
-                block_size = pick_gpu_block_size(gpu_map)
+                block_size = pick_gpu_block_size(gpu_map, unit_stride_counts(state.sdfg, state, node))
                 if block_size is None:
                     continue
             gpu_map.gpu_block_size = block_size

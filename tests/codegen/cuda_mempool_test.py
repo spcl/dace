@@ -8,10 +8,12 @@ from dace.codegen import common
 
 
 def count_frees_on_stream_zero(code: str, name: str) -> int:
-    """``<backend>FreeAsync`` calls of ``name`` on stream 0, spelled either way the two codegens name it."""
+    """``<backend>FreeAsync`` calls of ``name`` on stream 0, spelled any way the two codegens name it: their stream 0,
+    or ``nullptr`` -- the default stream every stream is under ``max_concurrent_streams = -1``."""
     return len(
         re.findall(
-            rf"{common.get_gpu_backend()}FreeAsync\({name}, (?:__state->gpu_context->streams\[0\]|gpu_stream0)", code
+            rf"{common.get_gpu_backend()}FreeAsync\({name}, (?:__state->gpu_context->streams\[0\]|gpu_stream0|nullptr)",
+            code,
         )
     )
 

@@ -645,10 +645,12 @@ def test_a_folded_input_keeps_the_moved_tasklets_connectors():
     assert out[0] == 3.0
 
 
-def test_a_wide_copy_named_by_a_moved_container_is_reanchored_on_the_source():
+@pytest.mark.parametrize("with_scope", [False, True])
+def test_a_wide_copy_named_by_a_moved_container_is_reanchored_on_the_source(with_scope: bool):
     """icon_scatter: a map body copies a slice of ``A`` into the body-local ``tmp``, the copy named by ``tmp``
     with ``A``'s subset as its other subset. ``tmp`` moves into the nested SDFG, so the parent edges must name
-    ``A`` -- they carry its subset exactly."""
+    ``A`` -- they carry its subset exactly. Nesting the map itself (``BlockTileKernels``) keeps the copy inside,
+    and its memlet keeps naming ``tmp``: renamed to ``A`` it would read ``tmp``'s subset as ``A``'s."""
     sdfg = dace.SDFG("nest_wide_copy_named_by_moved_container")
     sdfg.add_array("A", [4, 8], dace.float64)
     sdfg.add_array("B", [4, 8], dace.float64)
@@ -668,7 +670,7 @@ def test_a_wide_copy_named_by_a_moved_container_is_reanchored_on_the_source():
     )
     sdfg.validate()
 
-    nest_state_subgraph(sdfg, state, state.scope_subgraph(entry, include_entry=False, include_exit=False))
+    nest_state_subgraph(sdfg, state, state.scope_subgraph(entry, include_entry=with_scope, include_exit=with_scope))
     sdfg.validate()
     assert "tmp" not in sdfg.arrays
     assert all(e.data.data in sdfg.arrays for e in state.edges() if not e.data.is_empty())
@@ -780,7 +782,8 @@ if __name__ == "__main__":
     test_input_edge_on_the_whole_container_gets_no_inner_copy()
     test_folded_write_ordering_is_not_reanchored_into_a_cycle()
     test_a_folded_input_keeps_the_moved_tasklets_connectors()
-    test_a_wide_copy_named_by_a_moved_container_is_reanchored_on_the_source()
+    test_a_wide_copy_named_by_a_moved_container_is_reanchored_on_the_source(False)
+    test_a_wide_copy_named_by_a_moved_container_is_reanchored_on_the_source(True)
     test_an_rmw_chain_through_an_interior_access_node_writes_back_through_one_connector()
 
     test_nest_two_loops_with_same_variable()

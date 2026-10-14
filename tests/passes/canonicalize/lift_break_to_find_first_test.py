@@ -131,13 +131,16 @@ def test_a_test_that_reads_what_the_body_writes_is_refused():
     assert result is None and has_break(sdfg) and not find_firsts(sdfg)
 
 
-def test_the_chunked_search_stays_parallel_inside_its_chunk_loop():
-    """The chunk loop hands the search a chunk of work per entry: the CPU tail must not serialize it."""
+@pytest.mark.parametrize("program", [body_then_break, break_then_body])
+def test_the_chunked_search_stays_parallel_inside_its_chunk_loop(program):
+    """Canonicalize lifts the break from the unsimplified frontend graph, whose guard reads its condition through
+    a preparation region (TSVC ``s481``), and the chunk loop hands the search a chunk of work per entry: the CPU
+    tail must not serialize it."""
     from dace.transformation.passes.canonicalize.finalize import finalize_for_target
     from dace.transformation.passes.canonicalize.pipeline import canonicalize
 
-    sdfg = body_then_break.to_sdfg(simplify=True)
-    sdfg.name = "lift_ff_parallel_chunk"
+    sdfg = program.to_sdfg(simplify=False)
+    sdfg.name = f"lift_ff_parallel_chunk_{program.name}"
     canonicalize(sdfg, target="cpu")
     finalize_for_target(sdfg, "cpu")
     (node,) = find_firsts(sdfg)
@@ -155,20 +158,6 @@ def test_symbols_only_the_effect_assigns_may_be_read_after_the_loop(hit):
     out = np.zeros(1)
     sdfg(a=a, result=out, N=a.size)
     assert out[0] == (-3.0 if hit is None else 0.95 + hit)
-
-
-if __name__ == "__main__":
-    test_capture_finds_the_first_hit_and_runs_the_effect_once(17)
-    test_capture_finds_the_first_hit_and_runs_the_effect_once(0)
-    test_capture_finds_the_first_hit_and_runs_the_effect_once(None)
-    for size in (64, 0):
-        test_the_body_runs_exactly_below_the_hit(break_then_body, 211, size)
-        test_the_body_runs_exactly_below_the_hit(break_then_body, None, size)
-        test_the_body_runs_exactly_below_the_hit(body_then_break, 211, size)
-    test_a_test_that_reads_what_the_body_writes_is_refused()
-    test_the_chunked_search_stays_parallel_inside_its_chunk_loop()
-    test_symbols_only_the_effect_assigns_may_be_read_after_the_loop(33)
-    test_symbols_only_the_effect_assigns_may_be_read_after_the_loop(None)
 
 
 @pytest.mark.parametrize("implementation", ["CPU", "pure"])
@@ -210,3 +199,23 @@ def test_the_pure_search_is_python_sdfg_components_and_finds_the_first_hit(hit):
     assert all(t.language == dace.Language.Python for t in tasklets), [t.label for t in tasklets]
     assert out_index[0] == (-1 if hit is None else hit)
     assert out_value[0] == (-1.0 if hit is None else 0.95)
+
+
+if __name__ == "__main__":
+    test_capture_finds_the_first_hit_and_runs_the_effect_once(17)
+    test_capture_finds_the_first_hit_and_runs_the_effect_once(0)
+    test_capture_finds_the_first_hit_and_runs_the_effect_once(None)
+    for size in (64, 0):
+        test_the_body_runs_exactly_below_the_hit(break_then_body, 211, size)
+        test_the_body_runs_exactly_below_the_hit(break_then_body, None, size)
+        test_the_body_runs_exactly_below_the_hit(body_then_break, 211, size)
+    test_a_test_that_reads_what_the_body_writes_is_refused()
+    test_the_chunked_search_stays_parallel_inside_its_chunk_loop(body_then_break)
+    test_the_chunked_search_stays_parallel_inside_its_chunk_loop(break_then_body)
+    test_symbols_only_the_effect_assigns_may_be_read_after_the_loop(33)
+    test_symbols_only_the_effect_assigns_may_be_read_after_the_loop(None)
+    for hit in (5, 0, None):
+        test_a_two_dimensional_test_reads_the_element_it_names("CPU", hit)
+        test_a_two_dimensional_test_reads_the_element_it_names("pure", hit)
+    for hit in (17, 0, None):
+        test_the_pure_search_is_python_sdfg_components_and_finds_the_first_hit(hit)

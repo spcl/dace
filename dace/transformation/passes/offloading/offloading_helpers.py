@@ -6,7 +6,7 @@ from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES
 from dace.optionals import required
 from dace.ordered import OrderedSet
 from dace.sdfg import SDFG, SDFGState, nodes
-from dace.sdfg.state import ControlFlowRegion, ReturnBlock
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, ReturnBlock
 from dace.sdfg.utils import get_last_view_node
 from dace.transformation.passes.offloading.offloading_ir_node import OffloadingIRNode
 
@@ -25,6 +25,31 @@ def remove_empty_return_entries(entries: list[tuple[ControlFlowRegion, SDFGState
             for successor in successors:
                 region.add_edge(edge.src, successor.dst, edge.data)
         region.remove_node(entry)
+
+
+def add_fallthrough_branches(sdfg: SDFG) -> list[tuple[ConditionalBlock, ControlFlowRegion]]:
+    """Give each conditional on ``sdfg``'s own level without an ``else`` an empty one, so the copy analysis sees the
+    path that takes no arm and places that path's copies in it.
+
+    :return: every conditional given such an arm, with that arm; ``remove_empty_fallthrough_branches`` takes them
+             out again.
+    """
+    added: list[tuple[ConditionalBlock, ControlFlowRegion]] = []
+    for region in list(sdfg.all_control_flow_regions()):
+        if not isinstance(region, ConditionalBlock) or any(condition is None for condition, _ in region.branches):
+            continue
+        fallthrough = ControlFlowRegion(f"{region.label}_fallthrough", sdfg=sdfg)
+        fallthrough.add_state(f"{region.label}_fallthrough_entry", is_start_block=True)
+        region.add_branch(None, fallthrough)
+        added.append((region, fallthrough))
+    return added
+
+
+def remove_empty_fallthrough_branches(added: list[tuple[ConditionalBlock, ControlFlowRegion]]) -> None:
+    """Remove each arm of ``add_fallthrough_branches`` that received no copy."""
+    for conditional, fallthrough in added:
+        if all(isinstance(block, SDFGState) and block.number_of_nodes() == 0 for block in fallthrough.nodes()):
+            conditional.remove_branch(fallthrough)
 
 
 def separate_early_returns(sdfg: SDFG) -> list[tuple[ControlFlowRegion, SDFGState]]:
@@ -200,8 +225,9 @@ def traverse_IR(IR: OffloadingIRNode, method):
         stack.extend(reversed(node.next))
 
 
-def traverse_same_level(IR: OffloadingIRNode, method):  # DFS
-    queue = IR.next.copy()
+def traverse_same_level(IR: OffloadingIRNode, method, start: list[OffloadingIRNode] | None = None):  # DFS
+    """Apply ``method`` to the nodes of ``IR``'s section, from ``start`` (default: all of ``IR``'s successors)."""
+    queue = list(IR.next if start is None else start)
     while queue:
         curr = queue.pop()
         if curr.type == OffloadingIRNode.STATE or curr.type == OffloadingIRNode.EDGE:  # data node

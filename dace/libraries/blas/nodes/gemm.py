@@ -202,6 +202,8 @@ def _operand_window(edge, desc, shape, strides):
 @dace.library.expansion
 class ExpandGemmPure(ExpandTransformation):
     environments = []
+    # A loop nest over the operands: code a kernel's thread runs as well as the host does.
+    runs_inside_kernel = True
 
     @staticmethod
     def make_sdfg(node, parent_state, parent_sdfg, rowwise=False):
@@ -521,6 +523,8 @@ class ExpandGemmPureRowWise(ExpandTransformation):
     """
 
     environments = []
+    # The same loop nest as ``pure``, row by row.
+    runs_inside_kernel = True
 
     @staticmethod
     def expansion(node, state, sdfg):

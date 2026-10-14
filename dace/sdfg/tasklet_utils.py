@@ -106,7 +106,8 @@ def is_abort_guard(node: dace.nodes.Node) -> bool:
 def token_replace_dict(code: str, repldict: dict[str, str]) -> str:
     """
     Replaces exact token matches in a code string using a replacement dictionary.
-    Tokens are split using whitespace and common delimiters (` `, `(`, `)`, `[`, `]`).
+    A token is a maximal run of identifier characters and dots, so ``a.b`` stays one token and a name
+    next to a comma or an operator is still matched.
 
     Parameters
     ----------
@@ -121,14 +122,8 @@ def token_replace_dict(code: str, repldict: dict[str, str]) -> str:
         The code string with replacements applied.
     """
 
-    # Split while keeping delimiters
-    tokens = re.split(r"(\s+|[()\[\]])", code)
-
-    # Replace tokens that exactly match src
-    tokens = [repldict[token.strip()] if token.strip() in repldict else token for token in tokens]
-
-    # Recombine everything
-    return "".join(tokens).strip()
+    tokens = re.split(r"([^\w.]+)", code)
+    return "".join(repldict.get(token, token) for token in tokens).strip()
 
 
 def token_match(string_to_check: str, pattern_str: str) -> str:

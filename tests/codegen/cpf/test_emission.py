@@ -26,7 +26,8 @@ import pytest
 import dace
 from dace import cpf
 from dace.codegen.cpf import render as render_sdfg
-from dace.libraries.standard.nodes import FindFirst
+from dace.libraries.standard.nodes import FindFirst, Scan
+from dace.libraries.standard.nodes.scan import ScanOp, in_connector, out_connector
 from dace.transformation.passes.canonicalize.assume_symbols_nonnegative import (
     insert_assumption_guards,
     set_symbol_nonnegative_assumptions,
@@ -391,6 +392,33 @@ def test_scan_is_inlined_rather_than_called():
     assert_matches({"y": np.cumsum(x)}, {"y": y}, "cpf_scan")
 
 
+@pytest.mark.parametrize("language", ("c++", "c"))
+def test_a_multi_chain_scan_renders_each_chain_as_its_own_parallel_scan(language):
+    """``chains > 1`` fuses K scans into one loop through the ``dace/scan.hpp`` team helpers and a C++
+    lambda; neither exists in a standalone unit, so each chain renders as its own blocked scan."""
+    chains, n = 3, 777
+    sdfg = dace.SDFG("cpf_multi_chain_" + ("cpp" if language == "c++" else "c"))
+    sdfg.add_array("x", [chains, N], dace.float64)
+    sdfg.add_array("y", [chains, N], dace.float64)
+    state = sdfg.add_state()
+    node = Scan("Scan", op=ScanOp.MAX, chains=chains)
+    node.implementation = "CPU"
+    state.add_node(node)
+    out = state.add_write("y")
+    for c in range(chains):
+        state.add_edge(state.add_read("x"), None, node, in_connector(c), dace.Memlet(f"x[{c}, 0:N]"))
+        state.add_edge(node, out_connector(c), out, None, dace.Memlet(f"y[{c}, 0:N]"))
+    rendering = render_sdfg(sdfg, language=language)
+    assert_standalone(rendering.code, sdfg.name, language=language)
+    assert rendering.code.count("#pragma omp scan inclusive(acc)") >= 1, "each chain must keep the inscan form"
+
+    x = np.random.default_rng(7).uniform(-1.0, 1.0, (chains, n))
+    y = np.zeros_like(x)
+    library = build_standalone(rendering.code, sdfg.name, language=language)
+    call_standalone(library, rendering.sdfg, {"x": x, "y": y, "N": n})
+    assert_matches({"y": np.maximum.accumulate(x, axis=1)}, {"y": y}, sdfg.name)
+
+
 def test_rendering_is_deterministic():
     """The same SDFG renders to the same text twice.
 
@@ -710,10 +738,6 @@ def test_conditional_expression_renders_as_a_ternary(language):
     assert np.allclose(out, np.eye(6))
 
 
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
-
-
 def find_first_sdfg(name: str, implementation: str):
     """An SDFG whose only node is the search an early-exit loop would lower to.
 
@@ -952,3 +976,50 @@ def test_a_cast_in_an_extent_renders_a_size_helper_that_compiles():
     library = build_standalone(code, "cpf_cpp_cast_extent")
     call_standalone(library, rendering.sdfg, {"a": a, "out": out, "la": la, "lb": lb})
     assert_matches({"out": a * 2.0}, {"out": out}, "cpf_cpp_cast_extent")
+
+
+if __name__ == "__main__":
+    test_elementwise_map_is_rendered_parallel()
+    test_two_dimensional_map_indexes_through_a_stride()
+    test_wcr_folds_into_an_openmp_reduction()
+    test_a_conflicting_wcr_renders_as_an_atomic_that_says_it_is_not_reduced()
+    for label, resolution, statement, oracle in NON_CONFLICTING_WCR:
+        test_non_conflicting_wcr_renders_without_the_reduction_runtime(label, resolution, statement, oracle)
+    test_sequential_loop_around_a_parallel_map()
+    test_maths_functions_reach_the_standard_library()
+    test_integer_index_arithmetic_stays_integer()
+    test_single_precision_and_integer_types_survive()
+    test_matrix_multiply_renders_as_loops()
+    test_strided_copy_renders_as_a_loop_not_a_runtime_call()
+    test_scan_is_inlined_rather_than_called()
+    for language in ("c++", "c"):
+        test_a_multi_chain_scan_renders_each_chain_as_its_own_parallel_scan(language)
+    test_rendering_is_deterministic()
+    test_output_builds_without_warnings()
+    for language in ("c++", "c"):
+        test_minmax_follows_python_on_nan(language)
+    test_persistent_lifetime_is_demoted_not_left_in_a_state()
+    test_gpu_schedules_are_refused_with_a_reason()
+    for language in ("c++", "c"):
+        test_complex_containers_render_in_both_dialects(language)
+    for language in ("c++", "c"):
+        test_an_indirection_in_an_outlined_body_reads_a_const_parameter_once_qualified(language)
+    for language in ("c++", "c"):
+        test_a_complex_matrix_vector_product_renders_its_coefficient_in_the_element_type(language)
+    for language in ("c++", "c"):
+        test_cholesky_renders_as_loops_with_no_library(language)
+    for language in ("c++", "c"):
+        test_linear_solve_renders_as_loops_with_no_library(language)
+    for language in ("c++", "c"):
+        test_matrix_inverse_renders_as_loops_with_no_library(language)
+    for language in ("c++", "c"):
+        test_conditional_expression_renders_as_a_ternary(language)
+    for implementation in ["Auto", "CPU"]:
+        test_find_first_renders_the_cancelling_search(implementation)
+    for language in ("c++", "c"):
+        for label, builder, reason in RUNTIME_ONLY_CONSTRUCTS:
+            test_runtime_only_constructs_are_refused_with_a_reason(label, builder, reason, language)
+    for language in ("c++", "c"):
+        test_the_assumption_guard_renders_in_both_dialects(language)
+    test_the_scatter_guard_renders_without_the_dace_runtime()
+    test_a_cast_in_an_extent_renders_a_size_helper_that_compiles()

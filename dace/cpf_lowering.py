@@ -500,6 +500,16 @@ INLINE_DEFINITIONS: dict[str, str] = {
     "static constexpr inline R int_ceil(const T& numerator, const U& denominator) {\n"
     "    return (numerator + denominator - 1) / denominator;\n"
     "}",
+    "int_sqrt": "template <typename T>\n"
+    "static constexpr inline T int_sqrt(const T& n) {\n"
+    "    if (n < 2) return n < 0 ? T(-1) : n;\n"
+    "    T x = n, y = (x + 1) / 2;\n"
+    "    while (y < x) {\n"
+    "        x = y;\n"
+    "        y = (x + n / x) / 2;\n"
+    "    }\n"
+    "    return x;\n"
+    "}",
     "int_floor_ni": "template <typename T, typename U, typename R = decltype(std::declval<T>() / std::declval<U>())>\n"
     "static constexpr inline R int_floor_ni(const T& numerator, const U& denominator) {\n"
     "    R quotient = numerator / denominator;\n"
@@ -2174,6 +2184,22 @@ C_TYPED_HELPER_SPECS: dict[str, tuple[tuple[tuple[str, str], ...], tuple[tuple[t
     ),
     # Floored on the argument type itself, never a promoted one: the correction reads the sign of the
     # remainder, which a floating or unsigned instantiation would not have.
+    "int_sqrt": (
+        (("{T}", "n"),),
+        (
+            (
+                C_SIGNED_DTYPES,
+                "{T}",
+                "if (n < 2) return n < 0 ? -1 : n;\n"
+                "{T} x = n, y = (x + 1) / 2;\n"
+                "while (y < x) {\n"
+                "    x = y;\n"
+                "    y = (x + n / x) / 2;\n"
+                "}\n"
+                "return x;",
+            ),
+        ),
+    ),
     "int_floor_ni": (
         (("{T}", "numerator"), ("{T}", "denominator")),
         (

@@ -43,6 +43,22 @@ def guarded_gather(a: dace.float64[N], idx: dace.int64[N], b: dace.float64[N]):
             a[i] = b[idx[i]]
 
 
+@dace.program
+def exclusive_switch(
+    a: dace.float64[N], b: dace.float64[N], c: dace.float64[N], d: dace.float64[N], e: dace.float64[N], k: dace.int32[N]
+):
+    """TSVC ``s442``: each arm reads an array no other path reads."""
+    for i in range(N):
+        if k[i] == 1:
+            a[i] = a[i] + b[i] * b[i]
+        elif k[i] == 2:
+            a[i] = a[i] + c[i] * c[i]
+        elif k[i] == 3:
+            a[i] = a[i] + d[i] * d[i]
+        elif k[i] == 4:
+            a[i] = a[i] + e[i] * e[i]
+
+
 def reference(a, b, c, d, e, x):
     a, b, c = a.copy(), b.copy(), c.copy()
     for i in range(a.size):
@@ -88,6 +104,24 @@ def test_a_guarded_gather_keeps_its_branch():
     assert conditionals(sdfg) == 1
 
 
+def test_a_switch_whose_arms_read_their_own_arrays_keeps_its_branches():
+    """As selects, every element would stream b, c, d and e and store a, where the branches touch one of them on
+    the elements that take an arm (40.9 ms against 29.2 ms on s442 at preset L)."""
+    sdfg = canonical(exclusive_switch, "ifconv_exclusive_switch")
+    assert conditionals(sdfg) > 0
+    rng = np.random.default_rng(0)
+    arrays = {name: rng.random(64) for name in "abcde"}
+    k = rng.integers(0, 6, 64).astype(np.int32)
+    expected = arrays["a"].copy()
+    for i in range(64):
+        if 1 <= k[i] <= 4:
+            other = arrays["bcde"[k[i] - 1]][i]
+            expected[i] += other * other
+    sdfg(**arrays, k=k, N=64)
+    assert np.allclose(arrays["a"], expected)
+
+
 if __name__ == "__main__":
     test_nested_unequal_arms_become_selects_and_compute_the_reference()
     test_a_guarded_gather_keeps_its_branch()
+    test_a_switch_whose_arms_read_their_own_arrays_keeps_its_branches()

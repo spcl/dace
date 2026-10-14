@@ -13,7 +13,7 @@ from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.offloading import OffloadToAccelerator
-from dace.transformation.passes.offloading.host_maps import host_maps, maps_pinned_by_host_loops
+from dace.transformation.passes.offloading.host_maps import host_maps, maps_pinned_by_host_loops, moved_elements
 from dace.transformation.passes.offloading.offloading_helpers import is_callback_tasklet
 
 NB = dace.symbol("NB")
@@ -334,6 +334,17 @@ def test_the_sequential_fallback_arm_of_a_guard_keeps_its_map_on_the_host():
     pinned = maps_pinned_by_host_loops(sdfg)
 
     assert list(pinned) == [entry]
+
+
+def test_an_index_read_the_propagation_cannot_see_moves_at_most_its_subset():
+    """ilu0's per-iteration ``col_j = A_indices[m]`` propagates to ``A_indices[0:nnz]`` with volume ``nnz * len``:
+    the map can touch no more than the ``nnz`` elements, so that is what it moves."""
+    nnz, length, n = dace.symbol("nnz"), dace.symbol("len"), dace.symbol("N")
+    assert moved_elements(dace.Memlet(data="A", subset="0:nnz", volume=nnz * length)) == nnz
+    # An exact volume, a constant subset, or a factor of the subset's own size stays the volume.
+    assert moved_elements(dace.Memlet(data="A", subset="0:N", volume=n)) == n
+    assert moved_elements(dace.Memlet(data="A", subset="0:4", volume=4 * length)) == 4 * length
+    assert moved_elements(dace.Memlet(data="A", subset="0:N", volume=n * n)) == n * n
 
 
 if __name__ == "__main__":

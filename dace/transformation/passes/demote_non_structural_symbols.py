@@ -22,7 +22,7 @@ from dace.ordered import OrderedSet
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.graph import MultiConnectorEdge
-from dace.sdfg.state import AbstractControlFlowRegion, ConditionalBlock, LoopRegion
+from dace.sdfg.state import AbstractControlFlowRegion, ConditionalBlock, LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 
@@ -165,6 +165,36 @@ def assigned_symbols(sd: SDFG) -> OrderedSet[str]:
     return OrderedSet(name.strip() for edge in sd.all_interstate_edges() for name in edge.data.assignments)
 
 
+def fuse_into_successor(states: Iterable[SDFGState]) -> None:
+    """Fuse each state a demotion added (it loads the demoted value) into the state it leads to, where legal.
+
+    The load of an integer accumulator is an interstate assignment, so its demoted form sits in a state of its own, apart
+    from the store: ``o[b] = o[b] + 1`` became a read state and a write state, and ``AugAssignToWCR``, which matches one
+    state, never saw it as an accumulation. A float accumulator is never a symbol and kept its single state.
+    """
+    from dace.transformation.interstate import StateFusion
+
+    for state in states:
+        graph = state.parent_graph
+        successors = graph.out_edges(state)
+        if len(successors) != 1 or not successors[0].data.is_unconditional() or successors[0].data.assignments:
+            continue
+        follower = successors[0].dst
+        if not isinstance(follower, SDFGState) or graph.in_degree(follower) != 1:
+            continue
+        fusion = StateFusion()
+        fusion.setup_match(
+            state.sdfg,
+            graph.cfg_id,
+            -1,
+            {StateFusion.first_state: state, StateFusion.second_state: follower},
+            0,
+            override=True,
+        )
+        if fusion.can_be_applied(graph, 0, state.sdfg):
+            fusion.apply(graph, state.sdfg)
+
+
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class DemoteNonStructuralSymbols(ppl.Pass):
@@ -183,7 +213,11 @@ class DemoteNonStructuralSymbols(ppl.Pass):
 
     def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> int | None:
         """:returns: how many symbols were demoted, or ``None`` when none was."""
-        return demote_symbols(sdfg, assigned_symbols) or None
+        before = {id(state) for state in sdfg.states()}
+        demoted = demote_symbols(sdfg, assigned_symbols)
+        if demoted:
+            fuse_into_successor([state for state in sdfg.states() if id(state) not in before])
+        return demoted or None
 
     def report(self, pass_retval: int) -> str:
         return f"Demoted {pass_retval} non-structural symbols to scalars."

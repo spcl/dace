@@ -48,7 +48,7 @@ from dace.sdfg import SDFG, nodes, type_inference
 from dace.sdfg.narrowing import as_basic, as_expr
 from dace.sdfg.state import SDFGState
 from dace.sdfg.utils import dynamic_map_inputs
-from dace.transformation.passes.canonicalize.annotate_loop_kinds import PARALLEL
+from dace.transformation.passes.canonicalize.annotate_loop_kinds import MAP_DIMENSIONS, PARALLEL
 
 #: C++ integer type for computed flat indices, per ``codegen_params.index_ctype`` (exact-width types).
 INDEX_CTYPES = {"int64": "int64_t", "int32": "int32_t"}
@@ -70,6 +70,16 @@ PREPROCESSOR_IF = re.compile(r"^\s*#\s*if")
 PREPROCESSOR_ENDIF = re.compile(r"^\s*#\s*endif")
 # Storages of a scalar held by value in a plain brace.
 VALUE_SCALAR_STORAGES = (dtypes.StorageType.Register, dtypes.StorageType.Default, dtypes.StorageType.CPU_Heap)
+
+
+def map_hint(node: nodes.MapEntry) -> str:
+    """The comment a map renders with. A map born in codegen (copy lowering) has no label, and a Map is
+    data-parallel by definition; a multi-dimensional one renders as one nested ``for`` per dimension under a single
+    comment, which names them all."""
+    text = node.specialization_hint or PARALLEL
+    if len(node.map.params) > 1:
+        text += "\n" + MAP_DIMENSIONS.format(count=len(node.map.params), params=", ".join(node.map.params))
+    return text
 
 
 @dataclass(slots=True)
@@ -378,8 +388,7 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
 
     def _generate_MapEntry(self, sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream):
         self.emit_provenance(node, cfg, state_id, callsite_stream)
-        # A map born in codegen (copy lowering) has no label; a Map is data-parallel by definition.
-        hint = cpf_lowering.hint_comment(node.specialization_hint or PARALLEL)
+        hint = cpf_lowering.hint_comment(map_hint(node))
         if hint:
             callsite_stream.write(hint.rstrip("\n"), cfg, state_id, node)
         # Plan before the base emitter, whose map_scope_needs_brace reads it.

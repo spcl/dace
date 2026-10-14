@@ -4699,6 +4699,24 @@ class ProgramVisitor(ExtNodeVisitor):
                     " got %d). Missing arguments: %s" % (funcname, len(required_args), len(args), missing),
                 )
 
+        # A typed parameter bound to an array of another element type would be reinterpreted in place (the caller's
+        # float32 buffer read and written as float64), never converted: refuse it.
+        for aname, arg in args:
+            if not isinstance(arg, str) or arg not in self.sdfg.arrays or aname not in sdfg.arrays:
+                continue
+            outer, inner = self.sdfg.arrays[arg], sdfg.arrays[aname]
+            if isinstance(outer, data.Scalar) or isinstance(inner, data.Scalar):
+                continue
+            outer_type = getattr(outer.dtype, "base_type", outer.dtype)
+            inner_type = getattr(inner.dtype, "base_type", inner.dtype)
+            if outer_type != inner_type:
+                raise DaceSyntaxError(
+                    self,
+                    node,
+                    f'Argument "{aname}" of "{funcname}" is declared {inner_type.to_string()} but "{arg}" holds '
+                    f"{outer_type.to_string()}; convert it before the call (e.g. {arg}.astype(...))",
+                )
+
         # Remove newly-defined symbols from arguments
         if mapping is not None:
             symbols -= set(mapping.keys())

@@ -13,7 +13,6 @@ import dace
 from dace import symbolic
 from dace.sdfg.state import LoopRegion, SDFGState
 from dace.transformation.interstate.loop_to_map import LoopToMap
-from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.canonicalize.finalize import finalize_for_target
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
 from dace.transformation.passes.canonicalize.wavefront_skew import SKEW_P_PREFIX, SKEW_T_PREFIX, WavefrontSkew
@@ -334,7 +333,6 @@ def test_dependence_kind_classifies_backward_flow_forward_anti():
     backward (writer earlier -> read sees the new value) and anti when forward
     (writer later -> read sees the soon-overwritten old value). Symbolic
     components stay conservatively flow."""
-    from dace import symbolic
     from dace.transformation.passes.canonicalize.wavefront_skew import dependence_kind
 
     p = symbolic.pystr_to_symbolic
@@ -673,7 +671,6 @@ def test_dependence_kind_symbolic_forward_positive_is_anti():
     miscompile). A backward symbolic read ``aa[i, j - S]`` (``(0, -S)``) stays
     ``'flow'``; an unannotated / unprovable-sign symbol also stays conservatively
     ``'flow'`` (the optimistic retry pins it with a runtime guard)."""
-    from dace import symbolic
     from dace.transformation.passes.canonicalize.wavefront_skew import dependence_kind
 
     p = symbolic.pystr_to_symbolic
@@ -1017,6 +1014,23 @@ def residual_loops(sdfg):
     ]
 
 
+def assert_tiled_seidel_wavefront(sdfg, target: str) -> None:
+    """The ``(i, j)`` nest is skewed and TILED: its rectangular tiling is illegal (``tau = (2, 1)`` with the flow
+    distance ``(-1, +1)``), so the pass pre-skews the inner axis, ``w = j + i``, and tiles ``(i, w)``. The CPU keeps
+    the time loop, one tile diagonal and the two intra-tile loops (the innermost over ``w``); the GPU also skews the
+    tile interior, leaving the time loop and two diagonals."""
+    loops = residual_loops(sdfg)
+    names = [c.loop_variable for c in loops]
+    diagonals = skew_diagonals(sdfg)
+    if target == "cpu":
+        assert len(diagonals) == 1 and len(loops) == 4, f"expected t, a tile diagonal and two tile loops; got {names}"
+        assert any(name.endswith("_skew") for name in names), (
+            f"the innermost loop runs the pre-skewed axis; got {names}"
+        )
+    else:
+        assert len(diagonals) == 2 and len(loops) == 3, f"expected t and two diagonals; got {names}"
+
+
 def skew_diagonals(sdfg):
     """The ``_skew_t_`` diagonal loops a successful :class:`WavefrontSkew` leaves behind."""
     return [c for c in residual_loops(sdfg) if c.loop_variable.startswith(SKEW_T_PREFIX)]
@@ -1056,7 +1070,9 @@ def seidel_reference(A, nsteps, n):
 
 
 def test_seidel_2d_ij_wavefront_skews_under_reconstruct_plus_origin_knobs():
-    """seidel_2d's ``(i, j)`` wavefront IS reachable today -- but only with two non-default knobs.
+    """seidel_2d's ``(i, j)`` wavefront under ``reconstruct_wavefront_nest`` plus the global
+    ``normalize_loop_and_map_origin`` rebase. (The reconstruction now rebases its sibling loops
+    itself, so the second knob is no longer required; see the unsimplified test below.)
 
     ``reconstruct_wavefront_nest`` rebuilds the imperfect body (the slice-vectorized Map sitting
     beside the scan ``LoopRegion``) into the single ``LoopRegion`` the skew requires, and
@@ -1064,14 +1080,6 @@ def test_seidel_2d_ij_wavefront_skews_under_reconstruct_plus_origin_knobs():
     With both on, ``WavefrontSkew`` fires and the diagonal is ``_skew_t_ in [0 .. 3*N - 9]`` --
     exactly ``t = 2i + j`` over the rebased ``[0, N-3]`` box, i.e. the ``tau = (2, 1)`` the section
     header above argues is the only legal schedule for this nest.
-
-    **This falsifies a comment in the pipeline.** ``pipeline.py`` lines 632-639 justify the
-    ``reconstruct_wavefront_nest=False`` default with: "on the corpus kernel it targets, the Map's
-    slice-normalized range and the scan's direct-index range do not line up (a real offset, not
-    just a DOALL refusal), so the reconstruction never actually fires there yet -- ON is safe
-    (mutate-on-provable-win only) but unproven to help; flip once a corpus win is measured." The
-    ranges DO line up once ``normalize_loop_and_map_origin`` rebases them; the two knobs were only
-    ever evaluated in ISOLATION, and jointly they fire. This test is that measurement.
 
     The assertion is value-preserving on purpose: a structural count alone would also be satisfied
     by a rewrite that parallelised something unsound.
@@ -1082,13 +1090,7 @@ def test_seidel_2d_ij_wavefront_skews_under_reconstruct_plus_origin_knobs():
 
     on = seidel_2d_npbench.to_sdfg(simplify=True)
     canonicalize(on, validate=False, reconstruct_wavefront_nest=True, normalize_loop_and_map_origin=True, **CPU_PARAMS)
-    diagonals = skew_diagonals(on)
-    assert len(diagonals) == 1, (
-        f"expected the (i, j) nest to be skewed; residual loops were {[c.loop_variable for c in residual_loops(on)]}"
-    )
-    assert len(residual_loops(on)) == 2, "only the t time-step loop and the diagonal may remain"
-    end = symbolic.simplify(loop_analysis.get_loop_end(diagonals[0]) - symbolic.pystr_to_symbolic("3*N - 9"))
-    assert end == 0, f"diagonal should run to 3*N - 9 (= 2i + j over [0, N-3]); got {end} more"
+    assert_tiled_seidel_wavefront(on, "cpu")
 
     finalized = finalize_for_target(on, "cpu")
     finalized.name = "seidel_2d_wavefront_knobs_on"
@@ -1096,12 +1098,42 @@ def test_seidel_2d_ij_wavefront_skews_under_reconstruct_plus_origin_knobs():
     finalized(A=got, tsteps=steps, N=n)
     assert np.allclose(got, seidel_reference(a0.copy(), steps, n)), "the skew must be value-preserving"
 
-    # Non-vacuity: with the knobs at their defaults the very same kernel is NOT skewed, so the
-    # assertions above are testing the knobs and not something the pipeline does anyway.
+    # Non-vacuity: with the reconstruction switched off the very same kernel is NOT skewed, so the
+    # assertions above are testing the knob and not something the pipeline does anyway.
     off = seidel_2d_npbench.to_sdfg(simplify=True)
-    canonicalize(off, validate=False, **CPU_PARAMS)
-    assert skew_diagonals(off) == [], "default knobs must leave the (i, j) nest unskewed"
-    assert len(residual_loops(off)) == 3, "default knobs leave t, i and the in-row scan sequential"
+    canonicalize(off, validate=False, reconstruct_wavefront_nest=False, **CPU_PARAMS)
+    assert skew_diagonals(off) == [], "without the reconstruction the (i, j) nest stays unskewed"
+    assert len(residual_loops(off)) == 3, "without the reconstruction t, i and the in-row scan stay sequential"
+
+
+@pytest.mark.parametrize("target", ["cpu", "gpu"])
+def test_seidel_2d_unsimplified_row_copy_reconstructs_and_skews(target):
+    """seidel_2d lowered WITHOUT frontend simplification -- the form the benchmark harness hands to
+    canon -- skews under ``reconstruct_wavefront_nest`` alone, on both targets.
+
+    Unsimplified, ``A[i, 1:-1] += expr`` computes ``expr`` into a row transient and writes it back
+    with an AccessNode-to-AccessNode copy ``tmp[0:N-2] -> A[i, 1:N-1]``. The copy sat between the
+    Map-derived row loop and the in-row scan, so ``LoopFusion`` (adjacent loops only) never reached
+    the scan; and the row loop runs ``0:N-3`` while the scan runs ``1:N-2``, an origin mismatch
+    ``LoopFusion`` refuses. ``ReconstructWavefrontNest`` now turns the copy into a loop and rebases
+    the sibling loops itself, so neither ``normalize_loop_and_map_origin`` nor simplification is
+    needed. The CPU result is RUN against the sequential reference: a wrong skew is a silent
+    miscompile, not an exception.
+    """
+    n, steps = 12, 4
+    rng = np.random.default_rng(2026)
+    a0 = rng.standard_normal((n, n))
+
+    sdfg = seidel_2d_npbench.to_sdfg(simplify=False)
+    canonicalize(sdfg, validate=False, target=target, reconstruct_wavefront_nest=True)
+    assert_tiled_seidel_wavefront(sdfg, target)
+    if target != "cpu":
+        return
+    finalized = finalize_for_target(sdfg, "cpu")
+    finalized.name = "seidel_2d_unsimplified_wavefront"
+    got = a0.copy()
+    finalized(A=got, tsteps=steps, N=n)
+    assert np.allclose(got, seidel_reference(a0.copy(), steps, n)), "the skew must be value-preserving"
 
 
 # #
@@ -1318,6 +1350,8 @@ if __name__ == "__main__":
     for prog, interchangeable in ((same_lane_carry, True), (lane_crossing_carry, False)):
         test_move_loop_into_map_refuses_lane_crossing_carry(prog, interchangeable)
     test_seidel_2d_ij_wavefront_skews_under_reconstruct_plus_origin_knobs()
+    for target in ("cpu", "gpu"):
+        test_seidel_2d_unsimplified_row_copy_reconstructs_and_skews(target)
     test_row_sweep_ti_wavefront_is_detected()
     for program, with_scalar_accumulator, label in (
         (lu_factorization, False, "lu"),

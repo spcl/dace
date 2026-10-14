@@ -24,7 +24,6 @@ sizes = [{M: 30, N: 30}, {M: 120, N: 120}, {M: 220, N: 220}, {M: 1100, N: 1100},
 
 #: ported from the npbench bench_info paper row -- M > N here (tall), so full column rank holds
 #: even though sizes above is square; see the rank-deficiency note above for why that matters.
-paper_sizes = {M: 240, N: 200}
 
 args = [([M, N], datatype), ([N, N], datatype), ([M, N], datatype)]
 

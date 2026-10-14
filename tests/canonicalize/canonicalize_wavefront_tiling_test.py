@@ -72,7 +72,7 @@ def gauss_seidel_backward(a: dace.float64[N, N]):
             a[i, j] = (a[i, j - 1] + a[i - 1, j] + a[i - 1, j - 1] + a[i - 1, j + 1]) / 4.0
 
 
-ALL_SHAPES = [wf_north_west, wf_triangular, wavefront2d]
+ALL_SHAPES = [wf_north_west, wf_triangular, wavefront2d, gauss_seidel_backward]
 
 
 def skewed(prog, bi=32, bj=32, target="cpu"):
@@ -224,20 +224,27 @@ def test_both_targets_block_and_the_gpu_also_skews_the_tile(prog):
         assert np.array_equal(got, ref), f"{prog.name}/{label}: max abs diff {np.max(np.abs(got - ref)):.3e}"
 
 
-def test_steep_gauss_seidel_diagonal_is_refused_by_the_tiling_guard():
+def test_steep_gauss_seidel_diagonal_tiles_only_after_the_inner_preskew():
     """``tau = (2, 1)`` with the flow distance ``(-1, +1)``: legal element-wise, illegal
     tiled (the pair can straddle only the ``v`` boundary, giving the tile distance
-    ``(0, +1)`` and ``tau . (0, 1) = +1 > 0``). Checked both on the predicate and on the
-    nest the pass actually emits."""
+    ``(0, +1)`` and ``tau . (0, 1) = +1 > 0``). Skewing the inner axis first, ``w = v + u``,
+    maps every distance to ``(du, dv + du)``, all non-positive here, so ``(1, 1)`` tiles; the
+    pass emits that tiling, whose values the bit-exact test checks."""
     p = dace.symbolic.pystr_to_symbolic
     deps = [Dependence(p(du), p(dv), [], "flow") for du, dv in ((0, -1), (-1, 0), (-1, -1), (-1, 1))]
     assert tiling_legal(deps, (1, 1), 64, 64) is False, "sanity: (1, 1) is not even legal element-wise here"
     assert tiling_legal(deps, (2, 1), 64, 64) is False, "the straddling (0, +1) tile distance must refuse (2, 1)"
     assert tiling_legal(deps[:2], (2, 1), 64, 64) is True, "non-vacuity: without (-1, +1) the same tau tiles"
+    preskewed = [Dependence(d.du, d.dv + d.du, [], "flow") for d in deps]
+    assert tiling_legal(preskewed, (1, 1), 64, 64) is True, "after w = v + u the nest is fully permutable"
 
     sdfg, fired = skewed(gauss_seidel_backward)
     assert fired == 1
-    assert len(loops(sdfg)) == 1, f"the steep diagonal must stay untiled; got {[l.loop_variable for l in loops(sdfg)]}"
+    emitted = loops(sdfg)
+    assert len(emitted) == 3, f"expected T + intra-tile i + w; got {[l.loop_variable for l in emitted]}"
+    assert any(l.loop_variable.endswith("_skew") for l in emitted), (
+        f"the innermost loop runs the pre-skewed axis; got {[l.loop_variable for l in emitted]}"
+    )
 
 
 @pytest.mark.parametrize("prog", ALL_SHAPES, ids=lambda p: p.name)

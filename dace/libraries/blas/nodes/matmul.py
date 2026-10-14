@@ -34,6 +34,26 @@ def _matrix_operand(operand):
     return edge, desc, squeezed_size, squeezed_strides
 
 
+def compile_time_extent(extent, sdfg) -> int | None:
+    """``extent`` as an integer when it is a literal or names only compile-time constants of ``sdfg``
+    (``SDFG.specialize``), else ``None``.
+
+    :param extent: A symbolic or literal extent.
+    :param sdfg: The SDFG whose constants may resolve the extent's symbols.
+    """
+    try:
+        return int(symbolic.evaluate(extent, sdfg.constants))
+    except (TypeError, ValueError, KeyError, AttributeError):
+        return None
+
+
+def is_gemm_shape(a, b, c) -> bool:
+    """Whether the operands :func:`_get_matmul_operands` returned make a matrix-matrix product, which
+    ``SpecializeMatMul`` lowers to a ``Gemm``."""
+    size_a, size_b, size_c = a[4], b[4], c[4]
+    return len(size_c) == 2 and ((len(size_a) == 2 and len(size_b) == 2) or (len(a[2]) == 2 and len(b[2]) == 2))
+
+
 def _get_matmul_operands(node, state, sdfg, name_lhs="_a", name_rhs="_b", name_out="_c"):
     """Returns the matrix multiplication input edges, arrays, and shape."""
     res_lhs = None
@@ -238,7 +258,7 @@ class SpecializeMatMul(dace.transformation.transformation.ExpandTransformation):
         # A degenerate operand dimension is squeezed with a unit batch, so also check the output
         is_batched = len(size_a) >= 3 or len(size_b) >= 3 or (len(size_c) >= 3 and (len(a[2]) >= 3 or len(b[2]) >= 3))
 
-        if len(size_c) == 2 and ((len(size_a) == 2 and len(size_b) == 2) or (len(a[2]) == 2 and len(b[2]) == 2)):
+        if is_gemm_shape(a, b, c):
             # Matrix and matrix -> GEMM
             from dace.libraries.blas.nodes.gemm import Gemm
 

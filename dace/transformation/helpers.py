@@ -746,7 +746,7 @@ def nest_state_subgraph(
             return False
         return edge.data.subset is not None and edge.data.subset.num_elements() == nsdfg.arrays[name].total_size
 
-    # Add access nodes and edges as necessary
+    # Add access nodes and edges as necessary, each with the outer name its memlet tree spoke
     edges_to_rename = []
     for edge, name in input_names.items():
         if reads_whole_connector(edge, name):
@@ -754,19 +754,23 @@ def nest_state_subgraph(
         node = nstate.add_read(name)
         new_edge = copy.deepcopy(edge.data)
         new_edge.data = name
-        edges_to_rename.append(nstate.add_edge(node, None, edge.dst, edge.dst_conn, new_edge))
+        edges_to_rename.append((nstate.add_edge(node, None, edge.dst, edge.dst_conn, new_edge), edge.data.data))
     for edge, name in output_names.items():
         node = nstate.add_write(name)
         new_edge = copy.deepcopy(edge.data)
         new_edge.data = name
-        edges_to_rename.append(nstate.add_edge(edge.src, edge.src_conn, node, None, new_edge))
+        edges_to_rename.append((nstate.add_edge(edge.src, edge.src_conn, node, None, new_edge), edge.data.data))
 
     # Rename memlet paths inside nested SDFG to the nested data names
-    for new_edge in edges_to_rename:
+    for new_edge, outer_name in edges_to_rename:
         for edge in nstate.memlet_tree(new_edge):
             # An empty memlet on the same scope connector is a happens-before ordering edge;
             # stamping ``data`` on it makes a connector-less fake data edge later passes drop.
             if edge.data.is_empty():
+                continue
+            # A copy memlet named after its OTHER end (``row[0:K] -> src[j, 0:K]`` into ``row``) keeps that name:
+            # its subset is that container's, not the connector's.
+            if edge.data.data != outer_name and edge is not new_edge:
                 continue
             edge.data.data = new_edge.data.data
             # A bare whole-container memlet (``Memlet(data='s')``) names the whole connector, which validation

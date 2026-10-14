@@ -121,6 +121,25 @@ def row_through_kernel_scratch() -> dace.SDFG:
     return sdfg
 
 
+def row_staged_into_kernel_scratch() -> dace.SDFG:
+    """``row = A[k, :]; B[k, j] = 2 * row[j]`` per kernel thread: icon_scatter's staging copy, filled outside the inner
+    map and only read inside it."""
+    sdfg = dace.SDFG("row_staged_into_kernel_scratch")
+    sdfg.add_array("A", [K, M], dace.float64, storage=dtypes.StorageType.GPU_Global)
+    sdfg.add_array("B", [K, M], dace.float64, storage=dtypes.StorageType.GPU_Global)
+    sdfg.add_transient("row", [M], dace.float64, storage=dtypes.StorageType.GPU_Global)
+    state = sdfg.add_state()
+    a, b, row = state.add_read("A"), state.add_write("B"), state.add_access("row")
+    kernel, kernel_exit = state.add_map("rows", {"k": "0:K"}, schedule=dtypes.ScheduleType.GPU_Device)
+    inner, inner_exit = state.add_map("cols", {"j": "0:M"}, schedule=dtypes.ScheduleType.Sequential)
+    state.add_memlet_path(a, kernel, row, memlet=dace.Memlet(data="A", subset="k, 0:M", other_subset="0:M"))
+    tasklet = state.add_tasklet("twice", {"x"}, {"y"}, "y = 2 * x")
+    state.add_memlet_path(row, inner, tasklet, dst_conn="x", memlet=dace.Memlet("row[j]"))
+    state.add_memlet_path(tasklet, inner_exit, kernel_exit, b, src_conn="y", memlet=dace.Memlet("B[k, j]"))
+    sdfg.validate()
+    return sdfg
+
+
 def canonical_gpu(program) -> dace.SDFG:
     sdfg = program.to_sdfg(simplify=True)
     canonicalize(sdfg, target="gpu")
@@ -217,6 +236,14 @@ def test_a_per_thread_scratch_read_after_the_inner_map_keeps_one_thread_per_iter
     assert not maps_by_schedule(sdfg, dtypes.ScheduleType.GPU_ThreadBlock)
 
 
+def test_a_per_thread_buffer_filled_outside_the_inner_map_keeps_one_thread_per_iteration():
+    """Every lane would allocate and fill the whole row: 256 copies per block, which the device codegen hoists out of
+    the kernel sized for every thread (icon_scatter's staging copies, ~54 GB at preset M)."""
+    sdfg = row_staged_into_kernel_scratch()
+    BlockTileKernels().apply_pass(sdfg, {})
+    assert not maps_by_schedule(sdfg, dtypes.ScheduleType.GPU_ThreadBlock)
+
+
 @pytest.mark.gpu
 @pytest.mark.parametrize("m, n, k, nb", SIZES)
 def test_the_block_lowerings_compute_what_numpy_does(m, n, k, nb):
@@ -285,5 +312,6 @@ if __name__ == "__main__":
     test_an_in_place_update_outside_the_inner_map_runs_on_lane_zero_between_barriers()
     test_a_body_that_accumulates_outside_the_inner_map_keeps_one_thread_per_iteration()
     test_a_per_thread_scratch_read_after_the_inner_map_keeps_one_thread_per_iteration()
+    test_a_per_thread_buffer_filled_outside_the_inner_map_keeps_one_thread_per_iteration()
     for sizes in SIZES:
         test_the_block_lowerings_compute_what_numpy_does(*sizes)

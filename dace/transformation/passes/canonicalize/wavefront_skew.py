@@ -113,6 +113,10 @@ DEFAULT_TILE_SIZE = 64
 #: bandwidth-bound (~211 of ~3300 GB/s); shared-memory staging measured 0.79x at B=64.
 DEFAULT_GPU_TILE_SIZE = 64
 
+#: Largest inner-axis pre-skew ``w = v + k*u`` tried before giving up on tiling. ``k = 1`` makes every
+#: distance of a nearest-neighbour stencil (Gauss-Seidel: ``(1, -1)`` .. ``(0, 1)``) non-negative.
+MAX_PRESKEW = 2
+
 #: Dim names for the tile-index polyhedron handed to ``poly.skew_bounds``, and the
 #: PARAMETER names standing for its two tile counts. Handing ISL the counts as opaque
 #: parameters (rather than ``int_ceil(N - 1, B)`` inline) keeps the projected diagonal
@@ -1449,6 +1453,7 @@ class WavefrontSkew(ppl.Pass):
         # Prefer the tiled lowering; decided BEFORE any mutation so a refusal here
         # only picks the untiled path, never leaves the nest half-rewritten.
         tiles = self.plan_tiles(deps, u, v, domain, dims, tau)
+        preskew = None if tiles is not None else self.plan_preskewed_tiles(deps, u, v, ub, vb, dims)
 
         # Legal skew confirmed -- now (and only now) commit the snapshot absorb,
         # so every earlier refusal left the snapshot intact. Reads are redirected
@@ -1462,10 +1467,14 @@ class WavefrontSkew(ppl.Pass):
             self.emit_positive_guard(outer, deps, guard_syms)
 
         assert inner is not None  # a fused nest was committed to ``inner`` above
-        if tiles is None:
-            self.rewrite(outer, inner, sdfg, u, v, tau, bounds)
-        else:
+        if tiles is not None:
             self.rewrite_tiled(outer, inner, sdfg, u, ub, vb, tau, tiles)
+        elif preskew is not None:
+            k, skewed_tau, skewed_tiles = preskew
+            skewed_vb = self.preskew_inner(inner, sdfg, u, vb, k)
+            self.rewrite_tiled(outer, inner, sdfg, u, ub, skewed_vb, skewed_tau, skewed_tiles)
+        else:
+            self.rewrite(outer, inner, sdfg, u, v, tau, bounds)
         return True
 
     def plan_tiles(
@@ -1514,6 +1523,59 @@ class WavefrontSkew(ppl.Pass):
         n_i = symbolic.int_ceil(simplified(u_hi - u_lo + 1), bi)
         n_j = symbolic.int_ceil(simplified(v_hi - v_lo + 1), bj)
         return TilePlan(bounds, u_lo, v_lo, n_i, n_j, bi, bj)
+
+    def plan_preskewed_tiles(
+        self,
+        deps: list[Dependence],
+        u: str,
+        v: str,
+        ub: tuple[sympy.Expr, sympy.Expr],
+        vb: tuple[sympy.Expr, sympy.Expr],
+        dims: list[str],
+    ) -> tuple[int, tuple[int, int], TilePlan] | None:
+        """``(k, tau, plan)`` for tiling the nest after the inner-axis pre-skew ``w = v + k*u``, or ``None``.
+
+        Rectangular tiles of the original axes can reverse a dependence that straddles one tile boundary (see
+        :func:`tiling_legal`): Gauss-Seidel's flow distance ``(-1, +1)`` does. Skewing the inner axis first maps a
+        distance ``(du, dv)`` to ``(du, dv + k*du)``; for the smallest ``k`` that gives every distance one sign per
+        component the nest is fully permutable, rectangular tiles of ``(u, w)`` are legal, and each tile still runs its
+        points in the original lexicographic order (a skew by the outer axis preserves it)."""
+        for k in range(1, MAX_PRESKEW + 1):
+            shift = {sym(v): sym(v) - k * sym(u)}
+            skewed = [
+                Dependence(
+                    dep.du,
+                    dep.dv + k * dep.du,
+                    dep.nested,
+                    dep.kind,
+                    [simplified(g.subs(shift)) for g in dep.guard],
+                )
+                for dep in deps
+            ]
+            domain = domain_constraints(u, v, ub, (vb[0] + k * sym(u), vb[1] + k * sym(u)))
+            for tau in SKEW_CANDIDATES:
+                if not schedule_legal(tau, skewed, u, v, domain, []):
+                    continue
+                plan = self.plan_tiles(skewed, u, v, domain, dims, tau)
+                if plan is not None:
+                    return k, tau, plan
+        return None
+
+    def preskew_inner(
+        self, inner: LoopRegion, sdfg: SDFG, u: str, vb: tuple[sympy.Expr, sympy.Expr], k: int
+    ) -> tuple[sympy.Expr, sympy.Expr]:
+        """Rewrite ``inner`` over ``w = v + k*u``: the body reads ``v`` as ``w - k*u`` and the bounds shift by
+        ``k*u``. Returns the new inner bounds."""
+        v = inner.loop_variable
+        w = f"{v}_skew"
+        declare_iterators(sdfg, w)
+        inner.replace_dict({v: symbolic.symstr(sym(w) - k * sym(u))})
+        low, high = simplified(vb[0] + k * sym(u)), simplified(vb[1] + k * sym(u))
+        inner.loop_variable = w
+        inner.init_statement = properties.CodeBlock(f"{w} = ({symbolic.symstr(low)})")
+        inner.loop_condition = properties.CodeBlock(f"{w} <= ({symbolic.symstr(high)})")
+        inner.update_statement = properties.CodeBlock(f"{w} = {w} + 1")
+        return low, high
 
     def rewrite(
         self,

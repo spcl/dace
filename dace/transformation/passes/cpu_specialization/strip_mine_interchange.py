@@ -616,17 +616,24 @@ def count_axis(axes: list[tuple[nodes.MapEntry, str, Any]], size: Any) -> int:
 
 
 def targets_for(shape: Shape, size: Any) -> list[Target] | None:
-    """The maps a tile of extent ``size`` narrows in ``shape``: the one parameter of its own nest with that
-    extent; or, when its own nest has none, the one parameter with it in every inner nest. ``None`` otherwise."""
+    """The maps a tile of extent ``size`` narrows in ``shape``: the outermost parameter of its own nest with that
+    extent; or, when its own nest has none, the outermost one with it in every inner nest. ``None`` otherwise.
+
+    Outermost, not the only one: a cube ``(N, N, N, B)`` has three axes of extent ``N``, and refusing them all left
+    only the short innermost ``B`` to cut -- one or two tiles, the whole volume on one or two threads
+    (vector_stencil_4d). Where statements disagree on which axis that is, :func:`tile_local` sees the dependence at
+    a nonzero distance and refuses the cut."""
     own = [(owner, param) for owner, param, other in shape.axes if same_extent(other, size)]
-    if len(own) == 1:
+    if own:
         return [Target(own[0][0], own[0][1], None)]
-    if own or not shape.inner or any(count_axis(inner.axes, size) != 1 for inner in shape.inner):
+    if not shape.inner or any(count_axis(inner.axes, size) == 0 for inner in shape.inner):
         return None
     return [
         Target(owner, param, inner.nested)
         for inner in shape.inner
-        for owner, param, other in inner.axes
+        for owner, param, other in inner.axes[
+            : next(i for i, a in enumerate(inner.axes) if same_extent(a[2], size)) + 1
+        ]
         if same_extent(other, size)
     ]
 

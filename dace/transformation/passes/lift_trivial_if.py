@@ -243,16 +243,32 @@ class LiftTrivialIf(ppl.Pass):
             return n.id if isinstance(n, ast.Name) else None
 
         ivar_to_range = {iv: (s, e) for iv, s, e in ranges}
-        lname, rname = name_of(left), name_of(right)
-        if lname in ivar_to_range and rname not in ivar_to_range:
-            ivar, other = lname, right
-        elif rname in ivar_to_range and lname not in ivar_to_range:
-            ivar, other = rname, left
+
+        def ivar_in(n):
+            names = {sub.id for sub in ast.walk(n) if isinstance(sub, ast.Name)} & ivar_to_range.keys()
+            return next(iter(names)) if len(names) == 1 else None
+
+        lvar, rvar = ivar_in(left), ivar_in(right)
+        if lvar and not rvar:
+            ivar, varying, other = lvar, left, right
+        elif rvar and not lvar:
+            ivar, varying, other = rvar, right, left
             opname = {"Lt": "Gt", "LtE": "GtE", "Gt": "Lt", "GtE": "LtE"}.get(opname, opname)
         else:
             return "unknown"
         try:
             c = symbolic.pystr_to_symbolic(ast.unparse(other))
+            if name_of(varying) != ivar:
+                # An increasing guard ``g(i) < c`` is ``i < x`` at its crossing ``x`` (``i * 8192 < N``, ``i * i < N``
+                # over ``i >= 0``): the bare comparison the split that put ``x`` into the loop bounds decides.
+                if opname not in ("Lt", "LtE", "Gt", "GtE") or not symbolic.provably_nonnegative(
+                    ivar_to_range[ivar][0], assume_symbols_nonnegative=True
+                ):
+                    return "unknown"
+                c = symbolic.guard_crossing(ast.unparse(varying), ivar, c, strict=opname in ("Lt", "GtE"))
+                if c is None:
+                    return "unknown"
+                opname = {"Lt": "Lt", "LtE": "Lt", "Gt": "GtE", "GtE": "GtE"}[opname]
         except Exception:
             return "unknown"
         if symbolic.pystr_to_symbolic(ivar) in c.free_symbols:

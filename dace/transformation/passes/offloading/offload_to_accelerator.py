@@ -42,6 +42,7 @@ from dace.transformation.passes.length_one_array_scalar_conversion import (
 )
 from dace.transformation.passes.offloading.host_maps import HostMapSpec, host_maps, maps_pinned_by_host_loops
 from dace.transformation.passes.offloading.offloading_helpers import (
+    add_fallthrough_branches,
     enclosing_kernel,
     get_data_used_by_incoming_access_nodes,
     get_data_used_by_outgoing_access_nodes,
@@ -56,6 +57,7 @@ from dace.transformation.passes.offloading.offloading_helpers import (
     is_view,
     link_early_returns,
     register_kernel_local_transients,
+    remove_empty_fallthrough_branches,
     remove_empty_return_entries,
     separate_early_returns,
     traverse_IR,
@@ -140,6 +142,8 @@ class OffloadToAccelerator(ppl.Pass):
         self._host_only_loops: dict = {}
         #: Containers :meth:`place_single_sided_data` duplicated at entry: valid on both sides all run.
         self._read_only_duplicates: OrderedSet = OrderedSet()
+        #: Entry states of the empty arms :func:`add_fallthrough_branches` gave conditionals without an ``else``.
+        self._fallthrough_entries: OrderedSet[SDFGState] = OrderedSet()
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Everything
@@ -534,6 +538,12 @@ class OffloadToAccelerator(ppl.Pass):
         # array on the next scan and would be requested again for ever (TSVC s332's ``result``).
         attempted: OrderedSet[str] = OrderedSet()
         entries = self.separate_returns_and_refresh_scopes(sdfg)
+        # The path through a conditional that takes no arm keeps the locations the conditional was entered with.
+        # Without an arm of its own, the copies after the conditional assume the taken arm ran.
+        fallthroughs = add_fallthrough_branches(sdfg)
+        self._fallthrough_entries = OrderedSet(required(arm.start_block) for _, arm in fallthroughs)
+        if fallthroughs:
+            self.cache_scopes(sdfg)
         self.initialize_device_tables_on_the_device(sdfg)
 
         for _ in range(3):
@@ -589,6 +599,11 @@ class OffloadToAccelerator(ppl.Pass):
                     ).apply_pass(sdfg, {})
                     or OrderedSet()
                 )
+                # A kernel writes these, so placement decides where they live: a ``Register`` pin (a demoted
+                # symbol's) would keep the value in host code, handed to the kernel by value and lost.
+                for name in to_len1_arrays & rewritten:
+                    if sdfg.arrays[name].storage == dtypes.StorageType.Register:
+                        sdfg.arrays[name].storage = dtypes.StorageType.Default
 
             if to_scalars:
                 rewritten |= (
@@ -628,6 +643,7 @@ class OffloadToAccelerator(ppl.Pass):
         # step 4: insert copies based on IR
         self.eval_IR(sdfg, sdfgIR)
         remove_empty_return_entries(entries)
+        remove_empty_fallthrough_branches(fallthroughs)
 
     def separate_returns_and_refresh_scopes(self, sdfg: SDFG) -> list[tuple[ControlFlowRegion, SDFGState]]:
         """Give each return its own entry state, so the copy-backs an early return needs run on its path."""
@@ -1564,7 +1580,9 @@ class OffloadToAccelerator(ppl.Pass):
         # if there are no or multiple direct children, leave the sets empty & simply propagate later
         # there is no good heuristic to choose from here, which copies to make and which not
         # (not without significantly more analysis)
-        children = IR.next
+        # An added fall-through arm uses nothing, so it has no say in where the data starts: the conditional is
+        # placed for its one real arm, and the fall-through arm copies whatever the taken arm leaves elsewhere.
+        children = [child for child in IR.next if child.block not in self._fallthrough_entries]
         if len(children) != 1:
             return
 
@@ -1589,7 +1607,7 @@ class OffloadToAccelerator(ppl.Pass):
                     location_on_gpu[array_name] = False
 
         # traverse graph
-        traverse_same_level(IR, gather_data)
+        traverse_same_level(IR, gather_data, children)
 
         # populate IR sets
         IR.gpu_set = OrderedSet(array_name for array_name in location_on_gpu if location_on_gpu[array_name])
@@ -1638,6 +1656,22 @@ class OffloadToAccelerator(ppl.Pass):
         # This means that each branch will have to insert copies individually, usually leading to the least amount of
         # necessary copies.
 
+    @staticmethod
+    def exit_sets(node: OffloadingIRNode) -> tuple[OrderedSet[str], OrderedSet[str]]:
+        """``(cpu, gpu)``: where ``node`` leaves its data for what follows it.
+
+        A loop's CLOSE holds the loop body's last use, but the loop's tail copies every array its head holds on the
+        other side back to the head's side (the tail rule in :meth:`eval_IR`), so after the loop those arrays sit where
+        the head wants them. Read as the last use, an enclosing loop saw the array on the wrong side and added a copy
+        of its own: seidel's row loop copied ``A`` back to the device at its tail, and the time loop around it copied
+        the whole of ``A`` to the device once more per step."""
+        if node.type != OffloadingIRNode.CLOSE or node.open is None or node.open.type != OffloadingIRNode.OPEN_LOOP:
+            return node.cpu_set, node.gpu_set
+        head = node.open
+        to_gpu = node.cpu_set & head.gpu_set
+        to_cpu = node.gpu_set & head.cpu_set
+        return (node.cpu_set - to_gpu) | to_cpu, (node.gpu_set - to_cpu) | to_gpu
+
     def _propagate_arrays(self, IR: OffloadingIRNode):
         # all arrays which aren't used by this state retain their previous status
         # ASSUMPTION: arrays are either gpu or cpu within a state
@@ -1657,11 +1691,12 @@ class OffloadToAccelerator(ppl.Pass):
                 ):
                     continue
                 next_arrays = next.cpu_set | next.gpu_set
+                cpu_set, gpu_set = self.exit_sets(node)
 
-                for array in node.cpu_set:
+                for array in cpu_set:
                     if array not in next_arrays:
                         next.cpu_set.add(array)
-                for array in node.gpu_set:
+                for array in gpu_set:
                     if array not in next_arrays:
                         next.gpu_set.add(array)
 
@@ -1854,11 +1889,12 @@ class OffloadToAccelerator(ppl.Pass):
             # never written already matches on the device, and when it is a nested SDFG's input
             # connector the copy is not merely wasted -- it writes a container the body may only read
             # (npbench scattering_self_energies' ``neigh_idx``).
-            gpu_copies = {name for name in node.cpu_set & next.gpu_set if name not in self.no_copy_in_needed}
+            cpu_set, gpu_set = self.exit_sets(node)
+            gpu_copies = {name for name in cpu_set & next.gpu_set if name not in self.no_copy_in_needed}
             if gpu_copies:
                 place_copy(node_block, next_block, gpu_copies, to_gpu=True)
 
-            cpu_copies = node.gpu_set & next.cpu_set
+            cpu_copies = gpu_set & next.cpu_set
             if cpu_copies:
                 place_copy(node_block, next_block, cpu_copies, to_gpu=False)
 
@@ -2387,6 +2423,56 @@ class OffloadToAccelerator(ppl.Pass):
         issued = (n for body in node.sdfg.states() for n in body.scope_children()[None])
         return any(is_device_wide_libnode(n) for n in issued) or sdfg_only_launches(node.sdfg)
 
+    @staticmethod
+    def reads_host_pins_into_scalars(sdfg: SDFG, state: SDFGState, node: nodes.Node, pinned: AbstractSet[str]) -> bool:
+        """Whether ``node`` is a tasklet reading host-pinned data (:func:`host_connector_data`) and writing nothing but
+        scalars."""
+        if not isinstance(node, nodes.Tasklet):
+            return False
+        reads = [edge.data.data for edge in state.in_edges(node) if not edge.data.is_empty()]
+        writes = [edge.data.data for edge in state.out_edges(node) if not edge.data.is_empty()]
+        return (
+            any(name in pinned for name in reads)
+            and all(name in pinned or is_scalar(name, sdfg) for name in reads)
+            and bool(writes)
+            and all(is_scalar(name, sdfg) for name in writes)
+        )
+
+    def stage_host_pin_reads(self, sdfg: SDFG, state: SDFGState, scope_entry=None) -> None:
+        """Route every single-element read of host-pinned data by host work that will be wrapped through a scalar.
+
+        A tasklet that reads a device ArgReduce's host-resident result AND writes an array (``a[0] = x + index``
+        once the copy ``x = argmax_val[0]`` was forwarded into it) is host work wrapped into a size-1 kernel, which
+        would dereference the host pointer. A host tasklet ``x = argmax_val[0]`` in front of it is what
+        :meth:`reads_host_pins_into_scalars` keeps out of the kernel, and the scalar reaches the kernel by value.
+        Only reads straight from an access node at this scope's level: a read through a scope entry is device code.
+        """
+        pinned = host_connector_data(state)
+        if not pinned:
+            return
+        for node in list(state.scope_children()[scope_entry]):
+            if not isinstance(node, nodes.Tasklet) or self.reads_host_pins_into_scalars(sdfg, state, node, pinned):
+                continue
+            for edge in list(state.in_edges(node)):
+                name = edge.data.data
+                if (
+                    name not in pinned
+                    or not isinstance(edge.src, nodes.AccessNode)
+                    or edge.data.is_empty()
+                    or edge.data.dynamic
+                    or edge.data.subset.num_elements() != 1
+                ):
+                    continue
+                scalar = sdfg.add_scalar(
+                    f"{name}_host_elem", sdfg.arrays[name].dtype, transient=True, find_new_name=True
+                )[0]
+                load = state.add_tasklet(f"load_{scalar}", {"__inp"}, {"__out"}, "__out = __inp")
+                staged = state.add_access(scalar)
+                state.remove_edge(edge)
+                state.add_edge(edge.src, edge.src_conn, load, "__inp", deepcopy(edge.data))
+                state.add_edge(load, "__out", staged, None, Memlet(data=scalar, subset="0"))
+                state.add_edge(staged, None, node, edge.dst_conn, Memlet(data=scalar, subset="0"))
+
     def wrap_free_computation(self, sdfg: SDFG, state: SDFGState, scope_entry=None):
         """Lift the host work of ONE hybrid host scope into kernels; :meth:`is_device_work` has the rule.
 
@@ -2394,6 +2480,7 @@ class OffloadToAccelerator(ppl.Pass):
         it, so it bounds the partitions like device work does: left out, closing a partition would
         drag its whole body -- device-wide library calls included -- into a kernel.
         """
+        self.stage_host_pin_reads(sdfg, state, scope_entry)
         scope_children = state.scope_children()
         members = scope_children[scope_entry]
         partition_nodes: OrderedSet[nodes.Node] = OrderedSet(
@@ -2428,6 +2515,14 @@ class OffloadToAccelerator(ppl.Pass):
             if not array_access:
                 continue
 
+            # A tasklet that only turns host-pinned results into scalars (``x = argmax_val[0]`` after a device
+            # ArgReduce) is host work: wrapped, the kernel would dereference the host pointer. Kept out, the
+            # scalar it writes reaches the kernel by value.
+            pinned = host_connector_data(state)
+            partition -= OrderedSet(
+                node for node in partition if self.reads_host_pins_into_scalars(sdfg, state, node, pinned)
+            )
+
             # reduce partition to nodes which need to go into wrap
             self._remove_all_outer_access_nodes_from_group(state, partition)
             ctr += 1
@@ -2460,6 +2555,18 @@ class OffloadToAccelerator(ppl.Pass):
     # output of a tasklet is GPU-written, every output of that tasklet can be too -- so the
     # answer is the fixpoint, compared against the current scalars / len-1 arrays with the
     # mismatches converted.
+
+
+def host_connector_data(state: SDFGState) -> OrderedSet[str]:
+    """The containers ``state``'s library nodes reach through a connector they declare host-resident, scalars
+    included (``ArgReduce``'s results before they become length-1 arrays)."""
+    return OrderedSet(
+        edge.data.data
+        for node in state.nodes()
+        if isinstance(node, nodes.LibraryNode) and node.host_connectors
+        for edge in state.all_edges(node)
+        if not edge.data.is_empty() and (edge.src_conn if edge.src is node else edge.dst_conn) in node.host_connectors
+    )
 
 
 def reenters(state: SDFGState, region: AbstractSet[nodes.Node]) -> bool:

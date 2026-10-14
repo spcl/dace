@@ -9,11 +9,19 @@ frontend's slice-vectorized statement (``A[i, 1:-1] += ...``) becomes a Map-bear
 while the sequential in-row scan (``A[i, j] += A[i, j - 1]``) stays a ``LoopRegion`` -- an
 imperfect nest ``WavefrontSkew`` never even inspects for dependences.
 
-This pass reconstructs the perfect nest by composing two EXISTING transformations, adding no
+This pass reconstructs the perfect nest by composing EXISTING transformations, adding no
 dependence-legality logic of its own:
 
-1. ``MapToForLoop`` turns the Map-bearing sibling back into a ``LoopRegion``.
-2. ``LoopFusion`` merges it with the other sibling ``LoopRegion`` into one loop.
+1. ``CopyToMap`` turns a top-level row copy in the Map-bearing sibling into a Map. Lowered
+   without simplification, ``A[i, 1:-1] += expr`` computes ``expr`` into a row transient and
+   writes it back with an AccessNode-to-AccessNode copy ``tmp[0:N-2] -> A[i, 1:N-1]``. That copy
+   is neither a Map nor a ``LoopRegion``, so left alone it sits between the Map-derived loop and
+   the scan and ``LoopFusion`` (which fuses ADJACENT loops only) can never reach the scan.
+2. ``MapToForLoop`` turns every Map-bearing sibling back into a ``LoopRegion``.
+3. ``NormalizeLoopAndMapOrigin.rebase_loop`` rebases each sibling loop to a 0 origin. The
+   slice-normalized Map runs ``0:N-3`` while the scan runs ``1:N-2``; ``LoopFusion`` demands an
+   equal start, so without this the pair is refused even though the axes are the same.
+4. ``LoopFusion`` merges the sibling ``LoopRegion``s into one loop.
 
 ``LoopFusion`` normally refuses to fuse a sibling that is independently DOALL (correctly --
 that guard is what keeps ``FuseLoops`` from serializing parallel work it should instead
@@ -27,9 +35,7 @@ alone ever recovers. ``LoopFusion.can_be_applied`` gained a narrow, caller-scope
 Gated tightly, cheapest checks first: (1) the outer loop's body must be EXACTLY the
 two-sibling shape above, (2) the Map's range and the loop's range must already sweep the SAME
 axis -- same trip count, same stride, any origin (a slice-normalized Map starting at 0 beside
-a loop starting at 1 is exactly this shape, and the only one the pass has ever actually seen
-in the corpus; the origin mismatch is a rebase for whichever step converts the Map, not a
-reason to refuse here) -- checked here without paying for a conversion or a deepcopy, and only
+a loop starting at 1 is exactly this shape; step 3 rebases the origins) -- checked here without paying for a conversion or a deepcopy, and only
 then (3) the reconstruction is tried on a throwaway deepcopy and kept only if
 ``WavefrontSkew``'s own gate chain (``extract_two_level_nest`` + a legal ``tau``) accepts the
 result -- reusing ``WavefrontSkew.try_skew`` itself, so this pass can never drift from what
@@ -45,11 +51,13 @@ from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
+from dace.transformation.dataflow.copy_to_map import CopyToMap
 from dace.transformation.dataflow.map_for_loop import MapToForLoop
 from dace.transformation.interstate.loop_fusion import LoopFusion
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.canonicalize.empty_state_elimination import EmptyStateElimination
 from dace.transformation.passes.canonicalize.fuse_consecutive_loops import _symbolically_equal
+from dace.transformation.passes.canonicalize.normalize_loop_and_map_origin import NormalizeLoopAndMapOrigin
 from dace.transformation.passes.canonicalize.wavefront_skew import WavefrontSkew
 from dace.transformation.passes.fusion_inline import FuseStates
 
@@ -127,6 +135,49 @@ def _next_top_level_map(outer: LoopRegion) -> tuple[SDFGState, nodes.MapEntry] |
     return None
 
 
+def _next_top_level_copy(outer: LoopRegion) -> tuple[SDFGState, nodes.AccessNode, nodes.AccessNode] | None:
+    """The first top-level AccessNode-to-AccessNode copy in a direct-child state of ``outer`` that
+    ``CopyToMap`` accepts, re-scanned fresh on every call (a conversion rewires the state)."""
+    for block in outer.nodes():
+        if not isinstance(block, SDFGState):
+            continue
+        for edge in block.edges():
+            src, dst = edge.src, edge.dst
+            if not (isinstance(src, nodes.AccessNode) and isinstance(dst, nodes.AccessNode)):
+                continue
+            if block.entry_node(src) is not None:
+                continue
+            instance = CopyToMap()
+            instance.a, instance.b = src, dst
+            if instance.can_be_applied(block, expr_index=0, sdfg=block.sdfg, permissive=False):
+                return block, src, dst
+    return None
+
+
+def _convert_copies_to_maps(outer: LoopRegion) -> None:
+    """Turn every top-level row copy under ``outer`` into a Map (``CopyToMap``), so the following
+    Map-to-loop step leaves a ``LoopRegion`` where the copy was. A copy ``CopyToMap`` refuses stays;
+    the sibling fusion then stalls on it and the caller's probe rejects the candidate."""
+    while True:
+        found = _next_top_level_copy(outer)
+        if found is None:
+            return
+        state, src, dst = found
+        instance = CopyToMap()
+        instance.a, instance.b = src, dst
+        instance.apply(state, state.sdfg)
+
+
+def _rebase_sibling_loops(outer: LoopRegion) -> None:
+    """Rebase every ``LoopRegion`` directly under ``outer`` to a 0 origin, keeping its stride, so
+    sibling loops over the same axis with different origins (a slice-normalized ``0:N-3`` beside a
+    scan over ``1:N-2``) present the equal start ``LoopFusion`` requires."""
+    rebase = NormalizeLoopAndMapOrigin()
+    for block in list(outer.nodes()):
+        if isinstance(block, LoopRegion) and block.loop_variable:
+            rebase.rebase_loop(block)
+
+
 def _convert_maps_to_loops(outer: LoopRegion) -> bool:
     """Convert every top-level Map under ``outer`` to a ``LoopRegion`` via ``MapToForLoop``,
     one at a time until none remain. ``False`` if ``MapToForLoop`` itself refuses one (e.g. a
@@ -185,12 +236,15 @@ def _fuse_siblings_to_one(sdfg: SDFG, outer: LoopRegion) -> bool:
 
 
 def _reconstruct_body(sdfg: SDFG, outer: LoopRegion) -> bool:
-    """Collapse ``outer``'s two-sibling body into a single ``LoopRegion``: every top-level Map
-    to a loop, then every sibling loop pair fused to a fixpoint. ``False`` if either step
-    cannot finish -- the caller must then leave ``sdfg`` exactly as it found it."""
+    """Collapse ``outer``'s two-sibling body into a single ``LoopRegion``: every top-level copy
+    to a Map, every top-level Map to a loop, every sibling loop rebased to a 0 origin, then every
+    sibling loop pair fused to a fixpoint. ``False`` if a step cannot finish -- the caller must
+    then leave ``sdfg`` exactly as it found it."""
+    _convert_copies_to_maps(outer)
     if not _convert_maps_to_loops(outer):
         return False
     EmptyStateElimination().apply_pass(sdfg, {})
+    _rebase_sibling_loops(outer)
     return _fuse_siblings_to_one(sdfg, outer)
 
 
@@ -221,7 +275,8 @@ class ReconstructWavefrontNest(ppl.Pass):
     """Reconstruct an imperfect 2-D stencil nest into the perfect single-loop body
     ``WavefrontSkew`` requires, but only where doing so demonstrably unlocks a skew.
 
-    Composes two existing transformations (``MapToForLoop``, ``LoopFusion``) and adds no
+    Composes existing transformations (``CopyToMap``, ``MapToForLoop``, ``LoopFusion``) and the
+    ``NormalizeLoopAndMapOrigin`` loop rebase, and adds no
     dependence-legality logic of its own; see the module docstring for the full rationale.
     A candidate is committed to the real SDFG only after an identical trial run on a deepcopy
     proves ``WavefrontSkew`` would then skew it -- a pass that does not apply must not mutate.

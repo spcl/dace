@@ -1533,7 +1533,8 @@ class ArgMaxLift(ppl.Pass):
         transform: str | None,
     ) -> bool:
         """Check the pre-loop seed is ``value_carrier := [f](array[base + coeff*(start-1)])`` and, with
-        an index carrier, ``idx_carrier := start-1``.
+        an index carrier, ``idx_carrier := start-1`` -- ``start`` for both when ``start-1`` gathers a negative
+        position (see :meth:`_seed_iteration`).
 
         Rewrites that drop the pre-loop bind reconstruct the seed positionally; a seed read anywhere
         else would change the reduced set, so refuse unless proven. Substitutes the frontend's pre-loop
@@ -1572,8 +1573,15 @@ class ArgMaxLift(ppl.Pass):
         # The rewrite picks its slice lower bound off the sign of this position, so
         # an undecidable sign has no single correct lowering -- refuse rather than
         # assume in range.
-        if self._seed_position_negative(seed_pos) is None:
+        negative = self._seed_position_negative(seed_pos)
+        if negative is None:
             return False
+        # A loop that already starts at the array's first element seeds from that element
+        # (``x = a[0]; for i in range(N)``): the seed stands at ``start``, as in :meth:`_seed_iteration`.
+        if negative:
+            seed_pos, seed_idx = _resolve(base + coeff * start), _resolve(start)
+            if seed_pos is None or seed_idx is None:
+                return False
 
         # Value seed: ``[f](array[Q])``, possibly indirected through a gather
         # symbol bound on an earlier pre-loop edge (``maxv := abs(a_index)``).

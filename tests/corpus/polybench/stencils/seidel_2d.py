@@ -17,7 +17,6 @@ sizes = [
 ]
 
 #: ported from the npbench bench_info paper row (TSTEPS=100, N=400)
-paper_sizes = {tsteps: 100, N: 400}
 
 args = [([N, N], datatype)]
 

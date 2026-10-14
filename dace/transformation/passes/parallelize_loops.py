@@ -480,6 +480,11 @@ def prune_stale_symbol_mappings(sdfg: SDFG) -> int:
                 continue
             removed += prune_stale_symbol_mappings(node.sdfg)
             keep = {str(sym) for sym in node.sdfg.free_symbols} | set(node.sdfg.arrays)
+            # A connector's descriptor is compared in the caller's symbols, so its symbols stay mapped even when
+            # the callee holds them as compile-time constants (``SDFG.specialize``), which ``free_symbols`` omits.
+            for conn in node.in_connectors.keys() | node.out_connectors.keys():
+                if conn in node.sdfg.arrays:
+                    keep |= {str(sym) for sym in node.sdfg.arrays[conn].free_symbols}
             for key in [k for k in node.symbol_mapping if k not in keep]:
                 del node.symbol_mapping[key]
                 removed += 1

@@ -136,6 +136,16 @@ class ScatterToGuardedMaps(ppl.Pass):
         from dace.transformation.passes.parallelize_loops import ParallelizeLoops
 
         scatter_loops, idx_arrays, sliced_guards, joint_writes = detect_scatter_loops_and_idx_arrays(sdfg)
+        scatter_loops = [loop for loop in scatter_loops if needs_contract(sdfg, loop, joint_writes)]
+        kept = set(map(id, scatter_loops))
+        sliced_guards = [g for g in sliced_guards if id(g[0]) in kept]
+        joint_writes = [w for w in joint_writes if id(w[0]) in kept]
+        idx_arrays = {
+            name
+            for loop in scatter_loops
+            for name, (_targets, window) in _scatter_idx_targets_for_loop(loop, _owning_sdfg(sdfg, loop)).items()
+            if window is None
+        } & idx_arrays
 
         if self.assume_no_conflicts:
             # Caller asserts every idx array is a permutation: skip the sort +
@@ -276,6 +286,29 @@ class ScatterToGuardedMaps(ppl.Pass):
         if scatter_loops:
             propagate_memlets_sdfg(sdfg)
         return (len(idx_arrays) + len(sliced_guards) + len(joint_writes)) or None
+
+
+def lifts(loop: LoopRegion, owner: SDFG, contract: frozenset[str] = frozenset()) -> bool:
+    """Whether ``LoopToMap`` lifts ``loop`` with conflicts waived on the ``contract`` arrays only."""
+    from dace.transformation.interstate.loop_to_map import LoopToMap
+
+    probe = LoopToMap()
+    probe.contract_arrays = contract
+    probe.setup_match(owner, -1, -1, {LoopToMap.loop: loop}, 0, override=True)
+    return probe.can_be_applied(loop.parent_graph, 0, owner)
+
+
+def needs_contract(root: SDFG, loop: LoopRegion, joint_writes: list) -> bool:
+    """Whether ``loop`` is parallel exactly under the scatter contract: refused as it stands (a loop already
+    parallel needs no runtime check), and lifted once only its scatter targets' conflicts are waived (any other
+    carried dependence, such as a compaction counter, keeps it sequential)."""
+    owner = _owning_sdfg(root, loop)
+    if lifts(loop, owner):
+        return False
+    targets = {w.target for joint_loop, w in joint_writes if joint_loop is loop}
+    for scattered, _window in _scatter_idx_targets_for_loop(loop, owner).values():
+        targets |= scattered
+    return lifts(loop, owner, frozenset(targets))
 
 
 def detect_scatter_idx_arrays(sdfg: SDFG) -> set[str]:

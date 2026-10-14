@@ -20,7 +20,7 @@ map's parameter must be at a provably smaller stride than the outermost paramete
 
 from typing import NamedTuple
 
-from dace import SDFG, dtypes
+from dace import SDFG, dtypes, symbolic
 from dace.sdfg import nodes
 from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState
 from dace.transformation.dataflow.map_for_loop import MapToForLoop
@@ -120,7 +120,8 @@ def level_is_more_contiguous(param: str, planes: list[Plane]) -> bool:
     The test is per access because the plane maps index different arrays: an accumulator over ``[nproma,
     nblks_v]`` and a gather from ``vn[idx, jk, blk]`` over ``[nproma, nlev, nblks_e]`` share no extent to compare.
     An access by the plane axis alone does not move with the level and stays in cache across it; a gather by the
-    level alone walks one row of the gathered array when the level runs inside.
+    level alone walks one row of the gathered array when the level runs inside (newdxx_g's ``eigts1[na, :]`` per
+    atom, under planes over every G-vector).
     """
     homed = False
     for owner, state, entry in planes:
@@ -139,6 +140,36 @@ def level_is_more_contiguous(param: str, planes: list[Plane]) -> bool:
             except UndecidableStride:
                 return False
     return homed
+
+
+def spans_every_level(sdfg: SDFG, param: str, plane: Plane) -> bool:
+    """Whether ``plane``'s range is the same at every level: free of ``param`` and of any symbol the level's body
+    binds itself."""
+    owner, entry = plane[0], plane[2]
+    for symbol in map(str, entry.map.range.free_symbols):
+        if symbol in entry.in_connectors:  # a dynamic range, read from data inside the level
+            return False
+        if owner is sdfg:
+            outer_symbols = {symbol}
+        else:
+            mapping = owner.parent_nsdfg_node.symbol_mapping
+            if symbol not in mapping:
+                return False
+            outer_symbols = set(map(str, symbolic.pystr_to_symbolic(mapping[symbol]).free_symbols))
+        if param in outer_symbols:
+            return False
+    return True
+
+
+def some_plane_spans_every_level(sdfg: SDFG, param: str, planes: list[Plane]) -> bool:
+    """Whether some plane map's range is the same at every level, so the interchange has an axis to move outside
+    the level loop.
+
+    spmm's row map has one plane, over ``indptr[i]:indptr[i + 1]``, bound from data inside the row: there is nothing
+    to move out, and demoting it ran the whole product on one thread. newdxx_g's atom map has planes over every
+    G-vector beside one over the atom's own projectors; the G-vector planes move out.
+    """
+    return any(spans_every_level(sdfg, param, plane) for plane in planes)
 
 
 def inline_into(nested: nodes.NestedSDFG) -> None:
@@ -178,7 +209,13 @@ def demote_strided_level_maps(sdfg: SDFG) -> int:
             if not isinstance(entry, nodes.MapEntry):
                 continue
             level = level_planes(sdfg, state, entry)
-            if level is not None and level.planes and level_is_more_contiguous(entry.map.params[0], level.planes):
+            param = entry.map.params[0]
+            if (
+                level is not None
+                and level.planes
+                and level_is_more_contiguous(param, level.planes)
+                and some_plane_spans_every_level(sdfg, param, level.planes)
+            ):
                 nested = [n for n in state.scope_children()[entry] if isinstance(n, nodes.NestedSDFG)]
                 candidates.append((entry, nested, level.distribute))
     # By node, not by state: inlining one body moves the rest of its state's dataflow into a fresh state.

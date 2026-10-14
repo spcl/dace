@@ -17,6 +17,7 @@ from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.transformation.interstate.move_map_invariant_if_up import hoist_invariant_guards
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
 from dace.transformation.passes.scatter_to_guarded_maps import ScatterToGuardedMaps, detect_scatter_idx_arrays
+from dace.transformation.passes.unique_loop_iterators import UniqueLoopIterators
 
 N = dace.symbol("N")
 
@@ -233,8 +234,10 @@ def test_scatter_kernel_guarded_and_parallelized(kernel, inputs_fn):
 
 def test_two_distinct_scatters_get_individual_guards():
     """Two scatter loops with separate ``ip``/``jp`` arrays each get their own guard;
-    both run cleanly under permutation indices."""
+    both run cleanly under permutation indices. The two loops share ``i``, which canonicalization renames apart
+    before this pass runs; a shared iterator reads as used after the first loop and keeps it sequential."""
     sdfg = two_distinct_scatters.to_sdfg(simplify=True)
+    UniqueLoopIterators().apply_pass(sdfg, {})
     rewritten = ScatterToGuardedMaps().apply_pass(sdfg, {})
     sdfg.validate()
     assert rewritten == 2, f"Expected both ip and jp to be guarded; got {rewritten}."
@@ -255,6 +258,36 @@ def test_two_distinct_scatters_get_individual_guards():
     sdfg(a=a, b=b, c=c, d=d, ip=ip, jp=jp, N=n)
     assert np.allclose(a, a_ref)
     assert np.allclose(c, c_ref)
+
+
+@dace.program
+def scatter_with_a_compaction_counter(a: dace.float64[N], b: dace.float64[N], ip: dace.int32[N], kept: dace.int64[N]):
+    """A scatter whose loop also carries a counter (nfa_frontier's ``matched[base + n_match]``)."""
+    n = 0
+    for i in range(N):
+        a[ip[i]] = b[i]
+        if b[i] > 0.5:
+            kept[n] = i
+            n += 1
+
+
+def test_the_contract_waives_only_the_scatter_and_a_carried_counter_stays_sequential():
+    """The uniqueness contract answers for the scatter target alone; the compaction counter is a dependence it
+    does not cover, so the loop is neither guarded nor lifted, and the kept indices stay in order."""
+    sdfg = scatter_with_a_compaction_counter.to_sdfg(simplify=True)
+    assert ScatterToGuardedMaps(emit_unparallelized_else_branch=True).apply_pass(sdfg, {}) is None
+    assert _count_guard_nodes(sdfg) == 0
+
+    n = 64
+    ip = _make_permutation(n, seed=7)
+    b = np.random.default_rng(8).random(n)
+    a, kept = np.zeros(n), np.full(n, -1, dtype=np.int64)
+    sdfg(a=a, b=b, ip=ip, kept=kept, N=n)
+    a_ref = np.zeros(n)
+    a_ref[ip] = b
+    order = np.flatnonzero(b > 0.5)
+    assert np.allclose(a, a_ref)
+    assert np.array_equal(kept[: len(order)], order)
 
 
 # Symbolic-stride scatter forms (TSVC-2.5)
@@ -778,3 +811,4 @@ if __name__ == "__main__":
     test_a_sliced_guard_hoisted_out_of_a_map_feeds_the_dispatcher_inside_it(True)
     test_an_index_rebuilt_every_round_is_guarded_before_each_scatter(False)
     test_an_index_rebuilt_every_round_is_guarded_before_each_scatter(True)
+    test_the_contract_waives_only_the_scatter_and_a_carried_counter_stays_sequential()

@@ -301,6 +301,30 @@ def test_a_gather_on_a_read_only_operand_still_tiles():
     assert np.allclose(got, want), f"value mismatch, max |diff| {np.abs(got - want).max()}"
 
 
+B = dace.symbol("B")
+
+
+@dace.program
+def cube_sweep(out: dace.float64[N, N, N, B], inp: dace.float64[N, N, N, B], w: dace.float64[4]):
+    """vector_stencil_4d: a sequential loop over a map whose three leading axes all have extent ``N``."""
+    for r in range(4):
+        out += w[r] * inp
+
+
+def test_a_cube_is_tiled_along_its_outer_axis_not_its_short_innermost_one():
+    """Three axes of extent ``N`` named no single axis, so only the short ``B`` was cut: one or two tiles of 16, the
+    whole ``N^3`` volume on one or two threads."""
+    sdfg = finalized(cube_sweep, "smi_cube_sweep")
+    code = emitted(sdfg)
+    assert re.search(r"for \(\w+ \w+ = __dace_tile; \w+ < \(__dace_tile \+ 1\)", code), code
+    n, b = 7, 3
+    rng = np.random.default_rng(0)
+    out, inp, w = rng.random((n, n, n, b)), rng.random((n, n, n, b)), rng.random(4)
+    expected = out + w.sum() * inp
+    sdfg(out=out, inp=inp, w=w, N=n, B=b)
+    assert np.allclose(out, expected)
+
+
 if __name__ == "__main__":
     test_a_distance_zero_carry_is_tiled()
     test_the_tiles_cover_the_axis_exactly_once()
@@ -313,3 +337,4 @@ if __name__ == "__main__":
     test_the_cloudsc_vertical_carry_is_tiled_and_matches_numpy()
     test_a_gather_on_the_carried_array_is_refused()
     test_a_gather_on_a_read_only_operand_still_tiles()
+    test_a_cube_is_tiled_along_its_outer_axis_not_its_short_innermost_one()

@@ -332,6 +332,121 @@ def test_a_find_first_answer_stays_on_the_host():
             )
 
 
+LEN = dace.symbol("LEN")
+
+
+@dace.program
+def argmax_with_index_s315(a: dace.float64[LEN], out_value: dace.float64[1], out_index: dace.int64[1]):
+    x = a[0]
+    idx = 0
+    for i in range(1, LEN):
+        if a[i] > x:
+            x = a[i]
+            idx = i
+    out_value[0] = x
+    out_index[0] = idx
+
+
+def test_a_kernel_never_reads_a_host_pinned_result():
+    """TSVC ``s315`` on the GPU: the ``ArgReduce`` writes its (value, index) on the HOST, and the scalar carriers
+    copy them into the device outputs. The copy into a scalar is host work -- pulled into the size-1 kernel that
+    writes the outputs, the kernel would dereference a host pointer (an illegal memory access); kept out, the
+    scalar reaches the kernel by value."""
+    sdfg = argmax_with_index_s315.to_sdfg(simplify=False)
+    canonicalize(sdfg, target="gpu")
+    offload_to_gpu(sdfg)
+    pinned = {
+        edge.data.data
+        for node, state in sdfg.all_nodes_recursive()
+        if type(node).__name__ == "ArgReduce"
+        for edge in state.out_edges(node)
+        if edge.src_conn in node.host_connectors
+    }
+    assert pinned, "the fixture lifted no ArgReduce; the check below would be vacuous"
+    for node, state in sdfg.all_nodes_recursive():
+        if getattr(node, "schedule", None) == dtypes.ScheduleType.GPU_Device and hasattr(node, "map"):
+            read = {e.data.data for e in state.in_edges(node) if not e.data.is_empty()}
+            assert not read & pinned, f"kernel {node.map.label} reads host-pinned {read & pinned}"
+
+
+@dace.program
+def argmax_plus_index_s315(a: dace.float64[LEN], result: dace.float64[1]):
+    x = a[0]
+    idx = 0
+    for i in range(LEN):
+        if a[i] > x:
+            x = a[i]
+            idx = i
+    a[0] = x + float(idx)
+    result[0] = a[0]
+
+
+def test_a_kernel_never_reads_a_host_pinned_result_through_arithmetic():
+    """TSVC ``s315`` itself: ``a[0] = x + float(idx)``. Once ``AccumulatorCopyChainToWCR`` forwards the copy
+    ``x = argmax_val[0]`` into the addition, the tasklet that reads the host-pinned ``ArgReduce`` value also writes
+    the device array ``a``, so it is wrapped into a size-1 kernel; reading the pinned array there is a host pointer
+    dereferenced on the device (hipErrorIllegalAddress). The read has to reach the kernel as a by-value scalar."""
+    sdfg = argmax_plus_index_s315.to_sdfg(simplify=False)
+    canonicalize(sdfg, target="gpu")
+    offload_to_gpu(sdfg)
+    pinned = {
+        edge.data.data
+        for node, state in sdfg.all_nodes_recursive()
+        if type(node).__name__ == "ArgReduce"
+        for edge in state.out_edges(node)
+        if edge.src_conn in node.host_connectors
+    }
+    assert pinned, "the fixture lifted no ArgReduce; the check below would be vacuous"
+    for node, state in sdfg.all_nodes_recursive():
+        if getattr(node, "schedule", None) == dtypes.ScheduleType.GPU_Device and hasattr(node, "map"):
+            read = {e.data.data for e in state.in_edges(node) if not e.data.is_empty()}
+            assert not read & pinned, f"kernel {node.map.label} reads host-pinned {read & pinned}"
+
+
+@pytest.mark.gpu
+def test_a_kernel_never_reads_a_host_pinned_result_through_arithmetic_and_computes():
+    """The same program, run on the device against numpy."""
+    sdfg = argmax_plus_index_s315.to_sdfg(simplify=False)
+    canonicalize(sdfg, target="gpu")
+    offload_to_gpu(sdfg)
+    finalize_for_target(sdfg, target="gpu")
+    rng = np.random.default_rng(0)
+    a = rng.random(1000)
+    want_a = a.copy()
+    want_a[0] = want_a.max() + float(np.argmax(want_a))
+    result = np.zeros(1)
+    import cupy
+
+    a_dev, result_dev = cupy.asarray(a), cupy.asarray(result)
+    sdfg(a=a_dev, result=result_dev, LEN=a.size)
+    assert np.allclose(cupy.asnumpy(a_dev), want_a)
+    assert np.allclose(cupy.asnumpy(result_dev), want_a[0])
+
+
+@dace.program
+def signed_diagonal_prefix(A: dace.float64[LEN, LEN], out: dace.float64[LEN]):
+    for k in range(LEN - 1):
+        normx = np.sqrt(np.dot(A[k:, k], A[k:, k]))
+        d = A[k, k]
+        if d >= 0.0:
+            A[k + 1 :, k + 1] = A[k + 1 :, k + 1] - normx
+        out[k] = normx
+
+
+def test_a_scalar_a_kernel_writes_and_the_host_reads_lives_on_the_device():
+    """householder_qr's ``A_index = A[k, k]``: the read of device ``A`` runs in a size-1 kernel, and the host's
+    branch reads the result. A demoted symbol arrives as a ``Register`` scalar; promoted to a length-1 array for
+    the kernel's write it must also leave that pin, or it stays a host value the kernel receives by value and
+    the write is lost."""
+    sdfg = signed_diagonal_prefix.to_sdfg(simplify=False)
+    canonicalize(sdfg, target="gpu")
+    offload_to_gpu(sdfg)
+    written = OffloadToAccelerator().data_written_by_device_code(sdfg)
+    pinned = [name for name in written if sdfg.arrays[name].storage == dtypes.StorageType.Register]
+    assert written, "no kernel writes a value the host reads; the check below would be vacuous"
+    assert not pinned, f"{pinned} are written by a kernel but pinned to host registers"
+
+
 def scan_with_a_scalar_seed() -> dace.SDFG:
     """A device ``Scan`` whose seed is a ``Scalar`` -- the single-element input the host-preferred
     rule is about."""
@@ -1044,6 +1159,9 @@ def test_a_host_copy_out_of_a_kernel_output_is_not_a_kernel_write():
 
 
 if __name__ == "__main__":
+    test_a_scalar_a_kernel_writes_and_the_host_reads_lives_on_the_device()
+    test_a_kernel_never_reads_a_host_pinned_result()
+    test_a_kernel_never_reads_a_host_pinned_result_through_arithmetic()
     test_the_guarded_kernel_still_canonicalizes_to_a_parallel_and_a_sequential_arm()
     test_the_fallback_arm_owns_its_copies()
     test_the_fallback_copies_in_before_it_runs_and_out_after()
@@ -1055,6 +1173,7 @@ if __name__ == "__main__":
     test_a_one_iteration_map_inside_a_kernel_leaves_a_scalar_behind()
     test_a_one_iteration_map_outside_a_kernel_keeps_its_array()
     test_a_trivial_kernel_map_is_never_eliminated()
+    test_a_kernel_never_reads_a_host_pinned_result_through_arithmetic_and_computes()  # needs a GPU
 
 
 def kernel_writing_a_scalar_a_later_state_reads() -> dace.SDFG:

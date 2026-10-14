@@ -799,9 +799,12 @@ def test_redundant_second_array_across_map_exit():
     assert np.array_equal(b, ref_b)
 
 
-def test_redundant_array_integrates_a_nested_sdfg_behind_a_map_exit():
+@pytest.mark.parametrize("written", ["tmp[0:M]", "tmp[i]"])
+def test_redundant_array_integrates_a_nested_sdfg_behind_a_map_exit(written: str):
     """gem: a nested SDFG inside a map writes ``tmp``, which is copied into a window of ``out``. Removing
-    ``tmp`` must restate the nested connector as ``out``, though the nested SDFG is not a direct writer."""
+    ``tmp`` must restate the nested connector as ``out``, though the nested SDFG is not a direct writer. The
+    connector is the whole ``tmp`` however narrow the written subset is, so it becomes a view of the whole
+    ``tmp`` window of ``out``, not of the one element an iteration writes (gem's tail wrote ``out`` twice offset)."""
     N, M = dace.symbol("N"), dace.symbol("M")
     inner = dace.SDFG("redundant_array_nested_behind_map_exit_inner")
     inner.add_array("t", [M], dace.float64)
@@ -818,7 +821,7 @@ def test_redundant_array_integrates_a_nested_sdfg_behind_a_map_exit():
     nsdfg = state.add_nested_sdfg(inner, {}, {"t": None}, symbol_mapping={"i": "i", "M": "M"})
     state.add_nedge(entry, nsdfg, dace.Memlet())
     tmp = state.add_access("tmp")
-    state.add_memlet_path(nsdfg, exit_node, tmp, src_conn="t", memlet=dace.Memlet("tmp[0:M]"))
+    state.add_memlet_path(nsdfg, exit_node, tmp, src_conn="t", memlet=dace.Memlet(written))
     state.add_edge(tmp, None, state.add_write("out"), None, dace.Memlet("tmp[0:M] -> [N - M:N]"))
     sdfg.validate()
 
@@ -831,8 +834,105 @@ def test_redundant_array_integrates_a_nested_sdfg_behind_a_map_exit():
     assert np.array_equal(out, np.concatenate([np.zeros(6), 2.0 * np.arange(4)]))
 
 
+@dace.program
+def update_in_place(A: dace.float64[20], B: dace.float64[20]):
+    A[1:20] = A[1:20] - B[1:20]
+
+
+@dace.program
+def update_from_the_left(A: dace.float64[20], B: dace.float64[20]):
+    A[1:20] = A[0:19] - B[1:20]
+
+
+@pytest.mark.parametrize("program, in_place", [(update_in_place, True), (update_from_the_left, False)])
+def test_a_map_reading_the_element_it_writes_updates_in_place(program, in_place):
+    """householder_qr's ``Q[k:M] = Q[k:M] - X``: the map reads each element of ``A`` it writes, so writing ``A``
+    directly drops a full temporary and its copy. Read one element to the left, the temporary must stay: each
+    iteration would read an element another one overwrites."""
+    sdfg = program.to_sdfg(simplify=True)
+    assert sdfg.apply_transformations_repeated(RedundantArray) == int(in_place)
+    A, B = np.random.default_rng(0).random(20), np.random.default_rng(1).random(20)
+    expected = A.copy()
+    expected[1:20] = (A[1:20] if in_place else A[0:19]) - B[1:20]
+    sdfg(A=A, B=B)
+    assert np.allclose(A, expected)
+
+
+def converting_copy_sdfg(second: bool) -> dace.SDFG:
+    """``t = float32(a)`` then ``out = t * 3`` (``second``: the copy feeds a tasklet) or ``out = float32(a)`` through a
+    float32 transient written by a tasklet (first)."""
+    sdfg = dace.SDFG(f"converting_copy_{second}")
+    sdfg.add_array("a", [5], dace.float64)
+    sdfg.add_array("out", [5], dace.float64)
+    sdfg.add_transient("t", [5], dace.float32)
+    state = sdfg.add_state()
+    if second:
+        t = state.add_access("t")
+        state.add_nedge(state.add_read("a"), t, dace.Memlet("a[0:5]"))
+        state.add_mapped_tasklet(
+            "use",
+            {"i": "0:5"},
+            {"x": dace.Memlet("t[i]")},
+            "y = x * 3.0",
+            {"y": dace.Memlet("out[i]")},
+            input_nodes={"t": t},
+            external_edges=True,
+        )
+    else:
+        t = state.add_access("t")
+        state.add_mapped_tasklet(
+            "make",
+            {"i": "0:5"},
+            {"x": dace.Memlet("a[i]")},
+            "y = x",
+            {"y": dace.Memlet("t[i]")},
+            output_nodes={"t": t},
+            external_edges=True,
+        )
+        state.add_nedge(t, state.add_write("out"), dace.Memlet("t[0:5]"))
+    sdfg.validate()
+    return sdfg
+
+
+@pytest.mark.parametrize("second", [True, False])
+def test_a_copy_that_converts_the_element_type_is_kept(second):
+    """mixed_precision_ir: folding ``rhs32 = r`` (float64 -> float32) bound a float32 parameter to float64 bytes."""
+    sdfg = converting_copy_sdfg(second)
+    assert sdfg.apply_transformations_repeated([RedundantArray, RedundantSecondArray]) == 0
+    a, out = np.array([1 / 3, 2 / 3, 1.1, 1e-9, 7.7]), np.zeros(5)
+    sdfg(a=a, out=out)
+    rounded = a.astype(np.float32).astype(np.float64)
+    assert np.array_equal(out, rounded * 3.0 if second else rounded)
+
+
+def test_a_converting_copy_after_an_exact_store_folds():
+    """``t = a * 2.5`` (a ``float64`` value into a ``float64`` transient) then ``out = int64(t)``: the store into ``t``
+    is exact, so writing the product straight into ``out`` converts exactly as the copy did."""
+    sdfg = dace.SDFG("exact_store_then_convert")
+    sdfg.add_array("a", [5], dace.float64)
+    sdfg.add_array("out", [5], dace.int64)
+    sdfg.add_transient("t", [5], dace.float64)
+    state = sdfg.add_state()
+    t = state.add_access("t")
+    state.add_mapped_tasklet(
+        "scale",
+        {"i": "0:5"},
+        {"x": dace.Memlet("a[i]")},
+        "y = x * 2.5",
+        {"y": dace.Memlet("t[i]")},
+        output_nodes={"t": t},
+        external_edges=True,
+    )
+    state.add_nedge(t, state.add_write("out"), dace.Memlet("t[0:5]"))
+    assert sdfg.apply_transformations_repeated([RedundantArray, RedundantSecondArray]) == 1
+    a, out = np.array([1.1, -2.3, 3.9, 0.0, 7.7]), np.zeros(5, dtype=np.int64)
+    sdfg(a=a, out=out)
+    assert np.array_equal(out, (a * 2.5).astype(np.int64))
+
+
 if __name__ == "__main__":
     test_reshaping_with_redundant_arrays()
+    test_a_converting_copy_after_an_exact_store_folds()
     test_ordering_edge_is_not_a_redundant_copy()
     test_redundant_scalar_copy_is_removed([1])
     test_redundant_scalar_copy_is_removed([1, 1])
@@ -857,4 +957,9 @@ if __name__ == "__main__":
     test_reshaping_not_zero_started_input(True)
     test_reshaping_not_zero_started_input(False)
     test_redundant_second_array_across_map_exit()
-    test_redundant_array_integrates_a_nested_sdfg_behind_a_map_exit()
+    test_redundant_array_integrates_a_nested_sdfg_behind_a_map_exit("tmp[0:M]")
+    test_redundant_array_integrates_a_nested_sdfg_behind_a_map_exit("tmp[i]")
+    test_a_map_reading_the_element_it_writes_updates_in_place(update_in_place, True)
+    test_a_map_reading_the_element_it_writes_updates_in_place(update_from_the_left, False)
+    test_a_copy_that_converts_the_element_type_is_kept(True)
+    test_a_copy_that_converts_the_element_type_is_kept(False)

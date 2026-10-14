@@ -233,13 +233,51 @@ def is_reentered_cpu_transfer(
     from dace.sdfg.state import LoopRegion
     from dace.transformation.helpers import get_parent_map_and_loop_scopes
 
+    size_symbols = transfer_size_symbols(node, state)
     for scope in get_parent_map_and_loop_scopes(state.sdfg, node, state):
         if isinstance(scope, nodes.MapEntry):
             if scope.map.schedule != dtypes.ScheduleType.Sequential:
                 return True
         elif isinstance(scope, LoopRegion) and not is_short_loop(scope, cache=loop_cache):
-            return True
+            # A loop of an enclosing SDFG sees the size through a symbol mapping: counted as before.
+            if size_symbols is None or scope.sdfg is not state.sdfg or size_symbols & symbols_varying_in(scope):
+                return True
     return False
+
+
+def transfer_size_symbols(node: nodes.LibraryNode, state: dace.SDFGState) -> set[str] | None:
+    """The free symbols of a copy's or memset's element count; ``None`` for any other library node.
+
+    A loop that re-enters a transfer of a size it does not change is the map case of
+    :mod:`~dace.transformation.passes.cpu_specialization.sequentialize_unprofitable_parallel_scopes`:
+    ``E`` entries cost ``E * (fork + work / P)`` against ``E * work``, so the entry count cancels and
+    only the size decides (bicgstab's per-iteration ``N``-element memsets). A size the loop varies
+    is not one size: npbench ``stockham_fft``'s ``R**i``-element copy is tiny on most of its 349,525
+    entries, a measured 44x when each forked.
+    """
+    from dace.libraries.standard.nodes.copy import CopyLibraryNode
+    from dace.libraries.standard.nodes.fill import FillLibraryNode
+
+    if not isinstance(node, (CopyLibraryNode, FillLibraryNode)):
+        return None
+    out_edges = [e for e in state.out_edges(node) if e.data.subset is not None]
+    if len(out_edges) != 1:
+        return None
+    return {str(s) for s in dace.symbolic.free_symbols_and_functions(out_edges[0].data.subset.num_elements())}
+
+
+def symbols_varying_in(loop) -> set[str]:
+    """The symbols that take more than one value across ``loop``'s trips: its iteration variable, the
+    variables of the loops inside it, and every symbol an interstate edge inside it assigns."""
+    from dace.sdfg.state import LoopRegion
+
+    varying = {loop.loop_variable} if loop.loop_variable else set()
+    for region in loop.all_control_flow_regions():
+        if isinstance(region, LoopRegion) and region.loop_variable:
+            varying.add(region.loop_variable)
+    for edge in loop.all_interstate_edges(recursive=True):
+        varying |= set(edge.data.assignments)
+    return varying
 
 
 def cpu_transfer_parallelizes(

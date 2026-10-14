@@ -573,6 +573,16 @@ def carried_local_transients(loop: LoopRegion, candidates: set[str], ctx: Option
     :func:`observable_locals`: dead scratch left behind by an earlier rewrite would otherwise
     cost the loop its lift.
     """
+    carried = read_before_written(loop, candidates)
+    if not carried:
+        return carried
+    return carried & observable_locals(loop, candidates, ctx)
+
+
+def read_before_written(loop: LoopRegion, candidates: set[str]) -> set[str]:
+    """Among ``candidates``, the containers an iteration of ``loop`` can read before it writes them (see
+    :func:`carried_local_transients`). Each name's verdict depends on its own accesses alone, so asking about one
+    name gives that name's verdict of the whole set."""
     carried: set[str] = set()
 
     def scan(region: ControlFlowRegion, written: set[str]) -> None:
@@ -599,9 +609,7 @@ def carried_local_transients(loop: LoopRegion, candidates: set[str], ctx: Option
                 scan(block, written)
 
     scan(loop, set())
-    if not carried:
-        return carried
-    return carried & observable_locals(loop, candidates, ctx)
+    return carried
 
 
 def edge_read_symbols(edge: InterstateEdge, ctx: Optional["LiftContext"]) -> set[str]:
@@ -671,6 +679,55 @@ def observable_locals(loop: LoopRegion, candidates: set[str], ctx: Optional["Lif
                 observable.add(name)
                 changed = True
     return observable
+
+
+def split_loop_containers(sdfg: SDFG, loop_states: OrderedSet, ctx: "LiftContext") -> tuple[set[str], set[str]]:
+    """The containers the loop's states access, split into the ones live outside the loop (every non-transient, and
+    each transient ``ctx.access_states`` finds outside) and the loop-local transients."""
+    shared: set[str] = set()
+    local: set[str] = set()
+    for state in loop_states:
+        for n in state.data_nodes():
+            if not sdfg.arrays[n.data].transient:
+                shared.add(n.data)  # non-transients are shared by definition
+            elif n.data not in shared and n.data not in local:
+                # ``.get``, not ``[]``: ``access_states`` is a ``defaultdict`` and indexing
+                # it would INSERT an empty entry for every name probed.
+                holders = ctx.access_states.get(n.data)
+                if holders is not None and any(st not in loop_states for st in holders):
+                    shared.add(n.data)
+                else:
+                    local.add(n.data)
+    return shared, local
+
+
+def observable_from(
+    loop: LoopRegion, name: str, candidates: set[str], loop_states: OrderedSet, ctx: "LiftContext"
+) -> bool:
+    """Whether :func:`observable_locals` puts ``name`` in its set, found by walking only the candidates ``name``'s
+    value flows into: it is observable iff one of them flows into a non-candidate or is read by control flow.
+    ``ctx.access_states`` finds the states to walk; a state it misses can only hide a path, so ``False`` means
+    "not shown", never "dead"."""
+    seen = {name}
+    frontier = [name]
+    while frontier:
+        current = frontier.pop()
+        for state in ctx.access_states.get(current, ()):
+            if state not in loop_states:
+                continue
+            for dn in state.data_nodes():
+                if dn.data != current:
+                    continue
+                for reached in state.bfs_nodes(dn):
+                    if not isinstance(reached, nodes.AccessNode) or reached is dn:
+                        continue
+                    if reached.data not in candidates:
+                        return True
+                    if reached.data not in seen:
+                        seen.add(reached.data)
+                        frontier.append(reached.data)
+    read_by_control_flow = control_flow_reads(loop, ctx)
+    return not seen.isdisjoint(read_by_control_flow)
 
 
 def loop_varying_symbols(loop: LoopRegion) -> set[str]:
@@ -1304,6 +1361,12 @@ class LoopToMap(xf.MultiStateTransformation):
     def expressions(cls):
         return [sdutil.node_path_graph(cls.loop)]
 
+    def waives(self, name: str, permissive: bool) -> bool:
+        """Whether the dependence test waives conflicts on container ``name``: all of them under ``permissive``,
+        else only the ``contract_arrays`` a caller set, whose writes a runtime contract check guards (the scatter
+        targets of :class:`~dace.transformation.passes.scatter_to_guarded_maps.ScatterToGuardedMaps`)."""
+        return permissive or name in vars(self).get("contract_arrays", ())
+
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
 
         # Exposed so companion passes can distinguish a genuine loop-carried
@@ -1447,21 +1510,7 @@ class LoopToMap(xf.MultiStateTransformation):
             # loop's OWN transients can ever be looked up here, so resolve exactly those. (The
             # scan above also collects transients of states the loop never touches, but every
             # consumer below filters by a loop data node, so they can never be read.)
-            other_access_nodes = set()
-            local_transients = set()
-            access_states = ctx.access_states
-            for state in loop_states:
-                for n in state.data_nodes():
-                    if not sdfg.arrays[n.data].transient:
-                        other_access_nodes.add(n.data)  # non-transients are shared by definition
-                    elif n.data not in other_access_nodes and n.data not in local_transients:
-                        # ``.get``, not ``[]``: ``access_states`` is a ``defaultdict`` and indexing
-                        # it would INSERT an empty entry for every name probed.
-                        holders = access_states.get(n.data)
-                        if holders is not None and any(st not in loop_states for st in holders):
-                            other_access_nodes.add(n.data)
-                        else:
-                            local_transients.add(n.data)
+            other_access_nodes, local_transients = split_loop_containers(sdfg, loop_states, ctx)
 
         # A transient living ONLY in the loop is exempt from the analysis below because ``apply``
         # gives every iteration a private copy -- sound only while each iteration writes it before
@@ -1525,7 +1574,9 @@ class LoopToMap(xf.MultiStateTransformation):
                         # here, and a store into the view node is a separate in-edge.
                         if not counted_write(sdfg, state, dn, e):
                             continue
-                        reason = write_refusal(sdfg, state, dn, e, itersym, a, b, start, end, step, permissive, ctx)
+                        reason = write_refusal(
+                            sdfg, state, dn, e, itersym, a, b, start, end, step, self.waives(dn.data, permissive), ctx
+                        )
                         if reason is not None:
                             if facts is not None:
                                 facts.refusal_witness = ("write", dn.data)
@@ -1559,7 +1610,7 @@ class LoopToMap(xf.MultiStateTransformation):
                         continue
                     # itersym-dependent read: must match a*i+b like the writes, else this
                     # iteration reads a value another iteration writes.
-                    if not _check_range(src_subset, a, itersym, b, step) and not permissive:
+                    if not _check_range(src_subset, a, itersym, b, step) and not self.waives(data, permissive):
                         return refuse(
                             f"read of {data} at {src_subset} is iter-indexed but does not match the "
                             f"write pattern a*i+b -- loop-carried forward/backward dependency"
@@ -1580,7 +1631,9 @@ class LoopToMap(xf.MultiStateTransformation):
             reps = list(distinct.values())
             for x in range(len(reps)):
                 for y in range(x + 1, len(reps)):
-                    if _writes_may_overlap(reps[x], reps[y], itersym, step, start, end, varying) and not permissive:
+                    if _writes_may_overlap(reps[x], reps[y], itersym, step, start, end, varying) and not self.waives(
+                        data, permissive
+                    ):
                         return refuse(
                             f"writes {reps[x].subset} and {reps[y].subset} to {data} may overlap across iterations"
                         )
@@ -1589,7 +1642,9 @@ class LoopToMap(xf.MultiStateTransformation):
             accumulated = {str(m.subset): m for m in mmlts if m.wcr is not None}
             for acc in accumulated.values():
                 for plain in reps:
-                    if _writes_may_overlap(acc, plain, itersym, step, start, end, varying) and not permissive:
+                    if _writes_may_overlap(acc, plain, itersym, step, start, end, varying) and not self.waives(
+                        data, permissive
+                    ):
                         return refuse(
                             f"accumulated write {acc.subset} and plain write {plain.subset} to {data} "
                             "may overlap across iterations"
@@ -1745,7 +1800,9 @@ class LoopToMap(xf.MultiStateTransformation):
             return None
         if desc.transient:
             holders = ctx.access_states.get(name)
-            if holders is None or all(st in loop_states for st in holders):
+            if holders is None:
+                return None
+            if all(st in loop_states for st in holders) and not self.carried_witness(sdfg, name, loop_states, ctx):
                 return None
         if facts.read_write is UNCOMPUTED:
             facts.read_write = self.loop.read_and_write_sets()
@@ -1763,7 +1820,9 @@ class LoopToMap(xf.MultiStateTransformation):
             for w in st.in_edges(dn):
                 if not counted_write(sdfg, st, dn, w):
                     continue
-                reason = write_refusal(sdfg, st, dn, w, itersym, a, b, start, end, step, permissive, ctx)
+                reason = write_refusal(
+                    sdfg, st, dn, w, itersym, a, b, start, end, step, self.waives(name, permissive), ctx
+                )
                 if reason is not None:
                     return reason
                 writes.append(w.data)
@@ -1780,6 +1839,16 @@ class LoopToMap(xf.MultiStateTransformation):
                 ):
                     return f"read-after-write conflict on {name} within the loop body - src_subset={src_subset}"
         return None
+
+    def carried_witness(self, sdfg: SDFG, name: str, loop_states: OrderedSet, ctx: "LiftContext") -> bool:
+        """Whether the probe still analyzes the loop-local transient ``name``: an iteration reads it before
+        writing it and the value is observable (:func:`carried_local_transients`), decided for ``name`` alone.
+        The loop enclosing many lifts is typically refused on such a carrier (CloudSC's level loop on
+        ``zcovptot``), and the full analysis behind it walks the whole body once per lift."""
+        if name not in read_before_written(self.loop, {name}):
+            return False
+        _, local_transients = split_loop_containers(sdfg, loop_states, ctx)
+        return name in local_transients and observable_from(self.loop, name, local_transients, loop_states, ctx)
 
     def test_read_memlet(
         self,

@@ -403,7 +403,6 @@ def test_offload_to_gpu_sets_domain_matched_block_and_finalize_generates_cuda():
     from dace.sdfg import nodes
     from dace.transformation.passes.canonicalize import canonicalize
     from dace.transformation.passes.canonicalize.finalize import finalize_for_target, offload_to_gpu
-    from dace.transformation.passes.gpu_block_size_selection import WARPS_PER_2D_BLOCK, warp_width
 
     Nsym = dace.symbol("N", dtype=dace.int64)
 
@@ -424,11 +423,8 @@ def test_offload_to_gpu_sets_domain_matched_block_and_finalize_generates_cuda():
         if isinstance(n, nodes.MapEntry) and n.map.schedule == dace.dtypes.ScheduleType.GPU_Device
     ]
     assert gpu_maps, "offload_to_gpu should move the loop nest to a GPU_Device map"
-    # One FULL warp on x and the remaining warps stacked on y: a block narrower than a warp would
-    # put lanes of one warp on different rows, which is the strided access the sizing exists to
-    # avoid. Both extents are symbolic here, so the domain counts as square and takes the default
-    # depth. Asked of the backend rather than hardcoded -- a CDNA wavefront is 64 lanes, not 32.
-    want = [warp_width(), WARPS_PER_2D_BLOCK, 1]
+    # Both extents are symbolic, so the domain counts as square and takes the square of 256.
+    want = [16, 16, 1]
     assert any(n.map.gpu_block_size == want for n in gpu_maps), (
         f"N x N map should get a {want[0]}x{want[1]} block, got {[n.map.gpu_block_size for n in gpu_maps]}"
     )

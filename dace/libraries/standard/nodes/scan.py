@@ -48,7 +48,7 @@ import enum
 import numpy
 
 import dace
-from dace import dtypes, library, nodes, symbolic
+from dace import cpf_lowering, dtypes, library, nodes, symbolic
 from dace.codegen.common import global_code_id, sym2cpp
 
 # CUB env is imported lazily inside ``ExpandCUDA.expansion`` to break the
@@ -459,14 +459,16 @@ def _combine_expr(op: ScanOp, ctype: str, a: str, b: str) -> str:
     return f"std::{'min' if op is ScanOp.MIN else 'max'}<{ctype}>({a}, {b})"
 
 
-def _chain_seed_expr(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG, chain: int, ctype: str) -> str:
+def _chain_seed_expr(
+    node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG, chain: int, ctype: str, unseeded: str | None = None
+) -> str:
     """C++ expression the chain's accumulator starts at.
 
     A wired ``_scan_init`` wins (inclusive-with-init: ``out[k] = init OP in[0] OP
     ... OP in[k]``). Otherwise an exclusive scan takes the op identity and an
     inclusive one takes ``+``/``*``'s identity, or -- for ``min``/``max``, which
     have none in C++ literal form -- the chain's own first element, exactly as the
-    single-chain routines in ``dace/scan.hpp`` do.
+    single-chain routines in ``dace/scan.hpp`` do -- or ``unseeded`` when given.
     """
     _, _, _, _, init_edge = _validate_chain(node, state, sdfg, chain)
     if init_edge is not None:
@@ -475,7 +477,7 @@ def _chain_seed_expr(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG, chain
         return f"static_cast<{ctype}>({node.identity if node.identity is not None else _OP_TO_IDENTITY_CPP[node.op]})"
     if node.exclusive:
         raise ValueError(f"Scan op {node.op.value!r} has no universal identity; set ``identity`` explicitly.")
-    return f"{in_connector(chain)}[0]"
+    return unseeded if unseeded is not None else f"{in_connector(chain)}[0]"
 
 
 #: Compound assignment per op, for the ``declare reduction`` combiner below.
@@ -658,7 +660,18 @@ def _multi_chain_tasklet(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG, p
     else:
         first, second = updates, stores
         scan_kind = "inclusive"
-    if not parallel:
+    if parallel and cpf_lowering.standalone():
+        # A standalone unit has no ``dace/scan.hpp`` team helpers and C has no lambda, so each chain is its own
+        # blocked scan through the single-chain entry point CPF defines: K fork/joins instead of one.
+        # The identity call seeds an unseeded chain: C cannot type a seed read from the chain's first element.
+        entry = f"::dace::scan::{'exclusive' if node.exclusive else 'inclusive'}_{_OP_TO_OMP_SUFFIX[node.op]}"
+        identity = _OP_TO_SEED_CPP[node.op].format(ct=ctype)
+        code = "\n".join(
+            f"{entry}({in_connector(c)}, {in_connector(c)} + ({n_expr}), {out_connector(c)}, "
+            f"{_chain_seed_expr(node, state, sdfg, c, ctype, unseeded=identity)});"
+            for c in range(k)
+        )
+    elif not parallel:
         # Sequential shape: the plain loop, no pragmas, no blocking. ``min``/``max``
         # seed from the chain's first element, so an empty range must not run at all.
         decls = "\n".join(f"    {ctype} {accs[c]} = {seeds[c]};" for c in range(k))

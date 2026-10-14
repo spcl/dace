@@ -373,6 +373,7 @@ def build_wcr_loop_form(reduction_is_consumed: bool) -> dace.SDFG:
         sdfg.add_array(name, [N], dace.float64)
     sdfg.add_array("C", [N], dace.float64, transient=True)
     sdfg.add_array("out", [1], dace.float64)
+    sdfg.add_array("prod", [1], dace.float64, transient=True)
 
     loop1 = LoopRegion("reduce_loop", f"i < {N}", "i", "i = 0", "i = i + 1")
     sdfg.add_node(loop1, is_start_block=True)
@@ -383,7 +384,10 @@ def build_wcr_loop_form(reduction_is_consumed: bool) -> dace.SDFG:
     body1.add_edge(reduce_tasklet, "c_o", body1.add_access("C"), None, dace.Memlet("C[i]"))
     accum = body1.add_tasklet("accum", {"cur", "delta"}, {"nxt"}, "nxt = cur + delta")
     body1.add_edge(body1.add_access("out"), None, accum, "cur", dace.Memlet("out[0]"))
-    body1.add_edge(reduce_tasklet, "wcr_o", accum, "delta", dace.Memlet())
+    # A value passes between two tasklets through an AccessNode; an empty memlet carries no data.
+    prod = body1.add_access("prod")
+    body1.add_edge(reduce_tasklet, "wcr_o", prod, None, dace.Memlet("prod[0]"))
+    body1.add_edge(prod, None, accum, "delta", dace.Memlet("prod[0]"))
     body1.add_edge(accum, "nxt", body1.add_access("out"), None, dace.Memlet("out[0]"))
 
     scale_state = sdfg.add_state("scale")

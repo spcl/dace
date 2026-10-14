@@ -100,6 +100,18 @@ static DACE_CONSTEXPR DACE_HDFI T int_floor(const T& numerator, const T2& denomi
   return numerator / denominator;
 }
 
+// The largest r with r * r <= n, and -1 for a negative n: exact on every integer (Newton's iteration, no floating sqrt).
+template <typename T>
+static DACE_CONSTEXPR DACE_HDFI T int_sqrt(const T& n) {
+  if (n < 2) return n < 0 ? T(-1) : n;
+  T x = n, y = (x + 1) / 2;
+  while (y < x) {
+    x = y;
+    y = (x + n / x) / 2;
+  }
+  return x;
+}
+
 template <typename T>
 static DACE_CONSTEXPR DACE_HDFI int sgn(T val) {
   return (T(0) < val) - (val < T(0));

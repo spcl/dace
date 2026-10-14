@@ -49,6 +49,9 @@ UNTILED_KERNELS = frozenset(
         "correlation",
         "doitgen",
         "k3mm",
+        # Canonicalized to a skewed wavefront (WavefrontSkew + ReconstructWavefrontNest): the parallel map walks
+        # an anti-diagonal, so no axis is unit-stride and no map passes the tile-candidate gate.
+        "seidel_2d",
         "syr2k",
         "syrk",
         "trisolv",

@@ -152,8 +152,8 @@ def test_size_gate_defaults_to_parallel(count, expected):
 
 
 # Fork/join cost model: owned here, consumed by the CPU specialization band
-def loop_nested_copy(name: str, trip: str):
-    """``for k in range(trip): dst[0:BIG_ELEMS, k] = src[:]`` with the copy as a libnode."""
+def loop_nested_copy(name: str, trip: str, length: str = str(BIG_ELEMS)):
+    """``for k in range(trip): dst[0:length, k] = src[0:length]`` with the copy as a libnode."""
     sdfg = dace.SDFG(name)
     sdfg.add_symbol("T", dace.int32)
     sdfg.add_array("src", [BIG_ELEMS], dace.float64, dace.dtypes.StorageType.CPU_Heap)
@@ -163,10 +163,10 @@ def loop_nested_copy(name: str, trip: str):
     state = loop.add_state("body", is_start_block=True)
     ln = CopyLibraryNode(name="cp")
     state.add_edge(
-        state.add_access("src"), None, ln, CopyLibraryNode.INPUT_CONNECTOR_NAME, dace.Memlet(f"src[0:{BIG_ELEMS}]")
+        state.add_access("src"), None, ln, CopyLibraryNode.INPUT_CONNECTOR_NAME, dace.Memlet(f"src[0:{length}]")
     )
     state.add_edge(
-        ln, CopyLibraryNode.OUTPUT_CONNECTOR_NAME, state.add_access("dst"), None, dace.Memlet(f"dst[0:{BIG_ELEMS}, k]")
+        ln, CopyLibraryNode.OUTPUT_CONNECTOR_NAME, state.add_access("dst"), None, dace.Memlet(f"dst[0:{length}, k]")
     )
     sdfg.validate()
     return sdfg, state, ln, loop
@@ -182,18 +182,22 @@ def test_is_short_loop():
 
 @pin_threshold
 def test_reentry_and_combined_verdict():
-    """A long loop re-enters the transfer, a provably short one does not, and a top-level one has
-    nothing above it. ``cpu_transfer_parallelizes`` is the size gate AND the re-entry verdict."""
+    """A long loop re-enters a transfer whose size it varies; one of a size it leaves alone is the map case, decided
+    by the size alone (the entry count cancels). A provably short loop and the top level re-enter nothing.
+    ``cpu_transfer_parallelizes`` is the size gate AND the re-entry verdict."""
+    _, varying_state, varying_ln, _ = loop_nested_copy("cost_reentry_varying", "T", length="k + 1")
     _, long_state, long_ln, _ = loop_nested_copy("cost_reentry_long", "T")
-    _, short_state, short_ln, _ = loop_nested_copy("cost_reentry_short", "4")
+    _, short_state, short_ln, _ = loop_nested_copy("cost_reentry_short", "4", length="k + 1")
     top_sdfg, top_ln = copy_libnode_sdfg(BIG_ELEMS)
     top_state = next(iter(top_sdfg.states()))
 
-    assert is_reentered_cpu_transfer(long_ln, long_state) is True
+    assert is_reentered_cpu_transfer(varying_ln, varying_state) is True
+    assert is_reentered_cpu_transfer(long_ln, long_state) is False
     assert is_reentered_cpu_transfer(short_ln, short_state) is False
     assert is_reentered_cpu_transfer(top_ln, top_state) is False
 
-    assert cpu_transfer_parallelizes(long_ln, long_state, BIG_ELEMS) is False
+    assert cpu_transfer_parallelizes(varying_ln, varying_state, BIG_ELEMS) is False
+    assert cpu_transfer_parallelizes(long_ln, long_state, BIG_ELEMS) is True
     assert cpu_transfer_parallelizes(short_ln, short_state, BIG_ELEMS) is True
     assert cpu_transfer_parallelizes(top_ln, top_state, BIG_ELEMS) is True
     assert cpu_transfer_parallelizes(top_ln, top_state, SMALL_ELEMS) is False
@@ -232,7 +236,7 @@ def test_parallel_map_scope_is_reentry():
 def test_expansion_ignores_reentry():
     """The expansion delegates: a copy the cost model calls re-entered still expands to the
     parallel element map. Sequentializing it is the CPU specialization band's job."""
-    sdfg, state, ln, _ = loop_nested_copy("expand_ignores_reentry", "T")
+    sdfg, state, ln, _ = loop_nested_copy("expand_ignores_reentry", "T", length="k + 1")
     assert cpu_transfer_parallelizes(ln, state, BIG_ELEMS) is False
     sdfg.expand_library_nodes(recursive=True)
     assert ln.implementation == "MappedTasklet"

@@ -2,6 +2,7 @@
 import math
 
 import numpy as np
+import pytest
 from scipy.signal import convolve2d
 
 import dace
@@ -1038,6 +1039,60 @@ def test_a_producer_reading_the_intermediate_is_not_fused():
     assert np.allclose(b, 2.0 * np.maximum(0.5, a))
 
 
+def overwritten_producer_input(through_view):
+    """``A: t = 2 * x``; ``C: x = 5``, ordered after A; ``D: out = t + x``. A third map overwrites what the producer read
+    before the consumer runs, the producer reading ``x`` directly or through a view of it."""
+    n = 8
+    sdfg = dace.SDFG(f"otf_overwritten_producer_input_{through_view}")
+    sdfg.add_array("x", [n], dace.float64)
+    sdfg.add_array("out", [n], dace.float64)
+    sdfg.add_transient("t", [n], dace.float64)
+    state = sdfg.add_state()
+    x_in, t, x_out = state.add_read("x"), state.add_access("t"), state.add_access("x")
+    source = "x"
+    if through_view:
+        sdfg.add_view("xv", [n], dace.float64)
+        source, view = "xv", state.add_access("xv")
+        state.add_edge(x_in, None, view, "views", dace.Memlet(f"x[0:{n}]"))
+        x_in = view
+    state.add_mapped_tasklet(
+        "A",
+        {"i": f"0:{n}"},
+        {"a": dace.Memlet(f"{source}[i]")},
+        "b = 2 * a",
+        {"b": dace.Memlet("t[i]")},
+        input_nodes={source: x_in},
+        output_nodes={"t": t},
+        external_edges=True,
+    )
+    _, overwrite, _ = state.add_mapped_tasklet(
+        "C", {"i": f"0:{n}"}, {}, "o = 5.0", {"o": dace.Memlet("x[i]")}, output_nodes={"x": x_out}, external_edges=True
+    )
+    state.add_nedge(t, overwrite, dace.Memlet())
+    state.add_mapped_tasklet(
+        "D",
+        {"i": f"0:{n}"},
+        {"p": dace.Memlet("t[i]"), "q": dace.Memlet("x[i]")},
+        "r = p + q",
+        {"r": dace.Memlet("out[i]")},
+        input_nodes={"t": t, "x": x_out},
+        external_edges=True,
+    )
+    sdfg.validate()
+    return sdfg
+
+
+@pytest.mark.parametrize("through_view", [False, True])
+def test_a_producer_whose_input_is_overwritten_before_the_consumer_is_not_fused(through_view):
+    """cloudsc on GPU: fusion moves the producer's reads to the consumer, after the map that overwrites them, so every
+    fused element read the new ``x``. cloudsc's producer read a row view of the overwritten array."""
+    sdfg = overwritten_producer_input(through_view)
+    assert sdfg.apply_transformations(OTFMapFusion) == 0
+    x, out = np.arange(8, dtype=np.float64), np.zeros(8)
+    sdfg(x=x, out=out)
+    assert np.allclose(out, 2.0 * np.arange(8) + 5.0)
+
+
 if __name__ == "__main__":
     # Solver
     test_solve()
@@ -1078,6 +1133,8 @@ if __name__ == "__main__":
     test_seidel_2d_like_war_refuses_fusion()
     test_second_writer_of_the_intermediate_is_not_fused()
     test_a_producer_another_state_reads_is_kept()
+    for through_view in [False, True]:
+        test_a_producer_whose_input_is_overwritten_before_the_consumer_is_not_fused(through_view)
     # Symbol replacement
     test_advanced_replace_nested_sdfg_symbol_mapping()
     test_a_producer_reading_the_intermediate_is_not_fused()

@@ -21,6 +21,8 @@ per-lane select. Both accumulators are predicated and the kernel vectorizes corr
 what the end-to-end test below pins -- on the emitted selects AND on the numbers.
 """
 
+import numpy as np
+
 import dace
 from dace import nodes
 from dace.libraries.tileops.dispatch import detect_host_isa
@@ -33,7 +35,7 @@ from dace.transformation.passes.vectorization.utils.pass_invariants import (
     no_conditional_interstate_assign_on_widened_data,
 )
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
-from tests.corpus.npbench import npbench
+from tests.npbench.misc.azimint_naive_test import dace_azimint_naive, initialize, numpy_azimint_naive
 
 WIDTHS = (8,)
 
@@ -85,16 +87,12 @@ def test_azimint_naive_masked_counter_is_predicated_per_lane():
     for EACH of the two masked accumulators. Before the demotion only the float accumulator got
     one -- the counter reached its reduction buffer through an unmasked constant broadcast.
     """
-    by_name = {c["name"]: c for c in npbench.collect()}
-    assert "azimint_naive" in by_name, (
-        "azimint_naive left the npbench corpus; it is the kernel this "
-        "whole file exists for, so a rename must fail loudly here"
-    )
-    corpus = by_name["azimint_naive"]
-    arrays, params = npbench.make_inputs(corpus)
-    reference = npbench.reference_outputs(corpus, arrays, params)
+    n, npt = 400, 10
+    data, radius = initialize(n)
+    reference = numpy_azimint_naive(data, radius, npt)
 
-    sdfg = npbench.fresh_sdfg(corpus)
+    sdfg = dace_azimint_naive.to_sdfg(simplify=True)
+    sdfg.name = "azimint_naive_lane_guard"
     canonicalize(sdfg, validate=True)
     VectorizeCPUMultiDim(
         VectorizeConfig(
@@ -116,8 +114,8 @@ def test_azimint_naive_masked_counter_is_predicated_per_lane():
         f"expected a per-lane select for the float accumulator AND the counter, got {[n.label for n in selects]}"
     )
 
-    got = npbench.run_outputs(corpus, sdfg, arrays, params)
-    assert npbench.outputs_match(reference, got), "the masked counter lost its predicate"
+    got = sdfg(data=data.copy(), radius=radius.copy(), N=n, npt=npt)
+    assert np.allclose(got, reference, rtol=1e-12), "the masked counter lost its predicate"
 
 
 def _tile_nodes(sdfg: dace.SDFG, kind: str, into: str = None) -> list:

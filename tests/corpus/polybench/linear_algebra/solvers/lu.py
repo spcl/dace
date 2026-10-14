@@ -12,7 +12,6 @@ datatype = dace.float64
 sizes = [{N: 40}, {N: 120}, {N: 400}, {N: 2000}, {N: 4000}]
 
 #: paper dataset row, ported from npbench bench_info/lu.json (parameters.paper)
-paper_sizes = {N: 2000}
 
 args = [([N, N], datatype)]
 

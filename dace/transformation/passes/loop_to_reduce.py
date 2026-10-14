@@ -355,8 +355,66 @@ class AccumulatorCopyChainToWCR(ppl.Pass):
         from dace.transformation.passes.canonicalize.eliminate_trivial_tasklets import EliminateTrivialTasklets
 
         count = EliminateTrivialTasklets().apply_pass(sdfg, {}) or 0
+        count += forward_element_loads(sdfg)
         count += _augassign_to_wcr_per_state(sdfg)
         return count or None
+
+
+def forward_element_loads(sdfg: SDFG) -> int:
+    """Feed the tasklets reading a transient scalar copy of one array element from that element instead.
+
+    An integer accumulator reaches the store through such a copy: its load ``o_index = o[b]`` was a symbol assignment,
+    and the demoted form is ``o[b] -> o_index -> (o_index + 1) -> o[b]``, which no ``AugAssignToWCR`` shape matches.
+    Exact only while nothing else writes the array in the state between the copy and its readers, so a state that writes
+    the array anywhere but at the readers' own outputs is left alone.
+
+    :returns: how many scalars were forwarded.
+    """
+    forwarded = 0
+    for state in sdfg.states():
+        owner = state.sdfg
+        for scalar in [n for n in state.data_nodes() if isinstance(owner.arrays[n.data], data.Scalar)]:
+            desc = owner.arrays[scalar.data]
+            if not desc.transient or state.in_degree(scalar) != 1 or state.out_degree(scalar) == 0:
+                continue
+            if any(n is not scalar and n.data == scalar.data for s in owner.states() for n in s.data_nodes()):
+                continue
+            load = state.in_edges(scalar)[0]
+            source = load.src
+            if not isinstance(source, nodes.AccessNode) or isinstance(owner.arrays[source.data], data.View):
+                continue
+            element = load.data.get_src_subset(load, state)
+            if element is None or element.num_elements() != 1 or load.data.wcr is not None:
+                continue
+            readers = state.out_edges(scalar)
+            if not all(
+                isinstance(e.dst, nodes.Tasklet) and state.entry_node(e.dst) is state.entry_node(scalar)
+                for e in readers
+            ):
+                continue
+            own_outputs = {id(e) for e in readers for e in state.out_edges(e.dst)}
+            writers = [
+                e
+                for n in state.data_nodes()
+                if n.data == source.data
+                for e in state.in_edges(n)
+                if id(e) not in own_outputs and not e.data.is_empty()
+            ]
+            if writers:
+                continue
+            for edge in readers:
+                state.add_edge(
+                    source,
+                    load.src_conn,
+                    edge.dst,
+                    edge.dst_conn,
+                    mm.Memlet(data=source.data, subset=copy.deepcopy(element)),
+                )
+                state.remove_edge(edge)
+            state.remove_node(scalar)
+            owner.remove_data(scalar.data, validate=False)
+            forwarded += 1
+    return forwarded
 
 
 #: ``{PatternNode: node}`` binding for one ``AugAssignToWCR`` candidate.

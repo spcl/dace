@@ -177,8 +177,22 @@ def map_containers_and_traffic(
             continue
         names.add(edge.data.data)
         if not edge.data.dynamic:
-            traffic = traffic + edge.data.volume
+            traffic = traffic + moved_elements(edge.data)
     return names, traffic
+
+
+def moved_elements(memlet) -> symbolic.SymbolicType | int:
+    """The elements ``memlet`` moves: its volume, or its subset's size when the volume is that size times a factor
+    of the map's own -- the propagation of a read at an index it cannot see (ilu0's ``col_j = A_indices[m]`` per
+    iteration reads as ``nnz * len``), which can touch no more than the subset holds."""
+    elements = memlet.subset.num_elements()
+    if not symbolic.issymbolic(elements):
+        return memlet.volume
+    factor = symbolic.simplify(memlet.volume / elements)
+    sizes = {str(sym) for sym in elements.free_symbols}
+    if symbolic.simplify(factor - 1) != 0 and not {str(sym) for sym in factor.free_symbols} & sizes:
+        return elements
+    return memlet.volume
 
 
 def provably_moves_less(traffic: symbolic.SymbolicType | int, size: symbolic.SymbolicType | int) -> bool:
