@@ -73,7 +73,8 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
             return None
         by_conn = {edge.dst_conn: edge for edge in inedges}
         for op, inconn, other in AugAssignToWCR.python_updates(tasklet, list(by_conn)):
-            if by_conn[inconn].data.subset == outedge.data.subset:
+            read = by_conn[inconn].data
+            if read.data == outedge.data.data and read.subset == outedge.data.subset:
                 return op, by_conn[inconn], other
         return None
 

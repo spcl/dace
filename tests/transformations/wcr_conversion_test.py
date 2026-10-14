@@ -1,3 +1,5 @@
+import ast
+
 import numpy as np
 import pytest
 
@@ -347,6 +349,31 @@ def test_aug_assign_python_after_a_write_fissions_the_state():
     assert A[0] == 3.0
 
 
+def test_python_update_reads_the_update_of_the_written_element():
+    """``AugAssignToWCR.python_update``: ``out = in <op> other`` (binary, boolean, ``max`` / ``min``, either operand
+    order) where ``in`` reads the element ``out`` writes; ``None`` for another element or no update."""
+    sdfg = dace.SDFG("python_update_reads")
+    sdfg.add_array("A", [4], dace.float64)
+    sdfg.add_array("X", [4], dace.float64)
+    state = sdfg.add_state()
+    cases = {
+        "o = a + x": ("+", "A[1]"),
+        "o = max(x, a)": ("max", "A[1]"),
+        "o = a or x": ("or", "A[1]"),
+        "o = a * x": (None, "A[2]"),
+        "o = x": (None, "A[1]"),
+    }
+    for code, (op, read) in cases.items():
+        tasklet = state.add_tasklet(f"t_{len(state.nodes())}", {"a", "x"}, {"o"}, code)
+        state.add_edge(state.add_read("A"), None, tasklet, "a", dace.Memlet(read))
+        state.add_edge(state.add_read("X"), None, tasklet, "x", dace.Memlet("X[1]"))
+        out = state.add_edge(tasklet, "o", state.add_write("A"), None, dace.Memlet("A[1]"))
+        update = AugAssignToWCR.python_update(tasklet, state.in_edges(tasklet), out)
+        assert (update and update[0]) == op, code
+        if op is not None:
+            assert update[1].dst_conn == "a" and ast.unparse(update[2]) == "x"
+
+
 if __name__ == "__main__":
     test_aug_assign_python_after_a_write_fissions_the_state()
     test_aug_assign_tasklet_lhs()
@@ -366,3 +393,4 @@ if __name__ == "__main__":
     test_aug_assign_python_min_max("min(k, a)", np.minimum)
     test_aug_assign_python_logical_or()
     test_aug_assign_python_reads_another_element()
+    test_python_update_reads_the_update_of_the_written_element()
