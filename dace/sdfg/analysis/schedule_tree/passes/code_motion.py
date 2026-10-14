@@ -7,7 +7,9 @@ is, and which iterations of its outer loop must then stay in place. :func:`move_
 statements to the readers of their values.
 """
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
+from typing import Union
 
 import sympy
 
@@ -52,6 +54,13 @@ from dace.sdfg.analysis.schedule_tree.passes.transient_reuse import Liveness, Us
 
 # Nodes that create aliases or jump to arbitrary places: subtrees that contain them are not reordered
 _OPAQUE_NODES = (tn.ViewNode, tn.NViewEnd, tn.RefSetNode, tn.GotoNode, tn.StateLabel)
+
+#: A subtree, or statements of one loop body (in body order) that move together
+Statements = Union[tn.ScheduleTreeNode, Sequence[tn.ScheduleTreeNode]]
+
+
+def _statements(unit: Statements) -> tuple[tn.ScheduleTreeNode, ...]:
+    return (unit,) if isinstance(unit, tn.ScheduleTreeNode) else tuple(unit)
 
 
 @dataclass
@@ -110,22 +119,23 @@ class MotionAnalysis:
     # ------------------------------------------------------------------------------------------------------------------
     # What subtrees do
 
-    def footprint(self, unit: tn.ScheduleTreeNode, scope: tn.ScheduleTreeScope) -> Footprint:
+    def footprint(self, unit: Statements, scope: tn.ScheduleTreeScope) -> Footprint:
         """
         What ``unit`` does when it runs in one execution of ``scope``, an ancestor of it. The loops between the two
-        count as part of the unit, as when a statement is split off from the perfect loop nest around it into a nest
-        of its own; scopes there other than ``for`` loops and maps make the unit opaque.
+        count as part of the unit, as when statements are split off from the perfect loop nest around them into a nest
+        of their own; scopes there other than ``for`` loops and maps make the unit opaque.
 
-        :param unit: The subtree.
+        :param unit: The subtree, or statements of one body (siblings, in order).
         :param scope: An ancestor of ``unit`` (or its parent).
         :return: The accesses, symbols and opacity of the unit.
         """
-        key = (id(unit), id(scope))
+        statements = _statements(unit)
+        key = (tuple(id(s) for s in statements), id(scope))
         if key in self._footprints:
             return self._footprints[key]
         result = Footprint()
         bound: set[str] = set()
-        for loop in reversed(path_to(unit, scope)[1:]):  # Outermost first
+        for loop in reversed(path_to(statements[0], scope)[1:]):  # Outermost first
             if not isinstance(loop, (tn.ForScope, tn.MapScope)):
                 result.opaque = True
             own = bound_names(loop)
@@ -136,7 +146,8 @@ class MotionAnalysis:
                     result.reads.add(name)
             result.binds |= own
             bound |= own
-        self._walk(unit, unit, bound, result)
+        for statement in statements:
+            self._walk(statement, statement.parent, bound, result)
         for access in result.accesses:
             desc = self.containers[access.name]
             if (
@@ -148,15 +159,14 @@ class MotionAnalysis:
         self._footprints[key] = result
         return result
 
-    def _walk(self, node: tn.ScheduleTreeNode, unit: tn.ScheduleTreeNode, bound: set[str], result: Footprint):
+    def _walk(self, node: tn.ScheduleTreeNode, around: tn.ScheduleTreeScope, bound: set[str], result: Footprint):
         if isinstance(node, _OPAQUE_NODES):
             result.opaque = True
         elif isinstance(node, (tn.TaskletNode, tn.LibraryCall)) and node.node.has_side_effects(self.repository):
             result.opaque = True
-        elif isinstance(node, (tn.BreakNode, tn.ContinueNode)) and not any(
-            isinstance(n, tn.LoopScope) for n in path_to(node, unit.parent)[1:]
-        ):
-            result.opaque = True  # Leaves a loop around the unit
+        elif isinstance(node, (tn.BreakNode, tn.ContinueNode)):
+            if not any(isinstance(n, tn.LoopScope) for n in path_to(node, around)[1:]):
+                result.opaque = True  # Leaves a loop around the unit
         own = bound_names(node)
         read, written = set(), set()
         for memlet in memlets_of(node, "in_memlets") + memlets_of(node, "memlet"):
@@ -182,7 +192,7 @@ class MotionAnalysis:
                 result.assigns.add(name)
         result.binds |= own
         for child in getattr(node, "children", ()):
-            self._walk(child, unit, bound | own, result)
+            self._walk(child, around, bound | own, result)
 
     @property
     def escaping(self) -> set[str]:
@@ -200,12 +210,10 @@ class MotionAnalysis:
             return [None] * len(self.containers[access.name].shape)
         return self.reaching.region(access.node, access.memlet, context)
 
-    def _outer_space(
-        self, unit: tn.ScheduleTreeNode, scope: tn.ScheduleTreeScope
-    ) -> tuple[tn.ForScope, int, int, int] | None:
+    def _outer_space(self, unit: Statements, scope: tn.ScheduleTreeScope) -> tuple[tn.ForScope, int, int, int] | None:
         """``(loop, first, last, stride)`` of the outer loop of a unit (the child of ``scope`` that contains it), if it
         is a ``for`` loop with constant bounds and unit stride."""
-        outer = child_containing(scope, unit)
+        outer = child_containing(scope, _statements(unit)[0])
         if not isinstance(outer, tn.ForScope) or not outer.loop.loop_variable:
             return None
         space = self.reaching.ranges(outer).get(outer.loop.loop_variable)
@@ -249,13 +257,13 @@ class MotionAnalysis:
         return result if restricted else None
 
     def reorder_conflicts(
-        self, unit: tn.ScheduleTreeNode, scope: tn.ScheduleTreeScope, between: list[tn.ScheduleTreeNode]
+        self, unit: Statements, scope: tn.ScheduleTreeScope, between: list[tn.ScheduleTreeNode]
     ) -> list[tuple[int, int]] | None:
         """
         The iterations of the outer loop of ``unit`` that conflict with the siblings it would move past.
 
-        :param unit: The subtree to move: a child of ``scope``, or a node in the body of a perfect nest of loops that is
-                     a child of ``scope`` (moved with copies of the loops around it, see :meth:`footprint`). Its
+        :param unit: What moves: a child of ``scope``, or statements of the body of a perfect nest of loops that is
+                     a child of ``scope`` (moved with copies of the loops around them, see :meth:`footprint`). Its
                      outer loop is the child of ``scope`` that contains it.
         :param scope: The scope in which it moves.
         :param between: The children of ``scope`` it would move past (all before or all after it).
@@ -299,14 +307,14 @@ class MotionAnalysis:
                         conflicts.append(interval)
         return conflicts
 
-    def iterations_independent(self, unit: tn.ScheduleTreeNode, scope: tn.ScheduleTreeScope) -> bool:
+    def iterations_independent(self, unit: Statements, scope: tn.ScheduleTreeScope) -> bool:
         """
         Whether the iterations of the outer loop of ``unit`` (see :meth:`reorder_conflicts`) may run in any order:
         the unit assigns no symbols, and every access of each container it writes touches, in each iteration, one
         slice of the container that the same index expression in the loop variable selects (with coefficient one or
         minus one), so iterations touch disjoint parts of what any of them writes.
 
-        :param unit: The subtree.
+        :param unit: What moves (see :meth:`reorder_conflicts`).
         :param scope: The scope in which it moves.
         :return: True if the iterations are independent, False if that is not shown.
         """
@@ -338,7 +346,7 @@ class MotionAnalysis:
         return True
 
     def reordering(
-        self, unit: tn.ScheduleTreeNode, scope: tn.ScheduleTreeScope, between: list[tn.ScheduleTreeNode], downward: bool
+        self, unit: Statements, scope: tn.ScheduleTreeScope, between: list[tn.ScheduleTreeNode], downward: bool
     ) -> Reordering | None:
         """
         How ``unit`` may move past ``between`` (see :meth:`reorder_conflicts`): entirely if nothing conflicts, else
@@ -347,7 +355,7 @@ class MotionAnalysis:
         later (the last ones for a move down, the first ones for a move up), the order of iterations changes, which
         is only valid if they are independent (see :meth:`iterations_independent`).
 
-        :param unit: The subtree to move.
+        :param unit: What moves (see :meth:`reorder_conflicts`).
         :param scope: The scope in which it moves.
         :param between: The children of ``scope`` it moves past.
         :param downward: Whether it moves down (past later siblings) or up (past earlier ones).
@@ -369,12 +377,43 @@ class MotionAnalysis:
             return None
         if at_start != downward and not self.iterations_independent(unit, scope):
             return None
+        spaces = iteration_spaces(child_containing(scope, _statements(unit)[0]), self.repository)
+        if len(spaces) != 1 or spaces[0][2] is None:
+            return None  # The loop cannot be split
         return Reordering(stay)
 
 
 # ----------------------------------------------------------------------------------------------------------------------
-# Moving statements to their readers
+# Units of motion
 # ----------------------------------------------------------------------------------------------------------------------
+
+
+@dataclass
+class Unit:
+    """
+    What moves among the children of ``scope``: one child (``statements == [child]``, no ``nest``), or statements of
+    the innermost body of a perfect nest of ``for`` loops that is a child (``nest``, outermost first), which move with
+    copies of the loops around them (loop fission). Statements keep their order.
+    """
+
+    scope: tn.ScheduleTreeScope
+    statements: list[tn.ScheduleTreeNode]
+    nest: list[tn.ForScope] = field(default_factory=list)
+
+    @property
+    def outer(self) -> tn.ScheduleTreeNode:
+        """The child of ``scope`` that contains the unit."""
+        return self.nest[0] if self.nest else self.statements[0]
+
+    @property
+    def whole(self) -> bool:
+        """Whether the unit is all of ``outer``, which then moves as it is."""
+        return not self.nest or len(self.statements) == len(self.nest[-1].children)
+
+
+def subtree_unit(child: tn.ScheduleTreeNode) -> Unit:
+    """A child of a scope, as a unit."""
+    return Unit(child.parent, [child])
 
 
 def _nest_around(statement: tn.ScheduleTreeNode) -> list[tn.ForScope] | None:
@@ -401,25 +440,194 @@ def _injective(element: tuple[str, ...], variables: list[str]) -> bool:
     return True
 
 
+def split_off(statements: list[tn.ScheduleTreeNode], motion: MotionAnalysis) -> Unit | None:
+    """
+    Statements of the innermost body of a perfect nest of ``for`` loops, as a unit that runs in copies of the loops
+    (loop fission), if splitting them off is valid: the statements are tasklets that access single elements, without
+    side effects, and the rest of the body
+
+    * neither reads nor writes what they write,
+    * assigns no symbol they read and does not jump (``break``, ``continue``),
+    * writes what they read only before all of them that read it, at the one element they read, with every loop
+      variable of the nest indexing that element (each iteration then reads what it read before).
+
+    With all of the body, the unit is the whole nest.
+
+    :param statements: Children of the innermost loop of the nest.
+    :param motion: The analysis of the tree.
+    :return: The unit, or ``None`` if the statements cannot be split off.
+    """
+    nest = _nest_around(statements[0])
+    if nest is None or any(not loop.loop.loop_variable for loop in nest) or nest[0].parent is None:
+        return None
+    body = nest[-1].children
+    if any(s.parent is not nest[-1] for s in statements):
+        return None
+    positions = sorted(next(k for k, c in enumerate(body) if c is s) for s in statements)
+    statements = [body[k] for k in positions]
+    unit = Unit(nest[0].parent, statements, nest)
+    if unit.whole:
+        return unit
+    variables = [loop.loop.loop_variable for loop in nest]
+    outputs: set[str] = set()
+    inputs: dict[str, tuple[str, ...]] = {}  # Containers read and not written, by the element read
+    first_read: dict[str, int] = {}  # By the position of the first statement reading them
+    for position, statement in zip(positions, statements):
+        if not isinstance(statement, tn.TaskletNode) or statement.node.has_side_effects(motion.repository):
+            return None
+        for memlet in statement.out_memlets.values():
+            outputs.add(memlet.data)
+        for memlet in statement.in_memlets.values():
+            element = memlet_element(memlet)
+            if element is None or inputs.get(memlet.data, element) != element:
+                return None
+            inputs[memlet.data] = element
+            first_read.setdefault(memlet.data, position)
+    for name in outputs:
+        inputs.pop(name, None)
+    mine = motion.footprint(statements, nest[-1])
+    rest = [(k, c) for k, c in enumerate(body) if not any(c is s for s in statements)]
+    for k, child in rest:
+        theirs = motion.footprint(child, nest[-1])
+        if theirs.opaque or mine.reads & (theirs.assigns | theirs.binds):
+            return None
+        if (names_in_subtrees([child], names_read) | names_in_subtrees([child], names_written)) & outputs:
+            return None
+        for node in child.preorder_traversal():
+            for name in names_written(node) & inputs.keys():
+                if k > first_read[name] or not isinstance(node, tn.TaskletNode):
+                    return None
+                for memlet in node.out_memlets.values():
+                    if memlet.data == name and (
+                        memlet_element(memlet) != inputs[name] or not _injective(inputs[name], variables)
+                    ):
+                        return None
+    return unit
+
+
+def statement_group(seed: tn.TaskletNode, motion: MotionAnalysis) -> Unit | None:
+    """
+    A statement of the innermost body of a perfect nest of ``for`` loops together with the earlier statements of the
+    body whose values only the group uses there (e.g., a value and its positive part), split off from the nest
+    (see :func:`split_off`); the statement alone if the group cannot be split off.
+
+    :param seed: The statement.
+    :param motion: The analysis of the tree.
+    :return: The unit, or ``None`` if not even the statement can be split off.
+    """
+    if _nest_around(seed) is None:
+        return None
+    body = seed.parent.children
+    index = next(k for k, c in enumerate(body) if c is seed)
+    group = [seed]
+    for k in range(index - 1, -1, -1):
+        candidate = body[k]
+        if not isinstance(candidate, tn.TaskletNode):
+            continue
+        written = {m.data for m in candidate.out_memlets.values()}
+        if not written & names_in_subtrees(group, names_read):
+            continue
+        others = [c for c in body if c is not candidate and not any(c is g for g in group)]
+        if not (names_in_subtrees(others, names_read) | names_in_subtrees(others, names_written)) & written:
+            group.insert(0, candidate)
+    unit = split_off(group, motion) if len(group) > 1 else None
+    return unit or split_off([seed], motion)
+
+
+def move_unit(unit: Unit, before: tn.ScheduleTreeNode | None, stay: tuple[int, int] | None = None) -> None:
+    """
+    Move a unit to just before the child ``before`` of its scope (to the end if ``None``), as decided by
+    :meth:`MotionAnalysis.reordering`: the iterations of its outer loop whose variable values lie in ``stay`` remain
+    where they are, in a copy of the loop. A split-off unit runs in copies of the loops of its nest; the rest of the
+    nest stays.
+
+    :param unit: The unit.
+    :param before: The child of the unit's scope to move it before.
+    :param stay: Inclusive interval of values of the outer loop's variable whose iterations stay in place.
+    """
+    scope = unit.scope
+    children = list(scope.children)
+    if unit.whole and stay is None:
+        children = [c for c in children if c is not unit.outer]
+        children.insert(next((k for k, c in enumerate(children) if c is before), len(children)), unit.outer)
+        scope.children = []
+        scope.add_children(children)
+        return
+    nest = unit.nest or [unit.outer]
+    statements = unit.statements if unit.nest else list(unit.outer.children)
+    space = None
+    if stay is not None:
+        spaces = iteration_spaces(nest[0], repository_of(scope.get_root()))
+        if len(spaces) != 1 or spaces[0][2] is None:
+            raise ValueError("The outer loop of the unit cannot be split")
+        space = spaces[0][2]
+    innermost = nest[-1]
+    innermost.children = [c for c in innermost.children if not any(c is s for s in statements)]
+    lrr = range_analysis()
+
+    def copy_nest(interval, k: int) -> tn.ForScope:
+        body: list[tn.ScheduleTreeNode] = [clone_subtree(s) for s in statements]
+        for loop in reversed(nest[1:]):
+            body = [make_scope(loop, None, None, None, body, k)]
+        return make_scope(nest[0], None, space, interval, body, k)
+
+    moved_interval = None
+    if stay is not None:
+        first, last = (space.start, space.end) if space.ascending else (space.end, space.start)
+        lo, hi = stay
+        moved_interval = lrr.Interval(hi + 1, last) if lo == first else lrr.Interval(first, lo - 1)
+        children.insert(next(k for k, c in enumerate(children) if c is nest[0]) + 1, copy_nest(lrr.Interval(*stay), 1))
+    children.insert(
+        next((k for k, c in enumerate(children) if c is before), len(children)), copy_nest(moved_interval, 2)
+    )
+    if not innermost.children:
+        children = [c for c in children if c is not nest[0]]
+    scope.children = []
+    scope.add_children(children)
+
+
+def move_plan(unit: Unit, before: tn.ScheduleTreeNode | None, motion: MotionAnalysis) -> Reordering | None:
+    """
+    Whether and how ``unit`` may move to just before the child ``before`` of its scope (to the end if ``None``), up or
+    down (see :meth:`MotionAnalysis.reordering`).
+
+    :param unit: The unit.
+    :param before: The child of the unit's scope to move it before.
+    :param motion: The analysis of the tree.
+    :return: How to move it (pass ``stay`` to :func:`move_unit`), or ``None`` if it cannot move there.
+    """
+    children = unit.scope.children
+    position = next(k for k, c in enumerate(children) if c is unit.outer)
+    target = next((k for k, c in enumerate(children) if c is before), len(children))
+    downward = target > position
+    between = children[position + 1 : target] if downward else children[target:position]
+    if not between:
+        return Reordering()
+    return motion.reordering(unit.statements, unit.scope, between, downward)
+
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Moving statements to their readers
+# ----------------------------------------------------------------------------------------------------------------------
+
+
 def move_statements_to_readers(stree: tn.ScheduleTreeScope) -> int:
     """
     Move statements past what prevents putting them under the guard of their readers: an effect-free tasklet in the
     body of a perfect nest of ``for`` loops, whose values are read only under ``if`` scopes in a later nest of the same
-    scope, is split off into a nest of its own (loop fission) and placed right after the last nest in between that
-    assigns what those guards read. :func:`sink_into_guards` can then put it under the guard of its readers.
+    scope, is split off into a nest of its own (loop fission), together with the earlier statements whose values only
+    it uses (see :func:`statement_group`), and placed right after the last nest in between that assigns what those
+    guards read. :func:`sink_into_guards` can then put the statements under the guard of their readers.
 
-    The split is valid if the other statements of the nest neither read nor write the tasklet's outputs, and write
-    its inputs only at the elements it reads, before it in the body, with every loop variable indexing those
-    elements (each iteration then reads what it read before). The move is valid if the split-off nest does not
-    conflict with the nests in between (see :class:`MotionAnalysis`); where it does so only in the first or last
-    iterations of the outermost loop, those iterations stay in place in a nest of their own.
+    The split must be valid (see :func:`split_off`) and the split-off nest must not conflict with the nests in between
+    (see :class:`MotionAnalysis`); where it does so only in the first or last iterations of the outermost loop, those
+    iterations stay in place in a nest of their own.
 
     :param stree: The schedule tree (or subtree) to transform in place.
-    :return: The number of statements moved.
+    :return: The number of statement groups moved.
     """
     root = stree.get_root()
     containers = root.containers
-    lrr = range_analysis()
     moved = 0
     while True:
         reads, other = collect_reads(root)
@@ -432,7 +640,7 @@ def move_statements_to_readers(stree: tn.ScheduleTreeScope) -> int:
             if isinstance(node, tn.TaskletNode):
                 plan = _move_plan(node, reads, other, containers, liveness, reaching, memlet_uses, motion, cache)
                 if plan is not None:
-                    _apply_move(node, *plan, lrr)
+                    move_unit(*plan)
                     moved += 1
                     break  # The analyses describe the tree before the change
         else:
@@ -450,57 +658,54 @@ def _move_plan(
     motion: MotionAnalysis,
     cache: dict[str, tuple],
 ) -> tuple | None:
-    """``(nest, target, space, stay)`` to move ``statement`` out of ``nest`` to before the sibling ``target``, keeping
-    the iterations of the outermost loop (iteration space ``space``) whose values lie in ``stay`` in place (or
+    """``(unit, target, stay)`` to move ``statement`` and the statements split off with it to before the sibling
+    ``target`` of their nest, keeping the iterations of the outermost loop whose values lie in ``stay`` in place (or
     ``None``), or ``None`` if it cannot or need not be moved."""
     tasklet = statement.node
     if tasklet.language != dtypes.Language.Python or tasklet.side_effects:
         return None
-    nest = _nest_around(statement)
-    if nest is None or any(not loop.loop.loop_variable for loop in nest):
+    if not all(some_read_guarded(statement, reads.get(m.data, [])) for m in statement.out_memlets.values()):
+        return None  # Quick filter before the other analyses
+    unit = statement_group(statement, motion)
+    if unit is None or not unit.nest:
         return None
-    scope = nest[0].parent
-    if scope is None:
-        return None
-    variables = [loop.loop.loop_variable for loop in nest]
-    outputs: dict[str, tuple[str, ...]] = {}
-    for memlet in statement.out_memlets.values():
-        element = memlet_element(memlet)
-        desc = containers.get(memlet.data)
-        if (
-            element is None
-            or desc is None
-            or not desc.transient
-            or memlet.data in other
-            or memlet.wcr is not None
-            or outputs.get(memlet.data, element) != element
-        ):
+    for member in unit.statements:
+        if member.node.language != dtypes.Language.Python or member.node.side_effects:
             return None
-        outputs[memlet.data] = element
-    inputs: dict[str, tuple[str, ...]] = {}
-    for memlet in statement.in_memlets.values():
-        element = memlet_element(memlet)
-        if element is None or memlet.data in outputs or inputs.get(memlet.data, element) != element:
-            return None
-        inputs[memlet.data] = element
+        elements: dict[str, tuple[str, ...]] = {}
+        for memlet in member.out_memlets.values():
+            element = memlet_element(memlet)
+            desc = containers.get(memlet.data)
+            if (
+                element is None
+                or desc is None
+                or not desc.transient
+                or memlet.data in other
+                or memlet.wcr is not None
+                or elements.get(memlet.data, element) != element
+            ):
+                return None
+            elements[memlet.data] = element
 
-    if not all(some_read_guarded(statement, reads.get(name, [])) for name in outputs):
-        return None  # Quick filter before the liveness analysis
     # The readers: under guards, all in one later sibling nest, with nests in between (else there is no reason to move)
+    scope, nest = unit.scope, unit.nest
     siblings = scope.children
     position = next(k for k, c in enumerate(siblings) if c is nest[0])
     target = None
     guard_names = set()
-    for name in outputs:
-        found, _ = value_reads(statement, name, reads.get(name, []), liveness, reaching, memlet_uses, cache)
-        for read in found:
-            if not guarded_anywhere(read) or not inside(read.node, scope) or inside(read.node, nest[0]):
-                return None
-            container = child_containing(scope, read.node)
-            if target is not None and container is not target:
-                return None
-            target = container
-            guard_names |= set().union(*(expression_symbols(c) for c in guard_candidates(read, scope)))
+    for member in unit.statements:
+        for name in {m.data for m in member.out_memlets.values()}:
+            found, _ = value_reads(member, name, reads.get(name, []), liveness, reaching, memlet_uses, cache)
+            for read in found:
+                if any(read.node is s for s in unit.statements):
+                    continue  # Moves along
+                if not guarded_anywhere(read) or not inside(read.node, scope) or inside(read.node, nest[0]):
+                    return None
+                container = child_containing(scope, read.node)
+                if target is not None and container is not target:
+                    return None
+                target = container
+                guard_names |= set().union(*(expression_symbols(c) for c in guard_candidates(read, scope)))
     if target is None:
         return None
     # Move only past the nests that assign what the readers' guards read, i.e., that prevent sinking it, and no further
@@ -508,68 +713,8 @@ def _move_plan(
     blockers = [k for k in range(position + 1, readers_position) if assigned_in([siblings[k]]) & guard_names]
     if not blockers:
         return None
-    target_position = blockers[-1] + 1
-    target = siblings[target_position]
-
-    # The split: the rest of the body does not use the outputs and writes the inputs only where the statement reads
-    body = nest[-1].children
-    index = next(k for k, c in enumerate(body) if c is statement)
-    rest = body[:index] + body[index + 1 :]
-    if (names_in_subtrees(rest, names_read) | names_in_subtrees(rest, names_written)) & outputs.keys():
-        return None
-    for k, child in enumerate(body):
-        if child is statement:
-            continue
-        for node in child.preorder_traversal():
-            written = names_written(node) & inputs.keys()
-            if not written:
-                continue
-            if k > index or not isinstance(node, tn.TaskletNode):
-                return None
-            for memlet in node.out_memlets.values():
-                if memlet.data in inputs and (
-                    memlet_element(memlet) != inputs[memlet.data] or not _injective(inputs[memlet.data], variables)
-                ):
-                    return None
-
-    # The move
-    spaces = iteration_spaces(nest[0], motion.repository)
-    if len(spaces) != 1 or spaces[0][2] is None:
-        return None
-    reordering = motion.reordering(statement, scope, siblings[position + 1 : target_position], downward=True)
+    target = siblings[blockers[-1] + 1]
+    reordering = move_plan(unit, target, motion)
     if reordering is None:
         return None
-    return nest, target, spaces[0][2], reordering.stay
-
-
-def _apply_move(
-    statement: tn.TaskletNode,
-    nest: list[tn.ForScope],
-    target: tn.ScheduleTreeNode,
-    space,
-    stay: tuple[int, int] | None,
-    lrr,
-) -> None:
-    scope = nest[0].parent
-    innermost = nest[-1]
-    innermost.children = [c for c in innermost.children if c is not statement]
-
-    def copy_nest(interval, k: int) -> tn.ForScope:
-        body: list[tn.ScheduleTreeNode] = [clone_subtree(statement)]
-        for loop in reversed(nest[1:]):
-            body = [make_scope(loop, None, None, None, body, k)]
-        return make_scope(nest[0], None, space, interval, body, k)
-
-    first, last = (space.start, space.end) if space.ascending else (space.end, space.start)
-    moved_interval = None
-    if stay is not None:
-        lo, hi = stay
-        moved_interval = lrr.Interval(hi + 1, last) if lo == first else lrr.Interval(first, lo - 1)
-    children = list(scope.children)
-    if stay is not None:
-        children.insert(next(k for k, c in enumerate(children) if c is nest[0]) + 1, copy_nest(lrr.Interval(*stay), 1))
-    children.insert(next(k for k, c in enumerate(children) if c is target), copy_nest(moved_interval, 2))
-    if not innermost.children:
-        children = [c for c in children if c is not nest[0]]
-    scope.children = []
-    scope.add_children(children)
+    return unit, target, reordering.stay

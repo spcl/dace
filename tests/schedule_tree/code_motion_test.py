@@ -10,7 +10,15 @@ import dace
 from dace.properties import CodeBlock
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.sdfg.analysis.schedule_tree.passes import coarsen_guards, move_statements_to_readers, sink_into_guards
-from dace.sdfg.analysis.schedule_tree.passes.code_motion import MotionAnalysis, Reordering
+from dace.sdfg.analysis.schedule_tree.passes.code_motion import (
+    MotionAnalysis,
+    Reordering,
+    move_plan,
+    move_unit,
+    split_off,
+    statement_group,
+    subtree_unit,
+)
 from dace.sdfg.state import LoopRegion
 
 
@@ -250,6 +258,160 @@ def test_reorder_statement_of_nest():
 
 
 # ----------------------------------------------------------------------------------------------------------------------
+# Units and moves
+# ----------------------------------------------------------------------------------------------------------------------
+
+
+def _unit_inputs() -> list[dict[str, np.ndarray]]:
+    rng = np.random.default_rng(7)
+    return [{"x": rng.random(8) - 0.5, "y": rng.random(8), "out": np.zeros(8)} for _ in range(2)]
+
+
+def _labels(stree: tn.ScheduleTreeRoot) -> list[str]:
+    return [c.loop.label for c in stree.children]
+
+
+def test_move_subtree_down():
+    """``t = x``, ``u = y``, ``out = t + u``: the producer of ``t`` moves to just before its reader."""
+
+    def build():
+        stree = _pair(_copy_loop(), [_copy_loop("j", "y", "u")])
+        stree.children[1].loop.label = "other"
+        stree.add_child(_loop("k", 0, 8, [_tasklet("o = a + b", {"a": "t[k]", "b": "u[k]"}, {"o": "out[k]"})]))
+        return stree
+
+    def transform(stree):
+        unit = subtree_unit(stree.children[0])
+        assert move_plan(unit, stree.children[2], MotionAnalysis(stree)) == Reordering()
+        move_unit(unit, stree.children[2])
+        assert _labels(stree) == ["other", "loop_i", "loop_k"]
+
+    _same_results(build, transform, _unit_inputs())
+
+
+def test_move_consumer_up():
+    """The reader of ``t`` moves up to just after its producer, past an unrelated nest, but not past the producer."""
+
+    def build():
+        stree = _pair(_copy_loop(), [_copy_loop("j", "y", "u")])
+        stree.add_child(_loop("k", 0, 8, [_tasklet("o = a", {"a": "t[k]"}, {"o": "out[k]"})]))
+        return stree
+
+    def transform(stree):
+        unit = subtree_unit(stree.children[2])
+        analysis = MotionAnalysis(stree)
+        assert move_plan(unit, stree.children[0], analysis) is None
+        assert move_plan(unit, stree.children[1], analysis) == Reordering()
+        move_unit(unit, stree.children[1])
+        assert _labels(stree) == ["loop_i", "loop_k", "loop_j"]
+
+    _same_results(build, transform, _unit_inputs())
+
+
+def test_move_subtree_keeps_iterations():
+    """A scan moves past a reader of its first two values, which stay before the reader."""
+
+    def build():
+        stree = _pair(_tasklet("o = a", {"a": "x[0]"}, {"o": "t[0]"}), [_scan_loop()])
+        early = _tasklet("o = a + b", {"a": "t[1]", "b": "t[2]"}, {"o": "y[0]"})
+        stree.add_children([early, _loop("k", 0, 8, [_read("t[k]", "out[k]")])])
+        return stree
+
+    def transform(stree):
+        unit = subtree_unit(stree.children[1])
+        reordering = move_plan(unit, stree.children[3], MotionAnalysis(stree))
+        assert reordering == Reordering((1, 2))
+        move_unit(unit, stree.children[3], reordering.stay)
+        assert len([c for c in stree.children if type(c) is tn.ForScope]) == 3
+
+    _same_results(build, transform, _unit_inputs())
+
+
+def _group_tree(rest_reads_value: bool = False) -> tn.ScheduleTreeRoot:
+    """``for i: s = x[i] * 2; t[i] = max(s, 0); u[i] = y[i] (+ s)``, then a nest writing ``out``, then a reader of
+    ``t``. ``s`` is a scalar: ``t`` alone cannot be split off, since every iteration writes ``s``."""
+    stree = _root(
+        "group",
+        {"x": ([8], dace.float64), "y": ([8], dace.float64), "out": ([8], dace.float64)},
+        {"t": ([8], dace.float64), "u": ([8], dace.float64), "s": ((), dace.float64)},
+    )
+    value = _tasklet("o = a * 2", {"a": "x[i]"}, {"o": "s[0]"})
+    positive = _tasklet("o = max(a, 0.0)", {"a": "s[0]"}, {"o": "t[i]"})
+    if rest_reads_value:
+        rest = _tasklet("o = a + b", {"a": "y[i]", "b": "s[0]"}, {"o": "u[i]"})
+    else:
+        rest = _tasklet("o = a", {"a": "y[i]"}, {"o": "u[i]"})
+    stree.add_children(
+        [
+            _loop("i", 0, 8, [value, positive, rest]),
+            _copy_loop("j", "u", "out"),
+            _loop("k", 0, 8, [_tasklet("o = a + b", {"a": "t[k]", "b": "out[k]"}, {"o": "out[k]"})]),
+        ]
+    )
+    return stree
+
+
+def test_split_off_statement_group():
+
+    def transform(stree):
+        nest = stree.children[0]
+        value, positive, _ = nest.children
+        analysis = MotionAnalysis(stree)
+        assert split_off([positive], analysis) is None
+        unit = statement_group(positive, analysis)
+        assert unit is not None and unit.statements == [value, positive] and unit.nest == [nest]
+        assert move_plan(unit, stree.children[2], analysis) == Reordering()
+        move_unit(unit, stree.children[2])
+        # The rest of the nest, the nest writing ``out``, the group in a copy of the nest, the reader
+        assert len(stree.children) == 4 and len(stree.children[0].children) == 1
+        assert len(stree.children[2].children) == 2
+
+    _same_results(_group_tree, transform, _unit_inputs())
+
+
+def test_statement_group_not_if_value_used_by_rest():
+    stree = _group_tree(rest_reads_value=True)
+    nest = stree.children[0]
+    analysis = MotionAnalysis(stree)
+    assert statement_group(nest.children[1], analysis) is None
+    assert split_off(nest.children[:2], analysis) is None
+
+
+def test_split_off_whole_body():
+    stree = _group_tree()
+    nest = stree.children[0]
+    unit = split_off(list(nest.children), MotionAnalysis(stree))
+    assert unit.whole and unit.outer is nest
+
+
+def test_split_off_conditions():
+    """The rest of the body must not write the statement's inputs after it (or at other elements), assign symbols it
+    reads, or jump."""
+
+    def tree(rest: tn.ScheduleTreeNode, statement: tn.TaskletNode = None, rest_first: bool = False):
+        stree = _root("split", {"x": ([8], dace.float64), "y": ([8], dace.float64)}, {"t": ([8], dace.float64)})
+        stree.symbols["n"] = dace.int32
+        statement = statement or _tasklet("o = a", {"a": "x[i]"}, {"o": "t[i]"})
+        body = [rest, statement] if rest_first else [statement, rest]
+        stree.add_child(_loop("i", 0, 8, body))
+        return stree, statement
+
+    def splits(*args, **kwargs) -> bool:
+        stree, statement = tree(*args, **kwargs)
+        return split_off([statement], MotionAnalysis(stree)) is not None
+
+    assert splits(_tasklet("o = a", {"a": "x[i]"}, {"o": "y[i]"}))
+    # Writes the input before the statement, at the element it reads: each iteration reads what it read before
+    assert splits(_tasklet("o = a + 1", {"a": "y[i]"}, {"o": "x[i]"}), rest_first=True)
+    assert not splits(_tasklet("o = a + 1", {"a": "y[i]"}, {"o": "x[i]"}))
+    assert not splits(_tasklet("o = a + 1", {"a": "y[i]"}, {"o": "x[i + 1]"}), rest_first=True)
+    assert not splits(_tasklet("o = a", {"a": "t[i]"}, {"o": "y[i]"}))
+    symbolic_read = _tasklet("o = a", {"a": "x[n]"}, {"o": "t[i]"})
+    assert not splits(tn.AssignNode(name="n", value=CodeBlock("i"), edge=dace.InterstateEdge()), symbolic_read, True)
+    assert not splits(_if("y[i] > 0", [tn.BreakNode()]))
+
+
+# ----------------------------------------------------------------------------------------------------------------------
 # Moving statements to their readers
 # ----------------------------------------------------------------------------------------------------------------------
 
@@ -363,6 +525,13 @@ if __name__ == "__main__":
     test_reorder_not_past_side_effects()
     test_reorder_not_past_jump()
     test_reorder_statement_of_nest()
+    test_move_subtree_down()
+    test_move_consumer_up()
+    test_move_subtree_keeps_iterations()
+    test_split_off_statement_group()
+    test_statement_group_not_if_value_used_by_rest()
+    test_split_off_whole_body()
+    test_split_off_conditions()
     test_move_past_guard_assignment_then_sink()
     test_move_keeps_conflicting_iterations()
     test_move_not_past_writes_of_every_iteration()
