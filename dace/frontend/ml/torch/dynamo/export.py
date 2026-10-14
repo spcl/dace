@@ -18,6 +18,7 @@ import torch
 
 from dace.sdfg import SDFG
 
+from . import distributed
 from .backend import select_implementations
 from .capture import CapturedProgram, capture
 from .context import RANDOM_SEED_SYMBOL, sanitize_name
@@ -138,7 +139,7 @@ class CompiledModule:
         self._result = program.import_graph(name)
         _specialize_random_seed(self._result.sdfg, random_seed)
         select_implementations(self._result.sdfg)
-        self._compiled = self._result.sdfg.compile()
+        self._compiled = distributed.compile_sdfg(self._result.sdfg, program.options.distributed_compilation)
         self._runtime = CompiledGraph(
             self._compiled, self._result.inputs, self._result.outputs, communicators=self._result.communicators
         )

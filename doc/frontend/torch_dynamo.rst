@@ -229,6 +229,12 @@ Collectives are blocking: ``wait_tensor`` of a collective's result is the result
 ``capture()`` or exported with ``to_sdfg`` expose the communicator arguments; pass them the handles that
 :mod:`dace.libraries.comm.communicators` creates.
 
+Every rank compiles its own program by default. With ``DaceBackend(distributed_compilation=True)``, rank 0 of the
+default process group compiles and the other ranks load its build through :func:`dace.sdfg.utils.distributed_compile`
+(the same mechanism as ``@dace.program(distributed_compilation=True)``); the ranks must share a file system. A failure on
+any rank then raises on every rank, instead of leaving the others waiting in the program's first collective, and a rank
+whose program differs from rank 0's (see below) raises as well.
+
 Limitations
 -----------
 
@@ -236,8 +242,9 @@ Limitations
   with a different pattern recompiles. ``dynamic_shapes`` (above) avoids the duck shaping; sizes 0 and 1 remain
   special.
 * Data-dependent shapes (``nonzero``, ``.item()``) are not captured.
-* TorchDynamo folds ``dist.get_rank()`` into the graph, so programs whose communication depends on the rank (e.g.,
-  ring neighbors) compile one SDFG per rank.
+* TorchDynamo folds ``dist.get_rank()`` into the graph, and the peers of point-to-point operations are constants even
+  when the rank is a symbolic argument, so programs whose communication depends on the rank (e.g., ring neighbors)
+  compile one SDFG per rank and cannot use distributed compilation.
 * ATen operators without an implementation are imported as library nodes and raise an error naming the operator when
   the SDFG is expanded (at compile time); ``extra_decompositions`` and ``native_ops`` can be used to steer the
   decomposition table instead.

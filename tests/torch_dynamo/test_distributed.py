@@ -24,6 +24,7 @@ import torch.distributed._functional_collectives as fc  # noqa: E402
 from torch.distributed.device_mesh import init_device_mesh  # noqa: E402
 from torch.distributed.tensor import DTensor, Replicate, Shard, distribute_tensor  # noqa: E402
 
+import dace  # noqa: E402
 from dace.frontend.ml.torch.dynamo import DaceBackend  # noqa: E402
 
 
@@ -247,6 +248,58 @@ def test_dtensor_uneven_shards():
     torch.testing.assert_close(out.to_local(), torch.relu(inputs @ weight) * 2)
 
 
+@pytest.mark.mpi
+def test_distributed_compilation():
+    """Rank 0 compiles, and the other ranks load its build."""
+    size, rank = dist.get_world_size(), dist.get_rank()
+
+    def f(x):
+        return fc.all_reduce(x * 2, "sum", dist.group.WORLD) + 1
+
+    backend = DaceBackend(distributed_compilation=True)
+    for n in (4, 7):
+        torch.testing.assert_close(_compile(backend, f)(_data(rank, n)), sum(_data(r, n) * 2 for r in range(size)) + 1)
+    folders = [None] * size
+    dist.all_gather_object(folders, backend.last_sdfg.build_folder)
+    assert all(folder == folders[0] for folder in folders)
+
+
+@pytest.mark.mpi
+def test_distributed_compilation_failure(monkeypatch):
+    """A compilation that fails on rank 0 raises on every rank, instead of leaving the others waiting in the
+    program's collective."""
+    rank = dist.get_rank()
+
+    def f(x):
+        return fc.all_reduce(x * 2, "sum", dist.group.WORLD) + 1
+
+    if rank == 0:
+
+        def fail(sdfg, *args, **kwargs):
+            raise RuntimeError("injected compilation failure")
+
+        monkeypatch.setattr(dace.SDFG, "compile", fail)
+    with pytest.raises(Exception) as info:
+        _compile(DaceBackend(distributed_compilation=True), f)(_data(rank, 4))
+    if rank == 0:
+        assert "injected compilation failure" in str(info.value)
+    else:
+        assert "Compilation failed on rank 0: RuntimeError: injected compilation failure" in str(info.value)
+
+
+@pytest.mark.mpi
+def test_distributed_compilation_of_rank_dependent_program():
+    """A program that depends on the rank (Dynamo folds ``get_rank()``) cannot share rank 0's build."""
+    rank = dist.get_rank()
+
+    def f(x):
+        return fc.all_reduce(x * (dist.get_rank() + 1), "sum", dist.group.WORLD)
+
+    with pytest.raises(Exception) as info:
+        _compile(DaceBackend(distributed_compilation=True), f)(_data(rank, 4))
+    assert "differs from the SDFG that rank 0 compiled" in str(info.value)
+
+
 if __name__ == "__main__":
     # Run under MPI, e.g., ``mpirun -n 2 python tests/torch_dynamo/test_distributed.py``
     path = _init_process_group()
@@ -259,4 +312,6 @@ if __name__ == "__main__":
     test_training_through_collectives()
     test_dtensor_redistribute()
     test_dtensor_uneven_shards()
+    test_distributed_compilation()
+    test_distributed_compilation_of_rank_dependent_program()
     _destroy_process_group(path)

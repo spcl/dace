@@ -25,7 +25,7 @@ from torch.fx.experimental.symbolic_shapes import ShapeEnv
 
 from dace.sdfg import SDFG
 
-from . import shapes
+from . import distributed, shapes
 from .backend import CAPTURE_CONFIG, DaceBackend, DaceBackendOptions, select_implementations
 from .importer import GraphImporter, ImportResult
 from .runtime import CompiledGraph
@@ -79,9 +79,8 @@ class CapturedProgram:
         """
         result = self.import_graph(name)
         select_implementations(result.sdfg)
-        compiled = CompiledGraph(
-            result.sdfg.compile(), result.inputs, result.outputs, communicators=result.communicators
-        )
+        csdfg = distributed.compile_sdfg(result.sdfg, self.options.distributed_compilation)
+        compiled = CompiledGraph(csdfg, result.inputs, result.outputs, communicators=result.communicators)
 
         def call(*args, **kwargs) -> list[Any]:
             with torch.no_grad():

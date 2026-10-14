@@ -22,6 +22,7 @@ from dace import data, dtypes
 from dace.autodiff import make_two_phase_backward_pass
 from dace.config import Config
 
+from . import distributed
 from . import joint as jt
 from .context import UnsupportedOpError
 from .decompositions import build_decomposition_table
@@ -57,6 +58,9 @@ class DaceBackendOptions:
     #: AOTAutograd partition function that picks the values the forward saves for the backward (defaults to
     #: ``default_partition``, which saves instead of recomputing)
     partitioner: Callable | None = None
+    #: In ``torch.distributed`` programs, compile on rank 0 and load the build on the other ranks (see
+    #: :func:`.distributed.compile_sdfg`); the program may not depend on the rank
+    distributed_compilation: bool = False
 
 
 class DaceBackend:
@@ -264,7 +268,7 @@ class DaceBackend:
             from dace.transformation.auto import auto_optimize as aopt  # Deferred: imports the transformation library
 
             aopt.auto_optimize(sdfg, sdfg_device(sdfg))
-        csdfg = sdfg.compile()
+        csdfg = distributed.compile_sdfg(sdfg, self.options.distributed_compilation)
         self.compile_count += 1
         return csdfg
 

@@ -14,6 +14,10 @@ communicator once per process:
 - MPI (CPU tensors): the MPI communicator of the group's ranks. The processes must be MPI processes whose world ranks
   equal their ``torch.distributed`` ranks (e.g., launched with ``mpirun`` and a process group initialized from the
   ``OMPI_COMM_WORLD_*`` environment).
+
+Every rank compiles its own program by default. With distributed compilation, rank 0 compiles and the other ranks load
+its build (:func:`compile_sdfg`, through :func:`dace.sdfg.utils.distributed_compile`), and a failure on any rank
+raises on every rank instead of leaving the others waiting in the program's first collective.
 """
 
 import atexit
@@ -22,8 +26,12 @@ from typing import Any
 
 import torch
 import torch.distributed as dist
+from torch._subclasses.fake_tensor import unset_fake_temporarily
 
+from dace.codegen.compiled_sdfg import CompiledSDFG
 from dace.libraries.comm import communicators
+from dace.sdfg import SDFG
+from dace.sdfg import utils as sdfg_utils
 
 #: Implementation of the communication nodes by device type of the communicated tensors
 IMPLEMENTATIONS = {"cuda": "NCCL", "cpu": "MPI"}
@@ -62,6 +70,49 @@ def implementation_for(device: Any) -> str:
     if device_type not in IMPLEMENTATIONS:
         raise NotImplementedError(f"Collectives on {device_type} tensors are not supported")
     return IMPLEMENTATIONS[device_type]
+
+
+class ProcessGroupCommunicator:
+    """
+    The communicator interface :func:`dace.sdfg.utils.distributed_compile` uses (that of ``mpi4py``), over a
+    ``torch.distributed`` process group, so that programs launched without MPI (e.g., by ``torchrun``) can share a
+    build.
+    """
+
+    def __init__(self, group: "dist.ProcessGroup | None" = None):
+        self.group = group  #: The process group (``None`` for the default group)
+
+    def Get_rank(self) -> int:
+        return dist.get_rank(self.group)
+
+    # The object collectives communicate real tensors: compilation runs under Dynamo's fake tensor mode
+    def bcast(self, obj: Any, root: int = 0) -> Any:
+        objects = [obj]
+        with unset_fake_temporarily():
+            dist.broadcast_object_list(objects, group_src=root, group=self.group)
+        return objects[0]
+
+    def allgather(self, obj: Any) -> list[Any]:
+        objects: list[Any] = [None] * dist.get_world_size(self.group)
+        with unset_fake_temporarily():
+            dist.all_gather_object(objects, obj, group=self.group)
+        return objects
+
+
+def compile_sdfg(sdfg: SDFG, distributed_compilation: bool = False) -> CompiledSDFG:
+    """
+    Compiles the SDFG of a graph.
+
+    :param sdfg: The SDFG.
+    :param distributed_compilation: Compile on rank 0 of the default process group and load the build on the other
+                                    ranks, which must hold the same SDFG (the program may not depend on the rank) and
+                                    share a file system. Every rank raises if any rank fails. Without an initialized
+                                    default process group, compiles locally.
+    :return: The compiled SDFG.
+    """
+    if distributed_compilation and dist.is_available() and dist.is_initialized():
+        return sdfg_utils.distributed_compile(sdfg, ProcessGroupCommunicator())
+    return sdfg.compile()
 
 
 def _process_group(name: str) -> "dist.ProcessGroup":
