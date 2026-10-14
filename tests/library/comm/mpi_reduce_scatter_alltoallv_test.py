@@ -236,7 +236,7 @@ def test_nccl_point_to_point_without_requests():
     code = _expanded_code(sdfg)
     assert "MPI_REQUEST_NULL" not in code
     assert "_stat_tag" not in code
-    assert "__state->nccl->Wait();" in code
+    assert "__state->nccl->Wait(__dace_current_stream);" in code  # Connected to GPU memory: waits on the device
 
 
 def test_nccl_point_to_point_with_token_requests():

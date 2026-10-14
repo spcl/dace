@@ -36,15 +36,18 @@ class ExpandWaitMPI(ExpandTransformation):
 
 @dace.library.expansion
 class ExpandWaitNCCL(ExpandTransformation):
-    """Completes every pending NCCL ``Isend``/``Irecv``: launches their group and synchronizes their
-    streams. NCCL has no requests, so the ``_request`` connector is optional, and reports no status, so
-    the source and tag outputs are set to -1."""
+    """Completes every pending NCCL (or RCCL) ``Isend``/``Irecv``: launches their group, and orders what follows
+    after them. A wait connected to GPU memory (e.g., the received buffer, through its ordering connectors) runs on
+    a GPU stream: it makes that stream wait for the operations on the device, and code generation orders the readers
+    of the buffers after it, as for any other GPU work. A wait without GPU memory synchronizes the streams of the
+    operations on the host. NCCL has no requests, so the ``_request`` connector is optional, and reports no status,
+    so the source and tag outputs are set to -1. (Collectives need no wait: they run on the stream of their node.)"""
 
     environments = [environments.nccl.NCCL]
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
-        code = "__state->nccl->Wait();\n" + _status_code(node, parent_state, "-1", "-1")
+        code = _nccl_wait_code(node, parent_state, parent_sdfg) + _status_code(node, parent_state, "-1", "-1")
         tasklet = dace.sdfg.nodes.Tasklet(
             node.name,
             expanded_input_connectors(node, parent_state),
@@ -54,6 +57,16 @@ class ExpandWaitNCCL(ExpandTransformation):
             side_effects=True,
         )
         return tasklet
+
+
+def _nccl_wait_code(node: dace.sdfg.nodes.LibraryNode, state, sdfg) -> str:
+    """The NCCL wait of ``node``: on the device, on the stream of the node if it is connected to GPU memory (so
+    that code generation keeps it on a stream and orders the readers of the buffers after it), else on the host."""
+    on_stream = any(
+        e.data.data is not None and sdfg.arrays[e.data.data].storage == dtypes.StorageType.GPU_Global
+        for e in state.all_edges(node)
+    )
+    return "__state->nccl->Wait(__dace_current_stream);\n" if on_stream else "__state->nccl->Wait();\n"
 
 
 def _status_code(node: dace.sdfg.nodes.LibraryNode, state, tag: str, source: str) -> str:
@@ -134,8 +147,8 @@ class ExpandWaitallMPI(ExpandTransformation):
 
 @dace.library.expansion
 class ExpandWaitallNCCL(ExpandTransformation):
-    """Completes every pending NCCL ``Isend``/``Irecv``: launches their group and synchronizes their
-    streams. NCCL has no requests, so the ``_request`` connector is optional."""
+    """Completes every pending NCCL (or RCCL) ``Isend``/``Irecv`` like the NCCL ``Wait``: on the device if
+    connected to GPU memory, else on the host. NCCL has no requests, so the ``_request`` connector is optional."""
 
     environments = [environments.nccl.NCCL]
 
@@ -145,7 +158,7 @@ class ExpandWaitallNCCL(ExpandTransformation):
             node.name,
             expanded_input_connectors(node, parent_state),
             node.out_connectors,
-            "__state->nccl->Wait();",
+            _nccl_wait_code(node, parent_state, parent_sdfg),
             language=dace.dtypes.Language.CPP,
             side_effects=True,
         )

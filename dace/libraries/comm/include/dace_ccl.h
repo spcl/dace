@@ -56,6 +56,29 @@ static void SynchronizeStream(GpuStream stream) {
 #endif
 }
 
+/// Makes ``stream`` wait, on the device, for the work enqueued on ``other`` so far.
+static void StreamWaitStream(GpuStream stream, GpuStream other) {
+#ifdef WITH_HIP
+  hipEvent_t event;
+  hipError_t status = hipEventCreateWithFlags(&event, hipEventDisableTiming);
+  if (status == hipSuccess) status = hipEventRecord(event, other);
+  if (status == hipSuccess) status = hipStreamWaitEvent(stream, event, 0);
+  if (status == hipSuccess) status = hipEventDestroy(event);
+  if (status != hipSuccess) {
+    throw std::runtime_error(std::string("Ordering HIP streams failed: ") + hipGetErrorString(status));
+  }
+#else
+  cudaEvent_t event;
+  cudaError_t status = cudaEventCreateWithFlags(&event, cudaEventDisableTiming);
+  if (status == cudaSuccess) status = cudaEventRecord(event, other);
+  if (status == cudaSuccess) status = cudaStreamWaitEvent(stream, event, 0);
+  if (status == cudaSuccess) status = cudaEventDestroy(event);
+  if (status != cudaSuccess) {
+    throw std::runtime_error(std::string("Ordering CUDA streams failed: ") + cudaGetErrorString(status));
+  }
+#endif
+}
+
 // NCCL added ncclAlltoAll, ncclGather and ncclScatter in 2.28. RCCL has long had ncclGather and
 // ncclScatter (announced by RCCL_GATHER_SCATTER) and spelled the all-to-all ncclAllToAll until it
 // took the NCCL name with the 2.28 API. Without a native call, the helpers below fall back to
@@ -188,7 +211,7 @@ static void Scatter(const void* send, void* recv, size_t count, ncclDataType_t t
 }
 
 /**
- * The NCCL communicators of a DaCe program, one per MPI communicator it communicates over, and the
+ * The NCCL (or RCCL) communicators of a DaCe program, one per MPI communicator it communicates over, and the
  * NCCL group that collects its nonblocking point-to-point operations.
  *
  * NCCL has no bootstrap of its own, so the communicators the context creates come from MPI
@@ -248,10 +271,20 @@ class NcclContext {
     DACE_NCCL_CHECK(ncclGroupEnd());
   }
 
-  /// Completes every nonblocking operation: launches them and synchronizes their streams.
+  /// Completes every nonblocking operation on the host: launches them and synchronizes their streams.
   void Wait() {
     Launch();
     for (GpuStream stream : pending_streams_) SynchronizeStream(stream);
+    pending_streams_.clear();
+  }
+
+  /// Completes every nonblocking operation on the device: launches them and makes ``stream`` wait for their
+  /// streams, so that the work enqueued on ``stream`` afterwards sees their results. The host does not wait.
+  void Wait(GpuStream stream) {
+    Launch();
+    for (GpuStream pending : pending_streams_) {
+      if (pending != stream) StreamWaitStream(stream, pending);
+    }
     pending_streams_.clear();
   }
 
