@@ -317,24 +317,16 @@ def relocate_nodes(
             dmr_symbol = edge_to_move.dst_conn
 
             if dmr_symbol in to_node.in_connectors:
-                # Same symbol, same value: the moved binding is redundant, so drop it instead.
-                if not dynamic_map_range_binding_agrees(state, to_node, from_node, dmr_symbol):
-                    raise NotImplementedError(
-                        f"Tried to move the dynamic map range '{dmr_symbol}' from {from_node}'"
-                        f" to '{to_node}', but the symbol is already known there, but the"
-                        " renaming is not implemented."
-                    )
-                source = edge_to_move.src
+                # Both Maps bind the same value to this dynamic map range (`can_topologically_be_fused()`): drop the duplicate.
                 state.remove_edge(edge_to_move)
-                from_node.remove_in_connector(dmr_symbol)
-                if state.degree(source) == 0:
-                    state.remove_node(source)
-                continue
-            if not to_node.add_in_connector(dmr_symbol, force=False):
-                raise RuntimeError(  # Might fail because of out connectors.
-                    f"Failed to add the dynamic map range symbol '{dmr_symbol}' to '{to_node}'."
-                )
-            helpers.redirect_edge(state=state, edge=edge_to_move, new_dst=to_node)
+                if state.degree(edge_to_move.src) == 0:
+                    state.remove_node(edge_to_move.src)
+            else:
+                if not to_node.add_in_connector(dmr_symbol, force=False):
+                    raise RuntimeError(  # Might fail because of out connectors.
+                        f"Failed to add the dynamic map range symbol '{dmr_symbol}' to '{to_node}'."
+                    )
+                helpers.redirect_edge(state=state, edge=edge_to_move, new_dst=to_node)
             from_node.remove_in_connector(dmr_symbol)
 
         elif edge_to_move.dst_conn not in relocated_connectors:
@@ -1113,60 +1105,6 @@ def analyze_happens_before_fusion(
     return ordering_edges, list(dict.fromkeys(inner_pairs))
 
 
-def dynamic_map_range_edge(
-    state: dace.SDFGState,
-    map_entry: nodes.MapEntry,
-    symbol: str,
-) -> graph.MultiConnectorEdge | None:
-    """The single edge that binds dynamic-map-range `symbol` on `map_entry`, if there is one."""
-    # A dangling connector yields no edge; a bare `StopIteration` escaping into the matcher's
-    #  generator would be converted into a `RuntimeError` by PEP 479.
-    return next(iter(state.in_edges_by_connector(map_entry, symbol)), None)
-
-
-def dynamic_map_range_binding_agrees(
-    state: dace.SDFGState,
-    map_entry: nodes.MapEntry,
-    other_map_entry: nodes.MapEntry,
-    symbol: str,
-) -> bool:
-    """`True` if both Maps bind dynamic-map-range `symbol` to provably the same value."""
-    edge = dynamic_map_range_edge(state, map_entry, symbol)
-    other_edge = dynamic_map_range_edge(state, other_map_entry, symbol)
-    if edge is None or other_edge is None:
-        return False
-    data = edge.data.data
-    if (
-        data != other_edge.data.data
-        or edge.src_conn != other_edge.src_conn
-        or edge.data.subset != other_edge.data.subset
-    ):
-        return False
-    if edge.src is other_edge.src:
-        return True
-    # Any other producer computes a value this scan cannot see, making the test below vacuous.
-    if not isinstance(edge.src, nodes.AccessNode) or not isinstance(other_edge.src, nodes.AccessNode):
-        return False
-    # Distinct sources agree only if nothing writes that data in this state.
-    return not any(state.in_degree(dn) for dn in state.data_nodes() if dn.data == data)
-
-
-def dynamic_map_ranges_agree(
-    first_map_entry: nodes.MapEntry,
-    second_map_entry: nodes.MapEntry,
-    state: dace.SDFGState,
-) -> bool:
-    """`True` if every dynamic-map-range symbol both Maps bind is bound to the same value."""
-    shared = first_map_entry.dynamic_input_connectors & second_map_entry.dynamic_input_connectors
-    if not all(dynamic_map_range_binding_agrees(state, first_map_entry, second_map_entry, symbol) for symbol in shared):
-        return False
-    # The second Map's bindings are moved onto the first Map by `relocate_nodes()`, and a name
-    #  that is already an OUT connector there can neither be added nor renamed.
-    return all(
-        symbol not in first_map_entry.out_connectors for symbol in second_map_entry.dynamic_input_connectors - shared
-    )
-
-
 def can_topologically_be_fused(
     first_map_entry: nodes.MapEntry,
     second_map_entry: nodes.MapEntry,
@@ -1229,7 +1167,84 @@ def can_topologically_be_fused(
             return None
 
     # A colliding dynamic map range cannot be renamed, only dropped when both bind the same value.
-    if not dynamic_map_ranges_agree(first_map_entry, second_map_entry, graph):
+    if not dynamic_map_ranges_agree(graph, first_map_entry, second_map_entry):
         return None
 
     return param_repl
+
+
+def dynamic_map_range_source(
+    state: dace.SDFGState, edge: graph.MultiConnectorEdge
+) -> tuple[nodes.AccessNode, nodes.AccessNode] | None:
+    """
+    The access node a dynamic map range binding reads, as ``(root, viewed)``: the root of the binding's Memlet path,
+    and the data node it views if the root is a View (the root itself otherwise). ``None`` if the path does not start
+    at an access node, or the View cannot be resolved.
+
+    :param state: The state containing the binding.
+    :param edge: The edge into the dynamic map range connector.
+    """
+    root = state.memlet_path(edge)[0].src
+    if not isinstance(root, nodes.AccessNode):
+        return None
+    if not isinstance(root.desc(state.sdfg), dace.data.View):
+        return root, root
+    viewed = sdutils.get_last_view_node(state, root)
+    return (root, viewed) if viewed is not None else None
+
+
+def is_written_in_state(state: dace.SDFGState, data_name: str) -> bool:
+    """
+    Tests if any node of ``state`` writes ``data_name``, directly or through a View of it.
+
+    :param state: The state to scan.
+    :param data_name: The name of the (non-View) data.
+    """
+    for node in state.data_nodes():
+        if state.in_degree(node) == 0:
+            continue
+        if isinstance(node.desc(state.sdfg), dace.data.View):
+            viewed = sdutils.get_last_view_node(state, node)
+            if viewed is None or viewed.data == data_name:
+                return True
+        elif node.data == data_name:
+            return True
+    return False
+
+
+def dynamic_map_ranges_agree(state: dace.SDFGState, first: nodes.MapEntry, second: nodes.MapEntry) -> bool:
+    """
+    Tests if every dynamic map range both Maps bind reads the same value, and no other one of the second Map collides
+    with an out connector of the first.
+
+    Both bindings must read the same element: either through the same root node of their Memlet paths, or from two
+    access nodes of the same data that nothing in the state writes, directly or through a View. Two different View
+    nodes may map the same subset to different elements, so they must be the same node.
+
+    :param state: The state containing both Maps.
+    :param first: The Map that receives the dynamic map ranges.
+    :param second: The Map whose dynamic map ranges are moved.
+    """
+    first_ranges = {conn for conn in first.in_connectors if not conn.startswith("IN_")}
+    second_ranges = {conn for conn in second.in_connectors if not conn.startswith("IN_")}
+    for shared_dmr in first_ranges & second_ranges:
+        dmr_edges = [next(iter(state.in_edges_by_connector(node, shared_dmr)), None) for node in (first, second)]
+        if None in dmr_edges:
+            return False
+        dmr_source_first, dmr_source_second = dmr_edges
+        if (
+            dmr_source_first.data.data != dmr_source_second.data.data
+            or dmr_source_first.data.subset != dmr_source_second.data.subset
+        ):
+            return False
+        roots = [dynamic_map_range_source(state, edge) for edge in dmr_edges]
+        if None in roots:
+            return False
+        (root_first, viewed_first), (root_second, viewed_second) = roots
+        if root_first is root_second:
+            continue
+        if root_first is not viewed_first or root_second is not viewed_second:
+            return False
+        if root_first.data != root_second.data or is_written_in_state(state, root_first.data):
+            return False
+    return not any(dmr in first.out_connectors for dmr in second_ranges - first_ranges)

@@ -553,7 +553,7 @@ def test_horizontal_fusion_rejects_a_dynamic_map_range_bound_by_tasklets():
     sdfg.validate()
 
     entries = count_nodes(state, nodes.MapEntry, return_nodes=True)
-    assert not mfhelper.dynamic_map_ranges_agree(entries[0], entries[1], state), (
+    assert not mfhelper.dynamic_map_ranges_agree(state, entries[0], entries[1]), (
         "two different tasklet-produced bounds were declared equal"
     )
     assert sdfg.apply_transformations_repeated(dftrans.MapFusionHorizontal, validate_all=True) == 0
@@ -779,6 +779,50 @@ def test_horizontal_fusion_of_maps_sharing_a_dynamic_map_range(binding: str):
     sdfg.validate()
 
 
+@pytest.mark.parametrize("binding", ["same_view", "two_views", "written_through_view"])
+def test_horizontal_fusion_of_maps_sharing_a_dynamic_map_range_through_views(binding: str):
+    """The bindings are resolved through Views: two Maps reading ``lim`` through the same View node fuse; two View
+    nodes reading the same subset of ``bound_view`` do not, as they view different elements of ``bound``; and two
+    access nodes of ``bound`` do not once something writes ``bound`` through a View of it."""
+    sdfg = dace.SDFG(unique_name(f"shared_dynamic_map_range_{binding}"))
+    sdfg.add_array("bound", [2], dace.int64)
+    sdfg.add_view("bound_view", [1], dace.int64)
+    state = sdfg.add_state(is_start_block=True)
+    if binding == "same_view":
+        view = state.add_access("bound_view")
+        state.add_edge(state.add_access("bound"), None, view, "views", dace.Memlet("bound[1]"))
+        sources = (view, view)
+    elif binding == "two_views":
+        sources = (state.add_access("bound_view"), state.add_access("bound_view"))
+        bound = state.add_access("bound")
+        for element, view in enumerate(sources):
+            state.add_edge(bound, None, view, "views", dace.Memlet(f"bound[{element}]"))
+    else:
+        sources = (state.add_access("bound"), state.add_access("bound"))
+        writer = state.add_tasklet("set_bound", {}, {"__out"}, "__out = 4")
+        written = state.add_access("bound_view")
+        state.add_edge(writer, "__out", written, None, dace.Memlet("bound_view[0]"))
+        state.add_edge(written, "views", state.add_access("bound"), None, dace.Memlet("bound[1]"))
+    for name, source in zip(("A", "B"), sources):
+        sdfg.add_array(name, [10], dace.float64)
+        _, entry, _ = state.add_mapped_tasklet(
+            f"map_{name}",
+            {"__i": "0:lim"},
+            {},
+            "__out = 1.0",
+            {"__out": dace.Memlet(f"{name}[__i]")},
+            external_edges=True,
+        )
+        entry.add_in_connector("lim")
+        subset = "0" if source.data == "bound_view" else "1"
+        state.add_edge(source, None, entry, "lim", dace.Memlet(f"{source.data}[{subset}]"))
+    sdfg.validate()
+
+    fuses = binding == "same_view"
+    assert sdfg.apply_transformations_repeated(dftrans.MapFusionHorizontal(), validate_all=True) == int(fuses)
+    sdfg.validate()
+
+
 if __name__ == "__main__":
     test_horizontal_fusion_refuses_an_inner_shared_transient()
     test_horizontal_fusion_refuses_to_reorder_side_effects()
@@ -802,3 +846,6 @@ if __name__ == "__main__":
     test_horizontal_fusion_of_maps_sharing_a_dynamic_map_range("same_data")
     test_horizontal_fusion_of_maps_sharing_a_dynamic_map_range("other_data")
     test_horizontal_fusion_of_maps_sharing_a_dynamic_map_range("written_data")
+    test_horizontal_fusion_of_maps_sharing_a_dynamic_map_range_through_views("same_view")
+    test_horizontal_fusion_of_maps_sharing_a_dynamic_map_range_through_views("two_views")
+    test_horizontal_fusion_of_maps_sharing_a_dynamic_map_range_through_views("written_through_view")
