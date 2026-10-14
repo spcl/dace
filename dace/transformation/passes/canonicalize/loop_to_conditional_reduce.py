@@ -60,6 +60,11 @@ Scope
   associative binary op (``+``, ``-``, ``*``). ``min`` / ``max`` are left for
   :class:`ArgMaxLift`.
 * Every other write inside the true-branch goes to a transient nothing else reads.
+* Every evaluation in the true-branch is safe on every iteration, because the rewrite runs it where the
+  guard used to skip it: no integer division or modulo by anything but a nonzero constant, no
+  subscript inside a tasklet, and every array read provably in bounds over the loop domain. A guard
+  that protects its addend (``if d[i] != 0: s += n[i] // d[i]``, ``if i + K < N: s += a[i + K]``)
+  is therefore refused. Floating-point operations do not trap, so ``n[i] / d[i]`` on floats lifts.
 
 Refusals leave the loop unmodified so downstream stages still see it.
 """
@@ -70,7 +75,7 @@ from typing import Any, NamedTuple
 
 import numpy as np
 
-from dace import SDFG, data, dtypes, properties
+from dace import SDFG, data, dtypes, properties, symbolic
 from dace import memlet as mm
 from dace.frontend import operations
 from dace.sdfg import nodes
@@ -80,6 +85,7 @@ from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegio
 from dace.subsets import Subset
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
+from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.canonicalize.split_statements import value_edges
 
 #: AST binop class -> associative reduction operator string.
@@ -160,7 +166,7 @@ class LoopToConditionalReduce(ppl.Pass):
                 if region.parent_graph is None or region not in region.parent_graph.nodes():
                     continue
                 m = self._match(region, sd)
-                if m is None:
+                if m is None or not self.hoist_is_trap_free(region, m.true_state, sd):
                     continue
                 if self._rewrite(m, sd):
                     rewritten += 1
@@ -320,6 +326,102 @@ class LoopToConditionalReduce(ppl.Pass):
         )
 
     # match helpers
+
+    def hoist_is_trap_free(self, loop: LoopRegion, state: SDFGState, sdfg: SDFG) -> bool:
+        """Whether running ``state`` on every iteration of ``loop`` is safe: the rewrite drops the guard, so a
+        computation the guard protected would run where the source never ran it."""
+        for node in state.nodes():
+            if isinstance(node, nodes.Tasklet):
+                if not self.tasklet_is_trap_free(node, state, sdfg):
+                    return False
+            elif not isinstance(node, nodes.AccessNode):
+                return False
+        bounds = self.iterator_bounds(loop)
+        if bounds is None:
+            return False
+        for edge in state.edges():
+            if isinstance(edge.src, nodes.AccessNode) and not edge.data.is_empty():
+                if not self.read_in_bounds(edge, state, sdfg, bounds):
+                    return False
+        return True
+
+    def tasklet_is_trap_free(self, tasklet: nodes.Tasklet, state: SDFGState, sdfg: SDFG) -> bool:
+        """A Python tasklet with no subscript (an indirection the memlets do not show) and no integer division
+        or modulo by anything but a nonzero constant."""
+        if tasklet.code.language != dtypes.Language.Python:
+            return False
+        try:
+            tree = ast.parse((tasklet.code.as_string or "").strip())
+        except SyntaxError:
+            return False
+        floating = {
+            e.dst_conn
+            for e in state.in_edges(tasklet)
+            if e.data.data is not None and sdfg.arrays[e.data.data].dtype.type in (np.float16, np.float32, np.float64)
+        }
+        for expr in ast.walk(tree):
+            if isinstance(expr, ast.Subscript):
+                return False
+            if isinstance(expr, ast.BinOp) and isinstance(expr.op, (ast.Div, ast.FloorDiv, ast.Mod)):
+                if not self.divisor_is_safe(expr.right, floating):
+                    return False
+        return True
+
+    def divisor_is_safe(self, divisor: ast.expr, floating: set[str]) -> bool:
+        """A nonzero numeric literal, or a floating-point input, whose zero gives an infinity rather than a trap."""
+        if isinstance(divisor, ast.Constant):
+            return isinstance(divisor.value, (int, float)) and divisor.value != 0
+        return isinstance(divisor, ast.Name) and divisor.id in floating
+
+    def iterator_bounds(self, loop: LoopRegion) -> tuple[str, Any, Any] | None:
+        """``(iterator name, lowest, highest)`` value of ``loop``'s iterator, or ``None`` when an end or the
+        direction is unknown."""
+        first = loop_analysis.get_init_assignment(loop)
+        last = loop_analysis.get_loop_end(loop)
+        stride = loop_analysis.get_loop_stride(loop)
+        if first is None or last is None or stride is None:
+            return None
+        if loop_analysis._provably_le(1, stride):
+            return loop.loop_variable, first, last
+        if loop_analysis._provably_le(stride, -1):
+            return loop.loop_variable, last, first
+        return None
+
+    def read_in_bounds(self, edge: Any, state: SDFGState, sdfg: SDFG, bounds: tuple[str, Any, Any]) -> bool:
+        """Whether the read on ``edge`` stays inside its container on every iteration. Each subset bound must be
+        affine in the iterator, so its extremes over the loop sit at the iterator's lowest and highest value."""
+        if edge.data.dynamic:
+            return False
+        subset = edge.data.get_src_subset(edge, state)
+        if subset is None:
+            return False
+        for (lo, hi, _), extent in zip(subset.ndrange(), sdfg.arrays[edge.src.data].shape):
+            smallest = self.affine_extreme(lo, bounds, lowest=True)
+            largest = self.affine_extreme(hi, bounds, lowest=False)
+            if smallest is None or largest is None:
+                return False
+            if not (loop_analysis._provably_le(0, smallest) and loop_analysis._provably_le(largest, extent - 1)):
+                return False
+        return True
+
+    def affine_extreme(self, bound: Any, bounds: tuple[str, Any, Any], lowest: bool) -> Any | None:
+        """The smallest (``lowest``) or largest value ``bound`` takes over the loop, or ``None`` when ``bound`` is
+        not affine in the iterator or the sign of its slope is unknown."""
+        name, low, high = bounds
+        bound = symbolic.pystr_to_symbolic(str(bound))
+        iterator = next((s for s in bound.free_symbols if str(s) == name), None)
+        if iterator is None:
+            return bound
+        slope = symbolic.simplify(bound.diff(iterator))
+        if slope.has(iterator):
+            return None
+        if loop_analysis._provably_le(0, slope):
+            rising = True
+        elif loop_analysis._provably_le(slope, 0):
+            rising = False
+        else:
+            return None
+        return bound.subs(iterator, low if rising == lowest else high)
 
     def _branch_has_content(self, branch: ControlFlowBlock) -> bool:
         if not isinstance(branch, ControlFlowRegion):

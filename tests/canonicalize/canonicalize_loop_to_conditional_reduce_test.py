@@ -215,6 +215,114 @@ def test_refuses_else_branch_with_content():
     assert res is None
 
 
+# Guard-protected addends: the rewrite runs the true-branch on every iteration.
+
+K = dace.symbol("K")
+
+
+def _has_conditional_block(sdfg: dace.SDFG) -> bool:
+    return any(isinstance(r, ConditionalBlock) for r in sdfg.all_control_flow_regions(recursive=True))
+
+
+def test_refuses_an_addend_the_guard_keeps_in_bounds():
+    """``a[i + K]`` leaves the array for ``i >= N - K``; only the guard keeps the product from reading there. Lifting
+    would compute ``a[i + K] * 2.0`` on every iteration, so the loop must stay guarded."""
+
+    @dace.program
+    def kernel_guarded_out_of_range_read(a: dace.float64[N], out: dace.float64[1]):
+        s = 0.0
+        for i in range(N):
+            if i + K < N:
+                s = s + a[i + K] * 2.0
+        out[0] = s
+
+    sdfg = kernel_guarded_out_of_range_read.to_sdfg(simplify=True)
+    assert LoopToConditionalReduce().apply_pass(sdfg, {}) is None
+    assert _has_conditional_block(sdfg)
+
+    a = np.arange(1.0, 9.0)
+    out = np.zeros(1)
+    sdfg(a=a, out=out, N=8, K=3)
+    assert out[0] == 2.0 * a[3:].sum()
+
+
+def test_refuses_an_integer_modulo_the_guard_keeps_off_zero():
+    """``n[i] % d[i]`` divides by zero where the guard fails; lifting would evaluate it there."""
+
+    @dace.program
+    def kernel_guarded_integer_modulo(n: dace.int64[N], d: dace.int64[N], out: dace.float64[1]):
+        s = 0.0
+        for i in range(N):
+            if d[i] > 0:
+                s = s + (n[i] % d[i]) * 1.0
+        out[0] = s
+
+    sdfg = kernel_guarded_integer_modulo.to_sdfg(simplify=True)
+    assert LoopToConditionalReduce().apply_pass(sdfg, {}) is None
+    assert _has_conditional_block(sdfg)
+
+    n = np.arange(1, 9, dtype=np.int64)
+    d = np.array([3, 0, 2, 0, 3, 0, 4, 0], dtype=np.int64)
+    out = np.zeros(1)
+    sdfg(n=n, d=d, out=out, N=8)
+    assert out[0] == float(sum(x % y for x, y in zip(n, d) if y > 0))
+
+
+def test_lifts_a_floating_point_division_the_guard_keeps_off_zero():
+    """A floating-point division by zero yields an infinity, not a trap, and the mask discards it, so the guard does
+    not protect anything and the loop lifts."""
+
+    @dace.program
+    def kernel_guarded_float_division(n: dace.float64[N], d: dace.float64[N], out: dace.float64[1]):
+        s = 0.0
+        for i in range(N):
+            if d[i] != 0.0:
+                s = s + n[i] / d[i]
+        out[0] = s
+
+    sdfg = kernel_guarded_float_division.to_sdfg(simplify=True)
+    assert LoopToConditionalReduce().apply_pass(sdfg, {}) == 1
+    assert not _has_conditional_block(sdfg)
+
+    # Quotients and partial sums are exact in float64, so the reference holds under any order.
+    n = np.array([2.0, 1.0, 6.0, 1.0, 12.0, 1.0, 8.0, 1.0])
+    d = np.array([1.0, 0.0, 2.0, 0.0, 4.0, 0.0, 8.0, 0.0])
+    out = np.zeros(1)
+    sdfg(n=n, d=d, out=out, N=8)
+    assert out[0] == 2.0 + 3.0 + 3.0 + 1.0
+
+
+@pytest.mark.parametrize("descending", [False, True])
+def test_lifts_a_shifted_read_that_stays_in_bounds(descending: bool):
+    """``a[i + 1]`` over ``[0, N - 1)`` stays in bounds in either loop direction, so the bound check accepts it."""
+
+    @dace.program
+    def kernel_shifted_read_ascending(a: dace.float64[N], out: dace.float64[1]):
+        s = 0.0
+        for i in range(N - 1):
+            if a[i] > 0.0:
+                s = s + a[i + 1] * 2.0
+        out[0] = s
+
+    @dace.program
+    def kernel_shifted_read_descending(a: dace.float64[N], out: dace.float64[1]):
+        s = 0.0
+        for i in range(N - 2, -1, -1):
+            if a[i] > 0.0:
+                s = s + a[i + 1] * 2.0
+        out[0] = s
+
+    kernel = kernel_shifted_read_descending if descending else kernel_shifted_read_ascending
+    sdfg = kernel.to_sdfg(simplify=True)
+    assert LoopToConditionalReduce().apply_pass(sdfg, {}) == 1
+    assert not _has_conditional_block(sdfg)
+
+    a = np.array([1.0, -2.0, 3.0, 4.0, -5.0, 6.0, 7.0, 8.0])
+    out = np.zeros(1)
+    sdfg(a=a, out=out, N=8)
+    assert out[0] == sum(2.0 * a[i + 1] for i in range(7) if a[i] > 0.0)
+
+
 # Cross-pass non-interference.
 
 
