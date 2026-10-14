@@ -1640,7 +1640,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         access_set: set[nodes.AccessNode] = {
             other_node(edge)
             for edge in get_edges(scope_node)
-            if not edge.data.is_empty() and isinstance(other_node(edge), nodes.AccessNode)
+            if not (edge.data.is_empty() or not isinstance(other_node(edge), nodes.AccessNode))
         }
 
         return access_set
