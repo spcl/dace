@@ -273,7 +273,7 @@ def relocate_nodes(
 
     # Relocation of the edges that carry data. A passthrough connector may carry several edges, all of which are
     #  relocated together, so each connector is handled once.
-    relocated_in_conns: set[str] = set()
+    relocated_connectors: set[str] = set()
     for edge_to_move in list(state.in_edges(from_node)):
         assert isinstance(edge_to_move.dst_conn, str)
 
