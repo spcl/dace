@@ -7,5 +7,6 @@ from dace.library import register_library
 from .nodes import *
 from .environments import *
 from .utils import *
+from . import communicators
 
 register_library(__name__, "comm")

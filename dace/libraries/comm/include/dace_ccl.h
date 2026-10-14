@@ -11,7 +11,11 @@
 #include <nccl.h>
 #endif
 
+// The MPI environment defines DACE_WITH_MPI. Without it, a program communicates only over NCCL
+// communicators given to it as arguments.
+#ifdef DACE_WITH_MPI
 #include <mpi.h>
+#endif
 
 #include "dace_ccl_fwd.h"
 
@@ -168,8 +172,9 @@ static void Scatter(const void* send, void* recv, size_t count, ncclDataType_t t
  * The NCCL communicators of a DaCe program, one per MPI communicator it communicates over, and the
  * NCCL group that collects its nonblocking point-to-point operations.
  *
- * NCCL has no bootstrap of its own, so every communicator is created from an MPI communicator.
- * NCCL also has no requests: an ``Isend``/``Irecv`` joins an open NCCL group, which the next
+ * NCCL has no bootstrap of its own, so the communicators the context creates come from MPI
+ * communicators. Communicators created elsewhere (passed to the program as arguments) are not
+ * owned by the context. NCCL also has no requests: an ``Isend``/``Irecv`` joins an open NCCL group, which the next
  * blocking operation or ``Wait`` closes. That fuses an exchange of nonblocking operations into
  * one launch, which is what keeps a ring of sends and receives from deadlocking.
  **/
@@ -181,6 +186,7 @@ class NcclContext {
   // A destructor that throws terminates the process, so teardown does not check for errors.
   ~NcclContext() { Destroy(); }
 
+#ifdef DACE_WITH_MPI
   /// Creates the NCCL communicator of ``mpi_comm``. Collective over the processes of ``mpi_comm``;
   /// does nothing on a process outside it (``MPI_COMM_NULL``) or when the communicator exists.
   void Create(MPI_Comm mpi_comm) {
@@ -204,6 +210,7 @@ class NcclContext {
     }
     return it->second;
   }
+#endif
 
   /// Opens the NCCL group that the following operations join, unless one is open already.
   void Begin() {
@@ -230,12 +237,16 @@ class NcclContext {
   }
 
   void Destroy() {
+#ifdef DACE_WITH_MPI
     for (auto& entry : comms_) ncclCommDestroy(entry.second);
     comms_.clear();
+#endif
   }
 
  private:
+#ifdef DACE_WITH_MPI
   std::map<MPI_Comm, ncclComm_t> comms_;
+#endif
   std::set<GpuStream> pending_streams_;
   bool group_open_ = false;
 };

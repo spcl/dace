@@ -6,6 +6,7 @@ from dace import dtypes, symbolic
 from dace.libraries.comm import environments, utils
 from dace.libraries.comm.nodes.node import (
     CommNode,
+    NcclExpansion,
     expanded_input_connectors,
     mpi_communicator,
     nccl_communicator,
@@ -67,10 +68,8 @@ class ExpandBcastMPI(ExpandTransformation):
 
 
 @dace.library.expansion
-class ExpandBcastNCCL(ExpandTransformation):
+class ExpandBcastNCCL(NcclExpansion):
     """Broadcasts in place with ``ncclBroadcast``."""
-
-    environments = [environments.nccl.NCCL]
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):

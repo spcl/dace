@@ -10,7 +10,8 @@ class MPI:
     cmake_variables = {}
     cmake_includes = []
     cmake_libraries = ["${MPI_CXX_LIBRARIES}"]
-    cmake_compile_flags = ["-I${MPI_CXX_HEADER_DIR}"]
+    # DACE_WITH_MPI enables the parts of the communication headers that use MPI (see ``dace_ccl.h``)
+    cmake_compile_flags = ["-I${MPI_CXX_HEADER_DIR}", "-DDACE_WITH_MPI"]
     cmake_link_flags = ["${MPI_LINKER_FLAGS}"]
 
     headers = ["mpi.h"]

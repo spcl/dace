@@ -3,7 +3,16 @@ import dace.library
 import dace.properties
 import dace.sdfg.nodes
 from dace.libraries.comm import environments, utils
-from dace.libraries.comm.nodes.node import CommNode, nccl_communicator, nccl_tasklet, scaled, validate_nccl_buffers
+from dace.libraries.comm.nodes.node import (
+    CommNode,
+    NcclExpansion,
+    expanded_input_connectors,
+    mpi_communicator,
+    nccl_communicator,
+    nccl_tasklet,
+    scaled,
+    validate_nccl_buffers,
+)
 from dace.transformation.transformation import ExpandTransformation
 
 
@@ -20,24 +29,27 @@ class ExpandAllgatherMPI(ExpandTransformation):
         if inbuffer.dtype.veclen > 1:
             raise (NotImplementedError)
 
+        comm = mpi_communicator(node, parent_state)
         code = f"""
             int _commsize;
-            MPI_Comm_size(MPI_COMM_WORLD, &_commsize);
+            MPI_Comm_size({comm}, &_commsize);
             MPI_Allgather(_inbuffer, {in_count_str}, {in_mpi_dtype_str},
                           _outbuffer, {out_count_str}/_commsize, {out_mpi_dtype_str},
-                          MPI_COMM_WORLD);
+                          {comm});
             """
         tasklet = dace.sdfg.nodes.Tasklet(
-            node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
+            node.name,
+            expanded_input_connectors(node, parent_state),
+            node.out_connectors,
+            code,
+            language=dace.dtypes.Language.CPP,
         )
         return tasklet
 
 
 @dace.library.expansion
-class ExpandAllgatherNCCL(ExpandTransformation):
+class ExpandAllgatherNCCL(NcclExpansion):
     """Gathers with ``ncclAllGather``: every rank contributes its whole input buffer."""
-
-    environments = [environments.nccl.NCCL]
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):

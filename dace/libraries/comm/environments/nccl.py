@@ -6,7 +6,6 @@ import os
 
 import dace.library
 from dace.codegen import common
-from dace.libraries.comm.environments.mpi import MPI
 
 
 @dace.library.environment
@@ -14,9 +13,11 @@ class NCCL:
     """NCCL, or RCCL when DaCe targets the HIP backend. Both expose the same ``nccl*`` API, so the
     NCCL expansions serve both.
 
-    Communicators are bootstrapped over MPI: every process creates the one of ``MPI_COMM_WORLD``
-    when the program is initialized. Each process must drive its own GPU (e.g., through
-    ``CUDA_VISIBLE_DEVICES``), as NCCL rejects two ranks on one device. An NCCL installation outside
+    A node communicates over a communicator given as an argument (its ``_comm`` connector, see
+    :mod:`dace.libraries.comm.communicators`), or over one that the program bootstraps over MPI when
+    it is initialized (that of ``MPI_COMM_WORLD`` or of a process grid); only the latter needs MPI
+    (see :class:`dace.libraries.comm.nodes.node.NcclExpansion`). Each process must drive its own GPU
+    (e.g., through ``CUDA_VISIBLE_DEVICES``), as NCCL rejects two ranks on one device. An NCCL installation outside
     the default search paths is found through ``$NCCL_HOME`` (or ``$NCCL_ROOT``) or the
     ``nvidia-nccl-cu*`` Python wheel; ROCm through ``$ROCM_PATH``.
     """
@@ -30,12 +31,9 @@ class NCCL:
     # The GPU code declares the state struct too, but never uses the context it points to
     headers = {"frame": ["../include/dace_ccl.h"], "cuda": ["../include/dace_ccl_fwd.h"]}
     state_fields = ["dace::comm::NcclContext* nccl;"]
-    init_code = """
-        __state->nccl = new dace::comm::NcclContext();
-        __state->nccl->Create(MPI_COMM_WORLD);
-    """
+    init_code = "__state->nccl = new dace::comm::NcclContext();"
     finalize_code = "delete __state->nccl;"
-    dependencies = [MPI]
+    dependencies = []
 
     @staticmethod
     def uses_rccl() -> bool:

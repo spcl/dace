@@ -4,6 +4,7 @@ import dace.sdfg.nodes
 from dace.libraries.comm import environments, utils
 from dace.libraries.comm.nodes.node import (
     CommNode,
+    NcclExpansion,
     expanded_input_connectors,
     mpi_communicator,
     nccl_communicator,
@@ -48,11 +49,9 @@ class ExpandAlltoallMPI(ExpandTransformation):
 
 
 @dace.library.expansion
-class ExpandAlltoallNCCL(ExpandTransformation):
+class ExpandAlltoallNCCL(NcclExpansion):
     """Exchanges an equal chunk of the input buffer with every rank through ``ncclAlltoAll``, which
     ``dace::comm::AlltoAll`` replaces with grouped point-to-point calls where NCCL lacks it."""
-
-    environments = [environments.nccl.NCCL]
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):

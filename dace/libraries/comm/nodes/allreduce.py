@@ -5,6 +5,7 @@ import dace.sdfg.nodes
 from dace.libraries.comm import environments, utils
 from dace.libraries.comm.nodes.node import (
     CommNode,
+    NcclExpansion,
     expanded_input_connectors,
     mpi_communicator,
     nccl_communicator,
@@ -47,10 +48,8 @@ class ExpandAllreduceMPI(ExpandTransformation):
 
 
 @dace.library.expansion
-class ExpandAllreduceNCCL(ExpandTransformation):
+class ExpandAllreduceNCCL(NcclExpansion):
     """Reduces with ``ncclAllReduce``, in place if the input and output are the same container."""
-
-    environments = [environments.nccl.NCCL]
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):

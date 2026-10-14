@@ -5,6 +5,9 @@ import dace.sdfg.nodes
 from dace.libraries.comm import environments
 from dace.libraries.comm.nodes.node import (
     CommNode,
+    NcclExpansion,
+    expanded_input_connectors,
+    mpi_communicator,
     nccl_communicator,
     nccl_point_to_point,
     nccl_tasklet,
@@ -39,22 +42,25 @@ class ExpandRecvMPI(ExpandTransformation):
             count_str = "1"
         buffer_offset = 0  # this is here because the frontend already changes the ptr
         code += (
-            f"MPI_Recv(_buffer, {count_str}, {mpi_dtype_str}, int(_src), int(_tag), MPI_COMM_WORLD, MPI_STATUS_IGNORE);"
+            f"MPI_Recv(_buffer, {count_str}, {mpi_dtype_str}, int(_src), int(_tag), {mpi_communicator(node, parent_state)}, "
+            "MPI_STATUS_IGNORE);"
         )
         if ddt is not None:
             code += """// MPI_Type_free(&newtype);
             """
         tasklet = dace.sdfg.nodes.Tasklet(
-            node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
+            node.name,
+            expanded_input_connectors(node, parent_state),
+            node.out_connectors,
+            code,
+            language=dace.dtypes.Language.CPP,
         )
         return tasklet
 
 
 @dace.library.expansion
-class ExpandRecvNCCL(ExpandTransformation):
+class ExpandRecvNCCL(NcclExpansion):
     """Receives with ``ncclRecv``. NCCL has no tags: receives from a peer match its sends in order."""
-
-    environments = [environments.nccl.NCCL]
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):

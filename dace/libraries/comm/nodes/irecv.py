@@ -5,6 +5,7 @@ from dace import dtypes
 from dace.libraries.comm import environments
 from dace.libraries.comm.nodes.node import (
     CommNode,
+    NcclExpansion,
     expanded_input_connectors,
     mpi_communicator,
     nccl_communicator,
@@ -62,11 +63,9 @@ class ExpandIrecvMPI(ExpandTransformation):
 
 
 @dace.library.expansion
-class ExpandIrecvNCCL(ExpandTransformation):
+class ExpandIrecvNCCL(NcclExpansion):
     """Enqueues an ``ncclRecv`` in the open NCCL group, which the next ``Wait`` (or blocking operation)
     launches. The request is set to ``MPI_REQUEST_NULL``, as NCCL operations have none."""
-
-    environments = [environments.nccl.NCCL]
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):

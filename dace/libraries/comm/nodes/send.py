@@ -5,6 +5,9 @@ import dace.sdfg.nodes
 from dace.libraries.comm import environments
 from dace.libraries.comm.nodes.node import (
     CommNode,
+    NcclExpansion,
+    expanded_input_connectors,
+    mpi_communicator,
     nccl_communicator,
     nccl_point_to_point,
     nccl_tasklet,
@@ -39,7 +42,7 @@ class ExpandSendMPI(ExpandTransformation):
             count_str = "1"
         buffer_offset = 0
         code += f"""
-                MPI_Send(&(_buffer[{buffer_offset}]), {count_str}, {mpi_dtype_str}, int(_dest), int(_tag), MPI_COMM_WORLD);
+                MPI_Send(&(_buffer[{buffer_offset}]), {count_str}, {mpi_dtype_str}, int(_dest), int(_tag), {mpi_communicator(node, parent_state)});
                 """
         if ddt is not None:
             code += """// MPI_Type_free(&newtype);
@@ -47,7 +50,7 @@ class ExpandSendMPI(ExpandTransformation):
 
         tasklet = dace.sdfg.nodes.Tasklet(
             node.name,
-            node.in_connectors,
+            expanded_input_connectors(node, parent_state),
             node.out_connectors,
             code,
             language=dace.dtypes.Language.CPP,
@@ -57,10 +60,8 @@ class ExpandSendMPI(ExpandTransformation):
 
 
 @dace.library.expansion
-class ExpandSendNCCL(ExpandTransformation):
+class ExpandSendNCCL(NcclExpansion):
     """Sends with ``ncclSend``. NCCL has no tags: sends to a peer match its receives in order."""
-
-    environments = [environments.nccl.NCCL]
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):

@@ -3,8 +3,9 @@
 from typing import Any
 
 from dace import data, dtypes
-from dace.libraries.comm import utils
+from dace.libraries.comm import environments, utils
 from dace.sdfg import SDFG, SDFGState, nodes
+from dace.transformation.transformation import ExpandTransformation
 
 
 def input_descriptor_name(node: nodes.Node, state: Any, connector: str) -> str | None:
@@ -37,25 +38,43 @@ def validate_integer_descriptor(desc: Any, name: str) -> None:
         raise ValueError(f"{name} must be an integer")
 
 
+def external_communicator(node: nodes.Node, state: SDFGState) -> bool:
+    """Whether ``node`` communicates over a communicator given as an argument (its ``_comm`` connector)."""
+    return input_descriptor_name(node, state, "_comm") is not None
+
+
 def mpi_communicator(node: nodes.Node, state: SDFGState) -> str:
-    """The MPI communicator a node communicates over: its process grid (``_grid``), else the world."""
+    """The C++ expression of the MPI communicator a node communicates over: the handle given to its ``_comm``
+    connector (an integer holding an ``MPI_Comm``, e.g., ``mpi4py.MPI._handleof(comm)``), else its process grid
+    (``_grid``), else the world."""
+    if external_communicator(node, state):
+        return "((MPI_Comm)(_comm))"
     return "_grid" if input_descriptor_name(node, state, "_grid") else "MPI_COMM_WORLD"
 
 
 def nccl_communicator(node: nodes.Node, sdfg: SDFG, state: SDFGState) -> str:
-    """The C++ expression of the NCCL communicator a node communicates over.
+    """The C++ expression of the NCCL communicator a node communicates over: the handle given to its ``_comm``
+    connector (an integer holding an ``ncclComm_t``, see :func:`dace.libraries.comm.communicators.nccl_init_rank`),
+    else the communicator of its process grid (``_grid``), else that of ``MPI_COMM_WORLD``.
 
-    The communicator of a process grid is created in the initialization code of ``sdfg``, which runs after
-    that of the SDFG defining the grid. Creating it on first use instead would deadlock point-to-point
-    operations, since creation is collective over the grid.
+    The communicators of the world and of process grids are bootstrapped over MPI in the initialization code of the
+    program; that of a grid in the initialization code of ``sdfg``, which runs after that of the SDFG defining the
+    grid. Creating them on first use instead would deadlock point-to-point operations, since creation is collective.
+    An SDFG whose NCCL nodes all have a ``_comm`` connector needs no MPI.
     """
+    if external_communicator(node, state):
+        return "((ncclComm_t)(_comm))"
     grid = input_descriptor_name(node, state, "_grid")
     if grid is None:
+        _append_init_code_once(sdfg.root_sdfg, "__state->nccl->Create(MPI_COMM_WORLD);\n")
         return "__state->nccl->Get(MPI_COMM_WORLD)"
-    create = f"__state->nccl->Create(__state->{grid});\n"
-    if "frame" not in sdfg.init_code or create not in sdfg.init_code["frame"].as_string:
-        sdfg.append_init_code(create)
+    _append_init_code_once(sdfg, f"__state->nccl->Create(__state->{grid});\n")
     return "__state->nccl->Get(_grid)"
+
+
+def _append_init_code_once(sdfg: SDFG, code: str) -> None:
+    if "frame" not in sdfg.init_code or code not in sdfg.init_code["frame"].as_string:
+        sdfg.append_init_code(code)
 
 
 def validate_nccl_buffers(node: nodes.Node, *descs: data.Data) -> None:
@@ -118,6 +137,19 @@ def nccl_tasklet(
     )
 
 
+class NcclExpansion(ExpandTransformation):
+    """Base class of the NCCL expansions. An expansion that communicates over a communicator it bootstraps over MPI
+    (that of the world or of a process grid, see :func:`nccl_communicator`) also uses the MPI environment; one whose
+    node has a ``_comm`` connector does not."""
+
+    environments = [environments.nccl.NCCL]
+
+    @staticmethod
+    def postprocessing(sdfg, state, expansion):
+        if "_comm" not in expansion.in_connectors:
+            expansion.environments = set(expansion.environments) | {environments.mpi.MPI.full_class_path()}
+
+
 class CommNode(nodes.LibraryNode):
     """
     Abstract class representing a communication library node.
@@ -125,6 +157,10 @@ class CommNode(nodes.LibraryNode):
     Every node has an ``MPI`` implementation. Nodes that also have an ``NCCL`` implementation (which
     becomes RCCL on the HIP backend) leave ``default_implementation`` unset, so the
     ``library.comm.default_implementation`` configuration entry selects their backend.
+
+    A node communicates over the communicator given to its optional ``_comm`` connector, an integer scalar
+    holding the handle of an ``MPI_Comm`` (MPI) or ``ncclComm_t`` (NCCL) that matches its implementation. Without
+    one, it communicates over its process grid (``_grid``) or the world.
     """
 
     # Communication reads host control values (ranks, tags, requests) next to buffers in any memory

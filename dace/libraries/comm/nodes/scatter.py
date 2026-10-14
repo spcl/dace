@@ -3,8 +3,10 @@ from dace import dtypes, library
 from dace.libraries.comm import environments, utils
 from dace.libraries.comm.nodes.node import (
     CommNode,
+    NcclExpansion,
     expanded_input_connectors,
     input_descriptor_name,
+    mpi_communicator,
     nccl_communicator,
     nccl_tasklet,
     scaled,
@@ -28,23 +30,28 @@ class ExpandScatterMPI(ExpandTransformation):
 
         if inbuffer.dtype.veclen > 1:
             raise (NotImplementedError)
+        comm = mpi_communicator(node, parent_state)
         code = f"""
             int _commsize;
-            MPI_Comm_size(MPI_COMM_WORLD, &_commsize);
+            MPI_Comm_size({comm}, &_commsize);
             MPI_Scatter(_inbuffer, ({in_count_str})/_commsize, {in_mpi_dtype_str},
                         _outbuffer, {out_count_str}, {out_mpi_dtype_str},
-                        _root, MPI_COMM_WORLD);
+                        _root, {comm});
             """
-        tasklet = nodes.Tasklet(node.name, node.in_connectors, node.out_connectors, code, language=dtypes.Language.CPP)
+        tasklet = nodes.Tasklet(
+            node.name,
+            expanded_input_connectors(node, parent_state),
+            node.out_connectors,
+            code,
+            language=dtypes.Language.CPP,
+        )
         return tasklet
 
 
 @library.expansion
-class ExpandScatterNCCL(ExpandTransformation):
+class ExpandScatterNCCL(NcclExpansion):
     """Scatters equal chunks of the root's input buffer through ``ncclScatter``, which
     ``dace::comm::Scatter`` replaces with grouped point-to-point calls where NCCL lacks it."""
-
-    environments = [environments.nccl.NCCL]
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
