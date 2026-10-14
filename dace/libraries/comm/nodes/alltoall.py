@@ -9,6 +9,7 @@ from dace.libraries.comm.nodes.node import (
     mpi_communicator,
     nccl_communicator,
     nccl_tasklet,
+    pack_noncontiguous_buffers,
     scaled,
     validate_nccl_buffers,
 )
@@ -21,6 +22,7 @@ class ExpandAlltoallMPI(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
+        pack_noncontiguous_buffers(node, parent_sdfg, parent_state)
         (inbuffer, in_count_str), (outbuffer, out_count_str) = node.validate(parent_sdfg, parent_state)
         in_mpi_dtype_str = dace.libraries.comm.utils.MPI_DDT(inbuffer.dtype.base_type)
         out_mpi_dtype_str = dace.libraries.comm.utils.MPI_DDT(outbuffer.dtype.base_type)
@@ -55,6 +57,7 @@ class ExpandAlltoallNCCL(NcclExpansion):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
+        pack_noncontiguous_buffers(node, parent_sdfg, parent_state)
         (inbuffer, in_count_str), (outbuffer, _) = node.validate(parent_sdfg, parent_state)
         validate_nccl_buffers(node, inbuffer, outbuffer)
         nccl_type, factor = utils.nccl_transfer_type(inbuffer.dtype.base_type)

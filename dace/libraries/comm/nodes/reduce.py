@@ -11,6 +11,7 @@ from dace.libraries.comm.nodes.node import (
     mpi_communicator,
     nccl_communicator,
     nccl_tasklet,
+    pack_noncontiguous_buffers,
     scaled,
     validate_nccl_buffers,
 )
@@ -23,6 +24,7 @@ class ExpandReduceMPI(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
+        pack_noncontiguous_buffers(node, parent_sdfg, parent_state)
         (inbuffer, count_str), outbuffer, root, in_place = node.validate(parent_sdfg, parent_state)
         mpi_dtype_str = dace.libraries.comm.utils.MPI_DDT(inbuffer.dtype.base_type)
         if inbuffer.dtype.veclen > 1:
@@ -62,6 +64,7 @@ class ExpandReduceNCCL(NcclExpansion):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
+        pack_noncontiguous_buffers(node, parent_sdfg, parent_state)
         (inbuffer, count_str), outbuffer, _, _ = node.validate(parent_sdfg, parent_state)
         validate_nccl_buffers(node, inbuffer, outbuffer)
         nccl_type, factor = utils.nccl_reduction_type(inbuffer.dtype.base_type, node.op)

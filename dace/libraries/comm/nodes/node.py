@@ -2,8 +2,11 @@
 
 from typing import Any
 
-from dace import data, dtypes
+import sympy
+
+from dace import data, dtypes, subsets
 from dace.libraries.comm import environments, utils
+from dace.memlet import Memlet
 from dace.sdfg import SDFG, SDFGState, nodes
 from dace.transformation.transformation import ExpandTransformation
 
@@ -96,6 +99,91 @@ def mpi_average(op: str, buffer: str, count: str, comm: str, root: str | None = 
             }}
         }}
         """
+
+
+def row_major_contiguous(subset: subsets.Range, desc: data.Data) -> bool:
+    """Whether ``subset`` of ``desc`` is one contiguous run of memory in row-major (C) element order, the order in
+    which a buffer is communicated. A packed permutation (e.g., a transposed view) is contiguous memory, but not in
+    this order."""
+    if any((step != 1) == True for _, _, step in subset):  # noqa: E712 (symbolic comparison)
+        return False
+    expected = 1
+    for size, stride in reversed(list(zip(subset.size(), desc.strides))):
+        if (size == 1) == True:  # noqa: E712 (symbolic comparison)
+            continue
+        if sympy.simplify(sympy.sympify(stride) - sympy.sympify(expected)) != 0:
+            return False
+        expected = expected * size
+    return True
+
+
+def pack_noncontiguous_buffers(
+    node: nodes.LibraryNode,
+    sdfg: SDFG,
+    state: SDFGState,
+    inputs: tuple[str, ...] = ("_inbuffer",),
+    outputs: tuple[str, ...] = ("_outbuffer",),
+) -> None:
+    """
+    Routes the buffers of ``node`` that are not one contiguous run of memory (e.g., a transposed view, which
+    simplification may hand to the node in place of a contiguous copy) through contiguous transients: copies
+    into them before the node and out of them after it. The expansions communicate ``count`` elements from a
+    pointer, so they need contiguous buffers. A buffer that is both an input and an output (in place) gets one
+    transient.
+
+    :param inputs: The input connectors of buffers.
+    :param outputs: The output connectors of buffers.
+    """
+    packed: dict[tuple[str, str], str] = {}
+
+    def transient(memlet: Memlet) -> str:
+        key = (memlet.data, str(memlet.subset))
+        if key not in packed:
+            desc = sdfg.arrays[memlet.data]
+            packed[key], _ = sdfg.add_array(
+                f"__{node.label}_{memlet.data}_packed",
+                memlet.subset.size(),
+                desc.dtype,
+                storage=desc.storage,
+                transient=True,
+                find_new_name=True,
+            )
+        return packed[key]
+
+    def contiguous(memlet: Memlet) -> bool:
+        desc = sdfg.arrays[memlet.data]
+        return isinstance(desc, data.Scalar) or row_major_contiguous(memlet.subset, desc)
+
+    for edge in list(state.in_edges(node)):
+        if edge.dst_conn not in inputs or contiguous(edge.data):
+            continue
+        name = transient(edge.data)
+        full = subsets.Range.from_array(sdfg.arrays[name])
+        access = state.add_access(name)
+        state.add_edge(
+            edge.src,
+            edge.src_conn,
+            access,
+            None,
+            Memlet(data=edge.data.data, subset=edge.data.subset, other_subset=full),
+        )
+        state.remove_edge(edge)
+        state.add_edge(access, None, node, edge.dst_conn, Memlet.from_array(name, sdfg.arrays[name]))
+    for edge in list(state.out_edges(node)):
+        if edge.src_conn not in outputs or contiguous(edge.data):
+            continue
+        name = transient(edge.data)
+        full = subsets.Range.from_array(sdfg.arrays[name])
+        access = state.add_access(name)
+        state.add_edge(node, edge.src_conn, access, None, Memlet.from_array(name, sdfg.arrays[name]))
+        state.add_edge(
+            access,
+            None,
+            edge.dst,
+            edge.dst_conn,
+            Memlet(data=name, subset=full, other_subset=edge.data.subset),
+        )
+        state.remove_edge(edge)
 
 
 def validate_nccl_buffers(node: nodes.Node, *descs: data.Data) -> None:

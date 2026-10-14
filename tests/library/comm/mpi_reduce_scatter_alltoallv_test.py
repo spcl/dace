@@ -156,6 +156,33 @@ def test_wait_orders_receive_buffer():
     assert np.allclose(y, 2.0 * ((rank - 1) % size))
 
 
+@pytest.mark.mpi
+def test_allgather_of_strided_view():
+    """A transposed view as the buffer: the expansion packs it into a contiguous transient."""
+    from mpi4py import MPI
+
+    world = MPI.COMM_WORLD
+    size, rank = world.Get_size(), world.Get_rank()
+    sdfg = dace.SDFG("allgather_strided_view")
+    state = sdfg.add_state()
+    sdfg.add_array("x", [4, 3], dace.float64)
+    sdfg.add_view("xt", [3, 4], dace.float64, strides=[1, 3])
+    sdfg.add_array("out", [size * 3, 4], dace.float64)
+    xt = state.add_access("xt")
+    state.add_edge(state.add_read("x"), None, xt, "views", Memlet("x[0:4, 0:3]"))
+    node = comm.Allgather("allgather")
+    node.implementation = "MPI"
+    state.add_edge(xt, None, node, "_inbuffer", Memlet("xt[0:3, 0:4]"))
+    state.add_edge(node, "_outbuffer", state.add_write("out"), None, Memlet(f"out[0:{size * 3}, 0:4]"))
+    compiled = _compile_in_turn(sdfg)
+
+    x = np.arange(12, dtype=np.float64).reshape(4, 3) + 100 * rank
+    out = np.zeros((size * 3, 4))
+    compiled(x=x, out=out)
+    expected = np.concatenate([(np.arange(12, dtype=np.float64).reshape(4, 3) + 100 * r).T for r in range(size)])
+    assert np.allclose(out, expected)
+
+
 def _expanded_code(sdfg: dace.SDFG) -> str:
     sdfg.expand_library_nodes()
     return "\n".join(n.code.as_string for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.Tasklet))
@@ -244,6 +271,7 @@ if __name__ == "__main__":
     test_allreduce_average()
     test_alltoallv_uneven()
     test_wait_orders_receive_buffer()
+    test_allgather_of_strided_view()
     test_nccl_reduce_scatter_and_alltoallv_expansions()
     test_nccl_point_to_point_without_requests()
     test_nccl_point_to_point_with_token_requests()

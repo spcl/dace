@@ -11,6 +11,7 @@ from dace.libraries.comm.nodes.node import (
     mpi_communicator,
     nccl_communicator,
     nccl_tasklet,
+    pack_noncontiguous_buffers,
     scaled,
     validate_nccl_buffers,
 )
@@ -23,6 +24,7 @@ class ExpandBcastMPI(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
+        pack_noncontiguous_buffers(node, parent_sdfg, parent_state)
         (buffer, count_str), root = node.validate(parent_sdfg, parent_state)
         dtype = buffer.dtype.base_type
         mpi_dtype_str = "MPI_BYTE"
@@ -73,6 +75,7 @@ class ExpandBcastNCCL(NcclExpansion):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
+        pack_noncontiguous_buffers(node, parent_sdfg, parent_state)
         (buffer, count_str), _ = node.validate(parent_sdfg, parent_state)
         validate_nccl_buffers(node, buffer)
         if node.fcomm:
