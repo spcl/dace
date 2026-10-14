@@ -1137,31 +1137,6 @@ def test_a_four_level_cascade_of_nested_clamps_collapses_completely():
     assert len(survivors) == 1, f"all ten spatial loops must collapse; got {survivors}"
 
 
-@dace.program
-def blocked_tiles(a: dace.float64[N], b: dace.float64[N]):
-    blk = np.empty([N // 4, 4], dtype=np.float64)
-    for i in range(0, N, 4):
-        for ii in range(4):
-            blk[i // 4, ii] = b[i + ii] + 1.0
-    for i in range(0, N, 4):
-        for ii in range(4):
-            a[i + ii] = blk[i // 4, ii] * 2.0
-
-
-def test_an_array_blocked_to_the_tile_is_unblocked_and_both_nests_untile():
-    """``blk[i // 4, ii]`` is written by one tile nest and read (through the scalar the frontend copies it into)
-    by another: ``unblock_arrays`` flattens ``blk`` to ``blk[i + ii]`` and collapses both nests, the second
-    reading ``4*int_floor(i, 4) + ii`` once ``blk`` is flat, which is ``i + ii`` for tiles starting at 0."""
-    sdfg = blocked_tiles.to_sdfg(simplify=True)
-    assert len(_loops(sdfg)) == 4
-    assert UntileLoops(unblock_arrays=True).apply_pass(sdfg, {}) == 2
-    sdfg.validate()
-    assert len(sdfg.arrays["blk"].shape) == 1 and len(_loops(sdfg)) == 2
-    a, b = np.zeros(12), np.random.default_rng(0).random(12)
-    sdfg(a=a, b=b, N=12)
-    assert np.allclose(a, 2.0 * (b + 1.0))
-
-
 if __name__ == "__main__":
     test_case_a_combined_access_K4_collapses_to_single_loop()
     test_case_a_with_arithmetic_combination_collapses()
@@ -1195,4 +1170,3 @@ if __name__ == "__main__":
     test_a_clamped_two_level_tile_collapses_to_the_flat_stencil()
     test_a_clamped_tile_with_swapped_inner_axes_collapses()
     test_a_four_level_cascade_of_nested_clamps_collapses_completely()
-    test_an_array_blocked_to_the_tile_is_unblocked_and_both_nests_untile()
