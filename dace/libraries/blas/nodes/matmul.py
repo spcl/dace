@@ -261,8 +261,8 @@ class SpecializeMatMul(dace.transformation.transformation.ExpandTransformation):
                 alpha=node.alpha,
                 beta=beta,
                 cin=cin,
-                transA=getattr(node, "transA", False),
-                transB=getattr(node, "transB", False),
+                transA=node.transA,
+                transB=node.transB,
             )
             return gemm
         elif is_batched and len(size_a) >= 2 and len(size_b) >= 2:
@@ -283,7 +283,7 @@ class SpecializeMatMul(dace.transformation.transformation.ExpandTransformation):
             a[0].dst_conn = "_A"
             b[0].dst_conn = "_x"
             c[0].src_conn = "_y"
-            result = Gemv(node.name + "gemv", location=node.location, transA=getattr(node, "transA", False))
+            result = Gemv(node.name + "gemv", location=node.location, transA=node.transA)
         elif len(size_a) == 1 and len(size_b) == 2:
             # Vector and matrix -> GEMV with transposed matrix.
             # ``node.transA`` flipping the second operand
@@ -296,8 +296,7 @@ class SpecializeMatMul(dace.transformation.transformation.ExpandTransformation):
             a[0].dst_conn = "_x"
             b[0].dst_conn = "_A"
             c[0].src_conn = "_y"
-            net_trans = not bool(getattr(node, "transB", False))
-            result = Gemv(node.name + "gemvt", location=node.location, transA=net_trans)
+            result = Gemv(node.name + "gemvt", location=node.location, transA=not node.transB)
         elif len(size_a) == 1 and len(size_b) == 1:
             # Vector and vector -> dot product
             from dace.libraries.blas.nodes.dot import Dot
