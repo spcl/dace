@@ -5,10 +5,12 @@ import dace.sdfg.nodes
 from dace import dtypes, symbolic
 from dace.libraries.comm import environments, utils
 from dace.libraries.comm.nodes.node import (
-    CommNode,
     NcclExpansion,
+    NonblockingCommNode,
     expanded_input_connectors,
+    mpi_collective,
     mpi_communicator,
+    mpi_request_connector,
     nccl_communicator,
     nccl_tasklet,
     pack_noncontiguous_buffers,
@@ -25,6 +27,7 @@ class ExpandBcastMPI(ExpandTransformation):
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
         pack_noncontiguous_buffers(node, parent_sdfg, parent_state)
+        node.validate_request(parent_state)
         (buffer, count_str), root = node.validate(parent_sdfg, parent_state)
         dtype = buffer.dtype.base_type
         mpi_dtype_str = "MPI_BYTE"
@@ -55,18 +58,18 @@ class ExpandBcastMPI(ExpandTransformation):
             init = f"MPI_Comm __comm = MPI_Comm_f2c({node.fcomm});"
             comm = "__comm"
 
-        code = f"""
-            {init}
-            MPI_Bcast({ref}_inbuffer, {count_str}, {mpi_dtype_str}, _root, {comm});
-            _outbuffer = _inbuffer;"""
+        code = init + "\n"
+        code += mpi_collective(node, "Bcast", f"{ref}_inbuffer, {count_str}, {mpi_dtype_str}, _root, {comm}")
+        code += "_outbuffer = _inbuffer;"
         tasklet = dace.sdfg.nodes.Tasklet(
             node.name,
             expanded_input_connectors(node, parent_state),
             node.out_connectors,
             code,
             language=dtypes.Language.CPP,
+            side_effects=True,
         )
-        return tasklet
+        return mpi_request_connector(tasklet)
 
 
 @dace.library.expansion
@@ -76,6 +79,7 @@ class ExpandBcastNCCL(NcclExpansion):
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
         pack_noncontiguous_buffers(node, parent_sdfg, parent_state)
+        node.validate_request(parent_state)
         (buffer, count_str), _ = node.validate(parent_sdfg, parent_state)
         validate_nccl_buffers(node, buffer)
         if node.fcomm:
@@ -87,11 +91,11 @@ class ExpandBcastNCCL(NcclExpansion):
             f"DACE_NCCL_CHECK(ncclBroadcast({ref}_inbuffer, {ref}_outbuffer, {scaled(count_str, factor)}, "
             f"{nccl_type}, int(_root), __comm, __dace_current_stream));"
         )
-        return nccl_tasklet(node, parent_state, comm, body)
+        return nccl_tasklet(node, parent_state, comm, body, sdfg=parent_sdfg)
 
 
 @dace.library.node
-class Bcast(CommNode):
+class Bcast(NonblockingCommNode):
     # Global properties
     implementations = {
         "MPI": ExpandBcastMPI,

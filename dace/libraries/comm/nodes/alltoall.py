@@ -3,10 +3,12 @@ import dace.library
 import dace.sdfg.nodes
 from dace.libraries.comm import environments, utils
 from dace.libraries.comm.nodes.node import (
-    CommNode,
     NcclExpansion,
+    NonblockingCommNode,
     expanded_input_connectors,
+    mpi_collective,
     mpi_communicator,
+    mpi_request_connector,
     nccl_communicator,
     nccl_tasklet,
     pack_noncontiguous_buffers,
@@ -23,6 +25,7 @@ class ExpandAlltoallMPI(ExpandTransformation):
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
         pack_noncontiguous_buffers(node, parent_sdfg, parent_state)
+        node.validate_request(parent_state)
         (inbuffer, in_count_str), (outbuffer, out_count_str) = node.validate(parent_sdfg, parent_state)
         in_mpi_dtype_str = dace.libraries.comm.utils.MPI_DDT(inbuffer.dtype.base_type)
         out_mpi_dtype_str = dace.libraries.comm.utils.MPI_DDT(outbuffer.dtype.base_type)
@@ -36,18 +39,21 @@ class ExpandAlltoallMPI(ExpandTransformation):
             int size;
             MPI_Comm_size({comm}, &size);
             int sendrecv_amt = {in_count_str} / size;
-            MPI_Alltoall(_inbuffer, sendrecv_amt, {in_mpi_dtype_str}, \
-                        _outbuffer, sendrecv_amt, {out_mpi_dtype_str}, \
-                        {comm});
             """
+        code += mpi_collective(
+            node,
+            "Alltoall",
+            f"_inbuffer, sendrecv_amt, {in_mpi_dtype_str}, _outbuffer, sendrecv_amt, {out_mpi_dtype_str}, {comm}",
+        )
         tasklet = dace.sdfg.nodes.Tasklet(
             node.name,
             expanded_input_connectors(node, parent_state),
             node.out_connectors,
             code,
             language=dace.dtypes.Language.CPP,
+            side_effects=True,
         )
-        return tasklet
+        return mpi_request_connector(tasklet)
 
 
 @dace.library.expansion
@@ -58,6 +64,7 @@ class ExpandAlltoallNCCL(NcclExpansion):
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
         pack_noncontiguous_buffers(node, parent_sdfg, parent_state)
+        node.validate_request(parent_state)
         (inbuffer, in_count_str), (outbuffer, _) = node.validate(parent_sdfg, parent_state)
         validate_nccl_buffers(node, inbuffer, outbuffer)
         nccl_type, factor = utils.nccl_transfer_type(inbuffer.dtype.base_type)
@@ -69,11 +76,11 @@ class ExpandAlltoallNCCL(NcclExpansion):
             dace::comm::AlltoAll(_inbuffer, _outbuffer, {scaled("__chunk", factor)}, {nccl_type}, __comm,
                                  __dace_current_stream);
             """
-        return nccl_tasklet(node, parent_state, comm, body)
+        return nccl_tasklet(node, parent_state, comm, body, sdfg=parent_sdfg)
 
 
 @dace.library.node
-class Alltoall(CommNode):
+class Alltoall(NonblockingCommNode):
     # Global properties
     implementations = {
         "MPI": ExpandAlltoallMPI,
