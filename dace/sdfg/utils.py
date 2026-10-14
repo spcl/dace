@@ -1794,14 +1794,25 @@ def load_precompiled_sdfg(*args, **kwargs) -> csdfg.CompiledSDFG:
     return sdfg_compiler.load_precompiled_sdfg(*args, **kwargs)
 
 
+class DistributedCompilationError(RuntimeError):
+    """Compiling or loading an SDFG failed on another rank of a :func:`distributed_compile`."""
+
+
 def distributed_compile(sdfg: SDFG | None, comm, *, validate: bool = True) -> csdfg.CompiledSDFG:
     """
     Compiles an SDFG in rank 0 of MPI communicator ``comm``. Then, the compiled SDFG is loaded in all other ranks.
 
+    Every rank raises if any rank fails: rank 0 to compile, or another rank to load. A rank that holds an SDFG checks
+    that it is the one rank 0 compiled (rank-dependent programs, e.g., with the rank as a constant, cannot share a
+    build).
+
     :param sdfg: SDFG to be compiled. Ranks other than 0 only load, and may pass ``None``.
-    :param comm: MPI communicator. ``Intracomm`` is the base mpi4py communicator class.
+    :param comm: MPI communicator. ``Intracomm`` is the base mpi4py communicator class. Only ``Get_rank``, ``bcast``
+                 and ``allgather`` are used, so any object with these methods works.
     :param validate: If True, validates the SDFG prior to generating code.
     :return: Compiled SDFG.
+    :raises DistributedCompilationError: On the ranks that succeeded, if another rank failed. A rank that failed
+                                         raises its own error.
     :note: This method can be used only if the module mpi4py is installed.
     :note: Only rank 0 builds, so a rank holding the SDFG is pinned to rank 0's folder.
     :todo: Relocate this function to `dace.codegen.compiler`.
@@ -1809,23 +1820,45 @@ def distributed_compile(sdfg: SDFG | None, comm, *, validate: bool = True) -> cs
 
     rank = comm.Get_rank()
     func = None
-    folder = None
+    error = None
+    root_outcome = None
 
     # Rank 0 compiles SDFG.
     if rank == 0:
-        func = sdfg.compile(validate=validate)
-        folder = sdfg.build_folder
+        digest = sdfg.hash_sdfg()
+        try:
+            func = sdfg.compile(validate=validate)
+            root_outcome = (sdfg.build_folder, digest, None)
+        except Exception as ex:
+            error = ex
+            root_outcome = (None, None, f"{type(ex).__name__}: {ex}")
 
-    # Broadcasts build folder.
-    folder = comm.bcast(folder, root=0)
-    if sdfg is not None:
-        sdfg.build_folder = folder
+    # Broadcasts build folder (or the error).
+    folder, digest, root_error = comm.bcast(root_outcome, root=0)
+    if root_error is not None:
+        if error is not None:
+            raise error
+        raise DistributedCompilationError(f"Compilation failed on rank 0: {root_error}")
 
     # Loads compiled SDFG.
     if rank > 0:
-        func = sdfg_compiler.load_precompiled_sdfg(folder)
+        try:
+            if sdfg is not None:
+                if sdfg.hash_sdfg() != digest:
+                    raise ValueError(f"The SDFG {sdfg.name} differs from the SDFG that rank 0 compiled")
+                sdfg.build_folder = folder
+            func = sdfg_compiler.load_precompiled_sdfg(folder)
+        except Exception as ex:
+            error = ex
 
-    comm.Barrier()
+    # Every rank learns whether every rank succeeded.
+    outcomes = comm.allgather(None if error is None else f"{type(error).__name__}: {error}")
+    if error is not None:
+        raise error
+    failures = [(r, outcome) for r, outcome in enumerate(outcomes) if outcome is not None]
+    if failures:
+        details = "\n".join(f"  rank {r}: {outcome}" for r, outcome in failures)
+        raise DistributedCompilationError(f"Loading the compiled SDFG failed on other ranks:\n{details}")
 
     return func
 
