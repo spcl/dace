@@ -2178,7 +2178,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
                 if isinstance(memlet_or_node, nodes.Tasklet):
                     tasklet: nodes.Tasklet = memlet_or_node
-                    # Create a code->code node
+                    # Route the tasklet's output to the internal node through a transient scalar
                     new_scalar = tasklet.label
                     if isinstance(internal_node, nodes.NestedSDFG):
                         dtype = internal_node.sdfg.arrays[conn].dtype

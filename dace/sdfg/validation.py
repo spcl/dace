@@ -521,9 +521,12 @@ def _is_scalar(edge: "gr.MultiConnectorEdge[Memlet]", memlet_path: list["gr.Mult
 
 
 def _validate_memlet_tree_roots(state: "dace.sdfg.SDFGState", state_id: int):
-    """Data moves through AccessNodes: every non-empty memlet tree is rooted at one. A tree into scopes is rooted at
-    the edge entering its outermost entry, one out of scopes at the edge leaving its outermost exit, and an edge
-    through no scope may be rooted at either end; all other edges are inner tree edges and are skipped."""
+    """
+    Checks that every non-empty memlet tree is rooted at an AccessNode.
+
+    :param state: The state to check.
+    :param state_id: The index of the state, for error reporting.
+    """
     from dace.sdfg import nodes as nd
 
     for eid, e in enumerate(state.edges()):
