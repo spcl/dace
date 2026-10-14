@@ -17,8 +17,16 @@ from dace import dtypes
 # Re-exported for backward compatibility (they used to be defined in this module).
 from dace.codegen.ctypes_compiled_sdfg import (  # noqa: F401 [unused-import]  # Compatibility reexport.
     CtypesCompiledSDFG,
+    CtypesInterfaceSpec,
     ReloadableDLL,
 )
+from dace.codegen.nanobind_compiled_sdfg import NanobindInterfaceSpec
+
+#: A decided bindings interface: one specification class per interface, defined
+#: next to its compiled-SDFG wrapper. The ``compiler.interface`` CONFIG key
+#: stays a string ('auto'/'ctypes'/'nanobind'); the translation to a
+#: specification happens once, in :func:`~dace.codegen.compiler.resolve_compiler_interface`.
+BindingInterfaceSpec = CtypesInterfaceSpec | NanobindInterfaceSpec
 
 
 @runtime_checkable

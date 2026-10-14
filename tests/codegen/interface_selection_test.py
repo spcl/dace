@@ -62,26 +62,26 @@ def test_resolve_compiler_interface():
     config value is a string; the resolution returns a descriptor instance
     with per-compile fields at their defaults."""
     from dace.codegen.compiler import resolve_compiler_interface
-    from dace.codegen.ctypes_compiled_sdfg import CtypesInterface
-    from dace.codegen.nanobind_compiled_sdfg import NanobindInterface
+    from dace.codegen.ctypes_compiled_sdfg import CtypesInterfaceSpec
+    from dace.codegen.nanobind_compiled_sdfg import NanobindInterfaceSpec
 
     supported = _supported_sdfg("resolve_supported_probe")
     unsupported = _callback_sdfg("resolve_callback_probe")
 
     with set_temporary("compiler", "interface", value="auto"):
         decided = resolve_compiler_interface(supported)
-        assert isinstance(decided, NanobindInterface)
+        assert isinstance(decided, NanobindInterfaceSpec)
         assert decided.source_hash is None  # Filled in by compile(), not here.
-        assert isinstance(resolve_compiler_interface(unsupported), CtypesInterface)
-        assert isinstance(resolve_compiler_interface(None), CtypesInterface)
+        assert isinstance(resolve_compiler_interface(unsupported), CtypesInterfaceSpec)
+        assert isinstance(resolve_compiler_interface(None), CtypesInterfaceSpec)
     with set_temporary("compiler", "interface", value="ctypes"):
-        assert isinstance(resolve_compiler_interface(supported), CtypesInterface)
-        assert isinstance(resolve_compiler_interface(unsupported), CtypesInterface)
+        assert isinstance(resolve_compiler_interface(supported), CtypesInterfaceSpec)
+        assert isinstance(resolve_compiler_interface(unsupported), CtypesInterfaceSpec)
     with set_temporary("compiler", "interface", value="nanobind"):
         # Explicit nanobind is a demand, not a hint: the decision function
         # honors it and the codegen refusal (fail-fast) is the backstop.
-        assert isinstance(resolve_compiler_interface(supported), NanobindInterface)
-        assert isinstance(resolve_compiler_interface(unsupported), NanobindInterface)
+        assert isinstance(resolve_compiler_interface(supported), NanobindInterfaceSpec)
+        assert isinstance(resolve_compiler_interface(unsupported), NanobindInterfaceSpec)
     with set_temporary("compiler", "interface", value="no_such_interface"):
         with pytest.raises(ValueError, match="compiler.interface"):
             resolve_compiler_interface(supported)
@@ -100,10 +100,10 @@ def test_auto_falls_back_to_ctypes_without_nanobind_package(monkeypatch):
     supported = _supported_sdfg("no_nanobind_probe")
     with set_temporary("compiler", "interface", value="auto"):
         with pytest.warns(UserWarning, match="nanobind package is not installed"):
-            assert isinstance(compiler.resolve_compiler_interface(supported), compiler.CtypesInterface)
+            assert isinstance(compiler.resolve_compiler_interface(supported), compiler.CtypesInterfaceSpec)
         with warnings.catch_warnings():
             warnings.simplefilter("error")  # the warning fires once per process, not per compile
-            assert isinstance(compiler.resolve_compiler_interface(supported), compiler.CtypesInterface)
+            assert isinstance(compiler.resolve_compiler_interface(supported), compiler.CtypesInterfaceSpec)
     compiler._warn_nanobind_unavailable.cache_clear()
 
 
@@ -115,7 +115,7 @@ def test_explicit_nanobind_ignores_availability_probe(monkeypatch):
     monkeypatch.setattr(compiler, "_nanobind_available", lambda: False)
     with set_temporary("compiler", "interface", value="nanobind"):
         assert isinstance(
-            compiler.resolve_compiler_interface(_supported_sdfg("demand_probe")), compiler.NanobindInterface
+            compiler.resolve_compiler_interface(_supported_sdfg("demand_probe")), compiler.NanobindInterfaceSpec
         )
 
 

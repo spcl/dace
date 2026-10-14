@@ -32,9 +32,9 @@ from dace.codegen import command_db, compiler_family, nanobind_bindings
 from dace.codegen import ctypes_compiled_sdfg as csd
 from dace.codegen import exceptions as cgx
 from dace.codegen.codeobject import CodeObject
-from dace.codegen.compiled_sdfg import CompiledSDFGProtocol
-from dace.codegen.ctypes_compiled_sdfg import CtypesInterface
-from dace.codegen.nanobind_compiled_sdfg import NanobindCompiledSDFG, NanobindInterface
+from dace.codegen.compiled_sdfg import BindingInterfaceSpec, CompiledSDFGProtocol
+from dace.codegen.ctypes_compiled_sdfg import CtypesInterfaceSpec
+from dace.codegen.nanobind_compiled_sdfg import NanobindCompiledSDFG, NanobindInterfaceSpec
 from dace.codegen.target import TargetCodeGenerator, make_absolute
 from dace.config import Config
 
@@ -80,13 +80,6 @@ BUILD_TYPE_FLAGS_BY_FAMILY = {
 #: Clang, IntelLLVM and anything unrecognized use CMake's GNU-like defaults.
 CMAKE_BUILD_TYPE_FLAGS = BUILD_TYPE_FLAGS_BY_FAMILY["gnu"]
 
-#: A decided compiler interface: one descriptor class per interface, defined
-#: next to its compiled-SDFG wrapper. The ``compiler.interface`` CONFIG key
-#: stays a string ('auto'/'ctypes'/'nanobind'); the translation to a
-#: descriptor happens once, in :func:`resolve_compiler_interface`.
-# @CLAUDE: The name is not so good, because it is not an interface to a compiler, but to the bindiungs. Furthermore, it is a description/specification of one. So a better name would be `CompilerInterface` -> `BindingInterfaceSpec`, `NanobindInterface` -> `NanobindInterfaceSpec` and `CtypesInterface` -> `CtypesInterfaceSpec`. In addition this type alias should not be defined here but in `compiled_sdfg.py`.
-CompilerInterface = CtypesInterface | NanobindInterface
-
 
 def generate_program_folder(
     sdfg,
@@ -94,7 +87,7 @@ def generate_program_folder(
     out_path: str,
     config=None,
     folder_mode: str | None = None,
-    interface: CompilerInterface | None = None,
+    interface: BindingInterfaceSpec | None = None,
 ) -> str:
     """Writes all files required to configure and compile the DaCe program into the specified folder.
 
@@ -108,7 +101,7 @@ def generate_program_folder(
     :param folder_mode: Select which files should be saved in the program build folder;
                         if not given, ``compiler.build_folder_mode`` is used.
     :param interface: The decided Python interface for this folder, as a
-                      :data:`CompilerInterface` descriptor; if not given, it is
+                      :data:`BindingInterfaceSpec` descriptor; if not given, it is
                       resolved via :func:`resolve_compiler_interface`.
     :return: Path to the program folder.
 
@@ -192,18 +185,18 @@ def generate_program_folder(
     # it is compiled into the program library (the module *is* the library).
     if interface is None:
         interface = resolve_compiler_interface(sdfg)
-    if not isinstance(interface, (CtypesInterface, NanobindInterface)):
+    if not isinstance(interface, (CtypesInterfaceSpec, NanobindInterfaceSpec)):
         raise ValueError(
             f"Unknown value for the decided compiler interface: `{interface!r}` "
-            "(expected a CtypesInterface or NanobindInterface descriptor, "
+            "(expected a CtypesInterfaceSpec or NanobindInterfaceSpec descriptor, "
             "as returned by resolve_compiler_interface)."
         )
     if sdfg is None:
         # Raw code objects without an SDFG (e.g. helper libraries): no
         # bindings can be generated, so the folder is a ctypes-style artifact
         # regardless of the configured interface, and the marker must say so.
-        interface = CtypesInterface()
-    if isinstance(interface, NanobindInterface):
+        interface = CtypesInterfaceSpec()
+    if isinstance(interface, NanobindInterfaceSpec):
         bindings_folder = os.path.join(src_path, "cpu")
         os.makedirs(bindings_folder, exist_ok=True)
         bindings_name = f"{sdfg.name}_nanobind.cpp"
@@ -285,15 +278,15 @@ def generate_program_folder(
     return out_path
 
 
-def resolve_compiler_interface(sdfg=None) -> CompilerInterface:
+def resolve_compiler_interface(sdfg=None) -> BindingInterfaceSpec:
     """Decides the Python interface for compiling ``sdfg``.
 
     This is the single decision point for the ``compiler.interface``
     configuration: ``SDFG.compile()`` calls it once and passes the decided
     descriptor down (:func:`generate_program_folder`), so code generation
     never re-reads the configuration. The config value is a string; the
-    returned descriptor is a fresh :data:`CompilerInterface` instance (any
-    per-compile data, e.g. ``NanobindInterface.source_hash``, is filled in by
+    returned descriptor is a fresh :data:`BindingInterfaceSpec` instance (any
+    per-compile data, e.g. ``NanobindInterfaceSpec.source_hash``, is filled in by
     the caller).
 
     - ``ctypes``: always the ctypes interface.
@@ -309,21 +302,21 @@ def resolve_compiler_interface(sdfg=None) -> CompilerInterface:
     :param sdfg: The SDFG about to be compiled, or ``None`` when there is no
                  SDFG (raw code objects); ``auto`` then resolves to ``ctypes``,
                  since without an SDFG no bindings can be generated.
-    :return: A :class:`CtypesInterface` or :class:`NanobindInterface` instance.
+    :return: A :class:`CtypesInterfaceSpec` or :class:`NanobindInterfaceSpec` instance.
     """
     interface = Config.get("compiler", "interface")
     if interface not in ("ctypes", "nanobind", "auto"):
         raise ValueError(f"Unknown value for `compiler.interface`: `{interface}`")
     if interface == "ctypes":
-        return CtypesInterface()
+        return CtypesInterfaceSpec()
     if interface == "nanobind":
-        return NanobindInterface()
+        return NanobindInterfaceSpec()
     if not _nanobind_available():
         _warn_nanobind_unavailable()
-        return CtypesInterface()
+        return CtypesInterfaceSpec()
     if sdfg is None:
-        return CtypesInterface()
-    return NanobindInterface() if nanobind_bindings.unsupported_reason(sdfg) is None else CtypesInterface()
+        return CtypesInterfaceSpec()
+    return NanobindInterfaceSpec() if nanobind_bindings.unsupported_reason(sdfg) is None else CtypesInterfaceSpec()
 
 
 @cache

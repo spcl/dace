@@ -2795,7 +2795,7 @@ class SDFG(ControlFlowRegion):
 
         # Importing these outside creates an import loop
         from dace.codegen import codegen, compiler, nanobind_bindings
-        from dace.codegen.nanobind_compiled_sdfg import NanobindInterface
+        from dace.codegen.nanobind_compiled_sdfg import NanobindInterfaceSpec
 
         # Compute build folder path before running codegen
         build_folder = self.build_folder
@@ -2836,7 +2836,7 @@ class SDFG(ControlFlowRegion):
         #  'auto' detector inspects the arglist, which requires the resolved
         #  external nested SDFGs of the compile copy above.
         interface = compiler.resolve_compiler_interface(sdfg)
-        nanobind_interface = isinstance(interface, NanobindInterface)
+        nanobind_interface = isinstance(interface, NanobindInterfaceSpec)
 
         # Content-verified module reuse (nanobind; compiler.nanobind_reuse_loaded,
         # default on): if THIS identity (build folder, name) is already loaded and
@@ -3030,9 +3030,9 @@ class SDFG(ControlFlowRegion):
             explicitly and call ``safe_call()`` on the returned object.
         """
         from dace.codegen import compiler
-        from dace.codegen.nanobind_compiled_sdfg import NanobindInterface
+        from dace.codegen.nanobind_compiled_sdfg import NanobindInterfaceSpec
 
-        if isinstance(compiler.resolve_compiler_interface(self), NanobindInterface):
+        if isinstance(compiler.resolve_compiler_interface(self), NanobindInterfaceSpec):
             # Under nanobind a collision rename may recompile into a different
             #  build folder, and `SDFG.get_latest_report` would then not find
             #  the reports - hence unsupported here.

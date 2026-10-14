@@ -30,10 +30,10 @@ from dace.config import Config
 
 
 @dataclasses.dataclass
-class CtypesInterface:
-    """Descriptor for a decided ctypes compilation (see ``resolve_compiler_interface``).
+class CtypesInterfaceSpec:
+    """Specification of a decided ctypes compilation (see ``resolve_compiler_interface``).
 
-    The ctypes interface needs no per-compile data, so the descriptor only
+    The ctypes interface needs no per-compile data, so the specification only
     carries the interface's identity.
     """
 

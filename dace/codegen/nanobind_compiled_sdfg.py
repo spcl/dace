@@ -17,12 +17,11 @@ import numpy as np
 
 import dace
 from dace import dtypes, hooks
-from dace.codegen import compiler
 
 
 @dataclasses.dataclass
-class NanobindInterface:
-    """Descriptor for a decided nanobind compilation (see ``resolve_compiler_interface``).
+class NanobindInterfaceSpec:
+    """Specification of a decided nanobind compilation (see ``resolve_compiler_interface``).
 
     Carries the pre-codegen content hash of the source SDFG from ``compile()``
     to the bindings generator, which bakes it into the module for
@@ -314,6 +313,8 @@ class NanobindCompiledSDFG:
         Output travels through the in/out arguments (return values are not
         supported); delegates to the interface-agnostic ``safe_call_precompiled``.
         """
+        from dace.codegen import compiler  # Avoid import loop
+
         return compiler.safe_call_precompiled(self._sdfg, args, kwargs)
 
     def get_workspace_sizes(self, *args: Any, **kwargs: Any) -> dict[dtypes.StorageType, int]:
