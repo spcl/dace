@@ -103,6 +103,11 @@ def guards_nothing(state: SDFGState, edge: MultiConnectorEdge[Memlet]) -> bool:
     """
     if state.degree(edge.src) < 2 or state.degree(edge.dst) < 2:
         return False  # the edge is all that keeps an endpoint in the state
+    scope = state.scope_dict()
+    if (state.in_degree(edge.dst) == 1 and scope[edge.dst] is not None) or (
+        state.out_degree(edge.src) == 1 and scope[edge.src] is not None
+    ):
+        return False  # the edge is all that keeps an endpoint in its scope
     roots = viewed_data(state)
     after = reachable(state, edge.dst, True, None)
     for before in reachable(state, edge.src, False, None):

@@ -95,6 +95,45 @@ def test_ordering_edge_guarding_a_write_after_read_is_kept_in_order():
     assert np.allclose(b, np.arange(5.0) + 1.0) and np.allclose(a, 2.0 * np.arange(5.0))
 
 
+def test_ordering_edge_that_anchors_an_access_node_in_its_map_is_kept():
+    """Inside a map, an access node read from outside data and reached only by the nest's ordering edge
+    belongs to the map through that edge alone (velocity_tendencies after the GPU offload). Dropping it
+    leaves the node at the top level still feeding a node inside the map, and every walk of the map body
+    then counts the body twice."""
+    sdfg = dace.SDFG("ordering_anchors_in_map")
+    for array in ("x", "y", "c", "d"):
+        sdfg.add_array(array, [N], dace.float64)
+    state = sdfg.add_state("main", is_start_block=True)
+    inner = dace.SDFG("ordering_anchors_in_map_nest")
+    inner.add_array("u", [N], dace.float64)
+    inner.add_array("v", [N], dace.float64)
+    inner.add_symbol("i", dace.int64)
+    body = inner.add_state("body", is_start_block=True)
+    plus = body.add_tasklet("plus_one", {"a"}, {"b"}, "b = a + 1.0")
+    body.add_edge(body.add_read("u"), None, plus, "a", dace.Memlet("u[i]"))
+    body.add_edge(plus, "b", body.add_write("v"), None, dace.Memlet("v[i]"))
+    entry, exit_node = state.add_map("lanes", {"i": "0:N"})
+    nest = state.add_nested_sdfg(inner, {"u"}, {"v"}, symbol_mapping={"N": N, "i": "i"})
+    state.add_memlet_path(state.add_read("x"), entry, nest, dst_conn="u", memlet=dace.Memlet("x[0:N]"))
+    state.add_memlet_path(nest, exit_node, state.add_write("y"), src_conn="v", memlet=dace.Memlet("y[0:N]"))
+    anchored = state.add_access("c")
+    state.add_nedge(nest, anchored, dace.Memlet())
+    double = state.add_tasklet("double", {"a"}, {"b"}, "b = 2.0 * a")
+    state.add_edge(anchored, None, double, "a", dace.Memlet("c[i]"))
+    state.add_memlet_path(double, exit_node, state.add_write("d"), src_conn="b", memlet=dace.Memlet("d[i]"))
+    sdfg.validate()
+    assert state.scope_dict()[anchored] is entry
+
+    RouteOrderingThroughData().apply_pass(sdfg, {})
+    state._clear_scopedict_cache()
+    assert state.scope_dict()[anchored] is entry, "the access node left its map"
+    sdfg.validate()
+    x, y, c, d = np.arange(5.0), np.zeros(5), np.arange(5.0) + 3.0, np.zeros(5)
+    sdfg(x=x, y=y, c=c, d=d, N=5)
+    assert np.allclose(y, x + 1.0) and np.allclose(d, 2.0 * c)
+
+
 if __name__ == "__main__":
     test_ordering_edge_guarding_no_conflict_is_dropped_and_the_nest_inlines()
     test_ordering_edge_guarding_a_write_after_read_is_kept_in_order()
+    test_ordering_edge_that_anchors_an_access_node_in_its_map_is_kept()
