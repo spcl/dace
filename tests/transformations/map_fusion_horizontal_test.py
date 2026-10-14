@@ -744,6 +744,36 @@ def test_horizontal_fusion_relocates_a_connector_with_several_edges_once():
         state.add_edge(exit_node, "OUT_1", state.add_access(name), None, dace.Memlet(f"{name}[0:10, 0:3]"))
 
     assert sdfg.apply_transformations_repeated(dftrans.MapFusionHorizontal()) == 1
+@pytest.mark.parametrize("binding", ["same_node", "same_data", "other_data", "written_data"])
+def test_horizontal_fusion_of_maps_sharing_a_dynamic_map_range(binding: str):
+    """Both Maps are bounded by a dynamic map range ``lim``; they fuse only if both read the same value."""
+    sdfg = dace.SDFG(unique_name(f"shared_dynamic_map_range_{binding}"))
+    for name in ("bound", "other_bound"):
+        sdfg.add_array(name, [1], dace.int64)
+    state = sdfg.add_state(is_start_block=True)
+    first_source = state.add_access("bound")
+    if binding == "same_node":
+        second_source = first_source
+    else:
+        second_source = state.add_access("other_bound" if binding == "other_data" else "bound")
+    if binding == "written_data":
+        writer = state.add_tasklet("set_bound", {}, {"__out"}, "__out = 4")
+        state.add_edge(writer, "__out", state.add_access("bound"), None, dace.Memlet("bound[0]"))
+    for name, source in (("A", first_source), ("B", second_source)):
+        sdfg.add_array(name, [10], dace.float64)
+        _, entry, _ = state.add_mapped_tasklet(
+            f"map_{name}",
+            {"__i": "0:lim"},
+            {},
+            "__out = 1.0",
+            {"__out": dace.Memlet(f"{name}[__i]")},
+            external_edges=True,
+        )
+        entry.add_in_connector("lim")
+        state.add_edge(source, None, entry, "lim", dace.Memlet(f"{source.data}[0]"))
+
+    fuses = binding in ("same_node", "same_data")
+    assert sdfg.apply_transformations_repeated(dftrans.MapFusionHorizontal(), validate_all=True) == int(fuses)
     sdfg.validate()
 
 
@@ -766,3 +796,7 @@ if __name__ == "__main__":
     test_horizontal_fusion_rejects_a_disagreeing_dynamic_map_range("written_data")
     test_horizontal_fusion_rejects_a_dynamic_map_range_bound_by_tasklets()
     test_horizontal_fusion_relocates_a_connector_with_several_edges_once()
+    test_horizontal_fusion_of_maps_sharing_a_dynamic_map_range("same_node")
+    test_horizontal_fusion_of_maps_sharing_a_dynamic_map_range("same_data")
+    test_horizontal_fusion_of_maps_sharing_a_dynamic_map_range("other_data")
+    test_horizontal_fusion_of_maps_sharing_a_dynamic_map_range("written_data")
