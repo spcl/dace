@@ -1758,8 +1758,9 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         assert inner_data in inner_sdfg.arrays
         inner_desc = inner_sdfg.arrays[inner_data]
 
-        # We do not allow that the data is used as input and output; connectors carry the inner name.
-        if inner_data in nsdfg.in_connectors and inner_data in nsdfg.out_connectors:
+        # `inner_data` is a connector on the side of `outer_edge`; the same connector on the other side means the
+        #  nested SDFG reads and writes the data in place, which is not handled.
+        if inner_data in (nsdfg.out_connectors if is_incomming_edge else nsdfg.in_connectors):
             return False
 
         # The inner data is an array or a scalar.
