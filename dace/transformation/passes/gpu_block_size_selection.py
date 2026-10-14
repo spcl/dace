@@ -37,6 +37,7 @@ from typing import Any
 
 from dace import SDFG, dtypes
 from dace.codegen.common import cuda_emits_tree_reductions
+from dace.config import Config
 from dace.optionals import required
 from dace.sdfg import nodes
 from dace.sdfg.state import SDFGState
@@ -103,6 +104,9 @@ def domain_matched_block(extents: list, unit_stride: list[int] | None = None) ->
     unit_stride = unit_stride or [0] * rank
     constants = [constant_extent(extent) for extent in extents]
     caps = [next_power_of_two(c) if c is not None else threads for c in constants]
+    if rank == 3:
+        # The z axis holds fewer threads than x and y; past the limit the kernel cannot launch.
+        caps[2] = min(caps[2], Config.get("compiler", "cuda", "block_size_lastdim_limit"))
     block = [1] * rank
 
     def priority(axis: int) -> tuple:

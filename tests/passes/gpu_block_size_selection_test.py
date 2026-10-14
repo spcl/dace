@@ -291,6 +291,14 @@ def test_a_pending_warp_tile_reaches_codegen_without_a_block_size_conflict():
     assert "dim3(64, 1, 1)" in code, code
 
 
+def test_the_z_axis_stays_within_the_last_dimension_limit():
+    """A 3-D map whose only wide axis is the outermost puts that axis on z, which holds at most
+    ``compiler.cuda.block_size_lastdim_limit`` threads; past it the kernel cannot launch (seissol_tensor_contraction
+    asked for 512)."""
+    limit = dace.Config.get("compiler", "cuda", "block_size_lastdim_limit")
+    assert domain_matched_block([1, 1, dace.symbol("N")]) == [1, 1, limit]
+
+
 def test_pass_is_idempotent():
     sdfg, _ = build_2d_map_sdfg(dtypes.ScheduleType.GPU_Device)
     select_gpu_device_block_size(sdfg)
@@ -317,6 +325,7 @@ if __name__ == "__main__":
     test_gpu_transform_end_to_end()
     test_gpu_transform_1d_end_to_end()
     test_config_default_block_size_is_128()
+    test_the_z_axis_stays_within_the_last_dimension_limit()
     test_pass_is_idempotent()
     test_pass_skips_a_kernel_that_already_has_a_thread_block_map()
     test_pass_skips_a_kernel_whose_warp_tile_is_not_promoted_yet()
