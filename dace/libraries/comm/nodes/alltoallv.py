@@ -47,8 +47,8 @@ class ExpandAlltoallvMPI(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
+        node.validate_nonblocking(parent_sdfg, parent_state)
         pack_noncontiguous_buffers(node, parent_sdfg, parent_state)
-        node.validate_request(parent_state)
         inbuffer, outbuffer = node.validate(parent_sdfg, parent_state)
         if inbuffer.dtype.veclen > 1:
             raise NotImplementedError("MPI expansions do not support vector types")
@@ -80,7 +80,7 @@ class ExpandAlltoallvNCCL(NcclExpansion):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
-        pack_noncontiguous_buffers(node, parent_sdfg, parent_state, stream_ordered=True)
+        pack_noncontiguous_buffers(node, parent_sdfg, parent_state)
         inbuffer, outbuffer = node.validate(parent_sdfg, parent_state)
         validate_nccl_buffers(node, inbuffer, outbuffer)
         nccl_type, factor = utils.nccl_transfer_type(inbuffer.dtype.base_type)

@@ -26,8 +26,8 @@ class ExpandAllreduceMPI(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
+        node.validate_nonblocking(parent_sdfg, parent_state)
         pack_noncontiguous_buffers(node, parent_sdfg, parent_state)
-        node.validate_request(parent_state)
         if node.nonblocking and utils.is_average(node.op):
             raise NotImplementedError(
                 "The average of a nonblocking MPI reduction: reduce the sum and divide after the Wait"
@@ -66,7 +66,7 @@ class ExpandAllreduceNCCL(NcclExpansion):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
-        pack_noncontiguous_buffers(node, parent_sdfg, parent_state, stream_ordered=True)
+        pack_noncontiguous_buffers(node, parent_sdfg, parent_state)
         (inbuffer, count_str), outbuffer, _ = node.validate(parent_sdfg, parent_state)
         validate_nccl_buffers(node, inbuffer, outbuffer)
         nccl_type, factor = utils.nccl_reduction_type(inbuffer.dtype.base_type, node.op)
