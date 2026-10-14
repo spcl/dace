@@ -212,6 +212,32 @@ def test_nccl_point_to_point_without_requests():
     assert "__state->nccl->Wait();" in code
 
 
+def test_nccl_point_to_point_with_token_requests():
+    """An integer request container orders an NCCL Isend before its Wait without MPI types."""
+    sdfg = dace.SDFG("nccl_p2p_token_requests")
+    state = sdfg.add_state()
+    sdfg.add_array("x", [8], dace.float64, storage=dace.StorageType.GPU_Global)
+    for name in ("peer", "tag"):
+        sdfg.add_scalar(name, dace.int32)
+    sdfg.add_scalar("token", dace.int32, transient=True)
+    isend = comm.Isend("isend")
+    wait = comm.Wait("wait")
+    wait.remove_out_connector("_stat_tag")
+    wait.remove_out_connector("_stat_source")
+    for node in (isend, wait):
+        node.implementation = "NCCL"
+    state.add_edge(state.add_read("x"), None, isend, "_buffer", Memlet("x[0:8]"))
+    state.add_edge(state.add_read("peer"), None, isend, "_dest", Memlet("peer[0]"))
+    state.add_edge(state.add_read("tag"), None, isend, "_tag", Memlet("tag[0]"))
+    token = state.add_access("token")
+    state.add_edge(isend, "_request", token, None, Memlet("token[0]"))
+    state.add_edge(token, None, wait, "_request", Memlet("token[0]"))
+    sdfg.validate()
+    code = _expanded_code(sdfg)
+    assert "MPI_REQUEST_NULL" not in code
+    assert "_request = 0;" in code
+
+
 if __name__ == "__main__":
     for op in ["MPI_SUM", "avg", "max"]:
         test_reduce_scatter(op)
@@ -220,3 +246,4 @@ if __name__ == "__main__":
     test_wait_orders_receive_buffer()
     test_nccl_reduce_scatter_and_alltoallv_expansions()
     test_nccl_point_to_point_without_requests()
+    test_nccl_point_to_point_with_token_requests()
