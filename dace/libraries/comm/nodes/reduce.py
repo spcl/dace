@@ -7,6 +7,7 @@ from dace.libraries.comm.nodes.node import (
     CommNode,
     NcclExpansion,
     expanded_input_connectors,
+    mpi_average,
     mpi_communicator,
     nccl_communicator,
     nccl_tasklet,
@@ -44,6 +45,7 @@ class ExpandReduceMPI(ExpandTransformation):
         code += f"MPI_Reduce(_inbuffer, _outbuffer, {count_str}, {mpi_dtype_str}, {op}, _root, {comm});"
         if in_place:
             code += "}"
+        code += mpi_average(node.op, "_outbuffer", count_str, comm, root="_root")
         tasklet = dace.sdfg.nodes.Tasklet(
             node.name,
             expanded_input_connectors(node, parent_state),

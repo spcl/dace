@@ -11,5 +11,7 @@ from .reduce import Reduce
 from .allreduce import Allreduce
 from .allgather import Allgather
 from .alltoall import Alltoall
+from .alltoallv import Alltoallv
+from .reduce_scatter import ReduceScatter
 from .dummy import Dummy
 from .redistribute import Redistribute

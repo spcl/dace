@@ -18,12 +18,11 @@ class ExpandWaitMPI(ExpandTransformation):
         code = """
             MPI_Status _s;
             MPI_Wait(_request, &_s);
-            _stat_tag = _s.MPI_TAG;
-            _stat_source = _s.MPI_SOURCE;
             """
+        code += _status_code(node, parent_state, "_s.MPI_TAG", "_s.MPI_SOURCE")
         tasklet = dace.sdfg.nodes.Tasklet(
             node.name,
-            node.in_connectors,
+            expanded_input_connectors(node, parent_state),
             node.out_connectors,
             code,
             language=dace.dtypes.Language.CPP,
@@ -38,17 +37,14 @@ class ExpandWaitMPI(ExpandTransformation):
 @dace.library.expansion
 class ExpandWaitNCCL(ExpandTransformation):
     """Completes every pending NCCL ``Isend``/``Irecv``: launches their group and synchronizes their
-    streams. NCCL reports no status, so the source and tag outputs are set to -1."""
+    streams. NCCL has no requests, so the ``_request`` connector is optional, and reports no status, so
+    the source and tag outputs are set to -1."""
 
     environments = [environments.nccl.NCCL]
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
-        code = """
-            __state->nccl->Wait();
-            _stat_tag = -1;
-            _stat_source = -1;
-            """
+        code = "__state->nccl->Wait();\n" + _status_code(node, parent_state, "-1", "-1")
         tasklet = dace.sdfg.nodes.Tasklet(
             node.name,
             expanded_input_connectors(node, parent_state),
@@ -60,8 +56,28 @@ class ExpandWaitNCCL(ExpandTransformation):
         return tasklet
 
 
+def _status_code(node: dace.sdfg.nodes.LibraryNode, state, tag: str, source: str) -> str:
+    """Assignments of ``tag`` and ``source`` to the status outputs of a ``Wait`` that are connected."""
+    connected = {e.src_conn for e in state.out_edges(node)}
+    code = ""
+    if "_stat_tag" in connected:
+        code += f"_stat_tag = {tag};\n"
+    if "_stat_source" in connected:
+        code += f"_stat_source = {source};\n"
+    return code
+
+
 @dace.library.node
 class Wait(CommNode):
+    """
+    Completes a nonblocking operation (``Isend``, ``Irecv``) given its request (``_request``), and returns the tag
+    and source of a receive (``_stat_tag``, ``_stat_source``; optional).
+
+    Other connectors only order the wait in the dataflow: connect the buffer of the operation through an input and an
+    output connector (e.g., ``_in_buffer``, ``_out_buffer``) so that its readers (of a receive) or writers (of a send)
+    follow the wait. The expansions ignore them.
+    """
+
     # Global properties
     implementations = {
         "MPI": ExpandWaitMPI,
@@ -104,7 +120,7 @@ class ExpandWaitallMPI(ExpandTransformation):
             """
         tasklet = dace.sdfg.nodes.Tasklet(
             node.name,
-            node.in_connectors,
+            expanded_input_connectors(node, parent_state),
             node.out_connectors,
             code,
             language=dace.dtypes.Language.CPP,
@@ -119,13 +135,12 @@ class ExpandWaitallMPI(ExpandTransformation):
 @dace.library.expansion
 class ExpandWaitallNCCL(ExpandTransformation):
     """Completes every pending NCCL ``Isend``/``Irecv``: launches their group and synchronizes their
-    streams."""
+    streams. NCCL has no requests, so the ``_request`` connector is optional."""
 
     environments = [environments.nccl.NCCL]
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
-        node.validate(parent_sdfg, parent_state)
         tasklet = dace.sdfg.nodes.Tasklet(
             node.name,
             expanded_input_connectors(node, parent_state),
@@ -139,6 +154,11 @@ class ExpandWaitallNCCL(ExpandTransformation):
 
 @dace.library.node
 class Waitall(CommNode):
+    """
+    Completes the nonblocking operations of an array of requests (``_request``). Other connectors only order the
+    wait in the dataflow, as for :class:`Wait`.
+    """
+
     # Global properties
     implementations = {
         "MPI": ExpandWaitallMPI,

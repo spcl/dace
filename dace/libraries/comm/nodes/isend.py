@@ -76,7 +76,8 @@ class ExpandIsendMPI(ExpandTransformation):
 @dace.library.expansion
 class ExpandIsendNCCL(NcclExpansion):
     """Enqueues an ``ncclSend`` in the open NCCL group, which the next ``Wait`` (or blocking operation)
-    launches. The request is set to ``MPI_REQUEST_NULL``, as NCCL operations have none."""
+    launches. NCCL operations have no requests: the ``_request`` output is optional and set to
+    ``MPI_REQUEST_NULL`` (which needs MPI) if connected."""
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
@@ -85,7 +86,8 @@ class ExpandIsendNCCL(NcclExpansion):
         comm = nccl_communicator(node, parent_sdfg, parent_state)
         body = "__state->nccl->Track(__dace_current_stream);\n"
         body += nccl_point_to_point("ncclSend", "_buffer", "int(_dest)", count_str, buffer.dtype.base_type, ddt)
-        body += "*_request = MPI_REQUEST_NULL;\n"
+        if any(e.src_conn == "_request" for e in parent_state.out_edges(node)):
+            body += "*_request = MPI_REQUEST_NULL;\n"
         tasklet = nccl_tasklet(node, parent_state, comm, body, blocking=False)
         tasklet.out_connectors = {
             c: (dtypes.pointer(dtypes.opaque("MPI_Request")) if c == "_request" else t)

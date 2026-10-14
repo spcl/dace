@@ -70,9 +70,8 @@ static void SynchronizeStream(GpuStream stream) {
 #endif
 #endif
 
-#if !defined(DACE_NCCL_NATIVE_ALLTOALL) || !defined(DACE_NCCL_NATIVE_GATHER_SCATTER)
 /// The size in bytes of one element of an NCCL type, to address the per-rank chunks of a buffer.
-static size_t NcclTypeSize(ncclDataType_t type) {
+static inline size_t NcclTypeSize(ncclDataType_t type) {
   switch (type) {
     case ncclInt8:
     case ncclUint8:
@@ -96,12 +95,11 @@ static size_t NcclTypeSize(ncclDataType_t type) {
 }
 
 /// The ``index``-th chunk of ``bytes`` bytes of ``buffer``.
-static const void* Chunk(const void* buffer, int index, size_t bytes) {
+static inline const void* Chunk(const void* buffer, int index, size_t bytes) {
   return static_cast<const char*>(buffer) + index * bytes;
 }
 
-static void* Chunk(void* buffer, int index, size_t bytes) { return static_cast<char*>(buffer) + index * bytes; }
-#endif
+static inline void* Chunk(void* buffer, int index, size_t bytes) { return static_cast<char*>(buffer) + index * bytes; }
 
 /// Exchanges ``count`` elements with every rank, as ``MPI_Alltoall``: the chunk at ``send + i * count``
 /// goes to rank ``i``, and the chunk from rank ``i`` lands at ``recv + i * count``.
@@ -122,6 +120,27 @@ static void AlltoAll(const void* send, void* recv, size_t count, ncclDataType_t 
   }
   DACE_NCCL_CHECK(ncclGroupEnd());
 #endif
+}
+
+/// Exchanges a different number of elements with every rank, as ``MPI_Alltoallv``: ``send_counts[i]`` elements at
+/// ``send + send_displs[i]`` go to rank ``i``, and ``recv_counts[i]`` elements from rank ``i`` land at
+/// ``recv + recv_displs[i]`` (counts and displacements in elements of ``type``).
+static void AlltoAllv(const void* send, const size_t* send_counts, const size_t* send_displs, void* recv,
+                      const size_t* recv_counts, const size_t* recv_displs, ncclDataType_t type, ncclComm_t comm,
+                      GpuStream stream) {
+  int size;
+  DACE_NCCL_CHECK(ncclCommCount(comm, &size));
+  const size_t bytes = NcclTypeSize(type);
+  DACE_NCCL_CHECK(ncclGroupStart());
+  for (int peer = 0; peer < size; ++peer) {
+    if (send_counts[peer] > 0) {
+      DACE_NCCL_CHECK(ncclSend(Chunk(send, 1, send_displs[peer] * bytes), send_counts[peer], type, peer, comm, stream));
+    }
+    if (recv_counts[peer] > 0) {
+      DACE_NCCL_CHECK(ncclRecv(Chunk(recv, 1, recv_displs[peer] * bytes), recv_counts[peer], type, peer, comm, stream));
+    }
+  }
+  DACE_NCCL_CHECK(ncclGroupEnd());
 }
 
 /// Gathers ``count`` elements of every rank to ``root``, as ``MPI_Gather``: the elements of rank ``i``

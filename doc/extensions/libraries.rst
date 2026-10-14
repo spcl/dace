@@ -380,11 +380,13 @@ SciPy call is encountered.
   SpMM, SpMV) with pure, Intel MKL, and cuSPARSE expansions.
 * :mod:`dace.libraries.comm` - Point-to-point and collective communication
   (Send, Recv, Isend, Irecv, Wait, Bcast, Reduce, Allreduce, Allgather,
-  Alltoall, Scatter, Gather, ...) for distributed SDFGs, with MPI and NCCL
-  expansions (NCCL becomes RCCL on the HIP backend). The
-  ``library.comm.default_implementation`` configuration entry selects the
-  backend; the NCCL expansions communicate GPU global memory over
-  communicators bootstrapped with MPI, one GPU per rank. Nodes built on MPI
+  ReduceScatter, Alltoall, Alltoallv, Scatter, Gather, ...) for distributed
+  SDFGs, with MPI and NCCL expansions (NCCL becomes RCCL on the HIP backend).
+  The ``library.comm.default_implementation`` configuration entry selects the
+  backend; the NCCL expansions communicate GPU global memory, one GPU per rank.
+  A node communicates over the communicator given to its ``_comm`` connector
+  (an integer handle, see :mod:`dace.libraries.comm.communicators`), else over
+  its process grid or the world, which NCCL bootstraps with MPI. Nodes built on MPI
   datatypes (Redistribute, BlockScatter, BlockGather) are MPI-only. Formerly
   ``dace.libraries.mpi``, which remains as a deprecated alias.
 * :mod:`dace.libraries.pblas` - Distributed dense linear algebra via

@@ -53,7 +53,8 @@ def create_vector_ddt(memlet, data):
     return ddt
 
 
-#: Canonical reduction operator names, from MPI operator names and :class:`dace.dtypes.ReductionType`.
+#: Canonical reduction operator names, from MPI operator names and :class:`dace.dtypes.ReductionType`. The average
+#: (``avg``) has no MPI operator: MPI expansions sum and divide by the number of processes (see :func:`is_average`).
 _REDUCTION_OPS = {
     "MPI_SUM": "sum",
     "MPI_PROD": "prod",
@@ -75,9 +76,10 @@ _REDUCTION_OPS = {
     dtypes.ReductionType.Bitwise_And.name: "band",
     dtypes.ReductionType.Bitwise_Or.name: "bor",
     dtypes.ReductionType.Bitwise_Xor.name: "bxor",
+    "Avg": "avg",
 }
 
-_NCCL_OPS = {"sum": "ncclSum", "prod": "ncclProd", "max": "ncclMax", "min": "ncclMin"}
+_NCCL_OPS = {"sum": "ncclSum", "prod": "ncclProd", "max": "ncclMax", "min": "ncclMin", "avg": "ncclAvg"}
 
 _NCCL_TYPES = {
     dtypes.int8: "ncclInt8",
@@ -97,8 +99,8 @@ _COMPLEX_COMPONENTS = {dtypes.complex64: dtypes.float32, dtypes.complex128: dtyp
 
 
 def reduction_op(op: str) -> str:
-    """The canonical name (``sum``, ``prod``, ``max``, ``min``, ``land``, ...) of a reduction operator
-    given by its MPI name (``MPI_SUM``), :class:`dace.dtypes.ReductionType` name (``Sum``), or
+    """The canonical name (``sum``, ``prod``, ``max``, ``min``, ``avg``, ``land``, ...) of a reduction
+    operator given by its MPI name (``MPI_SUM``), :class:`dace.dtypes.ReductionType` name (``Sum``), or
     canonical name."""
     if op in _REDUCTION_OPS:
         return _REDUCTION_OPS[op]
@@ -107,12 +109,19 @@ def reduction_op(op: str) -> str:
     raise ValueError(f"Unknown reduction operator {op}")
 
 
+def is_average(op: str) -> bool:
+    """Whether ``op`` is the average, which MPI expansions compute as a sum divided by the number of processes."""
+    return not op.startswith("MPI_") and reduction_op(op) == "avg"
+
+
 def mpi_op(op: str) -> str:
-    """The MPI operator of a reduction operator. MPI operators without a portable equivalent (e.g.,
-    ``MPI_MAXLOC``) are passed through."""
+    """The MPI operator of a reduction operator; ``MPI_SUM`` for the average (see :func:`is_average`). MPI
+    operators without a portable equivalent (e.g., ``MPI_MAXLOC``) are passed through."""
     if op.startswith("MPI_") and op not in _REDUCTION_OPS:
         return op
     canonical = reduction_op(op)
+    if canonical == "avg":
+        return "MPI_SUM"
     return next(name for name, value in _REDUCTION_OPS.items() if value == canonical and name.startswith("MPI_"))
 
 
@@ -134,9 +143,9 @@ def nccl_transfer_type(dtype: dtypes.typeclass) -> tuple[str, int]:
 
 def nccl_reduction_type(dtype: dtypes.typeclass, op: str) -> tuple[str, int]:
     """The NCCL type that reduces elements of ``dtype`` with ``op``, and how many of them make up one
-    element. Complex numbers are summed as pairs of reals."""
+    element. Complex numbers are summed (and averaged) as pairs of reals."""
     if dtype in _NCCL_TYPES:
         return _NCCL_TYPES[dtype], 1
-    if dtype in _COMPLEX_COMPONENTS and reduction_op(op) == "sum":
+    if dtype in _COMPLEX_COMPONENTS and reduction_op(op) in ("sum", "avg"):
         return _NCCL_TYPES[_COMPLEX_COMPONENTS[dtype]], 2
     raise NotImplementedError(f"NCCL cannot reduce {dtype} with {op}")

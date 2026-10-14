@@ -7,6 +7,7 @@ from dace.libraries.comm.nodes.node import (
     CommNode,
     NcclExpansion,
     expanded_input_connectors,
+    mpi_average,
     mpi_communicator,
     nccl_communicator,
     nccl_tasklet,
@@ -37,6 +38,7 @@ class ExpandAllreduceMPI(ExpandTransformation):
             MPI_Allreduce({buffer}, _outbuffer, {count_str}, {mpi_dtype_str},
                           {utils.mpi_op(node.op)}, {comm});
             """
+        code += mpi_average(node.op, "_outbuffer", count_str, comm)
         tasklet = dace.sdfg.nodes.Tasklet(
             node.name,
             expanded_input_connectors(node, parent_state),
@@ -77,7 +79,8 @@ class Allreduce(CommNode):
         dtype=str,
         default="MPI_SUM",
         category="Semantics",
-        desc="Reduction operator: an MPI operator name (MPI_SUM) or a dace.dtypes.ReductionType name (Sum)",
+        desc="Reduction operator: an MPI operator name (MPI_SUM), a dace.dtypes.ReductionType name (Sum), or a "
+        "canonical name (sum, avg, ...; see dace.libraries.comm.utils.reduction_op)",
     )
 
     def __init__(self, name, op="MPI_SUM", *args, **kwargs):

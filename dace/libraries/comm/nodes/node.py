@@ -77,6 +77,27 @@ def _append_init_code_once(sdfg: SDFG, code: str) -> None:
         sdfg.append_init_code(code)
 
 
+def mpi_average(op: str, buffer: str, count: str, comm: str, root: str | None = None) -> str:
+    """The code that turns the sum an MPI reduction wrote to ``buffer`` into the average, if ``op`` is the average
+    (see :func:`dace.libraries.comm.utils.is_average`): divides the ``count`` elements by the number of processes of
+    ``comm``, on ``root`` only if given."""
+    if not utils.is_average(op):
+        return ""
+    condition = "true"
+    if root is not None:
+        condition = f"__avg_rank == {root}"
+    return f"""
+        {{
+            int __avg_size, __avg_rank;
+            MPI_Comm_size({comm}, &__avg_size);
+            MPI_Comm_rank({comm}, &__avg_rank);
+            if ({condition}) {{
+                for (long long __i = 0; __i < ({count}); ++__i) {buffer}[__i] /= __avg_size;
+            }}
+        }}
+        """
+
+
 def validate_nccl_buffers(node: nodes.Node, *descs: data.Data) -> None:
     """NCCL communicates device memory only, on the stream of the expanded tasklet."""
     for desc in descs:
