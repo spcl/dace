@@ -271,7 +271,9 @@ def relocate_nodes(
             state.remove_edge(empty_edge)
         empty_targets.add(empty_edge.dst)
 
-    # Relocation of the edges that carry data.
+    # Relocation of the edges that carry data. A passthrough connector may carry several edges, all of which are
+    #  relocated together, so each connector is handled once.
+    relocated_in_conns: set[str] = set()
     for edge_to_move in list(state.in_edges(from_node)):
         assert isinstance(edge_to_move.dst_conn, str)
 
@@ -295,8 +297,9 @@ def relocate_nodes(
             helpers.redirect_edge(state=state, edge=edge_to_move, new_dst=to_node)
             from_node.remove_in_connector(dmr_symbol)
 
-        else:
+        elif edge_to_move.dst_conn not in relocated_in_conns:
             # We have a Passthrough connection, i.e. there exists a matching `OUT_`.
+            relocated_in_conns.add(edge_to_move.dst_conn)
             old_conn = edge_to_move.dst_conn[3:]  # The connection name without prefix
             new_conn, conn_was_reused = get_new_conn_name(
                 edge_to_move=edge_to_move,
