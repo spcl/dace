@@ -123,6 +123,7 @@ def pack_noncontiguous_buffers(
     state: SDFGState,
     inputs: tuple[str, ...] = ("_inbuffer",),
     outputs: tuple[str, ...] = ("_outbuffer",),
+    stream_ordered: bool = False,
 ) -> None:
     """
     Routes the buffers of ``node`` that are not one contiguous run of memory (e.g., a transposed view, which
@@ -133,8 +134,12 @@ def pack_noncontiguous_buffers(
 
     :param inputs: The input connectors of buffers.
     :param outputs: The output connectors of buffers.
+    :param stream_ordered: The node runs on a GPU stream (NCCL or RCCL), which orders the copies before and after
+                           it on the device, so that packing works for a nonblocking node too. Otherwise a nonblocking
+                           node must have contiguous buffers: a packed output would be copied back before its
+                           ``Wait``, and a packed input could be freed before it.
     """
-    if isinstance(node, NonblockingCommNode) and node.nonblocking:
+    if isinstance(node, NonblockingCommNode) and node.nonblocking and not stream_ordered:
         # A packed output would be copied back before the operation completes, and a packed input freed
         for edge in state.in_edges(node) + state.out_edges(node):
             connector = edge.dst_conn if edge.dst == node else edge.src_conn

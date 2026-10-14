@@ -175,6 +175,23 @@ def test_nonblocking_restrictions():
         sdfg.expand_library_nodes()
 
 
+def test_nonblocking_nccl_packs_strided_buffers():
+    """NCCL orders the copies into and out of packed buffers on its stream, so a nonblocking node may have strided
+    buffers (MPI may not, see test_nonblocking_restrictions)."""
+    node = comm.Allreduce("allreduce")
+    node.implementation = "NCCL"
+    gpu = dace.StorageType.GPU_Global
+    sdfg = _nonblocking_sdfg("nb_nccl_strided", node, "n", "n", storage=gpu, request_type=dace.int32)
+    sdfg.add_array("matrix", ["n", "n"], dace.float64, storage=gpu)
+    start = sdfg.start_state
+    for edge in list(start.in_edges(node)):
+        start.remove_node(edge.src)
+    start.add_edge(start.add_read("matrix"), None, node, "_inbuffer", Memlet("matrix[0:n, 0]"))
+    code = _expanded_code(sdfg)
+    assert "ncclAllReduce(" in code
+    assert any("packed" in name for name in sdfg.arrays)
+
+
 def test_nonblocking_nccl_expansion():
     """NCCL (or RCCL) collectives run asynchronously on the stream of their node, nonblocking or not: the collective
     is launched right away, and its Wait orders the stream after it on the device, which is what lets code generation
@@ -253,5 +270,6 @@ if __name__ == "__main__":
     test_nonblocking_alltoall_alltoallv_bcast()
     test_nonblocking_mpi_expansion()
     test_nonblocking_restrictions()
+    test_nonblocking_nccl_packs_strided_buffers()
     test_nonblocking_nccl_expansion()
     test_nccl_collective_orders_on_streams()
