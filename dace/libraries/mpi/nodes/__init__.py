@@ -3,7 +3,6 @@ from .send import Send
 from .isend import Isend
 from .recv import Recv
 from .irecv import Irecv
-from .sendrecv import Sendrecv
 from .wait import Wait, Waitall
 from .bcast import Bcast
 from .scatter import Scatter, BlockScatter

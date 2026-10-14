@@ -183,7 +183,6 @@ LIBRARY_NODE_DESCRIPTIONS: dict[str, str] = {
     "Scatter": "MPI_Scatter: distribute from the root to every rank",
     "ScatterConflictCheck": "scatter conflict check: detect indices written more than once",
     "Send": "MPI_Send: blocking send",
-    "Sendrecv": "MPI_Sendrecv: paired send and receive",
     "Solve": "solve the linear system A @ X = B",
     "Stencil": "stencil: apply the given neighbourhood expression at every point",
     "Swap": "BLAS swap: exchange two vectors",
