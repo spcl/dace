@@ -297,7 +297,7 @@ def relocate_nodes(
             helpers.redirect_edge(state=state, edge=edge_to_move, new_dst=to_node)
             from_node.remove_in_connector(dmr_symbol)
 
-        elif edge_to_move.dst_conn not in relocated_in_conns:
+        elif edge_to_move.dst_conn not in relocated_connectors:
             # We have a Passthrough connection, i.e. there exists a matching `OUT_`.
             relocated_in_conns.add(edge_to_move.dst_conn)
             old_conn = edge_to_move.dst_conn[3:]  # The connection name without prefix
