@@ -84,6 +84,7 @@ CMAKE_BUILD_TYPE_FLAGS = BUILD_TYPE_FLAGS_BY_FAMILY["gnu"]
 #: next to its compiled-SDFG wrapper. The ``compiler.interface`` CONFIG key
 #: stays a string ('auto'/'ctypes'/'nanobind'); the translation to a
 #: descriptor happens once, in :func:`resolve_compiler_interface`.
+# @CLAUDE: The name is not so good, because it is not an interface to a compiler, but to the bindiungs. Furthermore, it is a description/specification of one. So a better name would be `CompilerInterface` -> `BindingInterfaceSpec`, `NanobindInterface` -> `NanobindInterfaceSpec` and `CtypesInterface` -> `CtypesInterfaceSpec`. In addition this type alias should not be defined here but in `compiled_sdfg.py`.
 CompilerInterface = CtypesInterface | NanobindInterface
 
 
