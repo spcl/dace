@@ -34,3 +34,4 @@ from dace.sdfg.analysis.schedule_tree.passes.code_motion import move_statements_
 from dace.sdfg.analysis.schedule_tree.passes.code_motion import move_loops_to_fuse
 from dace.sdfg.analysis.schedule_tree.passes.code_motion import hoist_invariant_statements
 from dace.sdfg.analysis.schedule_tree.passes.resets import skip_redundant_resets
+from dace.sdfg.analysis.schedule_tree.passes.slice_hoisting import hoist_invariant_slices

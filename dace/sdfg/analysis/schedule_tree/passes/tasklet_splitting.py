@@ -10,7 +10,7 @@ hoist_invariant_statements`). Values that the second part needs from the first p
 
 import ast
 import copy
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 
 from dace import data, dtypes
@@ -53,23 +53,24 @@ class TaskletCode:
 
 
 # Rough cost of operations relative to an addition: divisions, powers and calls (e.g., ``sqrt``, ``exp``) take many
-# cycles or are not vectorized as cheaply
+# cycles or are not vectorized as cheaply (type conversions are cheap)
 _EXPENSIVE = (ast.Div, ast.FloorDiv, ast.Mod, ast.Pow)
-_EXPENSIVE_WEIGHT = 8
+EXPENSIVE_WEIGHT = 8
 _CHEAP_CALLS = {"float", "int", "bool", "abs", "min", "max"}
 
 
 def operation_cost(statement: ast.stmt) -> int:
-    """The rough cost of the operations of a statement, in additions (see ``_EXPENSIVE_WEIGHT``)."""
+    """The rough cost of the operations of a statement, in additions (see ``EXPENSIVE_WEIGHT``)."""
     cost = 0
     for node in ast.walk(statement):
         if isinstance(node, ast.BinOp):
-            cost += _EXPENSIVE_WEIGHT if isinstance(node.op, _EXPENSIVE) else 1
+            cost += EXPENSIVE_WEIGHT if isinstance(node.op, _EXPENSIVE) else 1
         elif isinstance(node, (ast.UnaryOp, ast.Compare, ast.BoolOp, ast.IfExp)):
             cost += 1
         elif isinstance(node, ast.Call):
             name = astutils.rname(node.func)
-            cost += 0 if name in _CHEAP_CALLS else _EXPENSIVE_WEIGHT
+            conversion = name.split(".")[-1] in dtypes.TYPECLASS_STRINGS or name in dtypes.CTYPE_TO_TYPECLASS
+            cost += 0 if name in _CHEAP_CALLS or conversion else EXPENSIVE_WEIGHT
     return cost
 
 
@@ -159,6 +160,102 @@ def split_saving(code: TaskletCode, first: set[int]) -> int:
     return operations - len(passed_values(code, first)) + len(only_first)
 
 
+def value_types(node: tn.TaskletNode, containers: dict[str, data.Data]) -> dict[str, dtypes.typeclass]:
+    """
+    The types of the connectors of a tasklet (those of the containers their memlets access if they have none) and of
+    the locals its code assigns, as inferred over the whole code with its declarations: a local declared as
+    ``float32`` stays one even if computed from doubles.
+
+    :param node: The tasklet.
+    :param containers: The containers of the tree.
+    :return: The types by name (``None`` or ``typeclass(None)`` where unknown).
+    """
+    tasklet = node.node
+    types: dict[str, dtypes.typeclass] = {}
+    for connectors, memlets in ((tasklet.in_connectors, node.in_memlets), (tasklet.out_connectors, node.out_memlets)):
+        for connector, dtype in connectors.items():
+            if (dtype is None or dtype == dtypes.typeclass(None)) and connector in memlets:
+                dtype = containers[memlets[connector].data].dtype
+            types[connector] = dtype
+    inferred = type_inference.infer_types(list(tasklet.code.code), {k: v for k, v in types.items() if v is not None})
+    result = {k: v for k, v in inferred.items() if v != dtypes.typeclass(None)}
+    result.update({k: v for k, v in types.items() if v})
+    return result
+
+
+def tasklet_part(
+    node: tn.TaskletNode,
+    code: TaskletCode,
+    statements: Iterable[int],
+    outputs: list[tuple[str, Memlet]],
+    loaded: list[tuple[str, Memlet]],
+    suffix: str,
+    types: dict[str, dtypes.typeclass],
+) -> tn.TaskletNode:
+    """
+    A tasklet that runs some statements of a tasklet, reading the input connectors they read through the same memlets.
+
+    :param node: The tasklet (unchanged).
+    :param code: Its parsed code (see :func:`parse_tasklet`).
+    :param statements: Indices of the statements to run (in code order; a value they read must be assigned by one of
+                       them, be an input connector, or be ``loaded``).
+    :param outputs: ``(value, memlet)``: where values go (output connectors of the tasklet or locals, which then
+                    become output connectors). A value with several memlets goes through copies to new connectors.
+    :param loaded: ``(value, memlet)``: values the statements read but do not compute, read through new input
+                   connectors (a value that is also an output is copied to it first).
+    :param suffix: Appended to the label.
+    :param types: The types of connectors and locals (see :func:`value_types`).
+    :return: The tasklet.
+    """
+    tasklet = node.node
+    indices = sorted(statements)
+    assigned = {code.targets[k] for k in indices}
+    read = set().union(*(code.reads[k] for k in indices)) if indices else set()
+    taken = set(code.inputs) | set(code.outputs) | set(code.targets) | set(code.declarations)
+
+    def fresh(base: str) -> str:
+        name, number = base, 0
+        while name in taken:
+            number += 1
+            name = f"{base}_{number}"
+        taken.add(name)
+        return name
+
+    in_memlets = {c: copy.deepcopy(node.in_memlets[c]) for c in sorted(code.inputs & read) if c in node.in_memlets}
+    in_types = {c: types.get(c) for c in sorted(code.inputs & read)}
+    out_memlets: dict[str, Memlet] = {}
+    out_types: dict[str, dtypes.typeclass] = {}
+    first: list[ast.stmt] = []  # Copies of loaded values to outputs
+    last: list[ast.stmt] = []  # Copies of values to their further memlets
+    output_names = {name for name, _ in outputs}
+    for name, memlet in loaded:
+        connector = fresh(f"{name}_in") if name in output_names else name
+        in_memlets[connector] = copy.deepcopy(memlet)
+        in_types[connector] = types.get(name)
+        if connector != name:
+            first.append(ast.parse(f"{name} = {connector}").body[0])
+    for name, memlet in outputs:
+        connector = name if name not in out_memlets else fresh(f"{name}_out")
+        out_memlets[connector] = copy.deepcopy(memlet)
+        out_types[connector] = types.get(name)
+        if connector != name:
+            last.append(ast.parse(f"{connector} = {name}").body[0])
+    declared = [astutils.copy_tree(d) for n, d in code.declarations.items() if n in assigned]
+    body = declared + first + [astutils.copy_tree(code.statements[k]) for k in indices] + last
+    new = copy.deepcopy(tasklet)
+    new.label = f"{tasklet.label}_{suffix}"
+    new.code = CodeBlock(body, dtypes.Language.Python)
+    for connector in list(new.in_connectors):
+        new.remove_in_connector(connector)
+    for connector in list(new.out_connectors):
+        new.remove_out_connector(connector)
+    for connector, dtype in in_types.items():
+        new.add_in_connector(connector, dtype)
+    for connector, dtype in out_types.items():
+        new.add_out_connector(connector, dtype)
+    return tn.TaskletNode(node=new, in_memlets=in_memlets, out_memlets=out_memlets)
+
+
 def split_tasklet(
     node: tn.TaskletNode,
     code: TaskletCode,
@@ -185,45 +282,21 @@ def split_tasklet(
     passed = passed_values(code, first)
     repeated = [k for k in sorted(first) if code.targets[k] in needed and code.trivial(k)]
     second = sorted(second + repeated)
+    types = value_types(node, containers)
+    memlets = {
+        name: copy.deepcopy(node.out_memlets[name]) if name in code.outputs else store(name, types.get(name))
+        for name in passed
+    }
 
-    tasklet = node.node
-    types: dict[str, dtypes.typeclass] = {}
-    for connectors, memlets in ((tasklet.in_connectors, node.in_memlets), (tasklet.out_connectors, node.out_memlets)):
-        for connector, dtype in connectors.items():
-            if (dtype is None or dtype == dtypes.typeclass(None)) and connector in memlets:
-                dtype = containers[memlets[connector].data].dtype
-            types[connector] = dtype
-    # Over the whole code with its declarations: a local declared as ``float32`` stays one even if computed from doubles
-    inferred = type_inference.infer_types(list(tasklet.code.code), {k: v for k, v in types.items() if v is not None})
-    inferred = {k: v for k, v in inferred.items() if v != dtypes.typeclass(None)}
+    def outputs(indices) -> list[tuple[str, Memlet]]:
+        return [
+            (code.targets[k], node.out_memlets[code.targets[k]])
+            for k in sorted(indices)
+            if code.targets[k] in code.outputs and code.targets[k] in node.out_memlets
+        ]
 
-    def part(indices: list[int], suffix: str, extra_inputs: list[str], extra_outputs: list[str]) -> tn.TaskletNode:
-        statements = [astutils.copy_tree(code.statements[k]) for k in indices]
-        assigned = {code.targets[k] for k in indices}
-        declared = [astutils.copy_tree(d) for n, d in code.declarations.items() if n in assigned]
-        read = set().union(*(code.reads[k] for k in indices)) if indices else set()
-        inputs = sorted((code.inputs & read) | set(extra_inputs))
-        outputs = sorted((code.outputs & assigned) | set(extra_outputs))
-        new = copy.deepcopy(tasklet)
-        new.label = f"{tasklet.label}_{suffix}"
-        new.code = CodeBlock(declared + statements, dtypes.Language.Python)
-        for connector in list(new.in_connectors):
-            new.remove_in_connector(connector)
-        for connector in list(new.out_connectors):
-            new.remove_out_connector(connector)
-        for connector in inputs:
-            new.add_in_connector(connector, types.get(connector) or inferred.get(connector))
-        for connector in outputs:
-            new.add_out_connector(connector, types.get(connector) or inferred.get(connector))
-        in_memlets = {c: copy.deepcopy(node.in_memlets[c]) for c in inputs if c in node.in_memlets}
-        out_memlets = {c: copy.deepcopy(node.out_memlets[c]) for c in outputs if c in node.out_memlets}
-        return tn.TaskletNode(node=new, in_memlets=in_memlets, out_memlets=out_memlets)
-
-    a = part(sorted(first), "a", [], [n for n in passed if n not in code.outputs])
-    b = part(second, "b", passed, [])
-    for name in passed:
-        memlet = copy.deepcopy(node.out_memlets[name]) if name in code.outputs else store(name, inferred.get(name))
-        if name not in code.outputs:
-            a.out_memlets[name] = memlet
-        b.in_memlets[name] = copy.deepcopy(memlet)
+    a = tasklet_part(
+        node, code, first, outputs(first) + [(n, memlets[n]) for n in passed if n not in code.outputs], [], "a", types
+    )
+    b = tasklet_part(node, code, second, outputs(second), [(n, memlets[n]) for n in passed], "b", types)
     return a, b
