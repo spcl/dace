@@ -28,9 +28,11 @@ jobs:
       fail-fast: false
       matrix:
         python-version: ['3.10','3.14']
-        # The interface does not influence how SDFGs are optimized, so each
-        # leg also pins one Python interface: 0 runs ctypes, 1 runs nanobind
-        # (plus the production build-folder mode), autoopt runs auto.
+        # Each leg also pins the Python interface: 0 forces ctypes, 1 and
+        # autoopt run the default auto selection (forcing nanobind would fail
+        # every test outside the nanobind scope; nanobind-specific tests pin
+        # their interface themselves). Leg 1 additionally pins the production
+        # build-folder mode.
         simplify: [0,1,autoopt]
 
     steps:
@@ -69,7 +71,7 @@ jobs:
             export DACE_optimizer_autooptimize=1
             echo "Auto-optimization heuristics"
         elif [ "${{ matrix.simplify }}" = "1" ]; then
-            export DACE_compiler_interface=nanobind
+            export DACE_compiler_interface=auto
             export DACE_compiler_build_folder_mode="production"
             export DACE_optimizer_automatic_simplification=1
         else
@@ -91,7 +93,7 @@ jobs:
             export DACE_optimizer_autooptimize=1
             echo "Auto-optimization heuristics"
         elif [ "${{ matrix.simplify }}" = "1" ]; then
-            export DACE_compiler_interface=nanobind
+            export DACE_compiler_interface=auto
             export DACE_compiler_build_folder_mode="production"
             export DACE_optimizer_automatic_simplification=1
         else
@@ -113,7 +115,7 @@ jobs:
             export DACE_optimizer_autooptimize=1
             echo "Auto-optimization heuristics"
         elif [ "${{ matrix.simplify }}" = "1" ]; then
-            export DACE_compiler_interface=nanobind
+            export DACE_compiler_interface=auto
             export DACE_compiler_build_folder_mode="production"
             export DACE_optimizer_automatic_simplification=1
         else
@@ -132,7 +134,7 @@ jobs:
         if [ "${{ matrix.simplify }}" = "autoopt" ]; then
             export DACE_compiler_interface=auto
         elif [ "${{ matrix.simplify }}" = "1" ]; then
-            export DACE_compiler_interface=nanobind
+            export DACE_compiler_interface=auto
             export DACE_compiler_build_folder_mode="production"
         else
             export DACE_compiler_interface=ctypes
