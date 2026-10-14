@@ -98,11 +98,11 @@ class SpecializeSmallGemms(ppl.Pass):
         super().__init__()
         self.device = device
 
-    def modifies(self) -> ppl.Modifications:
-        return ppl.Modifications.Nodes
+    def modifies(self) -> ppl.Modifies:
+        return ppl.Modifies.Nodes
 
-    def should_reapply(self, modified: ppl.Modifications) -> bool:
-        return modified & ppl.Modifications.Nodes
+    def should_reapply(self, modified: ppl.Modifies) -> bool:
+        return modified & ppl.Modifies.Nodes
 
     def apply_pass(self, sdfg: SDFG, _: dict[str, Any]) -> int | None:
         """:returns: How many GEMMs were pinned to a loop nest, or ``None`` if none was."""
