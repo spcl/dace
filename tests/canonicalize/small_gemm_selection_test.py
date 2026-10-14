@@ -13,11 +13,9 @@ from dace import dtypes
 from dace.libraries.blas.nodes.gemm import Gemm
 from dace.libraries.blas.nodes.matmul import MatMul
 from dace.sdfg import nodes
-from dace.transformation.passes.canonicalize.finalize import (
-    canonicalize_set_fast_implementations,
-    select_small_gemms,
-)
+from dace.transformation.passes.canonicalize.finalize import canonicalize_set_fast_implementations
 from dace.transformation.passes.offloading.taskloop import is_device_wide_libnode
+from dace.transformation.passes.specialize_small_gemms import SpecializeSmallGemms
 
 N = dace.symbol("N")
 K = dace.symbol("K")
@@ -41,6 +39,8 @@ def products(sdfg: dace.SDFG) -> list[nodes.LibraryNode]:
 
 def test_a_small_product_per_map_iteration_is_one_rowwise_sequential_loop_on_the_cpu():
     sdfg = products_per_row.to_sdfg(simplify=True)
+    assert SpecializeSmallGemms(dtypes.DeviceType.CPU).apply_pass(sdfg, {}) == 1
+    # The implementation selection after the specialization stages keeps the pinned choice.
     canonicalize_set_fast_implementations(sdfg, dtypes.DeviceType.CPU)
     found = products(sdfg)
     assert found, "the program lost its matrix products"
@@ -60,7 +60,7 @@ def test_a_small_product_under_a_parallel_map_runs_inside_the_kernel_on_the_gpu(
     offload reads as kernel code, so the map stays the kernel."""
     sdfg = products_per_row.to_sdfg(simplify=True)
     assert any(is_device_wide_libnode(node) for node in products(sdfg)), "the test needs a host-issued product"
-    assert select_small_gemms(sdfg) == 1
+    assert SpecializeSmallGemms(dtypes.DeviceType.GPU).apply_pass(sdfg, {}) == 1
     found = products(sdfg)
     assert [type(node) for node in found] == [Gemm], found
     assert found[0].implementation == "pure"
@@ -69,10 +69,12 @@ def test_a_small_product_under_a_parallel_map_runs_inside_the_kernel_on_the_gpu(
 
 def test_specialized_extents_count_as_compile_time_constants():
     sdfg = products_of_runtime_size.to_sdfg(simplify=True)
-    assert select_small_gemms(sdfg) == 0, "a runtime-sized product is not known to be small"
+    assert SpecializeSmallGemms(dtypes.DeviceType.GPU).apply_pass(sdfg, {}) is None, (
+        "a runtime-sized product is not known to be small"
+    )
     sdfg = products_of_runtime_size.to_sdfg(simplify=True)
     sdfg.specialize(dict(K=10))
-    assert select_small_gemms(sdfg) == 1
+    assert SpecializeSmallGemms(dtypes.DeviceType.GPU).apply_pass(sdfg, {}) == 1
 
 
 if __name__ == "__main__":

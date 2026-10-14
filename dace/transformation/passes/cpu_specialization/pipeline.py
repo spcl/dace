@@ -40,6 +40,8 @@ Order within the stage, and why:
 6. :class:`~dace.transformation.passes.cpu_specialization.specialize_cpu_transfers.SpecializeCpuTransfers`
    -- gives the transfers step 5 just sequentialized their single ``memcpy`` / ``memset`` back, so
    the parallel-by-default copy expansion costs nothing when the cost model refuses it.
+7. :class:`~dace.transformation.passes.specialize_small_gemms.SpecializeSmallGemms` -- a small GEMM a map or
+   loop repeats runs as the row-wise loop nest in the iteration's thread, not as a BLAS call per iteration.
 
 The two terminal hygiene passes run again at the end because this stage builds states and indices
 of its own: ``ChunkAntiDependence`` emits prologue and seam blocks, which orphan the entry guard
@@ -48,7 +50,7 @@ holding python's ``//`` on a sympy expression -- sympy ``floor()``, which prints
 and truncates term by term. Both are re-runnable: the guard dedups and re-anchors itself.
 """
 
-from dace import SDFG
+from dace import SDFG, dtypes
 from dace.sdfg import infer_types
 from dace.transformation.interstate.move_map_invariant_if_up import hoist_invariant_guards
 from dace.transformation.passes.canonicalize.assume_symbols_nonnegative import AssumeSymbolConstraints
@@ -64,6 +66,7 @@ from dace.transformation.passes.cpu_specialization.sequentialize_unprofitable_pa
     SequentializeUnprofitableParallelScopes,
 )
 from dace.transformation.passes.cpu_specialization.specialize_cpu_transfers import SpecializeCpuTransfers
+from dace.transformation.passes.specialize_small_gemms import SpecializeSmallGemms
 
 
 def cpu_specialize(sdfg: SDFG, break_anti_dependence: bool = True, validate: bool = True) -> SDFG:
@@ -97,6 +100,7 @@ def cpu_specialize(sdfg: SDFG, break_anti_dependence: bool = True, validate: boo
     # After the schedules are final: only a body that stays a parallel map is if-converted.
     IfConvertParallelMapBodies().apply_pass(sdfg, {})
     SpecializeCpuTransfers().apply_pass(sdfg, {})
+    SpecializeSmallGemms(dtypes.DeviceType.CPU).apply_pass(sdfg, {})
 
     AssumeSymbolConstraints().apply_pass(sdfg, {})
     NormalizeFloorDivision().apply_pass(sdfg, {})
