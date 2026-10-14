@@ -585,8 +585,10 @@ def map_iteration_space(map_node: nd.Map, dim: int, repository) -> Optional[Iter
     if stride is None or stride <= 0:
         return None
     others = {p for p in map_node.params if p != param}
-    if any(str(s) in others or str(s) == param for s in itertools.chain(begin.free_symbols, end.free_symbols)):
+    if any(name in others or name == param for name in symbolic.symlist((begin, end))):
         return None
+    begin = begin.expr if isinstance(begin, symbolic.SymExpr) else begin
+    end = end.expr if isinstance(end, symbolic.SymExpr) else end
     return IterationSpace(repository, param, begin, end, stride, ast.LtE, others)
 
 
