@@ -299,7 +299,7 @@ def relocate_nodes(
 
         elif edge_to_move.dst_conn not in relocated_connectors:
             # We have a Passthrough connection, i.e. there exists a matching `OUT_`.
-            relocated_in_conns.add(edge_to_move.dst_conn)
+            relocated_connectors.add(edge_to_move.dst_conn)
             old_conn = edge_to_move.dst_conn[3:]  # The connection name without prefix
             new_conn, conn_was_reused = get_new_conn_name(
                 edge_to_move=edge_to_move,
