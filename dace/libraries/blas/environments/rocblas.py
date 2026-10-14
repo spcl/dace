@@ -27,7 +27,7 @@ class rocBLAS:
             dace.library.reject_gpu_location(node)
             + """\
 rocblas_handle &__dace_rocblas_handle = __state->rocblas_handle.Get();
-rocblas_set_stream(__dace_rocblas_handle, __dace_current_stream);\n"""
+dace::blas::CheckRocblasError(rocblas_set_stream(__dace_rocblas_handle, __dace_current_stream));\n"""
         )
 
     @staticmethod

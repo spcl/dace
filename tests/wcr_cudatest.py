@@ -3,7 +3,6 @@ import numpy as np
 import pytest
 
 import dace
-from dace.transformation.interstate import GPUTransformSDFG
 
 
 def create_zero_initialization(init_state: dace.SDFGState, array_name):
@@ -54,7 +53,7 @@ def create_test_sdfg():
 def test():
     my_max_sdfg = create_test_sdfg()
     my_max_sdfg.validate()
-    my_max_sdfg.apply_transformations(GPUTransformSDFG)
+    my_max_sdfg.apply_gpu_transformations()
 
     BETA = np.random.rand(10).astype(np.float32)
     BETA_MAX = np.zeros(1).astype(np.float32)

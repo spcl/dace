@@ -8,6 +8,7 @@ import copy
 import inspect
 import itertools
 import re
+import sys
 import warnings
 from collections.abc import Callable, Iterable, Iterator
 from typing import (
@@ -78,7 +79,9 @@ def _get_debug_info(explicit_lineinfo: dtypes.DebugInfo | None) -> dtypes.DebugI
         return explicit_lineinfo
 
     if dace.Config.get("compiler", "lineinfo") == "inspect":
-        caller = inspect.getframeinfo(inspect.stack()[2][0], context=0)
+        # ``inspect.stack()`` builds a FrameInfo, with source lookups, for every frame up to the root just to
+        # read one: two frames up is this function's caller's caller.
+        caller = inspect.getframeinfo(sys._getframe(2), context=0)
         return dtypes.DebugInfo(caller.lineno, 0, caller.lineno, 0, caller.filename)
 
     return None
@@ -358,6 +361,19 @@ class BlockGraphView:
         pass
 
 
+def memlet_path_is_the_edge(edge: MultiConnectorEdge[mm.Memlet], state: "SDFGState") -> bool:
+    """Whether ``edge`` alone is its memlet path: an empty memlet, or a ``GPU_Device`` map exit handing the
+    kernel's stream to a ``gpuStream_t`` access node (explicit stream handling), which moves no data."""
+    if edge.src_conn is None and edge.dst_conn is None and edge.data.is_empty():
+        return True
+    return (
+        isinstance(edge.src, nd.MapExit)
+        and edge.src.map.schedule == dtypes.ScheduleType.GPU_Device
+        and isinstance(edge.dst, nd.AccessNode)
+        and edge.dst.desc(state).dtype == dtypes.gpuStream_t
+    )
+
+
 @make_properties
 class DataflowGraphView(BlockGraphView, abc.ABC):
     def __init__(self, *args, **kwargs):
@@ -422,8 +438,8 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
         # Obtain the full state (to work with paths that trace beyond a scope)
         state = self._graph
 
-        # If empty memlet, return itself as the path
-        if edge.src_conn is None and edge.dst_conn is None and edge.data.is_empty():
+        # An empty memlet, or a kernel handing its stream on, is a path of its own
+        if memlet_path_is_the_edge(edge, state):
             return result
 
         # Prepend incoming edges until reaching the source node

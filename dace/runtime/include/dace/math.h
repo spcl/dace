@@ -444,6 +444,21 @@ static DACE_CONSTEXPR DACE_HDFI T cpp_mod(const T& numerator, const T& denominat
     return (T)std::fmod(numerator, denominator);
 }
 
+// C modulus (CMod): truncating.
+template<typename T, std::enable_if_t<std::is_integral<T>::value>* = nullptr>
+static DACE_CONSTEXPR DACE_HDFI T c_mod(const T& numerator, const T& denominator) {
+    return numerator % denominator;
+}
+template<typename T, std::enable_if_t<std::is_floating_point<T>::value>* = nullptr>
+static DACE_CONSTEXPR DACE_HDFI T c_mod(const T& numerator, const T& denominator) {
+    return (T)std::fmod(numerator, denominator);
+}
+template<typename T1, typename T2, std::enable_if_t<!std::is_same<T1, T2>::value>* = nullptr>
+static DACE_CONSTEXPR DACE_HDFI auto c_mod(const T1& numerator, const T2& denominator) -> decltype(numerator + denominator) {
+    using T = decltype(numerator + denominator);
+    return c_mod<T>((T)numerator, (T)denominator);
+}
+
 // Computes C/C++ divmod (std::div)
 template<typename T, std::enable_if_t<std::is_integral<T>::value && std::is_signed<T>::value>* = nullptr>
 static DACE_CONSTEXPR DACE_HDFI void cpp_divmod(const T& numerator, const T& denominator, T& quotient, T& remainder) {

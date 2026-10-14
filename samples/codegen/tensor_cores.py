@@ -29,7 +29,6 @@ from dace.sdfg.state import ControlFlowRegion, StateSubgraphView
 
 # Frontend imports and helpers
 # Transformations
-from dace.transformation.interstate import GPUTransformSDFG
 
 ############################################################################
 # Tensor core code generator
@@ -320,7 +319,7 @@ if __name__ == "__main__":
 
     # Transform the code to run on the GPU, while ensuring that the warp map
     # in the example runs within a single thread-block.
-    sdfg.apply_transformations(GPUTransformSDFG, options=dict(sequential_innermaps=False))
+    sdfg.apply_gpu_transformations()
 
     sdfg(A=A, B=B, C=C, N=1024)
 

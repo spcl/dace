@@ -1,0 +1,312 @@
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+"""A size computed in the program can be used as an array shape.
+
+``nt = Nt + 1; np.empty(nt)`` needs ``nt`` as a symbol, but it is a data descriptor. The size is
+read into a ``__sym_`` symbol on an interstate edge and substituted into the shape, leaving the
+descriptor in place so it can still be read or reassigned. Each shape captures its own symbol, so
+two arrays sized from the same reused name keep their own extents.
+"""
+
+import numpy as np
+import pytest
+
+import dace
+
+N = dace.symbol("N")
+
+
+@dace.program
+def size_from_empty(a: dace.float64[N], Nt: dace.int64, out: dace.float64[N]):
+    b = np.empty(Nt + 1, dace.float64)
+    for i in range(N):
+        b[i] = a[i] * 2.0
+    for i in range(N):
+        out[i] = b[i]
+
+
+@dace.program
+def size_read_after_use(a: dace.float64[N], Nt: dace.int64, out: dace.float64[N]):
+    m = Nt + 1
+    b = np.empty(m, dace.float64)
+    b[0] = 1.0
+    for i in range(N):
+        out[i] = a[i] + m  # the size descriptor must survive its use as a shape
+
+
+@dace.program
+def size_reassigned_after_use(a: dace.float64[N], Nt: dace.int64, out: dace.float64[N]):
+    m = Nt + 1
+    b = np.empty(m, dace.float64)
+    b[0] = 1.0
+    m = 99
+    for i in range(N):
+        out[i] = a[i] + m
+
+
+@dace.program
+def two_arrays_from_reassigned_size(Nt: dace.int64, out: dace.float64[1]):
+    m = Nt
+    b = np.empty(m, dace.float64)
+    for i in range(64):
+        b[i] = 1.0
+    m = 2  # a second array from the same name at a different value
+    c = np.empty(m, dace.float64)
+    c[0] = 0.0
+    out[0] = np.sum(b)  # must sum all 64 of b, not be truncated to c's size
+
+
+@dace.program
+def size_reused_as_index(out: dace.float64[1]):
+    m = 8
+    a = np.empty(m, dace.float64)
+    for i in range(8):
+        a[i] = i * 1.0
+    m = 2
+    out[0] = a[m]  # the shape symbol must not be the one this index reassigns
+
+
+@dace.program
+def size_from_size_one_array(nt: dace.int64[1], out: dace.float64[4]):
+    b = np.empty(nt, dace.float64)
+    b[0] = 1.0
+    out[0] = b[0]
+
+
+def test_scalar_size_as_shape():
+    n, nt = 5, 7
+    a = np.arange(n, dtype=np.float64)
+    out = np.zeros(n)
+    size_from_empty(a, np.int64(nt), out, N=n)
+    assert np.allclose(out, a * 2.0)
+
+
+def test_size_descriptor_survives_its_use_as_a_shape():
+    """Promotion must not delete the scalar: the program still reads it afterwards."""
+    n, nt = 5, 7
+    a = np.arange(n, dtype=np.float64)
+    out = np.zeros(n)
+    size_read_after_use(a, np.int64(nt), out, N=n)
+    assert np.allclose(out, a + (nt + 1))
+
+
+def test_size_can_be_reassigned_after_use_as_a_shape():
+    n, nt = 5, 7
+    a = np.arange(n, dtype=np.float64)
+    out = np.zeros(n)
+    size_reassigned_after_use(a, np.int64(nt), out, N=n)
+    assert np.allclose(out, a + 99)
+
+
+def test_two_arrays_from_a_reassigned_size_keep_their_own_extents():
+    """Reusing one size name for two arrays must not collapse their extents.
+
+    A single shared symbol gave both the last value written, so ``np.sum(b)`` returned 2.0 not 64.0.
+    """
+    out = np.zeros(1)
+    two_arrays_from_reassigned_size(np.int64(64), out)
+    assert np.isclose(out[0], 64.0)
+
+
+def test_a_size_reused_as_an_index_does_not_rebind_the_extent():
+    """The shape's symbol must differ from the one a later index access of the same name binds.
+
+    Sharing it re-binds the array's extent to the reassigned value (here 2), so ``a`` is too small
+    and the access goes out of bounds.
+    """
+    out = np.zeros(1)
+    size_reused_as_index(out)
+    assert np.isclose(out[0], 2.0)
+
+
+def test_promotion_leaves_the_descriptor_in_place():
+    sdfg = size_read_after_use.to_sdfg(simplify=False)
+    # The scalar read by each ``__sym_... = <scalar>`` assignment must survive as a descriptor;
+    # deleting it is what broke later reads of the size.
+    sources = {
+        rhs for e in sdfg.all_interstate_edges() for lhs, rhs in e.data.assignments.items() if lhs.startswith("__sym_")
+    }
+    assert sources, "the size scalar must be read into a symbol"
+    assert all(src in sdfg.arrays for src in sources), "the size descriptor must survive promotion"
+    sdfg.validate()
+
+
+def test_shape_stays_correct_through_simplify():
+    """simplify() may rewrite the promotion, but the array must keep the right extent either way.
+
+    Run once unsimplified and once simplified; both must agree with numpy.
+    """
+    n, nt = 6, 9
+    a = np.arange(n, dtype=np.float64)
+    for simplify in (False, True):
+        sdfg = size_from_empty.to_sdfg(simplify=simplify)
+        out = np.zeros(n)
+        sdfg(a=a, Nt=np.int64(nt), out=out, N=n)
+        assert np.allclose(out, a * 2.0), f"wrong result with simplify={simplify}"
+
+
+def test_a_size_one_array_is_read_through_a_subscript():
+    """A size-1 array is a valid extent, but the assignment must read ``nt[0]``, not the pointer."""
+    out = np.zeros(4)
+    size_from_size_one_array(np.array([4], dtype=np.int64), out)
+    assert np.allclose(out, [1.0, 0.0, 0.0, 0.0])
+
+
+@dace.program
+def size_from_empty_into_a_branch(a: dace.float64[N], Nt: dace.int64, out: dace.float64[N]):
+    b = np.empty(Nt + 1, dace.float64)  # promoted before the branch, so the assignment enters it
+    if Nt > 2:
+        for i in range(N):
+            b[i] = a[i] * 2.0
+        for i in range(N):
+            out[i] = b[i]
+    else:
+        for i in range(N):
+            out[i] = 0.0
+
+
+@dace.program
+def calls_size_from_empty(a: dace.float64[N], Nt: dace.int64, out: dace.float64[N]):
+    size_from_empty(a, Nt, out)
+
+
+@pytest.mark.parametrize("program", [size_from_empty_into_a_branch, calls_size_from_empty])
+def test_a_size_assigned_into_a_region_is_defined_before_the_allocation(program):
+    """The promoted size reaches a conditional, or a nested SDFG's loops, on the edge entering it."""
+    n, nt = 6, 9
+    a = np.arange(n, dtype=np.float64)
+    out = np.zeros(n)
+    program(a=a, Nt=np.int64(nt), out=out)
+    assert np.allclose(out, a * 2.0)
+
+
+@dace.program
+def zeros_from_size(Nt: dace.int64, out: dace.float64[1]):
+    b = np.zeros(Nt + 1, dace.float64)
+    out[0] = np.sum(b)
+
+
+@dace.program
+def ones_from_size(Nt: dace.int64, out: dace.float64[1]):
+    b = np.ones(Nt + 1, dace.float64)
+    out[0] = np.sum(b)
+
+
+@pytest.mark.parametrize("program,expected", [(zeros_from_size, 0.0), (ones_from_size, 4.0)])
+def test_the_fill_constructors_accept_a_computed_size(program, expected):
+    """zeros/ones/full build their transient on their own path, which also has to promote the size."""
+    out = np.zeros(1)
+    program(np.int64(3), out)
+    assert np.isclose(out[0], expected)
+
+
+def test_two_arrays_from_one_size_share_their_extent():
+    """Arrays sized by one unchanged scalar share its symbol, so an elementwise operation between them is not refused
+    as a broadcast of two different extents."""
+
+    @dace.program
+    def counts(p: dace.float64[N]):
+        a_grid = np.zeros(9, dtype=np.int64)
+        b_grid = np.zeros(16, dtype=np.int64)
+        n = a_grid.size * b_grid.size
+        count_a = np.ones(n, dtype=np.int64)
+        count_b = np.ones(n, dtype=np.int64)
+        count_c = p.size - count_a - count_b
+        p[0] = count_c[0]
+
+    p = np.zeros(5)
+    counts(p)
+    assert p[0] == 3
+
+
+def test_an_array_made_in_a_loop_shares_the_extent_of_one_made_before_it():
+    """A loop that never writes the size keeps its symbol: the loop-body array and the outer one combine."""
+
+    @dace.program
+    def loop_body_array(nib: dace.int64[1], out: dace.float64[N, 2]):
+        my_n = int(nib[0])
+        acc = np.zeros((N, 2, my_n), dtype=np.float64)
+        for ip in range(2):
+            tg = np.ones((N, my_n), dtype=np.float64)
+            acc[:, ip, :] = tg
+        out[:] = np.sum(acc, axis=2)
+
+    out = np.zeros((5, 2))
+    loop_body_array(np.array([3], dtype=np.int64), out)
+    assert np.allclose(out, 3.0), out
+
+
+def test_a_slice_bounded_by_a_size_shares_its_extent():
+    """``psi[:, :my_n]`` reads the same symbol ``np.zeros((N, my_n))`` was sized by, so the copy's extents match."""
+
+    @dace.program
+    def slice_by_size(nib: dace.int64[1], psi: dace.float64[N, N], out: dace.float64[N]):
+        my_n = int(nib[0])
+        tg = np.zeros((N, my_n), dtype=np.float64)
+        tg[:, :] = psi[:, :my_n]
+        out[:] = np.sum(tg, axis=1)
+
+    psi = np.arange(25, dtype=np.float64).reshape(5, 5).copy()
+    out = np.zeros(5)
+    slice_by_size(np.array([3], dtype=np.int64), psi, out)
+    assert np.allclose(out, psi[:, :3].sum(axis=1)), out
+
+
+def test_a_shape_in_a_loop_reads_the_size_the_previous_iteration_wrote():
+    """The size grows at the end of each iteration, after a shape in the body used it; the version read before the
+    loop must not stand in for it (cegterg's ``nbase_iter`` in HPCAgent-Bench)."""
+
+    @dace.program
+    def size_grows_in_a_loop(out: dace.float64[4]):
+        n = 2
+        first = np.ones(n)
+        out[3] = np.sum(first)
+        for k in range(3):
+            buf = np.ones(n)
+            out[k] = np.sum(buf[:n])
+            n = n + 1
+
+    out = np.zeros(4)
+    size_grows_in_a_loop(out)
+    assert np.allclose(out, [2.0, 3.0, 4.0, 2.0]), out
+
+
+def test_a_shape_made_after_a_slice_by_the_same_size_shares_its_extent():
+    """``pol[:nlp, 0]`` promotes ``nlp`` first; the later ``np.ones(nlp)`` reads the same symbol, so the two
+    broadcast together (cp2k_grid_integrate in HPCAgent-Bench)."""
+
+    @dace.program
+    def slice_then_shape(lmax: dace.int32[N], pol: dace.float64[5, 5], out: dace.float64[N, 5]):
+        for t in range(N):
+            nlp = int(lmax[t]) + 1
+            p = pol[:nlp, 0]
+            weight = np.ones(nlp)
+            out[t, :nlp] = weight * p
+
+    lmax = np.array([1, 3, 4], dtype=np.int32)
+    pol = np.arange(25, dtype=np.float64).reshape(5, 5).copy()
+    out = np.zeros((3, 5))
+    slice_then_shape(lmax, pol, out)
+    expected = np.zeros((3, 5))
+    for t, n in enumerate(lmax + 1):
+        expected[t, :n] = pol[:n, 0]
+    assert np.allclose(out, expected), out
+
+
+if __name__ == "__main__":
+    test_a_shape_made_after_a_slice_by_the_same_size_shares_its_extent()
+    test_a_shape_in_a_loop_reads_the_size_the_previous_iteration_wrote()
+    test_a_slice_bounded_by_a_size_shares_its_extent()
+    test_an_array_made_in_a_loop_shares_the_extent_of_one_made_before_it()
+    test_two_arrays_from_one_size_share_their_extent()
+    test_scalar_size_as_shape()
+    test_size_descriptor_survives_its_use_as_a_shape()
+    test_size_can_be_reassigned_after_use_as_a_shape()
+    test_two_arrays_from_a_reassigned_size_keep_their_own_extents()
+    test_a_size_reused_as_an_index_does_not_rebind_the_extent()
+    test_promotion_leaves_the_descriptor_in_place()
+    test_shape_stays_correct_through_simplify()
+    test_a_size_one_array_is_read_through_a_subscript()
+    test_the_fill_constructors_accept_a_computed_size(zeros_from_size, 0.0)
+    test_the_fill_constructors_accept_a_computed_size(ones_from_size, 4.0)
+    test_a_size_assigned_into_a_region_is_defined_before_the_allocation(size_from_empty_into_a_branch)
+    test_a_size_assigned_into_a_region_is_defined_before_the_allocation(calls_size_from_empty)

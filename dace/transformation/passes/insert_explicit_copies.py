@@ -289,6 +289,9 @@ class InsertExplicitCopies(ppl.Pass):
             outer = find_outer(state, edge)
         except RuntimeError:
             return False
+        # One container passing through the scope with one subset moves nothing
+        if inner_node.data == outer.data and edge.data.other_subset is None:
+            return False
         outer_desc = sdfg.arrays[outer.data]
         if (
             outer_desc.storage not in self._STANDARD_STORAGES
