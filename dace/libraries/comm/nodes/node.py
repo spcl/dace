@@ -123,7 +123,6 @@ def pack_noncontiguous_buffers(
     state: SDFGState,
     inputs: tuple[str, ...] = ("_inbuffer",),
     outputs: tuple[str, ...] = ("_outbuffer",),
-    stream_ordered: bool = False,
 ) -> None:
     """
     Routes the buffers of ``node`` that are not one contiguous run of memory (e.g., a transposed view, which
@@ -134,21 +133,7 @@ def pack_noncontiguous_buffers(
 
     :param inputs: The input connectors of buffers.
     :param outputs: The output connectors of buffers.
-    :param stream_ordered: The node runs on a GPU stream (NCCL or RCCL), which orders the copies before and after
-                           it on the device, so that packing works for a nonblocking node too. Otherwise a nonblocking
-                           node must have contiguous buffers: a packed output would be copied back before its
-                           ``Wait``, and a packed input could be freed before it.
     """
-    if isinstance(node, NonblockingCommNode) and node.nonblocking and not stream_ordered:
-        # A packed output would be copied back before the operation completes, and a packed input freed
-        for edge in state.in_edges(node) + state.out_edges(node):
-            connector = edge.dst_conn if edge.dst == node else edge.src_conn
-            if connector in inputs + outputs and not _contiguous_memlet(sdfg, edge.data):
-                raise ValueError(
-                    f'The nonblocking {type(node).__name__} "{node.label}" requires contiguous buffers, but '
-                    f"{edge.data.data} is not"
-                )
-        return
     packed: dict[tuple[str, str], str] = {}
 
     def transient(memlet: Memlet) -> str:
@@ -373,7 +358,21 @@ class NonblockingCommNode(CommNode):
         desc="Start the operation and return; a Wait on the _request output completes it",
     )
 
-    def validate_request(self, state: SDFGState) -> None:
-        """Checks that a nonblocking node has a connected ``_request`` output (MPI expansions)."""
-        if self.nonblocking and not any(e.src_conn == "_request" for e in state.out_edges(self)):
+    def validate_nonblocking(self, sdfg: SDFG, state: SDFGState) -> None:
+        """
+        Checks what an MPI expansion of a nonblocking node needs: a connected ``_request`` output, and contiguous
+        buffers, since the operation completes at its ``Wait``, after a packed output would have been copied back
+        (see :func:`pack_noncontiguous_buffers`) and a packed input freed. (NCCL needs neither: the copies of packed
+        buffers are ordered on the stream of the node.)
+        """
+        if not self.nonblocking:
+            return
+        if not any(e.src_conn == "_request" for e in state.out_edges(self)):
             raise ValueError(f'The nonblocking {type(self).__name__} "{self.label}" has no _request output')
+        for edge in state.in_edges(self) + state.out_edges(self):
+            connector = edge.dst_conn if edge.dst is self else edge.src_conn
+            if connector in ("_inbuffer", "_outbuffer") and not _contiguous_memlet(sdfg, edge.data):
+                raise ValueError(
+                    f'The nonblocking {type(self).__name__} "{self.label}" requires contiguous buffers, but '
+                    f"{edge.data.data} is not"
+                )

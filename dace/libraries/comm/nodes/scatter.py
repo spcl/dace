@@ -57,7 +57,7 @@ class ExpandScatterNCCL(NcclExpansion):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
-        pack_noncontiguous_buffers(node, parent_sdfg, parent_state, stream_ordered=True)
+        pack_noncontiguous_buffers(node, parent_sdfg, parent_state)
         (inbuffer, in_count_str), (outbuffer, out_count_str), _ = node.validate(parent_sdfg, parent_state)
         validate_nccl_buffers(node, inbuffer, outbuffer)
         nccl_type, factor = utils.nccl_transfer_type(inbuffer.dtype.base_type)
