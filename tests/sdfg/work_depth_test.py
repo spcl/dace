@@ -18,6 +18,7 @@ from dace.sdfg.performance_evaluation.work_depth import (
     get_tasklet_work_depth,
     parse_assumptions,
 )
+from dace.sdfg.state import LoopRegion
 from dace.sdfg.utils import inline_control_flow_regions
 from dace.symbolic import SymbolicType, pystr_to_symbolic, simplify
 from dace.transformation.dataflow import MapExpansion
@@ -344,6 +345,26 @@ def test_work_depth_bails_on_unstructured_control_flow():
     with pytest.warns(UserWarning, match="structured control flow"):
         analyze_sdfg(sdfg, w_d_map, get_tasklet_work_depth, [], False)
     assert w_d_map[get_uuid(sdfg)] == (0, 0)
+
+
+@dace.program
+def two_loops(x: dace.float64[N], y: dace.float64[M]):
+    for i in range(N):
+        x[i] += 1.0
+    for j in range(M):
+        y[j] = y[j] * 2.0 + 1.0
+
+
+def test_each_loop_records_its_own_work_and_depth():
+    """Every block is keyed by its region and index, so two loops never share one entry of the map."""
+    sdfg = two_loops.to_sdfg()
+    loops = [b for b in sdfg.nodes() if isinstance(b, LoopRegion)]
+    assert len(loops) == 2, "the frontend keeps both loops as LoopRegions, else this tests nothing"
+    w_d_map: dict[str, tuple[sp.Expr, sp.Expr]] = {}
+
+    analyze_sdfg(sdfg, w_d_map, get_tasklet_work_depth, [], False)
+
+    assert [w_d_map[get_uuid(loop)] for loop in loops] == [(N, N), (2 * M, 2 * M)]
 
 
 x, y, z, a = dace.symbol("x"), dace.symbol("y"), dace.symbol("z"), dace.symbol("a")
