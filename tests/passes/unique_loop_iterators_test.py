@@ -381,6 +381,28 @@ def test_seeds_counter_past_existing_map_params():
     assert mapparams == {"_loop_it_5"}, f"map parameter must be left untouched: {mapparams}"
 
 
+@dace.program
+def shadowing_loops(A: dace.float64[4]):
+    for i in range(2):
+        for i in range(3):
+            A[:] = A + 1.0
+
+
+def test_an_inner_loop_shadowing_the_outer_iterator_keeps_its_own_iterator():
+    """An inner loop rebinding the outer loop's name stays a different variable after the rename."""
+    sdfg = shadowing_loops.to_sdfg(simplify=False)
+    loops = [r for r in sdfg.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion)]
+    assert [loop.loop_variable for loop in loops] == ["i", "i"]
+
+    UniqueLoopIterators(assign_loop_iterator_post_value=False).apply_pass(sdfg, None)
+    sdfg.validate()
+    assert len({loop.loop_variable for loop in loops}) == 2
+
+    A = np.zeros(4)
+    sdfg(A=A)
+    assert np.allclose(A, 6.0)
+
+
 if __name__ == "__main__":
     test_nested_sdfg_symbol_mapping()
     test_loop_var_reconstruction()
@@ -391,3 +413,4 @@ if __name__ == "__main__":
     test_value_preserving_sibling_kbound_loops()
     test_negative_step_loop_value_preserving()
     test_seeds_counter_past_existing_map_params()
+    test_an_inner_loop_shadowing_the_outer_iterator_keeps_its_own_iterator()
