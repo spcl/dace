@@ -109,6 +109,23 @@ def test_overlap_moves_independent_work_between_start_and_wait():
     assert _labels(stree) == ["double", "|", "allreduce", "|", "independent", "|", "wait", "|", "combine"]
 
 
+def test_overlap_moves_work_from_before_the_start():
+    """Independent work before the producer of the reduced data moves between the start and the wait, behind the
+    start and its producer."""
+    stree = _tree(
+        "overlap_before",
+        [
+            _map("independent", "__out = __in + 1", {"__in": "x"}, "z"),
+            _map("double", "__out = 2 * __in", {"__in": "x"}, "y"),
+            _allreduce("allreduce", "y", "reduced", "request"),
+            _wait("wait", "reduced", "request"),
+            _map("combine", "__out = __a + __b", {"__a": "reduced", "__b": "z"}, "out"),
+        ],
+    )
+    overlap_communication(stree)
+    assert _labels(stree) == ["double", "|", "allreduce", "|", "independent", "|", "wait", "|", "combine"]
+
+
 def test_overlap_keeps_the_order_of_starts():
     """Two reductions: the second starts before the first wait, but not before the first start."""
     stree = _tree(
@@ -183,6 +200,7 @@ def test_overlapped_program():
 
 if __name__ == "__main__":
     test_overlap_moves_independent_work_between_start_and_wait()
+    test_overlap_moves_work_from_before_the_start()
     test_overlap_keeps_the_order_of_starts()
     test_overlap_respects_dependencies()
     test_overlapped_program()
