@@ -77,6 +77,7 @@ jobs:
         export DACE_cache=unique
         mpirun -n 2 coverage run --source=dace --parallel-mode -m pytest -x --with-mpi --tb=short --timeout_method thread --timeout=300 -m "mpi and not gpu"
 
+    # @CLAUDE: What is the difference between this test and the one above. Since there is no matrix here, we should only do `auto` mode.
     - name: Test MPI with pytest (nanobind interface)
       run: |
         export NOSTATUSBAR=1

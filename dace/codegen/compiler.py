@@ -79,6 +79,12 @@ BUILD_TYPE_FLAGS_BY_FAMILY = {
 #: Clang, IntelLLVM and anything unrecognized use CMake's GNU-like defaults.
 CMAKE_BUILD_TYPE_FLAGS = BUILD_TYPE_FLAGS_BY_FAMILY["gnu"]
 
+# @CLAUDE: This is a bit opaque, also the fact that we attach a dynamic attribute to `sdfg` to pass the hash to the bindings generator. \
+#   To solve this we will change that a bit, instead of passing `interface` as a string, there is a class for every interface method a separate one. We define them where the compiled sdfgs are defiend, I think for that a dataclass should be the right thing. \
+#   The one for ctypes is essentially an empty class. While the one for `nanobind` contains as sole member the value of the hash, that is allowed to be `None`. \
+#   The default value of `interface` is still `None` with the same effects as before. \
+#   However, inside `dace.Config` the interface key is still a string.
+
 
 def generate_program_folder(
     sdfg,

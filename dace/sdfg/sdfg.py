@@ -2846,6 +2846,8 @@ class SDFG(ControlFlowRegion):
         # rename-and-rebuild below), never a wrong reuse.
         source_hash = None
         if nanobind_interface and Config.get_bool("compiler", "nanobind_reuse_loaded"):
+            # @CLAUDE: Please create a helper function to compute the content hash. I think you should place it somewhere in `nanobind_bindings.py`.
+
             # `hash_sdfg()` considers neither the instrumentation nor the
             #  configuration, but both influence the generated code, so they
             #  join the reuse key. Hashing the WHOLE effective configuration
