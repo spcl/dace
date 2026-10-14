@@ -14,6 +14,7 @@ from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.canonicalize import canonicalize, finalize
 from dace.transformation.passes.canonicalize.move_loop_into_map_gated import MoveLoopIntoMapGated, launches_saved
 from dace.transformation.passes.gpu_block_size_selection import select_gpu_device_block_size
+from dace.transformation.passes.gpu_specialization.promote_host_maps_to_kernels import PromoteHostMapsToKernels
 
 K = dace.symbol("K")
 N = dace.symbol("N")
@@ -186,6 +187,45 @@ def test_the_offloaded_graph_stage_leaves_a_loop_around_a_wide_kernel_alone():
     sdfg = carry_through_single_iteration_kernel("wide_carry", lanes="0:4")
     assert MoveLoopIntoMapGated(target="gpu", single_iteration_only=True).apply_pass(sdfg, {}) is None
     assert len(top_level_loops(sdfg)) == 1
+
+
+def offloaded_loop_over_maps(name: str) -> dace.SDFG:
+    """:func:`loop_over_maps` after the offload: every map a kernel over device memory."""
+    sdfg = loop_over_maps(name, "3", 2)[0]
+    sdfg.arrays["a"].storage = dace.StorageType.GPU_Global
+    for node, _ in sdfg.all_nodes_recursive():
+        if isinstance(node, dace.nodes.MapEntry):
+            node.map.schedule = dace.ScheduleType.GPU_Device
+    return sdfg
+
+
+def lane_maps(sdfg: dace.SDFG) -> list:
+    return [
+        n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.MapEntry) and n.label.endswith("_lanes")
+    ]
+
+
+def test_the_lane_map_over_kernels_is_a_host_loop_until_it_is_promoted():
+    """The lane map the interchange wraps around device maps launches them, so it is created as a host map. Left
+    ``Default``, schedule inference made an unpromoted one a device map around the kernels it launches
+    (velocity_tendencies)."""
+    sdfg = offloaded_loop_over_maps("lanes_over_kernels")
+    assert MoveLoopIntoMapGated(target="gpu").apply_pass(sdfg, {})
+    lanes = lane_maps(sdfg)
+    assert len(lanes) == 1 and lanes[0].map.schedule == dace.ScheduleType.Sequential, lanes
+
+
+def test_a_nested_argument_without_storage_of_its_own_does_not_block_the_kernel():
+    """A nested SDFG's non-transient array is the caller's array; its own ``Default`` storage does not keep the lane
+    map off the device."""
+    sdfg = offloaded_loop_over_maps("lanes_default_arg")
+    assert MoveLoopIntoMapGated(target="gpu").apply_pass(sdfg, {})
+    nested = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG))
+    for desc in nested.sdfg.arrays.values():
+        if not desc.transient:
+            desc.storage = dace.StorageType.Default
+    assert PromoteHostMapsToKernels().apply_pass(sdfg, {}) == 1
+    assert lane_maps(sdfg)[0].map.schedule == dace.ScheduleType.GPU_Device
 
 
 @pytest.mark.gpu

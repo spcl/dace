@@ -628,7 +628,11 @@ def move_loop_into_lane_maps(loop: LoopRegion, sdfg: sd.SDFG) -> nodes.MapEntry:
         edge.data.subset = sbs.Range(dims)
         edge.data.volume = edge.data.subset.num_elements()
 
-    entry, _ = helpers.wrap_code_node_in_unit_map(state, nsdfg, dtypes.ScheduleType.Default, "_lanes")
+    # Over device maps the lane map is a host loop that launches them until the GPU specialization makes it the
+    # kernel; left Default, schedule inference would make it a device map around the kernels it launches.
+    on_device = any(e.map.schedule in dtypes.GPU_SCHEDULES for _, e in facts.lanes)
+    schedule = dtypes.ScheduleType.Sequential if on_device else dtypes.ScheduleType.Default
+    entry, _ = helpers.wrap_code_node_in_unit_map(state, nsdfg, schedule, "_lanes")
     entry.map.label = f"{loop.label}_lanes"
     entry.map.params = [lane.name for lane in lane_syms]
     entry.map.range = ref

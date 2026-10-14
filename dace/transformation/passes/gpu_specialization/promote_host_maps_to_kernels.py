@@ -34,6 +34,9 @@ def device_capable(node: nodes.Node, state: SDFGState, owned: bool) -> bool:
     """Whether a kernel can run ``node``; ``owned`` says a transient here belongs to the body."""
     if isinstance(node, nodes.AccessNode):
         desc = node.desc(state.sdfg)
+        if owned and not desc.transient and desc.storage == dtypes.StorageType.Default:
+            # A nested SDFG's argument has no storage of its own: it is the caller's array, checked out there.
+            return True
         return desc.storage in DEVICE_ACCESSIBLE or (owned and desc.transient and desc.storage in BODY_LOCAL)
     if isinstance(node, nodes.Tasklet):
         return node.language is dtypes.Language.Python
