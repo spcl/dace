@@ -957,6 +957,72 @@ def test_dde_keeps_a_loop_write_after_removing_a_dead_nested_sdfg():
     assert np.allclose(B, 2 * A)
 
 
+def test_dde_keeps_a_nested_write_when_simplify_reapplies_it_per_nested_sdfg():
+    """Simplify applies the pass once per SDFG of the hierarchy, all with the reachability computed before the first.
+    The first application removes a dead nested SDFG, which shifts the ``cfg_id`` of every region listed after it.
+    The next application, on the nested SDFG in the map, tied the stale tables to the shifted ids, so its first
+    state took the removed SDFG's table, reached nothing, and lost its write of ``t`` that the second state reads
+    (canon-GPU CloudSC lost its ice negative-value correction this way, in the simplify the GPU offload runs)."""
+    from dace.transformation.passes import analysis as ap
+    from dace.transformation.passes.simplify import SimplifyPass
+
+    sdfg = dace.SDFG("dde_simplify_reapply")
+    sdfg.add_symbol("N", dace.int64)
+    sdfg.add_array("A", ["N"], dace.float64)
+    sdfg.add_array("B", ["N"], dace.float64)
+    sdfg.add_array("dead", [1], dace.float64, transient=True)
+
+    # Listed before the body's nested SDFG, so removing it shifts the body's cfg_id.
+    first = sdfg.add_state("first", is_start_block=True)
+    dead_inner = dace.SDFG("dde_simplify_reapply_dead")
+    dead_inner.add_array("out", [1], dace.float64)
+    dead_inner.add_state("fill", is_start_block=True).add_mapped_tasklet(
+        "fill", dict(j="0:1"), {}, "o = 1.0", dict(o=dace.Memlet("out[j]")), external_edges=True
+    )
+    nested_dead = first.add_nested_sdfg(dead_inner, {}, {"out"})
+    first.add_edge(nested_dead, "out", first.add_write("dead"), None, dace.Memlet("dead[0]"))
+
+    # Two states inside a map, so nothing inlines them: the first writes ``t``, the second reads it.
+    body = dace.SDFG("dde_simplify_reapply_body")
+    body.add_symbol("i", dace.int64)
+    body.add_symbol("N", dace.int64)
+    body.add_array("a", ["N"], dace.float64)
+    body.add_array("b", ["N"], dace.float64)
+    body.add_array("t", [1], dace.float64, transient=True)
+    produce = body.add_state("produce", is_start_block=True)
+    double = produce.add_tasklet("double", {"x"}, {"y"}, "y = 2 * x")
+    produce.add_edge(produce.add_read("a"), None, double, "x", dace.Memlet("a[i]"))
+    produce.add_edge(double, "y", produce.add_write("t"), None, dace.Memlet("t[0]"))
+    consume = body.add_state_after(produce, "consume")
+    inc = consume.add_tasklet("inc", {"x"}, {"y"}, "y = x + 1")
+    consume.add_edge(consume.add_read("t"), None, inc, "x", dace.Memlet("t[0]"))
+    consume.add_edge(inc, "y", consume.add_write("b"), None, dace.Memlet("b[i]"))
+
+    second = sdfg.add_state_after(first, "second")
+    entry, exit_ = second.add_map("m", dict(i="0:N"))
+    nested_body = second.add_nested_sdfg(body, {"a"}, {"b"}, symbol_mapping={"i": "i", "N": "N"})
+    second.add_memlet_path(second.add_read("A"), entry, nested_body, dst_conn="a", memlet=dace.Memlet("A[0:N]"))
+    second.add_memlet_path(nested_body, exit_, second.add_write("B"), src_conn="b", memlet=dace.Memlet("B[0:N]"))
+    sdfg.validate()
+    body_id_before = body.cfg_id
+
+    # What simplify does with this pass: one application per SDFG, all reading the results computed up front.
+    results = {
+        ap.ControlFlowBlockReachability.__name__: ap.ControlFlowBlockReachability().apply_pass(sdfg, {}),
+        ap.AccessSets.__name__: ap.AccessSets().apply_pass(sdfg, {}),
+    }
+    SimplifyPass(validate=False).apply_subpass(sdfg, DeadDataflowElimination(), results)
+    sdfg.validate()
+    assert not any(isinstance(n, nodes.NestedSDFG) for n in first.nodes()), "the dead nested SDFG stays"
+    assert body.cfg_id < body_id_before, "the removal no longer shifts the body's cfg_id; test is vacuous"
+    assert any(n.data == "t" for n in produce.data_nodes()), "the write of t, read by the next state, was removed"
+
+    A = np.arange(8, dtype=np.float64)
+    B = np.zeros(8)
+    sdfg(A=A, B=B, N=8)
+    assert np.allclose(B, 2 * A + 1)
+
+
 if __name__ == "__main__":
     test_dse_simple()
     test_dse_unconditional()
@@ -995,3 +1061,4 @@ if __name__ == "__main__":
     test_dde_keeps_a_copy_that_a_write_through_a_view_does_not_cover()
     test_dde_removes_a_copy_that_a_write_through_a_view_fully_covers()
     test_dde_keeps_a_loop_write_after_removing_a_dead_nested_sdfg()
+    test_dde_keeps_a_nested_write_when_simplify_reapplies_it_per_nested_sdfg()

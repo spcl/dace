@@ -86,21 +86,25 @@ class DeadDataflowElimination(ppl.ControlFlowRegionPass):
         nested SDFG takes its regions out of the CFG list and shifts the ``cfg_id`` of every region listed
         after it. Looked up by the shifted id, a later region reads another region's table, reaches nothing,
         and every write it makes looks dead. So the tables are tied to their regions before anything is removed.
+
+        They are tied once per reachability result, not once per call: simplify applies this pass to every SDFG of
+        the hierarchy in turn, all with the result computed before the first application, so from the second call
+        on the ids it was keyed by no longer match the list. The regions are still the same objects.
         """
         reachability = pipeline_results.get(ap.ControlFlowBlockReachability.__name__)
-        if reachability is not None:
+        if reachability is None:
+            self.reachable_by_region = None
+        elif getattr(self, "reachability_tied_to", None) is not reachability:
+            self.reachability_tied_to = reachability
             self.reachable_by_region = {
                 cfg: reachability[cfg_id] for cfg_id, cfg in enumerate(sdfg.cfg_list) if cfg_id in reachability
             }
-        try:
-            return super().apply_pass(sdfg, pipeline_results)
-        finally:
-            self.reachable_by_region = None
+        return super().apply_pass(sdfg, pipeline_results)
 
     def region_reachability(
         self, region, pipeline_results: dict[str, Any]
     ) -> dict[ControlFlowBlock, set[ControlFlowBlock]]:
-        """``region``'s block reachability: the table tied to it at the start of the pass, else by ``cfg_id``."""
+        """``region``'s block reachability: the table tied to it when the result was first read, else by ``cfg_id``."""
         by_region = getattr(self, "reachable_by_region", None)
         if by_region is not None and region in by_region:
             return by_region[region]
