@@ -55,6 +55,7 @@ from dace.sdfg.analysis.schedule_tree.passes.readers import (
     some_read_guarded,
     value_reads,
 )
+from dace.sdfg.analysis.schedule_tree.passes.tasklet_splitting import parse_tasklet, split_saving, split_tasklet
 from dace.sdfg.analysis.schedule_tree.passes.transient_reuse import Liveness, Use
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -468,21 +469,27 @@ def _injective(element: tuple[str, ...], variables: list[str]) -> bool:
     return True
 
 
-def split_off(statements: list[tn.ScheduleTreeNode], motion: MotionAnalysis) -> Unit | None:
+def split_off(statements: list[tn.ScheduleTreeNode], motion: MotionAnalysis, first: bool = False) -> Unit | None:
     """
     Statements of the innermost body of a perfect nest of ``for`` loops, as a unit that runs in copies of the loops
     (loop fission), if splitting them off is valid: the statements are tasklets without side effects, and the rest of
-    the body
+    the body assigns no symbol they read and does not jump (``break``, ``continue``). If the unit runs after the rest
+    of the nest (the default), the rest of the body must also
 
-    * neither reads nor writes what they write,
-    * assigns no symbol they read and does not jump (``break``, ``continue``),
-    * writes what they read only before all of them that read it, at the one element they read of it, with every
-      loop variable of the nest indexing that element (each iteration then reads what it read before).
+    * neither read nor write what they write,
+    * write what they read only before all of them that read it, at the one element they read of it, with every loop
+      variable of the nest indexing that element (each iteration then reads what it read before).
+
+    If it runs before (``first``, e.g., when it is hoisted out of a loop around the nest), the rest of the body must
+    instead write nothing they read or write, and read what they write only after all of them, at the one element they
+    write of it, with every loop variable of the nest indexing that element (each iteration then reads what it read
+    before).
 
     With all of the body, the unit is the whole nest.
 
     :param statements: Children of the innermost loop of the nest.
     :param motion: The analysis of the tree.
+    :param first: Whether the unit runs before the rest of the nest instead of after it.
     :return: The unit, or ``None`` if the statements cannot be split off.
     """
     nest = _nest_around(statements[0])
@@ -516,7 +523,14 @@ def split_off(statements: list[tn.ScheduleTreeNode], motion: MotionAnalysis) -> 
         theirs = motion.footprint(child, nest[-1])
         if theirs.opaque or mine.reads & (theirs.assigns | theirs.binds):
             return None
-        if (motion.names(child)[0] | motion.names(child)[1]) & outputs:
+        child_read, child_written = motion.names(child)
+        if first:
+            if child_written & (outputs | inputs.keys()):
+                return None
+            if child_read & outputs and not _reads_after(child, k, positions[-1], statements, outputs, variables):
+                return None
+            continue
+        if (child_read | child_written) & outputs:
             return None
         for node in child.preorder_traversal():
             for name in names_written(node) & inputs.keys():
@@ -531,7 +545,44 @@ def split_off(statements: list[tn.ScheduleTreeNode], motion: MotionAnalysis) -> 
     return unit
 
 
-def statement_group(seed: tn.TaskletNode, motion: MotionAnalysis) -> Unit | None:
+def _reads_after(
+    child: tn.ScheduleTreeNode,
+    position: int,
+    last: int,
+    statements: list[tn.ScheduleTreeNode],
+    outputs: set[str],
+    variables: list[str],
+) -> bool:
+    """Whether a child of a loop body at ``position`` reads the ``outputs`` of ``statements`` only after the last of
+    them (at ``last``), through tasklet memlets, at the one element they write of each, indexed by every variable."""
+    if position < last:
+        return False
+    written: dict[str, set[tuple[str, ...] | None]] = {}
+    for statement in statements:
+        for memlet in statement.out_memlets.values():
+            written.setdefault(memlet.data, set()).add(memlet_element(memlet))
+    for node in child.preorder_traversal():
+        read = names_read(node) & outputs
+        if not read:
+            continue
+        if not isinstance(node, tn.TaskletNode):
+            return False
+        for memlet in node.in_memlets.values():
+            if memlet.data not in outputs:
+                continue
+            elements = written[memlet.data]
+            element = next(iter(elements))
+            if (
+                len(elements) != 1
+                or element is None
+                or memlet_element(memlet) != element
+                or not _injective(element, variables)
+            ):
+                return False
+    return True
+
+
+def statement_group(seed: tn.TaskletNode, motion: MotionAnalysis, first: bool = False) -> Unit | None:
     """
     A statement of the innermost body of a perfect nest of ``for`` loops together with the earlier statements of the
     body whose values only the group uses there (e.g., a value and its positive part), split off from the nest
@@ -539,6 +590,7 @@ def statement_group(seed: tn.TaskletNode, motion: MotionAnalysis) -> Unit | None
 
     :param seed: The statement.
     :param motion: The analysis of the tree.
+    :param first: Whether the unit runs before the rest of the nest instead of after it (see :func:`split_off`).
     :return: The unit, or ``None`` if not even the statement can be split off.
     """
     if _nest_around(seed) is None:
@@ -561,8 +613,8 @@ def statement_group(seed: tn.TaskletNode, motion: MotionAnalysis) -> Unit | None
             group.insert(0, candidate)
             group_used.update(own)
             group_read |= motion.names(candidate)[0]
-    unit = split_off(group, motion) if len(group) > 1 else None
-    return unit or split_off([seed], motion)
+    unit = split_off(group, motion, first) if len(group) > 1 else None
+    return unit or split_off([seed], motion, first)
 
 
 def move_unit(unit: Unit, before: tn.ScheduleTreeNode | None, stay: tuple[int, int] | None = None) -> None:
@@ -901,17 +953,22 @@ def hoist_unit(unit: Unit) -> None:
     parent.add_children(children)
 
 
-def hoist_invariant_statements(stree: tn.ScheduleTreeScope, min_trip_count: int = 2) -> int:
+def hoist_invariant_statements(stree: tn.ScheduleTreeScope, min_trip_count: int = 2, split: bool = True) -> int:
     """
     Hoist loop-invariant work out of ``for`` loops that contain loops: children of a loop body, and statements of the
     innermost body of a perfect nest in a loop body (split off with the earlier statements whose values only they use,
     see :func:`statement_group`), that compute the same values in every iteration (see :func:`hoistable`) run once
     before the loop. Outer loops are visited first, and hoisted units may be hoisted again out of the loops around
-    them. The values stay in the containers they are written to, so no temporaries are added. Innermost loops are
-    left to the compiler.
+    them. The values stay in the containers they are written to. Innermost loops are left to the compiler.
+
+    With ``split``, a tasklet that computes some values that are the same in every iteration and some that are not is
+    split in two (see :mod:`~dace.sdfg.analysis.schedule_tree.passes.tasklet_splitting`) if its first part can then be
+    hoisted. The values the second part reads from the first are stored in new transient arrays, one element per
+    iteration of the nest around the tasklet.
 
     :param stree: The schedule tree (or subtree) to transform in place.
     :param min_trip_count: Only hoist out of loops that run at least this many times.
+    :param split: Whether to split tasklets to hoist their invariant parts.
     :return: The number of units hoisted.
     """
     root = stree.get_root()
@@ -919,7 +976,7 @@ def hoist_invariant_statements(stree: tn.ScheduleTreeScope, min_trip_count: int 
     start = stree
     while True:
         motion = MotionAnalysis(root)
-        unit = _invariant_unit(stree, start, motion, min_trip_count)
+        unit = _invariant_unit(stree, start, motion, min_trip_count, split)
         if unit is None:
             return hoisted
         hoist_unit(unit)
@@ -940,7 +997,7 @@ def _preorder_from(stree: tn.ScheduleTreeScope, start: tn.ScheduleTreeNode) -> I
 
 
 def _invariant_unit(
-    stree: tn.ScheduleTreeScope, start: tn.ScheduleTreeNode, motion: MotionAnalysis, min_trip_count: int
+    stree: tn.ScheduleTreeScope, start: tn.ScheduleTreeNode, motion: MotionAnalysis, min_trip_count: int, split: bool
 ) -> Unit | None:
     for loop in _preorder_from(stree, start):
         if type(loop) is not tn.ForScope or not any(isinstance(c, (tn.LoopScope, tn.MapScope)) for c in loop.children):
@@ -957,10 +1014,97 @@ def _invariant_unit(
             innermost = child
             while len(innermost.children) == 1 and type(innermost.children[0]) is tn.ForScope:
                 innermost = innermost.children[0]
-            for statement in innermost.children:
+            for statement in list(innermost.children):
                 if not isinstance(statement, tn.TaskletNode):
                     continue
-                unit = statement_group(statement, motion)
+                unit = statement_group(statement, motion, first=True)
                 if unit is not None and unit.scope is loop and hoistable(unit, motion, min_trip_count):
                     return unit
+                if split:
+                    unit = _split_invariant(statement, loop, motion, min_trip_count)
+                    if unit is not None:
+                        return unit
     return None
+
+
+def _split_invariant(
+    statement: tn.TaskletNode, loop: tn.ForScope, motion: MotionAnalysis, min_trip_count: int
+) -> Unit | None:
+    """
+    Split a tasklet in the innermost body of a perfect nest in ``loop`` into the part that computes the same values in
+    every iteration of the loop and the rest (see :func:`split_tasklet`), if the first part can then be hoisted (see
+    :func:`hoistable`). Values the rest needs pass through new transient arrays indexed by the variables of the nest.
+
+    :return: The unit to hoist (in the changed tree), or ``None`` (the tree unchanged).
+    """
+    code = parse_tasklet(statement)
+    if code is None:
+        return None
+    # What changes between iterations: the loop variable and what the loop assigns
+    variant = assigned_in(loop.children) | {loop.loop.loop_variable}
+    changing = {
+        c for c, m in statement.in_memlets.items() if m.data in variant or {str(s) for s in m.free_symbols} & variant
+    }
+    invariant: set[int] = set()
+    for k, names in enumerate(code.reads):
+        if all(
+            (name in code.inputs and name not in changing)
+            or (code.defining(name) in invariant)
+            or (name not in code.inputs and code.defining(name) is None and name not in variant)
+            for name in names
+        ):
+            invariant.add(k)
+    if len(invariant) == len(code.statements) or split_saving(code, invariant) <= 0:
+        return None
+
+    # The values passed are stored per iteration of the nest
+    loops = list(reversed(path_to(statement, loop)[1:]))
+    shape, index = [], []
+    for nested in loops:
+        space = motion.reaching.ranges(nested).get(nested.loop.loop_variable) if type(nested) is tn.ForScope else None
+        if space is None or not all(sympy.sympify(v).is_Integer for v in space) or abs(space[2]) != 1:
+            return None
+        low, high = sorted((int(space[0]), int(space[1])))
+        shape.append(high - low + 1)
+        index.append(f"{nested.loop.loop_variable} - {low}" if low else nested.loop.loop_variable)
+    containers = motion.root.containers
+    added: list[str] = []
+
+    def store(name: str, dtype) -> Memlet:
+        if dtype is None:
+            raise _NoType
+        new = f"{statement.node.label}_{name}"
+        number = 0
+        while new in containers:
+            number += 1
+            new = f"{statement.node.label}_{name}_{number}"
+        containers[new] = data.Array(dtype, shape or [1], transient=True)
+        added.append(new)
+        return Memlet(f"{new}[{', '.join(index) or '0'}]")
+
+    try:
+        first, rest = split_tasklet(statement, code, invariant, store, containers)
+    except _NoType:
+        first = None
+    if first is None or not first.out_memlets:  # No type for a value, or only dead values
+        for name in added:
+            del containers[name]
+        return None
+    parent = statement.parent
+    original = list(parent.children)
+    position = next(k for k, c in enumerate(original) if c is statement)
+    parent.children = []
+    parent.add_children(original[:position] + [first, rest] + original[position + 1 :])
+    changed = MotionAnalysis(motion.root, motion.escaping)
+    unit = statement_group(first, changed, first=True)
+    if unit is not None and unit.scope is loop and hoistable(unit, changed, min_trip_count):
+        return unit
+    parent.children = []  # Undo
+    parent.add_children(original)
+    for name in added:
+        del containers[name]
+    return None
+
+
+class _NoType(Exception):
+    """A value to pass between the parts of a split tasklet has no known type."""

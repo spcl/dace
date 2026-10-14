@@ -641,6 +641,61 @@ def test_hoistable_whole_child():
     assert hoistable(subtree_unit(copy_nest), MotionAnalysis(stree))
 
 
+def _split_tree(code: str = "r = (b - a) / a\no = c * n + r", writes_y: bool = False) -> tn.ScheduleTreeRoot:
+    """``for n: for k: s[n, k] = x[k] * n + (y[k + 1] - y[k]) / y[k]`` in one tasklet, then a reader of ``s``: the
+    quotient is the same in every iteration of ``n`` (unless the loop also writes ``y``)."""
+    stree = _root(
+        "split_hoist",
+        {
+            "x": ([8], dace.float64),
+            "y": ([9], dace.float64),
+            "s": ([4, 8], dace.float64),
+            "out": ([4, 8], dace.float64),
+        },
+    )
+    statement = _tasklet(code, {"a": "y[k]", "b": "y[k + 1]", "c": "x[k]"}, {"o": "s[n, k]"})
+    body = [
+        _loop("k", 0, 8, [statement]),
+        _loop("k", 0, 8, [_tasklet("o = a + 1", {"a": "s[n, k]"}, {"o": "out[n, k]"})]),
+    ]
+    if writes_y:
+        body.append(_tasklet("o = a * 2", {"a": "y[0]"}, {"o": "y[0]"}))
+    stree.add_child(_loop("n", 0, 4, body))
+    return stree
+
+
+def _split_inputs() -> list[dict[str, np.ndarray]]:
+    rng = np.random.default_rng(9)
+    return [{"x": rng.random(8), "y": rng.random(9) + 0.5, "s": np.zeros((4, 8)), "out": np.zeros((4, 8))}]
+
+
+def test_hoist_split_tasklet():
+    """The quotient is split off and hoisted out of the loop over ``n``, stored per ``k``."""
+
+    def transform(stree):
+        assert hoist_invariant_statements(stree, split=False) == 0
+        assert hoist_invariant_statements(stree) == 1
+        hoisted, loop = stree.children
+        assert type(hoisted) is tn.ForScope and hoisted.loop.loop_variable == "k"
+        (first,) = hoisted.children
+        (second,) = loop.children[0].children
+        assert set(first.out_memlets) == {"r"} and "r" in second.in_memlets
+        assert stree.containers[first.out_memlets["r"].data].shape == (8,)
+
+    _same_results(_split_tree, transform, _split_inputs())
+
+
+def test_hoist_split_not_if_variant_or_trivial():
+    # The loop writes the inputs of the quotient: the split is undone
+    stree = _split_tree(writes_y=True)
+    containers = set(stree.containers)
+    assert hoist_invariant_statements(stree) == 0
+    assert len(stree.children[0].children[0].children) == 1 and set(stree.containers) == containers
+    # Only a copy, or one cheap operation whose input the rest reads anyway, is invariant: nothing worth hoisting
+    assert hoist_invariant_statements(_split_tree("r = a\no = c * n + r + b")) == 0
+    assert hoist_invariant_statements(_split_tree("r = a * 2.0\no = c * n + r + a + b")) == 0
+
+
 if __name__ == "__main__":
     test_reorder_unrelated_nests()
     test_reorder_reads_do_not_conflict()
@@ -674,3 +729,5 @@ if __name__ == "__main__":
     test_hoist_invariant_statement()
     test_hoist_not_if_variant()
     test_hoistable_whole_child()
+    test_hoist_split_tasklet()
+    test_hoist_split_not_if_variant_or_trivial()
