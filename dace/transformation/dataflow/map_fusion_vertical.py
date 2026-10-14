@@ -1636,8 +1636,11 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         else:
             get_edges = lambda node: state.out_edges(node)  # noqa: E731 [lambda-assignment]
             other_node = lambda e: e.dst  # noqa: E731 [lambda-assignment]
+        # An empty Memlet only orders the node against the scope, it accesses nothing
         access_set: set[nodes.AccessNode] = {
-            node for node in map(other_node, get_edges(scope_node)) if isinstance(node, nodes.AccessNode)
+            other_node(edge)
+            for edge in get_edges(scope_node)
+            if not edge.data.is_empty() and isinstance(other_node(edge), nodes.AccessNode)
         }
 
         return access_set
@@ -1666,13 +1669,13 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         # Is the node used for reading or for writing.
         #  This influences how we have to proceed.
         if isinstance(scope_node, nodes.MapEntry):
-            outer_edges_to_inspect = [e for e in state.in_edges(scope_node) if e.src == node]
+            outer_edges_to_inspect = [e for e in state.in_edges(scope_node) if e.src == node and not e.data.is_empty()]
             get_subset = lambda e: e.data.src_subset  # noqa: E731 [lambda-assignment]
             get_inner_edges = (  # noqa: E731 [lambda-assignment]
                 lambda e: state.out_edges_by_connector(scope_node, "OUT_" + e.dst_conn[3:])
             )
         else:
-            outer_edges_to_inspect = [e for e in state.out_edges(scope_node) if e.dst == node]
+            outer_edges_to_inspect = [e for e in state.out_edges(scope_node) if e.dst == node and not e.data.is_empty()]
             get_subset = lambda e: e.data.dst_subset  # noqa: E731 [lambda-assignment]
             get_inner_edges = (  # noqa: E731 [lambda-assignment]
                 lambda e: state.in_edges_by_connector(scope_node, "IN_" + e.src_conn[4:])
