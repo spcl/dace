@@ -4,12 +4,18 @@ Lowerings of ``torch.distributed`` functional collectives and point-to-point ope
 :mod:`dace.libraries.comm` nodes.
 
 Dynamo rewrites ``dist.all_reduce(t)`` and friends into functional operators (``_c10d_functional.*``) that return a new
-tensor, followed by ``wait_tensor``. Every operation is nonblocking: the collective or point-to-point operation
-(``isend``, ``irecv``, ``batch_p2p_ops``, traced with ``TORCHDYNAMO_ENABLE_P2P_COMPILATION=1``) starts it and writes a
-request, and its ``wait_tensor`` emits the ``Wait`` that completes it, which the readers of the result follow.
-:func:`dace.libraries.comm.schedule.overlap_communication` then moves the starts up and the waits down, so that
-independent work runs while the communication is in flight. With ``overlap_communication=False`` (see
-:class:`~.backend.DaceBackendOptions`), collectives are blocking and their ``wait_tensor`` is the result itself.
+tensor, followed by ``wait_tensor``. Communication is asynchronous:
+
+- MPI (CPU tensors): every operation is nonblocking. The collective or point-to-point operation (``isend``, ``irecv``,
+  ``batch_p2p_ops``, traced with ``TORCHDYNAMO_ENABLE_P2P_COMPILATION=1``) starts it and writes a request, and its
+  ``wait_tensor`` emits the ``Wait`` that completes it, which the readers of the result follow.
+  :func:`dace.libraries.comm.schedule.overlap_communication` then moves the starts up and the waits down, so that
+  independent work runs while the communication is in flight. With ``overlap_communication=False`` (see
+  :class:`~.backend.DaceBackendOptions`), collectives are blocking.
+- NCCL or RCCL (GPU tensors): operations run on the GPU stream of their node, and code generation orders their readers
+  after them on the device and runs independent work on other streams. Collectives need no wait (their
+  ``wait_tensor`` is the result itself); point-to-point operations join a group that their ``Wait`` launches, ordered
+  through their buffers (no requests, which would make the host wait for the stream).
 
 Every node communicates over a communicator argument of the program, one per process group and implementation (see
 :mod:`..distributed`): ``MPI`` for CPU tensors and ``NCCL`` (RCCL on ROCm) for GPU tensors. Communication buffers are
@@ -57,7 +63,7 @@ class Pending:
     """A nonblocking operation whose ``wait_tensor`` has not been lowered yet."""
 
     implementation: str
-    request: str  #: Request container (an ``MPI_Request`` array, or an integer token for NCCL)
+    request: str | None  #: Request container (an ``MPI_Request``; none for NCCL, ordered through the buffers)
     reads: list[TensorValue]  #: Buffers the operation reads, which must not change until the wait
     result: TensorValue | None  #: The buffer the operation writes (none for a send)
     #: The value of the ``wait_tensor`` (defaults to ``result``, or the sent buffer)
@@ -173,11 +179,13 @@ def _start(
     :param reads: The buffers the collective reads.
     :param average: The collective averages. Nonblocking MPI cannot average: it sums, and the wait divides.
     """
-    if not _nonblocking(ctx):
+    if not _nonblocking(ctx) or implementation != "MPI":
+        # NCCL (or RCCL) is asynchronous on the GPU stream of the node already: code generation orders the readers
+        # of the result after it on the device, and runs independent work on other streams
         _emit(ctx, libnode, group, implementation, inputs, outputs)
         return result
     average_over = None
-    if average and implementation == "MPI":
+    if average:
         libnode.op = "sum"
         average_over = group.size
     libnode.nonblocking = True
@@ -348,20 +356,28 @@ def lower_all_to_all_single(
 
 
 # ---------------------------------------------------------------------------------------------- point to point
-def _request(ctx: LoweringContext, implementation: str) -> str:
-    """A request container: an ``MPI_Request``, or an integer token that orders an NCCL operation before its wait."""
+def _request(ctx: LoweringContext, implementation: str) -> str | None:
+    """The request container of a nonblocking operation: an ``MPI_Request``. NCCL (or RCCL) operations have none:
+    they are ordered before their wait through their GPU buffers (a request in host memory would make the host wait
+    for the stream)."""
+    if implementation != "MPI":
+        return None
     name = ctx.new_name("request")
-    if implementation == "MPI":
-        ctx.containers[name] = data.Array(dtypes.opaque("MPI_Request"), [1], transient=True)
-    else:
-        ctx.containers[name] = data.Scalar(dtypes.int32, transient=True)
+    ctx.containers[name] = data.Array(dtypes.opaque("MPI_Request"), [1], transient=True)
     return name
 
 
+def _request_output(request: str | None) -> dict[str, Memlet]:
+    return {} if request is None else {"_request": Memlet(f"{request}[0]")}
+
+
 def _send(ctx: LoweringContext, name: str, tensor: TensorValue, peer, tag, group) -> TensorValue:
+    """A nonblocking send. Without a request, the send writes its buffer (an ordering connector) for its wait to
+    read, which orders the send before the wait."""
     tensor = _contiguous(ctx, tensor)
     implementation = distributed.implementation_for(tensor.device)
     request = _request(ctx, implementation)
+    ordering = {"_out_buffer": tensor.memlet()} if request is None else {}
     _emit(
         ctx,
         comm.Isend(sanitize_name(name)),
@@ -372,7 +388,7 @@ def _send(ctx: LoweringContext, name: str, tensor: TensorValue, peer, tag, group
             "_dest": Memlet(f"{_int_scalar(ctx, 'dest', peer)}[0]"),
             "_tag": Memlet(f"{_int_scalar(ctx, 'tag', tag)}[0]"),
         },
-        {"_request": Memlet(f"{request}[0]")},
+        dict(_request_output(request), **ordering),
     )
     result = dataclasses.replace(tensor)  # A distinct value for wait_tensor to find
     ctx.pending[id(result)] = Pending(implementation, request, [tensor], None, tensor)
@@ -394,7 +410,7 @@ def _receive(ctx: LoweringContext, name: str, val, peer, tag, group) -> TensorVa
             "_src": Memlet(f"{_int_scalar(ctx, 'src', peer)}[0]"),
             "_tag": Memlet(f"{_int_scalar(ctx, 'tag', tag)}[0]"),
         },
-        {"_buffer": out.memlet(), "_request": Memlet(f"{request}[0]")},
+        dict(_request_output(request), _buffer=out.memlet()),
     )
     ctx.pending[id(out)] = Pending(implementation, request, [], out, out)
     return out
@@ -436,7 +452,7 @@ def _wait(ctx: LoweringContext, pending: Pending) -> TensorValue:
     before it, and the readers of the result follow it.
     """
     wait = comm.Wait(ctx.unique("wait"))
-    inputs = {"_request": Memlet(f"{pending.request}[0]")}
+    inputs = {} if pending.request is None else {"_request": Memlet(f"{pending.request}[0]")}
     outputs = {}
     for k, buffer in enumerate(pending.reads):
         inputs[f"_in_read{k}"] = buffer.memlet()
@@ -444,6 +460,8 @@ def _wait(ctx: LoweringContext, pending: Pending) -> TensorValue:
         inputs["_in_buffer"] = pending.result.memlet()
         outputs["_out_buffer"] = pending.result.memlet()
     wait.implementation = pending.implementation
+    for conn in list(wait.in_connectors):
+        wait.remove_in_connector(conn)
     for conn in list(wait.out_connectors):
         wait.remove_out_connector(conn)
     for conn in inputs:

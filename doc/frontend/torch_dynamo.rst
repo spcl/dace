@@ -225,11 +225,18 @@ The program communicates over the communicators of the PyTorch process groups, w
 * **CPU tensors** use MPI. The processes must be MPI processes whose ranks equal their ``torch.distributed`` ranks
   (e.g., ``mpirun`` with a ``gloo`` process group initialized from the MPI ranks).
 
-Communication is nonblocking: a collective or point-to-point operation starts it, and its ``wait_tensor`` completes it.
-:func:`dace.libraries.comm.schedule.overlap_communication` then moves every start, with the work it depends on, ahead
-of other work, and every wait behind the work that does not depend on it, so that independent work runs while the
-communication is in flight (``torch.compile`` only overlaps where the program places its waits, or where Inductor
-reorders them). ``DaceBackend(overlap_communication=False)`` lowers blocking collectives instead. Programs captured with
+Communication is asynchronous, so independent work runs while it is in flight (``torch.compile`` only overlaps where
+the program places its waits, or where Inductor reorders them):
+
+* With MPI, a collective or point-to-point operation starts it, and its ``wait_tensor`` completes it.
+  :func:`dace.libraries.comm.schedule.overlap_communication` moves every start, with the work it depends on, ahead of
+  other work, and every wait behind the work that does not depend on it. ``DaceBackend(overlap_communication=False)``
+  lowers blocking collectives instead.
+* With NCCL or RCCL, operations run on the GPU stream of their node: code generation orders their readers after them
+  on the device and runs independent work on other streams, as for any other GPU library call. Collectives need no
+  wait, and nothing makes the host wait for a stream until the end of the state.
+
+Programs captured with
 ``capture()`` or exported with ``to_sdfg`` expose the communicator arguments; pass them the handles that
 :mod:`dace.libraries.comm.communicators` creates.
 

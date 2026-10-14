@@ -11,6 +11,7 @@ Expected values are computed locally from the (deterministic) inputs of every ra
 only, not ``torch``: the ``torch`` CI job runs without ``mpirun``.
 """
 
+import operator
 import os
 import tempfile
 
@@ -21,12 +22,17 @@ pytest.importorskip("torch", reason="PyTorch not installed. Please install with:
 import torch  # noqa: E402
 import torch.distributed as dist  # noqa: E402
 import torch.distributed._functional_collectives as fc  # noqa: E402
+from torch._subclasses.fake_tensor import FakeTensor, FakeTensorMode  # noqa: E402
 from torch.distributed.device_mesh import init_device_mesh  # noqa: E402
 from torch.distributed.tensor import DTensor, Replicate, Shard, distribute_tensor  # noqa: E402
+from torch.fx.passes.fake_tensor_prop import FakeTensorProp  # noqa: E402
 
 import dace  # noqa: E402
 from dace.frontend.ml.torch.dynamo import DaceBackend  # noqa: E402
+from dace.frontend.ml.torch.dynamo.backend import DaceBackendOptions  # noqa: E402
+from dace.frontend.ml.torch.dynamo.importer import GraphImporter  # noqa: E402
 from dace.libraries import comm  # noqa: E402
+from dace.sdfg.analysis.schedule_tree import treenodes as tn  # noqa: E402
 
 
 def _init_process_group() -> str:
@@ -116,6 +122,45 @@ def test_overlap_communication(overlap):
         sine = position(lambda n: isinstance(n, dace.nodes.Tasklet) and "sin" in n.code.as_string)
         wait = position(lambda n: isinstance(n, comm.Wait))
         assert start < sine < wait
+
+
+@pytest.mark.mpi
+def test_gpu_communication_is_stream_ordered():
+    """NCCL/RCCL communication of GPU tensors (lowered, not compiled: fake CUDA tensors): collectives need no request
+    or wait, and sends are ordered before their waits through their buffers, not through requests in host memory
+    (which would make the host wait for the stream). Nothing is put in a state of its own."""
+    peer = 1 - dist.get_rank() if dist.get_rank() < 2 else dist.get_rank()
+    c10d = torch.ops._c10d_functional
+    graph = torch.fx.Graph()
+    x, y = graph.placeholder("x"), graph.placeholder("y")
+    doubled = graph.call_function(torch.ops.aten.mul.Tensor, (x, 2))
+    reduced = graph.call_function(
+        c10d.wait_tensor.default, (graph.call_function(c10d.all_reduce.default, (doubled, "sum", "0")),)
+    )
+    sine = graph.call_function(torch.ops.aten.sin.default, (y,))
+    exchanged = graph.call_function(
+        c10d.batch_p2p_ops.default, (["isend", "irecv"], [peer, peer], [0, 0], [reduced, sine], "0")
+    )
+    waited = [
+        graph.call_function(c10d.wait_tensor.default, (graph.call_function(operator.getitem, (exchanged, i)),))
+        for i in range(2)
+    ]
+    graph.output((graph.call_function(torch.ops.aten.add.Tensor, (waited[1], sine)),))
+    gm = torch.fx.GraphModule(torch.nn.Module(), graph)
+    mode = FakeTensorMode()
+    inputs = [FakeTensor(mode, torch.empty(4, 3, device="meta"), torch.device("cuda")) for _ in range(2)]
+    FakeTensorProp(gm, mode).propagate(*inputs)
+    stree = GraphImporter(DaceBackendOptions()).import_graph(gm, inputs, "gpu_communication").stree
+
+    calls = [n for n in stree.preorder_traversal() if isinstance(n, tn.LibraryCall)]
+    assert all(call.node.implementation == "NCCL" for call in calls)
+    assert not any(isinstance(n, tn.StateBoundaryNode) for n in stree.preorder_traversal())
+    assert not any("_request" in call.in_memlets or "_request" in call.out_memlets for call in calls)
+    allreduce = next(call.node for call in calls if isinstance(call.node, comm.Allreduce))
+    assert not allreduce.nonblocking
+    send = next(call for call in calls if isinstance(call.node, comm.Isend))
+    assert set(send.out_memlets) == {"_out_buffer"}
+    assert sum(isinstance(call.node, comm.Wait) for call in calls) == 2
 
 
 @pytest.mark.mpi
@@ -340,6 +385,7 @@ if __name__ == "__main__":
         test_all_reduce_in_place(op)
     for overlap in [True, False]:
         test_overlap_communication(overlap)
+    test_gpu_communication_is_stream_ordered()
     test_gather_scatter_broadcast()
     test_all_to_all_single()
     test_subgroup()
