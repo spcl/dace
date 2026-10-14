@@ -7,7 +7,7 @@ from ordered_set import OrderedSet
 from dace import data, dtypes, subsets, symbolic, utils
 from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES
 from dace.sdfg import SDFG, SDFGState, nodes
-from dace.sdfg.state import ControlFlowRegion, ReturnBlock
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, ReturnBlock
 from dace.sdfg.utils import get_last_view_node
 from dace.transformation.passes.offloading.offloading_ir_node import OffloadingIRNode
 
@@ -26,6 +26,27 @@ def remove_empty_return_entries(entries: list[tuple[ControlFlowRegion, SDFGState
             for successor in successors:
                 region.add_edge(edge.src, successor.dst, edge.data)
         region.remove_node(entry)
+
+
+def add_fallthrough_branches(sdfg: SDFG) -> list[tuple[ConditionalBlock, ControlFlowRegion]]:
+    """Give each conditional without an ``else`` an empty one, for the copies of the path that takes no arm;
+    return the (conditional, arm) pairs."""
+    added: list[tuple[ConditionalBlock, ControlFlowRegion]] = []
+    for region in list(sdfg.all_control_flow_regions()):
+        if not isinstance(region, ConditionalBlock) or any(condition is None for condition, _ in region.branches):
+            continue
+        fallthrough = ControlFlowRegion(f"{region.label}_fallthrough", sdfg=sdfg)
+        fallthrough.add_state(f"{region.label}_fallthrough_entry", is_start_block=True)
+        region.add_branch(None, fallthrough)
+        added.append((region, fallthrough))
+    return added
+
+
+def remove_empty_fallthrough_branches(added: list[tuple[ConditionalBlock, ControlFlowRegion]]) -> None:
+    """Remove each arm of ``add_fallthrough_branches`` that received no copy."""
+    for conditional, fallthrough in added:
+        if all(isinstance(block, SDFGState) and block.number_of_nodes() == 0 for block in fallthrough.nodes()):
+            conditional.remove_branch(fallthrough)
 
 
 def separate_early_returns(sdfg: SDFG) -> list[tuple[ControlFlowRegion, SDFGState]]:
@@ -382,8 +403,13 @@ def traverse_IR_after_predecessors(IR: OffloadingIRNode, method: Callable[[Offlo
         raise RuntimeError(f"the offloading IR is not a DAG: {stuck} are never reached by all predecessors")
 
 
-def traverse_same_level(IR: OffloadingIRNode, method: Callable[[OffloadingIRNode], None]) -> None:  # DFS
-    queue = IR.next.copy()
+def traverse_same_level(
+    IR: OffloadingIRNode,
+    method: Callable[[OffloadingIRNode], None],
+    start: list[OffloadingIRNode] | None = None,
+) -> None:  # DFS
+    """Call ``method`` on the nodes of ``IR``'s section, from ``start`` (default: all of ``IR``'s successors)."""
+    queue = list(IR.next if start is None else start)
     while queue:
         curr = queue.pop()
         if curr.type == OffloadingIRNode.STATE or curr.type == OffloadingIRNode.EDGE:  # data node

@@ -25,19 +25,22 @@ class CopyAnalysis:
     """One analysis of ``sdfg``; ``hybrid_states`` collects the states that touch an array from both sides.
 
     A map of ``host_maps`` launches rather than computes: its body decides where the data it reaches goes.
+    ``fallthrough_entries`` are the entry states of the empty arms ``add_fallthrough_branches`` added.
     """
 
-    __slots__ = ("sdfg", "scopes", "host_maps", "hybrid_states")
+    __slots__ = ("sdfg", "scopes", "host_maps", "fallthrough_entries", "hybrid_states")
 
     def __init__(
         self,
         sdfg: SDFG,
         scopes: dict[SDFGState, dict[nodes.Node, nodes.Node | None]],
         host_maps: OrderedSet[nodes.MapEntry],
+        fallthrough_entries: OrderedSet[SDFGState] | None = None,
     ) -> None:
         self.sdfg = sdfg
         self.scopes = scopes
         self.host_maps = host_maps
+        self.fallthrough_entries = fallthrough_entries if fallthrough_entries is not None else OrderedSet()
         self.hybrid_states: OrderedSet[SDFGState] = OrderedSet()
 
     def build_ir(self) -> OffloadingIRNode:
@@ -107,8 +110,11 @@ class CopyAnalysis:
 
         # The first location of each array in the section opens it, the last one closes it. With
         # several children or routes there is no single answer, and propagation fills the sets later.
-        if len(outer_node.next) == 1:
-            outer_node.gpu_set, outer_node.cpu_set = section_locations(outer_node, first=True)
+        # An added fall-through arm uses nothing, so it is not a second child: the conditional opens
+        # for its one real arm, and the fall-through arm copies whatever that arm leaves elsewhere.
+        children = [child for child in outer_node.next if child.block not in self.fallthrough_entries]
+        if len(children) == 1:
+            outer_node.gpu_set, outer_node.cpu_set = section_locations(outer_node, first=True, start=children)
         if outer_node.has_one_route():
             outer_node.close.gpu_set, outer_node.close.cpu_set = section_locations(outer_node, first=False)
         return outer_node.close
@@ -301,8 +307,9 @@ def append(curr_node: OffloadingIRNode, node: OffloadingIRNode) -> OffloadingIRN
     return node
 
 
-def section_locations(IR: OffloadingIRNode, first: bool) -> Locations:
-    """The first (or last) location of each array along the section ``IR`` opens, on its own level."""
+def section_locations(IR: OffloadingIRNode, first: bool, start: list[OffloadingIRNode] | None = None) -> Locations:
+    """The first (or last) location of each array along the section ``IR`` opens, on its own level, from ``start``
+    (default: all of ``IR``'s successors)."""
     location_on_gpu: dict[str, bool] = {}
 
     def gather(node: OffloadingIRNode) -> None:
@@ -311,7 +318,7 @@ def section_locations(IR: OffloadingIRNode, first: bool) -> Locations:
                 if not first or name not in location_on_gpu:
                     location_on_gpu[name] = on_gpu
 
-    helpers.traverse_same_level(IR, gather)
+    helpers.traverse_same_level(IR, gather, start)
     return (
         OrderedSet(name for name, on_gpu in location_on_gpu.items() if on_gpu),
         OrderedSet(name for name, on_gpu in location_on_gpu.items() if not on_gpu),

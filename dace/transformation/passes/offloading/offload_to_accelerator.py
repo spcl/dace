@@ -5,7 +5,8 @@ from ordered_set import OrderedSet
 
 import dace.transformation.passes.offloading.offloading_helpers as helpers
 from dace import dtypes, properties
-from dace.sdfg import SDFG
+from dace.optionals import required
+from dace.sdfg import SDFG, SDFGState
 from dace.sdfg.utils import require_structured_control_flow
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes import FullMapFusion
@@ -104,16 +105,21 @@ class OffloadToAccelerator(ppl.Pass):
         put in device memory."""
         # An early return leaves before the end, so its copy-backs need a state of their own on its path.
         entries = helpers.separate_early_returns(sdfg)
+        # The path through a conditional that takes no arm keeps the locations the conditional was entered
+        # with; without an arm of its own, the copies after the conditional assume the taken arm ran.
+        fallthroughs = helpers.add_fallthrough_branches(sdfg)
+        fallthrough_entries = OrderedSet(required(arm.start_block) for _, arm in fallthroughs)
         # Before the placement: a table filled with literals is a constant every kernel reads, not one to copy.
         FoldConstantTables().apply_pass(sdfg, {})
         # A constant is declared locally by host code and by each kernel, so it is a register on either side.
         for name in sdfg.constants:
             if name in sdfg.arrays:
                 sdfg.arrays[name].storage = dtypes.StorageType.Register
-        analysis, IR, wrapped = self.place(sdfg, host_map_entries)
+        analysis, IR, wrapped = self.place(sdfg, host_map_entries, fallthrough_entries)
         insertion = CopyInsertion(sdfg, analysis.scopes)
         insertion.apply(IR)
         helpers.remove_empty_return_entries(entries)
+        helpers.remove_empty_fallthrough_branches(fallthroughs)
         if wrapped:
             ppl.Pipeline(
                 [
@@ -131,12 +137,14 @@ class OffloadToAccelerator(ppl.Pass):
                 placed_on_gpu |= self.offload_level(node.sdfg, host_map_entries)
         return placed_on_gpu
 
-    def place(self, sdfg: SDFG, host_map_entries: OrderedSet) -> tuple[CopyAnalysis, OffloadingIRNode, bool]:
+    def place(
+        self, sdfg: SDFG, host_map_entries: OrderedSet, fallthrough_entries: OrderedSet[SDFGState]
+    ) -> tuple[CopyAnalysis, OffloadingIRNode, bool]:
         """Analyze, wrap hybrid states and re-type single elements to a fixpoint; also say if anything was wrapped."""
         converted: OrderedSet[str] = OrderedSet()
         wrapped = False
         for _ in range(self.max_iterations):
-            analysis = CopyAnalysis(sdfg, helpers.get_sdfg_scope_dict(sdfg), host_map_entries)
+            analysis = CopyAnalysis(sdfg, helpers.get_sdfg_scope_dict(sdfg), host_map_entries, fallthrough_entries)
             IR = analysis.build_ir()
             changed = change_single_element_containers(sdfg, converted)
             converted |= changed
