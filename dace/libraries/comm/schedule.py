@@ -3,8 +3,9 @@
 Schedule-tree pass that overlaps nonblocking communication with independent work.
 
 A nonblocking operation (a ``nonblocking`` collective, ``Isend``, ``Irecv``) starts communicating, and its ``Wait``
-completes it. :func:`overlap_communication` moves every start as early, and every wait as late, as the data they
-access allows, so that the work between them runs while the communication is in flight. It then puts every
+completes it. :func:`overlap_communication` moves every start, with the work it depends on, ahead of the other work
+before it, and every wait behind the work after it that does not depend on it, so that the work between them runs
+while the communication is in flight. It then puts every
 communication node in a state of its own, so that code generation keeps this order (communication nodes have side
 effects, so state fusion does not merge them with their neighbors).
 
@@ -85,22 +86,25 @@ def _overlap_in(scope: tn.ScheduleTreeScope, root: tn.ScheduleTreeRoot, aliases:
     accesses = {id(child): _access(child, root, aliases) for child in children}
     _wait_for_buffers_in_flight(children, accesses, root, aliases)
 
-    # Starts move up, the first one first, so that they keep their order
+    # Each start moves up with the nodes it depends on (its backward slice), ahead of the others; the first start
+    # first, so that starts keep their order
     for start in [child for child in children if is_start(child)]:
         position = children.index(start)
-        while position > 0 and _can_exchange(children[position - 1], start, accesses, moving_start=True):
-            children[position - 1], children[position] = children[position], children[position - 1]
-            position -= 1
-    # Waits move down, the last one first
+        first = _region_start(children, position, accesses)
+        before = children[first:position]
+        slice_ = _slice(list(reversed(before)), start, accesses, before=True)
+        children[first : position + 1] = (
+            [n for n in before if id(n) in slice_] + [start] + [n for n in before if id(n) not in slice_]
+        )
+    # Each wait moves down behind the nodes that do not depend on it, ahead of its forward slice; the last wait first
     for wait in reversed([child for child in children if is_wait(child)]):
         position = children.index(wait)
-        while (
-            position < len(children) - 1
-            and not is_wait(children[position + 1])  # Waits keep their order
-            and _can_exchange(wait, children[position + 1], accesses)
-        ):
-            children[position], children[position + 1] = children[position + 1], children[position]
-            position += 1
+        last = _region_end(children, position, accesses)
+        after = children[position + 1 : last]
+        slice_ = _slice(after, wait, accesses, before=False)
+        children[position:last] = (
+            [n for n in after if id(n) not in slice_] + [wait] + [n for n in after if id(n) in slice_]
+        )
 
     # Every communication node in a state of its own
     pinned: list[tn.ScheduleTreeNode] = []
@@ -130,6 +134,42 @@ def _overlap_in(scope: tn.ScheduleTreeScope, root: tn.ScheduleTreeRoot, aliases:
     scope.children = pinned
 
 
+def _region_start(children: list[tn.ScheduleTreeNode], position: int, accesses) -> int:
+    """The first position after the last barrier before ``position``."""
+    first = position
+    while first > 0 and not accesses[id(children[first - 1])].barrier:
+        first -= 1
+    return first
+
+
+def _region_end(children: list[tn.ScheduleTreeNode], position: int, accesses) -> int:
+    """The position of the first barrier after ``position`` (or the end)."""
+    last = position + 1
+    while last < len(children) and not accesses[id(children[last])].barrier:
+        last += 1
+    return last
+
+
+def _slice(candidates: list[tn.ScheduleTreeNode], node: tn.ScheduleTreeNode, accesses, before: bool) -> set[int]:
+    """
+    The ids of the ``candidates`` that must stay on their side of ``node``: those that depend on it (or it on them),
+    directly or through other such candidates. ``candidates`` are the nodes before ``node`` from the nearest one
+    (``before``), or those after it from the nearest one. Communication keeps its order: starts and blocking
+    operations stay before a start, and waits after a wait.
+    """
+    slice_: list[tn.ScheduleTreeNode] = [node]
+    for candidate in candidates:
+        if before:
+            keep = accesses[id(candidate)].starts or any(
+                not _can_exchange(candidate, other, accesses) for other in slice_
+            )
+        else:
+            keep = is_wait(candidate) or any(not _can_exchange(other, candidate, accesses) for other in slice_)
+        if keep:
+            slice_.append(candidate)
+    return {id(n) for n in slice_[1:]}
+
+
 def _wait_for_buffers_in_flight(children: list[tn.ScheduleTreeNode], accesses, root, aliases) -> None:
     """A wait accesses the buffers of the starts whose requests it completes: no node may write their inputs, or
     access their outputs, before the wait."""
@@ -152,12 +192,10 @@ def _items(memlets) -> list[tuple[str | None, object]]:
     return list(memlets.items()) if isinstance(memlets, dict) else [(None, m) for m in memlets]
 
 
-def _can_exchange(first: tn.ScheduleTreeNode, second: tn.ScheduleTreeNode, accesses, moving_start=False) -> bool:
-    """Whether ``first`` and ``second``, adjacent in this order, can exchange places."""
+def _can_exchange(first: tn.ScheduleTreeNode, second: tn.ScheduleTreeNode, accesses) -> bool:
+    """Whether ``first`` and ``second`` (in this order) can exchange places: they do not depend on each other."""
     a, b = accesses[id(first)], accesses[id(second)]
     if a.barrier or b.barrier:
-        return False
-    if moving_start and a.starts:  # Communication starts in the same order on every process
         return False
     if a.defines & (b.names | b.symbols) or b.defines & (a.names | a.symbols):
         return False
