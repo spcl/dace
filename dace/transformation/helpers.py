@@ -1169,6 +1169,23 @@ def isolate_nested_sdfg(
         forward_from_nsdfg.add(fnode)
         fwd_stack.extend(oedge.dst for oedge in state.out_edges(fnode))
 
+    # Likewise a writer reachable FORWARD from an AccessNode that the pre walk reads: it overwrites the
+    # data after every read of that node (CloudSC's ``safe = where(x != 0, x, 1)`` beside
+    # ``x = where(m, x - e, x)``, both off one ``x`` node). In PRE it would run before those reads.
+    downstream: dict[nodes.AccessNode, set[nodes.Node]] = {}
+
+    def overwrites_after(read: nodes.AccessNode, writer: nodes.AccessNode) -> bool:
+        if read not in downstream:
+            reached: set[nodes.Node] = set()
+            stack = [oedge.dst for oedge in state.out_edges(read)]
+            while stack:
+                node = stack.pop()
+                if node not in reached:
+                    reached.add(node)
+                    stack.extend(oedge.dst for oedge in state.out_edges(node))
+            downstream[read] = reached
+        return writer in downstream[read]
+
     pre_nodes: OrderedSet[nodes.Node] = OrderedSet()
     to_visit: list[nodes.Node] = []
     for iedge in state.in_edges(nsdfg_node):
@@ -1179,7 +1196,9 @@ def isolate_nested_sdfg(
         to_visit.extend(
             other_writer
             for other_writer in data_writers.get(input_node.data, ())
-            if other_writer is not input_node and other_writer not in forward_from_nsdfg
+            if other_writer is not input_node
+            and other_writer not in forward_from_nsdfg
+            and not overwrites_after(input_node, other_writer)
         )
     visited: OrderedSet[nodes.Node] = OrderedSet()
     while len(to_visit) > 0:
@@ -1196,6 +1215,7 @@ def isolate_nested_sdfg(
                 if other_writer is not node_to_process
                 and other_writer not in visited
                 and other_writer not in forward_from_nsdfg
+                and not overwrites_after(node_to_process, other_writer)
             )
 
     # These are the nodes that belongs to the Post State. There are two reasons why a
@@ -1217,6 +1237,35 @@ def isolate_nested_sdfg(
                             return False
                         raise ValueError("Can not replicate non non-View AccessNodes into the post state.")
                     post_nodes.add(node)
+
+    # A read node replicated into POST loses the paths through the middle state. If such a path was all
+    # that ordered one of its POST readers before a POST overwrite of the same data, the split would leave
+    # that read and the overwrite unordered, so it is refused.
+    def reaches_in_post(source: nodes.Node, target: nodes.Node) -> bool:
+        seen: set[nodes.Node] = set()
+        stack = [source]
+        while stack:
+            node = stack.pop()
+            if node is target:
+                return True
+            if node not in seen:
+                seen.add(node)
+                stack.extend(oedge.dst for oedge in state.out_edges(node) if oedge.dst in post_nodes)
+        return False
+
+    for read in post_nodes:
+        if not isinstance(read, nodes.AccessNode) or (read not in middle_nodes and read not in pre_nodes):
+            continue
+        readers = [oedge.dst for oedge in state.out_edges(read) if oedge.dst in post_nodes]
+        for writer in data_writers.get(read.data, ()):
+            if writer in post_nodes and overwrites_after(read, writer):
+                if any(not reaches_in_post(reader, writer) for reader in readers):
+                    if test_if_applicable:
+                        return False
+                    raise ValueError(
+                        f'Cannot isolate NestedSDFG "{nsdfg_node}": a read of "{read.data}" would lose its ordering '
+                        "before an overwrite of it."
+                    )
 
     if test_if_applicable:
         return True

@@ -750,3 +750,139 @@ def test_isolate_stencil_swap_sibling_numerics():
     expected_A[1:9] = expected_B[1:9] * 2.0
     assert np.allclose(B, expected_B)
     assert np.allclose(A, expected_A)
+
+
+def _make_read_then_overwrite_sibling_sdfg() -> tuple[dace.SDFG, dace.SDFGState, dace_nodes.NestedSDFG]:
+    """A NestedSDFG and a sibling map both read the SAME ``A`` AccessNode; the sibling then overwrites ``A``
+    through a separate AccessNode ``a_out``. ``a_out`` is not reachable from the NSDFG, but it is reachable
+    from the NSDFG's input ``a_in``: the overwrite comes after every read of ``a_in``, the NSDFG's included.
+    This is CloudSC's ``zqxfgr_safe2 = where(zqxfg[2] != 0, zqxfg[2], 1)`` beside
+    ``zqxfg[2] = where(zllo2, zqxfg[2] - zevap2, zqxfg[2])``.
+    """
+    outer_sdfg = dace.SDFG("read_then_overwrite_sibling")
+    state = outer_sdfg.add_state(is_start_block=True)
+
+    for name in "AB":
+        outer_sdfg.add_array(name, shape=(10,), dtype=dace.float64, transient=False)
+
+    inner_sdfg = _make_nested_sdfg_simple()  # reads A, writes B := A + 1
+    nsdfg = state.add_nested_sdfg(sdfg=inner_sdfg, inputs={"A"}, outputs={"B"}, symbol_mapping={})
+    a_in = state.add_access("A")
+    state.add_edge(a_in, None, nsdfg, "A", dace.Memlet("A[0:10]"))
+    state.add_edge(nsdfg, "B", state.add_access("B"), None, dace.Memlet("B[0:10]"))
+
+    me, mx = state.add_map("comp_overwrite", {"__i": "1:9"})
+    tasklet = state.add_tasklet("ovw", {"__in"}, {"__out"}, "__out = __in * 2.0")
+    a_out = state.add_access("A")
+    me.add_in_connector("IN_A")
+    me.add_out_connector("OUT_A")
+    mx.add_in_connector("IN_A")
+    mx.add_out_connector("OUT_A")
+    state.add_edge(a_in, None, me, "IN_A", dace.Memlet("A[1:9]"))
+    state.add_edge(me, "OUT_A", tasklet, "__in", dace.Memlet("A[__i]"))
+    state.add_edge(tasklet, "__out", mx, "IN_A", dace.Memlet("A[__i]"))
+    state.add_edge(mx, "OUT_A", a_out, None, dace.Memlet("A[1:9]"))
+
+    outer_sdfg.validate()
+    return outer_sdfg, state, nsdfg
+
+
+def test_isolate_keeps_an_overwrite_of_the_input_after_the_nested_sdfg():
+    """The overwrite of the NSDFG's input array, downstream of the AccessNode the NSDFG reads, must not be
+    pulled into PRE: there it ran before the NSDFG, which then read the overwritten values."""
+    import numpy as np
+
+    sdfg, state, nsdfg_node = _make_read_then_overwrite_sibling_sdfg()
+    pre_state, middle_state, post_state = isolate_nested_sdfg(state=state, nsdfg_node=nsdfg_node)
+    sdfg.validate()
+
+    assert count_node(pre_state, dace_nodes.MapEntry) == 0, "the overwrite was moved before the NSDFG"
+    assert count_node(middle_state, dace_nodes.NestedSDFG) == 1
+    post_me = count_node(post_state, dace_nodes.MapEntry, return_nodes=True)
+    assert len(post_me) == 1 and post_me[0].map.label.startswith("comp_overwrite")
+
+    A = np.arange(10, dtype=np.float64) + 1.0
+    B = np.zeros(10, dtype=np.float64)
+    A0 = A.copy()
+    sdfg(A=A, B=B)
+    expected_B = np.zeros(10, dtype=np.float64)
+    expected_B[1:9] = A0[1:9] + 1.0
+    expected_A = A0.copy()
+    expected_A[1:9] = A0[1:9] * 2.0
+    assert np.allclose(B, expected_B), "the NSDFG read the overwritten A"
+    assert np.allclose(A, expected_A)
+
+
+def _make_overwrite_through_the_nested_sdfg_sdfg() -> tuple[dace.SDFG, dace.SDFGState, dace_nodes.NestedSDFG]:
+    """One ``A`` AccessNode feeds the NSDFG (``B := A + 1``) and a sibling map (``C := A * 3``); a second map
+    then overwrites ``A := B * 2`` from the NSDFG's output. Only the path through the NSDFG orders the sibling's
+    read before the overwrite, so a split that moves the NSDFG out of the state leaves the sibling and the
+    overwrite unordered in POST (CloudSC's ``zqxfgr_safe2`` read beside the ``zqxfg[2]`` update, the other of
+    its two ``np.minimum`` calls isolated).
+    """
+    outer_sdfg = dace.SDFG("overwrite_through_the_nested_sdfg")
+    state = outer_sdfg.add_state(is_start_block=True)
+
+    for name in "ABC":
+        outer_sdfg.add_array(name, shape=(10,), dtype=dace.float64, transient=False)
+
+    inner_sdfg = _make_nested_sdfg_simple()  # reads A, writes B := A + 1
+    nsdfg = state.add_nested_sdfg(sdfg=inner_sdfg, inputs={"A"}, outputs={"B"}, symbol_mapping={})
+    a_in = state.add_access("A")
+    b = state.add_access("B")
+    state.add_edge(a_in, None, nsdfg, "A", dace.Memlet("A[0:10]"))
+    state.add_edge(nsdfg, "B", b, None, dace.Memlet("B[0:10]"))
+
+    def mapped(label: str, src: dace_nodes.AccessNode, dst: str, code: str) -> None:
+        me, mx = state.add_map(label, {"__i": "1:9"})
+        tasklet = state.add_tasklet(label + "_t", {"__in"}, {"__out"}, code)
+        me.add_in_connector("IN_1")
+        me.add_out_connector("OUT_1")
+        mx.add_in_connector("IN_1")
+        mx.add_out_connector("OUT_1")
+        state.add_edge(src, None, me, "IN_1", dace.Memlet(f"{src.data}[1:9]"))
+        state.add_edge(me, "OUT_1", tasklet, "__in", dace.Memlet(f"{src.data}[__i]"))
+        state.add_edge(tasklet, "__out", mx, "IN_1", dace.Memlet(f"{dst}[__i]"))
+        state.add_edge(mx, "OUT_1", state.add_access(dst), None, dace.Memlet(f"{dst}[1:9]"))
+
+    mapped("comp_sibling_read", a_in, "C", "__out = __in * 3.0")
+    mapped("comp_overwrite", b, "A", "__out = __in * 2.0")
+    outer_sdfg.validate()
+    return outer_sdfg, state, nsdfg
+
+
+def test_isolate_refuses_to_leave_a_read_unordered_before_an_overwrite():
+    """Isolating the NSDFG would put the sibling's read of ``A`` and the overwrite of ``A`` in POST with no path
+    between them; the split is refused instead, and the inliners keep the state's ordering."""
+    import numpy as np
+
+    from dace.transformation.passes.fusion_inline import InlineSDFGs
+
+    sdfg, state, nsdfg_node = _make_overwrite_through_the_nested_sdfg_sdfg()
+    assert not isolate_nested_sdfg(state=state, nsdfg_node=nsdfg_node, test_if_applicable=True)
+
+    InlineSDFGs().apply_pass(sdfg, {})
+    sdfg.validate()
+    A = np.arange(10, dtype=np.float64) + 1.0
+    B = np.zeros(10, dtype=np.float64)
+    C = np.zeros(10, dtype=np.float64)
+    A0 = A.copy()
+    sdfg(A=A, B=B, C=C)
+    assert np.allclose(C[1:9], A0[1:9] * 3.0), "the sibling read the overwritten A"
+    assert np.allclose(B[1:9], A0[1:9] + 1.0)
+    assert np.allclose(A[1:9], (A0[1:9] + 1.0) * 2.0)
+
+
+if __name__ == "__main__":
+    test_already_isolated_sdfg()
+    test_non_empty_pre_set()
+    test_non_empty_pre_set_2()
+    test_non_empty_post_set()
+    test_non_empty_post_set_2()
+    test_multi_path_islolation()
+    test_isolate_data_name_ordering()
+    test_isolate_data_name_ordering_pre_and_post()
+    test_isolate_stencil_swap_sibling_to_post()
+    test_isolate_stencil_swap_sibling_numerics()
+    test_isolate_keeps_an_overwrite_of_the_input_after_the_nested_sdfg()
+    test_isolate_refuses_to_leave_a_read_unordered_before_an_overwrite()
