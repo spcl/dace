@@ -8,6 +8,7 @@ name) and rewrites the handful of torch-specific sympy functions (``FloorDiv``, 
 """
 
 from collections.abc import Iterable
+from typing import Any
 
 import sympy
 import torch
@@ -47,6 +48,12 @@ _PASSTHROUGH = (
 )
 
 
+def shape_env_of(values: Iterable[Any]) -> Any:
+    """The ``ShapeEnv`` of the current compilation, or of fake tensors among ``values`` (``None`` if there is none)."""
+    fake_mode = torch._guards.detect_fake_mode(list(values))
+    return fake_mode.shape_env if fake_mode is not None else None
+
+
 class SymbolTable:
     """
     Mints one DaCe symbol per Dynamo shape symbol and translates sympy expressions.
@@ -55,10 +62,20 @@ class SymbolTable:
     HOP body is bound to the same DaCe symbol as in the enclosing graph.
     """
 
-    def __init__(self, dtype: dtypes.typeclass = dace.int64, names: dict[str, str] | None = None):
+    def __init__(
+        self, dtype: dtypes.typeclass = dace.int64, names: dict[str, str] | None = None, shape_env: Any = None
+    ):
+        """
+        :param dtype: Type of the minted symbols.
+        :param names: Renaming of Dynamo symbols to DaCe symbol names.
+        :param shape_env: The ``ShapeEnv`` of the symbols, whose value ranges tell which symbols may be negative (a
+                          symbolic Python integer, as opposed to a size). Without it, every symbol is assumed
+                          nonnegative.
+        """
         self.dtype = dtype
         self.symbols: dict[str, symbolic.symbol] = {}
         self.names: dict[str, str] = dict(names or {})  #: Dynamo symbol name -> DaCe symbol name
+        self.shape_env = shape_env
         #: Dynamo symbols that stand for an expression over other symbols (e.g., the clamped extent of a slice with a
         #: data-dependent bound); they are substituted instead of becoming DaCe symbols
         self.aliases: dict[str, SymExpr] = {}
@@ -66,8 +83,18 @@ class SymbolTable:
     def get(self, sym: sympy.Symbol | str) -> symbolic.symbol:
         name = sym.name if isinstance(sym, sympy.Symbol) else str(sym)
         if name not in self.symbols:
-            self.symbols[name] = symbolic.symbol(self.names.get(name, name), self.dtype, nonnegative=True)
+            # ``nonnegative=False`` would assume a negative value: leave the sign unknown instead
+            assumptions = {"nonnegative": True} if self._nonnegative(name) else {}
+            self.symbols[name] = symbolic.symbol(self.names.get(name, name), self.dtype, **assumptions)
         return self.symbols[name]
+
+    def _nonnegative(self, name: str) -> bool:
+        if self.shape_env is None:
+            return True
+        for sym, value_range in self.shape_env.var_to_range.items():
+            if sym.name == name:
+                return bool(value_range.lower >= 0)
+        return True
 
     def define(self, name: str, dtype: dtypes.typeclass, nonnegative: bool = False) -> symbolic.symbol:
         """
@@ -153,9 +180,26 @@ class SymbolTable:
     def shape(self, sizes: Iterable) -> tuple[SymExpr, ...]:
         return tuple(self.to_dace(s) for s in sizes)
 
+    def strides(self, strides: Iterable) -> tuple[SymExpr, ...]:
+        """
+        Translates the strides of a tensor. Torch writes contiguous strides as ``Max(1, n)``, where ``n`` is the
+        product of the sizes of the following dimensions; they become ``n``, which equals it wherever the tensor has
+        elements, so that contiguous layouts compare equal to :func:`~.context.contiguous_strides`.
+        """
+        return tuple(_drop_unit_max(self.to_dace(s)) for s in strides)
+
     @property
     def symbol_types(self) -> dict[str, dtypes.typeclass]:
         return {sym.name: sym.dtype for sym in self.symbols.values()}
+
+
+def _drop_unit_max(expr: SymExpr) -> SymExpr:
+    if not isinstance(expr, sympy.Basic):
+        return expr
+    return expr.replace(
+        lambda e: isinstance(e, sympy.Max) and len(e.args) == 2 and sympy.Integer(1) in e.args,
+        lambda e: next(a for a in e.args if a != 1),
+    )
 
 
 def free_symbol_names(expr: SymExpr) -> set:

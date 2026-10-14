@@ -62,7 +62,7 @@ def alias_view(
     """
     val = _val(node) if val is None else val
     tshape = ctx.symtab.shape(val.shape)
-    tstrides = ctx.symtab.shape(val.stride())
+    tstrides = ctx.symtab.strides(val.stride())
     if subset is None and tshape == base.tshape and tstrides == base.tstrides and val.dtype == base.torch_dtype:
         return base
     if base.is_view and not getattr(ctx.options, "view_chains", True):

@@ -16,13 +16,14 @@ import sympy
 import torch
 
 import dace
-from dace import dtypes
+from dace import dtypes, subsets
 from dace.frontend.ml.torch.dynamo.context import (
     ConstValue,
     LoweringContext,
     SymValue,
     TensorValue,
     UnsupportedOpError,
+    as_sym,
     index_memlet,
 )
 from dace.frontend.ml.torch.dynamo.dtypes import is_boolean, is_floating, to_dace_dtype
@@ -491,6 +492,28 @@ def lower_full_like(ctx, node, x, fill_value, **kwargs):
 @register_lowering(aten.new_full.default)
 def lower_new_full(ctx, node, x, size, fill_value, **kwargs):
     return _fill(ctx, node, fill_value)
+
+
+@register_lowering(aten.constant_pad_nd.default)
+def lower_constant_pad_nd(ctx, node, x: TensorValue, pad, value=0):
+    """
+    Pads (or, with negative amounts, narrows) the last ``len(pad) // 2`` dimensions: ``pad`` lists the (before, after)
+    amounts from the last dimension backwards. The output is filled with ``value``, then the kept part of ``x`` is
+    copied into it. Amounts may be symbolic.
+    """
+    out = _fill(ctx, node, value)
+    pad = [as_sym(p) for p in pad]
+    src_ranges, dst_ranges = [], []
+    for dim in range(x.rank):
+        k = x.rank - 1 - dim  # Index of this dimension's (before, after) pair in ``pad``
+        before, after = (pad[2 * k], pad[2 * k + 1]) if 2 * k < len(pad) else (0, 0)
+        start = sympy.Max(-before, 0)
+        extent = x.tshape[dim] - start - sympy.Max(-after, 0)
+        src_ranges.append((start, start + extent - 1, 1))
+        dst_start = sympy.Max(before, 0)
+        dst_ranges.append((dst_start, dst_start + extent - 1, 1))
+    ctx.emit_copy(x, out, src_subset=subsets.Range(src_ranges), dst_subset=subsets.Range(dst_ranges))
+    return out
 
 
 @register_lowering(aten.zeros.default, aten.zeros_like.default, aten.new_zeros.default)

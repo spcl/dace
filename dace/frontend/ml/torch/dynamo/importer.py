@@ -34,7 +34,7 @@ from .context import (
     Value,
     dense_strides,
 )
-from .symbols import SymbolTable, SymExpr
+from .symbols import SymbolTable, SymExpr, shape_env_of
 
 _SYM_TYPES = (torch.SymInt, torch.SymBool, torch.SymFloat)
 
@@ -121,7 +121,7 @@ class GraphImporter:
         """
         from . import ops  # Deferred: the lowerings import this module
 
-        symtab = SymbolTable(names=symbol_names)
+        symtab = SymbolTable(names=symbol_names, shape_env=shape_env_of(example_inputs))
         storage = _storage_for(example_inputs)
         ctx = LoweringContext(name, symtab, self.options, importer=self, storage=storage)
         self.gm = gm
@@ -176,7 +176,9 @@ class GraphImporter:
         nodes = plan.nodes()
         forward_placeholders = [nodes[n] for n in jt.placeholder_names(plan.forward)]
         backward_placeholders = [nodes[n] for n in jt.placeholder_names(plan.backward)]
-        symtab = SymbolTable(names=symbol_names)
+        symtab = SymbolTable(
+            names=symbol_names, shape_env=shape_env_of(n.meta.get("val") for n in forward_placeholders)
+        )
         ctx = LoweringContext(
             name,
             symtab,

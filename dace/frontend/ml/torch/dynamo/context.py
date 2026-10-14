@@ -288,7 +288,7 @@ class LoweringContext:
         are expressed relative to it. Only pass ``contiguous=True`` for containers no FX view can refer to.
         """
         tshape = self.symtab.shape(val.shape)
-        tstrides = None if contiguous else dense_strides(self.symtab.shape(val.stride()), tshape)
+        tstrides = None if contiguous else dense_strides(self.symtab.strides(val.stride()), tshape)
         return self.add_array(prefix, tshape, val.dtype, tstrides, transient=transient, device=val.device, **kwargs)
 
     def add_view(
@@ -370,7 +370,7 @@ class LoweringContext:
         ``base`` (defaults to the whole container); its first element determines the view's offset.
         """
         return self.emit_view_raw(
-            prefix, base, self.symtab.shape(val.shape), self.symtab.shape(val.stride()), val.dtype, subset
+            prefix, base, self.symtab.shape(val.shape), self.symtab.strides(val.stride()), val.dtype, subset
         )
 
     def emit_view_raw(

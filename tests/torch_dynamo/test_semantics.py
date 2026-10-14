@@ -128,6 +128,27 @@ def test_as_strided_with_storage_offset(backend):
     _check(backend, f, [(torch.arange(12.0),), (torch.arange(20.0),)], expected_compiles=2)
 
 
+@pytest.mark.torch
+@pytest.mark.parametrize("pad", [(1, 2, 0, 3), (-1, 2, 2, -3)])
+def test_constant_pad(backend, pad):
+    """``F.pad`` with a fill value; negative amounts narrow the input."""
+
+    def f(x):
+        return F.pad(x * 2, pad, value=0.5) + 1
+
+    _check(backend, f, [(torch.randn(4, 5),), (torch.randn(6, 7),)])
+
+
+@pytest.mark.torch
+def test_constant_pad_symbolic_amount(backend):
+    """A padding amount that is a size of another input."""
+
+    def f(x, n):
+        return F.pad(x, (0, n.shape[0])) + 1
+
+    _check(backend, f, [(torch.randn(3, 4), torch.empty(2)), (torch.randn(3, 4), torch.empty(5))])
+
+
 if __name__ == "__main__":
     for test in (
         test_amax_amin_identity,
@@ -143,3 +164,8 @@ if __name__ == "__main__":
         torch._dynamo.reset()
         test(DaceBackend())
         print(test.__name__, "ok")
+    for pad in [(1, 2, 0, 3), (-1, 2, 2, -3)]:
+        torch._dynamo.reset()
+        test_constant_pad(DaceBackend(), pad)
+    torch._dynamo.reset()
+    test_constant_pad_symbolic_amount(DaceBackend())

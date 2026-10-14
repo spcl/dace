@@ -228,6 +228,25 @@ def test_dtensor_redistribute():
     assert backend.compile_count == 1
 
 
+@pytest.mark.mpi
+def test_dtensor_uneven_shards():
+    """Columns that do not divide evenly among the ranks: ``redistribute`` pads the shards to equal size (by an amount
+    that is symbolic in the rank's shard size) before its all-gather."""
+    size = dist.get_world_size()
+    mesh = init_device_mesh("cpu", (size,))
+    columns = 2 * size + 1
+    weight = _data(0, 6, columns) * 0.01
+    inputs = _data(1, 8, 6) * 0.01
+    w = distribute_tensor(weight, mesh, [Shard(1)])
+    x = distribute_tensor(inputs, mesh, [Replicate()])
+
+    def f(x, w):
+        return torch.relu(x @ w).redistribute(mesh, [Replicate()]) * 2
+
+    out = _compile(DaceBackend(), f)(x, w)
+    torch.testing.assert_close(out.to_local(), torch.relu(inputs @ weight) * 2)
+
+
 if __name__ == "__main__":
     # Run under MPI, e.g., ``mpirun -n 2 python tests/torch_dynamo/test_distributed.py``
     path = _init_process_group()
@@ -239,4 +258,5 @@ if __name__ == "__main__":
     test_ring_exchange()
     test_training_through_collectives()
     test_dtensor_redistribute()
+    test_dtensor_uneven_shards()
     _destroy_process_group(path)
