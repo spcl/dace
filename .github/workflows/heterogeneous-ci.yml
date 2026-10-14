@@ -75,23 +75,10 @@ jobs:
         export DACE_testing_serialization=1
         export DACE_testing_deserialize_exception=1
         export DACE_cache=unique
-        mpirun -n 2 coverage run --source=dace --parallel-mode -m pytest -x --with-mpi --tb=short --timeout_method thread --timeout=300 -m "mpi and not gpu"
-
-    # @CLAUDE: What is the difference between this test and the one above. Since there is no matrix here, we should only do `auto` mode.
-    - name: Test MPI with pytest (nanobind interface)
-      run: |
-        export NOSTATUSBAR=1
-        export DACE_testing_serialization=1
-        export DACE_testing_deserialize_exception=1
-        export DACE_cache=unique
-        # Every other MPI job runs the default ctypes interface, so MPI had never been
-        # exercised on the nanobind one. There is no argument-marshalling difference to
-        # expect - the MPI descriptors (ProcessGrid / SubArray / RedistrArray) live in
-        # sdfg.process_grids and are emitted into the state struct, so they never reach
-        # sdfg.arglist() and neither interface binds them - but "expected to work" and
-        # "known to work" are different things, and this closes the gap.
+        # No interface matrix here: MPI runs once, under the default auto
+        # selection (pinned explicitly so a changed default cannot silently
+        # reduce the coverage).
         export DACE_compiler_interface=auto
-        source ~/.venv/bin/activate # activate venv
         mpirun -n 2 coverage run --source=dace --parallel-mode -m pytest -x --with-mpi --tb=short --timeout_method thread --timeout=300 -m "mpi and not gpu"
 
     - name: Test ScaLAPACK PBLAS with pytest
