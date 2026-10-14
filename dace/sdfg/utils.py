@@ -826,6 +826,34 @@ def reanchor_stranded_ordering(state: SDFGState, outer: Node, anchor: Node, is_i
     return True
 
 
+def reanchor_stranded_read(state: SDFGState, outer: Node, anchor: Node) -> bool:
+    """Move ``outer``'s ordering edges to ``anchor`` when the fold took ``outer``'s only read.
+
+    ``anchor`` now performs the read ``outer`` did, so a happens-before on ``outer`` is one on
+    ``anchor``. Left in place, ``outer`` is reached by ordering alone and read by nothing: a sink
+    inside the enclosing scope, which every scope walk then trips on.
+
+    :param state: State holding both nodes.
+    :param outer: The read node the fold left without an out-edge.
+    :param anchor: The read node that absorbed the folded read.
+    :returns: ``True`` if the ordering was moved.
+    """
+    nodes = state.nodes()
+    if not isinstance(outer, nd.AccessNode) or anchor is outer or outer not in nodes or anchor not in nodes:
+        return False
+    if state.out_degree(outer):
+        return False
+    ordering = state.in_edges(outer)
+    if not ordering or not all(e.data.is_empty() for e in ordering):
+        return False
+    for e in ordering:
+        if not state.edges_between(e.src, anchor):
+            state.add_nedge(e.src, anchor, dace.Memlet())
+        state.remove_edge(e)
+    state.remove_node(outer)
+    return True
+
+
 def consolidate_edges_scope(state: SDFGState, scope_node: nd.EntryNode | nd.ExitNode) -> int:
     """
     Union scope-entering memlets relating to the same data node in a scope.
@@ -944,6 +972,15 @@ def consolidate_edges_scope(state: SDFGState, scope_node: nd.EntryNode | nd.Exit
             ):
                 continue
             history.append(incoming)
+        else:
+            # The folded read's node can also carry ordering edges in. Once the fold takes its only
+            # read, those move to the read that absorbed it (below), unless that read already
+            # precedes one of their sources.
+            read_from, absorbing = edge_to_remove.src, out_edge.src
+            if state.out_degree(read_from) == 1 and any(
+                nx.has_path(state._nx, absorbing, ie.src) for ie in state.in_edges(read_from) if ie.data.is_empty()
+            ):
+                continue
 
         remove_outer_connector(conn_to_remove)
         set_outer_subset(out_edge, sbs.union(get_outer_subset(out_edge), get_outer_subset(edge_to_remove)))
@@ -959,6 +996,8 @@ def consolidate_edges_scope(state: SDFGState, scope_node: nd.EntryNode | nd.Exit
         remove_edge_and_dangling_path(state, edge_to_remove)
         if isinstance(scope_node, nd.ExitNode):
             reanchor_stranded_ordering(state, stranded, absorbed, False)
+        else:
+            reanchor_stranded_read(state, read_from, absorbing)
 
         consolidated += 1
         # Inner side of the scope - remove and reconnect

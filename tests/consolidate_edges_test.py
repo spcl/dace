@@ -532,6 +532,39 @@ def test_consolidate_edges_refuses_reads_from_two_access_nodes():
     assert np.array_equal(expected, got)
 
 
+def test_consolidate_edges_hands_a_folded_read_s_ordering_to_the_read_that_absorbed_it():
+    """Two reads of an unwritten container fold into one, but each read node also carried an ordering edge.
+    The folded node was left reached by its ordering edge alone and read by nothing: a sink inside the
+    enclosing scope, which the GPU codegen refuses (velocity_tendencies). The order is kept by the read
+    that absorbed it."""
+    sdfg = dace.SDFG("read_fold_ordering")
+    sdfg.add_array("A", [8], dace.float64)
+    sdfg.add_array("B", [8], dace.float64)
+    sdfg.add_array("D", [1], dace.float64)
+    state = sdfg.add_state()
+
+    before = state.add_access("D")
+    state.add_edge(state.add_tasklet("w", {}, {"o": None}, "o = 1.0"), "o", before, None, dace.Memlet("D[0]"))
+    me, mx = state.add_map("m", dict(i="0:7"))
+    tasklet = state.add_tasklet("t", {"x": None, "y": None}, {"z": None}, "z = x + y")
+    for conn, index in (("x", "i"), ("y", "i + 1")):
+        read = state.add_access("A")
+        state.add_nedge(before, read, dace.Memlet())
+        state.add_memlet_path(read, me, tasklet, dst_conn=conn, memlet=dace.Memlet(f"A[{index}]"))
+    state.add_memlet_path(tasklet, mx, state.add_access("B"), src_conn="z", memlet=dace.Memlet("B[i]"))
+    sdfg.validate()
+
+    assert consolidate_edges(sdfg, propagate=False) == 1
+    sdfg.validate()
+    reads = [n for n in state.data_nodes() if n.data == "A"]
+    assert len(reads) == 1 and state.out_degree(reads[0]) == 1, "the folded read node must not be left behind"
+    assert state.edges_between(before, reads[0]), "the absorbing read must still follow the ordering source"
+
+    a, b, d = np.arange(8.0), np.zeros(8), np.zeros(1)
+    sdfg(A=a, B=b, D=d)
+    assert np.allclose(b[:7], a[:7] + a[1:])
+
+
 def test_consolidate_edges_folds_reads_of_one_written_access_node():
     """Reads taken through the SAME written access node share its program point, so they fold.
 
@@ -660,3 +693,4 @@ if __name__ == "__main__":
                 use_inner_access_node=use_inner_access_node,
                 use_non_standard_memlet=use_non_standard_memlet,
             )
+    test_consolidate_edges_hands_a_folded_read_s_ordering_to_the_read_that_absorbed_it()
