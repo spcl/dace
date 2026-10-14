@@ -446,6 +446,73 @@ def _guarded(body: list, var: str, first: int, last: int, fused_first: int, fuse
     return [tn.IfScope(condition=CodeBlock(f"({var} >= {first}) and ({var} <= {last})"), children=body)]
 
 
+class FusionCheck:
+    """
+    Whether :func:`fuse_loops_for_reuse` would fuse two sibling loops if they were adjacent, for deciding where to move
+    loops. Results describe the tree when the check was created.
+
+    :param root: The schedule tree.
+    """
+
+    def __init__(self, root: tn.ScheduleTreeRoot):
+        self._analysis = _Analysis(root)
+        self._index = AccessIndex(root)
+        self._loops: dict[tuple[int, int], _LoopInfo | None] = {}
+
+    def coarse(self, scope: tn.ScheduleTreeNode, min_trip_count: int = 2) -> bool:
+        """Whether ``scope`` is a loop that :func:`fuse_loops_for_reuse` considers fusing."""
+        return self._loop(scope, min_trip_count) is not None
+
+    def _loop(self, scope: tn.ScheduleTreeNode, min_trip_count: int) -> _LoopInfo | None:
+        key = (id(scope), min_trip_count)
+        if key not in self._loops:
+            self._loops[key] = self._analysis.loop(scope, min_trip_count)
+        return self._loops[key]
+
+    def reason(
+        self,
+        first: tn.ScheduleTreeNode,
+        second: tn.ScheduleTreeNode,
+        cache_bytes: int = 256 * 1024,
+        min_trip_count: int = 2,
+    ) -> str | None:
+        """
+        Why ``second`` would not be fused into ``first`` (an earlier sibling) if they were adjacent.
+
+        :param first: The earlier loop.
+        :param second: The later loop.
+        :param cache_bytes: See :func:`fuse_loops_for_reuse`.
+        :param min_trip_count: See :func:`fuse_loops_for_reuse`.
+        :return: ``None`` if they would be fused, else the reason why not.
+        """
+        a, b = self._loop(first, min_trip_count), self._loop(second, min_trip_count)
+        if a is None or b is None:
+            return "not a coarse loop"
+        inside: dict[str, int] = {}
+        for info in (a, b):
+            self._index._count(info.scope, inside, {}, set())
+        used_elsewhere = lambda key: self._index.reads.get(key, 0) > inside.get(key, 0)
+        return _legal(a, b, used_elsewhere) or _profitable([a], b, cache_bytes)
+
+    def fuse(self, first: tn.ForScope, second: tn.ForScope, min_trip_count: int = 2) -> None:
+        """
+        Fuse ``second`` into ``first``, adjacent siblings for which :meth:`reason` returned ``None``, as
+        :func:`fuse_loops_for_reuse` would. Afterwards, the check describes the fused loop as it is.
+
+        :param first: The earlier loop, which becomes the fused loop.
+        :param second: The later loop, which is removed.
+        :param min_trip_count: The value passed to :meth:`reason`.
+        """
+        a, b = self._loop(first, min_trip_count), self._loop(second, min_trip_count)
+        parent = second.parent
+        _fuse(first, [a], b)
+        children = [c for c in parent.children if c is not second]
+        parent.children = []
+        parent.add_children(children)
+        for key in [k for k in self._loops if k[0] in (id(first), id(second))]:
+            del self._loops[key]
+
+
 def fuse_loops_for_reuse(
     stree: tn.ScheduleTreeScope, cache_bytes: int = 256 * 1024, min_trip_count: int = 2, log: list | None = None
 ) -> int:

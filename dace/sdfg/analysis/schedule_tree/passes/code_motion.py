@@ -1,13 +1,19 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """
-Moving statements and subtrees of a schedule tree past their siblings.
+Moving statements and subtrees of a schedule tree past their siblings and out of loops.
 
 :class:`MotionAnalysis` decides whether a subtree may run after (or before) some of its siblings instead of where it
-is, and which iterations of its outer loop must then stay in place. :func:`move_statements_to_readers` uses it to move
-statements to the readers of their values.
+is, and which iterations of its outer loop must then stay in place. Units (:class:`Unit`) are whole children of a scope
+or statements split off from the loop nest around them. The passes move units only where that enables something
+concrete, never just toward their readers (which would lengthen the live ranges of their inputs):
+
+* :func:`move_statements_to_readers`: past nests that keep statements from the guards of their readers;
+* :func:`move_loops_to_fuse`: next to sibling loops they then fuse with;
+* :func:`hoist_invariant_statements`: out of loops whose iterations would all compute the same values.
 """
 
-from collections.abc import Sequence
+from collections import Counter
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
 from typing import Union
 
@@ -18,6 +24,7 @@ from dace.memlet import Memlet
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.sdfg.analysis.schedule_tree.dataflow import Box, ReachingAnalysis, disjoint
 from dace.sdfg.analysis.schedule_tree.passes.common import (
+    ancestors,
     assigned_in,
     bound_names,
     child_containing,
@@ -36,7 +43,9 @@ from dace.sdfg.analysis.schedule_tree.passes.common import (
     path_to,
     range_analysis,
     repository_of,
+    trip_count,
 )
+from dace.sdfg.analysis.schedule_tree.passes.loop_fusion import FusionCheck
 from dace.sdfg.analysis.schedule_tree.passes.readers import (
     Read,
     collect_memlet_uses,
@@ -106,15 +115,19 @@ class MotionAnalysis:
     conflict on it unless its value after the loop is read somewhere.
 
     :param root: The schedule tree.
+    :param escaping: :attr:`escaping` of an earlier version of the tree, if the changes since then (such as moving and
+                     fusing loops) can only have removed names from it; a superset is safe.
     """
 
-    def __init__(self, root: tn.ScheduleTreeRoot):
+    def __init__(self, root: tn.ScheduleTreeRoot, escaping: set[str] | None = None):
         self.root = root
         self.containers = root.containers
         self.repository = repository_of(root)
         self.reaching = ReachingAnalysis(root)
         self._footprints: dict[tuple[int, int], Footprint] = {}
-        self._escaping: set[str] | None = None
+        self._escaping = escaping
+        self._names: dict[int, tuple[set[str], set[str]]] = {}
+        self._trips: dict[int, int | None] = {}
 
     # ------------------------------------------------------------------------------------------------------------------
     # What subtrees do
@@ -193,6 +206,21 @@ class MotionAnalysis:
         result.binds |= own
         for child in getattr(node, "children", ()):
             self._walk(child, around, bound | own, result)
+
+    def names(self, node: tn.ScheduleTreeNode) -> tuple[set[str], set[str]]:
+        """The symbol and container names read and those assigned in a subtree."""
+        key = id(node)
+        if key not in self._names:
+            self._names[key] = (names_in_subtrees([node], names_read), names_in_subtrees([node], names_written))
+        return self._names[key]
+
+    def trip_count(self, loop: tn.ForScope) -> int | None:
+        """The number of iterations of a ``for`` loop, if it is a known constant."""
+        key = id(loop)
+        if key not in self._trips:
+            spaces = iteration_spaces(loop, self.repository)
+            self._trips[key] = trip_count(spaces[0][2]) if len(spaces) == 1 and spaces[0][2] is not None else None
+        return self._trips[key]
 
     @property
     def escaping(self) -> set[str]:
@@ -443,13 +471,13 @@ def _injective(element: tuple[str, ...], variables: list[str]) -> bool:
 def split_off(statements: list[tn.ScheduleTreeNode], motion: MotionAnalysis) -> Unit | None:
     """
     Statements of the innermost body of a perfect nest of ``for`` loops, as a unit that runs in copies of the loops
-    (loop fission), if splitting them off is valid: the statements are tasklets that access single elements, without
-    side effects, and the rest of the body
+    (loop fission), if splitting them off is valid: the statements are tasklets without side effects, and the rest of
+    the body
 
     * neither reads nor writes what they write,
     * assigns no symbol they read and does not jump (``break``, ``continue``),
-    * writes what they read only before all of them that read it, at the one element they read, with every loop
-      variable of the nest indexing that element (each iteration then reads what it read before).
+    * writes what they read only before all of them that read it, at the one element they read of it, with every
+      loop variable of the nest indexing that element (each iteration then reads what it read before).
 
     With all of the body, the unit is the whole nest.
 
@@ -470,7 +498,7 @@ def split_off(statements: list[tn.ScheduleTreeNode], motion: MotionAnalysis) -> 
         return unit
     variables = [loop.loop.loop_variable for loop in nest]
     outputs: set[str] = set()
-    inputs: dict[str, tuple[str, ...]] = {}  # Containers read and not written, by the element read
+    inputs: dict[str, set[tuple[str, ...] | None]] = {}  # Containers read and not written, by the elements read
     first_read: dict[str, int] = {}  # By the position of the first statement reading them
     for position, statement in zip(positions, statements):
         if not isinstance(statement, tn.TaskletNode) or statement.node.has_side_effects(motion.repository):
@@ -478,10 +506,7 @@ def split_off(statements: list[tn.ScheduleTreeNode], motion: MotionAnalysis) -> 
         for memlet in statement.out_memlets.values():
             outputs.add(memlet.data)
         for memlet in statement.in_memlets.values():
-            element = memlet_element(memlet)
-            if element is None or inputs.get(memlet.data, element) != element:
-                return None
-            inputs[memlet.data] = element
+            inputs.setdefault(memlet.data, set()).add(memlet_element(memlet))
             first_read.setdefault(memlet.data, position)
     for name in outputs:
         inputs.pop(name, None)
@@ -491,15 +516,16 @@ def split_off(statements: list[tn.ScheduleTreeNode], motion: MotionAnalysis) -> 
         theirs = motion.footprint(child, nest[-1])
         if theirs.opaque or mine.reads & (theirs.assigns | theirs.binds):
             return None
-        if (names_in_subtrees([child], names_read) | names_in_subtrees([child], names_written)) & outputs:
+        if (motion.names(child)[0] | motion.names(child)[1]) & outputs:
             return None
         for node in child.preorder_traversal():
             for name in names_written(node) & inputs.keys():
-                if k > first_read[name] or not isinstance(node, tn.TaskletNode):
+                if k > first_read[name] or not isinstance(node, tn.TaskletNode) or len(inputs[name]) != 1:
                     return None
+                element = next(iter(inputs[name]))
                 for memlet in node.out_memlets.values():
                     if memlet.data == name and (
-                        memlet_element(memlet) != inputs[name] or not _injective(inputs[name], variables)
+                        element is None or memlet_element(memlet) != element or not _injective(element, variables)
                     ):
                         return None
     return unit
@@ -519,17 +545,22 @@ def statement_group(seed: tn.TaskletNode, motion: MotionAnalysis) -> Unit | None
         return None
     body = seed.parent.children
     index = next(k for k, c in enumerate(body) if c is seed)
+    used = Counter(name for child in body for name in set.union(*motion.names(child)))  # By children using them
     group = [seed]
+    group_used = Counter(set.union(*motion.names(seed)))
+    group_read = set(motion.names(seed)[0])
     for k in range(index - 1, -1, -1):
         candidate = body[k]
         if not isinstance(candidate, tn.TaskletNode):
             continue
         written = {m.data for m in candidate.out_memlets.values()}
-        if not written & names_in_subtrees(group, names_read):
+        if not written & group_read:
             continue
-        others = [c for c in body if c is not candidate and not any(c is g for g in group)]
-        if not (names_in_subtrees(others, names_read) | names_in_subtrees(others, names_written)) & written:
+        own = set.union(*motion.names(candidate))
+        if all(used[name] - group_used[name] - (name in own) == 0 for name in written):  # No other child uses them
             group.insert(0, candidate)
+            group_used.update(own)
+            group_read |= motion.names(candidate)[0]
     unit = split_off(group, motion) if len(group) > 1 else None
     return unit or split_off([seed], motion)
 
@@ -718,3 +749,218 @@ def _move_plan(
     if reordering is None:
         return None
     return unit, target, reordering.stay
+
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Moving loops next to the loops they fuse with
+# ----------------------------------------------------------------------------------------------------------------------
+
+
+def move_loops_to_fuse(stree: tn.ScheduleTreeScope, cache_bytes: int = 256 * 1024, min_trip_count: int = 2) -> int:
+    """
+    Move coarse loops next to sibling loops that :func:`fuse_loops_for_reuse` would fuse them with if they were
+    adjacent (see :class:`FusionCheck`), and fuse each such pair. The later loop moves up to just after the earlier
+    one or, if that is not valid, the earlier one moves down to just before the later one; whole loops only (see
+    :func:`move_plan`). Each loop is paired with the nearest earlier loop that both fuses with it and can be moved
+    next to it.
+
+    :param stree: The schedule tree (or subtree) to transform in place.
+    :param cache_bytes: See :func:`fuse_loops_for_reuse`.
+    :param min_trip_count: See :func:`fuse_loops_for_reuse`.
+    :return: The number of loops moved.
+    """
+    root = stree.get_root()
+    check = FusionCheck(root)  # Still valid after moves and after the fusions it makes itself
+    # Moving and fusing loops only removes loop variables from those read after their loops
+    escaping = MotionAnalysis(root).escaping
+    blocked: set[tuple] = set()  # Pairs that cannot be moved together, with the siblings between them
+    moved = 0
+    start = stree
+    while True:
+        plan = _fusion_move(stree, start, check, MotionAnalysis(root, escaping), cache_bytes, min_trip_count, blocked)
+        if plan is None:
+            return moved
+        unit, before, (first, second) = plan
+        move_unit(unit, before)
+        check.fuse(first, second, min_trip_count)
+        blocked = {key for key in blocked if id(first) not in key and id(second) not in key}  # Their accesses changed
+        moved += 1
+        start = unit.scope  # Scopes before it in preorder (other than its ancestors) did not change
+
+
+def _fusion_move(
+    stree: tn.ScheduleTreeScope,
+    start: tn.ScheduleTreeScope,
+    check: FusionCheck,
+    motion: MotionAnalysis,
+    cache_bytes: int,
+    min_trip_count: int,
+    blocked: set[tuple],
+) -> tuple | None:
+    """``(unit, before, (first, second))``: the next loop (in the scopes from ``start`` on, in preorder) to move before
+    the sibling ``before`` to fuse the loops ``first`` and ``second``, or ``None``. A move does not change which loops
+    of its ancestors fuse or move, as it only reorders and fuses their descendants. Pairs found unmovable are added to
+    ``blocked`` by the ids of the two loops and of the siblings between them, and skipped while those are the same."""
+    for scope in _preorder_from(stree, start):
+        if not isinstance(scope, tn.ScheduleTreeScope):
+            continue
+        children = scope.children
+        coarse = [k for k, c in enumerate(children) if check.coarse(c, min_trip_count)]
+        for b in coarse:
+            for a in reversed([k for k in coarse if k < b - 1]):
+                first, second = children[a], children[b]
+                key = tuple(id(c) for c in children[a : b + 1])
+                if key in blocked or check.reason(first, second, cache_bytes, min_trip_count) is not None:
+                    continue
+                up = move_plan(subtree_unit(second), children[a + 1], motion)
+                if up is not None and up.stay is None:
+                    return subtree_unit(second), children[a + 1], (first, second)
+                down = move_plan(subtree_unit(first), second, motion)
+                if down is not None and down.stay is None:
+                    return subtree_unit(first), second, (first, second)
+                blocked.add(key)
+    return None
+
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Hoisting invariant statements out of loops
+# ----------------------------------------------------------------------------------------------------------------------
+
+
+def hoistable(unit: Unit, motion: MotionAnalysis, min_trip_count: int = 2) -> bool:
+    """
+    Whether a unit in the body of a ``for`` loop (its scope) computes the same values in every iteration and may run
+    once before the loop instead:
+
+    * the loop runs at least ``min_trip_count`` (and so at least one) times, a known constant;
+    * the unit does not read the loop variable, assign symbols, have side effects (see :meth:`MotionAnalysis.footprint`)
+      or read what it writes, and the variables of its loops are not read after them;
+    * the rest of the body (other children, and the rest of the unit's nest if it is split off) writes neither what
+      the unit reads nor what it writes, and assigns no symbol it reads;
+    * nothing in the body before the unit, nor the loop header, reads what it writes (in the first iteration, those
+      reads would see the values from before the loop).
+
+    Every iteration then writes the same values to the same elements, which nothing else in the loop overwrites, and
+    every read in the loop that sees them in the original sees them after hoisting, as do reads after the loop.
+
+    :param unit: The unit, whose scope is the loop.
+    :param motion: The analysis of the tree.
+    :param min_trip_count: Smallest number of iterations of the loop.
+    :return: True if the unit may be hoisted.
+    """
+    loop = unit.scope
+    if type(loop) is not tn.ForScope or not loop.loop.loop_variable:
+        return False
+    trips = motion.trip_count(loop)
+    if trips is None or trips < max(min_trip_count, 1):
+        return False
+    mine = motion.footprint(unit.statements, loop)
+    if mine.opaque or mine.assigns or loop.loop.loop_variable in mine.reads or mine.binds & motion.escaping:
+        return False
+    written = {a.name for a in mine.accesses if a.write}
+    read = {a.name for a in mine.accesses if not a.write}
+    if written & read or written & names_read(loop):
+        return False
+    position = next(k for k, c in enumerate(loop.children) if c is unit.outer)
+    others = [(k < position, c) for k, c in enumerate(loop.children) if k != position]
+    if not unit.whole:
+        others += [(False, c) for c in unit.nest[-1].children if not any(c is s for s in unit.statements)]
+    for before, other in others:
+        theirs = motion.footprint(other, loop)
+        if theirs.opaque or mine.reads & (theirs.assigns | theirs.binds):
+            return False
+        if any(a.write and a.name in read | written or before and a.name in written for a in theirs.accesses):
+            return False
+    return True
+
+
+def hoist_unit(unit: Unit) -> None:
+    """
+    Move a unit out of the loop that is its scope, to just before the loop (see :func:`hoistable`). A split-off unit
+    runs in copies of the loops of its nest; the rest of the nest stays.
+
+    :param unit: The unit.
+    """
+    loop = unit.scope
+    if unit.whole:
+        hoisted = unit.outer
+        loop.children = [c for c in loop.children if c is not hoisted]
+    else:
+        body: list[tn.ScheduleTreeNode] = [clone_subtree(s) for s in unit.statements]
+        for nested in reversed(unit.nest):
+            body = [make_scope(nested, None, None, None, body, 1)]
+        hoisted = body[0]
+        innermost = unit.nest[-1]
+        innermost.children = [c for c in innermost.children if not any(c is s for s in unit.statements)]
+        if not innermost.children:
+            loop.children = [c for c in loop.children if c is not unit.nest[0]]
+    parent = loop.parent
+    children = list(parent.children)
+    children.insert(next(k for k, c in enumerate(children) if c is loop), hoisted)
+    parent.children = []
+    parent.add_children(children)
+
+
+def hoist_invariant_statements(stree: tn.ScheduleTreeScope, min_trip_count: int = 2) -> int:
+    """
+    Hoist loop-invariant work out of ``for`` loops that contain loops: children of a loop body, and statements of the
+    innermost body of a perfect nest in a loop body (split off with the earlier statements whose values only they use,
+    see :func:`statement_group`), that compute the same values in every iteration (see :func:`hoistable`) run once
+    before the loop. Outer loops are visited first, and hoisted units may be hoisted again out of the loops around
+    them. The values stay in the containers they are written to, so no temporaries are added. Innermost loops are
+    left to the compiler.
+
+    :param stree: The schedule tree (or subtree) to transform in place.
+    :param min_trip_count: Only hoist out of loops that run at least this many times.
+    :return: The number of units hoisted.
+    """
+    root = stree.get_root()
+    hoisted = 0
+    start = stree
+    while True:
+        motion = MotionAnalysis(root)
+        unit = _invariant_unit(stree, start, motion, min_trip_count)
+        if unit is None:
+            return hoisted
+        hoist_unit(unit)
+        hoisted += 1
+        # Next, the loop may hold more and the hoisted unit may leave the loop around it; the loops before them in
+        # preorder did not change
+        loop = unit.scope
+        start = next((a for a in ancestors(loop) if type(a) is tn.ForScope and inside(a, stree)), loop)
+
+
+def _preorder_from(stree: tn.ScheduleTreeScope, start: tn.ScheduleTreeNode) -> Iterator[tn.ScheduleTreeNode]:
+    """The nodes of ``stree`` in preorder, from ``start`` on."""
+    started = start is stree
+    for node in stree.preorder_traversal():
+        started = started or node is start
+        if started:
+            yield node
+
+
+def _invariant_unit(
+    stree: tn.ScheduleTreeScope, start: tn.ScheduleTreeNode, motion: MotionAnalysis, min_trip_count: int
+) -> Unit | None:
+    for loop in _preorder_from(stree, start):
+        if type(loop) is not tn.ForScope or not any(isinstance(c, (tn.LoopScope, tn.MapScope)) for c in loop.children):
+            continue  # Hoisting out of innermost loops is the compiler's business
+        trips = motion.trip_count(loop)
+        if trips is None or trips < max(min_trip_count, 1):
+            continue
+        for child in loop.children:
+            unit = subtree_unit(child)
+            if hoistable(unit, motion, min_trip_count):
+                return unit
+            if type(child) is not tn.ForScope:
+                continue
+            innermost = child
+            while len(innermost.children) == 1 and type(innermost.children[0]) is tn.ForScope:
+                innermost = innermost.children[0]
+            for statement in innermost.children:
+                if not isinstance(statement, tn.TaskletNode):
+                    continue
+                unit = statement_group(statement, motion)
+                if unit is not None and unit.scope is loop and hoistable(unit, motion, min_trip_count):
+                    return unit
+    return None

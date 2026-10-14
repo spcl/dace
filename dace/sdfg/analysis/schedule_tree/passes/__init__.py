@@ -31,4 +31,6 @@ from dace.sdfg.analysis.schedule_tree.passes.loop_range_reduction import reduce_
 from dace.sdfg.analysis.schedule_tree.passes.guard_coarsening import coarsen_guards
 from dace.sdfg.analysis.schedule_tree.passes.guard_coarsening import sink_into_guards
 from dace.sdfg.analysis.schedule_tree.passes.code_motion import move_statements_to_readers
+from dace.sdfg.analysis.schedule_tree.passes.code_motion import move_loops_to_fuse
+from dace.sdfg.analysis.schedule_tree.passes.code_motion import hoist_invariant_statements
 from dace.sdfg.analysis.schedule_tree.passes.resets import skip_redundant_resets

@@ -9,10 +9,17 @@ import numpy as np
 import dace
 from dace.properties import CodeBlock
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
-from dace.sdfg.analysis.schedule_tree.passes import coarsen_guards, move_statements_to_readers, sink_into_guards
+from dace.sdfg.analysis.schedule_tree.passes import (
+    coarsen_guards,
+    hoist_invariant_statements,
+    move_loops_to_fuse,
+    move_statements_to_readers,
+    sink_into_guards,
+)
 from dace.sdfg.analysis.schedule_tree.passes.code_motion import (
     MotionAnalysis,
     Reordering,
+    hoistable,
     move_plan,
     move_unit,
     split_off,
@@ -508,6 +515,132 @@ def test_move_not_past_writes_of_every_iteration():
     assert move_statements_to_readers(stree) == 0
 
 
+# ----------------------------------------------------------------------------------------------------------------------
+# Moving loops next to the loops they fuse with
+# ----------------------------------------------------------------------------------------------------------------------
+
+
+def _fusion_tree(between_writes: str = "u") -> tn.ScheduleTreeRoot:
+    """``t = x``, then an unrelated nest (or one that writes ``t``), then ``out = t + 1``: vertical loops around
+    horizontal ones, which fuse when adjacent."""
+    stree = _root(
+        "fuse_move",
+        {"x": ([8, 64], dace.float64), "y": ([8, 64], dace.float64), "out": ([8, 64], dace.float64)},
+        {"t": ([8, 64], dace.float64), "u": ([8, 64], dace.float64)},
+    )
+
+    def nest(code: str, inputs: dict[str, str], output: str) -> tn.ForScope:
+        return _loop("k", 0, 8, [_loop("i", 0, 64, [_tasklet(code, inputs, {"o": output})])])
+
+    stree.add_children(
+        [
+            nest("o = a", {"a": "x[k, i]"}, "t[k, i]"),
+            nest("o = a * 2", {"a": "y[k, i]"}, f"{between_writes}[k, i]"),
+            nest("o = a + 1", {"a": "t[k, i]"}, "out[k, i]"),
+        ]
+    )
+    return stree
+
+
+def _fusion_inputs() -> list[dict[str, np.ndarray]]:
+    rng = np.random.default_rng(3)
+    return [{"x": rng.random((8, 64)), "y": rng.random((8, 64)), "out": np.zeros((8, 64))}]
+
+
+def test_move_loops_to_fuse():
+    """The reader of ``t`` moves up next to its producer and is fused with it (each loop accesses 8 KiB in all, a
+    fused iteration 1.5 KiB: with a 4 KiB cache, fusion keeps ``t`` in cache)."""
+
+    def transform(stree):
+        assert move_loops_to_fuse(stree, cache_bytes=4096) == 1
+        assert len(stree.children) == 2 and len(stree.children[0].children) == 2
+
+    _same_results(_fusion_tree, transform, _fusion_inputs())
+
+
+def test_move_loops_to_fuse_not_past_conflicts():
+    stree = _fusion_tree(between_writes="t")
+    assert move_loops_to_fuse(stree, cache_bytes=4096) == 0
+    assert len(stree.children) == 3
+
+
+def test_move_loops_to_fuse_only_if_profitable():
+    stree = _fusion_tree()
+    assert move_loops_to_fuse(stree, cache_bytes=1024 * 1024) == 0  # Everything stays in cache anyway
+
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Hoisting invariant statements out of loops
+# ----------------------------------------------------------------------------------------------------------------------
+
+
+def _hoisting_tree(
+    trips: int = 4, before: tn.ScheduleTreeNode = None, after: tn.ScheduleTreeNode = None, difference: str = "o = b - a"
+) -> tn.ScheduleTreeRoot:
+    """``for n: (for k: s[n, k] = x[k] * n; d[k] = y[k + 1] - y[k]); for k: out[n, k] = s[n, k] + d[k]``: the
+    differences are the same in every iteration of ``n``."""
+    stree = _root(
+        "hoist",
+        {
+            "x": ([8], dace.float64),
+            "y": ([9], dace.float64),
+            "s": ([4, 8], dace.float64),
+            "out": ([4, 8], dace.float64),
+        },
+        {"d": ([8], dace.float64)},
+    )
+    scaled = _tasklet("o = a * n", {"a": "x[k]"}, {"o": "s[n, k]"})
+    differences = _tasklet(difference, {"a": "y[k]", "b": "y[k + 1]"}, {"o": "d[k]"})
+    body = [
+        _loop("k", 0, 8, [scaled, differences]),
+        _loop("k", 0, 8, [_tasklet("o = a + b", {"a": "s[n, k]", "b": "d[k]"}, {"o": "out[n, k]"})]),
+    ]
+    body = ([before] if before else []) + body + ([after] if after else [])
+    stree.add_child(_loop("n", 0, trips, body))
+    return stree
+
+
+def _hoisting_inputs() -> list[dict[str, np.ndarray]]:
+    rng = np.random.default_rng(5)
+    return [{"x": rng.random(8), "y": rng.random(9), "s": np.zeros((4, 8)), "out": np.zeros((4, 8))}]
+
+
+def test_hoist_invariant_statement():
+
+    def transform(stree):
+        assert hoist_invariant_statements(stree) == 1
+        hoisted, loop = stree.children
+        assert type(hoisted) is tn.ForScope and len(hoisted.children) == 1
+        assert len(loop.children) == 2 and len(loop.children[0].children) == 1
+
+    _same_results(_hoisting_tree, transform, _hoisting_inputs())
+
+
+def test_hoist_not_if_variant():
+    # Reads the loop variable
+    assert hoist_invariant_statements(_hoisting_tree(difference="o = b - a + n")) == 0
+    # Its inputs change in the loop
+    assert hoist_invariant_statements(_hoisting_tree(after=_tasklet("o = a + 1", {"a": "y[0]"}, {"o": "y[0]"}))) == 0
+    # Something else writes its outputs
+    assert hoist_invariant_statements(_hoisting_tree(after=_tasklet("o = a", {"a": "x[0]"}, {"o": "d[0]"}))) == 0
+    # Read before it in the first iteration (the value from before the loop)
+    assert hoist_invariant_statements(_hoisting_tree(before=_tasklet("o = a", {"a": "d[0]"}, {"o": "x[0]"}))) == 0
+    # The loop runs once
+    assert hoist_invariant_statements(_hoisting_tree(trips=1)) == 0
+
+
+def test_hoistable_whole_child():
+    """A child of the loop body that computes the same values in every iteration."""
+    stree = _hoisting_tree()
+    loop = stree.children[0]
+    copy_nest = _loop("k", 0, 8, [_tasklet("o = a", {"a": "y[k]"}, {"o": "d[k]"})])
+    loop.children = [copy_nest] + [c for c in loop.children]
+    loop.children[1].children = loop.children[1].children[:1]
+    for child in loop.children:
+        child.parent = loop
+    assert hoistable(subtree_unit(copy_nest), MotionAnalysis(stree))
+
+
 if __name__ == "__main__":
     test_reorder_unrelated_nests()
     test_reorder_reads_do_not_conflict()
@@ -535,3 +668,9 @@ if __name__ == "__main__":
     test_move_past_guard_assignment_then_sink()
     test_move_keeps_conflicting_iterations()
     test_move_not_past_writes_of_every_iteration()
+    test_move_loops_to_fuse()
+    test_move_loops_to_fuse_not_past_conflicts()
+    test_move_loops_to_fuse_only_if_profitable()
+    test_hoist_invariant_statement()
+    test_hoist_not_if_variant()
+    test_hoistable_whole_child()
