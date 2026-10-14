@@ -271,6 +271,39 @@ def test_deterministic_label_in_horizontal_map_fusion(first_order: bool):
     assert expected_final_label == final_me.map.label
 
 
+@pytest.mark.parametrize("binding", ["same_node", "same_data", "other_data", "written_data"])
+def test_horizontal_fusion_of_maps_sharing_a_dynamic_map_range(binding: str):
+    """Both Maps are bounded by a dynamic map range ``lim``; they fuse only if both read the same value."""
+    sdfg = dace.SDFG(unique_name(f"shared_dynamic_map_range_{binding}"))
+    for name in ("bound", "other_bound"):
+        sdfg.add_array(name, [1], dace.int64)
+    state = sdfg.add_state(is_start_block=True)
+    first_source = state.add_access("bound")
+    if binding == "same_node":
+        second_source = first_source
+    else:
+        second_source = state.add_access("other_bound" if binding == "other_data" else "bound")
+    if binding == "written_data":
+        writer = state.add_tasklet("set_bound", {}, {"__out"}, "__out = 4")
+        state.add_edge(writer, "__out", state.add_access("bound"), None, dace.Memlet("bound[0]"))
+    for name, source in (("A", first_source), ("B", second_source)):
+        sdfg.add_array(name, [10], dace.float64)
+        _, entry, _ = state.add_mapped_tasklet(
+            f"map_{name}",
+            {"__i": "0:lim"},
+            {},
+            "__out = 1.0",
+            {"__out": dace.Memlet(f"{name}[__i]")},
+            external_edges=True,
+        )
+        entry.add_in_connector("lim")
+        state.add_edge(source, None, entry, "lim", dace.Memlet(f"{source.data}[0]"))
+
+    fuses = binding in ("same_node", "same_data")
+    assert sdfg.apply_transformations_repeated(dftrans.MapFusionHorizontal(), validate_all=True) == int(fuses)
+    sdfg.validate()
+
+
 if __name__ == "__main__":
     test_vertical_map_fusion_common_ancestor_is_required()
     test_vertical_map_fusion_no_common_ancestor_not_required()
@@ -279,3 +312,7 @@ if __name__ == "__main__":
     test_vertical_maps_are_not_fused_horizontally()
     test_deterministic_label_in_horizontal_map_fusion(first_order=True)
     test_deterministic_label_in_horizontal_map_fusion(first_order=False)
+    test_horizontal_fusion_of_maps_sharing_a_dynamic_map_range("same_node")
+    test_horizontal_fusion_of_maps_sharing_a_dynamic_map_range("same_data")
+    test_horizontal_fusion_of_maps_sharing_a_dynamic_map_range("other_data")
+    test_horizontal_fusion_of_maps_sharing_a_dynamic_map_range("written_data")
