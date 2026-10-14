@@ -408,6 +408,15 @@ def iedge_reads_gpu_array(edge_data: "dace.InterstateEdge", sdfg: SDFG, gpu_writ
     return bool(edge_data.read_symbols() & sdfg.arrays.keys() & gpu_written)
 
 
+def meta_reads_gpu_written(block, sdfg: SDFG, gpu_written: OrderedSet) -> bool:
+    """Whether ``block``'s own control-flow code (a branch condition, a loop's init / condition / update)
+    reads a GPU-written array. That code runs on the host before anything inside ``block``."""
+    if not hasattr(block, "get_meta_codeblocks"):
+        return False
+    reads = {str(sym) for code in block.get_meta_codeblocks() for sym in code.get_free_symbols()}
+    return bool(reads & sdfg.arrays.keys() & gpu_written)
+
+
 def block_reads_gpu_written(block, gpu_written: OrderedSet) -> bool:
     """Whether ``block`` (state or control-flow region) reads any GPU-written array -- i.e. it is a
     host consumer of GPU output (a copy-out / read-back) that must wait for the producing kernels."""
@@ -668,23 +677,34 @@ class SingleStreamGPUScheduler(GPUStreamSchedulingStrategy):
         # that owning region, not the root SDFG -- the correct per-iteration sync semantics.
         edges_to_splice: list[tuple[AbstractControlFlowRegion, Any]] = []
         for region in sdfg.all_control_flow_regions(recursive=True):
+            if region.sdfg is not sdfg:
+                continue  # a nested SDFG has no ``gpu_streams`` of its own to sync on
             for edge in list(region.edges()):
                 src, dst = edge.src, edge.dst
+                # A host read of GPU output on this edge: its assignments / condition, or the branch or
+                # loop condition of the block it enters, all evaluated on the host.
+                host_read = iedge_reads_gpu_array(edge.data, sdfg, self._gpu_written) or meta_reads_gpu_written(
+                    dst, sdfg, self._gpu_written
+                )
                 # src/dst may be any block kind; ``classify_root_block`` returns the union of a
                 # block's descendant kinds, so a CF region whose payload is GPU (or host) is
-                # classified accordingly.
-                if self._state_kinds.get(src) != NodeKind.GPU:
+                # classified accordingly. Blocks below the root are classified the same way.
+                if self.block_kind(src) != NodeKind.GPU:
+                    # Host work does not wait for the stream: GPU work queued before ``src`` is still in
+                    # flight when the host reads its output here (the read-back after a host-only block).
+                    if host_read and unsynced_gpu_predecessors(region, src, set()):
+                        edges_to_splice.append((region, edge))
                     continue
-                # GPU -> GPU: splice only when the iedge reads a GPU-written array. GPU -> host:
+                # GPU -> GPU: splice only when the host reads GPU output in between. GPU -> host:
                 # splice only on a hazard -- the host block consumes GPU output (copy-out /
                 # read-back) or writes an array the queued GPU work still touches. Exit visibility
                 # is the sink's concern (:meth:`append_host_sink_exit_syncs`).
-                dst_kind = self._state_kinds.get(dst, NodeKind.CPU)
+                dst_kind = self.block_kind(dst)
                 if dst_kind == NodeKind.GPU:
-                    if not iedge_reads_gpu_array(edge.data, sdfg, self._gpu_written):
+                    if not host_read:
                         continue
                 elif not (
-                    iedge_reads_gpu_array(edge.data, sdfg, self._gpu_written)
+                    host_read
                     or block_reads_gpu_written(dst, self._gpu_written)
                     or block_writes_gpu_accessed(dst, queued_gpu_accessed(region, src))
                 ):
@@ -696,6 +716,11 @@ class SingleStreamGPUScheduler(GPUStreamSchedulingStrategy):
         }
         self.append_host_sink_exit_syncs(sdfg, sync_states, stream_array_name)
         self.add_sync_state(sdfg, stream_array_name)
+
+    def block_kind(self, block) -> NodeKind:
+        """A root block's cached class, else the class of a block below the root, computed the same way."""
+        kind = self._state_kinds.get(block)
+        return kind if kind is not None else classify_root_block(block)
 
     def append_host_sink_exit_syncs(self, sdfg: dace.SDFG, sync_states, stream_array_name: str):
         """Sync after a host sink block that GPU work still reaches unsynchronized: the stream is in
