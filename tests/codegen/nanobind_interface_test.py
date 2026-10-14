@@ -2448,6 +2448,24 @@ def test_nanobind_interface_lowp_rejected():
             generate_bindings_code(sdfg)
 
 
+def test_nanobind_interface_non_primitive_elements_rejected():
+    """Opaque/pointer element and scalar types have no nb::ndarray dtype or
+    caster; they are out of scope in every form (argument, return, scalar)."""
+    from dace.codegen.nanobind_bindings import generate_bindings_code
+
+    for name, add in (
+        ("opaque_array_reject_probe", lambda s: s.add_array("A", [4], dace.opaque("non_trivial"))),
+        ("opaque_return_reject_probe", lambda s: s.add_array("__return", [4], dace.opaque("non_trivial"))),
+        ("opaque_scalar_reject_probe", lambda s: s.add_scalar("x", dace.opaque("non_trivial"))),
+        ("pointer_array_reject_probe", lambda s: s.add_array("A", [4], dace.pointer(dace.float64))),
+        ("pointer_scalar_reject_probe", lambda s: s.add_scalar("x", dace.pointer(dace.float64))),
+    ):
+        sdfg = dace.SDFG(name)
+        add(sdfg)
+        with pytest.raises(NotImplementedError, match="ctypes"):
+            generate_bindings_code(sdfg)
+
+
 def test_nanobind_interface_unsupported_reason_predicate():
     """`unsupported_reason` is the codegen refusals' predicate: None for a
     supported SDFG, the refusal reason for an out-of-scope one."""
@@ -2464,6 +2482,10 @@ def test_nanobind_interface_unsupported_reason_predicate():
     lowp = dace.SDFG("predicate_lowp_probe")
     lowp.add_array("A", [4], dace.bfloat16)
     assert unsupported_reason(lowp) is not None
+
+    opaque = dace.SDFG("predicate_opaque_probe")
+    opaque.add_array("A", [4], dace.opaque("non_trivial"))
+    assert "non-primitive" in unsupported_reason(opaque)
 
 
 def test_nanobind_interface_array_like_wrapper_arguments(nanobind_interface):

@@ -24,6 +24,21 @@ from dace.codegen.common import get_gpu_backend, sdfg_has_gpu_code, sym2cpp
 _LOWP_TYPES = (dtypes.bfloat16, dtypes.float8_e4m3fn, dtypes.float8_e5m2)
 
 
+def _ndarray_inexpressible(dtype) -> bool:
+    """True when ``nb::ndarray`` has no dtype for ``dtype``'s element type.
+
+    Expressible elements are the plain primitive typeclasses (bool and float16
+    included, via the helpers header's casters), vectors thereof, and pyobject
+    (marshalled as ``PyObject *``, not through ``nb::ndarray``); other
+    subclassed typeclasses (opaque, pointer, ...) have no DLPack dtype and
+    would render as their raw ctype inside ``nb::ndarray<...>``.
+    """
+    elem = dtype.vtype if isinstance(dtype, dtypes.vector) else dtype
+    if isinstance(elem, dtypes.pyobject):
+        return False
+    return type(elem) is not dtypes.typeclass
+
+
 def argument_unsupported(name: str, desc: dt.Data) -> str | None:
     """The reason argument ``(name, desc)`` is outside the nanobind interface's scope, or ``None``.
 
@@ -50,6 +65,8 @@ def argument_unsupported(name: str, desc: dt.Data) -> str | None:
             return f'return value "{name}" of type {type(desc).__name__} is not supported; returns are arrays only.'
         if isinstance(desc.dtype, dtypes.struct):
             return f'return value "{name}" is a record-dtype (dtypes.struct) array, which is out of scope; {hint}'
+        if _ndarray_inexpressible(desc.dtype):
+            return f'return value "{name}" has non-primitive element type {desc.dtype}, which is out of scope; {hint}'
         if any(str(o) != "0" for o in desc.offset):
             return f'return value "{name}" has a nonzero offset; in-binding allocation assumes offset 0; {hint}'
         return None
@@ -58,6 +75,8 @@ def argument_unsupported(name: str, desc: dt.Data) -> str | None:
             return f'argument "{name}" is a record-dtype (dtypes.struct) array, which is out of scope; {hint}'
         if desc.dtype.base_type == dtypes.string:
             return f'argument "{name}" is a string array (char-buffer form), which is out of scope; {hint}'
+        if _ndarray_inexpressible(desc.dtype):
+            return f'argument "{name}" has non-primitive element type {desc.dtype}, which is out of scope; {hint}'
         return None
     if isinstance(desc, dt.Scalar):
         if isinstance(desc.dtype, dtypes.pyobject) or desc.dtype == dtypes.string:
@@ -68,6 +87,8 @@ def argument_unsupported(name: str, desc: dt.Data) -> str | None:
             )
         if isinstance(desc.dtype, dtypes.vector):
             return f'vector scalar argument "{name}" is out of scope; {hint}'
+        if type(desc.dtype) is not dtypes.typeclass:
+            return f'scalar argument "{name}" of non-primitive type {desc.dtype} is out of scope; {hint}'
         return None
     return f'argument "{name}" of type {type(desc).__name__} is out of scope; {hint}'
 

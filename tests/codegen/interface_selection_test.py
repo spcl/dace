@@ -42,6 +42,16 @@ def _structure_sdfg(name: str) -> dace.SDFG:
     return sdfg
 
 
+def _opaque_array_sdfg(name: str) -> dace.SDFG:
+    """An SDFG whose argument array has an opaque (custom C++) element type -
+    out of the nanobind interface's scope."""
+    sdfg = dace.SDFG(name)
+    sdfg.add_array("A", [4], dace.opaque("non_trivial"))
+    sdfg.append_global_code("struct non_trivial { double v; };")
+    sdfg.add_state()
+    return sdfg
+
+
 def test_interface_default_is_auto():
     assert Config.get_default("compiler", "interface") == "auto"
 
@@ -131,6 +141,22 @@ def test_auto_falls_back_to_ctypes_for_structures():
         # object; the selection is what is under test).
         csdfg = _structure_sdfg("auto_structure_prog").compile()
         assert isinstance(csdfg, CtypesCompiledSDFG)
+
+
+def test_auto_falls_back_to_ctypes_for_opaque_elements():
+    from dace.codegen.ctypes_compiled_sdfg import CtypesCompiledSDFG
+
+    with set_temporary("compiler", "interface", value="auto"):
+        # Compile only: calling needs a buffer of the custom C++ type; the
+        # selection (and that the bindings TU is never generated) is the test.
+        csdfg = _opaque_array_sdfg("auto_opaque_prog").compile()
+        assert isinstance(csdfg, CtypesCompiledSDFG)
+
+
+def test_explicit_nanobind_refuses_opaque_elements():
+    with set_temporary("compiler", "interface", value="nanobind"):
+        with pytest.raises(NotImplementedError, match="ctypes"):
+            _opaque_array_sdfg("explicit_nanobind_opaque_prog").compile()
 
 
 def test_explicit_nanobind_refuses_unsupported_sdfg():
