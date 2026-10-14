@@ -2266,7 +2266,6 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         is_incomming_edge = outer_edge.dst is nsdfg
         assert (is_incomming_edge) or (outer_edge.src is nsdfg)
 
-        intermediate_data_outside: str = intermediate.data
         inner_sdfg = nsdfg.sdfg
         inner_data = outer_edge.dst_conn if is_incomming_edge else outer_edge.src_conn
         # A connector with no matching inner array is a shape we can not reason about.
@@ -2274,17 +2273,10 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             return False
         inner_desc = inner_sdfg.arrays[inner_data]
 
-        # We do not allow that the data is used as input and output.
-        # TODO(phimuell): In this situation it should be enough.
-        # On the write side `apply()` splits the InOut connector before renaming
-        #  (`_split_inout_for_intermediate`), so the read and the write end up on separate
-        #  connectors and the ambiguity this guards against is gone by the time the strides
-        #  are modified. The read side has no such split and stays refused.
-        if (
-            is_incomming_edge
-            and intermediate_data_outside in nsdfg.in_connectors
-            and intermediate_data_outside in nsdfg.out_connectors
-        ):
+        # Connectors carry the inner name. On the write side `apply()` splits the InOut connector before renaming
+        #  (`_split_inout_for_intermediate`), so the read and the write end up on separate connectors; the read side
+        #  has no such split and stays refused.
+        if is_incomming_edge and inner_data in nsdfg.out_connectors:
             return False
 
         # The inner data is an array or a scalar.
