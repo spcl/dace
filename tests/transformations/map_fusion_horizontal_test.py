@@ -273,7 +273,7 @@ def test_deterministic_label_in_horizontal_map_fusion(first_order: bool):
 
 @pytest.mark.parametrize("binding", ["same_node", "same_data", "other_data", "written_data"])
 def test_horizontal_fusion_of_maps_sharing_a_dynamic_map_range(binding: str):
-    """Both Maps are bounded by a dynamic map range ``lim``; they fuse only if both read the same value."""
+    """Both Maps are bounded by a dynamic map range ``lim``; they fuse only if both read it from the same node."""
     sdfg = dace.SDFG(unique_name(f"shared_dynamic_map_range_{binding}"))
     for name in ("bound", "other_bound"):
         sdfg.add_array(name, [1], dace.int64)
@@ -299,7 +299,7 @@ def test_horizontal_fusion_of_maps_sharing_a_dynamic_map_range(binding: str):
         entry.add_in_connector("lim")
         state.add_edge(source, None, entry, "lim", dace.Memlet(f"{source.data}[0]"))
 
-    fuses = binding in ("same_node", "same_data")
+    fuses = binding == "same_node"
     assert sdfg.apply_transformations_repeated(dftrans.MapFusionHorizontal(), validate_all=True) == int(fuses)
     sdfg.validate()
 
