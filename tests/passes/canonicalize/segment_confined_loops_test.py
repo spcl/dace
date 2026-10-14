@@ -165,7 +165,35 @@ def test_the_hint_names_the_pointer_array():
     assert "{pointer}" in SEGMENT_HINT and "{var}" in SEGMENT_HINT
 
 
+N = dace.symbol("N")
+knob = dace.symbol("knob", dace.float64)
+
+
+@dace.program
+def halves_until_knob(a: dace.float64[N], b: dace.float64[N]):
+    b[:] = a
+    for _ in range(64):
+        if np.max(b) <= knob:
+            break
+        b[:] = b * 0.5
+
+
+def test_a_loop_whose_interstate_value_is_a_comparison_canonicalizes():
+    """An interstate assignment can hold a comparison (``max_b <= knob``), which is no counter
+    ``var + k``: reading it as one raised ``TypeError`` (HPCAgent-Bench's pinned-knob fixture)."""
+    sdfg = halves_until_knob.to_sdfg(simplify=True)
+    canonicalize(sdfg, target="cpu")
+    finalize_for_target(sdfg, "cpu")
+    a, b = np.arange(1.0, 9.0), np.zeros(8)
+    sdfg(a=a, b=b, N=8, knob=0.25)
+    ref = a.copy()
+    while ref.max() > 0.25:
+        ref *= 0.5
+    assert np.allclose(b, ref)
+
+
 if __name__ == "__main__":
     test_a_component_loop_lifts_behind_its_entry_guard_and_computes_the_reference()
     test_a_write_one_past_a_member_keeps_the_loop()
     test_the_hint_names_the_pointer_array()
+    test_a_loop_whose_interstate_value_is_a_comparison_canonicalizes()

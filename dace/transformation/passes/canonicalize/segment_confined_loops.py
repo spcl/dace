@@ -68,9 +68,10 @@ def without(expr, name: str) -> str | None:
 
 
 def offset_from(index: str, var: str) -> int | None:
-    """``k`` when ``index`` is ``var + k`` for an integer constant ``k``, else ``None``."""
-    diff = symbolic.simplify(symbolic.pystr_to_symbolic(index) - symbolic.pystr_to_symbolic(var))
+    """``k`` when ``index`` is ``var + k`` for an integer constant ``k``, else ``None`` -- also for a
+    comparison or other boolean value (``max_b <= knob``), which has no difference to take."""
     try:
+        diff = symbolic.simplify(symbolic.pystr_to_symbolic(index) - symbolic.pystr_to_symbolic(var))
         return int(diff)
     except (TypeError, ValueError):
         return None
