@@ -191,11 +191,16 @@ class Convolution(ATenNode):
     ``aten.convolution(input, weight, bias?, stride, padding, dilation, transposed, output_padding, groups)``.
 
     Connectors ``input``, ``weight``, optional ``bias`` and ``output``; the remaining arguments are in
-    :attr:`~ATenNode.arguments`. Implementations are those of :class:`dace.libraries.ml.Convolution`.
+    :attr:`~ATenNode.arguments`. Implementations are those of :class:`dace.libraries.ml.Convolution`, including the
+    fused :attr:`activation` (set by :class:`dace.libraries.ml.FuseConvolutionActivation`).
     """
 
     implementations = {}
     default_implementation = "pure"
+
+    activation = properties.Property(
+        dtype=str, default="none", choices=ml.ACTIVATIONS, desc="Activation fused into the convolution"
+    )
 
 
 @delegate(Convolution, ml.Convolution)
@@ -210,9 +215,13 @@ def _build_convolution(node: Convolution, sdfg: SDFG, state: SDFGState) -> list[
         output_padding=int_list(args.get("output_padding", 0), nd),
         groups=int(as_symbolic(args.get("groups", 1))),
         transposed=bool(args.get("transposed", False)),
+        activation=node.activation,
     )
     connect(state, conv, {"input": "_x", "weight": "_w", "bias": "_b"}, {"output": "_y"})
     return [conv]
+
+
+ml.FuseConvolutionActivation.fusable.add(Convolution)
 
 
 # ---------------------------------------------------------------------------------------------- dropout

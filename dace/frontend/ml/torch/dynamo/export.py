@@ -50,7 +50,7 @@ def _default_name(model: Any) -> str:
 
 
 def _capture_from_descriptors(
-    model: Any, args: tuple, kwargs: dict, dynamic_shapes: Any, simplify: bool
+    model: Any, args: tuple, kwargs: dict, dynamic_shapes: Any, simplify: bool, fuse_activations: bool = False
 ) -> CapturedProgram:
     """
     Captures ``model`` for arguments that are DaCe data descriptors (``dace.float32[N, 3, 224, 224]``), DaCe symbols or
@@ -66,7 +66,15 @@ def _capture_from_descriptors(
     examples, derived_spec = example_arguments(bound.arguments)
     bound.arguments.update(examples)
     spec = dynamic_shapes if dynamic_shapes is not None else derived_spec
-    return capture(model, *bound.args, dynamic_shapes=spec, specialize_float=True, simplify=simplify, **bound.kwargs)
+    return capture(
+        model,
+        *bound.args,
+        dynamic_shapes=spec,
+        specialize_float=True,
+        simplify=simplify,
+        fuse_activations=fuse_activations,
+        **bound.kwargs,
+    )
 
 
 def _check_inputs(program: CapturedProgram, model: Any) -> None:
@@ -85,6 +93,7 @@ def to_sdfg(
     simplify: bool = True,
     name: str | None = None,
     random_seed: int | None = None,
+    fuse_activations: bool = False,
     **kwargs,
 ) -> SDFG:
     """
@@ -106,11 +115,14 @@ def to_sdfg(
     :param random_seed: Fixes the seed of the random operators (e.g. training-mode dropout) in the SDFG. By default
                         the seed is the symbol ``dace_random_seed``, which the runtimes draw from torch's generator on
                         every call; individual nodes can still be pinned through their ``seed`` property.
+    :param fuse_activations: Fold ReLU maps into the convolution nodes feeding them, so that the activation is applied
+                             by the convolution (cuDNN/MIOpen fuse it into their kernels where supported). Off by
+                             default.
     :param kwargs: Keyword argument descriptors.
     :return: The simplified, validated SDFG (not compiled).
     """
     _warn_if_training(model)
-    program = _capture_from_descriptors(model, args, kwargs, dynamic_shapes, simplify)
+    program = _capture_from_descriptors(model, args, kwargs, dynamic_shapes, simplify, fuse_activations)
     _check_inputs(program, model)
     sdfg = program.import_graph(name or _default_name(model), return_arrays=True).sdfg
     _specialize_random_seed(sdfg, random_seed)
@@ -173,6 +185,7 @@ def compile(
     simplify: bool = True,
     name: str | None = None,
     random_seed: int | None = None,
+    fuse_activations: bool = False,
     **kwargs,
 ) -> CompiledModule:
     """
@@ -180,10 +193,11 @@ def compile(
     :func:`to_sdfg`) and returns a :class:`CompiledModule` that runs on torch tensors.
 
     This is the ahead-of-time overload of :func:`dace.frontend.ml.torch.dynamo.compile`; it is selected when
-    descriptor arguments follow the model. ``random_seed`` fixes the seed of random operators (see :func:`to_sdfg`).
+    descriptor arguments follow the model. ``random_seed`` fixes the seed of random operators and ``fuse_activations``
+    folds ReLUs into convolutions (see :func:`to_sdfg`).
     """
     _warn_if_training(model)
-    program = _capture_from_descriptors(model, args, kwargs, dynamic_shapes, simplify)
+    program = _capture_from_descriptors(model, args, kwargs, dynamic_shapes, simplify, fuse_activations)
     _check_inputs(program, model)
     return CompiledModule(program, name or _default_name(model), random_seed)
 

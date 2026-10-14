@@ -41,6 +41,9 @@ class DaceBackendOptions:
     sdfg_name: str | None = None  #: Base name of the generated SDFGs (defaults to the compiled function's name)
     simplify: bool = True  #: Run ``SDFG.simplify`` after conversion
     validate: bool = True  #: Validate the generated SDFG
+    #: Fold point-wise activations (ReLU) into the convolution nodes that produce their input
+    #: (:class:`dace.libraries.ml.FuseConvolutionActivation`); off by default until measured broadly
+    fuse_activations: bool = False
     auto_optimize: bool = False  #: Run ``dace.transformation.auto.auto_optimize`` before compiling
     onnx_fallback: bool = True  #: Fall back to ``dace.libraries.onnx`` expansions for unsupported operators
     extra_decompositions: Iterable | None = None  #: Additional operators to decompose

@@ -24,6 +24,7 @@ def compile(
     name: str | None = None,
     simplify: bool = True,
     auto_optimize: bool = False,
+    fuse_activations: bool = False,
     onnx_fallback: bool = True,
     extra_decompositions=None,
     native_ops=None,
@@ -78,6 +79,8 @@ def compile(
     :param name: Name of the ahead-of-time SDFG (ahead-of-time route).
     :param simplify: Whether to simplify the generated SDFGs.
     :param auto_optimize: Whether to apply DaCe auto-optimization before compiling (lazy route).
+    :param fuse_activations: Whether to fold ReLU maps into the convolution nodes feeding them, so that cuDNN/MIOpen
+                             run one fused kernel for convolution, bias and activation (off by default).
     :param onnx_fallback: Whether to use ``dace.libraries.onnx`` expansions for operators without a native lowering.
     :param extra_decompositions: Additional ATen operators to decompose before lowering.
     :param native_ops: ATen operators that must not be decomposed.
@@ -97,12 +100,14 @@ def compile(
             simplify=simplify,
             name=name or sdfg_name,
             random_seed=random_seed,
+            fuse_activations=fuse_activations,
         )
 
     options = dict(
         sdfg_name=sdfg_name,
         simplify=simplify,
         auto_optimize=auto_optimize,
+        fuse_activations=fuse_activations,
         onnx_fallback=onnx_fallback,
         extra_decompositions=extra_decompositions,
         native_ops=native_ops,

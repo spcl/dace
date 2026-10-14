@@ -30,7 +30,7 @@ Usage
 
 ``dace.ml.compile`` can also be used as a decorator on functions. Importing ``dace.ml`` registers the backend under
 the name ``'dace'``, so ``torch.compile(fn, backend='dace', dynamic=True)`` works as well. Options (simplification,
-auto-optimization, decomposition overrides, saving the generated SDFGs) are keyword arguments of
+auto-optimization, activation fusion, decomposition overrides, saving the generated SDFGs) are keyword arguments of
 :func:`dace.frontend.ml.torch.dynamo.compile`; the backend instance used for a compiled object is available as
 ``compiled._dace_backend`` and exposes ``last_sdfg`` and ``compile_count``. :func:`dace.ml.sdfg_of` returns the most
 recent SDFG of any object compiled with the ``dace`` backend (a ``torch.compile`` result or the one below), so its
@@ -146,6 +146,12 @@ How programs are lowered
   returned by :func:`dace.ml.to_sdfg` before compiling. Operators without any implementation stay in
   the SDFG and raise an error naming the operator when it is expanded; an implementation is added by registering an
   expansion for the node (``dace.library.register_expansion``), without touching the frontend.
+* **Fused activations.** With ``fuse_activations=True`` on ``dace.ml.compile``/:func:`dace.ml.to_sdfg` (off by
+  default), a ReLU that follows a convolution is folded into the convolution node (its ``activation`` property),
+  removing the separate element-wise map. The pure implementation then applies the activation while it writes the
+  result, and cuDNN/MIOpen use their fused convolution+bias+activation kernels where they support the configuration
+  (falling back to separate calls otherwise). It is off by default because the fused vendor kernels are not faster in
+  every configuration.
 * **Dynamic shapes.** Every symbolic size and stride produced by Dynamo (``s0``, ``s1``, ...) is a DaCe symbol with
   the same name. Non-contiguous inputs therefore do not trigger recompilation either.
 * **Control flow.** The higher-order operators ``torch.cond``, ``torch.while_loop``, ``torch._higher_order_ops.scan``

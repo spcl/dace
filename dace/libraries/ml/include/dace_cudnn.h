@@ -129,6 +129,7 @@ class CudnnConvolutionPlan {
     cudnnDestroyTensorDescriptor(bias);
     cudnnDestroyFilterDescriptor(filter);
     cudnnDestroyConvolutionDescriptor(conv);
+    cudnnDestroyActivationDescriptor(activation);
   }
 
   /** Returns true when the descriptors and the algorithm must be (re)built. */
@@ -140,26 +141,46 @@ class CudnnConvolutionPlan {
       CheckCudnnError(cudnnCreateTensorDescriptor(&bias));
       CheckCudnnError(cudnnCreateFilterDescriptor(&filter));
       CheckCudnnError(cudnnCreateConvolutionDescriptor(&conv));
+      CheckCudnnError(cudnnCreateActivationDescriptor(&activation));
       created_ = true;
     }
     key_ = key;
+    fused = true;
     return true;
   }
 
   void* Workspace() { return workspace_.Get(workspace_size); }
+
+  /** A zero bias of ``bytes`` bytes (the fused convolution+bias+activation call requires a bias). */
+  const void* ZeroBias(size_t bytes) {
+    if (bytes > zero_bias_bytes_) {
+      void* ptr = zero_bias_.Get(bytes);
+      if (cudaMemset(ptr, 0, bytes) != cudaSuccess) {
+        throw std::runtime_error("Failed to initialize the zero bias of a fused convolution");
+      }
+      zero_bias_bytes_ = bytes;
+    }
+    return zero_bias_.Get(bytes);
+  }
 
   cudnnTensorDescriptor_t input = nullptr;   // x (forward, backward-filter) or dx (backward-data)
   cudnnTensorDescriptor_t output = nullptr;  // y or dy
   cudnnTensorDescriptor_t bias = nullptr;
   cudnnFilterDescriptor_t filter = nullptr;  // w or dw
   cudnnConvolutionDescriptor_t conv = nullptr;
+  cudnnActivationDescriptor_t activation = nullptr;
   int algo = 0;  // cudnnConvolution{Fwd,BwdData,BwdFilter}Algo_t
   size_t workspace_size = 0;
+  // Whether the fused convolution+bias+activation call applies; cleared when cuDNN reports it unsupported for
+  // this configuration, after which the separate calls are used.
+  bool fused = true;
 
  private:
   bool created_ = false;
   std::vector<int> key_;
   CudaWorkspace workspace_;
+  CudaWorkspace zero_bias_;
+  size_t zero_bias_bytes_ = 0;
 };
 
 }  // namespace ml

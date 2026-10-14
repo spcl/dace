@@ -101,11 +101,13 @@ class MiopenConvolutionPlan {
 
   ~MiopenConvolutionPlan() {
     if (!created_) return;
+    DestroyFusion();
     miopenDestroyTensorDescriptor(input);
     miopenDestroyTensorDescriptor(output);
     miopenDestroyTensorDescriptor(bias);
     miopenDestroyTensorDescriptor(filter);
     miopenDestroyConvolutionDescriptor(conv);
+    miopenDestroyActivationDescriptor(activation);
   }
 
   /** Returns true when the descriptors and the algorithm must be (re)built. */
@@ -117,8 +119,10 @@ class MiopenConvolutionPlan {
       CheckMiopenError(miopenCreateTensorDescriptor(&bias));
       CheckMiopenError(miopenCreateTensorDescriptor(&filter));
       CheckMiopenError(miopenCreateConvolutionDescriptor(&conv));
+      CheckMiopenError(miopenCreateActivationDescriptor(&activation));
       created_ = true;
     }
+    DestroyFusion();
     key_ = key;
     return true;
   }
@@ -127,13 +131,45 @@ class MiopenConvolutionPlan {
   void* Workspace(size_t bytes) { return workspace_.Get(bytes); }
   void* Workspace() { return workspace_.Get(workspace_size); }
 
+  /**
+   * Builds and compiles a vertical fusion plan convolution (+ bias) + activation for the current descriptors.
+   * Returns whether MIOpen supports the fusion for this configuration (``fused``); otherwise the separate calls
+   * are used. Mirrors torch's MIOpen convolution+ReLU path.
+   **/
+  bool SetupFusion(miopenHandle_t handle, bool with_bias, miopenActivationMode_t mode) {
+    DestroyFusion();
+    bool ok = miopenCreateFusionPlan(&fusion, miopenVerticalFusion, input) == miopenStatusSuccess;
+    ok = ok && miopenCreateOpConvForward(fusion, &conv_op, conv, filter) == miopenStatusSuccess;
+    if (with_bias) ok = ok && miopenCreateOpBiasForward(fusion, &bias_op, bias) == miopenStatusSuccess;
+    ok = ok && miopenCreateOpActivationForward(fusion, &activation_op, mode) == miopenStatusSuccess;
+    ok = ok && miopenCompileFusionPlan(handle, fusion) == miopenStatusSuccess;
+    ok = ok && miopenCreateOperatorArgs(&fusion_args) == miopenStatusSuccess;
+    if (!ok) DestroyFusion();
+    fused = ok;
+    return ok;
+  }
+
+  void DestroyFusion() {
+    if (fusion_args) miopenDestroyOperatorArgs(fusion_args);
+    if (fusion) miopenDestroyFusionPlan(fusion);
+    fusion = nullptr;
+    fusion_args = nullptr;
+    fused = false;
+  }
+
   miopenTensorDescriptor_t input = nullptr;   // x (forward, backward-weights) or dx (backward-data)
   miopenTensorDescriptor_t output = nullptr;  // y or dy
   miopenTensorDescriptor_t bias = nullptr;
   miopenTensorDescriptor_t filter = nullptr;  // w or dw
   miopenConvolutionDescriptor_t conv = nullptr;
+  miopenActivationDescriptor_t activation = nullptr;
   int algo = 0;  // miopenConv{Fwd,BwdData,BwdWeights}Algorithm_t
   size_t workspace_size = 0;
+  // Fused convolution (+ bias) + activation (see SetupFusion)
+  miopenFusionPlanDescriptor_t fusion = nullptr;
+  miopenFusionOpDescriptor_t conv_op = nullptr, bias_op = nullptr, activation_op = nullptr;
+  miopenOperatorArgs_t fusion_args = nullptr;
+  bool fused = false;
 
  private:
   bool created_ = false;

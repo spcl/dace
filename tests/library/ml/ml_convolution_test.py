@@ -185,6 +185,26 @@ def test_conv2d_symbolic_batch():
     assert np.allclose(y, ref, atol=1e-3), np.max(np.abs(y - ref))
 
 
+@pytest.mark.parametrize("bias", [True, False])
+def test_conv2d_relu_activation(bias):
+    """The ``activation`` property: the pure expansion applies the ReLU when it writes the result."""
+    strides, pads, dils, groups = (1, 1), (1, 1), (1, 1), 1
+    xshape, wshape = (2, 3, 7, 9), (4, 3, 3, 3)
+    sdfg, yshape = _build_conv_sdfg(xshape, wshape, strides, pads, dils, groups, bias)
+    node = next(x for s in sdfg.states() for x in s.nodes() if isinstance(x, ml.Convolution))
+    node.activation = "relu"
+    rng = np.random.default_rng(11)
+    x = rng.standard_normal(xshape).astype(np.float32)
+    w = rng.standard_normal(wshape).astype(np.float32)
+    b = rng.standard_normal((wshape[0],)).astype(np.float32) if bias else None
+    y = np.zeros(yshape, np.float32)
+    args = dict(x=x, w=w, y=y, **({"b": b} if bias else {}))
+    sdfg(**args)
+    ref = np.maximum(_ref_conv(x, w, strides, pads, dils, groups, b), 0)
+    assert np.allclose(y, ref, atol=1e-3), np.max(np.abs(y - ref))
+    assert (y == 0).any() and (y > 0).any()
+
+
 def test_transposed_not_implemented():
     sdfg, yshape = _build_conv_sdfg((1, 2, 6, 6), (2, 2, 3, 3), (1, 1), (0, 0), (1, 1), 1, False)
     for n in sdfg.all_sdfgs_recursive():
@@ -307,6 +327,50 @@ def test_gpu_codegen_conv1d_promoted(impl):
     assert "{0, 1}" in joined and "{1, 2}" in joined  # promoted padding and stride
     if impl == "MIOpen":
         assert "miopenTensorNCHW" in joined
+
+
+@pytest.mark.parametrize("impl", ["cuDNN", "MIOpen"])
+@pytest.mark.parametrize("bias", [True, False])
+def test_gpu_codegen_activation(impl, bias):
+    """A fused ReLU uses the libraries' convolution+bias+activation kernels, with the separate calls as fallback."""
+    sdfg, yshape = _build_conv_sdfg((2, 3, 8, 8), (4, 3, 3, 3), (1, 1), (1, 1), (1, 1), 1, bias)
+    for desc in sdfg.arrays.values():
+        desc.storage = dtypes.StorageType.GPU_Global
+    node = next(x for s in sdfg.states() for x in s.nodes() if isinstance(x, ml.Convolution))
+    node.implementation = impl
+    node.activation = "relu"
+    sdfg.expand_library_nodes()
+    joined = "\n".join(c.clean_code for c in sdfg.generate_code())
+    if impl == "cuDNN":
+        assert "cudnnConvolutionBiasActivationForward" in joined and "CUDNN_ACTIVATION_RELU" in joined
+        assert "cudnnActivationForward" in joined and "cudnnConvolutionForward(" in joined  # fallback
+        assert ("ZeroBias" in joined) != bias  # the fused call needs a bias: a zero one without ``_b``
+    else:
+        assert "SetupFusion" in joined and "miopenExecuteFusionPlan" in joined and "miopenActivationRELU" in joined
+        assert "miopenActivationForward" in joined and "miopenConvolutionForward(" in joined  # fallback
+        assert ("miopenSetOpArgsBiasForward" in joined) == bias
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize("bias", [True, False])
+def test_gpu_conv2d_relu(bias):
+    """cuDNN/MIOpen with a fused ReLU (or the fallback, if the library does not support the fusion here)."""
+    strides, pads, dils, groups = (1, 1), (1, 1), (1, 1), 1
+    xshape, wshape = (2, 3, 9, 7), (4, 3, 3, 3)
+    sdfg, yshape = _build_conv_sdfg(xshape, wshape, strides, pads, dils, groups, bias)
+    sdfg.apply_gpu_transformations()
+    node = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, ml.Convolution))
+    node.implementation = _gpu_implementation()
+    node.activation = "relu"
+    rng = np.random.default_rng(12)
+    x = rng.standard_normal(xshape).astype(np.float32)
+    w = rng.standard_normal(wshape).astype(np.float32)
+    b = rng.standard_normal((wshape[0],)).astype(np.float32) if bias else None
+    y = np.zeros(yshape, np.float32)
+    for _ in range(2):  # the second call runs with the configured plan
+        sdfg(x=x, w=w, y=y, **({"b": b} if bias else {}))
+        ref = np.maximum(_ref_conv(x, w, strides, pads, dils, groups, b), 0)
+        assert np.allclose(y, ref, atol=1e-3, rtol=1e-4), np.max(np.abs(y - ref))
 
 
 def test_cudnn_rejects_unsupported_weight_layout():

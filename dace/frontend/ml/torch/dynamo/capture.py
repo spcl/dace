@@ -183,6 +183,7 @@ def capture(
     native_ops: Sequence | None = None,
     simplify: bool = True,
     specialize_float: bool = False,
+    fuse_activations: bool = False,
     **kwargs,
 ) -> CapturedProgram:
     """
@@ -207,6 +208,8 @@ def capture(
     :param simplify: Whether SDFGs built from the capture are simplified.
     :param specialize_float: Treat Python floats (arguments, module attributes) as constants guarded by value, instead
                              of tracing them as 0-d tensor inputs.
+    :param fuse_activations: Fold ReLU maps into the convolution nodes feeding them (see
+                             :class:`dace.libraries.ml.FuseConvolutionActivation`).
     :param kwargs: Example keyword arguments.
     :return: The captured program.
     :raises CaptureError: If TorchDynamo or AOTAutograd cannot trace the call.
@@ -222,6 +225,7 @@ def capture(
         extra_decompositions=extra_decompositions,
         native_ops=native_ops,
         simplify=simplify,
+        fuse_activations=fuse_activations,
     )
     compiled = torch.compile(fn, backend=backend, dynamic=dynamic, fullgraph=True)
     if spec is not None:

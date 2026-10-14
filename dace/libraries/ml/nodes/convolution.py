@@ -8,6 +8,8 @@ taken from the connected data descriptors, so channels-last tensors are
 supported transparently through their strides.
 """
 
+import copy
+
 from dace import SDFG, Memlet, SDFGState, dtypes, library, nodes, properties, symbolic
 from dace.libraries.ml import environments as env
 from dace.transformation.transformation import ExpandTransformation
@@ -18,10 +20,35 @@ def _spatial_output_size(h, k, pad, dilation, stride):
     return symbolic.int_floor(h + 2 * pad - dilation * (k - 1) - 1, stride) + 1
 
 
+#: Activations a convolution node can apply to its result
+ACTIVATIONS = ("none", "relu")
+
+
+def _activated(value: str, activation: str) -> str:
+    """Python expression applying ``activation`` to ``value`` with torch's semantics (ReLU propagates NaN)."""
+    if activation == "none":
+        return value
+    if activation == "relu":
+        return f"({value} if (({value}) != ({value})) or (({value}) > 0) else 0)"
+    raise ValueError(f"Unknown activation {activation!r}")
+
+
 def _edges_by_connector(state, node):
     ins = {e.dst_conn: e for e in state.in_edges(node) if e.dst_conn}
     outs = {e.src_conn: e for e in state.out_edges(node) if e.src_conn}
     return ins, outs
+
+
+def _operand(sdfg, edge):
+    """
+    The descriptor of the container connected by ``edge``, sized by the memlet's subset: a convolution may read or
+    write a slice of a larger container (the channels of a concatenation), whose strides are kept.
+    """
+    desc = copy.deepcopy(sdfg.arrays[edge.data.data])
+    subset = edge.data.subset
+    if subset is not None and subset.dims() == len(desc.shape):
+        desc.shape = tuple(subset.size())
+    return desc
 
 
 @library.node
@@ -60,6 +87,14 @@ class Convolution(nodes.LibraryNode):
         category="Semantics",
         desc="Whether this is a transposed (fractionally-strided) convolution",
     )
+    activation = properties.Property(
+        dtype=str,
+        default="none",
+        choices=ACTIVATIONS,
+        category="Semantics",
+        desc="Activation applied to the result after the bias ('none' or 'relu'); cuDNN and MIOpen fuse it into the "
+        "convolution kernel where they support it",
+    )
 
     def __init__(
         self,
@@ -70,10 +105,12 @@ class Convolution(nodes.LibraryNode):
         output_padding=None,
         groups=1,
         transposed=False,
+        activation="none",
         *args,
         **kwargs,
     ):
         super().__init__(name, *args, inputs={"_x", "_w"}, outputs={"_y"}, **kwargs)
+        self.activation = activation
         if strides is not None:
             self.strides = list(strides)
         if pads is not None:
@@ -97,10 +134,10 @@ class Convolution(nodes.LibraryNode):
         if "_y" not in outs:
             raise ValueError("Convolution requires a '_y' output connector")
 
-        x = sdfg.arrays[ins["_x"].data.data]
-        w = sdfg.arrays[ins["_w"].data.data]
-        y = sdfg.arrays[outs["_y"].data.data]
-        b = sdfg.arrays[ins["_b"].data.data] if "_b" in ins else None
+        x = _operand(sdfg, ins["_x"])
+        w = _operand(sdfg, ins["_w"])
+        y = _operand(sdfg, outs["_y"])
+        b = _operand(sdfg, ins["_b"]) if "_b" in ins else None
 
         ndim = len(w.shape) - 2  # number of spatial dims
         if ndim < 1 or ndim > 3:
@@ -234,7 +271,7 @@ class ExpandConvolutionPure(ExpandTransformation):
             tasklet, imx, omx, wacc, src_conn="__o", memlet=Memlet(f"_acc[{out_index}]", wcr="lambda a, b: a + b")
         )
 
-        # --- State 3: write the output exactly once (adding bias when present) ---
+        # --- State 3: write the output exactly once (adding the bias and applying the activation) ---
         fin_state = sdfg.add_state_after(acc_state, "finalize")
         if has_bias:
             fin_state.add_mapped_tasklet(
@@ -244,7 +281,7 @@ class ExpandConvolutionPure(ExpandTransformation):
                     "__acc": Memlet(f"_acc[{out_index}]"),
                     "__b": Memlet(f"_b[{oc}]"),
                 },
-                "__y = __acc + __b",
+                f"__v = __acc + __b\n__y = {_activated('__v', node.activation)}",
                 {"__y": Memlet(f"_y[{out_index}]")},
                 external_edges=True,
             )
@@ -253,7 +290,7 @@ class ExpandConvolutionPure(ExpandTransformation):
                 "conv_finalize",
                 out_map_ranges,
                 {"__acc": Memlet(f"_acc[{out_index}]")},
-                "__y = __acc",
+                f"__y = {_activated('__acc', node.activation)}",
                 {"__y": Memlet(f"_y[{out_index}]")},
                 external_edges=True,
             )
@@ -295,9 +332,9 @@ class ConvolutionBackwardData(nodes.LibraryNode):
             raise ValueError("ConvolutionBackwardData requires '_dy' and '_w' input connectors")
         if "_dx" not in outs:
             raise ValueError("ConvolutionBackwardData requires a '_dx' output connector")
-        dy = sdfg.arrays[ins["_dy"].data.data]
-        w = sdfg.arrays[ins["_w"].data.data]
-        dx = sdfg.arrays[outs["_dx"].data.data]
+        dy = _operand(sdfg, ins["_dy"])
+        w = _operand(sdfg, ins["_w"])
+        dx = _operand(sdfg, outs["_dx"])
         ndim = len(w.shape) - 2
         if ndim < 1 or ndim > 3:
             raise ValueError("ConvolutionBackwardData supports 1-3 spatial dimensions")
@@ -443,9 +480,9 @@ class ConvolutionBackwardFilter(nodes.LibraryNode):
             raise ValueError("ConvolutionBackwardFilter requires '_x' and '_dy' input connectors")
         if "_dw" not in outs:
             raise ValueError("ConvolutionBackwardFilter requires a '_dw' output connector")
-        x = sdfg.arrays[ins["_x"].data.data]
-        dy = sdfg.arrays[ins["_dy"].data.data]
-        dw = sdfg.arrays[outs["_dw"].data.data]
+        x = _operand(sdfg, ins["_x"])
+        dy = _operand(sdfg, ins["_dy"])
+        dw = _operand(sdfg, outs["_dw"])
         ndim = len(dw.shape) - 2
         if ndim < 1 or ndim > 3:
             raise ValueError("ConvolutionBackwardFilter supports 1-3 spatial dimensions")
@@ -629,7 +666,12 @@ def _c_list(values) -> str:
     """The values as a C initializer list of ``int`` (symbolic sizes are cast, as they may be 64-bit symbols)."""
     from dace.codegen.targets import cpp
 
-    return ", ".join(str(v) if isinstance(v, int) else f"(int)({cpp.sym2cpp(v)})" for v in values)
+    def c_int(v):
+        if isinstance(v, int) or getattr(v, "is_Integer", False):
+            return str(int(v))
+        return f"(int)({cpp.sym2cpp(v)})"
+
+    return ", ".join(c_int(v) for v in values)
 
 
 def _gpu_operands(node, parent_sdfg, parent_state, kind: str):
@@ -638,7 +680,7 @@ def _gpu_operands(node, parent_sdfg, parent_state, kind: str):
         raise NotImplementedError("Transposed convolution is not implemented in the cuDNN/MIOpen expansions")
     node.validate(parent_sdfg, parent_state)
     ins, outs = _edges_by_connector(parent_state, node)
-    operands = {conn: parent_sdfg.arrays[e.data.data] for conn, e in list(ins.items()) + list(outs.items())}
+    operands = {conn: _operand(parent_sdfg, e) for conn, e in list(ins.items()) + list(outs.items())}
     for conn, desc in operands.items():
         if desc.storage != dtypes.StorageType.GPU_Global:
             raise ValueError(f"cuDNN/MIOpen convolution requires '{conn}' to be in GPU_Global storage")
@@ -740,6 +782,8 @@ def _require_dense_bias(b, library: str) -> None:
 
 
 _CUDNN_FILTER_FORMATS = {"NCHW": "CUDNN_TENSOR_NCHW", "NHWC": "CUDNN_TENSOR_NHWC"}
+_CUDNN_ACTIVATIONS = {"relu": "CUDNN_ACTIVATION_RELU"}
+_MIOPEN_ACTIVATIONS = {"relu": "miopenActivationRELU"}
 _MIOPEN_LAYOUTS = {
     ("NCHW", 4): "miopenTensorNCHW",
     ("NHWC", 4): "miopenTensorNHWC",
@@ -767,8 +811,9 @@ def _cudnn_code(node, kind: str, operands: dict, field: str) -> str:
     scalar = "double" if y.dtype == dtypes.float64 else "float"
     # Reduced-precision data may use the tensor cores (what torch does); single precision stays exact (no TF32)
     math_type = "CUDNN_TENSOR_OP_MATH" if y.dtype in (dtypes.float16, dtypes.bfloat16) else "CUDNN_FMA_MATH"
-    plan = {role: f"__plan.{role}" for role in ("input", "output", "filter", "conv", "bias")}
+    plan = {role: f"__plan.{role}" for role in ("input", "output", "filter", "conv", "bias", "activation")}
     plan["algo"] = _CUDNN_CALLS[kind]["algo"]
+    activation = getattr(node, "activation", "none")
     shape_key = geo.key(with_filter_strides=False)
 
     def tensor(desc_name, shape, strides):
@@ -793,8 +838,12 @@ def _cudnn_code(node, kind: str, operands: dict, field: str) -> str:
             dace::ml::CheckCudnnError(cudnnSetConvolutionGroupCount({plan["conv"]}, {node.groups}));
             dace::ml::CheckCudnnError(cudnnSetConvolutionMathType({plan["conv"]}, {math_type}));
         }}"""
-    if b is not None:
+    if b is not None or activation != "none":  # the fused convolution+bias+activation call requires a bias
         setup += tensor(plan["bias"], *geo.bias)
+    if activation != "none":
+        setup += f"""
+        dace::ml::CheckCudnnError(cudnnSetActivationDescriptor({plan["activation"]}, {_CUDNN_ACTIVATIONS[activation]},
+            CUDNN_NOT_PROPAGATE_NAN, 0.0));"""
     calls = _CUDNN_CALLS[kind]
     query = calls["query"].format(**plan)
     code = f"""
@@ -807,10 +856,28 @@ def _cudnn_code(node, kind: str, operands: dict, field: str) -> str:
         __plan.workspace_size = __choice.workspace;
     }}
     const {scalar} __alpha = 1, __beta = 0;
-    dace::ml::CheckCudnnError({calls["call"].format(**plan)});
+"""
+    separate = f"""        dace::ml::CheckCudnnError({calls["call"].format(**plan)});
 """
     if b is not None:
-        code += f"""    dace::ml::CheckCudnnError(cudnnAddTensor(__h, &__alpha, {plan["bias"]}, _b, &__alpha, {plan["output"]}, _y));
+        separate += f"""        dace::ml::CheckCudnnError(cudnnAddTensor(__h, &__alpha, {plan["bias"]}, _b, &__alpha, {plan["output"]}, _y));
+"""
+    if activation == "none":
+        code += separate.replace("\n        ", "\n    ")[4:]
+    else:
+        bias_ptr = "_b" if b is not None else f"__plan.ZeroBias(sizeof({y.dtype.ctype}) * ({_c_list([geo.w[0][0]])}))"
+        code += f"""    // One kernel for convolution, bias and activation where cuDNN supports it; separate calls otherwise
+    const void *__bias = {bias_ptr};
+    if (__plan.fused) {{
+        cudnnStatus_t __status = cudnnConvolutionBiasActivationForward(__h, &__alpha, {plan["input"]}, _x,
+            {plan["filter"]}, _w, {plan["conv"]}, ({plan["algo"]})__plan.algo, __plan.Workspace(), __plan.workspace_size,
+            &__beta, {plan["output"]}, _y, {plan["bias"]}, __bias, {plan["activation"]}, {plan["output"]}, _y);
+        if (__status == CUDNN_STATUS_NOT_SUPPORTED) __plan.fused = false; else dace::ml::CheckCudnnError(__status);
+    }}
+    if (!__plan.fused) {{
+{separate}        dace::ml::CheckCudnnError(cudnnActivationForward(__h, {plan["activation"]}, &__alpha, {plan["output"]}, _y,
+            &__beta, {plan["output"]}, _y));
+    }}
 """
     return env.cudnn.cuDNN.handle_setup_code(node) + code
 
@@ -824,8 +891,9 @@ def _miopen_code(node, kind: str, operands: dict, field: str) -> str:
     if b is not None:
         _require_dense_bias(b, "MIOpen")
     dt = _library_dtype(_MIOPEN_DTYPES, y.dtype, "MIOpen")
-    plan = {role: f"__plan.{role}" for role in ("input", "output", "filter", "conv", "bias")}
+    plan = {role: f"__plan.{role}" for role in ("input", "output", "filter", "conv", "bias", "activation")}
     plan["algo"] = _MIOPEN_CALLS[kind]["algo"]
+    activation = getattr(node, "activation", "none")
     shape_key = geo.key(with_filter_strides=True)
 
     def tensor(desc_name, shape, strides):
@@ -868,6 +936,13 @@ def _miopen_code(node, kind: str, operands: dict, field: str) -> str:
         }}"""
     if b is not None:
         setup += tensor(plan["bias"], *geo.bias)
+    fusion = ""
+    if activation != "none":
+        setup += f"""
+        dace::ml::CheckMiopenError(miopenSetActivationDescriptor({plan["activation"]},
+            {_MIOPEN_ACTIVATIONS[activation]}, 0.0, 0.0, 0.0));"""
+        fusion = f"""
+        __plan.SetupFusion(__h, {"true" if b is not None else "false"}, {_MIOPEN_ACTIVATIONS[activation]});"""
     calls = _MIOPEN_CALLS[kind]
     code = f"""
     miopenHandle_t &__h = __dace_miopen_handle;
@@ -881,13 +956,33 @@ def _miopen_code(node, kind: str, operands: dict, field: str) -> str:
         dace::ml::CheckMiopenError({calls["find"].format(**plan)});
         if (__n < 1) throw std::runtime_error("MIOpen found no applicable convolution algorithm");
         __plan.algo = __perf.{calls["found"]};
-        __plan.workspace_size = __perf.memory;
+        __plan.workspace_size = __perf.memory;{fusion}
     }}
     const float __alpha = 1.0f, __beta = 0.0f;
-    dace::ml::CheckMiopenError({calls["call"].format(**plan)});
+"""
+    separate = f"""        dace::ml::CheckMiopenError({calls["call"].format(**plan)});
 """
     if b is not None:
-        code += f"""    dace::ml::CheckMiopenError(miopenConvolutionForwardBias(__h, &__alpha, {plan["bias"]}, _b, &__beta, {plan["output"]}, _y));
+        separate += f"""        dace::ml::CheckMiopenError(miopenConvolutionForwardBias(__h, &__alpha, {plan["bias"]}, _b, &__beta, {plan["output"]}, _y));
+"""
+    if activation == "none":
+        code += separate.replace("\n        ", "\n    ")[4:]
+    else:
+        bias_args = ""
+        if b is not None:
+            bias_args = """
+        dace::ml::CheckMiopenError(miopenSetOpArgsBiasForward(__plan.fusion_args, __plan.bias_op, &__alpha, &__beta, _b));"""
+        code += f"""    // One fusion plan for convolution, bias and activation where MIOpen supports it; separate calls otherwise
+    if (__plan.fused) {{
+        dace::ml::CheckMiopenError(miopenSetOpArgsConvForward(__plan.fusion_args, __plan.conv_op, &__alpha, &__beta, _w));{bias_args}
+        dace::ml::CheckMiopenError(miopenSetOpArgsActivForward(__plan.fusion_args, __plan.activation_op, &__alpha, &__beta,
+            0.0, 0.0, 0.0));
+        dace::ml::CheckMiopenError(miopenExecuteFusionPlan(__h, __plan.fusion, {plan["input"]}, _x, {plan["output"]}, _y,
+            __plan.fusion_args));
+    }} else {{
+{separate}        dace::ml::CheckMiopenError(miopenActivationForward(__h, {plan["activation"]}, &__alpha, {plan["output"]}, _y,
+            &__beta, {plan["output"]}, _y));
+    }}
 """
     return env.miopen.MIOpen.handle_setup_code(node) + code
 

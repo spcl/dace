@@ -259,14 +259,26 @@ class GraphImporter:
         )
 
     def _to_sdfg(self, stree: tn.ScheduleTreeRoot, ctx: LoweringContext) -> SDFG:
-        """Converts the schedule tree of a graph, overlapping its communication with independent work."""
+        """
+        Converts the schedule tree of a graph, overlapping its communication with independent work and folding
+        activations into convolutions when the respective options are set.
+        """
         if ctx.communicators and self.options.overlap_communication:
             comm_schedule.overlap_communication(stree)
         if getattr(self.options, "verbose", False):
             print(stree.as_string())
-        return stree.as_sdfg(
+        sdfg = stree.as_sdfg(
             validate=getattr(self.options, "validate", True), simplify=getattr(self.options, "simplify", True)
         )
+        self._fuse_activations(sdfg)
+        return sdfg
+
+    def _fuse_activations(self, sdfg: SDFG) -> None:
+        """Folds ReLU maps into the convolution nodes feeding them, if the ``fuse_activations`` option is set."""
+        if getattr(self.options, "fuse_activations", False):
+            from dace.libraries.ml import fuse_activations  # Deferred: the library is imported on demand
+
+            fuse_activations(sdfg)
 
     @staticmethod
     def _bind_saved(value: Value, position: int) -> tuple[Value, InputSpec | None]:
