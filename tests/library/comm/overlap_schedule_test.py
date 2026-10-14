@@ -181,7 +181,7 @@ def test_overlapped_program():
     sdfg = stree.as_sdfg()
     # The allreduce, the independent map and the wait run in this order, in states of their own
     order = []
-    for state in sdfg.all_states():
+    for state in sdfg.states():
         labels = {n.label for n in state.nodes() if isinstance(n, (comm.Allreduce, comm.Wait, nodes.MapEntry))}
         order.extend(sorted(labels & {"allreduce", "independent_map", "wait"}))
     assert order == ["allreduce", "independent_map", "wait"]
