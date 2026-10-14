@@ -744,6 +744,8 @@ def test_horizontal_fusion_relocates_a_connector_with_several_edges_once():
         state.add_edge(exit_node, "OUT_1", state.add_access(name), None, dace.Memlet(f"{name}[0:10, 0:3]"))
 
     assert sdfg.apply_transformations_repeated(dftrans.MapFusionHorizontal()) == 1
+
+
 @pytest.mark.parametrize("binding", ["same_node", "same_data", "other_data", "written_data"])
 def test_horizontal_fusion_of_maps_sharing_a_dynamic_map_range(binding: str):
     """Both Maps are bounded by a dynamic map range ``lim``; they fuse only if both read the same value."""

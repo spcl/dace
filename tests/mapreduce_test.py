@@ -386,6 +386,8 @@ def test_a_second_body_tasklet_does_not_break_the_match():
     sdfg(a=a.copy(), other=other, out=out, N=n)
     assert np.allclose(out[0], (a * 2.0).sum()), f"reduction wrong: {out[0]}"
     assert np.allclose(other, a + 1.0), "the second body tasklet lost its output"
+
+
 def test_a_reduction_inside_an_outer_map_is_reinitialized_every_outer_iteration():
     """The fused WCR accumulates into a transient that lives inside an outer map, so its identity
     has to be written once per outer iteration. An init state before the whole state writes it once
