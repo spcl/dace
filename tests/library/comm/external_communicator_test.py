@@ -39,7 +39,8 @@ def _compile_in_turn(sdfg: dace.SDFG, world):
 
 
 def _subgroup(world):
-    """The communicator of every rank but the last (MPI_COMM_NULL on the last), to tell it apart from the world."""
+    """The communicator of every rank but the last (MPI_COMM_NULL on the last), to tell it apart from the world.
+    On two processes, it has one member."""
     group = world.Get_group().Incl(list(range(world.Get_size() - 1)))
     return world.Create_group(group)
 
@@ -49,8 +50,8 @@ def test_allreduce_external_mpi_communicator():
     from mpi4py import MPI
 
     world = MPI.COMM_WORLD
-    if world.Get_size() < 3:
-        raise ValueError("This test is supposed to be run with at least three processes")
+    if world.Get_size() < 2:
+        raise ValueError("This test is supposed to be run with at least two processes")
     sub = _subgroup(world)
 
     node = comm.Allreduce("allreduce")
@@ -72,8 +73,8 @@ def test_allgather_external_mpi_communicator():
     from mpi4py import MPI
 
     world = MPI.COMM_WORLD
-    if world.Get_size() < 3:
-        raise ValueError("This test is supposed to be run with at least three processes")
+    if world.Get_size() < 2:
+        raise ValueError("This test is supposed to be run with at least two processes")
     sub = _subgroup(world)
     size = world.Get_size() - 1
 
@@ -92,13 +93,14 @@ def test_allgather_external_mpi_communicator():
 
 @pytest.mark.mpi
 def test_send_recv_external_mpi_communicator():
-    """Ranks are numbered within the given communicator: rank 0 of a communicator that starts at world rank 1."""
+    """Ranks are numbered within the given communicator: the world in reverse order, so that its rank 0 is the
+    last world rank."""
     from mpi4py import MPI
 
     world = MPI.COMM_WORLD
-    if world.Get_size() < 3:
-        raise ValueError("This test is supposed to be run with at least three processes")
-    group = world.Get_group().Incl([1, 2])
+    if world.Get_size() < 2:
+        raise ValueError("This test is supposed to be run with at least two processes")
+    group = world.Get_group().Incl(list(reversed(range(world.Get_size()))))
     sub = world.Create_group(group)
 
     sdfg = dace.SDFG("external_comm_send_recv")
@@ -130,9 +132,9 @@ def test_send_recv_external_mpi_communicator():
     _add_comm(sdfg, recv_state, recv)
 
     compiled = _compile_in_turn(sdfg, world)
-    if sub == MPI.COMM_NULL:
-        return
     sub_rank = sub.Get_rank()
+    if sub_rank > 1:
+        return
     buf = np.full(8, 7.0) if sub_rank == 0 else np.zeros(8)
     compiled(
         buf=buf,
