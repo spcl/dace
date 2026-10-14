@@ -1098,6 +1098,53 @@ def test_mapfission_keeps_connector_offset():
     assert np.allclose(B, A)
 
 
+def test_fission_keeps_copy_into_a_wider_array_valid():
+    """
+    Fissions a map around a nested SDFG that computes a row into a transient and copies it into the row of a wider
+    array. The copy names the row of ``dqdt`` in ``subset`` and the transient in ``other_subset``; both sides must
+    survive the fission (``dqdt[0:6, 0:N]`` <- ``tmp[0:6, 0:N]``).
+    """
+    N = dace.symbol("N")
+    inner = dace.SDFG("inner")
+    inner.add_symbol("i", dace.int64)
+    inner.add_array("dqdt", [6, N], dace.float64)
+    inner.add_array("sx", [6, N], dace.float64)
+    inner.add_array("tmp", [N], dace.float64, transient=True)
+    istate = inner.add_state()
+    tmp = istate.add_access("tmp")
+    istate.add_mapped_tasklet(
+        "add",
+        {"j": "0:N"},
+        {"a": dace.Memlet("dqdt[i, j]"), "b": dace.Memlet("sx[i, j]")},
+        "c = a + b",
+        {"c": dace.Memlet("tmp[j]")},
+        input_nodes={"dqdt": istate.add_read("dqdt"), "sx": istate.add_read("sx")},
+        output_nodes={"tmp": tmp},
+        external_edges=True,
+    )
+    istate.add_nedge(tmp, istate.add_write("dqdt"), dace.Memlet(data="dqdt", subset="i, 0:N", other_subset="0:N"))
+
+    sdfg = dace.SDFG("mapfission_copy_into_wider_array")
+    sdfg.add_array("dqdt", [6, N], dace.float64)
+    sdfg.add_array("sx", [6, N], dace.float64)
+    state = sdfg.add_state()
+    me, mx = state.add_map("m", {"i": "0:6"})
+    node = state.add_nested_sdfg(inner, ["dqdt", "sx"], ["dqdt"], {"i": "i", "N": "N"})
+    state.add_memlet_path(state.add_read("dqdt"), me, node, dst_conn="dqdt", memlet=dace.Memlet("dqdt[0:6, 0:N]"))
+    state.add_memlet_path(state.add_read("sx"), me, node, dst_conn="sx", memlet=dace.Memlet("sx[0:6, 0:N]"))
+    state.add_memlet_path(node, mx, state.add_write("dqdt"), src_conn="dqdt", memlet=dace.Memlet("dqdt[0:6, 0:N]"))
+    sdfg.validate()
+
+    assert sdfg.apply_transformations(MapFission) == 1
+    sdfg.validate()
+
+    dqdt = np.random.rand(6, 7)
+    sx = np.random.rand(6, 7)
+    expected = dqdt + sx
+    sdfg(dqdt=dqdt, sx=sx, N=7)
+    assert np.allclose(dqdt, expected)
+
+
 if __name__ == "__main__":
     test_subgraph()
     test_nested_sdfg()
@@ -1127,3 +1174,4 @@ if __name__ == "__main__":
     test_mapfission_refuses_conditional_component_stays_valid()
     test_fission_promoted_transient_of_nested_sdfg()
     test_mapfission_keeps_connector_offset()
+    test_fission_keeps_copy_into_a_wider_array_valid()

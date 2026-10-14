@@ -601,7 +601,11 @@ class MapFission(transformation.SingleStateTransformation):
                                 # `test.transformations.mapfission_test.MapFissionTest.test_array_copy_outside_scope`.
                                 if not (scope_dict[e.src] and scope_dict[e.dst]):
                                     outside_border_edges.add(e)
+                                    # Propagate only the subset of `node.data`; the other side of a copy is kept
+                                    other_subset = e.data.other_subset
+                                    e.data.other_subset = None
                                     e.data = propagate_subset([e.data], desc, outer_map.params, outer_map.range)
+                                    e.data.other_subset = other_subset
 
                         # Only after offsetting memlets we can modify the
                         # overall offset. The memlets of an integrated nested SDFG were not offset, and still
