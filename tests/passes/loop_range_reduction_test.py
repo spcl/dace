@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests for the ``LoopRangeReduction`` pass."""
+import ast
 from typing import Dict, List, Optional
 
 import numpy as np
@@ -8,7 +9,7 @@ import pytest
 import dace
 from dace.properties import CodeBlock
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
-from dace.transformation.passes.loop_range_reduction import LoopRangeReduction
+from dace.transformation.passes.loop_range_reduction import LoopRangeReduction, map_iteration_space, reduced_ranges
 
 N = dace.symbol('N')
 M = dace.symbol('M')
@@ -624,6 +625,20 @@ def _maps(sdfg: dace.SDFG) -> List[dace.nodes.MapEntry]:
 
 def _map_ranges(sdfg: dace.SDFG) -> List[str]:
     return sorted(str(m.map.range) for m in _maps(sdfg))
+
+
+def test_map_iteration_space_symexpr_bounds():
+    sdfg = dace.SDFG('map_iteration_space_symexpr_bounds')
+    sdfg.add_symbol('N', dace.int64)
+    bound = dace.symbolic.SymExpr('N - 1', 'N')
+    map_node = dace.nodes.Map('m', ['i'], dace.subsets.Range([(0, bound, 1)]))
+
+    info = map_iteration_space(map_node, 0, sdfg)
+
+    assert info is not None
+    assert info.itervar == 'i'
+    assert info.end == bound.expr
+    assert reduced_ranges(ast.parse('i >= 1', mode='eval').body, info) is not None
 
 
 def test_map_symbolic_guard():
