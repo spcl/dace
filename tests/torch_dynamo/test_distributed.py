@@ -110,7 +110,7 @@ def test_overlap_communication(overlap):
     torch.testing.assert_close(_compile(backend, f)(x, y), expected)
 
     sdfg = backend.last_sdfg
-    states = list(sdfg.all_states())
+    states = sdfg.states()
 
     def position(predicate) -> int:
         return next(i for i, state in enumerate(states) if any(predicate(n) for n in state.nodes()))
