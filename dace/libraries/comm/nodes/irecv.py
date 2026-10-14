@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import dace.library
+import dace.properties
 import dace.sdfg.nodes
 from dace import dtypes
 from dace.libraries.comm import environments
@@ -10,6 +11,7 @@ from dace.libraries.comm.nodes.node import (
     mpi_communicator,
     nccl_communicator,
     nccl_point_to_point,
+    nccl_request,
     nccl_tasklet,
     validate_integer_descriptor,
     validate_nccl_buffers,
@@ -65,8 +67,8 @@ class ExpandIrecvMPI(ExpandTransformation):
 @dace.library.expansion
 class ExpandIrecvNCCL(NcclExpansion):
     """Enqueues an ``ncclRecv`` in the open NCCL group, which the next ``Wait`` (or blocking operation)
-    launches. NCCL operations have no requests: the ``_request`` output is optional and set to
-    ``MPI_REQUEST_NULL`` (which needs MPI) if connected."""
+    launches. NCCL operations have no requests: the ``_request`` output is optional (see
+    :func:`~dace.libraries.comm.nodes.node.nccl_request`)."""
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
@@ -75,13 +77,9 @@ class ExpandIrecvNCCL(NcclExpansion):
         comm = nccl_communicator(node, parent_sdfg, parent_state)
         body = "__state->nccl->Track(__dace_current_stream);\n"
         body += nccl_point_to_point("ncclRecv", "_buffer", "int(_src)", count_str, buffer.dtype.base_type, ddt)
-        if any(e.src_conn == "_request" for e in parent_state.out_edges(node)):
-            body += "*_request = MPI_REQUEST_NULL;\n"
         tasklet = nccl_tasklet(node, parent_state, comm, body, blocking=False)
-        tasklet.out_connectors = {
-            c: (dtypes.pointer(dtypes.opaque("MPI_Request")) if c == "_request" else t)
-            for c, t in tasklet.out_connectors.items()
-        }
+        request = nccl_request(node, parent_sdfg, parent_state, tasklet)
+        tasklet.code = dace.properties.CodeBlock(tasklet.code.as_string + request, dace.dtypes.Language.CPP)
         return tasklet
 
 

@@ -135,6 +135,24 @@ def nccl_point_to_point(
         """
 
 
+def nccl_request(node: nodes.LibraryNode, sdfg: SDFG, state: SDFGState, tasklet: nodes.Tasklet) -> str:
+    """The code that sets the ``_request`` output of a nonblocking NCCL operation, which has no request, and the
+    type of the connector. An ``MPI_Request`` container is set to ``MPI_REQUEST_NULL`` (which needs MPI); any other
+    (e.g., an integer token that orders the operation before its ``Wait`` without MPI) to zero. Without a
+    ``_request`` output, there is nothing to set."""
+    request = next((e for e in state.out_edges(node) if e.src_conn == "_request"), None)
+    if request is None:
+        return ""
+    dtype = sdfg.arrays[request.data.data].dtype
+    if isinstance(dtype, dtypes.opaque) and dtype.ctype == "MPI_Request":
+        tasklet.out_connectors = {
+            c: (dtypes.pointer(dtype) if c == "_request" else t) for c, t in tasklet.out_connectors.items()
+        }
+        return "*_request = MPI_REQUEST_NULL;\n"
+    tasklet.out_connectors = {c: (dtype if c == "_request" else t) for c, t in tasklet.out_connectors.items()}
+    return "_request = 0;\n"
+
+
 def nccl_tasklet(
     node: nodes.LibraryNode, state: SDFGState, comm: str, body: str, blocking: bool = True
 ) -> nodes.Tasklet:
