@@ -7,10 +7,12 @@ import dace.sdfg.nodes
 from dace import symbolic
 from dace.libraries.comm import environments, utils
 from dace.libraries.comm.nodes.node import (
-    CommNode,
     NcclExpansion,
+    NonblockingCommNode,
     expanded_input_connectors,
+    mpi_collective,
     mpi_communicator,
+    mpi_request_connector,
     nccl_communicator,
     nccl_tasklet,
     pack_noncontiguous_buffers,
@@ -19,15 +21,19 @@ from dace.libraries.comm.nodes.node import (
 from dace.transformation.transformation import ExpandTransformation
 
 
-def _counts_and_displacements(name: str, counts: Sequence, factor: int, ctype: str) -> str:
-    """C++ arrays ``<name>_counts`` and ``<name>_displs`` (exclusive prefix sums) of ``counts`` times ``factor``."""
+def _counts_and_displacements(name: str, counts: Sequence, factor: int, ctype: str, persistent: bool = False) -> str:
+    """C++ arrays ``<name>_counts`` and ``<name>_displs`` (exclusive prefix sums) of ``counts`` times ``factor``,
+    ``static`` if ``persistent`` (for arrays that must outlive the code, e.g., of a nonblocking operation)."""
     values = [
         f"({symbolic.symstr(c, cpp_mode=True)}) * {factor}" if factor != 1 else symbolic.symstr(c, cpp_mode=True)
         for c in counts
     ]
+    storage = "static " if persistent else ""
+    assignments = "".join(f"{name}_counts[{i}] = ({ctype})({v});\n" for i, v in enumerate(values))
     return f"""
-        const {ctype} {name}_counts[{len(values)}] = {{{", ".join(f"({ctype})({v})" for v in values)}}};
-        {ctype} {name}_displs[{len(values)}];
+        {storage}{ctype} {name}_counts[{len(values)}];
+        {storage}{ctype} {name}_displs[{len(values)}];
+        {assignments}
         {name}_displs[0] = 0;
         for (int __i = 1; __i < {len(values)}; ++__i) {name}_displs[__i] = {name}_displs[__i - 1] + {name}_counts[__i - 1];
         """
@@ -42,18 +48,22 @@ class ExpandAlltoallvMPI(ExpandTransformation):
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
         pack_noncontiguous_buffers(node, parent_sdfg, parent_state)
+        node.validate_request(parent_state)
         inbuffer, outbuffer = node.validate(parent_sdfg, parent_state)
         if inbuffer.dtype.veclen > 1:
             raise NotImplementedError("MPI expansions do not support vector types")
         mpi_dtype_str = utils.MPI_DDT(inbuffer.dtype.base_type)
         comm = mpi_communicator(node, parent_state)
-        code = _counts_and_displacements("__send", node.send_counts, 1, "int")
-        code += _counts_and_displacements("__recv", node.recv_counts, 1, "int")
-        code += f"""
-            MPI_Alltoallv(_inbuffer, __send_counts, __send_displs, {mpi_dtype_str},
-                          _outbuffer, __recv_counts, __recv_displs, {mpi_dtype_str}, {comm});
-            """
-        return dace.sdfg.nodes.Tasklet(
+        # A nonblocking exchange reads the counts and displacements until it completes: they outlive the tasklet
+        code = _counts_and_displacements("__send", node.send_counts, 1, "int", node.nonblocking)
+        code += _counts_and_displacements("__recv", node.recv_counts, 1, "int", node.nonblocking)
+        code += mpi_collective(
+            node,
+            "Alltoallv",
+            f"_inbuffer, __send_counts, __send_displs, {mpi_dtype_str}, _outbuffer, __recv_counts, __recv_displs, "
+            f"{mpi_dtype_str}, {comm}",
+        )
+        tasklet = dace.sdfg.nodes.Tasklet(
             node.name,
             expanded_input_connectors(node, parent_state),
             node.out_connectors,
@@ -61,6 +71,7 @@ class ExpandAlltoallvMPI(ExpandTransformation):
             language=dace.dtypes.Language.CPP,
             side_effects=True,
         )
+        return mpi_request_connector(tasklet)
 
 
 @dace.library.expansion
@@ -70,6 +81,7 @@ class ExpandAlltoallvNCCL(NcclExpansion):
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
         pack_noncontiguous_buffers(node, parent_sdfg, parent_state)
+        node.validate_request(parent_state)
         inbuffer, outbuffer = node.validate(parent_sdfg, parent_state)
         validate_nccl_buffers(node, inbuffer, outbuffer)
         nccl_type, factor = utils.nccl_transfer_type(inbuffer.dtype.base_type)
@@ -80,11 +92,11 @@ class ExpandAlltoallvNCCL(NcclExpansion):
             dace::comm::AlltoAllv(_inbuffer, __send_counts, __send_displs, _outbuffer, __recv_counts, __recv_displs,
                                   {nccl_type}, __comm, __dace_current_stream);
             """
-        return nccl_tasklet(node, parent_state, comm, body)
+        return nccl_tasklet(node, parent_state, comm, body, sdfg=parent_sdfg)
 
 
 @dace.library.node
-class Alltoallv(CommNode):
+class Alltoallv(NonblockingCommNode):
     """
     Exchanges a different number of elements with every process, as ``MPI_Alltoallv``: the input (``_inbuffer``)
     holds ``send_counts[i]`` elements for process ``i`` after those for the processes before it, and the output

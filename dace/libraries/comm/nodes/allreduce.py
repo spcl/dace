@@ -4,11 +4,13 @@ import dace.properties
 import dace.sdfg.nodes
 from dace.libraries.comm import environments, utils
 from dace.libraries.comm.nodes.node import (
-    CommNode,
     NcclExpansion,
+    NonblockingCommNode,
     expanded_input_connectors,
     mpi_average,
+    mpi_collective,
     mpi_communicator,
+    mpi_request_connector,
     nccl_communicator,
     nccl_tasklet,
     pack_noncontiguous_buffers,
@@ -25,6 +27,11 @@ class ExpandAllreduceMPI(ExpandTransformation):
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
         pack_noncontiguous_buffers(node, parent_sdfg, parent_state)
+        node.validate_request(parent_state)
+        if node.nonblocking and utils.is_average(node.op):
+            raise NotImplementedError(
+                "The average of a nonblocking MPI reduction: reduce the sum and divide after the Wait"
+            )
         (inbuffer, count_str), outbuffer, in_place = node.validate(parent_sdfg, parent_state)
         mpi_dtype_str = dace.libraries.comm.utils.MPI_DDT(inbuffer.dtype.base_type)
         if inbuffer.dtype.veclen > 1:
@@ -36,10 +43,11 @@ class ExpandAllreduceMPI(ExpandTransformation):
         if in_place:
             buffer = "MPI_IN_PLACE"
 
-        code = f"""
-            MPI_Allreduce({buffer}, _outbuffer, {count_str}, {mpi_dtype_str},
-                          {utils.mpi_op(node.op)}, {comm});
-            """
+        code = mpi_collective(
+            node,
+            "Allreduce",
+            f"{buffer}, _outbuffer, {count_str}, {mpi_dtype_str}, {utils.mpi_op(node.op)}, {comm}",
+        )
         code += mpi_average(node.op, "_outbuffer", count_str, comm)
         tasklet = dace.sdfg.nodes.Tasklet(
             node.name,
@@ -47,8 +55,9 @@ class ExpandAllreduceMPI(ExpandTransformation):
             node.out_connectors,
             code,
             language=dace.dtypes.Language.CPP,
+            side_effects=True,
         )
-        return tasklet
+        return mpi_request_connector(tasklet)
 
 
 @dace.library.expansion
@@ -58,6 +67,7 @@ class ExpandAllreduceNCCL(NcclExpansion):
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
         pack_noncontiguous_buffers(node, parent_sdfg, parent_state)
+        node.validate_request(parent_state)
         (inbuffer, count_str), outbuffer, _ = node.validate(parent_sdfg, parent_state)
         validate_nccl_buffers(node, inbuffer, outbuffer)
         nccl_type, factor = utils.nccl_reduction_type(inbuffer.dtype.base_type, node.op)
@@ -66,11 +76,11 @@ class ExpandAllreduceNCCL(NcclExpansion):
             f"DACE_NCCL_CHECK(ncclAllReduce(_inbuffer, _outbuffer, {scaled(count_str, factor)}, {nccl_type}, "
             f"{utils.nccl_op(node.op)}, __comm, __dace_current_stream));"
         )
-        return nccl_tasklet(node, parent_state, comm, body)
+        return nccl_tasklet(node, parent_state, comm, body, sdfg=parent_sdfg)
 
 
 @dace.library.node
-class Allreduce(CommNode):
+class Allreduce(NonblockingCommNode):
     # Global properties
     implementations = {
         "MPI": ExpandAllreduceMPI,

@@ -386,7 +386,10 @@ SciPy call is encountered.
   backend; the NCCL expansions communicate GPU global memory, one GPU per rank.
   A node communicates over the communicator given to its ``_comm`` connector
   (an integer handle, see :mod:`dace.libraries.comm.communicators`), else over
-  its process grid or the world, which NCCL bootstraps with MPI. Nodes built on MPI
+  its process grid or the world, which NCCL bootstraps with MPI. Allreduce,
+  Allgather, ReduceScatter, Bcast, Alltoall and Alltoallv can be ``nonblocking``:
+  they start the operation and write a request to ``_request``, which a Wait
+  completes. Nodes built on MPI
   datatypes (Redistribute, BlockScatter, BlockGather) are MPI-only. Formerly
   ``dace.libraries.mpi``, which remains as a deprecated alias.
 * :mod:`dace.libraries.pblas` - Distributed dense linear algebra via

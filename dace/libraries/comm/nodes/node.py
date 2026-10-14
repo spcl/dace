@@ -4,7 +4,7 @@ from typing import Any
 
 import sympy
 
-from dace import data, dtypes, subsets
+from dace import data, dtypes, properties, subsets
 from dace.libraries.comm import environments, utils
 from dace.memlet import Memlet
 from dace.sdfg import SDFG, SDFGState, nodes
@@ -134,6 +134,16 @@ def pack_noncontiguous_buffers(
     :param inputs: The input connectors of buffers.
     :param outputs: The output connectors of buffers.
     """
+    if isinstance(node, NonblockingCommNode) and node.nonblocking:
+        # A packed output would be copied back before the operation completes, and a packed input freed
+        for edge in state.in_edges(node) + state.out_edges(node):
+            connector = edge.dst_conn if edge.dst == node else edge.src_conn
+            if connector in inputs + outputs and not _contiguous_memlet(sdfg, edge.data):
+                raise ValueError(
+                    f'The nonblocking {type(node).__name__} "{node.label}" requires contiguous buffers, but '
+                    f"{edge.data.data} is not"
+                )
+        return
     packed: dict[tuple[str, str], str] = {}
 
     def transient(memlet: Memlet) -> str:
@@ -150,12 +160,8 @@ def pack_noncontiguous_buffers(
             )
         return packed[key]
 
-    def contiguous(memlet: Memlet) -> bool:
-        desc = sdfg.arrays[memlet.data]
-        return isinstance(desc, data.Scalar) or row_major_contiguous(memlet.subset, desc)
-
     for edge in list(state.in_edges(node)):
-        if edge.dst_conn not in inputs or contiguous(edge.data):
+        if edge.dst_conn not in inputs or _contiguous_memlet(sdfg, edge.data):
             continue
         name = transient(edge.data)
         full = subsets.Range.from_array(sdfg.arrays[name])
@@ -170,7 +176,7 @@ def pack_noncontiguous_buffers(
         state.remove_edge(edge)
         state.add_edge(access, None, node, edge.dst_conn, Memlet.from_array(name, sdfg.arrays[name]))
     for edge in list(state.out_edges(node)):
-        if edge.src_conn not in outputs or contiguous(edge.data):
+        if edge.src_conn not in outputs or _contiguous_memlet(sdfg, edge.data):
             continue
         name = transient(edge.data)
         full = subsets.Range.from_array(sdfg.arrays[name])
@@ -184,6 +190,31 @@ def pack_noncontiguous_buffers(
             Memlet(data=name, subset=full, other_subset=edge.data.subset),
         )
         state.remove_edge(edge)
+
+
+def _contiguous_memlet(sdfg: SDFG, memlet: Memlet) -> bool:
+    desc = sdfg.arrays[memlet.data]
+    return isinstance(desc, data.Scalar) or row_major_contiguous(memlet.subset, desc)
+
+
+def mpi_collective(node: nodes.LibraryNode, name: str, args: str) -> str:
+    """
+    The call of the MPI collective ``name`` (e.g., ``Allreduce``) with the arguments ``args``. For a nonblocking
+    node, the call of its nonblocking variant (``MPI_Iallreduce``), which starts the operation and sets the
+    ``_request`` output (see :func:`mpi_request_connector`).
+    """
+    if isinstance(node, NonblockingCommNode) and node.nonblocking:
+        return f"MPI_I{name[0].lower()}{name[1:]}({args}, _request);\n"
+    return f"MPI_{name}({args});\n"
+
+
+def mpi_request_connector(tasklet: nodes.Tasklet) -> nodes.Tasklet:
+    """Types the ``_request`` output of an expanded tasklet, if it has one, as a pointer to an ``MPI_Request``."""
+    tasklet.out_connectors = {
+        c: (dtypes.pointer(dtypes.opaque("MPI_Request")) if c == "_request" else t)
+        for c, t in tasklet.out_connectors.items()
+    }
+    return tasklet
 
 
 def validate_nccl_buffers(node: nodes.Node, *descs: data.Data) -> None:
@@ -242,11 +273,20 @@ def nccl_request(node: nodes.LibraryNode, sdfg: SDFG, state: SDFGState, tasklet:
 
 
 def nccl_tasklet(
-    node: nodes.LibraryNode, state: SDFGState, comm: str, body: str, blocking: bool = True
+    node: nodes.LibraryNode,
+    state: SDFGState,
+    comm: str,
+    body: str,
+    blocking: bool = True,
+    sdfg: SDFG | None = None,
 ) -> nodes.Tasklet:
     """The tasklet of an NCCL expansion. ``body`` enqueues the operation on ``__comm``, inside the open NCCL
     group of the program; a blocking operation then launches the group, a nonblocking one leaves it to
-    the ``Wait`` that completes it."""
+    the ``Wait`` that completes it.
+
+    A nonblocking collective (:class:`NonblockingCommNode`) is launched right away (NCCL runs it asynchronously to
+    the host): its ``Wait`` synchronizes its stream. Its ``_request`` output, if any, is a token (see
+    :func:`nccl_request`), which needs ``sdfg``."""
     code = f"""
         ncclComm_t __comm = {comm};
         __state->nccl->Begin();
@@ -254,7 +294,10 @@ def nccl_tasklet(
         """
     if blocking:
         code += "__state->nccl->Launch();\n"
-    return nodes.Tasklet(
+    nonblocking_collective = isinstance(node, NonblockingCommNode) and node.nonblocking
+    if nonblocking_collective:
+        code += "__state->nccl->Track(__dace_current_stream);\n"
+    tasklet = nodes.Tasklet(
         node.name,
         expanded_input_connectors(node, state),
         node.out_connectors,
@@ -262,6 +305,13 @@ def nccl_tasklet(
         language=dtypes.Language.CPP,
         side_effects=True,
     )
+    if nonblocking_collective:
+        if sdfg is None:
+            raise ValueError("The tasklet of a nonblocking NCCL collective needs its SDFG")
+        tasklet.code = properties.CodeBlock(
+            tasklet.code.as_string + nccl_request(node, sdfg, state, tasklet), dtypes.Language.CPP
+        )
+    return tasklet
 
 
 class NcclExpansion(ExpandTransformation):
@@ -295,3 +345,27 @@ class CommNode(nodes.LibraryNode):
 
     def has_side_effects(self, sdfg) -> bool:
         return True
+
+
+@properties.make_properties
+class NonblockingCommNode(CommNode):
+    """
+    A collective that can also start its operation and return (``nonblocking``), like the ``MPI_I*`` variants of MPI
+    collectives. A nonblocking node writes a request to its ``_request`` output, which a ``Wait`` completes; its
+    buffers must stay untouched until then, and must be contiguous. With MPI, the request is an ``MPI_Request``;
+    with NCCL, which has no requests, any container (e.g., an integer token, which orders the node before its
+    ``Wait``). The average (``avg``) of a reduction cannot be nonblocking with MPI: reduce the sum, and divide after
+    the ``Wait``.
+    """
+
+    nonblocking = properties.Property(
+        dtype=bool,
+        default=False,
+        category="Semantics",
+        desc="Start the operation and return; a Wait on the _request output completes it",
+    )
+
+    def validate_request(self, state: SDFGState) -> None:
+        """Checks that a nonblocking node has a connected ``_request`` output."""
+        if self.nonblocking and not any(e.src_conn == "_request" for e in state.out_edges(self)):
+            raise ValueError(f'The nonblocking {type(self).__name__} "{self.label}" has no _request output')
