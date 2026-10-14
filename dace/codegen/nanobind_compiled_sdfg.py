@@ -6,17 +6,33 @@ Loading (importlib under the ``dace.generated.*`` namespace) lives in
 """
 
 import ctypes
+import dataclasses
 import pathlib
 import warnings
 from collections.abc import Callable
 from types import ModuleType
-from typing import Any
+from typing import Any, ClassVar
 
 import numpy as np
 
 import dace
 from dace import dtypes, hooks
 from dace.codegen import compiler
+
+
+@dataclasses.dataclass
+class NanobindInterface:
+    """Descriptor for a decided nanobind compilation (see ``resolve_compiler_interface``).
+
+    Carries the pre-codegen content hash of the source SDFG from ``compile()``
+    to the bindings generator, which bakes it into the module for
+    loaded-module reuse. ``None`` when reuse is disabled.
+    """
+
+    #: The ``compiler.interface`` config value and ``INTERFACE`` marker content.
+    name: ClassVar[str] = "nanobind"
+
+    source_hash: str | None = None
 
 
 def _unwrap_array_likes(args: tuple[Any, ...], kwargs: dict[str, Any]) -> tuple[tuple[Any, ...], dict[str, Any]] | None:

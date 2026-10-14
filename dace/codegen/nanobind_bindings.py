@@ -9,7 +9,9 @@ The bound methods use typed parameters, so argument matching and casting
 happen in nanobind's dispatcher.
 """
 
+import io
 from collections import OrderedDict
+from hashlib import md5
 
 import numpy
 import sympy
@@ -17,6 +19,7 @@ import sympy
 from dace import data as dt
 from dace import dtypes, symbolic
 from dace.codegen.common import get_gpu_backend, sdfg_has_gpu_code, sym2cpp
+from dace.config import Config
 
 # ml_dtypes-backed low-precision types: numpy cannot export their arrays via
 # DLPack or the buffer protocol, so nanobind cannot ingest them; they are
@@ -104,6 +107,27 @@ def unsupported_reason(sdfg) -> str | None:
         if reason is not None:
             return reason
     return None
+
+
+def source_content_hash(sdfg) -> str:
+    """The pre-codegen content hash keying loaded-module reuse for ``sdfg``.
+
+    ``compile()`` computes it on the source SDFG (codegen mutates the SDFG, so
+    a post-codegen hash would never match) and :func:`generate_bindings_code`
+    bakes it into the module as ``source_sdfg_hash``. ``hash_sdfg()`` considers
+    neither the instrumentation nor the configuration, but both influence the
+    generated code, so they join the key. Hashing the WHOLE effective
+    configuration (deterministic: sorted YAML keys, env applied at load time)
+    errs toward a redundant rebuild, never a wrong reuse.
+    """
+    instr_sig = ",".join(
+        [sdfg.instrument.name]
+        + [n.instrument.name for n, _ in sdfg.all_nodes_recursive() if getattr(n, "instrument", None) is not None]
+    )
+    config_dump = io.StringIO()
+    Config.save(file=config_dump, all=True)
+    codegen_sig = f"{instr_sig}:{config_dump.getvalue()}"
+    return f"{sdfg.hash_sdfg()}:{md5(codegen_sig.encode('utf-8')).hexdigest()}"
 
 
 def _symbol_fallbacks(
@@ -505,7 +529,7 @@ def _external_memory_storages(sdfg):
     return sorted(storages, key=lambda s: s.name)
 
 
-def generate_bindings_code(sdfg, statestruct=None, gpu_backend=None) -> str:
+def generate_bindings_code(sdfg, statestruct=None, gpu_backend=None, source_hash=None) -> str:
     """Returns the C++ source of the nanobind module for ``sdfg``.
 
     :param statestruct: The frame generator's state-struct field declarations;
@@ -515,6 +539,9 @@ def generate_bindings_code(sdfg, statestruct=None, gpu_backend=None) -> str:
                         ``__dace_gpu_last_error`` exists - declaring the
                         accessor without the target would be a link error),
                         ``None`` otherwise.
+    :param source_hash: The :func:`source_content_hash` of the SOURCE SDFG
+                        (codegen has mutated ``sdfg`` by now), baked into the
+                        module for loaded-module reuse; ``None`` omits it.
     """
     from dace.codegen.targets.cpp import mangle_dace_state_struct_name
 
@@ -705,11 +732,6 @@ def generate_bindings_code(sdfg, statestruct=None, gpu_backend=None) -> str:
 
     state_field_appends = "\n            ".join(f'fields.append("{f}");' for f in _pointer_field_names(statestruct))
 
-    # Pre-codegen content hash of the SOURCE SDFG, threaded in by compile()
-    # (codegen mutates the SDFG, so the post-codegen hash would never match):
-    # lets a later compile() of an unchanged SDFG mint a fresh handle from the
-    # loaded module instead of rename-and-recompile.
-    source_hash = getattr(sdfg, "_source_sdfg_hash", None)
     source_hash_attr = f'\n    m.attr("source_sdfg_hash") = "{source_hash}";' if source_hash else ""
 
     # Setup statements may need the Python API, so with them the GIL is

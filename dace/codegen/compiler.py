@@ -33,7 +33,8 @@ from dace.codegen import ctypes_compiled_sdfg as csd
 from dace.codegen import exceptions as cgx
 from dace.codegen.codeobject import CodeObject
 from dace.codegen.compiled_sdfg import CompiledSDFGProtocol
-from dace.codegen.nanobind_compiled_sdfg import NanobindCompiledSDFG
+from dace.codegen.ctypes_compiled_sdfg import CtypesInterface
+from dace.codegen.nanobind_compiled_sdfg import NanobindCompiledSDFG, NanobindInterface
 from dace.codegen.target import TargetCodeGenerator, make_absolute
 from dace.config import Config
 
@@ -79,11 +80,11 @@ BUILD_TYPE_FLAGS_BY_FAMILY = {
 #: Clang, IntelLLVM and anything unrecognized use CMake's GNU-like defaults.
 CMAKE_BUILD_TYPE_FLAGS = BUILD_TYPE_FLAGS_BY_FAMILY["gnu"]
 
-# @CLAUDE: This is a bit opaque, also the fact that we attach a dynamic attribute to `sdfg` to pass the hash to the bindings generator. \
-#   To solve this we will change that a bit, instead of passing `interface` as a string, there is a class for every interface method a separate one. We define them where the compiled sdfgs are defiend, I think for that a dataclass should be the right thing. \
-#   The one for ctypes is essentially an empty class. While the one for `nanobind` contains as sole member the value of the hash, that is allowed to be `None`. \
-#   The default value of `interface` is still `None` with the same effects as before. \
-#   However, inside `dace.Config` the interface key is still a string.
+#: A decided compiler interface: one descriptor class per interface, defined
+#: next to its compiled-SDFG wrapper. The ``compiler.interface`` CONFIG key
+#: stays a string ('auto'/'ctypes'/'nanobind'); the translation to a
+#: descriptor happens once, in :func:`resolve_compiler_interface`.
+CompilerInterface = CtypesInterface | NanobindInterface
 
 
 def generate_program_folder(
@@ -92,7 +93,7 @@ def generate_program_folder(
     out_path: str,
     config=None,
     folder_mode: str | None = None,
-    interface: str | None = None,
+    interface: CompilerInterface | None = None,
 ) -> str:
     """Writes all files required to configure and compile the DaCe program into the specified folder.
 
@@ -105,9 +106,9 @@ def generate_program_folder(
     :param out_path: The folder in which the build files should be written.
     :param folder_mode: Select which files should be saved in the program build folder;
                         if not given, ``compiler.build_folder_mode`` is used.
-    :param interface: The decided Python interface for this folder ('ctypes' or
-                      'nanobind', never 'auto'); if not given, it is resolved
-                      via :func:`resolve_compiler_interface`.
+    :param interface: The decided Python interface for this folder, as a
+                      :data:`CompilerInterface` descriptor; if not given, it is
+                      resolved via :func:`resolve_compiler_interface`.
     :return: Path to the program folder.
 
     :note: The ``config`` argument is retained for compatibility and should not be used.
@@ -190,18 +191,18 @@ def generate_program_folder(
     # it is compiled into the program library (the module *is* the library).
     if interface is None:
         interface = resolve_compiler_interface(sdfg)
-    if interface not in ("ctypes", "nanobind"):
+    if not isinstance(interface, (CtypesInterface, NanobindInterface)):
         raise ValueError(
-            f"Unknown value for the decided compiler interface: `{interface}` "
-            '(expected "ctypes" or "nanobind"; "auto" must be resolved by the caller '
-            "via resolve_compiler_interface)."
+            f"Unknown value for the decided compiler interface: `{interface!r}` "
+            "(expected a CtypesInterface or NanobindInterface descriptor, "
+            "as returned by resolve_compiler_interface)."
         )
     if sdfg is None:
         # Raw code objects without an SDFG (e.g. helper libraries): no
         # bindings can be generated, so the folder is a ctypes-style artifact
         # regardless of the configured interface, and the marker must say so.
-        interface = "ctypes"
-    if interface == "nanobind":
+        interface = CtypesInterface()
+    if isinstance(interface, NanobindInterface):
         bindings_folder = os.path.join(src_path, "cpu")
         os.makedirs(bindings_folder, exist_ok=True)
         bindings_name = f"{sdfg.name}_nanobind.cpp"
@@ -214,7 +215,9 @@ def generate_program_folder(
             from dace.codegen import common
 
             gpu_backend = common.get_gpu_backend()
-        bindings_code = nanobind_bindings.generate_bindings_code(sdfg, statestruct=statestruct, gpu_backend=gpu_backend)
+        bindings_code = nanobind_bindings.generate_bindings_code(
+            sdfg, statestruct=statestruct, gpu_backend=gpu_backend, source_hash=interface.source_hash
+        )
         bindings_path = os.path.join(bindings_folder, bindings_name)
         if not identical_file_exists(bindings_path, bindings_code):
             with open(bindings_path, "w") as bindings_file:
@@ -224,7 +227,7 @@ def generate_program_folder(
     # Record which interface produced this folder (see `load_precompiled_sdfg`),
     # analogous to the `FOLDER_MODE` file.
     with open(os.path.join(out_path, "INTERFACE"), "w") as interface_file:
-        interface_file.write(interface)
+        interface_file.write(interface.name)
 
     # The runtime's report.save() opens `<folder>/perf/report-*.json` with a
     # bare std::ofstream, which neither creates directories nor reports a
@@ -281,13 +284,16 @@ def generate_program_folder(
     return out_path
 
 
-def resolve_compiler_interface(sdfg=None) -> str:
-    """Decides the concrete Python interface ('ctypes' or 'nanobind') for compiling ``sdfg``.
+def resolve_compiler_interface(sdfg=None) -> CompilerInterface:
+    """Decides the Python interface for compiling ``sdfg``.
 
     This is the single decision point for the ``compiler.interface``
     configuration: ``SDFG.compile()`` calls it once and passes the decided
-    mode down (``is_loaded()``, :func:`generate_program_folder`), so code
-    generation never re-reads the configuration.
+    descriptor down (:func:`generate_program_folder`), so code generation
+    never re-reads the configuration. The config value is a string; the
+    returned descriptor is a fresh :data:`CompilerInterface` instance (any
+    per-compile data, e.g. ``NanobindInterface.source_hash``, is filled in by
+    the caller).
 
     - ``ctypes``: always the ctypes interface.
     - ``nanobind``: always the nanobind interface; an SDFG outside its scope
@@ -302,19 +308,21 @@ def resolve_compiler_interface(sdfg=None) -> str:
     :param sdfg: The SDFG about to be compiled, or ``None`` when there is no
                  SDFG (raw code objects); ``auto`` then resolves to ``ctypes``,
                  since without an SDFG no bindings can be generated.
-    :return: ``'ctypes'`` or ``'nanobind'``.
+    :return: A :class:`CtypesInterface` or :class:`NanobindInterface` instance.
     """
     interface = Config.get("compiler", "interface")
     if interface not in ("ctypes", "nanobind", "auto"):
         raise ValueError(f"Unknown value for `compiler.interface`: `{interface}`")
-    if interface != "auto":
-        return interface
+    if interface == "ctypes":
+        return CtypesInterface()
+    if interface == "nanobind":
+        return NanobindInterface()
     if not _nanobind_available():
         _warn_nanobind_unavailable()
-        return "ctypes"
+        return CtypesInterface()
     if sdfg is None:
-        return "ctypes"
-    return "nanobind" if nanobind_bindings.unsupported_reason(sdfg) is None else "ctypes"
+        return CtypesInterface()
+    return NanobindInterface() if nanobind_bindings.unsupported_reason(sdfg) is None else CtypesInterface()
 
 
 @cache

@@ -8,6 +8,7 @@ lives in :mod:`dace.codegen.compiled_sdfg`, which also keeps the deprecated
 """
 
 import ctypes
+import dataclasses
 import os
 import pathlib
 import pickle
@@ -18,7 +19,7 @@ import sys
 import tempfile
 import warnings
 from collections.abc import Callable, Sequence
-from typing import Any
+from typing import Any, ClassVar
 
 import numpy as np
 
@@ -26,6 +27,18 @@ from dace import data as dt
 from dace import dtypes, hooks, symbolic
 from dace.codegen import exceptions as cgx
 from dace.config import Config
+
+
+@dataclasses.dataclass
+class CtypesInterface:
+    """Descriptor for a decided ctypes compilation (see ``resolve_compiler_interface``).
+
+    The ctypes interface needs no per-compile data, so the descriptor only
+    carries the interface's identity.
+    """
+
+    #: The ``compiler.interface`` config value and ``INTERFACE`` marker content.
+    name: ClassVar[str] = "ctypes"
 
 
 class ReloadableDLL:

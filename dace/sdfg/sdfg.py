@@ -4,7 +4,6 @@ import collections
 import copy
 import ctypes
 import gzip
-import io
 import json
 import os
 import pathlib
@@ -2795,7 +2794,8 @@ class SDFG(ControlFlowRegion):
         """
 
         # Importing these outside creates an import loop
-        from dace.codegen import codegen, compiler
+        from dace.codegen import codegen, compiler, nanobind_bindings
+        from dace.codegen.nanobind_compiled_sdfg import NanobindInterface
 
         # Compute build folder path before running codegen
         build_folder = self.build_folder
@@ -2832,11 +2832,11 @@ class SDFG(ControlFlowRegion):
 
         # Decide the Python interface for THIS SDFG once. Everything below -
         #  reuse, collision handling, folder generation - keys off the decided
-        #  value, and code generation never re-reads the configuration. The 'auto'
-        #  detector inspects the arglist, which requires the resolved external
-        #  nested SDFGs of the compile copy above.
+        #  descriptor, and code generation never re-reads the configuration. The
+        #  'auto' detector inspects the arglist, which requires the resolved
+        #  external nested SDFGs of the compile copy above.
         interface = compiler.resolve_compiler_interface(sdfg)
-        nanobind_interface = interface == "nanobind"
+        nanobind_interface = isinstance(interface, NanobindInterface)
 
         # Content-verified module reuse (nanobind; compiler.nanobind_reuse_loaded,
         # default on): if THIS identity (build folder, name) is already loaded and
@@ -2844,27 +2844,10 @@ class SDFG(ControlFlowRegion):
         # content hash, mint a fresh handle from it - no rename, no rebuild.
         # hash_sdfg() instability can only produce a false MISmatch (a redundant
         # rename-and-rebuild below), never a wrong reuse.
-        source_hash = None
         if nanobind_interface and Config.get_bool("compiler", "nanobind_reuse_loaded"):
-            # @CLAUDE: Please create a helper function to compute the content hash. I think you should place it somewhere in `nanobind_bindings.py`.
-
-            # `hash_sdfg()` considers neither the instrumentation nor the
-            #  configuration, but both influence the generated code, so they
-            #  join the reuse key. Hashing the WHOLE effective configuration
-            #  (deterministic: sorted YAML keys, env applied at load time)
-            #  errs toward a redundant rebuild, never a wrong reuse.
-            instr_sig = ",".join(
-                [sdfg.instrument.name]
-                + [
-                    n.instrument.name
-                    for n, _ in sdfg.all_nodes_recursive()
-                    if getattr(n, "instrument", None) is not None
-                ]
-            )
-            config_dump = io.StringIO()
-            Config.save(file=config_dump, all=True)
-            codegen_sig = f"{instr_sig}:{config_dump.getvalue()}"
-            source_hash = f"{sdfg.hash_sdfg()}:{md5(codegen_sig.encode('utf-8')).hexdigest()}"
+            # The descriptor carries the hash to the bindings generator, which
+            #  bakes it into the module (`source_sdfg_hash` below).
+            interface.source_hash = nanobind_bindings.source_content_hash(sdfg)
 
             # The folder must still hold a nanobind artifact: a ctypes rebuild
             #  of the same identity flips the INTERFACE marker, and reusing
@@ -2874,7 +2857,7 @@ class SDFG(ControlFlowRegion):
             module = sys.modules.get(compiler.nanobind_qualified_module_name(build_folder, self.name))
             if (
                 module is not None
-                and getattr(module, "source_sdfg_hash", None) == source_hash
+                and getattr(module, "source_sdfg_hash", None) == interface.source_hash
                 and os.path.isdir(build_folder)
                 and compiler.get_program_interface(build_folder) == "nanobind"
             ):
@@ -2884,13 +2867,6 @@ class SDFG(ControlFlowRegion):
                 return
 
         if self.regenerate_code or not os.path.isdir(build_folder):
-            # Attach the original sdfg hash to the SDFG, such that the nanobind bindings
-            #  generator can include it in the bindings.
-            # TODO(phimuell): It should not be a property, but we should come up with a
-            #   better way to pass the value to the generator.
-            if nanobind_interface and source_hash is not None:
-                sdfg._source_sdfg_hash = source_hash
-
             # Fix the build folder name on the copied SDFG to avoid it changing if the
             #  codegen modifies the SDFG (thereby changing its hash, only relevant for
             #  `cache=hash` mode; note due to indeterminism in `hash_sdfg()` this might
@@ -3054,8 +3030,9 @@ class SDFG(ControlFlowRegion):
             explicitly and call ``safe_call()`` on the returned object.
         """
         from dace.codegen import compiler
+        from dace.codegen.nanobind_compiled_sdfg import NanobindInterface
 
-        if compiler.resolve_compiler_interface(self) == "nanobind":
+        if isinstance(compiler.resolve_compiler_interface(self), NanobindInterface):
             # Under nanobind a collision rename may recompile into a different
             #  build folder, and `SDFG.get_latest_report` would then not find
             #  the reports - hence unsupported here.
