@@ -29,7 +29,7 @@ from dace.codegen import cpf
 from dace.codegen.codeobject import CodeObject
 from dace.codegen.cpf import Rendering
 from dace.libraries.blas.nodes.gemm import Gemm
-from dace.libraries.standard.nodes import FindFirst, Scan
+from dace.libraries.standard.nodes import FindFirst, Reduce, Scan
 from dace.libraries.standard.nodes.scan import ScanOp
 from tests.codegen.cpf.conftest import assert_standalone_units, device_scan_sdfg, render_gpu, require_gpu_backend
 
@@ -240,6 +240,27 @@ def test_a_host_level_node_over_device_memory_expands_into_a_kernel():
     sdfg = host_level_gemm_sdfg("cpf_hip_host_gemm")
     rendering = cpf.render(sdfg, language="hip")
     assert_standalone_units(rendering, "cpf_hip_host_gemm")
+
+
+def test_a_host_level_reduce_over_device_memory_expands_into_a_kernel():
+    """``Reduce`` renders through the device table's ``pure`` rather than the host lowering, and that
+    expansion is maps too: its init map and its reduction map inherit ``node.schedule``. Choosing it
+    from the device table must not skip the schedule correction, or the init map stays a HOST map
+    over the device output (pagerank, hmm_forward, viterbi: ``Data container "_out" is stored as
+    StorageType.GPU_Global but accessed on host``)."""
+    sdfg = dace.SDFG("cpf_hip_host_reduce")
+    storage = dace.dtypes.StorageType.GPU_Global
+    sdfg.add_array("a", [N], dace.float64, storage=storage)
+    sdfg.add_array("s", [1], dace.float64, storage=storage)
+    state = sdfg.add_state()
+    node = Reduce("sum", wcr="lambda a, b: a + b", identity=0)
+    node.implementation = "GPUAuto"
+    node.schedule = dace.dtypes.ScheduleType.Sequential
+    state.add_node(node)
+    state.add_edge(state.add_read("a"), None, node, None, dace.Memlet.from_array("a", sdfg.arrays["a"]))
+    state.add_edge(node, None, state.add_write("s"), None, dace.Memlet.from_array("s", sdfg.arrays["s"]))
+    rendering = cpf.render(sdfg, language="hip")
+    assert_standalone_units(rendering, "cpf_hip_host_reduce")
 
 
 def test_the_schedule_correction_is_confined_to_host_level_device_memory():
@@ -517,6 +538,7 @@ if __name__ == "__main__":
     test_a_library_node_over_device_memory_takes_its_device_implementation()
     test_the_host_implementation_still_wins_over_host_memory()
     test_a_host_level_node_over_device_memory_expands_into_a_kernel()
+    test_a_host_level_reduce_over_device_memory_expands_into_a_kernel()
     test_the_schedule_correction_is_confined_to_host_level_device_memory()
     test_a_device_library_node_inside_a_kernel_keeps_the_device_code_implementation()
     test_a_device_scan_renders_the_device_scan_and_its_scratch()

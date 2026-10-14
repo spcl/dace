@@ -527,7 +527,9 @@ def force_renderable_expansions(sdfg: SDFG, provenance: dict[str, tuple[str, str
             selected = next((c for c in renderable_implementations(node, state) if c in available), None)
             if selected is not None:
                 node.implementation = selected
-                if selected not in RENDERABLE_BY_NODE_DEVICE.get(type(node).__name__, ()):
+                # A device expansion (``CUDA``) is a host call that launches its own kernel. Every
+                # other one, ``Reduce``'s device ``pure`` included, is maps that take the node's schedule.
+                if selected != "CUDA":
                     schedule_host_level_device_node(node, state)
             if provenance is not None:
                 description = description_of(node)
