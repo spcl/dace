@@ -61,7 +61,7 @@ def nccl_unique_id() -> bytes:
     """
     uid = _NcclUniqueId()
     _check(_nccl_library().ncclGetUniqueId(ctypes.byref(uid)), "ncclGetUniqueId")
-    return bytes(uid.internal)
+    return bytes(uid)  # All bytes: the ``internal`` field would stop at the first NUL
 
 
 def nccl_init_rank(unique_id: bytes, rank: int, nranks: int) -> int:
@@ -76,8 +76,7 @@ def nccl_init_rank(unique_id: bytes, rank: int, nranks: int) -> int:
     """
     if len(unique_id) != NCCL_UNIQUE_ID_BYTES:
         raise ValueError(f"An NCCL unique ID has {NCCL_UNIQUE_ID_BYTES} bytes, got {len(unique_id)}")
-    uid = _NcclUniqueId()
-    uid.internal = unique_id
+    uid = _NcclUniqueId.from_buffer_copy(unique_id)
     comm = ctypes.c_void_p()
     _check(_nccl_library().ncclCommInitRank(ctypes.byref(comm), nranks, uid, rank), "ncclCommInitRank")
     return comm.value
