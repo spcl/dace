@@ -58,8 +58,27 @@ def test_a_value_routed_through_an_access_node_validates():
     sdfg.validate()
 
 
+def test_an_empty_memlet_between_two_tasklets_carries_no_connector():
+    """An empty memlet only orders two code nodes; one that names a connector would pass data without a container."""
+    sdfg, state, producer, consumer = _producer_consumer("empty_memlet_between_two_tasklets")
+    tmp = state.add_access("tmp")
+    state.add_edge(producer, "out", tmp, None, dace.Memlet("tmp[0]"))
+    state.add_edge(tmp, None, consumer, "inp", dace.Memlet("tmp[0]"))
+    state.add_edge(consumer, "out", state.add_write("B"), None, dace.Memlet("B[0]"))
+    after = state.add_tasklet("after", {}, {}, "")
+    state.add_edge(consumer, None, after, None, dace.Memlet())
+    sdfg.validate()
+
+    after.add_in_connector("inp")
+    state.remove_edge(state.in_edges(after)[0])
+    state.add_edge(consumer, None, after, "inp", dace.Memlet())
+    with pytest.raises(dace.sdfg.InvalidSDFGEdgeError, match="names a connector"):
+        sdfg.validate()
+
+
 if __name__ == "__main__":
     test_a_memlet_between_two_tasklets_is_rejected()
     test_a_memlet_path_through_a_map_between_two_tasklets_is_rejected()
     test_a_tree_rooted_at_a_tasklet_is_rejected_even_if_it_ends_at_an_access_node()
     test_a_value_routed_through_an_access_node_validates()
+    test_an_empty_memlet_between_two_tasklets_carries_no_connector()

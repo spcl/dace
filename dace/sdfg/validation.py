@@ -522,7 +522,8 @@ def _is_scalar(edge: "gr.MultiConnectorEdge[Memlet]", memlet_path: list["gr.Mult
 
 def _validate_memlet_tree_roots(state: "dace.sdfg.SDFGState", state_id: int):
     """
-    Checks that every non-empty memlet tree is rooted at an AccessNode.
+    Checks that every non-empty memlet tree is rooted at an AccessNode, and that an empty memlet between two code
+    nodes uses no connector.
 
     :param state: The state to check.
     :param state_id: The index of the state, for error reporting.
@@ -531,6 +532,13 @@ def _validate_memlet_tree_roots(state: "dace.sdfg.SDFGState", state_id: int):
 
     for eid, e in enumerate(state.edges()):
         if e.data.is_empty():
+            if (e.src_conn or e.dst_conn) and isinstance(e.src, nd.CodeNode) and isinstance(e.dst, nd.CodeNode):
+                raise InvalidSDFGEdgeError(
+                    f'The empty memlet from "{e.src}" to "{e.dst}" names a connector; route data through an AccessNode',
+                    state.parent_graph,
+                    state_id,
+                    eid,
+                )
             continue
         if isinstance(e.dst, nd.EntryNode) and not isinstance(e.src, nd.EntryNode):
             ends = (e.src,)
