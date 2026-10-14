@@ -9,7 +9,7 @@ from dace.optionals import required
 from dace.sdfg import SDFG, SDFGState
 from dace.sdfg.utils import require_structured_control_flow
 from dace.transformation import pass_pipeline as ppl
-from dace.transformation.passes import FullMapFusion
+from dace.transformation.dataflow import MapFusionHorizontal, MapFusionVertical
 from dace.transformation.passes.fold_constant_tables import FoldConstantTables
 from dace.transformation.passes.offloading.host_maps import HostMapSpec, host_maps, maps_pinned_by_host_loops
 from dace.transformation.passes.offloading.offloading_ir_node import OffloadingIRNode
@@ -121,13 +121,9 @@ class OffloadToAccelerator(ppl.Pass):
         helpers.remove_empty_return_entries(entries)
         helpers.remove_empty_fallthrough_branches(fallthroughs)
         if wrapped:
-            ppl.Pipeline(
-                [
-                    FullMapFusion(
-                        strict_dataflow=True, perform_vertical_map_fusion=True, perform_horizontal_map_fusion=True
-                    )
-                ]
-            ).apply_pass(sdfg, {})
+            # Fuse the size-1 maps the wrapping made: vertically into their producers and consumers, then side by side.
+            sdfg.apply_transformations_repeated(MapFusionVertical(strict_dataflow=True), validate=False)
+            sdfg.apply_transformations_repeated(MapFusionHorizontal(), validate=False)
         single_element_copies_into_map(sdfg)
 
         placed_on_gpu = OrderedSet(insertion.placed_on_gpu)
