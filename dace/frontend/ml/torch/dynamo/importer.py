@@ -56,6 +56,8 @@ class ImportResult:
     inputs: list[InputSpec]
     outputs: list[OutputSpec]
     symbols: dict[str, Any]
+    #: Communicator arguments: name -> (process group name, implementation), see :mod:`.distributed`
+    communicators: dict[str, tuple[str, str]] = dataclasses.field(default_factory=dict)
 
 
 @dataclasses.dataclass
@@ -74,6 +76,8 @@ class JointImportResult:
     forward: PhaseInterface
     backward: PhaseInterface
     symbols: dict[str, Any]
+    #: Communicator arguments: name -> (process group name, implementation), see :mod:`.distributed`
+    communicators: dict[str, tuple[str, str]] = dataclasses.field(default_factory=dict)
 
 
 class GraphImporter:
@@ -105,7 +109,7 @@ class GraphImporter:
                               the convention for SDFGs called from a ``@dace.program``. Symbolic and constant outputs
                               become rank-0 containers.
         """
-        from . import ops  # noqa: F401 (registers lowerings)
+        from . import ops  # Deferred: the lowerings import this module
 
         symtab = SymbolTable(names=symbol_names)
         storage = _storage_for(example_inputs)
@@ -114,6 +118,7 @@ class GraphImporter:
 
         inputs = self._bind_placeholders(ctx, gm, example_inputs, input_names)
         output_values = self.walk(ctx, gm)
+        ops.distributed.wait_pending(ctx)
         if return_arrays:
             outputs = self._return_outputs(ctx, output_values)
         else:
@@ -121,6 +126,7 @@ class GraphImporter:
 
         arg_names = [spec.name for spec in inputs if spec.kind == "tensor"]
         arg_names += [spec.name for spec in outputs if spec.kind == "tensor"]
+        arg_names += list(ctx.communicators)
         stree = tn.ScheduleTreeRoot(
             name=name,
             containers=ctx.containers,
@@ -134,7 +140,7 @@ class GraphImporter:
         sdfg = stree.as_sdfg(
             validate=getattr(self.options, "validate", True), simplify=getattr(self.options, "simplify", True)
         )
-        return ImportResult(sdfg, stree, inputs, outputs, dict(symtab.symbols))
+        return ImportResult(sdfg, stree, inputs, outputs, dict(symtab.symbols), dict(ctx.communicators))
 
     def import_joint(
         self,
@@ -155,7 +161,7 @@ class GraphImporter:
         :param symbol_names: Optional renaming of Dynamo shape symbols to DaCe symbol names.
         :param input_names: Optional container name per forward placeholder (primal).
         """
-        from . import ops  # noqa: F401 (registers lowerings)
+        from . import ops  # Deferred: the lowerings import this module
 
         nodes = plan.nodes()
         forward_placeholders = [nodes[n] for n in jt.placeholder_names(plan.forward)]
@@ -184,6 +190,7 @@ class GraphImporter:
         forward_children: list[tn.ScheduleTreeNode] = []
         with ctx.scope(forward_children):
             self.walk(ctx, plan.joint, plan.forward_nodes())
+            ops.distributed.wait_pending(ctx)
             returned = [
                 ctx.env[nodes[v.name]] if isinstance(v, torch.fx.Node) else ConstValue(v)
                 for v in jt.flat_outputs(plan.forward)
@@ -211,6 +218,7 @@ class GraphImporter:
         backward_children: list[tn.ScheduleTreeNode] = []
         with ctx.scope(backward_children):
             self.walk(ctx, plan.joint, plan.backward_nodes())
+            ops.distributed.wait_pending(ctx)
             returned = [ctx.env[v] if isinstance(v, torch.fx.Node) else ConstValue(v) for v in gradients]
             backward_outputs, _ = self._finalize_outputs(ctx, returned, backward_inputs)
 
@@ -218,7 +226,7 @@ class GraphImporter:
         backward_args = _argument_names(backward_inputs, backward_outputs)
         for container in set(forward_args) ^ set(backward_args):
             ctx.containers[container].optional = True
-        arg_names = forward_args + [a for a in backward_args if a not in forward_args]
+        arg_names = forward_args + [a for a in backward_args if a not in forward_args] + list(ctx.communicators)
         phase = symtab.get(jt.PHASE_SYMBOL)
         stree = tn.ScheduleTreeRoot(
             name=name,
@@ -242,6 +250,7 @@ class GraphImporter:
             PhaseInterface(jt.FORWARD, forward_inputs, forward_outputs),
             PhaseInterface(jt.BACKWARD, backward_inputs, backward_outputs),
             dict(symtab.symbols),
+            dict(ctx.communicators),
         )
 
     @staticmethod

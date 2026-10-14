@@ -186,6 +186,7 @@ class DaceBackend:
             result.backward.inputs,
             result.backward.outputs,
             _phase_arguments(result.sdfg, result.backward, result.forward),
+            result.communicators,
         )
         self._joint_backward[plan.backward.code].append(backward)
         return CompiledGraph(
@@ -193,6 +194,7 @@ class DaceBackend:
             result.forward.inputs,
             result.forward.outputs,
             _phase_arguments(result.sdfg, result.forward, result.backward),
+            result.communicators,
         )
 
     def _compile_graph(
@@ -209,7 +211,7 @@ class DaceBackend:
         result = importer.import_graph(gm, example_inputs, name, symbol_names=symbol_names, input_names=input_names)
         csdfg = self._compile_sdfg(result.sdfg)
         self.last_result = result
-        return CompiledGraph(csdfg, result.inputs, result.outputs)
+        return CompiledGraph(csdfg, result.inputs, result.outputs, communicators=result.communicators)
 
     def _compile_with_dace_autodiff(
         self, gm: torch.fx.GraphModule, example_inputs: list[Any], description: GraphDescription

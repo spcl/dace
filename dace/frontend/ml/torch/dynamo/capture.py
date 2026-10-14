@@ -79,7 +79,9 @@ class CapturedProgram:
         """
         result = self.import_graph(name)
         select_implementations(result.sdfg)
-        compiled = CompiledGraph(result.sdfg.compile(), result.inputs, result.outputs)
+        compiled = CompiledGraph(
+            result.sdfg.compile(), result.inputs, result.outputs, communicators=result.communicators
+        )
 
         def call(*args, **kwargs) -> list[Any]:
             with torch.no_grad():

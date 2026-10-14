@@ -221,6 +221,10 @@ class LoweringContext:
         #: Dynamo's unbacked (data-dependent) symbols the program assigns, by Dynamo name
         self.assigned_symbols: dict[str, symbolic.symbol] = {}
         self.random_streams = 0  #: Number of random operators emitted so far (each gets its own stream offset)
+        #: Communicator arguments of the program: container name -> (process group name, implementation)
+        self.communicators: dict[str, tuple[str, str]] = {}
+        #: Nonblocking point-to-point operations awaiting their ``wait_tensor``, by the name of their result container
+        self.pending_p2p: dict[str, Any] = {}
 
     # ------------------------------------------------------------------ naming / containers
     def new_name(self, prefix: str) -> str:

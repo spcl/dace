@@ -205,6 +205,30 @@ How programs are lowered
 
   See ``samples/ml`` for complete examples of both ways of training.
 
+Distributed programs
+--------------------
+
+Collectives and point-to-point operations of ``torch.distributed`` become :mod:`dace.libraries.comm` nodes.
+TorchDynamo rewrites ``dist.all_reduce``, ``dist.all_gather_into_tensor``, ``dist.reduce_scatter_tensor``,
+``dist.all_to_all_single`` and the functional collectives (``torch.distributed._functional_collectives``) into
+functional operators, which the frontend lowers to ``Allreduce``, ``Allgather``, ``ReduceScatter``, ``Bcast``,
+``Alltoall`` and ``Alltoallv`` nodes; their autograd-aware variants appear in backward graphs. Point-to-point operations
+(``isend``, ``irecv``, ``batch_isend_irecv``) are traced when ``TORCHDYNAMO_ENABLE_P2P_COMPILATION=1`` and become
+``Isend``/``Irecv``/``Wait`` nodes. ``dist.broadcast``, ``reduce``, ``gather``, ``scatter`` and ``barrier`` cause graph
+breaks in TorchDynamo (use the functional ``broadcast`` instead).
+
+The program communicates over the communicators of the PyTorch process groups, which it takes as arguments
+(``dace_comm_<group>_<backend>``) and the runtime supplies on every call:
+
+* **GPU tensors** use NCCL (RCCL on ROCm). The NCCL communicator of a group is bootstrapped over the group itself the
+  first time a program uses it, so programs run under ``torchrun`` without MPI.
+* **CPU tensors** use MPI. The processes must be MPI processes whose ranks equal their ``torch.distributed`` ranks
+  (e.g., ``mpirun`` with a ``gloo`` process group initialized from the MPI ranks).
+
+Collectives are blocking: ``wait_tensor`` of a collective's result is the result itself. Programs captured with
+``capture()`` or exported with ``to_sdfg`` expose the communicator arguments; pass them the handles that
+:mod:`dace.libraries.comm.communicators` creates.
+
 Limitations
 -----------
 
@@ -212,6 +236,8 @@ Limitations
   with a different pattern recompiles. ``dynamic_shapes`` (above) avoids the duck shaping; sizes 0 and 1 remain
   special.
 * Data-dependent shapes (``nonzero``, ``.item()``) are not captured.
+* TorchDynamo folds ``dist.get_rank()`` into the graph, so programs whose communication depends on the rank (e.g.,
+  ring neighbors) compile one SDFG per rank.
 * ATen operators without an implementation are imported as library nodes and raise an error naming the operator when
   the SDFG is expanded (at compile time); ``extra_decompositions`` and ``native_ops`` can be used to steer the
   decomposition table instead.

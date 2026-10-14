@@ -139,7 +139,9 @@ class CompiledModule:
         _specialize_random_seed(self._result.sdfg, random_seed)
         select_implementations(self._result.sdfg)
         self._compiled = self._result.sdfg.compile()
-        self._runtime = CompiledGraph(self._compiled, self._result.inputs, self._result.outputs)
+        self._runtime = CompiledGraph(
+            self._compiled, self._result.inputs, self._result.outputs, communicators=self._result.communicators
+        )
 
     @property
     def sdfg(self) -> SDFG:

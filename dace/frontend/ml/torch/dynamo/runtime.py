@@ -9,6 +9,7 @@ import torch
 from dace import symbolic
 from dace.codegen.compiled_sdfg import CompiledSDFG
 
+from . import distributed
 from .context import RANDOM_SEED_SYMBOL
 from .training import CompiledTwoPhase, TwoPhaseFunction
 
@@ -37,6 +38,7 @@ class CompiledGraph:
         inputs: list[Any],
         outputs: list[Any],
         fixed_arguments: dict[str, Any] | None = None,
+        communicators: dict[str, tuple[str, str]] | None = None,
     ):
         """
         :param csdfg: The compiled SDFG.
@@ -44,6 +46,8 @@ class CompiledGraph:
         :param outputs: How the outputs are produced (``OutputSpec`` list of the importer).
         :param fixed_arguments: Further SDFG arguments passed on every call, e.g., the phase of a joint SDFG and
                                 the (``None``) arrays of the other phase.
+        :param communicators: Communicator arguments of the SDFG: name -> (process group name, implementation),
+                              filled in on every call (see :mod:`.distributed`).
         """
         # Tells AOTAutograd to pass the inputs as one list. An instance attribute, so that it survives the
         # ``functools.wraps`` wrappers AOTAutograd puts around compiled functions (they copy ``__dict__`` only).
@@ -52,6 +56,7 @@ class CompiledGraph:
         self.inputs = inputs
         self.outputs = outputs
         self.fixed_arguments = dict(fixed_arguments or {})
+        self.communicators = dict(communicators or {})
         self.name = csdfg.sdfg.name
         #: Whether the program has random operators, which draw a fresh seed from torch's generator on every call
         self.random = RANDOM_SEED_SYMBOL in csdfg.sdfg.arglist()
@@ -64,6 +69,8 @@ class CompiledGraph:
         kwargs: dict[str, Any] = dict(self.fixed_arguments)
         if self.random:
             kwargs[RANDOM_SEED_SYMBOL] = int(torch.randint(0, 2**31 - 1, (), dtype=torch.int64))
+        for name, (group, implementation) in self.communicators.items():
+            kwargs[name] = distributed.communicator(group, implementation)
         symvals: dict[str, int] = {}
         for spec in self.inputs:
             if spec.kind == "sym":
