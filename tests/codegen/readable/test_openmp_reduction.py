@@ -185,22 +185,23 @@ def test_openmp_reduction_bit_exact(op, masked):
     assert np.allclose(experimental["out"], want, rtol=1e-12, atol=1e-12), (experimental["out"], want)
 
 
-# Real corpus kernels whose OpenMP-expanded SCALAR reductions previously mis-compiled under the
+# Real npbench kernels whose OpenMP-expanded SCALAR reductions previously mis-compiled under the
 # readable generator (``&x[0]`` on a scalar sink + an undeclared ``_out`` in the reduction clause).
+# Taken from main's npbench tests, the copy the extended corpus duplicated.
 _SCALAR_REDUCTION_KERNELS = {
-    "azimint_hist": "map_reduce/azimint_hist.py",
-    "azimint_naive": "map_reduce/azimint_naive.py",
-    "channel_flow": "structured_grids/channel_flow.py",
-    "nbody": "n_body_methods/nbody.py",
+    "azimint_hist": ("misc/azimint_hist_test.py", "dace_azimint_hist"),
+    "azimint_naive": ("misc/azimint_naive_test.py", "dace_azimint_naive"),
+    "channel_flow": ("misc/channel_flow_test.py", "dace_channel_flow"),
+    "nbody": ("misc/nbody_test.py", "nbody"),
 }
 
 
-def _load_corpus(relpath):
-    path = os.path.join(os.path.dirname(__file__), "..", "..", "corpus", "npbench", relpath)
-    spec = importlib.util.spec_from_file_location("k_" + os.path.basename(relpath), path)
+def _load_npbench(relpath, program):
+    path = os.path.join(os.path.dirname(__file__), "..", "..", "npbench", relpath)
+    spec = importlib.util.spec_from_file_location("k_" + os.path.basename(relpath)[:-3], path)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
-    return mod.CORPUS["program"]
+    return getattr(mod, program)
 
 
 @pytest.mark.parametrize("kernel", list(_SCALAR_REDUCTION_KERNELS))
@@ -211,7 +212,7 @@ def test_scalar_reduction_kernel_compiles(kernel):
 
     def build_and_run():
         with use_implementation(EXPERIMENTAL):
-            sdfg = _load_corpus(_SCALAR_REDUCTION_KERNELS[kernel]).to_sdfg(simplify=True)
+            sdfg = _load_npbench(*_SCALAR_REDUCTION_KERNELS[kernel]).to_sdfg(simplify=True)
             sdfg.apply_transformations_repeated(LoopToMap)
             sdfg.apply_transformations_repeated(MapFusion)
             sdfg.simplify()
