@@ -585,9 +585,6 @@ class SnitchCodeGen(TargetCodeGenerator):
             write = True
         elif isinstance(dst_node, nodes.AccessNode) and memlet.data == dst_node.data:
             write = False
-        elif isinstance(src_node, nodes.CodeNode) and isinstance(dst_node, nodes.CodeNode):
-            # Code->Code copy (not read nor write)
-            raise RuntimeError("Copying between code nodes is only supported as part of the participating nodes")
         else:
             raise LookupError("Memlet does not point to any of the nodes")
 

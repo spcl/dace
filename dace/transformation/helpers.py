@@ -550,23 +550,11 @@ def nest_state_subgraph(
     # descriptor/connector order, and with it the generated code, changed from run to run.
     # That is the durbin miscompile: same structure, different wiring, correct on some seeds.
     data_in_subgraph = dict.fromkeys(n.data for n in subgraph.nodes() if isinstance(n, nodes.AccessNode))
-    # Find other occurrences in SDFG. A transient is named by an access node OR, when it is only
-    # a scalar bridging two code nodes, by nothing but the memlet on the edge between them.
-    # Counting access nodes alone would call such a transient subgraph-local and delete it out
-    # from under its other user -- e.g. the body copy ``SplitMapForTileRemainder`` leaves in a
-    # remainder tail, whose own nesting then fails with a ``KeyError`` on the missing descriptor.
-    # Transients named only by a memlet between two code nodes inside the subgraph. They move into
-    # the nested SDFG unconditionally, but they are still asked about below, so they join ``wanted``.
-    subgraph_edge_transients = dict.fromkeys(
-        e.data.data
-        for e in subgraph.edges()
-        if e.data.data is not None and isinstance(e.src, nodes.CodeNode) and isinstance(e.dst, nodes.CodeNode)
-    )
+    # Find other occurrences in SDFG
     # ``other_nodes`` is only ever queried for these names, so collect occurrences of THESE and
     # nothing else. Building a dict of every data name in the SDFG (two full scans) to then read a
     # handful of entries was 20% of ``MapToForLoop.apply``.
     wanted = {dname for dname in data_in_subgraph if sdfg.arrays[dname].transient}
-    wanted.update(subgraph_edge_transients)
 
     subgraph_edge_ids = {id(e) for e in subgraph.edges()}
     subgraph_node_set = dict.fromkeys(subgraph.nodes())  # hoisted: membership below else rebuilt per scanned node
@@ -593,9 +581,6 @@ def nest_state_subgraph(
     for dname in data_in_subgraph:
         if dname in wanted and dname not in other_nodes:
             subgraph_transients[dname] = None
-
-    # All transients of edges between code nodes are also added to nested graph
-    subgraph_transients.update(subgraph_edge_transients)
 
     # A boundary memlet must name the container on the PARENT side of its edge, and it does not
     # always: a versioning pass renames the inner end of a staging copy and the memlet on the
@@ -2106,23 +2091,6 @@ def redirect_edge(
         new_src or edge.src, new_src_conn or edge.src_conn, new_dst or edge.dst, new_dst_conn or edge.dst_conn, memlet
     )
     return new_edge
-
-
-def replace_code_to_code_edges(sdfg: SDFG):
-    """
-    Adds access nodes between all code->code edges in each state.
-
-    :param sdfg: The SDFG to process.
-    """
-    for state in sdfg.states():
-        for edge in state.edges():
-            if not isinstance(edge.src, nodes.CodeNode) or not isinstance(edge.dst, nodes.CodeNode):
-                continue
-            # Add access nodes
-            aname = state.add_access(edge.data.data)
-            state.add_edge(edge.src, edge.src_conn, aname, None, edge.data)
-            state.add_edge(aname, None, edge.dst, edge.dst_conn, copy.deepcopy(edge.data))
-            state.remove_edge(edge)
 
 
 def make_map_internal_write_external(

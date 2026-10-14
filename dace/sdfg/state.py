@@ -1063,8 +1063,6 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
 
             elif edge.data.data not in descs:
                 # The edge reads data from the outside, and the Memlet is directly indicating what is read.
-                if isinstance(edge.src, nd.CodeNode) and isinstance(edge.dst, nd.CodeNode):
-                    continue  # Ignore code->code edges.
                 additional_descs = {edge.data.data: sdfg.arrays[edge.data.data]}
 
             elif isinstance(edge.dst, (nd.AccessNode, nd.CodeNode)) and isinstance(edge.src, nd.EntryNode):

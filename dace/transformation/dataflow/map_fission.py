@@ -507,7 +507,7 @@ class MapFission(transformation.SingleStateTransformation):
                     outer_edge = next(e for e in graph.out_edges(nsdfg_node) if e.src_conn == edge.dst.data)
                     edge_to_outer[edge] = outer_edge
 
-            # Collect all border arrays and code->code edges
+            # Collect all border arrays
             arrays = MapFission._border_arrays(nsdfg_node.sdfg if self.expr_index == 1 else sdfg, state, subgraph)
             if self.expr_index == 0:
                 arrays -= MapFission.iteration_invariant_copies(state, map_entry, subgraph, arrays)

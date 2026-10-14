@@ -179,7 +179,7 @@ def _replace_memlets(sdfg: SDFG, input_mapping: dict[str, Memlet], output_mappin
                 dst_data = None
                 dst_memlet = None
 
-            # Other cases (code->code)
+            # Neither end is a mapped container
             if src_data is None and dst_data is None:
                 if e.data.data in input_mapping or e.data.data in output_mapping:
                     mapping = input_mapping if e.data.data in input_mapping else output_mapping
@@ -670,9 +670,6 @@ def _prepare_sdfg_for_conversion(sdfg: SDFG, *, toplevel: bool) -> None:
 
     # Split edges with assignments and conditions
     xfh.split_interstate_edges(sdfg)
-
-    # Replace code->code edges with data<->code edges
-    xfh.replace_code_to_code_edges(sdfg)
 
     if toplevel:  # Top-level SDFG preparation (only perform once)
         # Handle name collisions (in arrays, state labels, symbols)
