@@ -83,6 +83,15 @@ def squared(values: dace.int64[N], out: dace.int64[1]):
 
 
 @dace.program
+def classified(classes: dace.int64[256], trans: dace.int64[NS, NA], text: dace.int64[N], counts: dace.int64[2]):
+    state = 1
+    for i in range(N):
+        state = trans[state, classes[text[i]]]
+        if state <= 1:
+            counts[state] += 1
+
+
+@dace.program
 def shifted(trans: dace.int64[NS, NA], symbols: dace.int64[N], counts: dace.int64[NS]):
     state = 1
     for i in range(N):
@@ -172,6 +181,14 @@ def reference_crc16(data, polynomial):
             c = (c >> 1) ^ polynomial if (c ^ cur) & 1 else c >> 1
             cur >>= 1
     return (c ^ 0xFFFF) & 0xFFFF
+
+
+def reference_classified(classes, trans, text, counts):
+    state = 1
+    for symbol in text:
+        state = trans[state, classes[symbol]]
+        if state <= 1:
+            counts[state] += 1
 
 
 def before_lifting(program) -> dace.SDFG:
@@ -403,3 +420,53 @@ def test_a_crc_through_the_gf2_scan_on_the_gpu_equals_the_bytewise_crc():
 
     assert [node.schedule for node in state_scans(sdfg)] == [dace.ScheduleType.GPU_Device]
     assert int(actual[0]) == reference_crc16(data, 0x8408)
+
+
+@pytest.mark.parametrize("states, classes", [(9, 12), (5, 4)])
+def test_a_byte_classifying_automaton_counts_its_accept_and_reject_states_as_the_loop_did(states, classes):
+    """The shape of UTF-8 validation (9 states, 12 byte classes) and CSV tokenizing (5 states, 4 classes): a
+    class table between the input and the transition table, a start state of 1, and a count only in states 0
+    and 1."""
+    rng = np.random.default_rng(states)
+    byte_class = rng.integers(0, classes, 256)
+    trans = rng.integers(0, states, (states, classes))
+    text = rng.integers(0, 256, 6000)
+    expected = np.zeros(2, np.int64)
+    reference_classified(byte_class, trans, text, expected)
+    sdfg = classified.to_sdfg(simplify=True)
+    pipeline.canonicalize(sdfg)
+    actual = np.zeros(2, np.int64)
+
+    sdfg(classes=byte_class, trans=trans, text=text, counts=actual, N=6000, NS=states, NA=classes)
+
+    assert [node.kind for node in state_scans(sdfg)] == [StateScanKind.FINITE]
+    assert not any(isinstance(region, LoopRegion) for region in sdfg.all_control_flow_regions(recursive=True))
+    np.testing.assert_array_equal(actual, expected)
+
+
+@pytest.mark.parametrize("chunks", [1, 3, 64, 5000])
+def test_the_block_count_does_not_change_the_states_a_scan_records(chunks):
+    rng = np.random.default_rng(chunks)
+    trans, symbols = automaton(rng, 16, 4, 3000)
+    expected = np.zeros(16, np.int64)
+    reference_dfa(trans, symbols, expected)
+    sdfg = before_lifting(dfa)
+    LoopToStateScan().apply_pass(sdfg, {})
+    state_scans(sdfg)[0].chunks = chunks
+    actual = np.zeros(16, np.int64)
+
+    sdfg(trans=trans, symbols=symbols, counts=actual, N=3000, NS=16, NA=4)
+
+    np.testing.assert_array_equal(actual, expected)
+
+
+def test_a_state_scan_survives_serialization_with_its_step():
+    sdfg = before_lifting(crc16)
+    LoopToStateScan().apply_pass(sdfg, {})
+
+    sut = dace.SDFG.from_json(sdfg.to_json())
+
+    node = state_scans(sut)[0]
+    assert (node.kind, node.bits, node.state) == (StateScanKind.GF2_AFFINE, 64, "c")
+    assert node.step is not None and "polynomial" in node.step.arrays
+    sut.validate()

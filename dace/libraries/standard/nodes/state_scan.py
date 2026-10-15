@@ -141,7 +141,10 @@ def finite_compose_sdfg(node: "StateScan", outer: SDFG) -> SDFG:
     loop = counted_loop("compose_blocks", "__c", "0", text(node.chunks))
     hop = loop.add_state("hop", is_start_block=True)
     look = hop.add_tasklet(
-        "look", {"tbl": None, "cur": None}, {"nxt": None}, f"nxt = tbl[__c, cur - ({text(node.base)})]"
+        "look",
+        {"tbl": None, "cur": None},
+        {"nxt": None},
+        f"nxt = tbl[__c * ({text(node.count)}) + cur - ({text(node.base)})]",
     )
     hop.add_edge(hop.add_read("table"), None, look, "tbl", whole(inner, "table"))
     hop.add_edge(hop.add_read("starts"), None, look, "cur", Memlet("starts[__c]"))
@@ -305,12 +308,21 @@ def scan_sdfg(node: "StateScan", state: dace.SDFGState, outer: SDFG, schedule: d
     chunks = text(node.chunks)
     blocks = chunk_bounds(node)
     if node.kind is StateScanKind.FINITE:
-        sdfg.add_array("table", [node.chunks, node.count], dtype, storage=storage, transient=True)
+        # flat, so no dimension of extent one is squeezed out of it
+        sdfg.add_array("table", [node.chunks * node.count], dtype, storage=storage, transient=True)
         first, second, third = phases(sdfg, 3)
         nest(
             first,
             sdfg,
-            run_sdfg(node, "block_table", sdfg, f"({text(node.base)}) + __j", blocks, "table", "__c, __j"),
+            run_sdfg(
+                node,
+                "block_table",
+                sdfg,
+                f"({text(node.base)}) + __j",
+                blocks,
+                "table",
+                f"__c * ({text(node.count)}) + __j",
+            ),
             tables,
             ["table"],
             {"__c": f"0:{chunks}", "__j": f"0:{text(node.count)}"},
