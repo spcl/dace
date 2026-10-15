@@ -2830,26 +2830,33 @@ class SymbolResolver:
 
     The reuse is per state on purpose: what a state sees depends on the control flow regions
     around it and on the inter-state edges that lead to it. Its expensive part, the walk over the
-    data descriptors, is genuinely per SDFG and is reused as such. A resolver is only valid while
-    the symbols, data descriptors, control flow regions and inter-state edges stay unchanged.
+    data descriptors, is genuinely per SDFG and is reused as such. Only the state asked about last
+    is kept, one per SDFG: callers resolve the nodes of one state together, and a copy of every
+    symbol for every state of a large SDFG costs gigabytes (QE ``h_psi``: 14478 states of about
+    12500 symbols each). A resolver is only valid while the symbols, data descriptors, control flow
+    regions and inter-state edges stay unchanged.
     """
 
     def __init__(self) -> None:
         self._per_sdfg: dict[SDFG, dict[str, dtypes.typeclass]] = {}
-        self._per_state: dict[SDFGState, dict[str, dtypes.typeclass]] = {}
+        #: Per SDFG, the state resolved last and the symbols every node of it sees.
+        self._per_state: dict[SDFG, tuple[SDFGState, dict[str, dtypes.typeclass]]] = {}
         self._region_updates: dict[
             tuple[ControlFlowBlock, ControlFlowBlock | None], list[dict[str, dtypes.typeclass]]
         ] = {}
 
     def defined_at(self, state: "SDFGState", node: nd.Node) -> dict[str, dtypes.typeclass]:
-        state_symbols = self._per_state.get(state)
-        if state_symbols is None:
+        last = self._per_state.get(state.sdfg)
+        if last is not None and last[0] is state:
+            state_symbols = last[1]
+        else:
             sdfg_symbols = self._per_sdfg.get(state.sdfg)
             if sdfg_symbols is None:
                 sdfg_symbols = self._per_sdfg[state.sdfg] = state.sdfg_symbols()
-            state_symbols = self._per_state[state] = state.symbols_defined_at_state(
+            state_symbols = state.symbols_defined_at_state(
                 sdfg_symbols=sdfg_symbols, region_updates=self._region_updates
             )
+            self._per_state[state.sdfg] = (state, state_symbols)
         return state.symbols_defined_at(node, state_symbols=state_symbols)
 
     def forget(self, sdfg: "SDFG") -> None:
@@ -2859,7 +2866,7 @@ class SymbolResolver:
         """
         if self._per_sdfg.pop(sdfg, None) is None:
             return
-        self._per_state = {state: syms for state, syms in self._per_state.items() if state.sdfg is not sdfg}
+        self._per_state.pop(sdfg, None)
 
 
 @make_properties
