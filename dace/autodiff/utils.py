@@ -414,14 +414,13 @@ def extract_indices(expression: str) -> dict[str, list[str]]:
     return index_map
 
 
-def index_symbol(name: str, dtype: dtypes.typeclass | None = None) -> sp.Idx:
-    """Index label for an ``IndexedBase`` access, over a DaCe symbol.
+def index_symbol(name: str, dtype: dtypes.typeclass | None = None) -> symbolic.symbol:
+    """Index of an ``IndexedBase`` access: the DaCe symbol itself, as the executed tasklet code indexes with.
 
-    An ``Idx`` label must be integral, so a non-integer declaration cannot supply it and the
-    default integer dtype stands in.
+    Not an ``Idx``, whose label must be a SymPy integer: a DaCe symbol is its name and carries no assumption, and an
+    ``Idx`` index would not match the plain one the code built anyway.
     """
-    sym = connector_symbol(name, dtype)
-    return sp.Idx(sym if sym.is_integer else connector_symbol(name))
+    return connector_symbol(name, dtype)
 
 
 def replace_bare_symbols(expr: sp.Expr, known: dict[str, sp.Expr]) -> sp.Expr:
