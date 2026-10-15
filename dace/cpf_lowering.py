@@ -3818,15 +3818,40 @@ C_SPELLED_VALUE: "re.Pattern" = re.compile(
 C_SUBSCRIPTED: "re.Pattern" = re.compile(r"([A-Za-z_]\w*)\s*\[")
 
 
+def c_offset_base(argument: str) -> str:
+    """``argument`` with its enclosing parentheses dropped and every parenthesized leftmost operand of a ``+``
+    opened: ``((A + i) + j * M)`` -> ``A + i``. The leftmost operand of a pointer sum is the pointer, so the
+    text left starts with the array an offset expression points into."""
+    text = argument.strip()
+    while text.startswith("("):
+        if c_encloses(text, 0):
+            text = text[1:-1].strip()
+            continue
+        close = c_closing(text, 0)
+        if close is None or not text[close + 1 :].lstrip().startswith("+"):
+            break
+        text = text[1:close].strip()
+    return text
+
+
+def c_closing(text: str, start: int) -> int | None:
+    """The position of the bracket closing the one that opens at ``text[start]``, or ``None``."""
+    depth = 0
+    for position in range(start, len(text)):
+        depth += {"(": 1, "[": 1, ")": -1, "]": -1}.get(text[position], 0)
+        if depth == 0:
+            return position
+    return None
+
+
 def c_native_array_dtype(argument: str, site: NativeSite | None, call: str) -> str:
     """The element type of the array ``argument`` names, as ``site`` types it.
 
     :raises NotImplementedError: if the argument is not a typed array in scope at the site.
     """
-    # An offset into an array, ``(A + (N * i))``, points at the same element type as ``A`` itself.
-    text = argument.strip()
-    while text.startswith("(") and c_encloses(text, 0):
-        text = text[1:-1].strip()
+    # An offset into an array, ``(A + (N * i))``, points at the same element type as ``A`` itself, and so does an
+    # offset of an offset, ``(A + i) + j * M``, which is how a reduction over a column of a slice reaches it.
+    text = c_offset_base(argument)
     offset = re.match(r"([A-Za-z_]\w*)\s*\+", text)
     name = offset.group(1) if offset is not None else text
     entry = site.names.get(name) if site is not None else None
@@ -3856,6 +3881,15 @@ def c_native_value_dtype(argument: str, site: NativeSite | None, call: str) -> s
         and c_encloses(text, required(subscripted).end() - 1)
     ):
         return array[0]
+    # An element of an offset into a typed array, ``(A + i)[0]``: an element of ``A``.
+    if text.startswith("("):
+        close = c_closing(text, 0)
+        rest = text[close + 1 :].lstrip() if close is not None else ""
+        if rest.startswith("[") and c_encloses(rest, 0):
+            try:
+                return c_native_array_dtype(text[1:close], site, call)
+            except NotImplementedError:
+                pass
     # A scalar the expansion reads through its address, ``(&s)[0]``: the scalar itself.
     addressed = re.fullmatch(r"\(\s*&\s*([A-Za-z_]\w*)\s*\)\s*\[\s*0\s*\]", text)
     scalar = names.get(addressed.group(1)) if addressed is not None else None
