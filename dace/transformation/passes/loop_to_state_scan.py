@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Lift a loop that carries a finite-state symbol to a :class:`~dace.libraries.standard.nodes.state_scan.StateScan`.
+"""Lift a loop that carries a finite-state or GF(2)-affine symbol to a :class:`~dace.libraries.standard.nodes.state_scan.StateScan`.
 
 ::
 
@@ -11,7 +11,8 @@
                                                    counts[state] += 1
                                                state = seq[N]
 
-:mod:`~dace.transformation.passes.analysis.finite_state` proves the state finite and slices out the step. The scan
+:mod:`~dace.transformation.passes.analysis.finite_state` proves the state finite and slices out the step; failing
+that, :mod:`~dace.transformation.passes.analysis.carried_state` proves it GF(2)-affine (a CRC). The scan
 computes every iteration's start state, so the loop reads it instead of carrying it, and a later ``LoopToMap``
 makes the loop parallel. The body keeps its own assignments to the state: they are dead across iterations, and the
 values they give inside an iteration are the ones the loop computed before.
@@ -21,21 +22,22 @@ carries nothing a map cannot.
 """
 
 import ast
-import copy
 
 import dace
 from dace import SDFG, dtypes, symbolic
-from dace.libraries.standard.nodes.state_scan import INIT_CONNECTOR, OUT_CONNECTOR, StateScan
+from dace.libraries.standard.nodes.state_scan import INIT_CONNECTOR, OUT_CONNECTOR, StateScan, StateScanKind
 from dace.memlet import Memlet
-from dace.sdfg.state import ControlFlowRegion, LoopRegion, SDFGState
+from dace.sdfg.state import ControlFlowRegion, LoopRegion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.analysis import loop_analysis
+from dace.transformation.passes.analysis.carried_state import gf2_state
 from dace.transformation.passes.analysis.finite_state import (
-    FiniteState,
+    StepSlice,
     assignments_in,
     carried_symbols,
     finite_state,
     names,
+    step_sdfg,
     straight_chain,
 )
 
@@ -55,45 +57,31 @@ def is_reduction(loop: LoopRegion, symbol: str) -> bool:
     return len(carried) == 1 and all(symbol not in names(ast.unparse(side)) for side in others)
 
 
-def rest_is_parallel(loop: LoopRegion, found: FiniteState) -> bool:
-    """Whether every symbol ``loop`` carries besides the state is a reduction."""
+def rest_is_parallel(loop: LoopRegion, symbol: str) -> bool:
+    """Whether every symbol ``loop`` carries besides ``symbol`` is a reduction."""
     chain = straight_chain(loop)
     return chain is not None and all(
-        is_reduction(loop, name) for name in carried_symbols(loop, chain) if name != found.symbol
+        is_reduction(loop, name) for name in carried_symbols(loop, chain) if name != symbol
     )
 
 
-def step_sdfg(loop: LoopRegion, found: FiniteState) -> SDFG:
-    """A copy of ``loop``'s body that keeps only the step: its control flow, the assignments to the step's symbols,
-    and the tables they read. Every state is emptied; the step reads no dataflow result."""
-    sdfg = loop.sdfg
-    step = SDFG(f"{loop.label}_step")
-    body = copy.deepcopy(loop)
-    for block in list(body.nodes()):
-        step.add_node(block, is_start_block=block is body.start_block)
-    for edge in body.edges():
-        step.add_edge(edge.src, edge.dst, edge.data)
-    for edge in step.all_interstate_edges():
-        for lhs in [lhs for lhs in edge.data.assignments if lhs not in found.step_symbols]:
-            del edge.data.assignments[lhs]
-    for block in step.all_control_flow_blocks():
-        if isinstance(block, SDFGState):
-            block.remove_nodes_from(list(block.nodes()))
-    for name in found.tables:
-        desc = copy.deepcopy(sdfg.arrays[name])
-        desc.transient = False
-        step.add_datadesc(name, desc)
-    step.reset_cfg_list()
-    for name in step.free_symbols | set(found.step_symbols) | {loop.loop_variable}:
-        if name in sdfg.symbols and name not in step.symbols:
-            step.add_symbol(name, sdfg.symbols[name])
-    if loop.loop_variable not in step.symbols:
-        step.add_symbol(loop.loop_variable, dtypes.int64)
-    return step
+def scan_node(loop: LoopRegion) -> tuple[StateScan, StepSlice] | None:
+    """A :class:`StateScan` for ``loop``'s carried state, finite if it is, else GF(2)-affine, or ``None``."""
+    finite = finite_state(loop)
+    if finite is not None:
+        node = StateScan(f"{loop.label}_state_scan", tuple(sorted(finite.step.tables)))
+        node.kind, node.base, node.count = StateScanKind.FINITE, finite.base, finite.count
+        return node, finite.step
+    affine = gf2_state(loop)
+    if affine is not None:
+        node = StateScan(f"{loop.label}_state_scan", tuple(sorted(affine.step.tables)))
+        node.kind, node.bits = StateScanKind.GF2_AFFINE, affine.bits
+        return node, affine.step
+    return None
 
 
-def lift(loop: LoopRegion, found: FiniteState) -> None:
-    """Replace ``loop``'s carried state by a :class:`StateScan` in front of it."""
+def lift(loop: LoopRegion, node: StateScan, found: StepSlice) -> None:
+    """Replace ``loop``'s carried state by ``node``, in a state in front of it."""
     sdfg = loop.sdfg
     parent: ControlFlowRegion = loop.parent_graph
     begin = loop_analysis.get_init_assignment(loop)
@@ -103,14 +91,11 @@ def lift(loop: LoopRegion, found: FiniteState) -> None:
     seed = sdfg.add_scalar(f"{found.symbol}_start", dtype, transient=True, find_new_name=True)[0]
 
     scan_state = parent.add_state_before(loop, f"{loop.label}_state_scan", is_start_block=parent.start_block is loop)
-    node = StateScan(f"{loop.label}_state_scan", tuple(sorted(found.tables)))
     node.step = step_sdfg(loop, found)
     node.state = found.symbol
     node.iterate = loop.loop_variable
     node.begin = begin
     node.end = end
-    node.base = found.base
-    node.count = found.count
     scan_state.add_node(node)
     take = scan_state.add_tasklet("start_state", {}, {"out": None}, f"out = {found.symbol}")
     start = scan_state.add_access(seed)
@@ -136,7 +121,8 @@ def lift(loop: LoopRegion, found: FiniteState) -> None:
 
 
 class LoopToStateScan(ppl.Pass):
-    """Lift loops whose carried symbol is a proven-finite state to :class:`StateScan` library nodes."""
+    """Lift loops whose carried symbol is a proven-finite or GF(2)-affine state to :class:`StateScan` library
+    nodes."""
 
     CATEGORY: str = "Optimization Preparation"
 
@@ -154,9 +140,9 @@ class LoopToStateScan(ppl.Pass):
         lifted = 0
         loops = [cfg for cfg in sdfg.all_control_flow_regions(recursive=True) if isinstance(cfg, LoopRegion)]
         for loop in loops:
-            found = finite_state(loop)
-            if found is None or not rest_is_parallel(loop, found):
+            made = scan_node(loop)
+            if made is None or not rest_is_parallel(loop, made[1].symbol):
                 continue
-            lift(loop, found)
+            lift(loop, made[0], made[1])
             lifted += 1
         return lifted or None

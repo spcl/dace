@@ -27,31 +27,44 @@ from the scan.
 """
 
 import ast
+import copy
 from dataclasses import dataclass
 
 import sympy
 
-from dace import symbolic
-from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion
+from dace import SDFG, data, dtypes, symbolic
+from dace.optionals import required
+from dace.sdfg import nodes
+from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState
 from dace.transformation.passes.analysis import loop_analysis, smt_dependence
 
 
 @dataclass(frozen=True, slots=True)
-class FiniteState:
-    """A loop's finite carried state and the slice of its body that computes it.
+class StepSlice:
+    """A loop's carried symbol and the part of its body that computes it.
 
     :ivar symbol: the carried symbol.
-    :ivar base: the smallest value the state takes.
-    :ivar count: how many values it takes.
-    :ivar step_symbols: every symbol the step assigns, ``symbol`` included.
-    :ivar tables: the arrays the step reads; the loop writes none of them.
+    :ivar values: every symbol and scalar the step defines, ``symbol`` included.
+    :ivar tables: the containers the step reads; the loop defines none of them.
     """
 
     symbol: str
+    values: frozenset[str]
+    tables: frozenset[str]
+
+
+@dataclass(frozen=True, slots=True)
+class FiniteState:
+    """A loop's finite carried state: ``count`` values from ``base``.
+
+    :ivar step: the state and the slice that computes it.
+    :ivar base: the smallest value the state takes.
+    :ivar count: how many values it takes.
+    """
+
+    step: StepSlice
     base: sympy.Basic
     count: sympy.Basic
-    step_symbols: frozenset[str]
-    tables: frozenset[str]
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,6 +73,11 @@ class Subscript:
 
     array: str
     indices: tuple[str, ...]
+
+
+def is_scalar(desc: data.Data) -> bool:
+    """Whether ``desc`` holds one value."""
+    return isinstance(desc, data.Scalar) or (isinstance(desc, data.Array) and tuple(desc.shape) == (1,))
 
 
 def subscripts(text: str) -> list[Subscript]:
@@ -122,17 +140,39 @@ def carried_symbols(loop: LoopRegion, chain: list[ControlFlowBlock]) -> list[str
     return list(dict.fromkeys(carried))
 
 
+def definitions(region: ControlFlowRegion) -> list[tuple[str, set[str]]]:
+    """Every value ``region`` defines with the names it reads: interstate assignments, tasklet writes and copies."""
+    found = [(lhs, names(rhs)) for lhs, rhs in assignments_in(region)]
+    for state in (block for block in region.all_control_flow_blocks() if isinstance(block, SDFGState)):
+        for node in state.nodes():
+            if isinstance(node, nodes.Tasklet):
+                reads = {edge.data.data for edge in state.in_edges(node) if not edge.data.is_empty()}
+                reads |= set(node.free_symbols)
+                found += [(edge.data.data, reads) for edge in state.out_edges(node) if not edge.data.is_empty()]
+        found += [
+            (edge.dst.data, {edge.src.data})
+            for edge in state.edges()
+            if isinstance(edge.src, nodes.AccessNode) and isinstance(edge.dst, nodes.AccessNode)
+        ]
+    return found
+
+
+def defines(region: ControlFlowRegion, needed: set[str]) -> bool:
+    """Whether ``region`` defines a ``needed`` value."""
+    return any(lhs in needed for lhs, reads in definitions(region))
+
+
 def guarded_assignments(region: ControlFlowRegion, needed: set[str]) -> set[str]:
-    """The names read by the conditions that guard an assignment to a ``needed`` symbol."""
+    """The names read by the conditions that guard a definition of a ``needed`` value."""
     guards: set[str] = set()
     for block in region.all_control_flow_blocks():
-        if isinstance(block, LoopRegion) and any(lhs in needed for lhs, rhs in assignments_in(block)):
+        if isinstance(block, LoopRegion) and defines(block, needed):
             for statement in (block.loop_condition, block.init_statement, block.update_statement):
                 guards |= names(statement.as_string) if statement is not None else set()
         if not isinstance(block, ConditionalBlock):
             continue
         for condition, branch in block.branches:
-            if condition is not None and any(lhs in needed for lhs, rhs in assignments_in(branch)):
+            if condition is not None and defines(branch, needed):
                 guards |= names(condition.as_string)
     for edge in region.all_interstate_edges():
         if not edge.data.is_unconditional() and any(lhs in needed for lhs in edge.data.assignments):
@@ -140,20 +180,27 @@ def guarded_assignments(region: ControlFlowRegion, needed: set[str]) -> set[str]
     return guards
 
 
-def step_slice(loop: LoopRegion, symbol: str, arrays: set[str]) -> tuple[frozenset[str], frozenset[str]]:
-    """The symbols ``symbol`` depends on through assignments and their guards, and the arrays those read."""
-    pairs = assignments_in(loop)
+def step_slice(loop: LoopRegion, symbol: str) -> tuple[frozenset[str], frozenset[str]] | None:
+    """The values ``symbol`` depends on inside ``loop``, through definitions and the guards around them, and the
+    containers it reads that the loop does not define. ``None`` when it depends on a non-scalar container the loop
+    writes, which the step could not recompute alone."""
+    containers = loop.sdfg.arrays
+    found = definitions(loop)
+    defined = {lhs for lhs, reads in found}
     needed = {symbol}
     reads: set[str] = set()
     while True:
-        for lhs, rhs in pairs:
+        for lhs, used in found:
             if lhs in needed:
-                reads |= names(rhs)
+                reads |= used
         reads |= guarded_assignments(loop, needed)
-        grown = needed | {name for name in reads if name not in arrays and any(lhs == name for lhs, rhs in pairs)}
+        grown = needed | (reads & defined)
         if grown == needed:
-            return frozenset(needed), frozenset(reads & arrays)
+            break
         needed = grown
+    if any(name in containers and not is_scalar(containers[name]) for name in needed):
+        return None
+    return frozenset(needed), frozenset(name for name in reads - defined if name in containers)
 
 
 def unit_offset(index: str, symbol: str) -> sympy.Basic | None:
@@ -210,27 +257,74 @@ def index_bound(
     return None
 
 
-def finite_state(loop: LoopRegion) -> FiniteState | None:
-    """The finite carried state of ``loop``, or ``None``.
+def step_slices(loop: LoopRegion) -> list[StepSlice]:
+    """Every carried symbol of ``loop`` whose step reads no other carried symbol, with that step.
 
-    ``None`` when the body is not a straight chain of blocks, the loop does not step by one, it carries no symbol a
-    table read bounds, or the step reads an array the loop writes.
+    Empty when the body is not a straight chain of blocks or the loop does not step by one.
     """
-    sdfg = loop.sdfg
     if loop_analysis.get_loop_stride(loop) != 1 or loop_analysis.loop_jumps(loop):
-        return None
+        return []
     chain = straight_chain(loop)
     if chain is None:
-        return None
-    arrays = set(sdfg.arrays)
-    shapes = {name: tuple(desc.shape) for name, desc in sdfg.arrays.items()}
-    written = loop.read_and_write_sets()[1]
-    for symbol in carried_symbols(loop, chain):
-        step_symbols, tables = step_slice(loop, symbol, arrays)
-        carried = set(carried_symbols(loop, chain)) - {symbol}
-        if step_symbols & carried or tables & set(written):
-            continue
-        bound = index_bound(loop, chain, symbol, shapes)
+        return []
+    carried = carried_symbols(loop, chain)
+    found = []
+    for symbol in carried:
+        sliced = step_slice(loop, symbol)
+        if sliced is not None and not sliced[0] & (set(carried) - {symbol}):
+            found.append(StepSlice(symbol, sliced[0], sliced[1]))
+    return found
+
+
+def finite_state(loop: LoopRegion) -> FiniteState | None:
+    """The finite carried state of ``loop``, or ``None`` when no carried symbol has a step and a table bound."""
+    chain = straight_chain(loop)
+    shapes = {name: tuple(desc.shape) for name, desc in loop.sdfg.arrays.items()}
+    for step in step_slices(loop):
+        bound = index_bound(loop, required(chain), step.symbol, shapes)
         if bound is not None:
-            return FiniteState(symbol, bound[0], bound[1], step_symbols, tables)
+            return FiniteState(step, bound[0], bound[1])
     return None
+
+
+def step_dataflow(state: SDFGState, values: frozenset[str]) -> set:
+    """The nodes of ``state`` that compute one of ``values``: tasklets and copies writing it, and the access nodes
+    they read and write."""
+    kept: set = set()
+    for edge in state.edges():
+        if edge.data.is_empty() or edge.data.data not in values or not isinstance(edge.dst, nodes.AccessNode):
+            continue
+        if isinstance(edge.src, (nodes.Tasklet, nodes.AccessNode)):
+            kept |= {edge.src, edge.dst} | {inner.src for inner in state.in_edges(edge.src)}
+    return kept
+
+
+def step_sdfg(loop: LoopRegion, step: StepSlice) -> SDFG:
+    """A copy of ``loop``'s body that keeps only ``step``: its control flow, the definitions of the step's values,
+    and the tables they read. Its symbols are the step's, the loop variable and every size the tables need."""
+    sdfg = loop.sdfg
+    result = SDFG(f"{loop.label}_step")
+    body = copy.deepcopy(loop)
+    for block in list(body.nodes()):
+        result.add_node(block, is_start_block=block is body.start_block)
+    for edge in body.edges():
+        result.add_edge(edge.src, edge.dst, edge.data)
+    for edge in result.all_interstate_edges():
+        for lhs in [lhs for lhs in edge.data.assignments if lhs not in step.values]:
+            del edge.data.assignments[lhs]
+    for block in result.all_control_flow_blocks():
+        if isinstance(block, SDFGState):
+            block.remove_nodes_from([node for node in block.nodes() if node not in step_dataflow(block, step.values)])
+    for name in sorted(step.tables):
+        desc = copy.deepcopy(sdfg.arrays[name])
+        desc.transient = False
+        result.add_datadesc(name, desc)
+    for name in sorted(step.values & set(sdfg.arrays)):
+        result.add_datadesc(name, copy.deepcopy(sdfg.arrays[name]))
+    result.reset_cfg_list()
+    for name in sorted(result.free_symbols | set(step.values) | {loop.loop_variable}):
+        if name in sdfg.symbols and name not in result.symbols:
+            result.add_symbol(name, sdfg.symbols[name])
+    if loop.loop_variable not in result.symbols:
+        result.add_symbol(loop.loop_variable, dtypes.int64)
+    return result

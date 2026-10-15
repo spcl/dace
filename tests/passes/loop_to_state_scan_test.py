@@ -5,8 +5,9 @@ import numpy as np
 import pytest
 
 import dace
-from dace.libraries.standard.nodes.state_scan import StateScan
+from dace.libraries.standard.nodes.state_scan import StateScan, StateScanKind
 from dace.sdfg.state import LoopRegion
+from dace.transformation.passes.analysis.carried_state import gf2_state
 from dace.transformation.passes.analysis.finite_state import finite_state
 from dace.transformation.passes.canonicalize import pipeline
 from dace.transformation.passes.loop_to_state_scan import LoopToStateScan
@@ -57,6 +58,28 @@ def kmp(text: dace.int64[N], pattern: dace.int64[NA], fail: dace.int64[NA], foun
             count = count + 1
             q = fail[q - 1]
     found[0] = count
+
+
+@dace.program
+def crc16(data: dace.uint8[N], crc: dace.int64[1], polynomial: dace.int64):
+    c = 0xFFFF
+    for b in range(N):
+        cur_byte = 0xFF & data[b]
+        for bit in range(0, 8):
+            if (c & 0x0001) ^ (cur_byte & 0x0001):
+                c = (c >> 1) ^ polynomial
+            else:
+                c = c >> 1
+            cur_byte = cur_byte >> 1
+    crc[0] = (c ^ 0xFFFF) & 0xFFFF
+
+
+@dace.program
+def squared(values: dace.int64[N], out: dace.int64[1]):
+    state = 1
+    for i in range(N):
+        state = (state * state) ^ values[i]
+    out[0] = state
 
 
 @dace.program
@@ -141,6 +164,16 @@ def failure_table(pattern):
     return fail
 
 
+def reference_crc16(data, polynomial):
+    c = 0xFFFF
+    for byte in data:
+        cur = int(byte)
+        for bit in range(8):
+            c = (c >> 1) ^ polynomial if (c ^ cur) & 1 else c >> 1
+            cur >>= 1
+    return (c ^ 0xFFFF) & 0xFFFF
+
+
 def before_lifting(program) -> dace.SDFG:
     """``program`` canonicalized up to the stage that lifts loops to library nodes."""
     sdfg = program.to_sdfg(simplify=True)
@@ -151,6 +184,13 @@ def before_lifting(program) -> dace.SDFG:
 
 def only_loop(sdfg: dace.SDFG) -> LoopRegion:
     loops = [region for region in sdfg.all_control_flow_regions(recursive=True) if isinstance(region, LoopRegion)]
+    assert len(loops) == 1
+    return loops[0]
+
+
+def top_loop(sdfg: dace.SDFG) -> LoopRegion:
+    """The one loop at the top of ``sdfg``; inner loops (a CRC's bit loop) are its body."""
+    loops = [region for region in sdfg.nodes() if isinstance(region, LoopRegion)]
     assert len(loops) == 1
     return loops[0]
 
@@ -167,8 +207,8 @@ def test_a_table_driven_state_is_bounded_by_the_extent_it_indexes():
     sut = finite_state(only_loop(before_lifting(dfa)))
 
     assert sut is not None
-    assert (sut.symbol, sut.base, sut.count) == ("state", 0, NS)
-    assert sut.tables == {"trans", "symbols"}
+    assert (sut.step.symbol, sut.base, sut.count) == ("state", 0, NS)
+    assert sut.step.tables == {"trans", "symbols"}
 
 
 def test_a_state_read_at_an_offset_starts_at_the_offset():
@@ -187,8 +227,8 @@ def test_the_huffman_step_keeps_the_branch_that_resets_the_node():
     sut = finite_state(only_loop(before_lifting(huffman)))
 
     assert sut is not None
-    assert (sut.symbol, sut.count) == ("node", NI)
-    assert {"nxt", "node"} <= sut.step_symbols
+    assert (sut.step.symbol, sut.count) == ("node", NI)
+    assert {"nxt", "node"} <= sut.step.values
 
 
 def test_a_dfa_scan_leaves_a_map_and_counts_the_states_the_loop_counted():
@@ -318,3 +358,48 @@ def test_a_dfa_scan_offloaded_to_the_gpu_counts_the_states_the_loop_counted():
 
     assert [node.schedule for node in state_scans(sdfg)] == [dace.ScheduleType.GPU_Device]
     np.testing.assert_array_equal(cupy.asnumpy(actual), expected)
+
+
+def test_a_crc_register_is_proven_gf2_affine_with_the_polynomial_as_a_parameter():
+    sut = gf2_state(top_loop(before_lifting(crc16)))
+
+    assert sut is not None
+    assert (sut.step.symbol, sut.bits) == ("c", 64)
+    assert "polynomial" in sut.step.tables
+
+
+@pytest.mark.parametrize("program", [squared, unbounded, dfa])
+def test_a_step_squaring_adding_or_looking_up_its_state_is_not_gf2_affine(program):
+    assert gf2_state(top_loop(before_lifting(program))) is None
+
+
+@pytest.mark.parametrize("length", [0, 1, 7, 5000])
+def test_a_crc_through_the_gf2_scan_equals_the_bytewise_crc(length):
+    data = np.random.default_rng(length).integers(0, 256, length).astype(np.uint8)
+    sdfg = crc16.to_sdfg(simplify=True)
+    pipeline.canonicalize(sdfg)
+    actual = np.zeros(1, np.int64)
+
+    sdfg(data=data, crc=actual, polynomial=np.int64(0x8408), N=length)
+
+    assert [node.kind for node in state_scans(sdfg)] == [StateScanKind.GF2_AFFINE]
+    assert actual[0] == reference_crc16(data, 0x8408)
+
+
+@pytest.mark.gpu
+def test_a_crc_through_the_gf2_scan_on_the_gpu_equals_the_bytewise_crc():
+    import cupy  # Only present on GPU runners.
+
+    from dace.transformation.passes.canonicalize import finalize
+
+    data = np.random.default_rng(19).integers(0, 256, 100000).astype(np.uint8)
+    sdfg = crc16.to_sdfg(simplify=True)
+    pipeline.canonicalize(sdfg, target="gpu")
+    finalize.offload_to_gpu(sdfg)
+    finalize.finalize_for_target(sdfg, "gpu")
+    actual = cupy.zeros(1, cupy.int64)
+
+    sdfg(data=cupy.asarray(data), crc=actual, polynomial=np.int64(0x8408), N=100000)
+
+    assert [node.schedule for node in state_scans(sdfg)] == [dace.ScheduleType.GPU_Device]
+    assert int(actual[0]) == reference_crc16(data, 0x8408)
