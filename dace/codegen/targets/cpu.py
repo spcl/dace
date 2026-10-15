@@ -531,6 +531,15 @@ _REDUCTION_TO_OMP_OP = {
 _COMPLEX_TYPES = (dtypes.complex64, dtypes.complex128)
 
 
+def array_reductions_enabled(sdfg: SDFG) -> bool:
+    """Whether ``sdfg`` may emit OpenMP array-section and complex ``declare reduction`` clauses: its own
+    ``openmp_array_reductions`` or its root's. ``canonicalize`` sets the flag on every SDFG it returns, but a
+    nested SDFG made afterwards -- a loop ``finalize_for_target`` outlines, a library node it or codegen
+    expands -- starts with the default, and reading only its own flag would send its accumulators to
+    atomics."""
+    return sdfg.openmp_array_reductions or sdfg.root_sdfg.openmp_array_reductions
+
+
 def _contiguous_element_count(desc):
     """Element count if ``desc`` is a plain, 0-offset, C-contiguous ``Array`` buffer or ``ArrayView``.
 
@@ -3583,7 +3592,7 @@ class CPUCodeGen(TargetCodeGenerator):
 
         The WCR target must be (a) an ``AccessNode`` outside the map scope, (b) either a
         true ``Scalar`` (clause ``reduction(op:var)``, always eligible) or -- only when
-        ``sdfg.openmp_array_reductions`` is on -- a plain 0-offset C-contiguous ``Array``
+        ``openmp_array_reductions`` is on (:func:`array_reductions_enabled`) -- a plain 0-offset C-contiguous ``Array``
         buffer (clause ``reduction(op:A[0:n])`` over the whole buffer), (c) non-persistent
         with a subset independent of THIS map's iter variables, (c2) NOT also read by the
         map (a privatized copy starts at the operator identity, so a read inside the region
@@ -3678,7 +3687,7 @@ class CPUCodeGen(TargetCodeGenerator):
             declare = None
             if is_scalar:
                 clause_target = var_name
-            elif sdfg.openmp_array_reductions:
+            elif array_reductions_enabled(sdfg):
                 # An array-section reduction privatizes its section per thread for the region; only
                 # a provably contiguous buffer is eligible, anything else falls through to the atomic
                 # path. The section is the written span, not the buffer: ``sum[0]`` of a length-N
@@ -3700,7 +3709,7 @@ class CPUCodeGen(TargetCodeGenerator):
             # a ``#pragma omp declare reduction`` (only ``+`` / ``*`` have a defined identity
             # + combiner). Off the flag, preserve the exact prior scalar behavior (no dtype
             # special-casing) so a disabled flag is a codegen no-op.
-            if sdfg.openmp_array_reductions and desc.dtype in _COMPLEX_TYPES:
+            if array_reductions_enabled(sdfg) and desc.dtype in _COMPLEX_TYPES:
                 named = _complex_declare_reduction(op_str, desc.dtype.ctype)
                 if named is None:
                     continue

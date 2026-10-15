@@ -811,6 +811,43 @@ def test_array_wcr_two_spans_of_one_array_share_one_clause():
     assert np.allclose(_run_arr(sd, X, A0), ref)
 
 
+def _nest_in_flagged_root(inner: dace.SDFG) -> dace.SDFG:
+    """``inner`` as a nested SDFG of a root that carries ``openmp_array_reductions`` while ``inner`` does not: the
+    shape ``finalize_for_target`` leaves when it outlines a loop or expands a library node after ``canonicalize``
+    set the flag. The nested SDFG sits under a one-trip map and has two states, as an outlined loop body does, so
+    codegen emits it as its own function rather than inlining it into the root."""
+    inner.add_state_before(inner.start_state, "entry")
+    root = dace.SDFG(inner.name + "_root")
+    for name, desc in inner.arrays.items():
+        root.add_datadesc(name, desc.clone())
+    st = root.add_state()
+    me, mx = st.add_map("team", dict(t="0:1"), schedule=dace.ScheduleType.Sequential)
+    node = st.add_nested_sdfg(inner, {"X"}, {"A"})
+    st.add_memlet_path(st.add_read("X"), me, node, dst_conn="X", memlet=dace.Memlet.from_array("X", root.arrays["X"]))
+    st.add_memlet_path(node, mx, st.add_write("A"), src_conn="A", memlet=dace.Memlet.from_array("A", root.arrays["A"]))
+    root.openmp_array_reductions = True
+    root.validate()
+    return root
+
+
+def test_nested_sdfg_built_after_canonicalize_takes_the_root_flag():
+    """A nested SDFG made after ``canonicalize`` flagged the root still takes the array-section clause and the
+    complex ``declare reduction``: the flag is the root's, not each nested SDFG's own."""
+    inner = _build_wcr_array_sum(dace.complex128, flag=False)
+    root = _nest_in_flagged_root(inner)
+    assert not inner.openmp_array_reductions
+    _, src = _compile_and_read_src(root)
+    assert "declare reduction(cpf_cadd : dace::complex128" in src, "expected the complex declare-reduction"
+    pragma = [l for l in src.splitlines() if "#pragma omp parallel for" in l]
+    assert any("reduction(cpf_cadd:A[0:" in l for l in pragma), "\n".join(pragma)
+    assert "reduce_atomic" not in src, "a covered complex accumulator must not fall back to atomics"
+
+    rng = np.random.default_rng(5)
+    X = rng.standard_normal((KK, NR, NM)) + 1j * rng.standard_normal((KK, NR, NM))
+    A0 = rng.standard_normal((NR, NM)) + 1j * rng.standard_normal((NR, NM))
+    assert np.allclose(_run_arr(root, X, A0), A0 + X.sum(axis=0))
+
+
 if __name__ == "__main__":
     test_view_wcr_target_emits_section_clause()
     test_array_wcr_section_covers_only_the_written_element()
@@ -835,3 +872,4 @@ if __name__ == "__main__":
     test_complex_array_wcr_emits_declare_reduction_and_is_correct()
     test_noncontiguous_array_target_falls_back_to_atomic()
     test_complex_product_declare_uses_identity_one()
+    test_nested_sdfg_built_after_canonicalize_takes_the_root_flag()
