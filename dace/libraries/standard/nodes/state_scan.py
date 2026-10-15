@@ -160,8 +160,8 @@ def finite_compose_sdfg(node: "StateScan", outer: SDFG) -> SDFG:
 
 
 #: The GF(2) compose. ``basis_images[j]`` is the step at ``begin`` from basis state ``j`` (from zero at ``j == bits``), so
-#: column ``j`` of ``A`` is ``basis_images[j] ^ basis_images[bits]``. Every block but the last is ``size`` long; ``A^size`` and the
-#: last block's power come from repeated squaring on column masks.
+#: column ``j`` of ``A`` is ``basis_images[j] ^ basis_images[bits]``. Every non-empty block is ``size`` long except at most one, which
+#: holds the remainder; ``A^size`` and that block's power come from repeated squaring on column masks.
 GF2_COMPOSE = """
 unsigned long long column[64], full[64], last[64], base[64], next[64];
 const long long bits = {bits}, chunks = {chunks}, begin = {begin}, end = {end};
@@ -171,8 +171,8 @@ for (long long j = 0; j < bits; ++j) {{
 }}
 for (long long which = 0; which < 2; ++which) {{
     unsigned long long *power = which == 0 ? full : last;
-    long long exponent = which == 0 ? size : (end - begin) - size * (chunks - 1);
-    if (exponent < 0) exponent = 0;
+    // the one block shorter than size, if any, holds the remainder
+    long long exponent = which == 0 ? size : (size > 0 ? (end - begin) % size : 0);
     for (long long j = 0; j < bits; ++j) {{ power[j] = 1ULL << j; base[j] = column[j]; }}
     while (exponent > 0) {{
         if (exponent & 1) {{
@@ -302,13 +302,13 @@ def scan_sdfg(node: "StateScan", state: dace.SDFGState, outer: SDFG, schedule: d
     storage = dtypes.StorageType.GPU_Global if on_gpu else dtypes.StorageType.CPU_Heap
     single = schedule if on_gpu else dtypes.ScheduleType.Sequential
     dtype = sdfg.arrays[OUT_CONNECTOR].dtype
+    # flat and one element longer than needed: a container of one element reaches a tasklet as a scalar, not an array
     sdfg.add_array("starts", [node.chunks + 1], dtype, storage=storage, transient=True)
     tables = sorted(edge.dst_conn for edge in state.in_edges(node) if edge.dst_conn != INIT_CONNECTOR)
     chunks = text(node.chunks)
     blocks = chunk_bounds(node)
     if node.kind is StateScanKind.FINITE:
-        # flat, so no dimension of extent one is squeezed out of it
-        sdfg.add_array("table", [node.chunks * node.count], dtype, storage=storage, transient=True)
+        sdfg.add_array("table", [node.chunks * node.count + 1], dtype, storage=storage, transient=True)
         first, second, third = phases(sdfg, 3)
         nest(
             first,
@@ -339,7 +339,7 @@ def scan_sdfg(node: "StateScan", state: dace.SDFGState, outer: SDFG, schedule: d
     else:
         sdfg.add_array("seeds", [node.bits + 1], dtype, storage=storage, transient=True)
         sdfg.add_array("raw", [node.bits + 1], dtype, storage=storage, transient=True)
-        sdfg.add_array("block", [node.chunks], dtype, storage=storage, transient=True)
+        sdfg.add_array("block", [node.chunks + 1], dtype, storage=storage, transient=True)
         basis, columns, summaries, second, third = phases(sdfg, 5)
         nest(basis, sdfg, basis_sdfg(node, sdfg), [], ["seeds"], {"__unit": "0:1"}, single)
         once = (text(node.begin), f"min({text(node.begin)} + 1, {text(node.end)})")
