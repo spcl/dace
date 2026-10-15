@@ -43,7 +43,7 @@ def test_external_mem(symbolic):
     # the values passed to initialize() and accepts no arguments here.
     # Test workspace size
     csdfg = sdfg.compile()
-    ws_args = extra_args if isinstance(csdfg, dace.codegen.CtypesCompiledSDFG) else {}
+    ws_args = {} if isinstance(csdfg, dace.codegen.CtypesCompiledSDFG) else extra_args
     csdfg.initialize(a, **extra_args)
     sizes = csdfg.get_workspace_sizes(**ws_args)
     assert sizes == {dace.StorageType.CPU_Heap: 20 * 8}
@@ -79,7 +79,7 @@ def test_external_twobuffers():
 
     # See test_external_mem: nanobind takes the symbols per call.
     # See test_external_mem: keyed off the compiled object, not the config.
-    ws_args = dict(N=20) if hasattr(csdfg, "_handle") else {}
+    ws_args = {} if isinstance(csdfg, dace.codegen.CtypesCompiledSDFG) else dict(N=20)
 
     # Test workspace size
     a = np.random.rand(20)
