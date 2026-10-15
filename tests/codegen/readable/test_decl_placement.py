@@ -8,6 +8,7 @@ is byte-identical for every value, and the default reproduces today's readable o
 """
 
 import re
+
 import numpy as np
 import pytest
 
