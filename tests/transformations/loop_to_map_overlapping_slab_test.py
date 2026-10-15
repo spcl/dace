@@ -14,7 +14,7 @@ from dace.transformation.interstate import LoopToMap
 M = dace.symbol("M")
 N = dace.symbol("N")
 K = dace.symbol("K")
-S = dace.symbol("S")
+S = dace.symbol("S", positive=True)  # a stride: LoopToMap maps a loop only when its step has a known sign
 
 
 @dace.program

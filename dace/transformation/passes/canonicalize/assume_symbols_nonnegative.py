@@ -37,7 +37,6 @@ no data outputs (the same drop that silently removed scatter guards before they
 were marked side-effecting).
 """
 
-from collections.abc import Collection
 from typing import Any
 
 import sympy
@@ -51,32 +50,29 @@ from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 from dace.transformation.passes.canonicalize.tracked_assumptions import tracked_assumptions
 
+#: A declared sign at least as strong as the contract's ``>= 0``; a contradicting one is left alone.
+SIGN_PREDICATES = frozenset(
+    {
+        symbolic.Predicate.POSITIVE,
+        symbolic.Predicate.NONNEGATIVE,
+        symbolic.Predicate.NEGATIVE,
+        symbolic.Predicate.NONPOSITIVE,
+    }
+)
 
-def names_still_plain(sdfg: SDFG, positive: Collection[str] = ()) -> dict[str, None]:
-    """Names that occur SOMEWHERE in ``sdfg`` as a symbol WITHOUT ``nonnegative=True``, or, for a name in
-    ``positive``, without ``positive=True``.
 
-    ``symbolic.symbol(name, dtype=dtype)`` builds a FRESH symbol and does not recall assumptions
-    set earlier, so asking it whether a name is nonnegative always answers ``None``. The assumption
-    lives on the symbol objects ``replace_dict`` threaded into the graph, which is what this reads
-    -- otherwise the pass re-marks every symbol on every run and never reports ``None``, so a
-    fixed-point pipeline containing it cannot converge.
-
-    Scanned over every sympy-typed property ``replace_dict`` WRITES, not just the descriptors: a
-    re-canonicalize starts from a graph whose descriptors are already marked, and the stages in
-    between rebuild map ranges and subsets by PARSING (which mints plain symbols), so a
-    descriptor-only look answers "already assumed" while the map ranges have gone back to bare
-    ``N``. Same SDFG, two spellings of the same bound, two different content digests. String-backed
-    properties (interstate assignments, loop conditions, tasklet code) are deliberately NOT scanned:
-    they cannot carry a sympy assumption at all, so counting them would report "still plain"
-    forever.
+def names_still_plain(sdfg: SDFG) -> dict[str, None]:
+    """The signed-integer symbols ``sdfg`` declares with no sign predicate yet: the ones
+    :func:`set_symbol_nonnegative_assumptions` would assume nonnegative (one level of ``sdfg``).
 
     :param sdfg: The SDFG to inspect (one level; callers iterate nested SDFGs themselves).
-    :param positive: Names whose assumption is ``positive=True`` rather than ``nonnegative=True``.
-    :returns: The symbol names seen without the assumption, membership-checked only.
+    :returns: The names, membership-checked only.
     """
+    predicates = sdfg.symbol_repo.params.predicates
     return dict.fromkeys(
-        str(s) for s in sized_symbols(sdfg) if not (s.is_positive if s.name in positive else s.is_nonnegative)
+        name
+        for name in sorted(sdfg.free_symbols)
+        if sdfg.symbols.get(name) in SIGNED_INTEGER_DTYPES and not predicates.get(name, frozenset()) & SIGN_PREDICATES
     )
 
 
@@ -111,60 +107,28 @@ def passed_through(node: nodes.NestedSDFG, name: str) -> bool:
 
 
 def set_symbol_nonnegative_assumptions(sdfg: SDFG) -> int | None:
-    """Set the SymPy ``nonnegative=True`` assumption on every signed-integer argument symbol of
-    ``sdfg`` (and its nested SDFGs), in place.
+    """Assume every signed-integer symbol the root of ``sdfg`` declares nonnegative, in its symbol repository. A
+    nested SDFG is left alone: it inherits the facts through its symbol mapping, and assuming more there than the
+    mapped values prove is what validation refuses.
 
     This is the compile-time half of the offset/size nonnegativity contract
-    ([[feedback_symbols_nonnegative_canonicalization]]): DaCe size / offset symbols carry no
-    sign, so a proof over them (``RelaxIntegerPowers`` deciding an integer power is ``>= 0``,
-    the offset-sign reasoning ``LoopToMap`` relies on) cannot conclude ``s >= 0`` even though a
-    size or a loop count always is. Rebuilding each such symbol with ``nonnegative=True`` and
-    substituting it through the SDFG (via ``replace_dict``, which threads it into every
-    descriptor shape / subset / interstate expression) makes those proofs go through.
-    :func:`insert_assumption_guards` emits the matching runtime trap so the assumption is
-    checked at the boundary rather than merely assumed.
+    ([[feedback_symbols_nonnegative_canonicalization]]): a size or a loop count always is ``>= 0``, and proofs over
+    the symbols (``RelaxIntegerPowers`` deciding an integer power is ``>= 0``, the offset-sign reasoning ``LoopToMap``
+    relies on) read it from the SDFG's facts. A symbol already declared with a sign keeps it.
+    :func:`insert_assumption_guards` emits the matching runtime trap so the assumption is checked at the boundary
+    rather than merely assumed.
 
     :param sdfg: the SDFG whose symbols are updated in place.
     :returns: the number of symbols updated, or ``None`` if none.
     """
+    root = sdfg
+    while root.parent_sdfg is not None:
+        root = root.parent_sdfg
+    predicates = root.symbol_repo.params.predicates
     updated = 0
-    # A name declared positive anywhere keeps that (stronger) assumption everywhere: respelling it merely nonnegative
-    # in one SDFG makes it a different sympy symbol from the positive spelling a nested SDFG keeps.
-    positive = {s.name for g in sdfg.all_sdfgs_recursive() for s in sized_symbols(g) if s.is_positive}
-    # Per SDFG, the names whose spelling there carries the assumption once this runs. A nested SDFG passes a
-    # same-name symbol through its mapping, and No-View compares its connector descriptors with the parent's
-    # by sympy equality, so it may mark such a name only when the parent marks it too: a loop iterator or map
-    # parameter of the parent is not a free symbol there and stays plain.
-    marked: dict[SDFG, set[str]] = {}
-    for g in sdfg.all_sdfgs_recursive():
-        repl = {}
-        plain = names_still_plain(g, positive)
-        node = g.parent_nsdfg_node
-        parent_marked = marked.get(g.parent_sdfg) if node is not None else None
-        marked[g] = set()
-        # ``free_symbols``, NOT the argument set: a nested SDFG's size symbol often enters only
-        # through descriptor shapes and the symbol mapping, so it is absent from
-        # ``used_symbols(all_symbols=False)`` -- and an unstamped nested spelling makes a second
-        # canonicalize produce a different graph. The runtime guard
-        # (:func:`insert_assumption_guards`) still traps only the ARGUMENT symbols
-        # (:func:`_signed_integer_free_symbols`); every other name here maps to one of those by
-        # name across the nesting, so the contract stays boundary-checked.
-        # sorted: ``free_symbols`` is a set of strings (per-process randomized hashing). The
-        # substitutions happen to commute here, but sorting makes determinism provable.
-        for name in sorted(g.free_symbols):
-            dtype = g.symbols.get(name)
-            if dtype not in SIGNED_INTEGER_DTYPES:
-                continue
-            if parent_marked is not None and name not in parent_marked and passed_through(node, name):
-                continue
-            marked[g].add(name)
-            if name not in plain:
-                continue
-            assumption = {"positive": True} if name in positive else {"nonnegative": True}
-            repl[name] = symbolic.symbol(name, dtype=dtype, **assumption)
-        if repl:
-            g.replace_dict(repl)
-            updated += len(repl)
+    for name in names_still_plain(root):
+        root.set_symbol_assumptions(name, predicates.get(name, frozenset()) | {symbolic.Predicate.NONNEGATIVE})
+        updated += 1
     return updated or None
 
 

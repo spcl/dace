@@ -21,7 +21,6 @@ from dace.libraries.standard.environments.cuda import CUDA
 from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES
 from dace.properties import LambdaProperty, ListProperty, Property
 from dace.sdfg import SDFG, SDFGState, dealias, devicelevel_block_size, graph, propagation, scope
-from dace.sdfg import utils as sdutil
 from dace.sdfg.state import SymbolResolver
 from dace.symbolic import issymbolic, simplify, symstr
 from dace.transformation import transformation as pm

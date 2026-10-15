@@ -18,11 +18,12 @@ import keyword
 import warnings
 
 from dace import data as dt
-from dace import dtypes, subsets
+from dace import dtypes, subsets, symbolic
 from dace.properties import CodeBlock
 from dace.sdfg import nodes
 from dace.sdfg.scope import is_in_scope
 from dace.sdfg.sdfg import SDFG
+from dace.sdfg.state import SymbolResolver
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.pass_pipeline import Modifies
 
@@ -198,7 +199,9 @@ class InlineTaskletConnectors(ppl.Pass):
             return {}
 
         candidates = [name for name in in_acc if name not in inout and name in accesses]
-        for name in reads_after_aliased_writes(node, candidates, in_acc, out_acc, in_subset, out_subset):
+        for name in reads_after_aliased_writes(
+            node, candidates, in_acc, out_acc, in_subset, out_subset, SymbolResolver().facts_at(state, node)
+        ):
             del accesses[name]
         return accesses
 
@@ -272,6 +275,7 @@ def aliased_writers(
     out_acc: dict[str, tuple[str, list[str]]],
     in_subset: dict[str, subsets.Subset],
     out_subset: dict[str, subsets.Subset],
+    facts: symbolic.Facts,
 ) -> list[str]:
     """The outputs other than input ``name`` that write an element of its container it may read."""
     return [
@@ -279,7 +283,7 @@ def aliased_writers(
         for other in out_acc
         if other != name
         and out_acc[other][0] == in_acc[name][0]
-        and subsets.intersects(in_subset[name], out_subset[other]) is not False
+        and subsets.intersects(in_subset[name], out_subset[other], facts) is not symbolic.Truth.FALSE
     ]
 
 
@@ -290,9 +294,10 @@ def reads_after_aliased_writes(
     out_acc: dict[str, tuple[str, list[str]]],
     in_subset: dict[str, subsets.Subset],
     out_subset: dict[str, subsets.Subset],
+    facts: symbolic.Facts,
 ) -> list[str]:
     """The ``candidates`` inputs a statement of ``node`` may read after an output writing an aliased element."""
-    aliased = {name: aliased_writers(name, in_acc, out_acc, in_subset, out_subset) for name in candidates}
+    aliased = {name: aliased_writers(name, in_acc, out_acc, in_subset, out_subset, facts) for name in candidates}
     aliased = {name: writers for name, writers in aliased.items() if writers}
     if not aliased:
         return []

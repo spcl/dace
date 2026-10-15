@@ -277,7 +277,7 @@ class OffloadToAccelerator(ppl.Pass):
                     if memlet.dynamic or memlet.wcr is not None:
                         continue
                     written = memlet.get_dst_subset(edge, state)
-                    if written is None or not written.covers(whole):
+                    if written is None or not written.covers(whole, sdfg.facts()):
                         continue
                     if symbolic.equal(as_expr(memlet.volume), as_expr(desc.total_size), is_length=False):
                         return True

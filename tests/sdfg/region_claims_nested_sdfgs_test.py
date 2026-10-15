@@ -119,6 +119,7 @@ def test_a_region_assembled_behind_a_conditional_is_claimed_through_its_branches
     to traverse into them.
     """
     sdfg = host_sdfg("specialize")
+    sdfg.add_symbol("N", dace.int64)  # read by the specialization condition
     original = detached_loop_holding(writer_sdfg("leaf"))
     sdfg.add_node(original, is_start_block=True)
     sdfg.validate()

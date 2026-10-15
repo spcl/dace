@@ -52,7 +52,7 @@ from dace import SDFG, symbolic
 from dace.optionals import required
 from dace.properties import CodeBlock
 from dace.sdfg import nodes
-from dace.sdfg.narrowing import as_basic, as_expr
+from dace.sdfg.narrowing import as_expr
 from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
 from dace.subsets import Subset
@@ -74,13 +74,14 @@ def _provably_nonempty(loop: LoopRegion) -> bool:
     if init is None or end is None or stride is None:
         return False
     s = symbolic.pystr_to_symbolic(stride)
-    if s.is_positive:
+    facts = loop.sdfg.facts()
+    if symbolic.ask(symbolic.predicate_relation(symbolic.Predicate.POSITIVE, s), facts) is symbolic.Truth.TRUE:
         diff = symbolic.simplify(as_expr(symbolic.pystr_to_symbolic(end)) - as_expr(symbolic.pystr_to_symbolic(init)))
-    elif s.is_negative:
+    elif symbolic.ask(symbolic.predicate_relation(symbolic.Predicate.NEGATIVE, s), facts) is symbolic.Truth.TRUE:
         diff = symbolic.simplify(as_expr(symbolic.pystr_to_symbolic(init)) - as_expr(symbolic.pystr_to_symbolic(end)))
     else:
         return False
-    return as_basic(diff).is_nonnegative is True
+    return symbolic.provably_nonnegative(diff, facts)
 
 
 def _last_reached_iterate(loop: LoopRegion) -> symbolic.SymbolicType | None:

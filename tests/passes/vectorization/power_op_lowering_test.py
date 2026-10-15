@@ -117,20 +117,19 @@ def test_exponent_classifier_reuses_relax_proof():
     exponent."""
     sdfg = symbolic_power.to_sdfg(simplify=True)
     set_symbol_nonnegative_assumptions(sdfg)  # S is a size symbol -> nonnegative
-    assert exponent_relaxes_to_ipow(dace.symbolic.pystr_to_symbolic("S"), sdfg) is True
-    assert exponent_relaxes_to_ipow(dace.symbolic.pystr_to_symbolic("3"), sdfg) is True
-    assert exponent_relaxes_to_ipow(dace.symbolic.pystr_to_symbolic("1.5"), sdfg) is False
-    assert exponent_relaxes_to_ipow(dace.symbolic.pystr_to_symbolic("-2"), sdfg) is False
+    assert exponent_relaxes_to_ipow(dace.symbolic.pystr_to_symbolic("S"), sdfg.facts()) is True
+    assert exponent_relaxes_to_ipow(dace.symbolic.pystr_to_symbolic("3"), sdfg.facts()) is True
+    assert exponent_relaxes_to_ipow(dace.symbolic.pystr_to_symbolic("1.5"), sdfg.facts()) is False
+    assert exponent_relaxes_to_ipow(dace.symbolic.pystr_to_symbolic("-2"), sdfg.facts()) is False
 
 
 def test_set_symbol_nonnegative_assumptions():
-    """``set_symbol_nonnegative_assumptions`` re-mints a signed-integer free symbol with
-    ``nonnegative=True`` and threads it through the stored expressions, so a size-power proof
-    can conclude ``>= 0``."""
+    """``set_symbol_nonnegative_assumptions`` assumes a signed-integer size symbol nonnegative in the SDFG's facts, so a
+    size-power proof can conclude ``>= 0``."""
     sdfg = symbolic_power.to_sdfg(simplify=True)
-    assert all(s.is_nonnegative is None for s in sdfg.arrays["A"].free_symbols if s.name == "S")
+    assert dace.symbolic.Predicate.NONNEGATIVE not in sdfg.symbol_repo.params.predicates.get("S", frozenset())
     set_symbol_nonnegative_assumptions(sdfg)
-    assert all(s.is_nonnegative is True for s in sdfg.arrays["A"].free_symbols if s.name == "S")
+    assert dace.symbolic.Predicate.NONNEGATIVE in sdfg.symbol_repo.params.predicates["S"]
 
 
 if __name__ == "__main__":

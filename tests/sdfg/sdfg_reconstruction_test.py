@@ -141,7 +141,6 @@ def _build_loop_region() -> SDFG:
     sdfg = dace.SDFG("loop_fill")
     sdfg.using_explicit_control_flow = True
     sdfg.add_array("A", [10], dace.float32)
-    sdfg.add_symbol("i", dace.int32)
 
     pre = sdfg.add_state("pre", is_start_block=True)
     loop = LoopRegion(
@@ -296,7 +295,6 @@ def test_reduce_library_node_round_trip():
 def test_break_continue_blocks_inside_loop():
     sdfg = dace.SDFG("brk_cnt")
     sdfg.using_explicit_control_flow = True
-    sdfg.add_symbol("i", dace.int32)
     sdfg.add_array("A", [1], dace.float32)
     pre = sdfg.add_state("pre", is_start_block=True)
     loop = LoopRegion(

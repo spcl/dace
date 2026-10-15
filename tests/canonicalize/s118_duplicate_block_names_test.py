@@ -84,7 +84,6 @@ def test_trivial_loop_elimination_reparents_clone_bodies_uniquely():
     """
     sdfg = dace.SDFG("tle_clone_body_names")
     sdfg.add_array("a", [_N], dace.float64)
-    sdfg.add_symbol("i", dace.int64)
 
     original = _single_iteration_loop(sdfg, "loop_p0", "dup_body")
     clone = copy.deepcopy(original)  # a deepcopy carries the body label over verbatim -- the real shape

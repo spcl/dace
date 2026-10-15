@@ -239,7 +239,7 @@ class RematerializeDerivedTemporaries(ppl.Pass):
                 return None
             # Every element the consumer spans must have been written by this producer, else the value
             # rematerialization reproduces was never in the temporary to begin with.
-            if not outer_write.data.subset.covers(outer_read.data.subset):
+            if not outer_write.data.subset.covers(outer_read.data.subset, sdfg.facts()):
                 return None
             # Pair the inner reads with THIS outer edge by connector. Filtering by container name alone
             # collects the same inner edge once per outer edge when the entry carries two of them, and

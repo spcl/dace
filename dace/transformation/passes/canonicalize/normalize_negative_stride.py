@@ -47,10 +47,10 @@ from dace.transformation.passes.canonicalize.fresh_names import lowest_free_suff
 POS_ITER_PREFIX = "_loop_pos_"
 
 
-def _is_negative(value: symbolic.SymbolicType) -> bool:
+def is_negative_number(value: symbolic.SymbolicType, facts: symbolic.Facts) -> bool:
     """``True`` iff ``value`` simplifies to a concrete negative number."""
     try:
-        s = symbolic.simplify(value)
+        s = symbolic.simplify(value, facts)
     except Exception:
         return False
     return as_basic(s).is_number and as_basic(s).is_negative
@@ -86,7 +86,7 @@ class NormalizeNegativeStride(ppl.Pass):
     def _try_normalize(self, loop: LoopRegion, sdfg: SDFG) -> bool:
         """Rewrite one loop if its stride is a numeric negative; return whether it ran."""
         stride = loop_analysis.get_loop_stride(loop)
-        if stride is None or not _is_negative(stride):
+        if stride is None or not is_negative_number(stride, sdfg.facts()):
             return False
         start = loop_analysis.get_init_assignment(loop)
         end = loop_analysis.get_loop_end(loop)
@@ -99,11 +99,6 @@ class NormalizeNegativeStride(ppl.Pass):
 
         old_var = loop.loop_variable
         new_var = f"{POS_ITER_PREFIX}{lowest_free_suffix(sdfg, (POS_ITER_PREFIX,), with_free_symbols=True)}"
-        # Declare the new iterator. Inherit the old variable's dtype where
-        # known so downstream type-inference doesn't have to redo the work.
-        new_var_dtype = sdfg.symbols.get(old_var, dace.int64)
-        sdfg.add_symbol(new_var, new_var_dtype)
-
         # Rebind the original symbol on the *first body block* via the existing
         # loop_variable-to-body assignment edge; this preserves every reference
         # to ``old_var`` in memlets / tasklet bodies without rewriting them.

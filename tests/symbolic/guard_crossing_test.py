@@ -41,9 +41,9 @@ def test_int_sqrt_is_the_exact_integer_root():
 def test_int_sqrt_plus_one_is_provably_nonnegative():
     """``int_sqrt`` is never below -1, which is what lets a split's tail ``int_sqrt(N - 1) + 1`` start a range."""
     n = symbolic.pystr_to_symbolic("N")
-    assert symbolic.provably_nonnegative(symbolic.int_sqrt(n - 1) + 1)
-    assert not symbolic.provably_nonnegative(symbolic.int_sqrt(n - 1))
-    assert not symbolic.provably_nonnegative(1 - symbolic.int_sqrt(n))
+    assert symbolic.provably_nonnegative(symbolic.int_sqrt(n - 1) + 1, symbolic.contract_facts(n))
+    assert not symbolic.provably_nonnegative(symbolic.int_sqrt(n - 1), symbolic.Facts.none())
+    assert not symbolic.provably_nonnegative(1 - symbolic.int_sqrt(n), symbolic.Facts.none())
 
 
 if __name__ == "__main__":

@@ -9,7 +9,7 @@ specializes it into ``if (M >= 1) { scan } else { pinned sequential loop }``.
 The guard is redundant: a recurrence step needs two in-range iterations ``M`` apart, and the
 span ``[0, M)`` is only ``M`` wide, so no such pair exists -- the write region ``a[M..2M)`` is
 disjoint from the read region ``a[0..M)`` and the loop is DOALL for every ``M``.
-``_stride_guard_is_statically_dischargeable`` proves exactly that (``iter_end <= iter_start +
+``stride_guard_is_statically_dischargeable`` proves exactly that (``iter_end <= iter_start +
 stride - 1``), so the fallback can go.
 
 But the proof discharges ``stride <= 0`` via "then the span is ``<= 0``, so the loop is

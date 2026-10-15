@@ -60,5 +60,8 @@ class SupplyNumThreads(ppl.Pass):
         # ``DEFAULT_SYMBOL_TYPE``, so the name usually EXISTS here at a width nobody chose, and
         # ``add_symbol`` refuses a name it already holds. The reserved symbol has one width by
         # contract, so the accidental narrower declaration is corrected rather than deferred to.
-        sdfg.symbols[name] = DTYPE
+        if name in sdfg.symbols:
+            sdfg.symbol_repo.set_type(name, DTYPE)
+        else:
+            sdfg.add_symbol(name, DTYPE)
         return 1

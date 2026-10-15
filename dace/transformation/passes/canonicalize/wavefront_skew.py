@@ -160,10 +160,9 @@ def sym(name: str) -> sympy.Expr:
 
 
 def declare_iterators(sdfg: SDFG, *names: str) -> None:
-    """Declare the pass's new iterators as int64 symbols of ``sdfg``, and to the symbol-dtype authority so that
-    :func:`sym` mints them at that dtype too."""
+    """Declare the pass's new iterators to the symbol-dtype authority so that :func:`sym` mints them at int64. They are
+    loop iterators, so the loops bind them and the SDFG must not declare them."""
     for name in names:
-        sdfg.add_symbol(name, dace.int64)
         symbolic.declare_symbol_dtype(name, as_typeclass(dace.int64))
 
 
@@ -434,7 +433,9 @@ def plan_split_snapshots(outer: LoopRegion, inner: LoopRegion, sdfg: SDFG) -> Sn
     return snap_src, snap_reads, copy_states
 
 
-def snapshot_reads_forward(snap_reads: list[SnapRead], carrier: "Carrier", u: str, v: str) -> bool:
+def snapshot_reads_forward(
+    snap_reads: list[SnapRead], carrier: "Carrier", u: str, v: str, facts: symbolic.Facts
+) -> bool:
     """Every snapshot read must be a FORWARD (anti) dependence in ITERATION space:
     the writer of the cell it reads runs strictly later, so its value is the
     not-yet-overwritten old element the snapshot captured -- which the diagonal
@@ -456,7 +457,7 @@ def snapshot_reads_forward(snap_reads: list[SnapRead], carrier: "Carrier", u: st
         dv = simplified(v_r - sym(v))
         if du == 0 and dv == 0:
             continue  # reads the very cell being written (old value)
-        if dependence_kind(du, dv) != "anti":
+        if dependence_kind(du, dv, facts) != "anti":
             return False  # backward (flow) or undecidable -> unsafe to redirect
     return True
 
@@ -731,7 +732,7 @@ class Dependence:
 Carrier = tuple[str, WriteMap | None, list[Dependence]]
 
 
-def dependence_kind(du: sympy.Expr, dv: sympy.Expr) -> str:
+def dependence_kind(du: sympy.Expr, dv: sympy.Expr, facts: symbolic.Facts) -> str:
     """Classify a distance ``(du, dv) = writer - current`` as ``'flow'`` or
     ``'anti'`` by the lexicographic sign of its first non-zero component (a
     positive first component means the writer runs after the current iteration,
@@ -747,16 +748,22 @@ def dependence_kind(du: sympy.Expr, dv: sympy.Expr) -> str:
     or a backward symbol (``arr[i, j - K]``) -- stays conservatively ``'flow'``:
     it is a genuine backward recurrence, or an unannotated offset the optimistic
     retry pins with a runtime positive-guard, so a flow treatment can only refuse
-    or trap, never mis-order."""
+    or trap, never mis-order. The sign is proven under ``facts``."""
     du_s, dv_s = simplified(du), simplified(dv)
     if du_s.is_number and dv_s.is_number:
         if du_s > 0 or (du_s == 0 and dv_s > 0):
             return "anti"
         return "flow"
     lead = du_s if du_s != 0 else dv_s  # lexicographically leading (first non-zero) component
-    if lead.is_positive:
+    if provably_positive(lead, facts):
         return "anti"
     return "flow"
+
+
+def provably_positive(expr: sympy.Expr, facts: symbolic.Facts) -> bool:
+    """Whether ``expr > 0`` follows from ``facts``."""
+    relation = symbolic.predicate_relation(symbolic.Predicate.POSITIVE, expr)
+    return symbolic.ask(relation, facts) is symbolic.Truth.TRUE
 
 
 def map_scope_context(state: SDFGState, node: nodes.Node) -> list[tuple[str, sympy.Expr, sympy.Expr]] | None:
@@ -1011,7 +1018,7 @@ def collect_carrier(
             if points is None:
                 return None
             rsubs.extend((pt, ctx, guard) for pt in points)
-        deps = carrier_dependences(wsubs, rsubs, u, v)
+        deps = carrier_dependences(wsubs, rsubs, u, v, sdfg.facts())
         if deps is None:
             return None
         wmap, dep_list = deps
@@ -1023,7 +1030,11 @@ def collect_carrier(
 
 
 def carrier_dependences(
-    wsubs: list[list[sympy.Expr]], rsubs: list[tuple[list[sympy.Expr], MapContext, list[sympy.Expr]]], u: str, v: str
+    wsubs: list[list[sympy.Expr]],
+    rsubs: list[tuple[list[sympy.Expr], MapContext, list[sympy.Expr]]],
+    u: str,
+    v: str,
+    facts: symbolic.Facts,
 ) -> tuple[WriteMap | None, list[Dependence]] | None:
     """``(write map, dependences)`` for one array, or ``None`` to refuse the whole nest.
 
@@ -1050,7 +1061,7 @@ def carrier_dependences(
             dv = simplified(v_r - sym(v))
             if du == 0 and dv == 0:
                 continue  # in-place self-read, not a dependence
-            deps.append(Dependence(du, dv, ctx, dependence_kind(du, dv), guard))
+            deps.append(Dependence(du, dv, ctx, dependence_kind(du, dv, facts), guard))
         return wmap, deps
 
     amap = axis_write_map(wsubs, u, v)
@@ -1064,7 +1075,7 @@ def carrier_dependences(
         d = axis_distance(idx[0], coeff, const, u, v)
         if d is None:
             return None  # undecidable offset sign -> refuse
-        deps.append(Dependence(d[0], d[1], ctx, dependence_kind(d[0], d[1]), guard))
+        deps.append(Dependence(d[0], d[1], ctx, dependence_kind(d[0], d[1], facts), guard))
     if deps:
         # Output dependence: the same location is rewritten every outer iteration, so consecutive
         # sweeps must not land on one diagonal. Unguarded on purpose -- assuming a write always
@@ -1423,7 +1434,7 @@ class WavefrontSkew(ppl.Pass):
         # (anti) dependence in iteration space -- the writer runs on a strictly
         # later diagonal, so the diagonal schedule reproduces the snapshot's old
         # value. A backward read would change value, so refuse (no mutation).
-        if not snapshot_reads_forward(snap_reads, carrier, u, v):
+        if not snapshot_reads_forward(snap_reads, carrier, u, v, sdfg.facts()):
             return False
 
         domain = domain_constraints(u, v, ub, vb)
@@ -1446,7 +1457,8 @@ class WavefrontSkew(ppl.Pass):
 
         # Pick a legal diagonal skew, using symbol positivity if declared.
         off_syms = offset_symbols(deps, dims)
-        assume_annotated = [s - 1 for s in off_syms if s.is_positive]
+        facts = sdfg.facts()
+        assume_annotated = [s - 1 for s in off_syms if provably_positive(s, facts)]
         tau = None
         guard_syms: list[sympy.Symbol] = []
         for cand in SKEW_CANDIDATES:
@@ -1460,7 +1472,7 @@ class WavefrontSkew(ppl.Pass):
             for cand in SKEW_CANDIDATES:
                 if schedule_legal(cand, deps, u, v, domain, assume_all):
                     tau = cand
-                    guard_syms = [s for s in off_syms if not s.is_positive]
+                    guard_syms = [s for s in off_syms if not provably_positive(s, facts)]
                     break
         if tau is None:
             return False

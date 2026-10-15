@@ -10,6 +10,8 @@ yields the alignment and the shift of the access from the aligned window the wid
 import warnings
 from collections.abc import Iterable
 
+import sympy
+
 import dace
 from dace.data import Data
 from dace.memlet import Memlet
@@ -125,7 +127,8 @@ def even_extent_substitutions(even: list[tuple[SymbolicType, int]]) -> dict[Symb
         rest = dace.symbolic.simplify(extent - sym)
         if not as_basic(rest).is_Integer:
             continue
-        t = dace.symbolic.symbol(f"__dace_align_t{n}", nonnegative=True, integer=True)
+        # A proof-local sympy symbol: a DaCe symbol is a name only and carries no assumption
+        t = sympy.Symbol(f"__dace_align_t{n}", nonnegative=True, integer=True)
         subs[sym] = width * t - int(as_expr(rest))
     return subs
 
@@ -266,7 +269,7 @@ def linear_base_offset(
         coeff = dace.symbolic.simplify(dace.symbolic.equalize_symbol(as_expr(offset).diff(sym).subs(subs)))
         if as_basic(coeff).is_nonnegative is not True:
             return None
-        k = dace.symbolic.symbol(f"__dace_align_k{idx}", nonnegative=True, integer=True)
+        k = sympy.Symbol(f"__dace_align_k{idx}", nonnegative=True, integer=True)
         start, end, step = (dace.symbolic.pystr_to_symbolic(x) for x in (start, end, step))
         at_base = at_base.subs(sym, start + step * k)
         at_end = at_end.subs(sym, end)

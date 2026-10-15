@@ -178,7 +178,8 @@ def _dedup_boundary_aliases(state: SDFGState, keep: nodes.NestedSDFG) -> None:
         base.replace_dict(sym_repl, replace_keys=False)
         for old in sym_repl:
             keep.symbol_mapping.pop(old, None)
-            base.symbols.pop(old, None)
+            if old in base.symbols:
+                base.symbol_repo.remove(old)
 
     # In-connector dedup: an in-edge whose outer memlet matches an earlier one
     # reads identical data; rename its inner descriptor onto the earlier

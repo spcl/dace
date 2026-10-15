@@ -86,13 +86,13 @@ def _is_iv_eligible_tasklet(tasklet: nodes.Tasklet, state: SDFGState, loop: Loop
         return False
 
     write_subset = write_edge.data.subset
-    if _one_elem(write_subset) != 1:
+    if _one_elem(write_subset, sdfg.facts()) != 1:
         return False
     loop_var_sym = symbolic.pystr_to_symbolic(loop.loop_variable)
     if _uses(write_subset, loop_var_sym):
         return False
 
-    final_accum, final_subset = _chase_forward_to_accum(state, sdfg, write_edge.dst, write_subset)
+    final_accum, final_subset = _chase_forward_to_accum(state, sdfg, write_edge.dst, write_subset, sdfg.facts())
     if final_accum not in sdfg.arrays or _uses(final_subset, loop_var_sym):
         return False
 

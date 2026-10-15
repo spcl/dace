@@ -34,7 +34,13 @@ from dace.libraries.tileops.nodes.tile_op import TileOp
 from dace.memlet import Memlet
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
-from dace.sdfg.state import AbstractControlFlowRegion, ConditionalBlock, ControlFlowRegion, LoopRegion
+from dace.sdfg.state import (
+    AbstractControlFlowRegion,
+    ConditionalBlock,
+    ControlFlowRegion,
+    LoopRegion,
+    SymbolResolver,
+)
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 from dace.transformation.passes.analysis.loop_analysis import get_loop_stride
@@ -56,13 +62,13 @@ class Token(NamedTuple):
     subset: subsets.Subset | None
     layout: Layout
 
-    def waits_for(self, other: "Token") -> bool:
+    def waits_for(self, other: "Token", facts: symbolic.Facts) -> bool:
         """Whether this access must wait for ``other``: another thread may touch an element both touch."""
         if self.data != other.data:
             return False
         if self.subset is None or other.subset is None:
             return True
-        if subsets.intersects(self.subset, other.subset) is False:
+        if subsets.intersects(self.subset, other.subset, facts) is symbolic.Truth.FALSE:
             return False
         # The same elements in the same layout stay on the same threads
         return self.subset != other.subset or differ(self.layout, other.layout)
@@ -99,11 +105,11 @@ class Tokens:
             [token.shifted(loop.loop_variable, step) for token in self.reads],
         )
 
-    def conflicts(self, reads: list[Token], writes: list[Token]) -> bool:
+    def conflicts(self, reads: list[Token], writes: list[Token], facts: symbolic.Facts) -> bool:
         """Whether the accesses wait for a token: another thread may have written an element read or written here,
         or may still read an element written here."""
-        return any(access.waits_for(token) for access in (*reads, *writes) for token in self.writes) or any(
-            access.waits_for(token) for access in writes for token in self.reads
+        return any(access.waits_for(token, facts) for access in (*reads, *writes) for token in self.writes) or any(
+            access.waits_for(token, facts) for access in writes for token in self.reads
         )
 
     def record(self, reads: list[Token], writes: list[Token]) -> None:
@@ -290,7 +296,7 @@ class Walk:
             return tokens
         level = kernel_level(state, node)
         self.order.setdefault(state, {})[level] = None
-        if tokens.conflicts(reads, writes):
+        if tokens.conflicts(reads, writes, SymbolResolver().facts_at(state, node)):
             self.barriers[(state, level)] = self.scope_of_kernel
             tokens = Tokens()
         if isinstance(node, nodes.NestedSDFG):

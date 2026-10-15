@@ -1833,7 +1833,13 @@ def propagate_node(dfg_state, node, symbols: Optional["SymbolResolver"] = None):
             continue
         aligned_memlet = align_memlet(dfg_state, internal_edge, dst=use_dst)
         edge.data = propagate_memlet(
-            dfg_state, aligned_memlet, node, True, connector=connector, defined_variables=defined_variables
+            dfg_state,
+            aligned_memlet,
+            node,
+            True,
+            connector=connector,
+            defined_variables=defined_variables,
+            symbols=symbols,
         )
 
 

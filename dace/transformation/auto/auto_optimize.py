@@ -527,7 +527,11 @@ def libnode_work_is_below_break_even(node: nodes.LibraryNode, state: SDFGState) 
     biggest = counts[0]
     for count in counts[1:]:
         biggest = sympy.Max(biggest, count)
-    return symbolic.ask("negative", symbolic.simplify(biggest - threshold)) is True
+    from dace.sdfg.state import SymbolResolver  # dace.sdfg.state imports the transformations
+
+    facts = SymbolResolver().facts_at(state, node)
+    margin = symbolic.simplify(biggest - threshold, facts)
+    return symbolic.ask(symbolic.predicate_relation(symbolic.Predicate.NEGATIVE, margin), facts) is symbolic.Truth.TRUE
 
 
 def libnode_runs_multicore(node: nodes.LibraryNode) -> bool:

@@ -187,8 +187,8 @@ def test_symbolic_subset_non_overlap_proven_at_ir_level():
     # ``intersects`` returns ``False`` when proven non-overlapping, ``True`` when
     # provably overlapping, ``None`` when indeterminate. We assert PROVEN
     # non-overlapping -- the symbolic strength that LLVM AA cannot reach.
-    result = lower.intersects(upper)
-    assert result is False, (
+    result = lower.intersects(upper, symbolic.contract_facts(positive={"M"}))
+    assert result is symbolic.Truth.FALSE, (
         f"symbolic non-overlap proof failed: lower={lower}, upper={upper}, "
         f"intersects() returned {result!r} (expected False)"
     )

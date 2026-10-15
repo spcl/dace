@@ -472,7 +472,7 @@ class NormalizeWCRSource(ppl.Pass):
             sub = e.data.get_dst_subset(e, state) or e.data.subset
             if sub is None or len(sub) != len(desc.shape):
                 return whole
-            window = copy.deepcopy(sub) if window is None else subsets.bounding_box_union(window, sub)
+            window = copy.deepcopy(sub) if window is None else subsets.bounding_box_union(window, sub, sd.facts())
         if window is None or {str(s) for s in window.free_symbols} - set(sd.symbols.keys()):
             return whole
         return window

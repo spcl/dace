@@ -148,7 +148,7 @@ def test_threshold_config_flips_selection():
 def test_size_gate_defaults_to_parallel(count, expected):
     """Only a PROVABLY sub-threshold count is serial. Every symbolic count -- one symbol, a
     multiple, or a product of two -- is assumed big enough, with no symbol outranking another."""
-    assert is_parallel_cpu_transfer_size(count) is expected
+    assert is_parallel_cpu_transfer_size(count, dace.symbolic.Facts.none()) is expected
 
 
 # Fork/join cost model: owned here, consumed by the CPU specialization band

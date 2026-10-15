@@ -1846,16 +1846,14 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         if base_dtype is None or not np.issubdtype(base_dtype.type, np.integer):
             return "pow"  # float base -> libm pow (NumPy semantics); ipow would not be bit-exact
         from dace import symbolic
+        from dace.sdfg.state import SymbolResolver
         from dace.transformation.passes.relax_integer_powers import exponent_relaxes_to_ipow
 
-        root = inner_state.sdfg
-        while root.parent_sdfg is not None:
-            root = root.parent_sdfg
         try:
             exponent = symbolic.pystr_to_symbolic(exponent_expr)
         except Exception:  # noqa: BLE001 -- unparseable exponent: fall back to std::pow
             return "pow"
-        return "ipow" if exponent_relaxes_to_ipow(exponent, root) else "pow"
+        return "ipow" if exponent_relaxes_to_ipow(exponent, SymbolResolver().facts_at(inner_state)) else "pow"
 
     def _convert_binop_with_symbol(
         self, inner_state: SDFGState, tasklet: Tasklet, detected: SymbolBinopMatch, iter_vars: tuple[str, ...]

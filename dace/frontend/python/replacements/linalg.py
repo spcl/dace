@@ -238,7 +238,7 @@ def dot(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, op_a: str, op_b: str, 
             raise SyntaxError
     else:
         # Infer result type
-        restype, _ = result_type([arr_a, arr_b], "Mul", symbols=pv.symbol_types())
+        restype = result_type([arr_a, arr_b], "Mul", symbols=pv.symbol_types())[0]
         op_out = pv.get_target_name()
         op_out, _ = sdfg.add_scalar(op_out, restype, transient=True, storage=arr_a.storage, find_new_name=True)
 
@@ -545,7 +545,7 @@ def inner(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, op_a: str, op_b: str
     if rank_a == 1 and rank_b == 1:
         return dot(pv, sdfg, state, op_a, op_b)
 
-    restype, _ = result_type([desc_a, desc_b], "Mul")
+    restype = result_type([desc_a, desc_b], "Mul", symbols=pv.symbol_types())[0]
     sub_a, sub_b = einsum_subscripts([rank_a, rank_b], 1, "numpy.inner")
     spec = f"{sub_a},{sub_b}->{sub_a[:-1]}{sub_b[:-1]}"
     return _einsum(pv, sdfg, state, StringLiteral(spec), op_a, op_b, dtype=restype)
@@ -584,7 +584,7 @@ def kron(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, op_a: str, op_b: str)
     if ndim == 1:
         return reshape(pv, sdfg, state, outer(pv, sdfg, state, op_a, op_b), merged)
 
-    restype, _ = result_type([desc_a, desc_b], "Mul")
+    restype = result_type([desc_a, desc_b], "Mul", symbols=pv.symbol_types())[0]
     sub_a, sub_b = einsum_subscripts([ndim, ndim], 0, "numpy.kron")
     interleaved = "".join(a + b for a, b in zip(sub_a, sub_b))
     spec = f"{sub_a},{sub_b}->{interleaved}"
@@ -662,7 +662,7 @@ def cross(
     else:
         out_lead, map_range, out_idx, idx_a, idx_b = (), {}, "", "", ""
 
-    restype, _ = result_type([desc_a, desc_b], "Mul")
+    restype = result_type([desc_a, desc_b], "Mul", symbols=pv.symbol_types())[0]
     out_shape = list(out_lead) + ([3] if ncomp == 3 else [])
     if out_shape:
         out, _ = sdfg.add_transient(pv.get_target_name(), out_shape, restype, desc_a.storage, find_new_name=True)

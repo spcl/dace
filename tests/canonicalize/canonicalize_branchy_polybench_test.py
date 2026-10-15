@@ -114,17 +114,9 @@ def test_nussinov_boundary_guards_value_preserving():
     assert np.array_equal(got, exp)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="MoveLoopInvariantIfUp cannot reach this shape at all: _match and _split_guard_loop both "
-    "require exactly ONE ConditionalBlock in the loop body and the source already has two, so "
-    "the hoist refuses before ConditionFusion ever runs -- reordering them buys nothing. "
-    "Splitting the two guards apart is illegal: A at j reads table[i, j - 1] that B writes at "
-    "j - 1. The only value-preserving hoist is loop unswitching (replicate the j loop under "
-    "both arms of i + 1 < N), which no pass in the tree implements.",
-)
 def test_nussinov_invariant_boundary_guard_not_evaluated_per_j():
-    """``i + 1 < N`` is invariant over the inner ``j`` loop and must be hoisted above it."""
+    """``i + 1 < N`` is invariant over the inner ``j`` loop and must not be evaluated per ``j``. Inside the inner loop
+    ``i + 1 <= j <= N - 1`` holds, so the guard (like ``j - 1 >= 0``) is provably true there and is dropped."""
     sdfg = nussinov_boundary_guards.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
     sdfg.validate()

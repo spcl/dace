@@ -9,6 +9,7 @@ import types
 import weakref
 from collections import Counter
 from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Set as AbstractSet
 from functools import cache, lru_cache
 from typing import (
     TYPE_CHECKING,
@@ -1644,28 +1645,6 @@ def structural_repr(expr) -> str:
     return f"{head}({expr}{flags})"
 
 
-#: `ask` predicate -> the sympy `Q` predicate that answers it on the island.
-_ASK_Q = {
-    "integer": sympy.Q.integer,
-    "nonnegative": sympy.Q.nonnegative,
-    "positive": sympy.Q.positive,
-    "negative": sympy.Q.negative,
-}
-
-
-def _ask_direct(predicate: str, expr) -> bool | None:
-    """The expression's own answer. Explicit dispatch, never `getattr`."""
-    if predicate == "integer":
-        return expr.is_integer
-    if predicate == "nonnegative":
-        return expr.is_nonnegative
-    if predicate == "positive":
-        return expr.is_positive
-    if predicate == "negative":
-        return expr.is_negative
-    raise ValueError(f"unknown ask predicate {predicate!r}")
-
-
 def numeric_bounds(expr: sympy.Basic) -> tuple[Any, Any]:
     """``(lower, upper)`` numeric bounds of the sympy expression ``expr``, each ``None`` where unknown.
 
@@ -1738,143 +1717,6 @@ def _interval(expr: Any, remainders: dict[Any, tuple[Any, Any]]) -> tuple[Any, A
             return (min(lowers) if len(lowers) == len(parts) else None), (min(uppers) if uppers else None)
         return (max(lowers) if lowers else None), (max(uppers) if len(uppers) == len(parts) else None)
     return None, None
-
-
-def _ask_by_bounds(predicate: str, expr: sympy.Basic) -> bool | None:
-    """A sign predicate settled by :func:`numeric_bounds`, or ``None`` if the bounds do not decide it."""
-    if predicate == "integer":
-        return None
-    lower, upper = numeric_bounds(expr)
-    if predicate == "negative":
-        if upper is not None and upper < 0:
-            return True
-        return False if lower is not None and lower >= 0 else None
-    if predicate == "positive":
-        if lower is not None and lower > 0:
-            return True
-        return False if upper is not None and upper <= 0 else None
-    if lower is not None and lower >= 0:
-        return True
-    return False if upper is not None and upper < 0 else None
-
-
-#: Terms a polynomial may have for :func:`_ask_factored` to factor it; factoring cost grows quickly past that.
-FACTOR_TERMS = 8
-
-
-def _ask_factored(predicate: str, expr: sympy.Basic) -> bool | None:
-    """A predicate the expression's factored form settles, or ``None``.
-
-    The assumption engine reads a sum term by term, so ``N*M - M`` over positive integers stays undecided while
-    its factored form ``M*(N - 1)`` is a product of two nonnegative factors: two strides of one array, products
-    of its extents, compare only through the factored form.
-    """
-    if not expr.is_Add or len(expr.args) > FACTOR_TERMS or not expr.is_polynomial():
-        return None
-    factored = sympy.factor(expr)
-    return None if factored == expr else _ask_direct(predicate, factored)
-
-
-def _ask_facts(symbols, facts: dict[str, frozenset[str]]) -> list[Any]:
-    """`Q` predicates for what `facts` declares about `symbols`, plus each symbol's own integrality."""
-    out = []
-    for sym in symbols:
-        declared = facts.get(sym.name, frozenset())
-        if sym.is_integer or "integer" in declared:
-            out.append(sympy.Q.integer(sym))
-        if "positive" in declared:
-            out.append(sympy.Q.positive(sym))
-        elif "nonnegative" in declared:
-            out.append(sympy.Q.nonnegative(sym))
-    return out
-
-
-def stamped_with_facts(expr, facts: dict[str, frozenset[str]]):
-    """`expr` with every declared symbol respelled carrying `facts` as SYMBOL-LEVEL assumptions.
-
-    sympy's contextual engine (`assuming` + `Q`) does not combine integrality with a sign: given
-    `Q.integer(K) & Q.positive(K)` it cannot answer `K - 1 >= 0`, while the symbol-level form knows
-    a positive integer is `>= 1` and settles it. The respelling is TRANSIENT -- for one query, never
-    stored -- so the bare spelling the SDFG holds is untouched.
-
-    :return: the restamped expression, or `None` when no declared symbol occurs in `expr`.
-    """
-    repl = {}
-    for sym in expr.free_symbols:
-        declared = facts.get(sym.name, frozenset())
-        assumptions = {}
-        if sym.is_integer or "integer" in declared:
-            assumptions["integer"] = True
-        if "positive" in declared:
-            assumptions["positive"] = True
-        elif "nonnegative" in declared:
-            assumptions["nonnegative"] = True
-        if assumptions:
-            repl[sym] = sympy.Symbol(sym.name, **assumptions)
-    return expr.xreplace(repl) if repl else None
-
-
-def ask(predicate: str, expr, facts: dict[str, frozenset[str]] | None = None) -> bool | None:
-    """Three-valued (`True`/`False`/`None`) query on `expr`, in whichever backend built it.
-
-    `facts` declares per symbol NAME what an enclosing scope knows ('integer'/'positive'/
-    'nonnegative') -- needed because sympy mints same-named symbols that lost their assumptions, which
-    is exactly what a typed engine carries in the symbol's range instead.
-
-    Cheap first: the expression's own answer, which a typed engine settles from that range. Only an
-    undecided query reaches sympy's assumption engine, where the declared facts can still close it.
-    """
-    if predicate not in _ASK_Q:
-        raise ValueError(f"unknown ask predicate {predicate!r}")
-    if isinstance(expr, str):
-        expr = pystr_to_symbolic(expr)
-    if not isinstance(expr, SymbolicBasic):
-        expr = symbolic_engine.sympify(expr)
-    answer = _ask_direct(predicate, expr)
-    if answer is not None:
-        return answer
-    if to_sympy is not None:
-        converted = to_sympy(expr)
-        if converted is not None:
-            expr = converted
-    if not isinstance(expr, sympy.Basic):
-        return None
-    answer = _ask_by_bounds(predicate, expr)
-    if answer is not None:
-        return answer
-    expr = equalize_symbol(expr)
-    facts = facts or {}
-    # Symbol-level first: it is strictly stronger than the contextual engine below, which cannot
-    # combine integrality with a sign (see `stamped_with_facts`).
-    stamped = stamped_with_facts(expr, facts)
-    if stamped is not None:
-        answer = _ask_direct(predicate, stamped)
-        if answer is not None:
-            return answer
-    answer = _ask_factored(predicate, expr if stamped is None else stamped)
-    if answer is not None:
-        return answer
-    with sympy.assuming(*_ask_facts(expr.free_symbols, facts)):
-        return sympy.ask(_ASK_Q[predicate](expr))
-
-
-def provably_at_most(a, b, facts: dict[str, frozenset[str]] | None = None) -> bool:
-    """Whether ``a <= b`` for every value of the symbols ``facts`` allows; ``False`` means not proven.
-
-    A ``Min`` or ``Max`` on either side is taken apart, as the assumption engine does not: ``Min(x, y) <= b``
-    holds when one argument is at most ``b``, ``a <= Min(x, y)`` when ``a`` is at most every argument, and
-    ``Max`` the other way round. What is left is asked as ``b - a >= 0`` (:func:`ask`).
-    """
-    a, b = sympy.sympify(a), sympy.sympify(b)
-    if isinstance(a, sympy.Min):
-        return any(provably_at_most(arg, b, facts) for arg in a.args)
-    if isinstance(a, sympy.Max):
-        return all(provably_at_most(arg, b, facts) for arg in a.args)
-    if isinstance(b, sympy.Min):
-        return all(provably_at_most(a, arg, facts) for arg in b.args)
-    if isinstance(b, sympy.Max):
-        return any(provably_at_most(a, arg, facts) for arg in b.args)
-    return ask("nonnegative", b - a, facts) is True
 
 
 def apply_head(name: str, *args):
@@ -1977,7 +1819,7 @@ def _integral(quotient: sympy.Expr) -> bool:
 
 def ceiling_div(numerator: sympy.Expr, step: sympy.Expr) -> sympy.Expr:
     """``ceil(numerator / step)`` for an integer numerator and step, such as the element count of a range."""
-    if step == 1:
+    if step == 1 and _integral(numerator):
         return numerator
     quotient = numerator / step
     # Over integer operands the ceiling folds an exact quotient and an integer part (``ceil(N - 1/2) = N``)
@@ -1997,7 +1839,13 @@ def split_divisible_terms(x, y) -> tuple[sympy.Basic, sympy.Basic] | None:
     The caller decides what the split is worth. A zero remainder is exact and needs no assumption
     about either operand -- nothing is rounded, so truncation, floor and ceiling all agree. A
     remainder is only safe to leave behind where truncation IS flooring; see the callers.
+
+    The whole quotient is tried first: a divisor that is itself a sum, as :func:`simplify_under` writes a positive
+    ``P`` (``s + 1``), divides ``N*(s + 1) + s + 1`` while none of its terms does.
     """
+    whole = sympy.cancel(x / y)
+    if _integral(whole):
+        return whole, sympy.S.Zero
     quotient, remainder = sympy.S.Zero, sympy.S.Zero
     for term in sympy.Add.make_args(x):
         candidate = term / y
@@ -4130,7 +3978,8 @@ def simplify_under(expr: SymbolicType, facts: Facts) -> SymbolicType:
     )
 
 
-@lru_cache(maxsize=2048, typed=True)
+# Not cached itself: ``simplify_under`` is, and records the orders a cached proof relied on in each caller's facts, which
+#  a cache in front of it would skip.
 def simplify(expr: SymbolicType, facts: Facts | None = None) -> SymbolicType:
     """Simplifies ``expr`` under ``facts`` (:func:`simplify_under`). ``None`` is :meth:`Facts.none`, for a caller not
     yet handed the facts of its scope: symbols are names only, so it proves nothing about their signs or integrality.
@@ -4168,7 +4017,10 @@ def simplify(expr: SymbolicType, facts: Facts | None = None) -> SymbolicType:
 
     if type(expr) is int:
         return sympy.Integer(expr)
-    if isinstance(expr, sympy.Number) or is_plain_symbol(expr) or is_fixed_point(expr):
+    if isinstance(expr, sympy.Number):
+        return expr
+    # The facts may solve a symbol for a value (``N == 512``); only facts that rewrite nothing leave these unchanged
+    if (facts is None or not facts.substitution) and (is_plain_symbol(expr) or is_fixed_point(expr)):
         return expr
     return simplify_under(expr, facts if facts is not None else Facts.none())
 
@@ -4209,87 +4061,14 @@ def guard_crossing(expr: SymbolicType | str, var: str, bound: SymbolicType | str
             denominator.is_integer
             and denominator.is_number
             and denominator > 0
-            and provably_nonnegative(numerator, assume_symbols_nonnegative=True)
+            and provably_nonnegative(numerator, contract_facts(numerator))
         ):
             return int_ceil(numerator, denominator) if strict else int_floor(numerator, denominator) + 1
         return None
-    if poly.degree() == 2 and coeffs[0] == 1 and coeffs[1] == 0 and (-coeffs[2]).is_integer:
+    if poly.degree() == 2 and coeffs[0] == 1 and coeffs[1] == 0 and _integral(-coeffs[2]):
         square = -coeffs[2]
         return int_sqrt(square - 1) + 1 if strict else int_sqrt(square) + 1
     return None
-
-
-def provably_nonnegative(expr, assume_symbols_nonnegative: bool = False) -> bool:
-    """Whether ``expr >= 0`` for EVERY value of its free symbols. ``False`` means NOT PROVEN, never
-    "negative" -- an undecided expression is reported unproven, so a caller can only ever lose
-    precision by trusting it, not correctness.
-
-    Sympy gives up on a floor/ceiling it cannot evaluate, leaving a bound as ordinary as
-    ``N - 2*int_floor(N, 2) >= 0`` undecided though it holds for every integer ``N``. This closes
-    that gap by REPLACING each rounding node with a valid bound that makes the whole expression
-    smaller, then asking sympy whether the weakened expression is still nonnegative:
-    ``floor(t) in (t - 1, t]`` and ``ceiling(t) in [t, t + 1)``, so a rounding node with a negative
-    coefficient takes its upper bound and one with a nonnegative coefficient its lower; ``int_sqrt``
-    takes its lower bound -1 under a positive coefficient.
-
-    Sound because every step only weakens: a nonnegative lower bound proves the original
-    nonnegative. Conservative in every other direction -- a rounding node the expression is not
-    AFFINE in (squared, multiplied by another, or nested inside another's argument) has no such
-    one-sided substitution and is refused outright.
-
-    ``assume_symbols_nonnegative`` additionally asserts every free symbol is ``>= 0``. That is the
-    CANONICALIZATION contract (runtime-guarded there), not a property of SDFGs at large, so it is
-    off by default: a caller that has not established it must not be handed an answer leaning on it.
-    """
-    if isinstance(expr, sympy.Expr):
-        # A bound reparsed from a CodeBlock string and a subset an assumption-setting pass rebuilt
-        # spell one name as two sympy symbols, which then never cancel -- ``x - x`` reads as undecided
-        # rather than 0. Merging them only ever decides an expression that was unprovable before.
-        expr = equalize_symbol(expr)
-    s = simplify(expr)
-    if not isinstance(s, sympy.Basic):
-        return s >= 0
-    if s.is_number:
-        return bool(s >= 0)
-    e = s.replace(lambda t: isinstance(t, int_floor), lambda t: sympy.floor(t.args[0] / t.args[1]))
-    e = e.replace(lambda t: isinstance(t, int_ceil), lambda t: sympy.ceiling(t.args[0] / t.args[1]))
-    if assume_symbols_nonnegative:
-        e = e.subs(
-            {sym: sympy.Symbol(sym.name, nonnegative=True, integer=bool(sym.is_integer)) for sym in e.free_symbols}
-        )
-    # ``int_sqrt`` is at least -1 everywhere, so a positive multiple of it only weakens when it is replaced by -1.
-    roots = e.atoms(int_sqrt)
-    if roots:
-        coefficients = {root: e.coeff(root, 1) for root in roots}
-        if not all(c.is_number and c > 0 for c in coefficients.values()):
-            return False
-        if (e - sum(c * root for root, c in coefficients.items())).atoms(int_sqrt):
-            return False
-        e = e.subs(dict.fromkeys(roots, -1))
-    if e.is_nonnegative is True:
-        return True
-    atoms = list(e.atoms(sympy.floor, sympy.ceiling))
-    if not atoms:
-        return False
-    # A rounding inside another's argument has no independent extreme: moving the inner one moves
-    # the outer one's own bound, so the substitution below would not weaken in a known direction.
-    if any(a.args[0].atoms(sympy.floor, sympy.ceiling) for a in atoms):
-        return False
-    bounds = {sympy.floor: (lambda a: a - 1, lambda a: a), sympy.ceiling: (lambda a: a, lambda a: a + 1)}
-    relaxed = {}
-    affine_part = sympy.Integer(0)
-    for a in atoms:
-        c = e.coeff(a, 1)
-        if not c.is_number:
-            return False  # nonlinear in the rounding node -> cannot bound
-        low, high = bounds[a.func]
-        relaxed[a] = high(a.args[0]) if c < 0 else low(a.args[0])
-        affine_part += c * a
-    # Every rounding node must be accounted for by that affine decomposition; one surviving in the
-    # remainder is squared or multiplied by another, where a one-sided bound proves nothing.
-    if (e - affine_part).atoms(sympy.floor, sympy.ceiling):
-        return False
-    return simplify(e.subs(relaxed)).is_nonnegative is True
 
 
 def nonnegative_integers(dividend, divisor) -> bool:
@@ -4299,7 +4078,7 @@ def nonnegative_integers(dividend, divisor) -> bool:
         dividend.is_integer
         and divisor.is_integer
         and divisor.is_positive
-        and (dividend.is_nonnegative or (has_rounding(dividend) and provably_nonnegative(dividend)))
+        and (dividend.is_nonnegative or (has_rounding(dividend) and provably_nonnegative(dividend, Facts.none())))
     )
 
 
@@ -4657,10 +4436,8 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
         return self._print(sympy.Function(name)(*expr.args))
 
     def _print_Mod(self, expr):
-        # In Python, ``%`` is floored. In C++ it is C's, which agrees only on nonnegative integers
-        if not self.cpp_mode or nonnegative_integers(*expr.args):
-            return "((%s) %% (%s))" % (self._print(expr.args[0]), self._print(expr.args[1]))
-        return self._print_binary_call("py_mod", expr)
+        # ``%`` has C++ semantics (truncation); Python's floored modulo is the separate user function ``py_mod``
+        return "((%s) %% (%s))" % (self._print(expr.args[0]), self._print(expr.args[1]))
 
     def _print_CMod(self, expr):
         if not self.cpp_mode:
@@ -5249,6 +5026,29 @@ def free_symbol_like(expr: Any, sym: Any) -> sympy.Symbol | None:
     return matches[0] if len(matches) == 1 else min(matches, key=structural_repr)
 
 
+def contract_facts(*exprs: Any, positive: AbstractSet[str] = frozenset()) -> Facts:
+    """Canonicalization's standing contract, stated as facts: every free symbol of ``exprs`` is a nonnegative integer
+    (``positive`` names a positive one). For a caller with no SDFG in reach; a caller that has one asks its facts
+    (``sdfg.facts()``, ``SymbolResolver().facts_at(...)``) instead, which is where this contract is meant to end up."""
+    names = sorted(
+        {
+            str(sym)
+            for expr in exprs
+            if isinstance(expr, sympy.Basic)
+            for sym in expr.free_symbols
+            if isinstance(sym, sympy.Symbol) and not isinstance(sym, UndefinedSymbol)
+        }
+        | set(positive)
+    )
+    return Facts(
+        [
+            predicate_relation(Predicate.POSITIVE if name in positive else Predicate.NONNEGATIVE, symbol(name))
+            for name in names
+        ],
+        frozenset(names),
+    )
+
+
 def tile_extent(max_elem: Any, min_elem: Any) -> Any:
     """Extent of the range ``[min_elem, max_elem]``; a ``Min``-bounded tile yields its static width."""
     if isinstance(max_elem, sympy.Min):
@@ -5266,12 +5066,14 @@ def slabs_disjoint(stride: Any, begin: Any, end: Any, step: Any = 1, reach: Any 
     clamps = [term for term in sympy.Add.make_args(end) if isinstance(term, sympy.Min)]
     ends = [arg + end - clamps[0] for arg in clamps[0].args] if len(clamps) == 1 else [end]
     if any(
-        ask("nonnegative", simplify(bound - last - 1 + begin)) is True
+        provably_nonnegative(simplify(bound - last - 1 + begin), Facts.none())
         for last in ends
         for bound in (1, stride, -stride)
     ):
         return True
-    return reach is not None and any(ask("nonnegative", simplify(step - 1 - r)) is True for r in (reach, -reach))
+    return reach is not None and any(
+        provably_nonnegative(simplify(step - 1 - r), Facts.none()) for r in (reach, -reach)
+    )
 
 
 def affine_coefficients(expr: Any, sym: Any) -> tuple[Any, Any] | None:

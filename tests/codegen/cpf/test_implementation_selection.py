@@ -68,13 +68,13 @@ def test_a_large_or_unknown_copy_stays_a_parallel_map(elements):
     call -- and a symbolic size, which is every copy in a kernel with a runtime extent, must be
     ASSUMED large rather than treated as unknown-therefore-small.
     """
-    assert is_parallel_cpu_transfer_size(elements)
+    assert is_parallel_cpu_transfer_size(elements, dace.symbolic.Facts.none())
 
 
 def test_a_small_constant_copy_is_the_only_one_that_takes_the_single_call():
     threshold = int(dace.Config.get("compiler", "cpu", "parallel_transfer_min_elements"))
-    assert not is_parallel_cpu_transfer_size(threshold - 1)
-    assert is_parallel_cpu_transfer_size(threshold)
+    assert not is_parallel_cpu_transfer_size(threshold - 1, dace.symbolic.Facts.none())
+    assert is_parallel_cpu_transfer_size(threshold, dace.symbolic.Facts.none())
 
 
 @pytest.mark.parametrize("implementation", ["CPU", "vectorized", "Auto", "GPUAuto", "CUDA", "PBLAS"])

@@ -10,7 +10,7 @@ from typing import (
 import dace
 from dace import data, dtypes, properties, subsets, symbolic, transformation
 from dace.ordered import OrderedSet
-from dace.sdfg import SDFG, SDFGState, dealias, graph, nodes, propagation
+from dace.sdfg import SDFG, SDFGState, dealias, graph, nodes
 from dace.sdfg.analysis import cfg as cfg_analysis
 from dace.sdfg.state import ReturnBlock, SymbolResolver
 from dace.sdfg.type_inference import infer_expr_type
@@ -261,6 +261,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
     @staticmethod
     def tiled_producer_subset(
         producer_edges: list[graph.MultiConnectorEdge[dace.Memlet]],
+        facts: symbolic.Facts,
     ) -> subsets.Range | None:
         """The per-iteration footprint several producers together write into an intermediate.
 
@@ -274,6 +275,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         never wrote, and an overlap means two producers race for one element.
 
         :param producer_edges: The edges entering the MapExit connector, at least one.
+        :param facts: The facts that hold where the producers write.
         :returns: The bounding box, or ``None`` when the producers do not tile it.
         """
         subset: subsets.Range | None = None
@@ -285,7 +287,9 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             if not isinstance(edge.data.dst_subset, subsets.Range):
                 return None
             subset = (
-                edge.data.dst_subset if subset is None else subsets.bounding_box_union(subset, edge.data.dst_subset)
+                edge.data.dst_subset
+                if subset is None
+                else subsets.bounding_box_union(subset, edge.data.dst_subset, facts)
             )
             volume += edge.data.dst_subset.num_elements()
         if subset is None:
@@ -885,7 +889,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             ]
             if not producer_edges:
                 return None
-            group_subset = self.tiled_producer_subset(producer_edges)
+            group_subset = self.tiled_producer_subset(producer_edges, facts)
             if group_subset is None:
                 return None
 
@@ -1260,7 +1264,9 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                 for oedge in out_edges
                 for e in state.in_edges_by_connector(first_map_exit, "IN_" + oedge.src_conn[4:])
             ]
-            producer_subset = self.tiled_producer_subset(pre_exit_edges)
+            producer_subset = self.tiled_producer_subset(
+                pre_exit_edges, SymbolResolver().facts_at(state, first_map_exit)
+            )
             if producer_subset is None:
                 raise NotImplementedError
 
@@ -2423,7 +2429,20 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         if claimed is None:
             return True
         full_range = subsets.Range.from_array(intermediate_node.desc(sdfg))
-        return claimed.covers(full_range) is not False
+        # Undecided counts as carrying: only a claim provably narrower than the array is let through.
+        if claimed.dims() != full_range.dims():
+            return True
+        facts = sdfg.facts()
+        for claimed_range, full_dim in zip(claimed, full_range):
+            (cb, ce), (fb, fe) = claimed_range[:2], full_dim[:2]
+            # Narrower than the array: starts inside it, ends inside it, or spans fewer elements
+            if (
+                symbolic.provably_le(fb + 1, cb, facts)
+                or symbolic.provably_le(ce + 1, fe, facts)
+                or symbolic.provably_le(ce - cb + 1, fe - fb, facts)
+            ):
+                return False
+        return True
 
     def _nsdfg_producer_fully_defines_intermediate(
         self,
@@ -2482,8 +2501,8 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         #  cover ends the search and everything else keeps looking (and finally refuses).
         if claimed.dims() == full_range.dims():
             if not (
-                self._subset_definitely_covers(full_range, claimed)
-                and self._subset_definitely_covers(claimed, full_range)
+                self._subset_definitely_covers(full_range, claimed, sdfg.facts())
+                and self._subset_definitely_covers(claimed, full_range, sdfg.facts())
             ):
                 return True
 
@@ -2524,12 +2543,12 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                     symbolic.safe_replace(mapping=nsdfg.symbol_mapping, replace_callback=write_subset.replace)
                     if not set(map(str, write_subset.free_symbols)).issubset(allowed_symbols):
                         return False
-                    if self._subset_definitely_covers(write_subset, full_range):
+                    if self._subset_definitely_covers(write_subset, full_range, sdfg.facts()):
                         return True
         return False
 
     @staticmethod
-    def _subset_definitely_covers(outer: subsets.Subset, inner: subsets.Subset) -> bool:
+    def _subset_definitely_covers(outer: subsets.Subset, inner: subsets.Subset, facts: symbolic.Facts) -> bool:
         """Strict version of `outer.covers(inner)` that is `True` only on positive proof.
 
         `Subset.covers()` does not raise on a dimensionality mismatch, it RETURNS a
@@ -2542,12 +2561,13 @@ class MapFusionVertical(transformation.SingleStateTransformation):
 
         :param outer: The subset that should cover.
         :param inner: The subset that should be covered.
+        :param facts: The facts that hold where both subsets are compared.
         """
         if not (isinstance(outer, subsets.Range) and isinstance(inner, subsets.Range)):
             return False
         if outer.dims() != inner.dims():
             return False
-        return outer.covers(inner) is True
+        return outer.covers(inner, facts)
 
     @staticmethod
     def _unconditionally_executed_states(inner_sdfg: SDFG) -> list[SDFGState]:

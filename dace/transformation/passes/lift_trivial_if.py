@@ -281,7 +281,7 @@ class LiftTrivialIf(ppl.Pass):
                 # An increasing guard ``g(i) < c`` is ``i < x`` at its crossing ``x`` (``i * 8192 < N``, ``i * i < N``
                 # over ``i >= 0``): the bare comparison the split that put ``x`` into the loop bounds decides.
                 if opname not in ("Lt", "LtE", "Gt", "GtE") or not symbolic.provably_nonnegative(
-                    ivar_to_range[ivar][0], assume_symbols_nonnegative=True
+                    ivar_to_range[ivar][0], cfb.sdfg.facts()
                 ):
                     return "unknown"
                 c = symbolic.guard_crossing(ast.unparse(varying), ivar, c, strict=opname in ("Lt", "GtE"))

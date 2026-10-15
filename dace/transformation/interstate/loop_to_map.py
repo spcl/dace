@@ -1199,6 +1199,14 @@ def iterator_type(loop: LoopRegion, rebound: set[str], table: dict[str, dtypes.t
     return loop.new_symbols(table).get(itervar)
 
 
+def declare_or_retype(sdfg: SDFG, name: str, dtype: dtypes.typeclass) -> None:
+    """Declares ``name`` in ``sdfg`` at ``dtype``, retyping an existing declaration."""
+    if name in sdfg.symbols:
+        sdfg.symbol_repo.set_type(name, dtype)
+    else:
+        sdfg.add_symbol(name, dtype)
+
+
 def declare_lifted_symbols(nsdfg: SDFG, sdfg: SDFG, loop: LoopRegion, ctx: LiftContext | None = None) -> None:
     """Declare in the lifted body the free symbols whose type the parent SDFG settles without a walk.
 
@@ -1231,11 +1239,11 @@ def declare_lifted_symbols(nsdfg: SDFG, sdfg: SDFG, loop: LoopRegion, ctx: LiftC
     itervar = loop.loop_variable
     for name in sorted(free - rebound - {itervar}):
         if name in table:
-            nsdfg.symbols[name] = table[name]
+            declare_or_retype(nsdfg, name, table[name])
     if itervar in free and itervar not in rebound:
         itertype = iterator_type(loop, rebound, table)
         if itertype is not None:
-            nsdfg.symbols[itervar] = itertype
+            declare_or_retype(nsdfg, itervar, itertype)
     # An enclosing loop's iterator: the walk ends by re-typing it from that loop's header, which reads the
     # same types as here when no edge assigns the iterator and no other loop binds it.
     region = loop.parent_graph
@@ -1244,7 +1252,7 @@ def declare_lifted_symbols(nsdfg: SDFG, sdfg: SDFG, loop: LoopRegion, ctx: LiftC
         if name in free and edge_assignments[name] == 0 and loop_variables[name] == 1:
             itertype = iterator_type(region, rebound, table)
             if itertype is not None:
-                nsdfg.symbols[name] = itertype
+                declare_or_retype(nsdfg, name, itertype)
         region = region.parent_graph
 
 
@@ -1933,7 +1941,7 @@ class LoopToMap(xf.MultiStateTransformation):
             if (
                 candidate.wcr is not None
                 and not _check_range(write, a, itersym, b, step)
-                and subsets.intersects(read, write) is not False
+                and subsets.intersects(read, write, facts) is not symbolic.Truth.FALSE
             ):
                 return False
             if read == write:

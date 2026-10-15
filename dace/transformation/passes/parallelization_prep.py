@@ -557,8 +557,18 @@ class BestEffortLoopPeeling(ppl.Pass):
 
         try:
             mini = dace.SDFG(sdfg.name + "_peelprobe")
+            # The declarations with their facts, so a proof on the copy sees what it sees on ``sdfg``
+            predicates = sdfg.symbol_repo.params.predicates
             for sname, stype in sdfg.symbols.items():
-                mini.add_symbol(sname, stype)
+                mini.add_symbol(sname, stype, predicates=predicates.get(sname, frozenset()))
+            # An enclosing loop's iterator is bound outside the copy, which reads it as a parameter
+            region = loop.parent_graph
+            while region is not None and not isinstance(region, SDFG):
+                if isinstance(region, LoopRegion) and region.loop_variable and region.loop_variable not in mini.symbols:
+                    itertype = region.new_symbols(sdfg.symbols).get(region.loop_variable)
+                    if itertype is not None:
+                        mini.add_symbol(region.loop_variable, itertype)
+                region = region.parent_graph
             # Arrays referenced by the loop body and its interstate edges.
             needed = set()
             for st in loop.states():
@@ -1337,7 +1347,7 @@ class BestEffortLoopPeeling(ppl.Pass):
         ``subsets.Range.intersects`` also uses to decide whether a split's two halves overlap. Only
         the nonnegative-symbol assumption is added here: it is canonicalization's contract, not a
         property of SDFGs in general, so the shared helper leaves it off by default."""
-        return symbolic.provably_nonnegative(x, assume_symbols_nonnegative=True)
+        return symbolic.provably_nonnegative(x, symbolic.contract_facts(x))
 
     def _nonneg_assuming_large_modulus(self, x, m, offsets=frozenset()):
         """Prove ``x >= 0`` given the modulus ``m`` is at least ``peel_limit + 1`` and

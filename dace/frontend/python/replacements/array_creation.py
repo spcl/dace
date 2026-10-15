@@ -513,7 +513,9 @@ def logspace(
     exponents = _linspace(pv, sdfg, state, start, stop, num, endpoint, False, None, axis)
     expdesc = sdfg.arrays[exponents]
     if dtype is None:
-        basetype = sym_type(base) if symbolic.issymbolic(base) else dtypes.dtype_to_typeclass(type(base))
+        basetype = (
+            sym_type(base, pv.symbol_types()) if symbolic.issymbolic(base) else dtypes.dtype_to_typeclass(type(base))
+        )
         dtype = dtypes.result_type_of(expdesc.dtype, basetype)
     elif not isinstance(dtype, dtypes.typeclass):
         dtype = dtypes.dtype_to_typeclass(dtype)

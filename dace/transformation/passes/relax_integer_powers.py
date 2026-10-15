@@ -41,6 +41,13 @@ def relaxed_exponent(exp: sympy.Expr, facts: symbolic.Facts) -> sympy.Expr | Non
     return exp if integer and symbolic.provably_nonnegative(exp, facts) else None
 
 
+def exponent_relaxes_to_ipow(exp: symbolic.SymbolicType, facts: symbolic.Facts) -> bool:
+    """Whether ``exp`` is a provable non-negative integer under ``facts`` -- the SAME proof :class:`RelaxIntegerPowers`
+    uses to lower a ``Pow`` to ``ipow``. The tile-op emitter calls this to choose ``ipow`` vs ``pow`` for a ``**`` /
+    ``pow`` operand, so the ``**`` lowering and the pow->ipow relaxation agree on which powers are integer."""
+    return relaxed_exponent(sympy.sympify(exp), facts) is not None
+
+
 @dataclass(slots=True)
 class PowerRelaxer:
     """One walk over an SDFG tree that rewrites every provable ``Pow`` in sizes, subscripts, bounds, conditions,

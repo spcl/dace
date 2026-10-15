@@ -764,6 +764,12 @@ def stride_loop_sdfg(stride: str) -> tuple[dace.SDFG, LoopRegion]:
     return sdfg, loop
 
 
+def iterator_width(sdfg: dace.SDFG, name: str) -> dace.typeclass:
+    """The width of the iterator ``name``: the loop that binds it types it, no symbol table declares it."""
+    loop = next(region for region in sdfg.all_control_flow_regions() if getattr(region, "loop_variable", None) == name)
+    return loop.new_symbols(sdfg.symbols)[name]
+
+
 def test_a_symbolic_stride_axis_is_renamed_at_its_own_32_bit_width():
     sdfg, loop = stride_loop_sdfg("S32")
     sut = LoopToStreamCompaction()
@@ -772,7 +778,7 @@ def test_a_symbolic_stride_axis_is_renamed_at_its_own_32_bit_width():
     new_name = sut.rename_iterator(loop, sdfg, "probe", dtype)
 
     assert dtype == dace.int32
-    assert sdfg.symbols[new_name] == dace.int32
+    assert iterator_width(sdfg, new_name) == dace.int32
     assert loop.loop_variable == new_name
     # The property an assumed width breaks: the renamed condition is read back by parsing its
     # text, and a symbol parsed from text carries the default width. Declared at any other width
@@ -780,7 +786,7 @@ def test_a_symbolic_stride_axis_is_renamed_at_its_own_32_bit_width():
     parsed = next(
         sym for sym in symbolic.pystr_to_symbolic(loop.loop_condition.as_string).free_symbols if sym.name == new_name
     )
-    assert symbolic.simplify(parsed - symbolic.symbol(new_name, sdfg.symbols[new_name])) == 0
+    assert symbolic.simplify(parsed - symbolic.symbol(new_name, iterator_width(sdfg, new_name))) == 0
 
 
 def test_a_unit_stride_axis_is_renamed_at_the_64_bit_width_its_step_infers():
@@ -793,7 +799,7 @@ def test_a_unit_stride_axis_is_renamed_at_the_64_bit_width_its_step_infers():
     new_name = sut.rename_iterator(loop, sdfg, "probe", dtype)
 
     assert dtype == dace.int64
-    assert sdfg.symbols[new_name] == dace.int64
+    assert iterator_width(sdfg, new_name) == dace.int64
 
 
 # ... and the width has to reach the SUBSET, not only the declaration.
@@ -824,14 +830,14 @@ def test_the_mask_point_subset_names_the_axis_at_its_declared_width():
 
     axis = subset.symbols[new_name]
 
-    assert sdfg.symbols[new_name] == dace.int64
-    assert axis.dtype == sdfg.symbols[new_name]
+    assert iterator_width(sdfg, new_name) == dace.int64
+    assert axis.dtype == iterator_width(sdfg, new_name)
 
 
 def test_a_difference_over_the_mask_point_subset_axis_cancels():
     """The property a re-minted axis breaks: two symbols of one name never cancel."""
     sdfg, new_name, subset = probe_point_subset("1")
-    declared = symbolic.symbol(new_name, sdfg.symbols[new_name])
+    declared = symbolic.symbol(new_name, iterator_width(sdfg, new_name))
 
     residue = symbolic.simplify(subset.ranges[0][0] - (declared - symbolic.pystr_to_symbolic("M32")))
 

@@ -19,22 +19,24 @@ import pytest
 import dace
 import tests.corpus.measure_parallelization as mp
 from dace.sdfg.state import ConditionalBlock
+from dace.symbolic import provably_nonnegative
 from dace.transformation.passes.vectorization.same_write_set_if_else_to_ite_cfg import (
     arm_accesses_are_in_range_unguarded,
     condition_guards_iteration_symbol,
-    provably_nonnegative,
 )
 
 N = dace.symbol("N")
+#: A shape symbol is positive.
+SHAPE_FACTS = dace.symbolic.contract_facts(positive={"N"})
 
 
 def test_nonnegativity_uses_the_positive_symbol_assumption():
     """A shape symbol is a positive integer, so the top index of an ``N``-long array is in range --
     but ``N - 2`` stays indeterminate, so the proof still fails closed."""
-    assert provably_nonnegative(dace.symbolic.pystr_to_symbolic("N - 1")) is True
-    assert provably_nonnegative(dace.symbolic.pystr_to_symbolic("0")) is True
-    assert provably_nonnegative(dace.symbolic.pystr_to_symbolic("-1")) is False
-    assert provably_nonnegative(dace.symbolic.pystr_to_symbolic("N - 2")) is False
+    assert provably_nonnegative(dace.symbolic.pystr_to_symbolic("N - 1"), SHAPE_FACTS) is True
+    assert provably_nonnegative(dace.symbolic.pystr_to_symbolic("0"), SHAPE_FACTS) is True
+    assert provably_nonnegative(dace.symbolic.pystr_to_symbolic("-1"), SHAPE_FACTS) is False
+    assert provably_nonnegative(dace.symbolic.pystr_to_symbolic("N - 2"), SHAPE_FACTS) is False
 
 
 def _guarded_map(then_index: str, else_index: str):

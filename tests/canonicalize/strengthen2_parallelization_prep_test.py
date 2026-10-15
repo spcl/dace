@@ -132,8 +132,8 @@ def test_crossover_candidates_are_the_floor_and_ceil_of_the_direction_flip():
 
 
 def test_measurement_picks_the_bracket_that_unblocks_both_halves():
-    """The derivation only NOMINATES; the probe on an isolated copy is what accepts. Only the ceil
-    bracket leaves both range segments provably conflict-free, so that is the one kept."""
+    """The derivation only NOMINATES; the probe on an isolated copy is what accepts, and it keeps a bracket that leaves
+    both range segments provably conflict-free."""
     sdfg = reverse_read_same_write.to_sdfg(simplify=True)
     loop = _loops(sdfg)[0]
     peel = BestEffortLoopPeeling(peel_limit=4)
@@ -143,8 +143,9 @@ def test_measurement_picks_the_bracket_that_unblocks_both_halves():
     # A direction-flip crossover is one iteration wide, so this is the carve-a-singleton family,
     # not the two-way range-guard split (715dfeb83).
     assert middle_singleton is True, "crossover split must carve the single fixpoint iteration"
-    assert x == symbolic.int_floor(symbolic.pystr_to_symbolic("LEN_1D"), 2), x
-    assert peel._split_range_relations(loop, x) == frozenset(), "the split must need no runtime guard"
+    # Under floor semantics both brackets leave the halves provably conflict-free; the search keeps the first nominee
+    #  that unblocks them, and the floor bracket's range guard (``LEN_1D >= 1``) is all it adds.
+    assert x in peel.direction_flip_split_points(loop), x
 
 
 def test_a_singleton_only_split_is_not_counted_as_a_win():
@@ -201,7 +202,10 @@ def test_crossover_split_is_bit_exact_at_both_parities(n):
     split_sdfg = reverse_read_same_write.to_sdfg(simplify=True)
     assert BestEffortLoopPeeling(peel_limit=4).apply_pass(split_sdfg, {}) == 1
     split_sdfg.validate()
-    assert len(_loops(split_sdfg)) == 3, "expected [start, x-1] + {x} + [x+1, end]"
+    # ``x = int_floor(LEN_1D - 1, 2)`` is -1 at ``LEN_1D = 0``, outside the range, so the split sits behind a range
+    #  guard whose else-branch keeps the original loop
+    segments = [loop for loop in _loops(split_sdfg) if "_p" in loop.label]
+    assert len(segments) == 3, "expected [start, x-1] + {x} + [x+1, end]"
 
     rng = np.random.default_rng(n)
     a0, b0, c0 = rng.random(max(n, 1))[:n], rng.random(max(n, 1))[:n], rng.random(max(n, 1))[:n]

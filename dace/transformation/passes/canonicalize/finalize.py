@@ -387,7 +387,7 @@ def finalize_transient_storage(sdfg: SDFG, device: dtypes.DeviceType) -> None:
             # positive inside the branch and negative outside it, and ``new T[negative]`` aborts.
             if not (
                 allocated_unconditionally(sd, name)
-                or all(symbolic.provably_nonnegative(dim, assume_symbols_nonnegative=True) for dim in desc.shape)
+                or all(symbolic.provably_nonnegative(dim, sd.facts()) for dim in desc.shape)
             ):
                 desc.lifetime = dtypes.AllocationLifetime.State
                 continue

@@ -379,7 +379,7 @@ class LoopToScan(ppl.Pass):
         this pass leave it alone). ``guard`` is the ``stride >= 1`` predicate from
         :func:`_symbolic_stride_guard` under which the residue-class scan is valid.
 
-        When the guard is provably redundant (:func:`_stride_guard_is_statically_dischargeable`
+        When the guard is provably redundant (:func:`stride_guard_is_statically_dischargeable`
         -- the iteration span is no wider than the stride, so the loop carries no recurrence
         at all), drop the conditional and lift the loop to a BARE MAP via
         :func:`_lift_proven_doall_to_map`.
@@ -408,7 +408,7 @@ class LoopToScan(ppl.Pass):
             for info in par_infos:
                 _rewrite(par_region, par_loop, info, owner)
 
-        if _stride_guard_is_statically_dischargeable(infos) and _lift_proven_doall_to_map(loop, sdfg):
+        if stride_guard_is_statically_dischargeable(infos, sdfg.facts()) and _lift_proven_doall_to_map(loop, sdfg):
             return
         specialize_loop_under_condition(loop, guard, _lift, sdfg)
 
@@ -1541,7 +1541,7 @@ def _rewrite_interchange_carry_with_map(shape: _CarryMapShape, sdfg: SDFG) -> Lo
         # The carry variable is now the loop's own iterator; remove it
         # from the inner SDFG's external symbol set so codegen doesn't
         # expect it as a kernel argument.
-        del inner_sdfg.symbols[carry_var]
+        inner_sdfg.symbol_repo.remove(carry_var)
 
     # 5. Clean up the (now empty) ``body_state``. We can't remove it from
     #    its parent because it's the body of the original LoopRegion which
@@ -2705,7 +2705,7 @@ def _symbolic_stride_guard(infos: list["_Scan"]) -> str | None:
     return " && ".join(conds) if conds else None
 
 
-def _stride_guard_is_statically_dischargeable(infos: list["_Scan"]) -> bool:
+def stride_guard_is_statically_dischargeable(infos: list["_Scan"], facts: symbolic.Facts) -> bool:
     """Whether the ``stride >= 1`` guard :func:`_symbolic_stride_guard` would emit is
     provably redundant -- i.e. the loop is DOALL for EVERY symbol value, so a bare ``Map``
     is correct and the sequential fallback is never observably taken.
@@ -2740,14 +2740,14 @@ def _stride_guard_is_statically_dischargeable(infos: list["_Scan"]) -> bool:
     guarded = False
     for info in infos:
         s = info.scan_stride
-        if not (isinstance(s, sympy.Basic) and not s.is_Integer and s.is_positive is not True):
+        if not (isinstance(s, sympy.Basic) and not s.is_Integer and not loop_analysis._provably_le(1, s, facts)):
             continue
         guarded = True
         if info.iter_start is None or info.iter_end is None:
             return False
-        span_end = symbolic.simplify(info.iter_end)  # inclusive last index
-        span_top = symbolic.simplify(as_expr(symbolic.pystr_to_symbolic(info.iter_start)) + as_expr(s) - 1)
-        if not loop_analysis._provably_le(span_end, span_top):
+        span_end = symbolic.simplify(info.iter_end, facts)  # inclusive last index
+        span_top = symbolic.simplify(as_expr(symbolic.pystr_to_symbolic(info.iter_start)) + as_expr(s) - 1, facts)
+        if not loop_analysis._provably_le(span_end, span_top, facts):
             return False
     return guarded
 
@@ -2756,7 +2756,7 @@ def _lift_proven_doall_to_map(loop: LoopRegion, sdfg: SDFG) -> bool:
     """Lift a loop already PROVEN DOALL to a bare ``Map``, bypassing ``LoopToMap``'s own
     ``can_be_applied`` dependency test. :returns: whether the lift happened.
 
-    The caller's proof (:func:`_stride_guard_is_statically_dischargeable`) is what makes this
+    The caller's proof (:func:`stride_guard_is_statically_dischargeable`) is what makes this
     sound: ``LoopToMap`` refuses this shape because its subset test cannot see that the
     apparent recurrence ``out[i + k_w] = out[i + k_r] + delta`` needs two in-range iterations
     ``scan_stride`` apart, which the proven span bound rules out. Same contract as
@@ -4666,15 +4666,16 @@ def carry_distance_kind(distance: Any) -> str | None:
     simplified = symbolic.simplify(distance)
     if isinstance(simplified, sympy.Basic) and simplified.is_Integer or isinstance(simplified, int):
         return "scan" if int(simplified) >= 1 else None
-    positive = symbolic.ask("positive", *_sign_query(simplified))
-    if positive is True:
+    query, facts = sign_query(simplified)
+    positive = symbolic.ask(symbolic.predicate_relation(symbolic.Predicate.POSITIVE, query), facts)
+    if positive is symbolic.Truth.TRUE:
         return "scan"
-    if positive is False:
+    if positive is symbolic.Truth.FALSE:
         return None
     return "guard"
 
 
-def _sign_query(expr) -> tuple[Any, dict[str, frozenset[str]]]:
+def sign_query(expr) -> tuple[Any, symbolic.Facts]:
     """``expr`` and the facts to ask its SIGN under.
 
     Two things stand between a distance and its sign, and a read-AHEAD needs both cleared. Its
@@ -4698,10 +4699,17 @@ def _sign_query(expr) -> tuple[Any, dict[str, frozenset[str]]]:
     for node in sympy.preorder_traversal(expr):
         if isinstance(node, sympy.Pow) and node.exp.is_negative:
             divisors.update(sym.name for sym in free_symbols(as_expr(node.base)))
-    facts = {
-        sym.name: frozenset({"integer", "positive"} if sym.name in divisors else {"integer", "nonnegative"})
-        for sym in free_symbols(as_expr(expr))
-    }
+    names = {sym.name for sym in free_symbols(as_expr(expr))}
+    facts = symbolic.Facts(
+        [
+            symbolic.predicate_relation(
+                symbolic.Predicate.POSITIVE if name in divisors else symbolic.Predicate.NONNEGATIVE,
+                symbolic.symbol(name),
+            )
+            for name in sorted(names)
+        ],
+        frozenset(names),
+    )
     return expr, facts
 
 

@@ -863,8 +863,8 @@ class PromoteConstantIndexAccess(ppl.Pass):
                 # SymPy will not decide, while the helper folds that into the same ``None`` it
                 # already answers for indeterminate. Conservative default: any non-False answer
                 # means we cannot rule out overlap.
-                result = subsets.intersects(memlet.subset, slot)
-                if result is not False:
+                result = subsets.intersects(memlet.subset, slot, state.sdfg.facts())
+                if result is not symbolic.Truth.FALSE:
                     return True
         return False
 

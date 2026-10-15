@@ -545,7 +545,7 @@ class BranchElimination(transformation.MultiStateTransformation):
                         subsets1 = set()
                     for other_subset in subsets1:
                         for subset0 in subsets0:
-                            if subset0.intersects(other_subset):
+                            if subset0.intersects(other_subset, state0.sdfg.facts()) is not dace.symbolic.Truth.FALSE:
                                 intersects[name] = True
                 for name, subsets1 in state1_write_subsets.items():
                     if name in state0_write_subsets:
@@ -554,7 +554,7 @@ class BranchElimination(transformation.MultiStateTransformation):
                         subsets0 = set()
                     for other_subset in subsets0:
                         for subset1 in subsets1:
-                            if subset1.intersects(other_subset):
+                            if subset1.intersects(other_subset, state0.sdfg.facts()) is not dace.symbolic.Truth.FALSE:
                                 intersects[name] = True
 
                 if not all(v is False for k, v in intersects.items()):

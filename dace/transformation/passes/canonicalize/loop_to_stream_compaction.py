@@ -767,7 +767,6 @@ class LoopToStreamCompaction(ppl.Pass):
         new_name = f"compaction_it_{suffix}"
         while new_name in sdfg.symbols or new_name in sdfg.arrays:
             new_name += "_"
-        sdfg.add_symbol(new_name, dtype)
         repl = {loop.loop_variable: new_name}
         loop.replace_meta_accesses(repl)
         loop.replace_dict(repl)

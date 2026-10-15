@@ -217,7 +217,8 @@ def loop_provably_at_most_one_iteration(loop: LoopRegion) -> bool:
     start = get_init_assignment(loop)
     end = get_loop_end(loop)  # inclusive
     step = get_loop_stride(loop)
-    facts = loop.sdfg.facts()
+    # A loop not yet placed in an SDFG has no facts beyond its own bounds
+    facts = loop.sdfg.facts() if loop.sdfg is not None else symbolic.Facts.none()
     if start is None or end is None or step is None or symbolic.simplify(step, facts) != 1:
         return False
     return _provably_le(symbolic.simplify(end, facts), symbolic.simplify(start, facts), facts)

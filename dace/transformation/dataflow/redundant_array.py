@@ -320,7 +320,10 @@ def nested_connectors_may_alias(sdfg: SDFG, first: str, second: str) -> bool:
 
     for one in outer_memlets[first]:
         for other in outer_memlets[second]:
-            if one.data == other.data and subsets.intersects(one.subset, other.subset) is not False:
+            if (
+                one.data == other.data
+                and subsets.intersects(one.subset, other.subset, sdfg.facts()) is not symbolic.Truth.FALSE
+            ):
                 return True
     return False
 
@@ -555,7 +558,10 @@ class RedundantArray(pm.SingleStateTransformation):
                     other_subset = e.data.get_dst_subset(e, graph)
                     if other_subset is None:
                         return False
-                    if any(subsets.intersects(oset, other_subset) is not False for oset in true_out_subsets):
+                    if any(
+                        subsets.intersects(oset, other_subset, sdfg.facts()) is not symbolic.Truth.FALSE
+                        for oset in true_out_subsets
+                    ):
                         return False
 
             # In non-permissive mode, check if the state has two or more access nodes

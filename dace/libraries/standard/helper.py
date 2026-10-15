@@ -201,13 +201,25 @@ def is_short_loop(loop, cache: dict[int, bool] | None = None) -> bool:
     start = loop_analysis.get_init_assignment(loop)
     end = loop_analysis.get_loop_end(loop)
     stride = loop_analysis.get_loop_stride(loop)
+    symbolic = dace.symbolic
     if start is None or end is None or stride is None:
         verdict = False
-    elif dace.symbolic.ask("positive", dace.symbolic.simplify(stride)) is not True:
-        verdict = False
     else:
-        trips = dace.symbolic.int_floor(end - start, stride) + 1
-        verdict = dace.symbolic.ask("negative", dace.symbolic.simplify(trips - REENTRY_SHORT_LOOP_TRIPS)) is True
+        from dace.sdfg.state import SymbolResolver  # dace.sdfg.state imports the libraries
+
+        facts = SymbolResolver().facts_at(loop)
+        stride = symbolic.simplify(stride, facts)
+        if (
+            symbolic.ask(symbolic.predicate_relation(symbolic.Predicate.POSITIVE, stride), facts)
+            is not symbolic.Truth.TRUE
+        ):
+            verdict = False
+        else:
+            trips = symbolic.simplify(symbolic.int_floor(end - start, stride) + 1 - REENTRY_SHORT_LOOP_TRIPS, facts)
+            verdict = (
+                symbolic.ask(symbolic.predicate_relation(symbolic.Predicate.NEGATIVE, trips), facts)
+                is symbolic.Truth.TRUE
+            )
     if cache is not None:
         cache[id(loop)] = verdict
     return verdict
@@ -299,7 +311,10 @@ def cpu_transfer_parallelizes(
     :param loop_cache: forwarded to :func:`is_reentered_cpu_transfer`.
     :returns: ``True`` to keep the parallel element map, ``False`` to sequentialize it.
     """
-    return is_parallel_cpu_transfer_size(num_elements) and not is_reentered_cpu_transfer(
+    from dace.sdfg.state import SymbolResolver  # dace.sdfg.state imports the libraries
+
+    facts = SymbolResolver().facts_at(state, node)
+    return is_parallel_cpu_transfer_size(num_elements, facts) and not is_reentered_cpu_transfer(
         node, state, loop_cache=loop_cache
     )
 

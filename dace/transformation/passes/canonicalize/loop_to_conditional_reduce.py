@@ -381,9 +381,10 @@ class LoopToConditionalReduce(ppl.Pass):
         stride = loop_analysis.get_loop_stride(loop)
         if first is None or last is None or stride is None:
             return None
-        if loop_analysis._provably_le(1, stride):
+        facts = loop.sdfg.facts()
+        if loop_analysis._provably_le(1, stride, facts):
             return loop.loop_variable, first, last
-        if loop_analysis._provably_le(stride, -1):
+        if loop_analysis._provably_le(stride, -1, facts):
             return loop.loop_variable, last, first
         return None
 
@@ -396,15 +397,20 @@ class LoopToConditionalReduce(ppl.Pass):
         if subset is None:
             return False
         for (lo, hi, _), extent in zip(subset.ndrange(), sdfg.arrays[edge.src.data].shape):
-            smallest = self.affine_extreme(lo, bounds, lowest=True)
-            largest = self.affine_extreme(hi, bounds, lowest=False)
+            smallest = self.affine_extreme(lo, bounds, True, sdfg.facts())
+            largest = self.affine_extreme(hi, bounds, False, sdfg.facts())
             if smallest is None or largest is None:
                 return False
-            if not (loop_analysis._provably_le(0, smallest) and loop_analysis._provably_le(largest, extent - 1)):
+            if not (
+                loop_analysis._provably_le(0, smallest, sdfg.facts())
+                and loop_analysis._provably_le(largest, extent - 1, sdfg.facts())
+            ):
                 return False
         return True
 
-    def affine_extreme(self, bound: Any, bounds: tuple[str, Any, Any], lowest: bool) -> Any | None:
+    def affine_extreme(
+        self, bound: Any, bounds: tuple[str, Any, Any], lowest: bool, facts: symbolic.Facts
+    ) -> Any | None:
         """The smallest (``lowest``) or largest value ``bound`` takes over the loop, or ``None`` when ``bound`` is
         not affine in the iterator or the sign of its slope is unknown."""
         name, low, high = bounds
@@ -412,12 +418,12 @@ class LoopToConditionalReduce(ppl.Pass):
         iterator = next((s for s in bound.free_symbols if str(s) == name), None)
         if iterator is None:
             return bound
-        slope = symbolic.simplify(bound.diff(iterator))
+        slope = symbolic.simplify(bound.diff(iterator), facts)
         if slope.has(iterator):
             return None
-        if loop_analysis._provably_le(0, slope):
+        if loop_analysis._provably_le(0, slope, facts):
             rising = True
-        elif loop_analysis._provably_le(slope, 0):
+        elif loop_analysis._provably_le(slope, 0, facts):
             rising = False
         else:
             return None

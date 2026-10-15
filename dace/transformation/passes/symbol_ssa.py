@@ -297,7 +297,7 @@ class SymbolSSA(ppl.Pass):
                     fresh[root] = find_new_name(name, taken)
                     taken.add(fresh[root])
                     if name in sdfg.symbols:
-                        sdfg.symbols[fresh[root]] = sdfg.symbols[name]
+                        sdfg.add_symbol(fresh[root], sdfg.symbols[name])
                     renamed[name].add(fresh[root])
             if not fresh:
                 continue

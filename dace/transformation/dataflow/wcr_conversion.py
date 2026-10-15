@@ -214,7 +214,7 @@ def nested_connector_subset(nsdfg_node: nodes.NestedSDFG, conn: str, writes: boo
                 sub = e.data.subset if e.data.data == conn else e.data.other_subset
                 if sub is None or len(sub.size()) != len(idesc.shape):
                     return None
-                acc = copy.deepcopy(sub) if acc is None else subsets.union(acc, sub)
+                acc = copy.deepcopy(sub) if acc is None else subsets.union(acc, sub, nsdfg_node.sdfg.facts())
     if acc is None:
         return None
     acc.replace({k: symbolic.pystr_to_symbolic(v) for k, v in nsdfg_node.symbol_mapping.items()})

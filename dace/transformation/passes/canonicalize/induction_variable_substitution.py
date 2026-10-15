@@ -392,13 +392,13 @@ def extract_tasklet_iv(
         return None
 
     write_subset = write_edge.data.subset
-    if _one_elem(write_subset) != 1:
+    if _one_elem(write_subset, sdfg.facts()) != 1:
         return None
     loop_var_sym = symbolic.pystr_to_symbolic(loop.loop_variable)
     if _uses(write_subset, loop_var_sym):
         return None
 
-    final_accum, final_subset = _chase_forward_to_accum(state, sdfg, write_edge.dst, write_subset)
+    final_accum, final_subset = _chase_forward_to_accum(state, sdfg, write_edge.dst, write_subset, sdfg.facts())
     if final_accum not in sdfg.arrays:
         return None
     # The eventual write subset must also be loop-invariant. Otherwise the
@@ -1400,7 +1400,7 @@ def staged_write(
     if ssi == reader_si and snode is not reader_node and not reaches(sstate, snode, reader_node):
         return None  # two versions in one state, and no dataflow path proves the producer's write ran
     write_sub = _subset_at(sedge, snode)
-    if write_sub is None or _one_elem(write_sub) != 1 or str(write_sub) != str(reader_sub):
+    if write_sub is None or _one_elem(write_sub, sdfg.facts()) != 1 or str(write_sub) != str(reader_sub):
         return None  # a different element -> that write says nothing about the value read here
     if not isinstance(sedge.src, nodes.Tasklet):
         return None
@@ -1443,7 +1443,7 @@ def remat_source(
         if not isinstance(src, nodes.AccessNode) or e.dst_conn is None:
             return None
         sub = _subset_at(e, src)
-        if sub is None or _one_elem(sub) != 1:
+        if sub is None or _one_elem(sub, sdfg.facts()) != 1:
             return None
         if _body_writes(chain, src.data):
             # Re-reading this container late would read the overwrite, so recompute it instead. The
@@ -1488,7 +1488,7 @@ def rematerializable_producer(
         return None
     sdesc = sdfg.arrays.get(stage.data)
     stage_sub = _subset_at(write_edge, stage)
-    if sdesc is None or stage_sub is None or _one_elem(stage_sub) != 1:
+    if sdesc is None or stage_sub is None or _one_elem(stage_sub, sdfg.facts()) != 1:
         return None
     if not sdesc.transient or _uses(stage_sub, loop_var):
         return None  # a subset moving with i is the DIRECT shifted read, which the chase handles
@@ -1520,7 +1520,7 @@ def plan_rotation(
     are the same loop.
     """
     desc = sdfg.arrays.get(accum)
-    if desc is None or not desc.transient or _one_elem(subsets.Range.from_array(desc)) != 1:
+    if desc is None or not desc.transient or _one_elem(subsets.Range.from_array(desc), sdfg.facts()) != 1:
         return None
 
     # (1) written EXACTLY ONCE per iteration -- else a read's value is not this one update's.
@@ -1528,7 +1528,7 @@ def plan_rotation(
     if len(writes) != 1:
         return None
     wsi, write_state, post_node, write_edge = writes[0]
-    if _one_elem(_subset_at(write_edge, post_node)) != 1:
+    if _one_elem(_subset_at(write_edge, post_node), sdfg.facts()) != 1:
         return None
 
     loop_var = symbolic.pystr_to_symbolic(loop.loop_variable)
@@ -1559,7 +1559,7 @@ def plan_rotation(
             if _uses(cur_sub, loop_var):
                 src_data, src_subset = cur_node.data, cur_sub
                 break
-            if not cdesc.transient or _one_elem(cur_sub) != 1:
+            if not cdesc.transient or _one_elem(cur_sub, sdfg.facts()) != 1:
                 return None
             staged = _body_writes(chain, cur_node.data)
             if len(staged) != 1:
@@ -1567,7 +1567,7 @@ def plan_rotation(
             ssi, _, snode, sedge = staged[0]
             if ssi > cur_si or (ssi == cur_si and snode is not cur_node):
                 return None  # written LATER in the body -> a carried value, not this iteration's
-            if _one_elem(_subset_at(sedge, snode)) != 1:
+            if _one_elem(_subset_at(sedge, snode), sdfg.facts()) != 1:
                 return None
             # The whole staging container dies with the update; (6) below proves nothing else reads it.
             chase.extend((st, n) for _, st, n in _body_nodes(chain, cur_node.data))

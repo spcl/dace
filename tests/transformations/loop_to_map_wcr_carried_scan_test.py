@@ -46,7 +46,6 @@ def build_prefix_scan(use_wcr: bool) -> dace.SDFG:
     sdfg.add_array("B", [N], dace.float64)
     sdfg.add_array("acc", [1], dace.float64)
     sdfg.add_array("out", [N], dace.float64)
-    sdfg.add_symbol("i", dace.int64)
 
     loop = LoopRegion("loop", f"i < {N}", "i", "i = 0", "i = i + 1")
     sdfg.add_node(loop, is_start_block=True)

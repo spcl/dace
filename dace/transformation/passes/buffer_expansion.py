@@ -449,7 +449,7 @@ class BufferExpansion(ppl.Pass):
                     # Written then read at this node -> defined this iteration. A single covering
                     # write, or several node-local writes that together tile the read region
                     # (multi-edge fill), both qualify.
-                    if BufferExpansion._union_covers(in_subsets, read):
+                    if BufferExpansion.union_covers(in_subsets, read, loop.sdfg.facts()):
                         continue
                     exposed_reads.append((block, read, in_subsets))
         if not (saw_read and saw_write):
@@ -469,12 +469,12 @@ class BufferExpansion(ppl.Pass):
             for wb, subs in write_blocks.items():
                 if wb is not block and wb in dominators:
                     covering.extend(subs)
-            if not BufferExpansion._union_covers(covering, read):
+            if not BufferExpansion.union_covers(covering, read, loop.sdfg.facts()):
                 return False  # read reaches the loop entry without a covering write -> carried
         return True
 
     @staticmethod
-    def _union_covers(writes: list[Any], read) -> bool:
+    def union_covers(writes: list[Any], read, facts: symbolic.Facts) -> bool:
         """True iff the ``writes`` TOGETHER cover ``read`` (sound; conservative when unsure).
 
         Accepts either a single write that already covers ``read``, or several unit-step writes
@@ -496,7 +496,7 @@ class BufferExpansion(ppl.Pass):
         # Both return a (truthy) ValueError on a dimensionality mismatch instead of raising, so gate
         # the fast path on matching dims -- every subset here is for the same buffer, so this only
         # rejects malformed input, never a real cover.
-        if any(w is not None and w.dims() == dims and w.covers_precise(read) for w in writes):
+        if any(w is not None and w.dims() == dims and w.covers_precise(read, facts) for w in writes):
             return True
         chunks = [w for w in writes if isinstance(w, subsets.Range) and w.dims() == dims]
         if len(chunks) < 2:

@@ -4,12 +4,14 @@ Contains replacements for filtering functions. This module includes functions fr
 NumPy's Indexing Routines and Sorting, Searching, and Counting Functions.
 """
 
+from collections.abc import Mapping
+
 from dace import SDFG, Memlet, SDFGState, data, dtypes, nodes, subsets, symbolic
 from dace.frontend.common import op_repository as oprepo
 from dace.frontend.python.replacements.utils import ProgramVisitor, broadcast_together
 
 
-def branch_type(operand, arr: data.Data | None) -> dtypes.typeclass:
+def branch_type(operand, arr: data.Data | None, symbols: Mapping[str, dtypes.typeclass]) -> dtypes.typeclass:
     """dtype of one ``numpy.where`` branch: the array's own, else the scalar's.
 
     A symbolic scalar (``2 * N``) reaches here as a sympy expression, whose Python ``type()`` --
@@ -18,7 +20,7 @@ def branch_type(operand, arr: data.Data | None) -> dtypes.typeclass:
     if arr is not None:
         return arr.dtype
     if symbolic.issymbolic(operand):
-        return symbolic.symtype(operand)
+        return symbolic.symtype(operand, symbols)
     return dtypes.dtype_to_typeclass(type(operand))
 
 
@@ -91,8 +93,8 @@ def _array_array_where(
     except KeyError:
         right_arr = None
 
-    left_type = branch_type(left_operand, left_arr)
-    right_type = branch_type(right_operand, right_arr)
+    left_type = branch_type(left_operand, left_arr, visitor.symbol_types())
+    right_type = branch_type(right_operand, right_arr, visitor.symbol_types())
 
     # Implicit Python coversion implemented as casting
     arguments = [cond_arr, left_arr or left_type, right_arr or right_type]

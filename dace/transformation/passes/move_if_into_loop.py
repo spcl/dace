@@ -47,7 +47,7 @@ from dace.ordered import OrderedSet
 from dace.properties import CodeBlock
 from dace.sdfg import nodes, propagation
 from dace.sdfg.sdfg import InterstateEdge, memlets_in_ast
-from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState
+from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState, SymbolResolver
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 from dace.transformation.interstate.state_fusion import keep_start_block
@@ -271,8 +271,13 @@ def body_may_overwrite(region: ControlFlowRegion, loop: LoopRegion, read: Memlet
                 written = e.data.get_dst_subset(e, st) or e.data.subset
                 if written is None:
                     return True
-                image = propagation.propagate_subset([Memlet(data=read.data, subset=written)], desc, params, rng)
-                if subsets.intersects(read.subset, required(image.subset)) is not False:
+                image = propagation.propagate_subset(
+                    [Memlet(data=read.data, subset=written)], desc, params, rng, SymbolResolver().facts_at(st)
+                )
+                if (
+                    subsets.intersects(read.subset, required(image.subset), SymbolResolver().facts_at(st))
+                    is not dace.symbolic.Truth.FALSE
+                ):
                     return True
     return False
 

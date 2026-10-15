@@ -787,7 +787,6 @@ class UntileLoops(ppl.Pass):
 
         # New iterator with step ``inner_stride``; > 1 is a cascade rung collapsed on a later sweep.
         k_var = f"{UNTILE_PREFIX}{lowest_free_suffix(sdfg, (UNTILE_PREFIX,))}"
-        sdfg.add_symbol(k_var, sdfg.symbols.get(outer.loop_variable, dace.int64))
         # Exclusive bound = union of visited tiles: ``stop`` rounded up to a tile boundary above
         # ``outer_start``. Equals ``N`` when ``K | N``; a tiled stencil's interior stop is not a tile
         # multiple, so ``outer_end + 1`` would truncate the last tile.

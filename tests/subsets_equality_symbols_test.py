@@ -16,8 +16,9 @@ def test_equal_ranges_across_symbol_instances():
     assert rng1 == rng2
     assert not (rng1 != rng2)
     # equality must not contradict the containment answers for the same pair
-    assert rng1.covers(rng2) and rng2.covers(rng1)
-    assert subsets.intersects(rng1, rng2)
+    facts = dace.symbolic.Facts.none()
+    assert rng1.covers(rng2, facts) and rng2.covers(rng1, facts)
+    assert subsets.intersects(rng1, rng2, facts) is dace.symbolic.Truth.TRUE
 
 
 def test_equal_ranges_hash_alike():

@@ -3,7 +3,6 @@
 import gzip
 import json
 import os
-import threading
 import warnings
 
 import numpy as np

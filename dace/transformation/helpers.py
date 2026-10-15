@@ -441,7 +441,7 @@ def drop_folded_boundary_edge(
     while kept_level is not None and level is not None and kept_level.edge is not level.edge:
         kept_memlet, memlet = kept_level.edge.data, level.edge.data
         if kept_memlet.data == memlet.data and kept_memlet.subset is not None and memlet.subset is not None:
-            widened = union(kept_memlet.subset, memlet.subset)
+            widened = union(kept_memlet.subset, memlet.subset, SymbolResolver().facts_at(state))
             kept_memlet.subset = widened if widened is not None else Range.from_array(sdfg.arrays[kept_memlet.data])
         kept_level, level = kept_level.parent, level.parent
     outer = edge.src if is_input else edge.dst

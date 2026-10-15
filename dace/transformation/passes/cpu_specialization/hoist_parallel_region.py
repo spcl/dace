@@ -294,7 +294,7 @@ def whole_fill_hull(
         return None
     hull = parts[0]
     for part in parts[1:]:
-        hull = subsets.union(hull, part) if hull is not None else None
+        hull = subsets.union(hull, part, state.sdfg.facts()) if hull is not None else None
     if hull is None or str(hull) == str(full) or not hull.free_symbols <= inputs:
         return None
     return hull

@@ -3,6 +3,7 @@
 Contains replacements of Python mathematical operations.
 """
 
+from collections.abc import Mapping
 from numbers import Integral, Number
 from typing import Any
 
@@ -161,12 +162,12 @@ def is_data(sdfg: SDFG, operand: Any) -> bool:
     return isinstance(operand, str) and operand in sdfg.arrays
 
 
-def operand_dtype(sdfg: SDFG, operand: Any) -> dtypes.typeclass:
+def operand_dtype(sdfg: SDFG, operand: Any, symbols: Mapping[str, dtypes.typeclass]) -> dtypes.typeclass:
     """dtype of a replacement operand: the container's own, else the constant's."""
     if is_data(sdfg, operand):
         return sdfg.arrays[operand].dtype
     if symbolic.issymbolic(operand):
-        return symbolic.symtype(operand)
+        return symbolic.symtype(operand, symbols)
     return dtypes.dtype_to_typeclass(type(operand))
 
 
@@ -193,7 +194,7 @@ def magnitude(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, x: Any) -> Any:
 def real_probe(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, x: str) -> str:
     """``isfinite``/``isnan`` have no complex overload in C++, so complex operands are tested
     through their magnitude, which is non-finite exactly when a component is."""
-    if operand_dtype(sdfg, x) in COMPLEX_TYPES:
+    if operand_dtype(sdfg, x, pv.symbol_types()) in COMPLEX_TYPES:
         return ufunc_call(pv, sdfg, state, "absolute", [x])
     return x
 
@@ -342,7 +343,7 @@ def nan_to_num(
     if isinstance(x, Number):
         return np.nan_to_num(x, nan=nan, posinf=posinf, neginf=neginf).item()
 
-    dtype = operand_dtype(sdfg, x)
+    dtype = operand_dtype(sdfg, x, pv.symbol_types())
     if dtype in COMPLEX_TYPES:
         raise ValueError(
             "numpy.nan_to_num on complex input is unsupported: the repaired real and "
@@ -367,7 +368,7 @@ def nan_to_num(
 @oprepo.replaces("numpy.i0")
 def i0(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, x: Any) -> str:
     """``numpy.i0``: the modified Bessel function of the first kind, order 0."""
-    if operand_dtype(sdfg, x) in COMPLEX_TYPES:
+    if operand_dtype(sdfg, x, pv.symbol_types()) in COMPLEX_TYPES:
         raise ValueError("numpy.i0 is not defined for complex input")
     return ufunc_call(pv, sdfg, state, "i0", [x])
 
@@ -378,7 +379,7 @@ def sinc(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, x: Any) -> Any:
     singularity at zero so the quotient never divides by it."""
     if isinstance(x, Number):
         return float(np.sinc(x))
-    restype = real_result_type(operand_dtype(sdfg, x))
+    restype = real_result_type(operand_dtype(sdfg, x, pv.symbol_types()))
     shifted = select(pv, sdfg, state, ufunc_call(pv, sdfg, state, "equal", [x, 0]), restype.type(1.0e-20), x)
     scaled = ufunc_call(pv, sdfg, state, "multiply", [restype.type(np.pi), shifted])
     return ufunc_call(pv, sdfg, state, "divide", [ufunc_call(pv, sdfg, state, "sin", [scaled]), scaled])
@@ -388,14 +389,14 @@ def sinc(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, x: Any) -> Any:
 def angle(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, z: Any, deg: bool = False) -> str:
     """``numpy.angle``: the argument of z, which ``arctan2`` already computes with the right
     quadrant and the right sign on both zeros."""
-    dtype = operand_dtype(sdfg, z)
+    dtype = operand_dtype(sdfg, z, pv.symbol_types())
     if dtype in COMPLEX_TYPES:
         parts = [_imag(pv, sdfg, state, z), _real(pv, sdfg, state, z)]
     else:
         parts = [real_result_type(dtype).type(0.0), z]
     result = ufunc_call(pv, sdfg, state, "arctan2", parts)
     if deg:
-        scale = operand_dtype(sdfg, result).type(180.0 / np.pi)
+        scale = operand_dtype(sdfg, result, pv.symbol_types()).type(180.0 / np.pi)
         result = ufunc_call(pv, sdfg, state, "multiply", [result, scale])
     return result
 
@@ -404,7 +405,7 @@ def angle(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, z: Any, deg: bool = 
 def iscomplexobj(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, x: Any) -> bool:
     """A predicate on the descriptor, not on the values: it resolves while parsing and emits no
     dataflow at all."""
-    return operand_dtype(sdfg, x) in COMPLEX_TYPES
+    return operand_dtype(sdfg, x, pv.symbol_types()) in COMPLEX_TYPES
 
 
 @oprepo.replaces("numpy.real_if_close")
@@ -414,7 +415,7 @@ def real_if_close(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: Any, tol:
     A complex operand is refused. Whether the result is the real part or the untouched complex
     array depends on the imaginary parts themselves, so its dtype cannot be put on a descriptor.
     """
-    if operand_dtype(sdfg, a) not in COMPLEX_TYPES:
+    if operand_dtype(sdfg, a, pv.symbol_types()) not in COMPLEX_TYPES:
         return a
     raise ValueError(
         "numpy.real_if_close on complex input is unsupported: the result dtype is "

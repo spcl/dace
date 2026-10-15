@@ -19,7 +19,8 @@ def differently_minted_pair():
     """The same name from the two paths that disagree: a map parameter and a parsed memlet."""
     from_map = symbolic.symbol("k", dace.int64, nonnegative=True)
     from_string = dace.Memlet("A[k]").subset.min_element()[0]
-    assert from_map - from_string != 0, "the two paths agree now, so this test guards nothing"
+    # Symbols are names only: the two paths mint the same symbol, which every fold below relies on
+    assert from_map - from_string == 0, "a symbol is its name"
     return from_map, from_string
 
 
@@ -42,13 +43,6 @@ def test_an_offset_by_another_symbol_is_left_alone():
     rng.offset(dace.Memlet("A[j]").subset, negative=True)
     assert rng != subsets.Range([(0, 0, 1)]), "k - j was folded away"
     assert {str(s) for s in rng.free_symbols} == {"k", "j"}, f"unexpected symbols in {rng}"
-
-
-def test_the_guard_reports_a_duplicated_name():
-    from_map, from_string = differently_minted_pair()
-    assert symbolic.has_duplicate_symbol_names(from_map - from_string)
-    assert not symbolic.has_duplicate_symbol_names(from_map - symbolic.symbol("j"))
-    assert not symbolic.has_duplicate_symbol_names(5)
 
 
 def test_compose_folds_it_too():

@@ -316,7 +316,7 @@ def fully_written(state: SDFGState, node: nodes.AccessNode, desc: data.Data, app
         approximated = approximation.get(edge)
         if approximated is None or approximated.subset is None:
             continue  # unknown writes only ADD coverage, so dropping them stays under-approximate
-        if approximated.subset.covers(full):
+        if approximated.subset.covers(full, state.sdfg.facts()):
             return True
         written.append(approximated.subset)
     return elementwise_writes_cover(written, desc)

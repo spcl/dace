@@ -166,7 +166,7 @@ def test_second_canonicalize_keeps_the_guard_its_own_block():
 
 
 def _plain_map_bound_symbols(sdfg):
-    """Symbol names a map range still spells WITHOUT the nonnegativity assumption."""
+    """Symbol names a map range reads that the facts of its SDFG do not prove nonnegative."""
     return {
         str(s)
         for sd in sdfg.all_sdfgs_recursive()
@@ -177,16 +177,12 @@ def _plain_map_bound_symbols(sdfg):
         for bound in rng
         if isinstance(bound, sympy.Basic)
         for s in bound.free_symbols
-        if not s.is_nonnegative
+        if str(s) in sd.symbols and not dace.symbolic.provably_nonnegative(s, sd.facts())
     }
 
 
 def test_map_bounds_keep_the_assumption_across_a_second_canonicalize():
-    """The assumption lives on the symbol OBJECTS threaded through the graph, and a stage that
-    rebuilds a map bound by PARSING mints a plain one. The terminal pass therefore has to decide
-    "already assumed" over everything it rewrites, not over the descriptors alone: run 1 marks
-    the descriptors, so a descriptor-only look makes run 2 skip and leaves the map bounds spelled
-    ``N`` where run 1 spelled ``symbol(N, nonnegative=True)`` -- the same bound, two digests."""
+    """The assumption is a fact of the SDFG, so a second canonicalize keeps it on every map bound."""
     sdfg = _axpy_sdfg()
     canonicalize(sdfg)
     assert not _plain_map_bound_symbols(sdfg)
@@ -194,42 +190,37 @@ def test_map_bounds_keep_the_assumption_across_a_second_canonicalize():
     assert not _plain_map_bound_symbols(sdfg)
 
 
-def test_reassumes_a_map_bound_that_was_rebuilt_plain():
-    """A bound re-parsed after the pass ran is exactly what a later stage leaves behind. The pass
-    must see it and re-mark -- and report that it did, since it rewrote the graph."""
+def test_a_reparsed_map_bound_keeps_the_assumption():
+    """A bound re-parsed after the pass ran is exactly what a later stage leaves behind. The assumption lives in the
+    SDFG's symbol repository, not on the symbol objects, so the re-parsed bound keeps it and the pass has nothing to
+    redo."""
     sdfg = _axpy_sdfg()
     canonicalize(sdfg)
     entries = [n for st in sdfg.states() for n in st.nodes() if isinstance(n, nodes.MapEntry)]
     assert entries
     entries[0].map.range = subsets.Range.from_string(str(entries[0].map.range))
-    assert _plain_map_bound_symbols(sdfg) == {"N"}
-    assert set_symbol_nonnegative_assumptions(sdfg) == 1
     assert not _plain_map_bound_symbols(sdfg)
     assert set_symbol_nonnegative_assumptions(sdfg) is None
 
 
-def test_a_positive_size_stays_positive_beside_a_plain_spelling():
-    """``positive=True`` is a different sympy symbol from ``nonnegative=True``. A plain spelling of a positive size in the
-    outer SDFG must not respell it merely nonnegative there while the nested SDFG keeps it positive: the connector
-    descriptors would stop being equivalent (fuse_move_ifs, scatter_accum_dup, segment_reduce_ragged)."""
-    size = dace.symbol("P", dace.int64, positive=True)
+def test_a_positive_size_stays_positive():
+    """A size declared positive keeps that (stronger) assumption in every SDFG of the nesting."""
+    positive = frozenset({dace.symbolic.Predicate.POSITIVE})
+    size = dace.symbol("P", dace.int64)
     inner = dace.SDFG("positive_inner")
-    inner.add_symbol("P", dace.int64)
+    inner.add_symbol("P", dace.int64, predicates=positive)
     inner.add_array("x", [size], dace.float64)
     inner.add_state()
     sdfg = dace.SDFG("positive_outer")
-    sdfg.add_symbol("P", dace.int64)
+    sdfg.add_symbol("P", dace.int64, predicates=positive)
     sdfg.add_array("x", [size], dace.float64)
     state = sdfg.add_state()
     node = state.add_nested_sdfg(inner, {"x"}, set(), {"P": size})
     state.add_edge(state.add_read("x"), None, node, "x", dace.Memlet.from_array("x", sdfg.arrays["x"]))
-    # The plain spelling a re-parsed bound leaves behind.
     state.add_mapped_tasklet("touch", {"i": "0:P"}, {"a": dace.Memlet("x[i]")}, "pass", {}, external_edges=True)
-    assert set_symbol_nonnegative_assumptions(sdfg)
+    assert set_symbol_nonnegative_assumptions(sdfg) is None
     sdfg.validate()
-    assert all(
-        s.is_positive for g in sdfg.all_sdfgs_recursive() for d in g.arrays.values() for s in d.shape[0].free_symbols
-    )
+    assert all(g.symbol_repo.params.predicates["P"] == positive for g in sdfg.all_sdfgs_recursive())
 
 
 def test_guard_leads_the_block_list_on_every_canonicalize():
@@ -364,8 +355,8 @@ if __name__ == "__main__":
     test_survives_full_canonicalize_and_runs()
     test_second_canonicalize_keeps_the_guard_its_own_block()
     test_map_bounds_keep_the_assumption_across_a_second_canonicalize()
-    test_reassumes_a_map_bound_that_was_rebuilt_plain()
-    test_a_positive_size_stays_positive_beside_a_plain_spelling()
+    test_a_reparsed_map_bound_keeps_the_assumption()
+    test_a_positive_size_stays_positive()
     test_guard_leads_the_block_list_on_every_canonicalize()
     test_repositioning_alone_is_reported_as_a_change()
     test_guard_aborts_on_negative_symbol()

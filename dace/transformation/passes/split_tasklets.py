@@ -9,10 +9,11 @@ from collections.abc import Iterable
 from typing import Any
 
 import dace
-from dace import SDFG, properties, subsets
+from dace import SDFG, properties, subsets, symbolic
 from dace import graphlib as nx
 from dace.ordered import OrderedSet
 from dace.sdfg.nodes import CodeBlock
+from dace.sdfg.state import SymbolResolver
 from dace.sdfg.type_inference import infer_types
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
@@ -630,25 +631,27 @@ def same_array_writes_are_ordered(plans: list[OutputPlan], out_edges: dict[str, 
     return True
 
 
-def overlaps_a_read(write, reads: Iterable[Any]) -> bool:
+def overlaps_a_read(write, reads: Iterable[Any], facts: symbolic.Facts) -> bool:
     for read in reads:
         if read.data.data != write.data.data:
             continue
         if read.data.subset is None or write.data.subset is None:
             return True
-        if subsets.intersects(read.data.subset, write.data.subset) is not False:
+        if subsets.intersects(read.data.subset, write.data.subset, facts) is not symbolic.Truth.FALSE:
             return True
     return False
 
 
-def writes_stay_whole(plans: dict[str, OutputPlan], in_edges: dict[str, Any], out_edges: dict[str, Any]) -> bool:
+def writes_stay_whole(
+    plans: dict[str, OutputPlan], in_edges: dict[str, Any], out_edges: dict[str, Any], facts: symbolic.Facts
+) -> bool:
     """True if a split loses an order: another output reads the written element or an in-place write's value."""
     for conn, write in out_edges.items():
         others = [plan for plan in plans.values() if plan.out_conn != conn]
-        if overlaps_a_read(write, [in_edges[name] for plan in others for name in plan.input_reads]):
+        if overlaps_a_read(write, [in_edges[name] for plan in others for name in plan.input_reads], facts):
             return True
         if any(reads_output(plans, plan.out_conn, conn) for plan in others) and overlaps_a_read(
-            write, in_edges.values()
+            write, in_edges.values(), facts
         ):
             return True
     return False
@@ -678,7 +681,9 @@ def plan_output_split(
     if any(edge.data.data in symbol_lifted_data for edge in out_edges.values()):
         return None
     plans = {output: plan_output(tasklet, body, output, in_edges) for output in tasklet.out_connectors}
-    if None in plans.values() or writes_stay_whole(plans, in_edges, out_edges):
+    if None in plans.values() or writes_stay_whole(
+        plans, in_edges, out_edges, SymbolResolver().facts_at(state, tasklet)
+    ):
         return None
     ordered = emission_order(tasklet, plans)
     if not same_array_writes_are_ordered(ordered, out_edges):

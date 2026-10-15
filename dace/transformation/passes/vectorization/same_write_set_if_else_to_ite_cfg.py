@@ -27,9 +27,8 @@ from dace.sdfg.construction_utils import (
     copy_state_contents,
 )
 from dace.sdfg.graph import Edge, MultiConnectorEdge
-from dace.sdfg.narrowing import as_basic, as_expr
 from dace.sdfg.sdfg import InterstateEdge
-from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SymbolResolver
 from dace.symbolic_engine import to_sympy
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.helpers import get_parent_map_and_loop_scopes
@@ -179,23 +178,6 @@ def iteration_symbol_ranges(
     return ranges
 
 
-def provably_nonnegative(expr: sympy.Basic) -> bool:
-    """Whether ``expr`` is provably ``>= 0`` for every legal value of its free symbols.
-
-    A bare sympy symbol carries no positivity assumption, so re-declare free symbols as positive
-    integers (the standing DaCe shape/range assumption) before asking. Fails closed on anything
-    still indeterminate.
-
-    :param expr: The symbolic expression to test.
-    :returns: ``True`` only if non-negativity is proven.
-    """
-    expr = symbolic.simplify(expr)
-    if expr.is_number:
-        return bool(as_expr(expr) >= 0)
-    positive = {s: sympy.Symbol(s.name, positive=True, integer=True) for s in expr.free_symbols}
-    return as_basic(symbolic.simplify(expr.subs(positive))).is_nonnegative is True
-
-
 def arm_accesses_are_in_range_unguarded(cb: ConditionalBlock) -> bool:
     """Whether every access in every arm stays in bounds with the guard removed.
 
@@ -212,6 +194,8 @@ def arm_accesses_are_in_range_unguarded(cb: ConditionalBlock) -> bool:
     if not ranges:  # no enclosing map: nothing guarded
         return False
     syms = [symbolic.pystr_to_symbolic(name) for name in ranges]
+    # Inside the enclosing scopes: their ranges are what make a corner an executed iteration
+    facts = SymbolResolver().facts_at(cb)
     corners = [dict(zip(ranges, combo)) for combo in itertools.product(*(ranges[n] for n in ranges))]
 
     for _cond, body in cb.branches:
@@ -234,7 +218,7 @@ def arm_accesses_are_in_range_unguarded(cb: ConditionalBlock) -> bool:
                             return False  # corners do not bound a non-affine index
                         for corner in corners:
                             at = expr.subs({symbolic.pystr_to_symbolic(k): v for k, v in corner.items()})
-                            if not provably_nonnegative(at if low else bound - at):
+                            if not symbolic.provably_nonnegative(at if low else bound - at, facts):
                                 return False
     return True
 

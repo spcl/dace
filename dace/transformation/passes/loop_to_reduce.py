@@ -26,7 +26,7 @@ from dace import memlet as mm
 from dace.ordered import OrderedSet
 from dace.sdfg import graph as gr
 from dace.sdfg.propagation import propagate_subset
-from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SymbolResolver
 from dace.symbolic import AND, OR, Subscript, bitwise_and, bitwise_or
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
@@ -820,10 +820,16 @@ def _expand_over_loop(
         off = symbolic.simplify(rb_sym - coeff * ivar, facts)
         if coeff.has(ivar) or off.has(ivar):
             return None  # non-linear
-        if not (coeff.is_integer and coeff.is_positive):
+        if not (
+            symbolic._integral(coeff)
+            and symbolic.ask(symbolic.predicate_relation(symbolic.Predicate.POSITIVE, coeff), facts)
+            is symbolic.Truth.TRUE
+        ):
             return None  # only ascending integer read stride
         step = symbolic.simplify(coeff * loop_stride, facts)
-        ranges.append((symbolic.simplify(coeff * start + off, facts), symbolic.simplify(coeff * end + off, facts), step))
+        ranges.append(
+            (symbolic.simplify(coeff * start + off, facts), symbolic.simplify(coeff * end + off, facts), step)
+        )
     return subsets.Range(ranges)
 
 
@@ -1247,7 +1253,9 @@ def _extract(loop: LoopRegion, sdfg: SDFG, permissive: bool = False) -> _Reducti
             accum=target,
             accum_subset=subsets.Range([(0, 0, 1)]),
             array=array,
-            array_subset=subsets.Range([(symbolic.simplify(start + offset, facts), symbolic.simplify(end + offset, facts), stride)]),
+            array_subset=subsets.Range(
+                [(symbolic.simplify(start + offset, facts), symbolic.simplify(end + offset, facts), stride)]
+            ),
         )
 
     # Branched min/max pattern (TSVC s314, s316): ``for i: if a[i] > x: x = a[i]``.
@@ -1528,6 +1536,7 @@ def _lift_wcr_scalar(parent: ControlFlowRegion, loop: LoopRegion, info: _Reducti
     loop_start = loop_analysis.get_init_assignment(loop)
     loop_end = loop_analysis.get_loop_end(loop)
     loop_stride = loop_analysis.get_loop_stride(loop)
+    facts = SymbolResolver().facts_at(loop)
     per_iter_ranges = []
     for axis, (lo, hi, st) in enumerate(info.array_subset.ndrange()):
         # Reduction axis = axis whose element count equals the iteration count.
@@ -1541,7 +1550,12 @@ def _lift_wcr_scalar(parent: ControlFlowRegion, loop: LoopRegion, info: _Reducti
             coeff = symbolic.simplify(st / loop_stride, facts)
             axis_elems = symbolic.simplify((hi - lo) / st + 1, facts)
             iters = symbolic.simplify((loop_end - loop_start) / loop_stride + 1, facts)
-            if coeff.is_integer and coeff.is_positive and not symbolic.inequal_symbols(axis_elems, iters):
+            if (
+                symbolic._integral(coeff)
+                and symbolic.ask(symbolic.predicate_relation(symbolic.Predicate.POSITIVE, coeff), facts)
+                is symbolic.Truth.TRUE
+                and not symbolic.inequal_symbols(axis_elems, iters)
+            ):
                 is_reduction_axis = True
         if is_reduction_axis:
             idx = symbolic.simplify(coeff * iter_sym + (lo - coeff * loop_start), facts)
@@ -1670,6 +1684,7 @@ def slot_accessed_besides(
     :param accum_subset: the slot the retarget privatizes.
     :param accum_desc: the accumulator's descriptor.
     """
+    facts = SymbolResolver().facts_at(loop)
     # An access is compared over every iteration of the loop: s118's ``a[i - j - 1]`` read names a
     # different element than the ``a[i]`` slot for each ``j`` in ``0..i-1``, which the per-iteration
     # subset alone cannot show.
@@ -1694,9 +1709,9 @@ def slot_accessed_besides(
                     return True
                 if iterations is not None:
                     subset = propagate_subset(
-                        [mm.Memlet(data=accum_name, subset=subset)], accum_desc, [loop.loop_variable], iterations
+                        [mm.Memlet(data=accum_name, subset=subset)], accum_desc, [loop.loop_variable], iterations, facts
                     ).subset
-                if subsets.intersects(subset, accum_subset) is not False:
+                if subsets.intersects(subset, accum_subset, facts) is not symbolic.Truth.FALSE:
                     return True
     return accum_name in control_flow_reads(loop)
 

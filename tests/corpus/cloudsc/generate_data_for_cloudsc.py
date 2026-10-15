@@ -246,6 +246,13 @@ O3_CPU_ARGS: str = "-std=c++14 -fPIC -O3 -fopenmp -fno-fast-math -ffp-contract=o
 #: Files whose contents change the parsed SDFG. The program itself, and this builder -- an edit to
 #: either must mint a fresh cache entry rather than resume a stale one.
 CACHE_SOURCE_FILES = (Path(__file__), Path(cloudsc_py.f.__code__.co_filename))
+#: The sources that define how an SDFG is written to and read from ``.sdfgz``. Two checkouts of one dace version can
+#: disagree on that format (a symbol table moved into the symbol repository), and an entry one wrote must then miss
+#: in the other rather than load with its symbols silently dropped.
+CACHE_FORMAT_FILES = tuple(
+    Path(dace.__file__).parent / relative
+    for relative in ("serialize.py", "sdfg/sdfg.py", "sdfg/state.py", "sdfg/symbol_repo.py", "properties.py")
+)
 
 
 def cloudsc_cache_dir() -> Path | None:
@@ -262,11 +269,11 @@ def cloudsc_cache_dir() -> Path | None:
 
 
 def cloudsc_cache_key(simplify: bool) -> str:
-    """Digest of everything that decides the parsed SDFG: the source files, the ``simplify`` flag,
-    and the dace version (``to_sdfg`` semantics and the ``.sdfgz`` format both move with it)."""
+    """Digest of everything that decides the parsed SDFG: the source files, the ``simplify`` flag, the dace version
+    (``to_sdfg`` semantics move with it) and the sources of the ``.sdfgz`` format (:data:`CACHE_FORMAT_FILES`)."""
     hasher = hashlib.sha256()
     hasher.update(f"dace={dace.__version__};simplify={simplify}".encode())
-    for path in CACHE_SOURCE_FILES:
+    for path in CACHE_SOURCE_FILES + CACHE_FORMAT_FILES:
         try:
             hasher.update(path.read_bytes())
         except OSError:

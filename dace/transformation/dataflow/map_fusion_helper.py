@@ -64,23 +64,11 @@ def find_parameter_remapping(
     if len(first_params) != first_map.range.dims() or len(second_params) != second_map.range.dims():
         return None
 
-    if simplify_ranges:
-        simp = lambda e: symbolic.simplify_ext(symbolic.simplify(e))  # noqa: E731 [lambda-assignment]
-    else:
-        simp = lambda e: e  # noqa: E731 [lambda-assignment]
-
-    # One name can be two sympy symbols (a DaCe symbol folds its dtype into its identity, so ``N:int64``
-    #  from one frontend path and ``N:int`` from another never compare equal): unify them first.
-    bounds = symbolic.equalize_symbols_across(
-        *(symbolic.pystr_to_symbolic(b) for rng in (*first_map.range, *second_map.range) for b in rng)
-    )
-    split = 3 * len(first_params)
     first_rngs: dict[str, tuple[Any, Any, Any]] = {
-        param: tuple(simp(r) for r in bounds[3 * i : 3 * i + 3]) for i, param in enumerate(first_params)
+        param: tuple(rng) for param, rng in zip(first_params, first_map.range)
     }
     second_rngs: dict[str, tuple[Any, Any, Any]] = {
-        param: tuple(simp(r) for r in bounds[split + 3 * i : split + 3 * i + 3])
-        for i, param in enumerate(second_params)
+        param: tuple(rng) for param, rng in zip(second_params, second_map.range)
     }
 
     # Parameters of the second map that have not yet been matched to a parameter

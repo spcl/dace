@@ -19,8 +19,15 @@ from dace.sdfg import graph as gr
 from dace.sdfg import propagation
 from dace.sdfg import utils as sdutil
 from dace.sdfg.scope import ScopeTree
-from dace.sdfg.state import AbstractControlFlowRegion, ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState, SymbolResolver
-from dace.transformation import helpers, transformation
+from dace.sdfg.state import (
+    AbstractControlFlowRegion,
+    ConditionalBlock,
+    ControlFlowRegion,
+    LoopRegion,
+    SDFGState,
+    SymbolResolver,
+)
+from dace.transformation import transformation
 from dace.transformation.passes.analysis import loop_analysis
 
 
@@ -426,11 +433,6 @@ def elementwise_refusal(
     return None
 
 
-def provably_nonnegative(expr) -> bool:
-    value = symbolic.simplify(symbolic.pystr_to_symbolic(expr))
-    return value.is_Number and value >= 0
-
-
 def wide_fill_refusal(
     loop: LoopRegion,
     sdfg: sd.SDFG,
@@ -468,8 +470,8 @@ def wide_fill_refusal(
                 for d, j, offset in sig:
                     begin, end, _ = sub.ndrange()[d]
                     if not (
-                        provably_nonnegative(begin - ref[j][0] - offset)
-                        and provably_nonnegative(ref[j][1] + offset - end)
+                        symbolic.provably_nonnegative(begin - ref[j][0] - offset, SymbolResolver().facts_at(state))
+                        and symbolic.provably_nonnegative(ref[j][1] + offset - end, SymbolResolver().facts_at(state))
                     ):
                         return f"{data}, filled beyond the lanes, is read outside them in {state.label}"
     return None
@@ -877,6 +879,10 @@ class MoveLoopIntoMap(transformation.MultiStateTransformation):
 
         if itervar in sdfg.symbols:
             sdfg.symbol_repo.remove(itervar)
+        # The replicated loop binds its iterator inside the nest now, which therefore neither declares nor maps it
+        if itervar in nsdfg.sdfg.symbols:
+            nsdfg.sdfg.remove_symbol(itervar)
+        nsdfg.symbol_mapping.pop(itervar, None)
 
         # Add missing data/symbols
         for s in nsdfg.sdfg.free_symbols:

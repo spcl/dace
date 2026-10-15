@@ -132,7 +132,7 @@ def spell_extent_as_source(sdfg: SDFG, target: Any, source: Any, mapping: dict[s
         return
     # ``replace_dict`` looks the key up by name; a typed ``target`` hashes apart from that lookup.
     sdfg.replace_dict({name: str(source)}, symrepl={pystr_to_symbolic(name): source})
-    sdfg.symbols.pop(name, None)
+    sdfg.symbol_repo.remove(name)
     parent = sdfg.parent_nsdfg_node
     owner = parent.symbol_mapping if parent is not None else mapping
     owner.pop(name, None)
@@ -3523,7 +3523,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 bitwise_args.append(self.sdfg.arrays[op_name])
             elif isinstance(operand, (Number, numpy.bool_)):
                 bitwise_args.append(operand)
-            replacements.operators.result_type(bitwise_args, bitwise_augassign_ops[op])
+            replacements.operators.result_type(bitwise_args, bitwise_augassign_ops[op], symbols=self.symbol_types())
 
         indirect_indices = indirect_indices or {}
         tasklet_code = ""

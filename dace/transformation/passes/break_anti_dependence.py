@@ -171,11 +171,7 @@ def _provably_nonnegative_under_nonneg_symbols(expr) -> bool:
     from dace import symbolic
 
     try:
-        # Fresh DaCe symbols (uncached ``__xnew__``) carrying the nonnegativity
-        # assumption for a LOCAL proof; ``_eval_subs`` matches by name, so the
-        # substitution lands without polluting the global symbol registry.
-        subs = {s: symbolic.symbol(s.name, nonnegative=True) for s in expr.free_symbols}
-        return bool(expr.subs(subs).is_nonnegative)
+        return symbolic.provably_nonnegative(expr, symbolic.contract_facts(expr))
     except (AttributeError, TypeError):
         return False
 
@@ -1001,7 +997,7 @@ class BreakAntiDependence(ppl.Pass):
         desc = sdfg.arrays[name]
         memlets = [Memlet(data=name, subset=copy.deepcopy(s)) for s in read_subsets]
         window = propagation.propagate_subset(
-            memlets, desc, [loop.loop_variable], subsets.Range([(start, end, stride)])
+            memlets, desc, [loop.loop_variable], subsets.Range([(start, end, stride)]), sdfg.facts()
         ).subset
         if window is None:
             return None

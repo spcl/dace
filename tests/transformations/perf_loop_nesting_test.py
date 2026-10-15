@@ -321,6 +321,8 @@ def _build_velocity_for_it_35_pattern():
 
     # Outer SDFG: parent _for_it_35 around the NSDFG
     outer = SDFG("velocity_for_it_35")
+    outer.add_symbol("LEV_LO", dace.int32)  # the map bounds read them
+    outer.add_symbol("LEV_HI", dace.int32)
     outer.add_array("cfl_clipping", [NPROMA, KLEV], dace.int32)
     outer.add_array("z_w_con_c", [NPROMA, KLEV], dace.float64)
     outer.add_scalar("cfl_w_limit", dace.float64)
@@ -440,6 +442,8 @@ def test_pln_on_parent_inside_nested_sdfg_must_use_owning_sdfg():
     inner_sdfg, inner_state = _build_velocity_for_it_35_pattern()
 
     wrapper = SDFG("wrapper")
+    for name, stype in inner_sdfg.symbols.items():
+        wrapper.add_symbol(name, stype)
     for name, desc in inner_sdfg.arrays.items():
         wrapper.add_datadesc(name, desc.clone())
     wstate = wrapper.add_state("wstate", is_start_block=True)

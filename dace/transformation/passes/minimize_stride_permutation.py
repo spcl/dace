@@ -147,13 +147,15 @@ def stride_difference_sign(a, b) -> int:
         return 0
     if as_basic(diff).is_number:
         return -1 if diff < 0 else 1
-    extents = dict.fromkeys((sym.name for sym in as_basic(diff).free_symbols), frozenset({"integer", "positive"}))
+    extents = symbolic.contract_facts(
+        as_basic(diff), positive=frozenset(sym.name for sym in as_basic(diff).free_symbols)
+    )
     # Non-STRICT: two scores that may coincide (``1`` vs ``LEN_2D`` at ``LEN_2D == 1``) impose no
     # order, and reporting them as tied keeps the stable sort's current-order behaviour. A score is the
     # ``Min`` of a parameter's home strides, which :func:`~dace.symbolic.provably_at_most` takes apart.
-    if symbolic.provably_at_most(left, right, extents):
+    if symbolic.provably_le(left, right, extents):
         return -1
-    if symbolic.provably_at_most(right, left, extents):
+    if symbolic.provably_le(right, left, extents):
         return 1
     raise UndecidableStride(f"{a} vs {b}")
 

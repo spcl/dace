@@ -38,7 +38,7 @@ from dace import SDFG, symbolic
 from dace.optionals import required
 from dace.sdfg import nodes
 from dace.sdfg.narrowing import as_basic, as_expr
-from dace.sdfg.state import SDFGState
+from dace.sdfg.state import SDFGState, SymbolResolver
 from dace.subsets import Range
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
@@ -55,6 +55,7 @@ def access_coefficients(state: SDFGState, entry: nodes.MapEntry, param: str) -> 
         ascending/descending access, or ``None`` for the whole map if any use is non-affine.
     """
     sym = symbolic.pystr_to_symbolic(param)
+    facts = SymbolResolver().facts_at(state, entry)
     signs: list[int | None] = []
     for edge in state.scope_subgraph(entry).edges():
         if edge.data is None or edge.data.is_empty():
@@ -73,9 +74,15 @@ def access_coefficients(state: SDFGState, entry: nodes.MapEntry, param: str) -> 
                         or sym in as_basic(symbolic.simplify(expr - coeff * sym)).free_symbols
                     ):
                         return None
-                    if required(coeff).is_negative:
+                    if (
+                        symbolic.ask(symbolic.predicate_relation(symbolic.Predicate.NEGATIVE, required(coeff)), facts)
+                        is symbolic.Truth.TRUE
+                    ):
                         signs.append(-1)
-                    elif required(coeff).is_positive:
+                    elif (
+                        symbolic.ask(symbolic.predicate_relation(symbolic.Predicate.POSITIVE, required(coeff)), facts)
+                        is symbolic.Truth.TRUE
+                    ):
                         signs.append(1)
                     else:
                         return None  # a sign we cannot decide is not a direction we may flip

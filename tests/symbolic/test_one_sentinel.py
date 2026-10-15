@@ -43,15 +43,13 @@ def test_shape_with_one_preserves_symbol():
 
 
 def test_one_marker_survives_a_reparse():
-    """A shape entry reparsed from its string spelling mints a bare ``ONE`` with none of the
-    sentinel's assumptions, so sympy object identity no longer holds --
-    :func:`dace.symbolic.has_one_marker` must still recognise the marker by NAME, and
-    ``collapse_one_dims`` must still drop it."""
+    """A shape entry reparsed from its string spelling is the sentinel again: symbols are names only.
+    :func:`dace.symbolic.has_one_marker` recognises the marker by NAME, and ``collapse_one_dims`` drops it."""
     sdfg = dace.SDFG("one_marker_reparsed")
     sdfg.add_array("Idx", (4, ONE), dace.int64, transient=True)
     stored = tuple(dace.symbolic.pystr_to_symbolic(str(s)) for s in sdfg.arrays["Idx"].shape)
 
-    assert ONE not in stored[1].free_symbols, "expected the reparsed symbol to be bare (no assumptions)"
+    assert ONE in stored[1].free_symbols, "a symbol is its name"
     assert stored[1].name == "ONE"
     assert dace.symbolic.has_one_marker(stored[1])
     assert not dace.symbolic.has_one_marker(stored[0])

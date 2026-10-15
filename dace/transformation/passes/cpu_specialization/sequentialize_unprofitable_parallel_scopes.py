@@ -62,7 +62,7 @@ from typing import Any
 from dace import SDFG, data, dtypes, properties, symbolic
 from dace.sdfg import nodes
 from dace.sdfg.narrowing import config_int
-from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState, SymbolResolver
 from dace.transformation import pass_pipeline as ppl
 
 #: Schedules a CPU map or library node still parallelizes under. ``Default`` is included because
@@ -306,22 +306,27 @@ class SequentializeUnprofitableParallelScopes(ppl.Pass):
             elif isinstance(node, nodes.NestedSDFG) and node.sdfg is not None:
                 self.visit_region(node.sdfg, in_parallel)
 
-    def fewer_than_threshold(self, count: Any) -> bool | None:
+    def fewer_than_threshold(self, count: Any, facts: symbolic.Facts) -> symbolic.Truth:
         """Whether a trip count provably falls short of the break-even work (three-valued).
 
         :param count: the map's own iteration count, constant or symbolic.
-        :returns: ``symbolic.ask('negative', count - threshold)``, computed once per count.
+        :param facts: the facts at the map.
+        :returns: whether ``count - threshold`` is negative under ``facts``, computed once per count and facts.
         """
-        if count not in self.below_threshold:
-            self.below_threshold[count] = symbolic.ask("negative", symbolic.simplify(count - self.threshold))
-        return self.below_threshold[count]
+        key = (count, facts)
+        if key not in self.below_threshold:
+            margin = symbolic.simplify(count - self.threshold, facts)
+            self.below_threshold[key] = symbolic.ask(
+                symbolic.predicate_relation(symbolic.Predicate.NEGATIVE, margin), facts
+            )
+        return self.below_threshold[key]
 
-    def worth_forking(self, count: Any) -> bool:
+    def worth_forking(self, count: Any, facts: symbolic.Facts) -> bool:
         """Whether a map of ``count`` iterations earns its own OpenMP region (``True`` keeps it parallel).
 
         :param count: the map's own iteration count, constant or symbolic.
         """
-        return self.threshold <= 0 or self.fewer_than_threshold(count) is not True
+        return self.threshold <= 0 or self.fewer_than_threshold(count, facts) is not symbolic.Truth.TRUE
 
     def decide_map(self, state: SDFGState, node: nodes.MapEntry, in_parallel: bool) -> bool:
         """Set ``node``'s schedule and report whether its body runs inside a parallel map.
@@ -339,7 +344,7 @@ class SequentializeUnprofitableParallelScopes(ppl.Pass):
                 self.pinned += 1
             return True
         count = node.map.range.num_elements()
-        if not self.worth_forking(count):
+        if not self.worth_forking(count, SymbolResolver().facts_at(state, node)):
             note_sequential(node, BELOW_BREAK_EVEN_REASON.format(count=count))
         elif in_sequential_loop(state) and (segment := data_segment(state, node)) is not None:
             note_sequential(node, DATA_SEGMENT_REASON.format(begin=segment[0], end=segment[1]))

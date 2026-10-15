@@ -176,7 +176,7 @@ class NestedGPUDeviceMapLowering(ppl.Pass):
             param_types.update(inner_map.new_symbols(map_state.sdfg, map_state, {}))
             for dim, param in enumerate(inner_map.map.params):
                 one = subsets.Range([rng[dim]])
-                ranges[param] = one if param not in ranges else subsets.union(ranges[param], one)
+                ranges[param] = one if param not in ranges else subsets.union(ranges[param], one, state.sdfg.facts())
                 if ranges[param] is None:
                     raise NotImplementedError(f"Cannot bound the union of the ranges of {param}")
 

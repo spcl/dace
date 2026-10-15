@@ -510,15 +510,9 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
                 for sym, expr in non_identity_mapping.items():
                     if sym not in new_data.assignments:
                         new_data.assignments[sym] = expr
+            # An interstate assignment binds its name, so the outer SDFG declares none: a declaration would also stop a
+            #  loop lifted around the assignment from binding it
             outer_state.parent_graph.add_edge(e.src, source, new_data)
-            # Add new symbols to the outer SDFG so the iedge assignments
-            # validate against the outer scope.
-            if non_identity_mapping:
-                for sym in non_identity_mapping:
-                    if sym not in sdfg.symbols:
-                        inner_type = nsdfg.symbols.get(sym, None)
-                        if inner_type is not None:
-                            sdfg.add_symbol(sym, inner_type)
         for e in outer_state.parent_graph.out_edges(nsdfg_state):
             for sink in sinks:
                 outer_state.parent_graph.add_edge(sink, e.dst, dc(e.data))

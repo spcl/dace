@@ -201,10 +201,11 @@ def provably_moves_less(traffic: symbolic.SymbolicType | int, size: symbolic.Sym
     A symbolic extent is taken as big enough, so a constant count is below any symbolic ``size``.
     """
     if not symbolic.issymbolic(traffic):
-        return symbolic.issymbolic(size) or symbolic.provably_nonnegative(size - traffic - 1)
-    return symbolic.provably_nonnegative(
-        size - traffic, assume_symbols_nonnegative=True
-    ) and not symbolic.provably_nonnegative(traffic - size, assume_symbols_nonnegative=True)
+        return symbolic.issymbolic(size) or symbolic.provably_nonnegative(size - traffic - 1, symbolic.Facts.none())
+    facts = symbolic.contract_facts(traffic, size)
+    return symbolic.provably_nonnegative(size - traffic, facts) and not symbolic.provably_nonnegative(
+        traffic - size, facts
+    )
 
 
 def is_fallback_loop(loop: LoopRegion) -> bool:

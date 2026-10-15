@@ -336,13 +336,13 @@ def test_dependence_kind_classifies_backward_flow_forward_anti():
     from dace.transformation.passes.canonicalize.wavefront_skew import dependence_kind
 
     p = symbolic.pystr_to_symbolic
-    assert dependence_kind(p("0"), p("-1")) == "flow"  # aa[i, j-1]
-    assert dependence_kind(p("-1"), p("0")) == "flow"  # aa[i-1, j]
-    assert dependence_kind(p("-1"), p("1")) == "flow"  # aa[i-1, j+1] (du<0 dominates)
-    assert dependence_kind(p("0"), p("1")) == "anti"  # aa[i, j+1] (old)
-    assert dependence_kind(p("1"), p("0")) == "anti"  # aa[i+1, j] (old)
-    assert dependence_kind(p("1"), p("-1")) == "anti"  # aa[i+1, j-1] (du>0 dominates)
-    assert dependence_kind(p("0"), p("-sym1")) == "flow"  # symbolic -> conservative flow
+    assert dependence_kind(p("0"), p("-1"), symbolic.Facts.none()) == "flow"  # aa[i, j-1]
+    assert dependence_kind(p("-1"), p("0"), symbolic.Facts.none()) == "flow"  # aa[i-1, j]
+    assert dependence_kind(p("-1"), p("1"), symbolic.Facts.none()) == "flow"  # aa[i-1, j+1] (du<0 dominates)
+    assert dependence_kind(p("0"), p("1"), symbolic.Facts.none()) == "anti"  # aa[i, j+1] (old)
+    assert dependence_kind(p("1"), p("0"), symbolic.Facts.none()) == "anti"  # aa[i+1, j] (old)
+    assert dependence_kind(p("1"), p("-1"), symbolic.Facts.none()) == "anti"  # aa[i+1, j-1] (du>0 dominates)
+    assert dependence_kind(p("0"), p("-sym1"), symbolic.Facts.none()) == "flow"  # symbolic -> conservative flow
 
 
 @dace.program
@@ -529,21 +529,21 @@ def test_snapshot_reads_forward_classifies_in_iteration_space_not_array_offset()
     # array offset vs the write [N-1-i, j] is [+1, 0] (would look "forward"); iteration
     # space says backward -> MUST refuse.
     backward = [(None, None, None, [_p("N - i"), _p("j")], "a", _win("0:N, 0:N"))]
-    assert snapshot_reads_forward(backward, reflected, "i", "j") is False
+    assert snapshot_reads_forward(backward, reflected, "i", "j", symbolic.Facts.none()) is False
     # Array cell [N-2-i, j] is written by iteration (i+1, j) -> FORWARD (anti). Raw
     # array offset is [-1, 0] (would look "backward"); iteration space says forward -> accept.
     forward = [(None, None, None, [_p("N - 2 - i"), _p("j")], "a", _win("0:N, 0:N"))]
-    assert snapshot_reads_forward(forward, reflected, "i", "j") is True
+    assert snapshot_reads_forward(forward, reflected, "i", "j", symbolic.Facts.none()) is True
 
     # Identity map sanity: a[i, j+1] forward (anti), a[i, j-1] backward (flow).
     identity = ("a", WriteMap("i", "j", m=(1, 0, 0, 1), c=(_p("0"), _p("0"))), [])
     anti = [(None, None, None, [_p("i"), _p("j + 1")], "a", _win("0:N, 0:N"))]
-    assert snapshot_reads_forward(anti, identity, "i", "j") is True
+    assert snapshot_reads_forward(anti, identity, "i", "j", symbolic.Facts.none()) is True
     flow = [(None, None, None, [_p("i"), _p("j - 1")], "a", _win("0:N, 0:N"))]
-    assert snapshot_reads_forward(flow, identity, "i", "j") is False
+    assert snapshot_reads_forward(flow, identity, "i", "j", symbolic.Facts.none()) is False
     # A snapshot on a non-carrier array can never be reasoned about -> refuse.
     other = [(None, None, None, [_p("i"), _p("j + 1")], "b", _win("0:N, 0:N"))]
-    assert snapshot_reads_forward(other, identity, "i", "j") is False
+    assert snapshot_reads_forward(other, identity, "i", "j", symbolic.Facts.none()) is False
 
 
 def _snap_copy_state(memlet: str):
@@ -674,12 +674,13 @@ def test_dependence_kind_symbolic_forward_positive_is_anti():
     from dace.transformation.passes.canonicalize.wavefront_skew import dependence_kind
 
     p = symbolic.pystr_to_symbolic
-    S = dace.symbol("S", positive=True)
-    assert dependence_kind(p("0"), S) == "anti"  # aa[i, j+S], S>0 -> forward anti
-    assert dependence_kind(S, p("0")) == "anti"  # aa[i+S, j], S>0 -> forward anti
-    assert dependence_kind(p("0"), -S) == "flow"  # aa[i, j-S] -> backward flow
-    assert dependence_kind(p("-1"), S) == "flow"  # du=-1 backward dominates lexicographically
-    assert dependence_kind(p("0"), p("-sym1")) == "flow"  # unprovable sign -> conservative flow
+    S = dace.symbol("S")
+    facts = symbolic.Facts([symbolic.predicate_relation(symbolic.Predicate.POSITIVE, S)], frozenset({"S"}))
+    assert dependence_kind(p("0"), S, facts) == "anti"  # aa[i, j+S], S>0 -> forward anti
+    assert dependence_kind(S, p("0"), facts) == "anti"  # aa[i+S, j], S>0 -> forward anti
+    assert dependence_kind(p("0"), -S, facts) == "flow"  # aa[i, j-S] -> backward flow
+    assert dependence_kind(p("-1"), S, facts) == "flow"  # du=-1 backward dominates lexicographically
+    assert dependence_kind(p("0"), p("-sym1"), symbolic.Facts.none()) == "flow"  # unprovable sign -> conservative flow
 
 
 def _hand_built_forward_symbolic_nest(fwd_col):
@@ -688,15 +689,15 @@ def _hand_built_forward_symbolic_nest(fwd_col):
     through ``aa_index`` slice transients that ``simplify`` collapses into
     disconnected symbol refs, hiding the reads from ``collect_carrier`` so the pass
     would refuse and never engage. Building the memlets from the positive ``S``
-    symbol OBJECT (not a parsed string, which strips ``positive=True``) is what
-    drives the genuine forward-anti dependence into the pass."""
+    symbol, declared positive on the SDFG, is what drives the genuine forward-anti dependence into the pass."""
     from dace import subsets
 
     N_ = dace.symbol("N")
     i, j = dace.symbol("i"), dace.symbol("j")
     sdfg = dace.SDFG("wf_fwd_sym")
     sdfg.add_array("aa", [N_, N_], dace.int64)
-    sdfg.add_symbol("S", dace.int64)
+    # Declared positive on the SDFG: its facts are what the pass proves the forward sign from
+    sdfg.add_symbol("S", dace.int64, predicates=frozenset({symbolic.Predicate.POSITIVE}))
     outer = LoopRegion("outer", "i < N - 1", "i", "i = 1", "i = i + 1")
     sdfg.add_node(outer, is_start_block=True)
     inner = LoopRegion("inner", "j < N - 1", "j", "j = 1", "j = j + 1")

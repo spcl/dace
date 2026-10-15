@@ -141,8 +141,8 @@ def test_inline_lowers_non_identity_symbol_mapping_to_iedge_assignment():
     sdfg = _build_non_identity_symbol_mapping_sdfg()
     _apply_inline(sdfg)
 
-    # M must now be a declared outer symbol (picked up from the inner table).
-    assert "M" in sdfg.symbols
+    # The assignment binds M, so the outer SDFG does not declare it.
+    assert "M" not in sdfg.symbols
     # Some interstate edge must carry an assignment for ``M`` derived from
     # ``N // 2`` (the inline lowers it; codegen may parenthesize it).
     found = False

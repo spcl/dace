@@ -19,9 +19,15 @@ from dace.symbolic import deserialize_symbolic, int_ceil, int_floor, pystr_to_sy
 
 N = pystr_to_symbolic("N")
 M = pystr_to_symbolic("M")
-#: A stride and a trip count, carrying the assumptions an extent normally arrives with.
-P = symbol("P", dtype=dtypes.int64, positive=True)
-K = symbol("K", dtype=dtypes.int64, nonnegative=True)
+#: A stride and a trip count, under the facts an extent normally arrives with.
+P = symbol("P", dtype=dtypes.int64)
+K = symbol("K", dtype=dtypes.int64)
+EXTENT_FACTS = dace.symbolic.contract_facts(K, positive={"P"})
+
+
+def under(expr):
+    """``expr`` simplified under the facts of an extent: ``P`` positive, ``K`` nonnegative."""
+    return dace.symbolic.simplify(expr, EXTENT_FACTS)
 
 
 def test_unit_denominator_folds_away():
@@ -131,7 +137,7 @@ def test_a_divisor_that_may_be_zero_is_not_folded(fn):
     assert fn(i, i).func is fn
     assert fn(i, i).free_symbols == {i}
     # The same numerator over a divisor that cannot be zero is exact, and does fold.
-    assert fn(P, P) == 1
+    assert under(fn(P, P)) == 1
 
 
 @pytest.mark.parametrize("fn", [int_floor, int_ceil])
@@ -140,8 +146,8 @@ def test_exact_division_reaches_a_symbolic_divisor(fn):
     a time. Exactness needs no assumption beyond a nonzero divisor: nothing is rounded."""
     whole = (P * N + P) / P
     assert whole.is_integer is None, whole
-    assert fn(P * N + P, P) == N + 1
-    assert fn(P * (K - 1) + P, P) == K
+    assert under(fn(P * N + P, P)) == N + 1
+    assert under(fn(P * (K - 1) + P, P)) == K
 
 
 @pytest.mark.parametrize("fn,folded", [(int_floor, K), (int_ceil, K + 1)])
@@ -150,7 +156,7 @@ def test_an_inexact_split_needs_the_assumptions_that_make_truncation_flooring(fn
     these emit C ``/``, which truncates toward zero. The two agree on a nonnegative numerator over a
     positive divisor -- which is what an extent normally is -- so the split is taken exactly there
     and refused where the assumptions are missing."""
-    assert fn(4 * K + 2, 4) == folded
+    assert under(fn(4 * K + 2, 4)) == folded
     assert fn(4 * N + 2, 4).func is fn
 
 
@@ -158,8 +164,8 @@ def test_a_numerator_that_can_go_negative_is_never_split():
     """The hazard the assumptions rule out. ``int_floor(3 - 2*P, P)`` splits to ``int_floor(3, P) -
     2``, which answers -2 where the program, at ``P = 5``, computes ``-7/5 == -1`` -- so a positive
     divisor alone does not earn the split."""
-    assert int_floor(3 - 2 * P, P).func is int_floor
-    assert int_ceil(3 - 2 * P, P).func is int_ceil
+    assert under(int_floor(3 - 2 * P, P)).func is int_floor
+    assert under(int_ceil(3 - 2 * P, P)).func is int_ceil
 
 
 def test_a_strided_slice_extent_folds_to_its_trip_count():
@@ -169,8 +175,8 @@ def test_a_strided_slice_extent_folds_to_its_trip_count():
     and biasing turns this one into ``P*K`` over ``P``. So the fold is the value the emitted program
     computes, not an appeal to the mathematical ceiling.
     """
-    assert int_ceil(P * (K - 1) + 1, P) == K
-    assert int_ceil(P * K + 1, P) == K + 1
+    assert under(int_ceil(P * (K - 1) + 1, P)) == K
+    assert under(int_ceil(P * K + 1, P)) == K + 1
 
 
 def divide_in_a_program(name: str, numerator: str, p: int) -> int:
@@ -244,9 +250,9 @@ def test_a_stored_floor_over_an_integer_does_not_reach_cpp_as_a_floating_call():
 
 def test_a_constant_remainder_folds_over_a_provably_nonnegative_numerator():
     """``int_floor(2*P - 1, 2)`` is ``P - 1`` and ``int_ceil(2*P - 1, 2)`` is ``P`` once ``2*P - 1 >= 0`` is provable."""
-    assert int_floor(2 * P - 1, 2) == P - 1
-    assert int_ceil(2 * P - 1, 2) == P
-    assert int_floor(3 * P + 5, 3) == P + 1
+    assert under(int_floor(2 * P - 1, 2)) == P - 1
+    assert under(int_ceil(2 * P - 1, 2)) == P
+    assert under(int_floor(3 * P + 5, 3)) == P + 1
     for value in range(1, 9):
         assert (2 * value - 1) // 2 == value - 1
         assert -((1 - 2 * value) // 2) == value
@@ -254,4 +260,4 @@ def test_a_constant_remainder_folds_over_a_provably_nonnegative_numerator():
 
 def test_a_constant_remainder_stays_unfolded_when_the_numerator_may_be_negative():
     """At ``K = 0`` the numerator is ``-1``: floor gives -1 but the generated C division gives 0."""
-    assert isinstance(int_floor(2 * K - 1, 2), int_floor)
+    assert isinstance(under(int_floor(2 * K - 1, 2)), int_floor)

@@ -15,6 +15,7 @@ from dace.symbolic import Truth
 from dace.transformation import transformation
 from dace.transformation.interstate.state_fusion import (
     MATCH_ERRORS,
+    endpoint_subset,
     is_fusible_state_shape,
     is_start_block,
     keep_start_block,
@@ -238,9 +239,10 @@ class StateFusionExtended(transformation.MultiStateTransformation):
         :param inputs_b: If True, checks inputs of the second group.
         :return: True if subsets intersect or result is indeterminate.
         """
-        # Set traversal functions
-        src_subset = lambda e: e.data.src_subset if e.data.src_subset is not None else e.data.dst_subset
-        dst_subset = lambda e: e.data.dst_subset if e.data.dst_subset is not None else e.data.src_subset
+        # Set traversal functions: the subset an edge accesses on the side of the group's node, never the other
+        #  container's (see ``endpoint_subset``).
+        src_subset = lambda e, graph: endpoint_subset(e, graph, source=True)
+        dst_subset = lambda e, graph: endpoint_subset(e, graph, source=False)
         if inputs_a:
             edges_a = [e for n in group_a for e in graph_a.out_edges(n)]
             subset_a = src_subset
@@ -256,9 +258,14 @@ class StateFusionExtended(transformation.MultiStateTransformation):
 
         # Simple all-pairs check. The states are consecutive, so what holds in the first holds in the second.
         facts = SymbolResolver().facts_at(graph_a)
+        # An empty Memlet only orders, it accesses no data
+        edges_a = [e for e in edges_a if not e.data.is_empty()]
+        edges_b = [e for e in edges_b if not e.data.is_empty()]
         for ea in edges_a:
             for eb in edges_b:
-                sa, sb = subset_a(ea), subset_b(eb)
+                sa, sb = subset_a(ea, graph_a), subset_b(eb, graph_b)
+                if sa is None or sb is None:
+                    return True
                 # A SubsetUnion is a legal ``Memlet.subset`` (properties.py) whose overlap with a Range is not
                 # decided here; indeterminate is the conservative answer, and this function returns True on it.
                 if isinstance(sa, subsets.SubsetUnion) or isinstance(sb, subsets.SubsetUnion):
@@ -616,7 +623,9 @@ class StateFusionExtended(transformation.MultiStateTransformation):
                 if e.data is None or e.data.wcr is None or e.data.data not in first_written:
                     continue
                 wsub = e.data.get_dst_subset(e, second_state) or e.data.subset
-                if wsub is not None and all(subsets.intersects(wsub, fs) is False for fs in first_written[e.data.data]):
+                if wsub is not None and all(
+                    subsets.intersects(wsub, fs, sdfg.facts()) is Truth.FALSE for fs in first_written[e.data.data]
+                ):
                     continue
                 seed = sdfg.arrays[e.data.data]
                 accumulated = second_state.memlet_path(e)[-1].dst
@@ -758,7 +767,10 @@ class StateFusionExtended(transformation.MultiStateTransformation):
                         have_consumers = True
                     if _ordered_by_existing_dataflow(consumers, we):
                         continue
-                    if any(subsets.intersects(wsub, rs) is not False for rs in first_read_subsets[wnode.data]):
+                    if any(
+                        subsets.intersects(wsub, rs, sdfg.facts()) is not Truth.FALSE
+                        for rs in first_read_subsets[wnode.data]
+                    ):
                         # The anti-dependency is on the READ ITSELF, which happens at the
                         # reader's CONSUMER (the tasklet / map that reads through the access
                         # node), not at the access node (a pure source node has no

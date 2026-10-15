@@ -141,7 +141,7 @@ class EqualizeSymbolDtypes(ppl.Pass):
                     if str(value) == name and name in node.sdfg.symbols:
                         outer = table.get(name)
                         if outer is not None and is_scalar_dtype(outer) and node.sdfg.symbols[name] != outer:
-                            node.sdfg.symbols[name] = outer
+                            node.sdfg.symbol_repo.set_type(name, outer)
                             rewritten += 1
                     retyped = retype_expression(
                         symbolic.pystr_to_symbolic(value) if isinstance(value, str) else value, table

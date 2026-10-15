@@ -492,7 +492,6 @@ def test_a_nest_in_a_nested_sdfg_is_lifted_over_the_nested_sdfgs_own_arrays(prog
     """The lift reads the nested SDFG's descriptors, not same-named ones of its parent. The connectors bind
     differently named outer containers (No-View lets only the name differ), so a parent lookup finds nothing."""
     inner = prog.to_sdfg(simplify=True)
-    inner.remove_symbol("i"), inner.remove_symbol("j")  # loop iterators, not free symbols
     outer = dace.SDFG("outer_a_nest_in_a_nested_sdfg_is_lifted_over_the_nested_sdfgs_own_arrays")
     state = outer.add_state()
     names = [n for n, d in inner.arrays.items() if not d.transient]

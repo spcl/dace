@@ -218,7 +218,6 @@ def test_an_ordering_edge_does_not_make_a_statement_part_of_the_iv_component():
     sdfg.add_array("a", [n], _dace.float64)
     sdfg.add_array("b", [n], _dace.float64)
     sdfg.add_array("scale", [1], _dace.float64)
-    sdfg.add_symbol("i", _dace.int64)
 
     loop = LoopRegion("loop", condition_expr=f"i < {n}", loop_var="i", initialize_expr="i = 0", update_expr="i = i + 1")
     st = loop.add_state("body", is_start_block=True)

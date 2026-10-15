@@ -206,7 +206,8 @@ def test_helpers_used_finds_the_c_typed_helpers():
 @pytest.mark.parametrize("dialect", [Dialect.STANDALONE, Dialect.STANDALONE_C], ids=["c++", "c"])
 def test_helpers_used_drives_the_definitions_a_unit_needs(dialect):
     """Scanning emitted text yields exactly the definitions that text requires, callees included."""
-    code = printed(sympy.Mod(X, Y), dialect)
+    # ``%`` is C's own operator; Python's floored modulo is the helper ``py_mod``
+    code = printed(sympy.Function("py_mod")(X, Y), dialect)
     assert cpf_lowering.definitions_for(cpf_lowering.helpers_used(code, dialect), dialect)
 
 

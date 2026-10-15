@@ -196,6 +196,8 @@ def _frontend_metadata_to_json(meta):
 
 def _frontend_metadata_from_json(obj, context=None):
     return copy.deepcopy(obj) if obj else {}
+
+
 class NameCollisionError(NameError):
     """Raised when a new symbol or data descriptor takes a name the SDFG already uses for the other kind."""
 
@@ -2391,6 +2393,7 @@ class SDFG(ControlFlowRegion):
         rather than folded into it -- the ordinary one runs thousands of times in a single parse.
         """
         return dt.find_new_name(name, _UsedNames(self, include_connectors=True))
+
     def is_name_declared(self, name: str) -> bool:
         """Checks if `name` is a data descriptor, symbol or constant of the SDFG."""
         return name in self._arrays or name in self.symbols or name in self.constants_prop

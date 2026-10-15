@@ -59,7 +59,10 @@ def _sibling_overlapping_writes(sdfg: dace.SDFG):
                     for second in writes[idx + 1 :]:
                         if first.data.data != second.data.data:
                             continue
-                        if subsets.intersects(first.data.subset, second.data.subset) is not False:
+                        if (
+                            subsets.intersects(first.data.subset, second.data.subset, sd.facts())
+                            is not dace.symbolic.Truth.FALSE
+                        ):
                             hits.append((state.label, first.data.data))
     return hits
 

@@ -16,7 +16,6 @@ from dace.codegen.target import TargetCodeGenerator
 from dace.ordered import OrderedSet
 from dace.sdfg import SDFG, SDFGState, nodes, utils
 from dace.sdfg import scope as sdscope
-from dace.sdfg.analysis import cfg as cfg_analysis
 from dace.sdfg.state import (
     AbstractControlFlowRegion,
     ConditionalBlock,

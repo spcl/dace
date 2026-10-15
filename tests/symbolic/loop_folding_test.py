@@ -35,7 +35,8 @@ def test_exact_integer_division_folds():
     assert symbolic.int_floor(2 * N, 2) == N
     assert symbolic.int_ceil(2 * N, 2) == N
     assert symbolic.int_floor(4 * N + 8, 4) == N + 2
-    assert sym2cpp(symbolic.int_floor(N, K)) == "(N / K)"
+    # ``int_floor`` floors like Python; nothing proves ``N`` nonnegative, so C's ``/`` would truncate wrongly
+    assert sym2cpp(symbolic.int_floor(N, K)) == "py_floor(N, K)"
 
 
 def test_inexact_integer_division_stays():
