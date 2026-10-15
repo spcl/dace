@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Unified adapter over the polybench, tsvc and tsvc_2_5 corpora.
+"""Unified adapter over the polybench, tsvc, tsvc_2_5 and automata corpora.
 
 The three corpus loaders expose different APIs (polybench is size-indexed with an
 untransformed-SDFG baseline; tsvc and tsvc_2_5 are symbol-parametrized kernel registries
@@ -7,7 +7,7 @@ with a scalar numpy oracle each). This module dispatches all three behind one in
 the canonicalize numerical corpus tests can iterate the *combined* suite uniformly.
 
 Every suite runs at a small, CI-tractable shape: polybench's mini size, one tsvc extent per kernel regime,
-and tsvc_2_5's declared symbol table.
+tsvc_2_5's declared symbol table and the automata suite's fixed stream length.
 """
 
 import inspect
@@ -17,6 +17,7 @@ import numpy as np
 
 import dace
 from dace.frontend.python.parser import DaceProgram
+from tests.corpus.automata import automata as AUTOMATA
 from tests.corpus.polybench import polybench as _PB
 from tests.corpus.tsvc import tsvc as _TS
 from tests.corpus.tsvc.tsvc_numpy import REFERENCES as _TS_REF
@@ -32,10 +33,11 @@ _SEED = 1234
 
 
 def kernels() -> list[tuple[str, str]]:
-    """All ``(suite, name)`` pairs, in corpus order: polybench, tsvc, tsvc_2_5."""
+    """All ``(suite, name)`` pairs, in corpus order: polybench, tsvc, tsvc_2_5, automata."""
     out = [("poly", k.name) for k in _PB.collect()]
     out += [("tsvc", k.name) for k in _TS.collect()]
     out += [("tsvc25", p.name) for p in _T25.collect()]
+    out += [("automata", name) for name in AUTOMATA.collect()]
     return out
 
 
@@ -80,6 +82,19 @@ def make(suite: str, name: str) -> dict:
         ref = {n: a.copy() for n, a in arrays.items()}
         _TS_REF[name](**ref, **params)  # the scalar oracle writes its outputs into ref in place
         return dict(suite=suite, name=name, k=k, arrays=arrays, params=params, ref=ref)
+    if suite == "automata":
+        made = AUTOMATA.inputs(name, _SEED)
+        ref = {n: a.copy() for n, a in made.arrays.items()}
+        made.reference(**ref, **made.scalars)
+        return dict(
+            suite=suite,
+            name=name,
+            k=AUTOMATA.PROGRAMS[name],
+            arrays=made.arrays,
+            scalars=made.scalars,
+            params=made.sizes,
+            ref=ref,
+        )
     p = t25_program(name)
     sizes = dict(_T25.SIZES)
     arrays, scalars = _T25.make_inputs(p, seed=_SEED, sizes=sizes)

@@ -114,6 +114,7 @@ from dace.transformation.passes.loop_to_reduce import (
     RetargetWCRAccumulator,
 )
 from dace.transformation.passes.loop_to_scan import LoopToScan
+from dace.transformation.passes.loop_to_state_scan import LoopToStateScan
 from dace.transformation.passes.minimize_stride_permutation import MinimizeStridePermutation
 from dace.transformation.passes.move_if_into_loop import MoveIfIntoLoop
 from dace.transformation.passes.normalize_wcr import NormalizeWCR
@@ -839,6 +840,7 @@ def lift_semantics(lift: bool, lift_copy: bool, interchange_carry_with_map: bool
         (label, LoopToReduce()),
         (label, LiftPreprocess()),
         (label, LoopToScan(interchange_carry_with_map=interchange_carry_with_map, target=target)),
+        (label, LoopToStateScan()),
         (label, ArgMaxLift()),
         (label, LoopToConditionalReduce()),
         (label, LoopToStreamCompaction()),
