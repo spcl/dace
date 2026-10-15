@@ -994,6 +994,42 @@ def build_lift_invariants(sdfg: SDFG) -> LiftInvariants:
     )
 
 
+def control_flow_reads_outside(sdfg: sd.SDFG, loop: LoopRegion, ctx: Optional["LiftContext"] = None) -> set[str]:
+    """The names read by the interstate edges and by the loop and conditional headers of ``sdfg`` that lie
+    outside ``loop``'s body: ``loop``'s own header included, nested SDFGs excluded (they read through their
+    connectors). Each edge's and header's share is memoized on ``ctx`` as :func:`control_flow_reads` does.
+
+    :param sdfg: the SDFG holding ``loop``.
+    :param loop: the loop region.
+    :param ctx: the lift context, if a pass holds one.
+    :returns: the names.
+    """
+    memo = None if ctx is None else ctx.invariants.control_flow_reads
+    # The loop's own region, and every region within it, holds the body; the loop's header is read outside it.
+    inside = set(loop.all_control_flow_regions(recursive=True)) | {loop}
+    names: set[str] = {str(s) for c in loop.get_meta_codeblocks() for s in c.get_free_symbols()}
+    for region in sdfg.all_control_flow_regions():
+        if region in inside:
+            continue
+        for edge in region.edges():
+            reads = None if memo is None else memo.get(edge.data)
+            if reads is None:
+                reads = set(edge.data.free_symbols)
+                if memo is not None:
+                    memo[edge.data] = reads
+            names |= reads
+        for block in region.nodes():
+            if not isinstance(block, (LoopRegion, ConditionalBlock)):
+                continue
+            reads = None if memo is None else memo.get(block)
+            if reads is None:
+                reads = {str(s) for c in block.get_meta_codeblocks() for s in c.get_free_symbols()}
+                if memo is not None:
+                    memo[block] = reads
+            names |= reads
+    return names
+
+
 def block_free_symbols(block, ctx: Optional["LiftContext"]) -> set[str]:
     """``block.free_symbols``, memoized on ``ctx`` when one is available."""
     if ctx is None:
@@ -1511,6 +1547,12 @@ class LoopToMap(xf.MultiStateTransformation):
             # scan above also collects transients of states the loop never touches, but every
             # consumer below filters by a loop data node, so they can never be read.)
             other_access_nodes, local_transients = split_loop_containers(sdfg, loop_states, ctx)
+        # A loop transient an outside header or interstate edge reads is live outside, though no access node there
+        # names it (a symbol demoted to a scalar, read by a later loop's conditions): ``apply`` must not privatize it.
+        if local_transients:
+            read_outside = local_transients & control_flow_reads_outside(sdfg, self.loop, ctx)
+            local_transients -= read_outside
+            other_access_nodes |= read_outside
 
         # A transient living ONLY in the loop is exempt from the analysis below because ``apply``
         # gives every iteration a private copy -- sound only while each iteration writes it before
@@ -1848,6 +1890,7 @@ class LoopToMap(xf.MultiStateTransformation):
         if name not in read_before_written(self.loop, {name}):
             return False
         _, local_transients = split_loop_containers(sdfg, loop_states, ctx)
+        local_transients -= control_flow_reads_outside(sdfg, self.loop, ctx)
         return name in local_transients and observable_from(self.loop, name, local_transients, loop_states, ctx)
 
     def test_read_memlet(
@@ -2084,8 +2127,17 @@ class LoopToMap(xf.MultiStateTransformation):
         # in, never a connector, never moved out of the parent (other blocks may still read it).
         constant_set = {name for name in rw_set if name in sdfg.constants_prop}
         unique_set = set()
+        outside_reads: set[str] | None = None
         for name in rw_set - constant_set:
             if not sdfg.arrays[name].transient:
+                continue
+            # A container a header or an interstate edge outside the loop reads is not the body's to privatize,
+            # though no access node outside names it: a symbol demoted to a scalar is read by the conditions of
+            # a LATER loop (fv3_dycore's ``if abs(__inl2_ord_inner) == 5``). Moved into the nest, those reads
+            # were left naming a symbol nothing defines.
+            if outside_reads is None:
+                outside_reads = control_flow_reads_outside(sdfg, self.loop, lift_ctx)
+            if name in outside_reads:
                 continue
             if lift_ctx is not None:
                 # The same question the scan below asks -- "does an access node for this name live
