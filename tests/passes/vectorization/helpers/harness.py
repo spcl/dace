@@ -45,7 +45,6 @@ NCLDQL = dace.symbol("NCLDQL")
 NCLDQI = dace.symbol("NCLDQI")
 
 
-
 def undeclare_scope_bound_symbols(sdfg: dace.SDFG) -> None:
     """The builders declare one symbol set on both SDFGs; a map or loop of ``sdfg`` binds some of them, and an
     iterator is never an SDFG symbol."""

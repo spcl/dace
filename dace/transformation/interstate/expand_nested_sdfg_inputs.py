@@ -31,10 +31,10 @@ from dace.frontend.python import astutils
 from dace.memlet import Memlet
 from dace.properties import Property, make_properties
 from dace.sdfg import SDFGState, nodes
-from dace.sdfg.sdfg import interstate_bound_names, scope_bound_names
 from dace.sdfg import utils as sdutil
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.narrowing import as_expr, as_range
+from dace.sdfg.sdfg import interstate_bound_names, scope_bound_names
 from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.subsets import Range
 from dace.transformation import transformation

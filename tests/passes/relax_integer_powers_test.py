@@ -6,11 +6,10 @@ import pytest
 import sympy
 
 import dace
-from dace.symbolic import Predicate
 from dace import data, symbolic, symbolic_engine
 from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion, SymbolResolver
-from dace.symbolic import ipow, pystr_to_symbolic, symstr
+from dace.symbolic import Predicate, ipow, pystr_to_symbolic, symstr
 from dace.transformation.passes.relax_integer_powers import RelaxIntegerPowers, relaxed_exponent
 
 
