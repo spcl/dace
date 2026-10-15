@@ -15,4 +15,5 @@ from .merge_node import MergeLibraryNode
 from .norm2 import Norm2
 from .reduce import Reduce
 from .scan import Scan, ScanOp
+from .state_scan import StateScan
 from .symmetrize import Symmetrize
