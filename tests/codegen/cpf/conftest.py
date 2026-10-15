@@ -19,6 +19,7 @@ while verifying nothing. Tests arrive as the phases land, and each one asserts.
 """
 
 import ctypes
+import ctypes.util
 import os
 import re
 import shutil
@@ -418,6 +419,10 @@ def vendor_build_flags(code: str) -> tuple[list[str], list[str]]:
         for directory in dict.fromkeys(os.path.dirname(p) for p in environment.cmake_libraries() if os.sep in p):
             link += [f"-L{directory}", f"-Wl,-rpath,{directory}"]
         link += list(VENDOR_LIBRARIES[name].link_tokens(code))
+    # A distro that packages LAPACKE apart from OpenBLAS (Debian, Ubuntu: liblapacke) needs it named too; an
+    # OpenBLAS built with its own LAPACKE (spack, conda) has none, and the rendering's link line is the latter's.
+    if "lapack" in vendor_families(code) and ctypes.util.find_library("lapacke"):
+        link.insert(next((i for i, t in enumerate(link) if t == "-lopenblas"), len(link)), "-llapacke")
     return includes, link
 
 

@@ -48,9 +48,10 @@ jobs:
     - uses: ./.github/actions/setup-dace
       with:
         python-version: '3.14'
-        # Deliberately minimal: libyaml + cmake only. NO BLAS, NO LAPACK -- CPF output must not
-        # reference them, and installing them would let a leaked library call link and pass.
-        apt-packages: libyaml-dev cmake
+        # libyaml + cmake, plus the host vendor libraries CPF lowers BLAS, LAPACK and FFT nodes to
+        # (OpenBLAS with its CBLAS and LAPACKE interfaces, FFTW3): the environment provides them, as the
+        # judge image does. Every other library a rendering names is still a leak.
+        apt-packages: libyaml-dev cmake libopenblas-dev liblapacke-dev libfftw3-dev
         groups: testing
 
     - name: CPF lowering, dialect and emission suites (c++)

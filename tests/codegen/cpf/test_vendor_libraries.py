@@ -8,8 +8,6 @@ library on :attr:`~dace.codegen.cpf.Rendering.link` and by family on :attr:`~dac
 Each case is built against that link line and computes what numpy does.
 """
 
-import os
-
 import numpy as np
 import pytest
 
@@ -97,14 +95,6 @@ CASES = {
 }
 
 
-def install_flags(environment) -> tuple[list[str], list[str]]:
-    """The ``-I`` and ``-L``/rpath flags of an install off the default search path (spack, conda). A machine with
-    the library on its default paths needs none, which is what the rendered unit assumes."""
-    includes = [f"-I{path}" for path in environment.cmake_includes()]
-    directories = dict.fromkeys(os.path.dirname(path) for path in environment.cmake_libraries() if os.sep in path)
-    return includes, [flag for directory in directories for flag in (f"-L{directory}", f"-Wl,-rpath,{directory}")]
-
-
 @pytest.mark.parametrize("language", ["c++", "c"])
 @pytest.mark.parametrize("label", sorted(CASES))
 def test_a_library_node_renders_as_the_vendor_call_and_computes_what_numpy_does(label, language):
@@ -119,10 +109,8 @@ def test_a_library_node_renders_as_the_vendor_call_and_computes_what_numpy_does(
     assert family in rendering.libraries, rendering.libraries
     assert rendering.link, f"{label}: a unit that calls {family} must name it on its link line"
 
-    includes, directories = install_flags(environment)
-    library = build_standalone(
-        rendering.code, sdfg.name, language=language, extra_flags=includes, link=[*directories, *rendering.link]
-    )
+    # The harness adds this machine's install paths and the rendering's link line (conftest.vendor_build_flags).
+    library = build_standalone(rendering.code, sdfg.name, language=language)
     inputs = make_inputs(np.random.default_rng(0))
     arguments = {name: value.copy() for name, value in inputs.items()}
     for name, want in expected(inputs).items():
