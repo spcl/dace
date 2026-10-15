@@ -1717,7 +1717,7 @@ def rewrite_native_code(code: str, dialect: Dialect | None = None, site: NativeS
     code = _QUALIFIED_NAME.sub(replace, code)
     if c_dialect:
         # Last, so the predicate the search function takes is C already.
-        code = c_find_first(c_cast_native_code(code), site)
+        code = c_find_first(c_cast_native_code(c_native_ipow(code, site)), site)
     return code
 
 
@@ -4147,6 +4147,50 @@ def c_native_value_dtype(argument: str, site: NativeSite | None, call: str) -> s
         f"CPF cannot type the value {argument!r} that {call} takes in C: it is neither a "
         "typed name nor a value that spells its type"
     )
+
+
+#: An ``ipow`` call in a hand-written body: the runtime's qualified name, or the bare one ``str`` of a dace expression
+#: prints, which an expansion formats into its call (a BLAS GEMV's ``Lb**3`` rows are ``ipow(Lb, 3)``).
+C_NATIVE_IPOW_CALL: "re.Pattern" = re.compile(r"(?<![\w:])(?:(?:::)?dace::math::)?ipow\s*\(")
+#: A typed helper's call as C spells it, ``cpf_<helper>_<dace type>(``: its result has that type.
+C_TYPED_HELPER_CALL: "re.Pattern" = re.compile(r"cpf_[a-z_]+?_(%s)\s*\(" % "|".join(C_SCALAR_SPELLINGS))
+
+
+def c_native_scalar_dtype(argument: str, site: NativeSite | None, call: str) -> str:
+    """The type of a scalar ``argument`` of a hand-written body: an integer or floating literal, a typed helper's
+    call (:data:`C_TYPED_HELPER_CALL`), else what :func:`c_native_value_dtype` reads off the site.
+
+    :raises NotImplementedError: for any other expression.
+    """
+    text = argument.strip()
+    if re.fullmatch(r"[+-]?\d+[lLuU]*", text):
+        return "int64"
+    if re.fullmatch(r"[+-]?(\d+\.\d*|\.\d+|\d+)([eE][+-]?\d+)?[fF]?", text):
+        return "float32" if text[-1] in "fF" else "float64"
+    helper = C_TYPED_HELPER_CALL.match(text)
+    if helper is not None and c_encloses(text, text.index("(", helper.start())):
+        return helper.group(1)
+    return c_native_value_dtype(text, site, call)
+
+
+def c_native_ipow(code: str, site: NativeSite | None) -> str:
+    """Every ``ipow`` call of a hand-written body as the typed C helper for its base's type.
+
+    C has no overloading, so ``ipow`` is one helper per base type (``cpf_ipow_int64``), picked by the type of the
+    base; the C++ dialect's ``ipow`` template is not there. Rewritten innermost first, so an ``ipow`` base is typed
+    by the helper it already became.
+
+    :raises NotImplementedError: if a base is not a value the site types.
+    """
+    for match in reversed(list(C_NATIVE_IPOW_CALL.finditer(code))):
+        open_at = match.end() - 1
+        close = c_closing(code, open_at)
+        arguments = c_call_arguments(code[open_at + 1 : close]) if close is not None else None
+        if arguments is None or len(arguments) != 2:
+            continue
+        base_type = c_native_scalar_dtype(arguments[0], site, "ipow")
+        code = code[: match.start()] + c_helper_call("ipow", arguments, (base_type, "int64")) + code[close + 1 :]
+    return code
 
 
 def c_instance_call(name: str, arguments: tuple[str, ...]) -> str:
