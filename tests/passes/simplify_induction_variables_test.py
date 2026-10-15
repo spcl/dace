@@ -131,6 +131,8 @@ def test_a_derived_iv_sizing_a_loop_local_container_folds_into_it_and_converges(
     fill = use_state.add_tasklet("fill", {}, {"o"}, "o = 1.0")
     use_state.add_edge(fill, "o", use_state.add_write("row"), None, dace.Memlet("row[0]"))
     if live_after:
+        # Read after the loop that assigns it: the SDFG declares it, since a loop's assignments do not reach past it
+        sdfg.add_symbol("j", dace.int64)
         sdfg.add_edge(loop, sdfg.add_state("post"), dace.InterstateEdge(assignments={"out": "j"}))
 
     p = SimplifyInductionVariables()

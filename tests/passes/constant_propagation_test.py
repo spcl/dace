@@ -671,6 +671,8 @@ def nest_with_a_string_symbol_mapping() -> dace.SDFG:
     body.add_nedge(body.add_read("src"), body.add_write("dst"), dace.Memlet("src[0:4]"))
 
     sdfg = dace.SDFG("string_symbol_mapping")
+    sdfg.add_symbol("rows", dace.int64)
+    sdfg.add_symbol("cols", dace.int64)
     sdfg.add_array("a", [4], dace.float64)
     sdfg.add_array("out", [4], dace.float64)
     state = sdfg.add_state("call", is_start_block=True)

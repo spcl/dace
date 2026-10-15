@@ -662,7 +662,8 @@ def region_scope_fixture(name: str, condition: str, init: str = "i = 0", guard_b
     sdfg = dace.SDFG(name)
     sdfg.add_array("A", [1], dace.float64, transient=True)
     sdfg.add_array("B", [1], dace.float64)
-    sdfg.add_symbol("i", dace.int64)
+    if "N" in condition:
+        sdfg.add_symbol("N", dace.int64)
 
     loop = LoopRegion("loop", condition, "i", init, "i = i + 1")
     sdfg.add_node(loop, is_start_block=True)
@@ -716,7 +717,6 @@ def test_symbolic_trip_count_loop_is_refused():
     body defines nothing after the loop and the read stays undominated.
     """
     sdfg, loop_write, end_read = region_scope_fixture("region_write_symbolic", "i < N")
-    sdfg.add_symbol("N", dace.int64)
     res = write_scopes(sdfg)
 
     body, end = state_named(sdfg, "body"), state_named(sdfg, "end")
@@ -799,8 +799,6 @@ def test_loop_carried_read_is_not_split_from_the_body_write():
     sdfg = dace.SDFG("loop_carried_after_region_write")
     sdfg.add_array("A", [1], dace.float64, transient=True)
     sdfg.add_array("B", [1], dace.float64)
-    sdfg.add_symbol("i", dace.int64)
-    sdfg.add_symbol("j", dace.int64)
 
     producer = LoopRegion("producer", "i < 4", "i", "i = 0", "i = i + 1")
     sdfg.add_node(producer, is_start_block=True)

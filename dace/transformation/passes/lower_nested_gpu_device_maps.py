@@ -183,16 +183,16 @@ class NestedGPUDeviceMapLowering(ppl.Pass):
         kernel.map.params.extend(ranges)
         kernel.map.range = subsets.Range(list(kernel.map.range) + [merged[0] for merged in ranges.values()])
 
-        # Every NestedSDFG on the way down binds the absorbed params.
+        for map_state, inner_map in inner_maps:
+            self.move_map_to_if(map_state, inner_map)
+
+        # Every NestedSDFG on the way down binds the absorbed params, which no inner map binds any more.
         for map_state, _ in inner_maps:
             for sdfg in nested_sdfg_chain(map_state.sdfg, state.sdfg):
                 for param in ranges:
                     if param not in sdfg.symbols:
                         sdfg.add_symbol(param, param_types[param])
                     sdfg.parent_nsdfg_node.symbol_mapping.setdefault(param, param)
-
-        for map_state, inner_map in inner_maps:
-            self.move_map_to_if(map_state, inner_map)
         return len(inner_maps)
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, object]) -> int | None:

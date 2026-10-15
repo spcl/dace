@@ -127,16 +127,16 @@ class OutlineTopLevelNests(ppl.Pass):
             count += 1
 
         for loop in loop_refs:
-            # nest_sdfg_subgraph needs every nest-defined symbol registered on the parent to type its
-            # symbolic outputs; a bare loop index need not be a declared symbol, so declare it.
-            for symbol in loop_defined_symbols(loop):
-                if symbol not in sdfg.symbols:
-                    sdfg.add_symbol(symbol, dtypes.int64)
             loop_vars = {
                 block.loop_variable
                 for block in [loop, *loop.all_control_flow_blocks()]
                 if isinstance(block, LoopRegion) and block.loop_variable and block.init_statement
             }
+            # nest_sdfg_subgraph needs every nest-defined symbol registered on the parent to type its
+            # symbolic outputs; a loop's own iterator is bound by the loop, never declared.
+            for symbol in loop_defined_symbols(loop):
+                if symbol not in sdfg.symbols and symbol not in loop_vars:
+                    sdfg.add_symbol(symbol, dtypes.int64)
             inner_state = helpers.nest_sdfg_subgraph(sdfg, SubgraphView(sdfg, [loop]))
             nsdfg = next(n for n in inner_state.nodes() if isinstance(n, nodes.NestedSDFG))
             # A loop variable the nest re-initialises internally needs no INBOUND value. A counter that

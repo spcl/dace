@@ -241,4 +241,8 @@ class LoopLifting(DetectLoop, transformation.MultiStateTransformation):
         # Connect the loop to everything after the loop.
         graph.add_edge(to_connect, after, InterstateEdge(assignments=exit_edge.data.assignments))
 
+        # The state machine's counter may be a declared symbol; the loop now binds it, and an iterator is never one
+        if itvar is not None and init_expr is not None and itvar in sdfg.symbols:
+            sdfg.remove_symbol(itvar)
+
         sdfg.root_sdfg.using_explicit_control_flow = True

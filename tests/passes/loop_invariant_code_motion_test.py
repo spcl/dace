@@ -482,6 +482,7 @@ def test_middle_child_hoist_keeps_body_chain_connected():
 
 def test_wcr_output_is_not_hoisted():
     sdfg = dace.SDFG("licm_wcr")
+    sdfg.add_symbol("N", dace.int64)
     sdfg.add_array("a", [1], dace.float64)
     sdfg.add_array("acc", [1], dace.float64)
 

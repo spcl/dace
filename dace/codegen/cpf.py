@@ -183,6 +183,7 @@ LIBRARY_NODE_DESCRIPTIONS: dict[str, str] = {
     "Redistribute": "redistribute an array between two process grids",
     "Scal": "BLAS scal: x = alpha * x",
     "Scan": "scan: running (prefix) fold along an axis",
+    "StateScan": "state scan: a finite-state or linear recurrence run as a parallel prefix over blocks",
     "Scatter": "MPI_Scatter: distribute from the root to every rank",
     "ScatterConflictCheck": "scatter conflict check: detect indices written more than once",
     "Send": "MPI_Send: blocking send",

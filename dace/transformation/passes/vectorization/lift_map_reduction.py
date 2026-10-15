@@ -565,6 +565,8 @@ class LiftMapReductionToReduce(ppl.Pass):
         for sym, src in scalar_src.items():
             me_w.add_in_connector(sym)
             state.add_edge(state.add_access(src), None, me_w, sym, dace.Memlet(f"{src}[0]"))
+            # The scope binds it now, and a scope-bound name is never an SDFG symbol
+            sdfg.remove_symbol(sym)
 
         # Route every cluster<->outside edge through the wrap map. Internal edges
         # and the dynamic-range feeds just added are left alone.

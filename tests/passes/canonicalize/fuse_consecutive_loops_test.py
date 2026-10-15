@@ -198,7 +198,6 @@ def test_bodies_differing_only_in_a_copy_memlets_destination_are_not_fused():
     sdfg = dace.SDFG("fuse_other_subset")
     sdfg.add_array("A", [8, 2], dace.float64)
     sdfg.add_array("B", [4], dace.float64)
-    sdfg.add_symbol("i", dace.int64)
     first, second = make_loop("loop1", 0, 4, "0:2"), make_loop("loop2", 4, 8, "2:4")
     sdfg.add_node(first, is_start_block=True)
     sdfg.add_node(second)

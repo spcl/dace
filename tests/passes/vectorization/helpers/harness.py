@@ -17,6 +17,7 @@ import dace
 from dace import InterstateEdge
 from dace.properties import CodeBlock
 from dace.sdfg import ControlFlowRegion
+from dace.sdfg.sdfg import scope_bound_names
 from dace.sdfg.state import ConditionalBlock
 from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.parallelize_loops import ParallelizeLoops
@@ -42,6 +43,14 @@ KLON = dace.symbol("KLON")
 KLEV = dace.symbol("KLEV")
 NCLDQL = dace.symbol("NCLDQL")
 NCLDQI = dace.symbol("NCLDQI")
+
+
+
+def undeclare_scope_bound_symbols(sdfg: dace.SDFG) -> None:
+    """The builders declare one symbol set on both SDFGs; a map or loop of ``sdfg`` binds some of them, and an
+    iterator is never an SDFG symbol."""
+    for name in sorted(scope_bound_names(sdfg) & sdfg.symbols.keys()):
+        sdfg.remove_symbol(name)
 
 
 def _innermost_map_K(sdfg: dace.SDFG, loop_to_map_permissive: bool = False) -> int | None:
@@ -965,6 +974,7 @@ def _get_cloudsc_snippet_three(add_scalar: bool, map_range_dependent_subset: boo
             dace.memlet.Memlet.from_array(arr, outer_state.sdfg.arrays[arr]),
         )
         m1_exit.add_out_connector(f"OUT_{arr}", force=True)
+    undeclare_scope_bound_symbols(sdfg)
     sdfg.validate()
     return sdfg
 
@@ -1144,6 +1154,7 @@ def _get_cloudsc_snippet_four():
         )
         m1_exit.add_out_connector(f"OUT_{arr}", force=True)
         m1_exit.add_in_connector(f"IN_{arr}", force=True)
+    undeclare_scope_bound_symbols(sdfg)
     sdfg.validate()
     return sdfg
 
@@ -1242,6 +1253,7 @@ def _get_map_inside_nested_map():
             dace.memlet.Memlet.from_array(arr, outer_state.sdfg.arrays[arr]),
         )
         m1_exit.add_out_connector(f"OUT_{arr}", force=True)
+    undeclare_scope_bound_symbols(sdfg)
     sdfg.validate()
     return sdfg
 
@@ -1323,6 +1335,7 @@ def _get_dependency_edge_to_unary_symbol_sdfg():
             dace.memlet.Memlet.from_array(arr, outer_state.sdfg.arrays[arr]),
         )
         m1_exit.add_out_connector(f"OUT_{arr}", force=True)
+    undeclare_scope_bound_symbols(sdfg)
     sdfg.validate()
     return sdfg
 

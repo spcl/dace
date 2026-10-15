@@ -657,7 +657,6 @@ def test_a_wcr_accumulator_is_not_an_induction_variable():
     n = 4
     sdfg = dace.SDFG("ivs_wcr")
     sdfg.add_array("acc", [1], dace.float64)
-    sdfg.add_symbol("i", dace.int64)
     loop = LoopRegion("loop", condition_expr=f"i < {n}", loop_var="i", initialize_expr="i = 0", update_expr="i = i + 1")
     st = loop.add_state("body", is_start_block=True)
     t = st.add_tasklet("t", {"__in"}, {"__out"}, "__out = __in * 0.99")

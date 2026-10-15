@@ -41,7 +41,6 @@ def _build(
         sdfg.add_array(name, [N], dace.float64)
     sdfg.add_array("C", [1], dace.float64)
     sdfg.add_array("M", [1], dace.float64, transient=True)
-    sdfg.add_symbol("i", dace.int64)
 
     first = _loop("loop1", N)
     body1 = first.add_state("body1", is_start_block=True)
@@ -155,7 +154,6 @@ def test_a_candidate_holding_the_entry_block_is_not_sunk(entry: str):
     sdfg = dace.SDFG(f"reorder_state_for_loop_fusion_entry_{entry}")
     for name in ("P", "Q", "T", "U"):
         sdfg.add_array(name, [N], dace.float64)
-    sdfg.add_symbol("i", dace.int64)
     first, second = _loop("loop1", N), _loop("loop2", N)
     for loop, (dst, src) in ((first, ("T", "P")), (second, ("U", "Q"))):
         body = loop.add_state(f"body_{dst}", is_start_block=True)
@@ -294,8 +292,9 @@ def test_another_path_into_second_is_not_sunk():
     including the one that never used to run it at all -- refused.
     """
     sdfg, first, state, second = _build(conflict="none")
+    sdfg.add_symbol("flag", dace.int64)
     extra = sdfg.add_state("extra")
-    sdfg.add_edge(first, extra, InterstateEdge(condition="i == 999"))
+    sdfg.add_edge(first, extra, InterstateEdge(condition="flag == 999"))
     sdfg.add_edge(extra, second, InterstateEdge())
     sdfg.validate()
 

@@ -10,6 +10,8 @@ from dace.transformation.passes.tile_synchronization import InsertTileSync, Toke
 M, N, K = (dace.symbol(name) for name in "MNK")
 BM, BN, BK = 16, 16, 8
 ROW = BlockLayout(128, 1, 256, None)
+#: The facts of a loop over an integer ``k``
+FACTS = symbolic.Facts((), frozenset({"k"}))
 
 
 @dace.program
@@ -89,9 +91,9 @@ def test_the_slots_of_a_circular_buffer_carry_their_own_tokens():
     k = symbolic.symbol("k")
     slot = lambda index: subsets.Range([(index, index, 1), (0, 255, 1)])
     current, following = Token("buf", slot(k % 2), ROW), Token("buf", slot((k + 1) % 2), None)
-    assert not Token("buf", slot(0), None).waits_for(Token("buf", slot(1), ROW))
-    assert following.waits_for(Token("buf", slot((k + 1) % 2), ROW))
-    assert not current.waits_for(Token("buf", slot(k % 2), ROW))
+    assert not Token("buf", slot(0), None).waits_for(Token("buf", slot(1), ROW), FACTS)
+    assert following.waits_for(Token("buf", slot((k + 1) % 2), ROW), FACTS)
+    assert not current.waits_for(Token("buf", slot(k % 2), ROW), FACTS)
     # Across the back edge a token names the previous iteration's subset
     assert Token("buf", slot(k), ROW).shifted("k", 1).subset == slot(k - 1)
     assert Token("buf", slot(k), ROW).shifted("k", None).subset is None

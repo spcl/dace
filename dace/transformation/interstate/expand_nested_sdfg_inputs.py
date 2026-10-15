@@ -31,6 +31,7 @@ from dace.frontend.python import astutils
 from dace.memlet import Memlet
 from dace.properties import Property, make_properties
 from dace.sdfg import SDFGState, nodes
+from dace.sdfg.sdfg import interstate_bound_names, scope_bound_names
 from dace.sdfg import utils as sdutil
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.narrowing import as_expr, as_range
@@ -891,7 +892,9 @@ class ExpandNestedSDFGInputs(transformation.SingleStateTransformation):
         # sized by an inner loop iterator (a triangular reduction buffer ``_red_buf[M - it - 1]``
         # inside the ``it`` loop). Such a name has no binding in the caller's scope, so putting it
         # in ``symbol_mapping`` makes codegen pass an undeclared variable at the call site.
-        inner_defined = set(inner_sdfg.symbols.keys()) - {str(s) for s in inner_sdfg.free_symbols}
+        inner_defined = (set(inner_sdfg.symbols.keys()) - {str(s) for s in inner_sdfg.free_symbols}) | (
+            scope_bound_names(inner_sdfg) | interstate_bound_names(inner_sdfg)
+        )
         for inner_desc in inner_sdfg.arrays.values():
             for sym in inner_desc.free_symbols:
                 sym_name = str(sym)

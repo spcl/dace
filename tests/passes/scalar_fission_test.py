@@ -645,7 +645,6 @@ def test_privatize_loop_local_undominated_through_map_scope():
     sdfg.add_array("data", [8, 8], dace.float64)
     sdfg.add_array("out", [8], dace.float64)
     sdfg.add_scalar("acc", dace.float64, transient=True)
-    sdfg.add_symbol("i", dace.int64)
     loop = LoopRegion("loop", "i < 8", "i", "i = 0", "i = i + 1")
     sdfg.add_node(loop, is_start_block=True)
     guard = loop.add_state("guard", is_start_block=True)
@@ -690,7 +689,6 @@ def loop_region_versions_sdfg(condition: str) -> dace.SDFG:
     sdfg = dace.SDFG(f"loop_region_scalar_versions_{tag}")
     sdfg.add_array("out", [3], dace.float64)
     sdfg.add_scalar("A", dace.float64, transient=True)
-    sdfg.add_symbol("i", dace.int64)
 
     loop = LoopRegion("loop", condition, "i", "i = 0", "i = i + 1")
     sdfg.add_node(loop, is_start_block=True)

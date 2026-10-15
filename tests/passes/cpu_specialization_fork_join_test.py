@@ -105,6 +105,8 @@ def one_map_sdfg(name, shape, ranges, loop_end=None, schedule=dtypes.ScheduleTyp
     """An SDFG holding one map, optionally wrapped in a ``for it in 0:loop_end`` loop."""
     sdfg = dace.SDFG(name)
     sdfg.add_array("a", shape, dace.float64)
+    if loop_end is not None and str(loop_end) not in sdfg.symbols and not str(loop_end).isdigit():
+        sdfg.add_symbol(str(loop_end), dace.int64)
     container = sdfg if loop_end is None else loop(sdfg, "outer", loop_end)
     map_state(container, sdfg, "body", ranges, schedule)
     sdfg.validate()
@@ -190,6 +192,7 @@ def test_map_inside_a_conditional_is_decided():
     whole body under one, and its three stream-compaction loops kept a region per row.
     """
     sdfg = dace.SDFG("small_map_under_if")
+    sdfg.add_symbol("N", dace.int64)
     sdfg.add_array("a", [BELOW_BREAK_EVEN], dace.float64)
     body = ControlFlowRegion("body", sdfg=sdfg)
     map_state(body, sdfg, "body", [f"0:{BELOW_BREAK_EVEN}"])
@@ -501,6 +504,7 @@ def test_each_distinct_trip_count_is_asked_once():
     from dace import symbolic
 
     sdfg = dace.SDFG("shared_trip_counts")
+    sdfg.add_symbol("N", dace.int64)
     sdfg.add_array("a", [ABOVE_BREAK_EVEN], dace.float64)
     extents = [BELOW_BREAK_EVEN, "N", BELOW_BREAK_EVEN, "N", ABOVE_BREAK_EVEN, BELOW_BREAK_EVEN]
     for index, extent in enumerate(extents):

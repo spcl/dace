@@ -8,6 +8,7 @@ returned ``TileAccess`` record.
 """
 
 import pytest
+import sympy
 
 import dace
 from dace import symbolic
@@ -359,7 +360,8 @@ def test_c_modulo_with_an_unknown_sign_dividend_falls_back_to_gather(index):
 def test_c_modulo_with_a_nonnegative_dividend_folds_to_the_modular_pattern():
     """With a nonnegative dividend C's ``%`` equals the floored one, so ``CMod`` folds to ``Mod`` and is detected
     as modular. The modular dim is still recorded GATHER: no tile-aligned modular load exists."""
-    expr = symbolic.CMod(symbolic.symbol("nonneg_i", nonnegative=True), 5)
+    # A registry symbol is a bare name; the sign comes from a SymPy assumption here
+    expr = symbolic.CMod(sympy.Symbol("nonneg_i", nonnegative=True, integer=True), 5)
     assert isinstance(expr, symbolic.MODULO_FUNCTIONS["Mod"])
     assert _detect_modular_factor(expr, "nonneg_i") == 5
     ta = classify_tile_access(Range([(expr, expr, 1)]), iter_vars=("nonneg_i",))

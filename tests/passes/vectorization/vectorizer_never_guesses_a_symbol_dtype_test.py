@@ -55,14 +55,16 @@ def int32_parameter_map(sdfg: SDFG, state: SDFGState, label: str, param: str) ->
     """A map whose parameter genuinely infers as int32: both bounds reach ``Range`` as bare symbols."""
     lo = symbolic.symbol("LO", dace.int32)
     hi = symbolic.symbol("HI", dace.int32)
-    sdfg.symbols.setdefault("LO", dace.int32)
-    sdfg.symbols.setdefault("HI", dace.int32)
+    if "LO" not in sdfg.symbols:
+        sdfg.add_symbol("LO", dace.int32)
+    if "HI" not in sdfg.symbols:
+        sdfg.add_symbol("HI", dace.int32)
     return state.add_map(label, {param: subsets.Range([(lo, hi, 1)])})
 
 
 def map_parameter_dtype(state: SDFGState, entry: nodes.MapEntry, param: str) -> dace.dtypes.typeclass:
     """The dtype the map itself gives its parameter -- the authority every re-declaration owes."""
-    return entry.new_symbols(state.sdfg, state, {})[param]
+    return entry.new_symbols(state.sdfg, state, dict(state.sdfg.symbols))[param]
 
 
 def body_nsdfg_in_map_scope(

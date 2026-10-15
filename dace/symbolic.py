@@ -1807,9 +1807,14 @@ class DaceFunction(sympy.Function, metaclass=_HEAD_META):
 
 
 def _as_integers(expr: sympy.Expr) -> sympy.Expr:
-    """``expr`` over integer symbols of the same names, for operands that are integers by definition."""
+    """``expr`` over integer symbols of the same names, for operands that are integers by definition. A ``Dummy`` (a
+    proof's slack) stays distinct from every other one: two slacks share a name, not a value."""
     return expr.xreplace(
-        {s: sympy.Symbol(s.name, integer=True) for s in expr.free_symbols if isinstance(s, sympy.Symbol)}
+        {
+            s: sympy.Dummy(s.name, integer=True) if isinstance(s, sympy.Dummy) else sympy.Symbol(s.name, integer=True)
+            for s in expr.free_symbols
+            if isinstance(s, sympy.Symbol)
+        }
     )
 
 
