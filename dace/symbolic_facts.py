@@ -171,7 +171,8 @@ class Facts:
         return hash(self.key())
 
     def assumptions(self, name: str) -> dict[str, bool]:
-        """The SymPy assumptions the facts prove for the symbol ``name``: integrality from its dtype, and a sign."""
+        """The SymPy assumptions the facts prove for the symbol ``name``: integrality from its dtype, and a sign, or at
+        least that it is nonzero."""
         assumed = {"integer": True} if name in self.integers else {"real": True}
         free, zero = sympy.Symbol(name), sympy.Integer(0)
         for kind, lhs, rhs, sign in (
@@ -183,6 +184,9 @@ class Facts:
             if ask(Relation(kind, lhs, rhs), self) is Truth.TRUE:
                 assumed[sign] = True
                 break
+        else:
+            if ask(Relation(RelationKind.NE, free, zero), self) is Truth.TRUE:
+                assumed["nonzero"] = True
         return assumed
 
 
@@ -379,6 +383,15 @@ class DivisionKind(enum.Enum):
     FLOOR = enum.auto()
     CEIL = enum.auto()
     MOD = enum.auto()
+    #: SymPy's ``floor`` and ``ceiling`` of a real: exact, whatever the sign of their argument
+    REAL_FLOOR = enum.auto()
+    REAL_CEIL = enum.auto()
+
+    @property
+    def exact(self) -> bool:
+        """Whether the bounds hold for every argument, not only for a nonnegative numerator over a positive
+        denominator."""
+        return self in (DivisionKind.REAL_FLOOR, DivisionKind.REAL_CEIL)
 
 
 class Division(NamedTuple):
@@ -400,10 +413,23 @@ class Division(NamedTuple):
             return (sympy.Integer(0), (x - y + 1) / y) if lower else (x / y, x)
         if self.kind is DivisionKind.CEIL:
             return (sympy.Integer(0), x / y) if lower else ((x + y - 1) / y, x)
+        if self.kind is DivisionKind.REAL_FLOOR:
+            return (x - 1,) if lower else (x,)
+        if self.kind is DivisionKind.REAL_CEIL:
+            return (x,) if lower else (x + 1,)
         return (sympy.Integer(0),) if lower else (y - 1, x)
 
 
+def division_types() -> tuple[type, ...]:
+    """The atoms the proof treats as divisions: their bounds are known, their values are not."""
+    return (symbolic.int_floor, symbolic.int_ceil, sympy.Mod, sympy.floor, sympy.ceiling)
+
+
 def division_kind(atom: sympy.Expr) -> DivisionKind:
+    if isinstance(atom, sympy.floor):
+        return DivisionKind.REAL_FLOOR
+    if isinstance(atom, sympy.ceiling):
+        return DivisionKind.REAL_CEIL
     if isinstance(atom, symbolic.int_floor):
         return DivisionKind.FLOOR
     if isinstance(atom, symbolic.int_ceil):
@@ -422,10 +448,8 @@ def lowered(
     same division by the same placeholder), whose operands are rewritten through ``substitution``. This comes before
     anything rebuilds ``expr``, which would have SymPy rewrite a ``Mod`` by Python's rounding.
     """
-    division_types = (symbolic.int_floor, symbolic.int_ceil, sympy.Mod)
-    while innermost := [
-        atom for atom in expr.atoms(*division_types) if not any(arg.atoms(*division_types) for arg in atom.args)
-    ]:
+    types = division_types()
+    while innermost := [atom for atom in expr.atoms(*types) if not any(arg.atoms(*types) for arg in atom.args)]:
         replacements: dict[sympy.Expr, sympy.Symbol] = {}
         for atom in sorted(innermost, key=str):
             # Placeholders of inner divisions are integers too
@@ -437,14 +461,15 @@ def lowered(
                     {},
                     divisions,
                 )
-                for arg in atom.args
+                # A real rounding has one argument: its denominator is one
+                for arg in (*atom.args, sympy.Integer(1))[:2]
             )
             division = Division(division_kind(atom), numerator, denominator)
             # An exact quotient (and its zero remainder) is the same under C's truncation and Python's rounding; an
             # exact int_ceil is not, as C computes it as ``(x + y - 1) / y``
             quotient = cast(sympy.Expr, sympy.cancel(numerator / denominator))
             if division.kind is not DivisionKind.CEIL and quotient.is_integer:
-                replacements[atom] = quotient if division.kind is DivisionKind.FLOOR else sympy.Integer(0)
+                replacements[atom] = sympy.Integer(0) if division.kind is DivisionKind.MOD else quotient
                 continue
             placeholder = next((known for known, existing in divisions.items() if existing == division), None)
             if placeholder is None:
@@ -474,7 +499,10 @@ def proves_sign(expr: sympy.Expr, divisions: dict[sympy.Symbol, Division], stric
         poly is None
         or poly.degree() != 1
         or not (
-            proves_sign(division.numerator, divisions, False) and proves_sign(division.denominator, divisions, True)
+            division.kind.exact
+            or (
+                proves_sign(division.numerator, divisions, False) and proves_sign(division.denominator, divisions, True)
+            )
         )
     ):
         return False
@@ -492,6 +520,18 @@ def proves_sign(expr: sympy.Expr, divisions: dict[sympy.Symbol, Division], stric
         else proves_sign(expr.xreplace({placeholder: bound}), divisions, strict)
         for bound in bounds
     )
+
+
+def generalized_divisions(expr: sympy.Expr) -> sympy.Expr:
+    """``expr`` with every division (and rounding) atom replaced by a fresh symbol, the same atom by the same one."""
+    atoms = sorted(expr.atoms(*division_types()), key=str)
+    if not atoms:
+        return expr
+    # Plain symbols: the proof treats a Dummy as one of its own slacks. The names cannot be program symbols.
+    taken = {str(free) for free in expr.free_symbols}
+    names = (f"__dace_division{index}" for index in range(len(atoms) + len(taken)))
+    fresh = [name for name in names if name not in taken][: len(atoms)]
+    return cast(sympy.Expr, expr.xreplace({atom: sympy.Symbol(name) for atom, name in zip(atoms, fresh)}))
 
 
 def by_cases(expr: sympy.Expr, kind: RelationKind, extremum: sympy.Expr, facts: Facts) -> Truth:
@@ -586,7 +626,12 @@ def prove(query: Relation, facts: Facts) -> Truth:
     expr = cast(sympy.Expr, sympy.sympify(query.rhs - query.lhs))
     extrema = sorted(expr.atoms(sympy.Min, sympy.Max), key=str)
     if extrema:
-        return by_cases(expr, query.kind, extrema[0], facts)
+        truth = by_cases(expr, query.kind, extrema[0], facts)
+        if truth is Truth.UNKNOWN and expr.atoms(*division_types()):
+            # A case relation holding a division cannot be solved for; what holds for every value of each division
+            # holds for the actual one
+            return by_cases(generalized_divisions(expr), query.kind, generalized_divisions(extrema[0]), facts)
+        return truth
     divisions: dict[sympy.Symbol, Division] = {}
     difference = lowered(expr, facts.integers, facts.substitution, divisions)
     difference = with_integers(difference, facts.integers | {placeholder.name for placeholder in divisions})

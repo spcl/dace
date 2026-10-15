@@ -36,6 +36,17 @@ def top_level_nodes(state: SDFGState):
     return state.scope_children()[None]
 
 
+def endpoint_subset(edge, state: SDFGState, source: bool) -> subsets.Subset | None:
+    """The subset ``edge`` accesses at its source (or destination) node. A copy whose memlet names only the other
+    container leaves this side's ``other_subset`` unset, which means the same shape based at index zero; that is
+    the subset returned, never the other container's. ``None`` when the edge carries no subset at all.
+    """
+    subset = edge.data.get_src_subset(edge, state) if source else edge.data.get_dst_subset(edge, state)
+    if subset is None and edge.data.subset is not None and edge.data.data is not None:
+        subset = subsets.Range([(0, size - 1, 1) for size in edge.data.subset.size()])
+    return subset
+
+
 @transformation.explicit_cf_compatible
 class StateFusion(transformation.MultiStateTransformation):
     """Implements the state-fusion transformation.
@@ -107,9 +118,10 @@ class StateFusion(transformation.MultiStateTransformation):
         :param inputs_b: If True, checks inputs of the second group.
         :return: True if subsets intersect or result is indeterminate.
         """
-        # Set traversal functions
-        src_subset = lambda e: e.data.src_subset if e.data.src_subset is not None else e.data.dst_subset
-        dst_subset = lambda e: e.data.dst_subset if e.data.dst_subset is not None else e.data.src_subset
+        # Set traversal functions: the subset an edge accesses on the side of the group's node, never the other
+        #  container's (see ``endpoint_subset``).
+        src_subset = lambda e, graph: endpoint_subset(e, graph, source=True)
+        dst_subset = lambda e, graph: endpoint_subset(e, graph, source=False)
         if inputs_a:
             edges_a = [e for n in group_a for e in graph_a.out_edges(n)]
             subset_a = src_subset
@@ -125,9 +137,13 @@ class StateFusion(transformation.MultiStateTransformation):
 
         # Simple all-pairs check. The states are consecutive, so what holds in the first holds in the second.
         facts = SymbolResolver().facts_at(graph_a)
+        # An empty Memlet only orders, it accesses no data
+        edges_a = [e for e in edges_a if not e.data.is_empty()]
+        edges_b = [e for e in edges_b if not e.data.is_empty()]
         for ea in edges_a:
             for eb in edges_b:
-                if subsets.intersects(subset_a(ea), subset_b(eb), facts) is not Truth.FALSE:
+                sa, sb = subset_a(ea, graph_a), subset_b(eb, graph_b)
+                if sa is None or sb is None or subsets.intersects(sa, sb, facts) is not Truth.FALSE:
                     return True
         return False
 

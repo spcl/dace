@@ -11,6 +11,7 @@ from dace.sdfg import utils as sdutil
 from dace.sdfg.state import ControlFlowRegion, SDFGState, SymbolResolver
 from dace.symbolic import Truth
 from dace.transformation import transformation
+from dace.transformation.interstate.state_fusion import endpoint_subset
 
 
 # Helper class for finding connected component correspondences
@@ -116,8 +117,8 @@ class StateFusionExtended(transformation.MultiStateTransformation):
         :return: True if subsets intersect or result is indeterminate.
         """
         # Set traversal functions
-        src_subset = lambda e: e.data.src_subset if e.data.src_subset is not None else e.data.dst_subset
-        dst_subset = lambda e: e.data.dst_subset if e.data.dst_subset is not None else e.data.src_subset
+        src_subset = lambda e, graph: endpoint_subset(e, graph, source=True)
+        dst_subset = lambda e, graph: endpoint_subset(e, graph, source=False)
         if inputs_a:
             edges_a = [e for n in group_a for e in graph_a.out_edges(n)]
             subset_a = src_subset
@@ -133,9 +134,13 @@ class StateFusionExtended(transformation.MultiStateTransformation):
 
         # Simple all-pairs check. The states are consecutive, so what holds in the first holds in the second.
         facts = SymbolResolver().facts_at(graph_a)
+        # An empty Memlet only orders, it accesses no data
+        edges_a = [e for e in edges_a if not e.data.is_empty()]
+        edges_b = [e for e in edges_b if not e.data.is_empty()]
         for ea in edges_a:
             for eb in edges_b:
-                if subsets.intersects(subset_a(ea), subset_b(eb), facts) is not Truth.FALSE:
+                sa, sb = subset_a(ea, graph_a), subset_b(eb, graph_b)
+                if sa is None or sb is None or subsets.intersects(sa, sb, facts) is not Truth.FALSE:
                     return True
         return False
 

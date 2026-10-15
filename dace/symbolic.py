@@ -1044,9 +1044,14 @@ def sympy_numeric_fix(expr):
 
 
 def _as_integers(expr: sympy.Expr) -> sympy.Expr:
-    """``expr`` over integer symbols of the same names, for operands that are integers by definition."""
+    """``expr`` over integer symbols of the same names, for operands that are integers by definition. A ``Dummy`` (a
+    proof's slack) stays distinct from every other one: two slacks share a name, not a value."""
     return expr.xreplace(
-        {s: sympy.Symbol(s.name, integer=True) for s in expr.free_symbols if isinstance(s, sympy.Symbol)}
+        {
+            s: sympy.Dummy(s.name, integer=True) if isinstance(s, sympy.Dummy) else sympy.Symbol(s.name, integer=True)
+            for s in expr.free_symbols
+            if isinstance(s, sympy.Symbol)
+        }
     )
 
 
@@ -1057,7 +1062,7 @@ def _integral(quotient: sympy.Expr) -> bool:
 
 def ceiling_div(numerator: sympy.Expr, step: sympy.Expr) -> sympy.Expr:
     """``ceil(numerator / step)`` for an integer numerator and step, such as the element count of a range."""
-    if step == 1:
+    if step == 1 and _integral(numerator):
         return numerator
     quotient = numerator / step
     # Over integer operands the ceiling folds an exact quotient and an integer part (``ceil(N - 1/2) = N``)
