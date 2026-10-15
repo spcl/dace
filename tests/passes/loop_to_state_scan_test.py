@@ -45,6 +45,21 @@ def matches(delta: dace.int64[NS, 4], accept: dace.int64[NS], text: dace.int64[N
 
 
 @dace.program
+def kmp(text: dace.int64[N], pattern: dace.int64[NA], fail: dace.int64[NA], found: dace.int64[1]):
+    count = 0
+    q = 0
+    for i in range(N):
+        while q > 0 and pattern[q] != text[i]:
+            q = fail[q - 1]
+        if pattern[q] == text[i]:
+            q = q + 1
+        if q == NA:
+            count = count + 1
+            q = fail[q - 1]
+    found[0] = count
+
+
+@dace.program
 def shifted(trans: dace.int64[NS, NA], symbols: dace.int64[N], counts: dace.int64[NS]):
     state = 1
     for i in range(N):
@@ -100,6 +115,30 @@ def reference_matches(delta, accept, text, found):
     for symbol in text:
         state = delta[state, symbol]
         found[0] += accept[state]
+
+
+def reference_kmp(text, pattern, fail, found):
+    q = 0
+    for symbol in text:
+        while q > 0 and pattern[q] != symbol:
+            q = fail[q - 1]
+        if pattern[q] == symbol:
+            q += 1
+        if q == len(pattern):
+            found[0] += 1
+            q = fail[q - 1]
+
+
+def failure_table(pattern):
+    fail = np.zeros(len(pattern), np.int64)
+    k = 0
+    for i in range(1, len(pattern)):
+        while k > 0 and pattern[k] != pattern[i]:
+            k = fail[k - 1]
+        if pattern[k] == pattern[i]:
+            k += 1
+        fail[i] = k
+    return fail
 
 
 def before_lifting(program) -> dace.SDFG:
@@ -237,3 +276,45 @@ def test_each_expansion_runs_the_block_maps_on_its_device(implementation, schedu
 
     assert len(block_maps) == 2
     assert {entry.map.schedule for entry in block_maps} == {schedule}
+
+
+def test_a_kmp_search_whose_step_holds_a_while_loop_becomes_a_map_around_it():
+    rng = np.random.default_rng(13)
+    text = rng.integers(0, 2, 4000)
+    pattern = np.array([0, 1, 0, 1, 1], dtype=np.int64)
+    fail = failure_table(pattern)
+    expected = np.zeros(1, np.int64)
+    reference_kmp(text, pattern, fail, expected)
+    sdfg = kmp.to_sdfg(simplify=True)
+    pipeline.canonicalize(sdfg)
+    actual = np.zeros(1, np.int64)
+
+    sdfg(text=text, pattern=pattern, fail=fail, found=actual, N=4000, NA=5)
+
+    loops = [region for region in sdfg.all_control_flow_regions(recursive=True) if isinstance(region, LoopRegion)]
+    assert len(state_scans(sdfg)) == 1
+    assert [loop.loop_variable for loop in loops] == [""]
+    assert all(loop.sdfg is not sdfg for loop in loops)
+    np.testing.assert_array_equal(actual, expected)
+
+
+@pytest.mark.gpu
+def test_a_dfa_scan_offloaded_to_the_gpu_counts_the_states_the_loop_counted():
+    import cupy  # Only present on GPU runners.
+
+    from dace.transformation.passes.canonicalize import finalize
+
+    rng = np.random.default_rng(17)
+    trans, symbols = automaton(rng, 64, 4, 200000)
+    expected = np.zeros(64, np.int64)
+    reference_dfa(trans, symbols, expected)
+    sdfg = dfa.to_sdfg(simplify=True)
+    pipeline.canonicalize(sdfg, target="gpu")
+    finalize.offload_to_gpu(sdfg)
+    finalize.finalize_for_target(sdfg, "gpu")
+    actual = cupy.zeros(64, cupy.int64)
+
+    sdfg(trans=cupy.asarray(trans), symbols=cupy.asarray(symbols), counts=actual, N=200000, NS=64, NA=4)
+
+    assert [node.schedule for node in state_scans(sdfg)] == [dace.ScheduleType.GPU_Device]
+    np.testing.assert_array_equal(cupy.asnumpy(actual), expected)

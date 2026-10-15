@@ -73,8 +73,8 @@ def subscripts(text: str) -> list[Subscript]:
 
 
 def names(text: str) -> set[str]:
-    """Every name ``text`` reads, array names included."""
-    return {node.id for node in ast.walk(ast.parse(text, mode="eval")) if isinstance(node, ast.Name)}
+    """Every name the expression or statement ``text`` mentions, array names included."""
+    return {node.id for node in ast.walk(ast.parse(text)) if isinstance(node, ast.Name)}
 
 
 def straight_chain(region: ControlFlowRegion) -> list[ControlFlowBlock] | None:
@@ -126,6 +126,9 @@ def guarded_assignments(region: ControlFlowRegion, needed: set[str]) -> set[str]
     """The names read by the conditions that guard an assignment to a ``needed`` symbol."""
     guards: set[str] = set()
     for block in region.all_control_flow_blocks():
+        if isinstance(block, LoopRegion) and any(lhs in needed for lhs, rhs in assignments_in(block)):
+            for statement in (block.loop_condition, block.init_statement, block.update_statement):
+                guards |= names(statement.as_string) if statement is not None else set()
         if not isinstance(block, ConditionalBlock):
             continue
         for condition, branch in block.branches:

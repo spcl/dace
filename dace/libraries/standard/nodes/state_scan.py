@@ -32,6 +32,8 @@ from dace.sdfg import nodes
 from dace.transformation.transformation import ExpandTransformation
 
 INIT_CONNECTOR = "_init"
+#: Threads per GPU thread block for the block maps.
+GPU_BLOCK_THREADS = 128
 OUT_CONNECTOR = "_out"
 
 #: Recorded on every node: the device trade of the scan against the loop it replaces.
@@ -160,6 +162,9 @@ def nest(
 ) -> None:
     """``inner`` under a map over ``ranges``, reading and writing whole containers of ``sdfg``."""
     entry, leave = state.add_map(inner.name, ranges, schedule=schedule)
+    if schedule in dtypes.ALL_GPU_SCHEDULES:
+        # one thread per (block, start state); the compose map has a single point
+        entry.map.gpu_block_size = [GPU_BLOCK_THREADS if len(ranges) > 1 or "__c" in ranges else 1, 1, 1]
     mapping = {name: name for name in inner.free_symbols}
     call = state.add_nested_sdfg(inner, dict.fromkeys(reads), dict.fromkeys(writes), symbol_mapping=mapping)
     for name in reads:
