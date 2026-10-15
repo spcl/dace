@@ -608,6 +608,19 @@ def top_level_loop_locals(sdfg: SDFG, loop: LoopRegion) -> set[str]:
     }
 
 
+def loop_defined_symbols(loop: LoopRegion) -> set[str]:
+    """The symbols ``loop`` defines: its iterators and those of the loops inside it, and every symbol an
+    interstate edge inside it assigns. None of them has a value before the loop runs.
+
+    :param loop: the loop region.
+    :returns: the names.
+    """
+    defined = {b.loop_variable for b in [loop, *loop.all_control_flow_blocks()] if isinstance(b, LoopRegion)}
+    for edge in loop.all_interstate_edges(recursive=True):
+        defined.update(edge.data.assignments)
+    return defined
+
+
 def outlinable(sdfg: SDFG, loop: LoopRegion) -> bool:
     """Whether ``loop`` can be outlined with :func:`top_level_loop_locals` kept outside the nest.
 
@@ -621,9 +634,7 @@ def outlinable(sdfg: SDFG, loop: LoopRegion) -> bool:
     :param loop: the loop region about to be outlined.
     :returns: ``True`` if outlining keeps the SDFG valid.
     """
-    defined = {b.loop_variable for b in [loop, *loop.all_control_flow_blocks()] if isinstance(b, LoopRegion)}
-    for edge in loop.all_interstate_edges(recursive=True):
-        defined.update(edge.data.assignments)
+    defined = loop_defined_symbols(loop)
     private = loop_local_transients(sdfg, loop) - top_level_loop_locals(sdfg, loop)
     used = {n.data for b in loop.all_control_flow_blocks() if isinstance(b, SDFGState) for n in b.data_nodes()}
     return not any(
