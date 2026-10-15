@@ -2123,7 +2123,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         If `scope_node` is a `MapEntry` it will operate on the set of incoming edges
         and if it is an `MapExit` on the set of outgoing edges. The function will
         then determine all access nodes that have a connection through these edges
-        to the scope nodes (edges that does not lead to access nodes are ignored).
+        to the scope nodes, edges that does not lead to access nodes or are empty are ignored.
         The function returns a set that contains all access nodes that were found.
         It is important that this set will also contain views.
 
