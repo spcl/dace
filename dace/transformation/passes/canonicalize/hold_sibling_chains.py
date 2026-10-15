@@ -9,7 +9,8 @@ update a lone recurrence and the ``(i, j)`` wavefront the two spell together is 
 A chain whose siblings are all DOALL is no wavefront and is mapped as usual.
 """
 
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from dace.sdfg.state import LoopRegion
 from dace.transformation.interstate.loop_to_map import LoopToMap
