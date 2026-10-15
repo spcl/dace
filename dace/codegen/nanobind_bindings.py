@@ -24,7 +24,7 @@ from dace.config import Config
 # ml_dtypes-backed low-precision types: numpy cannot export their arrays via
 # DLPack or the buffer protocol, so nanobind cannot ingest them; they are
 # outside the interface's scope (see argument_unsupported).
-_LOWP_TYPES = (dtypes.bfloat16, dtypes.float8_e4m3fn, dtypes.float8_e5m2)
+_NANOBIND_UNSUPPORTED_DTYPES = (dtypes.bfloat16, dtypes.float8_e4m3fn, dtypes.float8_e5m2)
 
 
 def _ndarray_inexpressible(dtype) -> bool:
@@ -58,7 +58,7 @@ def argument_unsupported(name: str, desc: dt.Data) -> str | None:
         return f'argument "{name}" is a ContainerArray, which is out of scope; {hint}'
     if isinstance(desc.dtype, dtypes.callback):
         return f'callback argument "{name}" is out of scope (needs the ctypes trampoline machinery); {hint}'
-    if desc.dtype.base_type in _LOWP_TYPES:
+    if desc.dtype.base_type in _NANOBIND_UNSUPPORTED_DTYPES:
         return (
             f'argument "{name}" of low-precision type {desc.dtype} is out of scope '
             f"(nanobind cannot ingest ml_dtypes-backed data); {hint}"
