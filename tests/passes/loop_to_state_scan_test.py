@@ -390,7 +390,7 @@ def test_a_step_squaring_adding_or_looking_up_its_state_is_not_gf2_affine(progra
     assert gf2_state(top_loop(before_lifting(program))) is None
 
 
-@pytest.mark.parametrize("length", [0, 1, 7, 5000])
+@pytest.mark.parametrize("length", [0, 1, 7, 1600, 5000])
 def test_a_crc_through_the_gf2_scan_equals_the_bytewise_crc(length):
     data = np.random.default_rng(length).integers(0, 256, length).astype(np.uint8)
     sdfg = crc16.to_sdfg(simplify=True)
@@ -470,3 +470,17 @@ def test_a_state_scan_survives_serialization_with_its_step():
     assert (node.kind, node.bits, node.state) == (StateScanKind.GF2_AFFINE, 64, "c")
     assert node.step is not None and "polynomial" in node.step.arrays
     sut.validate()
+
+
+@pytest.mark.parametrize("chunks, length", [(1, 1000), (3, 1000), (256, 1600), (7, 50), (64, 6)])
+def test_a_gf2_scan_whose_last_block_is_short_still_equals_the_bytewise_crc(chunks, length):
+    """Lengths that do not divide into equal blocks leave one short block; its power of ``A`` is its own."""
+    data = np.random.default_rng(chunks).integers(0, 256, length).astype(np.uint8)
+    sdfg = before_lifting(crc16)
+    LoopToStateScan().apply_pass(sdfg, {})
+    state_scans(sdfg)[0].chunks = chunks
+    actual = np.zeros(1, np.int64)
+
+    sdfg(data=data, crc=actual, polynomial=np.int64(0x8408), N=length)
+
+    assert actual[0] == reference_crc16(data, 0x8408)

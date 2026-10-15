@@ -27,8 +27,8 @@ from dace.frontend.python.parser import DaceProgram
 
 N, M, NS, NA, NI = (dace.symbol(name, dace.int64) for name in ("N", "M", "NS", "NA", "NI"))
 
-#: The stream length every kernel runs at.
-LENGTH = 4096
+#: The stream length every kernel runs at: prime, so no block count splits it into equal blocks.
+LENGTH = 4099
 
 
 @dace.program
