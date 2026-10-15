@@ -17,7 +17,7 @@ import numpy as np
 
 import dace
 from dace.frontend.python.parser import DaceProgram
-from tests.corpus.automata import automata as _AU
+from tests.corpus.automata import automata as AUTOMATA
 from tests.corpus.polybench import polybench as _PB
 from tests.corpus.tsvc import tsvc as _TS
 from tests.corpus.tsvc.tsvc_numpy import REFERENCES as _TS_REF
@@ -37,7 +37,7 @@ def kernels() -> list[tuple[str, str]]:
     out = [("poly", k.name) for k in _PB.collect()]
     out += [("tsvc", k.name) for k in _TS.collect()]
     out += [("tsvc25", p.name) for p in _T25.collect()]
-    out += [("automata", name) for name in _AU.collect()]
+    out += [("automata", name) for name in AUTOMATA.collect()]
     return out
 
 
@@ -83,13 +83,13 @@ def make(suite: str, name: str) -> dict:
         _TS_REF[name](**ref, **params)  # the scalar oracle writes its outputs into ref in place
         return dict(suite=suite, name=name, k=k, arrays=arrays, params=params, ref=ref)
     if suite == "automata":
-        made = _AU.inputs(name, _SEED)
+        made = AUTOMATA.inputs(name, _SEED)
         ref = {n: a.copy() for n, a in made.arrays.items()}
         made.reference(**ref, **made.scalars)
         return dict(
             suite=suite,
             name=name,
-            k=_AU.PROGRAMS[name],
+            k=AUTOMATA.PROGRAMS[name],
             arrays=made.arrays,
             scalars=made.scalars,
             params=made.sizes,
