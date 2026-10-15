@@ -990,8 +990,11 @@ class DaceProgram(pycommon.SDFGConvertible):
         global_vars.update(gvars)
 
         argtypes = {k: v for k, v in argtypes.items() if k not in removed_args}
+        # A symbol is its name: an annotation's free symbol may be a same-named object built elsewhere (SymPy's cache
+        # hands it back), so it names a symbol the program does not declare itself and never replaces its global
         for argtype in argtypes.values():
-            global_vars.update({v.name: v for v in argtype.free_symbols})
+            for v in argtype.free_symbols:
+                global_vars.setdefault(v.name, v)
 
         # Parse AST to create the SDFG
         parsed_ast, closure = preprocessing.preprocess_dace_program(
