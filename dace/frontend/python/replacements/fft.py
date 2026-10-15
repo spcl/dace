@@ -1,7 +1,9 @@
-# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """
 Contains replacements for the Discrete Fourier Transform numpy package (numpy.fft)
 """
+
+from collections.abc import Sequence
 
 import sympy as sp
 
@@ -25,25 +27,36 @@ def _fft_core(
     sdfg: SDFG,
     state: SDFGState,
     a: str,
-    n: symbolic.SymbolicType | None = None,
-    axis=-1,
+    s: Sequence[symbolic.SymbolicType] | None = None,
+    axes: Sequence[int] | None = None,
     norm: StringLiteral = StringLiteral("backward"),
     is_inverse: bool = False,
 ):
     from dace.libraries.fft.nodes import FFT, IFFT  # Avoid import loops
 
-    if axis != 0 and axis != -1:
-        raise NotImplementedError("Only one dimensional arrays are supported at the moment")
     if not isinstance(a, str) or a not in sdfg.arrays:
         raise ValueError("Input must be a valid array")
 
     libnode = FFT("fft") if not is_inverse else IFFT("ifft")
 
     desc = sdfg.arrays[a]
-    N = desc.shape[axis]
+    ndim = len(desc.shape)
+    if axes is None:
+        axes = list(range(ndim))
+    else:
+        axes = [int(axis) for axis in axes]
+        if any(not -ndim <= axis < ndim for axis in axes):
+            raise ValueError(f"FFT axes {axes} out of bounds for a {ndim}-dimensional array")
+        axes = [axis % ndim for axis in axes]
+        if len(set(axes)) != len(axes):
+            raise ValueError(f"Repeated FFT axes are not supported, got {axes}")
+    libnode.axes = axes
+    N = 1
+    for axis in axes:
+        N *= desc.shape[axis]
 
-    # If n is not None, either pad input or slice and add a view
-    if n is not None:
+    # If s (or n) is not None, either pad input or slice and add a view
+    if s is not None:
         raise NotImplementedError
 
     # Compute factor
@@ -81,7 +94,7 @@ def _fft(
     axis=-1,
     norm: StringLiteral = StringLiteral("backward"),
 ):
-    return _fft_core(pv, sdfg, state, a, n, axis, norm, False)
+    return _fft_core(pv, sdfg, state, a, None if n is None else [n], [axis], norm, False)
 
 
 @oprepo.replaces("numpy.fft.ifft")
@@ -94,4 +107,56 @@ def _ifft(
     axis=-1,
     norm: StringLiteral = StringLiteral("backward"),
 ):
-    return _fft_core(pv, sdfg, state, a, n, axis, norm, True)
+    return _fft_core(pv, sdfg, state, a, None if n is None else [n], [axis], norm, True)
+
+
+@oprepo.replaces("numpy.fft.fft2")
+def _fft2(
+    pv: "ProgramVisitor",
+    sdfg: SDFG,
+    state: SDFGState,
+    a: str,
+    s=None,
+    axes=(-2, -1),
+    norm: StringLiteral = StringLiteral("backward"),
+):
+    return _fft_core(pv, sdfg, state, a, s, axes, norm, False)
+
+
+@oprepo.replaces("numpy.fft.ifft2")
+def _ifft2(
+    pv: "ProgramVisitor",
+    sdfg: SDFG,
+    state: SDFGState,
+    a: str,
+    s=None,
+    axes=(-2, -1),
+    norm: StringLiteral = StringLiteral("backward"),
+):
+    return _fft_core(pv, sdfg, state, a, s, axes, norm, True)
+
+
+@oprepo.replaces("numpy.fft.fftn")
+def _fftn(
+    pv: "ProgramVisitor",
+    sdfg: SDFG,
+    state: SDFGState,
+    a: str,
+    s=None,
+    axes=None,
+    norm: StringLiteral = StringLiteral("backward"),
+):
+    return _fft_core(pv, sdfg, state, a, s, axes, norm, False)
+
+
+@oprepo.replaces("numpy.fft.ifftn")
+def _ifftn(
+    pv: "ProgramVisitor",
+    sdfg: SDFG,
+    state: SDFGState,
+    a: str,
+    s=None,
+    axes=None,
+    norm: StringLiteral = StringLiteral("backward"),
+):
+    return _fft_core(pv, sdfg, state, a, s, axes, norm, True)
