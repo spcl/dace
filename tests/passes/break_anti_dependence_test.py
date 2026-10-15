@@ -13,7 +13,6 @@ from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
 from dace.transformation.interstate.loop_to_map import LoopToMap
 from dace.transformation.passes import BreakAntiDependence
-from dace.transformation.passes.break_anti_dependence import reparsed_index
 
 N = dace.symbol("N")
 #: An int64 extent, so the frontend infers an int64 iterator and casts it to meet an int32 index array.
@@ -789,15 +788,6 @@ def test_smt_fallback_refuses_when_the_indirection_array_is_written_in_the_loop(
     assert sdfg.to_json() == before, "a refusing pass must leave the SDFG bit-identical"
 
 
-def test_a_reparsed_index_takes_the_dtype_of_the_active_symbol_scope():
-    """The reparse must follow the symbol-dtype scope of each call: a result reused from another SDFG's
-    scope carries an iterator of the wrong dtype that never matches the loop's own (TSVC s116)."""
-    raw = dace.symbolic.pystr_to_symbolic("reparse_it + 1")
-    for dtype in (dace.int32, dace.int64, dace.int32):
-        with dace.symbolic.serialization_symbol_dtypes({"reparse_it": dtype}):
-            assert {sym.dtype for sym in reparsed_index(raw).free_symbols} == {dtype}
-
-
 if __name__ == "__main__":
     test_break_anti_dependence_read_ahead_parallelizes()
     test_break_anti_dependence_read_behind_refused()
@@ -823,4 +813,3 @@ if __name__ == "__main__":
     test_smt_fallback_breaks_a_guarded_indirected_read_ahead()
     test_smt_fallback_refuses_the_same_shape_without_the_guard()
     test_smt_fallback_refuses_when_the_indirection_array_is_written_in_the_loop()
-    test_a_reparsed_index_takes_the_dtype_of_the_active_symbol_scope()

@@ -2608,29 +2608,16 @@ def _provably_nonpositive(expr) -> bool:
     ``int_floor`` / ``int_ceil`` are DaCe ``sympy.Function`` subclasses with no sign rule, so
     a shift stride like ``-int_floor(LEN_1D, 2)`` reads as sign-UNKNOWN and gets mislabelled
     an admissible symbolic scan stride (TSVC ``s1421``: ``b[i] = b[half + i] + a[i]`` is a pure
-    ``+half`` read-ahead over a disjoint region, not a recurrence). Rewrite them to SymPy's
-    ``floor`` / ``ceiling`` -- which DO propagate sign -- over nonnegative-rebuilt free symbols,
-    then test. Only *provable* nonpositivity is reported; a sign that stays unknown (a bare
-    symbolic stride ``K``, which may be ``0`` or positive) yields ``False``.
+    ``+half`` read-ahead over a disjoint region, not a recurrence). The proof bounds them under the
+    contract's facts, with a divisor positive. Only *provable* nonpositivity is reported; a sign that stays
+    unknown (a bare symbolic stride ``K``, which may be ``0`` or positive) yields ``False``.
     """
     if not isinstance(expr, sympy.Basic):
         return False
     if expr.is_nonpositive is True:
         return True
-    divisors = _divisor_symbols(expr)
-    rebuilt = expr.subs(
-        {
-            s: sympy.Symbol(s.name, positive=True, integer=True)
-            if s in divisors
-            else sympy.Symbol(s.name, nonnegative=True, integer=True)
-            for s in free_symbols(as_expr(expr))
-        }
-    )
-    rebuilt = rebuilt.replace(lambda n: isinstance(n, symbolic.int_floor), lambda n: sympy.floor(n.args[0] / n.args[1]))
-    rebuilt = rebuilt.replace(
-        lambda n: isinstance(n, symbolic.int_ceil), lambda n: sympy.ceiling(n.args[0] / n.args[1])
-    )
-    return rebuilt.is_nonpositive is True
+    divisors = {str(symbol) for symbol in _divisor_symbols(expr)}
+    return symbolic.provably_nonnegative(-expr, symbolic.contract_facts(expr, positive=divisors))
 
 
 def _admissible_scan_stride(diff):
@@ -2659,7 +2646,7 @@ def _admissible_scan_stride(diff):
     # an always-false guard, leaving the pinned sequential fallback to run every time.
     # Refusing the match instead lets the loop reach ``LoopToMap``, whose own dependency
     # proof lifts it to an unconditional Map when the read/write regions are disjoint.
-    if diff.is_integer and not _provably_nonpositive(diff):
+    if symbolic._integral(diff) and not _provably_nonpositive(diff):
         return diff
     return None
 
@@ -4683,9 +4670,9 @@ def sign_query(expr) -> tuple[Any, symbolic.Facts]:
     the runtime specialization -- three branches the anti-dependence pass can no longer reach --
     instead of refusing it as the anti-dependence it is.
 
-    ``int_floor`` is opaque: it is dace's own function, and sympy has no sign rule for it, so
-    ``-int_floor(N, 2)`` has no sign at all. Spelled as ``floor(N / 2)`` it does. And a bare dace
-    symbol carries integrality but nothing about its sign, so the facts say what dace's
+    ``int_floor`` is bounded by the prover itself (an integer floor, kept as such: spelled as SymPy's
+    ``floor(N / 2)`` it loses its integrality and ``-floor(N / 2) <= 0`` no longer follows for ``N < 2``).
+    And a bare dace symbol carries integrality but nothing about its sign, so the facts say what dace's
     canonicalization already assumes -- every symbol NONNEGATIVE, and a symbol under a DIVISOR
     positive, since a divisor left merely nonnegative may be zero and ``floor(N / M)`` is then
     undefined. The stronger fact stays confined to divisors: declaring every symbol positive would
@@ -4694,11 +4681,12 @@ def sign_query(expr) -> tuple[Any, symbolic.Facts]:
     :param expr: the distance.
     :returns: the expression to ask about, and the per-symbol-name facts to ask it under.
     """
-    expr = expr.replace(symbolic.int_floor, lambda x, y: sympy.floor(x / y))
     divisors: set[str] = set()
     for node in sympy.preorder_traversal(expr):
         if isinstance(node, sympy.Pow) and node.exp.is_negative:
             divisors.update(sym.name for sym in free_symbols(as_expr(node.base)))
+        elif isinstance(node, (symbolic.int_floor, symbolic.int_ceil)):
+            divisors.update(sym.name for sym in free_symbols(as_expr(node.args[1])))
     names = {sym.name for sym in free_symbols(as_expr(expr))}
     facts = symbolic.Facts(
         [

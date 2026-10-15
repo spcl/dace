@@ -1402,7 +1402,7 @@ def _extract_branched_minmax(
     wcr = _CALL_TO_WCR["max"] if cmp_is_gt else _CALL_TO_WCR["min"]
     # ``stride`` must reach the widening: dropping it folds every element in ``[start, end]``,
     # including the ones a strided loop skips, which silently changes the min/max.
-    expanded = _expand_over_loop(array_subset, loop_var_sym, start, end, stride)
+    expanded = _expand_over_loop(array_subset, loop_var_sym, start, end, facts, stride)
     if expanded is None:
         return None
     return _Reduction(wcr, accum_name, accum_subset, array_name, expanded)

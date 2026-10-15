@@ -267,13 +267,27 @@ def linear_base_offset(
         if sym is None:
             continue
         coeff = dace.symbolic.simplify(dace.symbolic.equalize_symbol(as_expr(offset).diff(sym).subs(subs)))
-        if as_basic(coeff).is_nonnegative is not True:
+        # Under canonicalization's contract every program symbol is nonnegative
+        if not dace.symbolic.provably_nonnegative(coeff, dace.symbolic.contract_facts(coeff)):
             return None
         k = sympy.Symbol(f"__dace_align_k{idx}", nonnegative=True, integer=True)
         start, end, step = (dace.symbolic.pystr_to_symbolic(x) for x in (start, end, step))
         at_base = at_base.subs(sym, start + step * k)
         at_end = at_end.subs(sym, end)
-    return tuple(e.subs(subs) for e in (at_base, at_end, size))
+    # The residues and bounds below are SymPy's to decide; it decides them over the contract's nonnegative integers
+    return tuple(contract_symbols(e.subs(subs)) for e in (at_base, at_end, size))
+
+
+def contract_symbols(expr: SymbolicType) -> SymbolicType:
+    """``expr`` over proof-local nonnegative integer symbols of the same names: canonicalization's contract for a
+    program symbol, which is a bare name."""
+    return as_basic(expr).xreplace(
+        {
+            sym: sympy.Symbol(sym.name, nonnegative=True, integer=True)
+            for sym in as_basic(expr).free_symbols
+            if isinstance(sym, sympy.Symbol) and not sym.is_integer
+        }
+    )
 
 
 def add_stride_substitutions(
@@ -300,7 +314,7 @@ def add_stride_substitutions(
         sym = by_name.get(name)
         if sym is None or name in pinned:
             continue
-        subs[sym] = modulus * dace.symbolic.symbol(f"__dace_align_s{n}", positive=True, integer=True)
+        subs[sym] = modulus * sympy.Symbol(f"__dace_align_s{n}", positive=True, integer=True)
 
 
 def declined(arr: Data, edge: MultiConnectorEdge[Memlet], elem_bytes: int, allow_shift: bool) -> tuple[int, int]:

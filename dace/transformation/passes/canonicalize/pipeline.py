@@ -35,7 +35,10 @@ from dace.transformation.passes.break_anti_dependence import BreakAntiDependence
 from dace.transformation.passes.buffer_expansion import BufferExpansion
 from dace.transformation.passes.canonicalize.annotate_loop_kinds import AnnotateLoopKinds
 from dace.transformation.passes.canonicalize.arg_max_lift import ArgMaxLift
-from dace.transformation.passes.canonicalize.assume_symbols_nonnegative import AssumeSymbolConstraints
+from dace.transformation.passes.canonicalize.assume_symbols_nonnegative import (
+    AssumeSymbolConstraints,
+    SetSymbolNonnegativeAssumptions,
+)
 from dace.transformation.passes.canonicalize.cascade_iedge_assignments_up import CascadeInterstateEdgeAssignmentsUp
 from dace.transformation.passes.canonicalize.collapse_noop_cast import CollapseNoOpCast
 from dace.transformation.passes.canonicalize.dead_carried_store import DeadCarriedStoreElimination
@@ -717,6 +720,8 @@ def loop_to_map_units() -> list[ppl.Pass]:
     """LoopToMap on every loop it accepts, the scope summaries it reads rebuilt first."""
     return [
         PropagateMemlets(),
+        # A scalar argument promoted to a symbol since ingestion is under the contract too (its step orients a map)
+        SetSymbolNonnegativeAssumptions(),
         ParallelizeLoops(propagate=False),
         PatternApplyOnceEverywhere([PruneConnectors()]),
     ]
@@ -744,6 +749,9 @@ def statement_round() -> list[ppl.Pass]:
 def ingest(target: str) -> Stages:
     """Raise structured control flow and settle one spelling, then the first ``SimplifyPass`` and cleanup."""
     s: Stages = [
+        # The contract's compile-time half from the start: every proof below reads the sizes as nonnegative (a
+        # symbolic loop step ``n3`` orients its map); ``AssumeSymbolConstraints`` adds the runtime check at the end
+        (CLEANUP, SetSymbolNonnegativeAssumptions()),
         (CLEANUP, ControlFlowRaising()),
         (CLEANUP, RequireStructuredControlFlow()),
         (CLEANUP, RemoveViews()),
@@ -897,6 +905,7 @@ def derive_parallelism(
         (label, AccumulatorCopyChainToWCR()),
         (label, RetargetWCRAccumulator()),
         (label, PropagateMemlets()),
+        (label, SetSymbolNonnegativeAssumptions()),
         (label, ParallelizeLoops(propagate=False)),
         (label, _PrivatizeScalarsStage()),
         (label, _PrivatizeArraysStage()),

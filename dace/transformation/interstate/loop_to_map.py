@@ -1359,6 +1359,17 @@ def symbols_assigned_before_use(
     return symbols_that_may_be_used
 
 
+def step_direction(step: Any, facts: symbolic.Facts) -> int | None:
+    """``1`` for a loop whose step is provably ``>= 0``, ``-1`` for one provably ``<= 0``, else None. A zero step
+    never terminates (and Python's ``range`` refuses it), so the sign alone orients the loop."""
+    zero = sp.Integer(0)
+    if symbolic.ask(symbolic.Relation(symbolic.RelationKind.LE, zero, sp.sympify(step)), facts) is symbolic.Truth.TRUE:
+        return 1
+    if symbolic.ask(symbolic.Relation(symbolic.RelationKind.LE, sp.sympify(step), zero), facts) is symbolic.Truth.TRUE:
+        return -1
+    return None
+
+
 @properties.make_properties
 @xf.explicit_cf_compatible
 class LoopToMap(xf.MultiStateTransformation):
@@ -1429,12 +1440,8 @@ class LoopToMap(xf.MultiStateTransformation):
         if self.keep_small_loops_sequential and symbolic.is_small(end - start, facts):
             return False
 
-        # A map runs its range upwards: a loop is mapped only when the sign of its step is known
-        zero = sp.Integer(0)
-        if all(
-            symbolic.ask(symbolic.Relation(symbolic.RelationKind.LT, *sides), facts) is not symbolic.Truth.TRUE
-            for sides in ((zero, sp.sympify(step)), (sp.sympify(step), zero))
-        ):
+        # A map runs its range upwards: a loop is mapped only when the direction of its step is known
+        if step_direction(step, facts) is None:
             return False
 
         # Loops containing break, continue, or returns may not be turned into a map.
@@ -2065,10 +2072,7 @@ class LoopToMap(xf.MultiStateTransformation):
         start = loop_analysis.get_init_assignment(self.loop)
         end = loop_analysis.get_loop_end(self.loop)
         step = loop_analysis.get_loop_stride(self.loop)
-        negative_step = symbolic.ask(
-            symbolic.Relation(symbolic.RelationKind.LT, sp.sympify(step), sp.Integer(0)),
-            SymbolResolver().facts_at(self.loop),
-        )
+        negative_step = step_direction(step, SymbolResolver().facts_at(self.loop)) == -1
 
         nsdfg = None
 
@@ -2305,7 +2309,7 @@ class LoopToMap(xf.MultiStateTransformation):
             if sym not in nsdfg.symbols and sym in sdfg.symbols:
                 nsdfg.symbol_repo.add(sym, sdfg.symbols[sym])
 
-        if negative_step is symbolic.Truth.TRUE:
+        if negative_step:
             # If step is negative, we have to flip start and end to produce a correct map with a positive increment.
             start, end, step = end, start, -step
 

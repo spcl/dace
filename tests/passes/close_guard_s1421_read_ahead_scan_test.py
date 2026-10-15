@@ -55,11 +55,10 @@ def _counts(sdfg):
 
 def test_int_floor_stride_is_proven_nonpositive():
     """The ``s1421`` stride is PROVEN ``<= 0``, so it is not an admissible scan stride."""
-    n = symbolic.symbol("LEN_1D", dtype=dace.int64, nonnegative=True)
+    n = symbolic.symbol("LEN_1D")
     stride = -symbolic.int_floor(n, 2)
 
-    # ``int_floor`` signs itself from its operands: a nonnegative dividend over a positive divisor.
-    assert stride.is_nonpositive is True
+    # Canonicalization's contract makes ``LEN_1D`` nonnegative: a nonnegative dividend over a positive divisor.
     assert _provably_nonpositive(stride)
     assert _admissible_scan_stride(stride) is None
 

@@ -33,7 +33,7 @@ import ast
 import copy
 from typing import Any, NamedTuple
 
-from dace import SDFG, InterstateEdge, Memlet, dtypes, symbolic
+from dace import SDFG, InterstateEdge, Memlet, symbolic
 from dace.sdfg import nodes
 from dace.sdfg import tasklet_utils as tutil
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
@@ -531,9 +531,14 @@ def add_entry_guard(sdfg: SDFG, loop: LoopRegion, proof: Proof) -> None:
     parent = loop.parent_graph
     count = str(symbolic.simplify(loop_analysis.get_loop_end(loop) + 1))
 
+    taken: set[str] = set()
+
     def fresh(base: str) -> str:
-        name = sdfg.find_new_symbol(base)
-        sdfg.add_symbol(name, dtypes.int64)
+        # Iterators of the guard loops: bound by their loops, so reserved here rather than declared
+        name, index = sdfg.find_new_symbol(base), 0
+        while name in taken:
+            name, index = sdfg.find_new_symbol(f"{base}_{index}"), index + 1
+        taken.add(name)
         return name
 
     def guard_state(region: ControlFlowRegion, label: str, condition: str, reads: dict[str, str]) -> SDFGState:

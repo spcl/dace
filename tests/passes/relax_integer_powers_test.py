@@ -6,6 +6,7 @@ import pytest
 import sympy
 
 import dace
+from dace.symbolic import Predicate
 from dace import data, symbolic, symbolic_engine
 from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion, SymbolResolver
@@ -346,8 +347,7 @@ def test_relaxes_pow_inside_a_packed_product():
 
 def test_nested_sdfg_inherits_outer_sign_facts():
     """A nested SDFG an expansion mints spells its shapes bare (a reparse cannot know signs) --
-    the sign facts live on the symbol OBJECTS in the outer SDFG's descriptors. The facts have to
-    travel by name across the nesting, else ``R**K`` inside declines for want of a sign and
+    the sign facts are the outer SDFG's declared predicates. The facts have to travel by name across the nesting, else ``R**K`` inside declines for want of a sign and
     codegen emits a ``double`` ``pow`` loop bound."""
     bare_shape = [pystr_to_symbolic("R**K")]  # bare symbols, exactly as a reparsed store spells them
 
@@ -359,11 +359,10 @@ def test_nested_sdfg_inherits_outer_sign_facts():
     # the whole point: no signs spelled here
     assert all(s.is_positive is None for s in inner.arrays["y"].free_symbols)
 
-    R = dace.symbol("R", dtype=dace.int64, integer=True, positive=True)
-    K = dace.symbol("K", dtype=dace.int64, integer=True, positive=True)
+    R, K = dace.symbol("R"), dace.symbol("K")
     outer = dace.SDFG("outer")
-    outer.add_symbol("R", dace.int64)
-    outer.add_symbol("K", dace.int64)
+    outer.add_symbol("R", dace.int64, predicates=frozenset({Predicate.POSITIVE}))
+    outer.add_symbol("K", dace.int64, predicates=frozenset({Predicate.POSITIVE}))
     outer.add_array("y", [R**K], dace.float64)
     state = outer.add_state()
     nsdfg = state.add_nested_sdfg(inner, {}, {"y"}, symbol_mapping={"R": "R", "K": "K"})

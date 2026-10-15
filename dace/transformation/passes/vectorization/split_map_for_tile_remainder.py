@@ -203,10 +203,8 @@ class SplitMapForTileRemainder(ppl.Pass):
     def _provably_divisible(self, lb: symbolic.SymbolicType, ub: symbolic.SymbolicType, W: int) -> bool:
         # Whether dim ``[lb:ub]`` is provably a whole number of tiles.
         trip = symbolic.simplify(ub - lb + 1)
-        try:
-            return bool(symbolic.simplify(trip % W) == 0)
-        except Exception:  # noqa: BLE001 - non-decidable symbolic trip -> split
-            return False
+        query = symbolic.Relation(symbolic.RelationKind.DIVIDES, W, trip)
+        return symbolic.ask(query, symbolic.contract_facts(trip)) is symbolic.Truth.TRUE
 
     def _trip_class(self, lb: symbolic.SymbolicType, ub: symbolic.SymbolicType, W: int) -> str:
         # Classify a tiled dim's extent against width ``W``.

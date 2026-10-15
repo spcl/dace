@@ -518,6 +518,10 @@ def proves_sign(expr: sympy.Expr, divisions: dict[sympy.Symbol, Division], stric
     coefficient = cast(sympy.Expr, poly.coeff_monomial(placeholder))
     if proves_sign(coefficient, divisions, False):
         bounds = division.bounds(lower=True)
+        # Over a symbolic denominator ``(x - y + 1) / y`` is no linear bound; a floored quotient of a nonnegative
+        # numerator by a positive denominator is nonnegative outright
+        if division.kind is DivisionKind.FLOOR and proves_sign(division.numerator, divisions, False):
+            bounds = (*bounds, sympy.Integer(0))
     elif proves_sign(-coefficient, divisions, False):
         bounds = division.bounds(lower=False)
     else:

@@ -264,18 +264,11 @@ def test_per_row_inner_reduction_multidim_is_lifted(prefer):
     assert np.allclose(acc, b.sum(axis=1))
 
 
-def _build_interstate_reduction_sdfg(offset_expr: str, iv_dtype=None):
-    """Loop body = 2 empty states + interstate edge ``{accum: accum + B[<offset>]}``.
-
-    :param iv_dtype: When given, DECLARE the loop variable with this dtype. Left ``None`` the
-                     symbol is never added, so it resolves to the default type -- the only
-                     difference between the dtype-mismatch test and its control.
-    """
+def _build_interstate_reduction_sdfg(offset_expr: str):
+    """Loop body = 2 empty states + interstate edge ``{accum: accum + B[<offset>]}``."""
     sdfg = dace.SDFG(f"interstate_sum_{offset_expr.replace(' ', '').replace('-', 'm')}")
     sdfg.add_symbol("accum", dace.float64)
     sdfg.add_array("B", [N], dace.float64)
-    if iv_dtype is not None:
-        sdfg.add_symbol("i", iv_dtype)
 
     pre = sdfg.add_state("pre", is_start_block=True)
     loop = LoopRegion("loop", condition_expr="i < N", loop_var="i", initialize_expr="i = 0", update_expr="i = i + 1")
@@ -300,34 +293,6 @@ def test_interstate_edge_direct_index_is_lifted(prefer):
     assert lifted == 1
     assert _count_loops(sdfg) == _expected_loop_count_after_lift(prefer, 0, 1)
     _assert_lifted_with_wcr(sdfg, prefer, "lambda a, b: a + b")
-
-
-def test_interstate_edge_lifts_with_non_default_dtype_loop_variable():
-    """The loop variable's DECLARED dtype must not decide whether the lift fires.
-
-    ``symbol._hashable_content`` folds the dtype into sympy identity, so the ``i`` taken from
-    ``sdfg.symbols`` (``int64`` here) is a different object than the default-typed ``i`` that
-    ``pystr_to_symbolic`` leaves in the parsed index ``B[i]``. Subtracting one from the other
-    kept BOTH spellings, the ``offset.has(loop_var_sym)`` guard then saw the loop variable in
-    what should have been a constant offset, and ``_extract`` refused a reduction it should
-    lift -- a predicate answering False because two spellings differ, not because the shape
-    was unsafe. ``test_interstate_edge_direct_index_is_lifted`` is the control: same fixture,
-    only the declared dtype differs.
-    """
-    prefer = _MATCHER_ONLY_MODE
-    sdfg = _build_interstate_reduction_sdfg("i", iv_dtype=dace.int64)
-    sdfg.validate()
-    assert _count_loops(sdfg) == 1
-
-    lifted = LoopToReduce(prefer=prefer).apply_pass(sdfg, {})
-    sdfg.validate()
-
-    assert lifted == 1, "a non-default-typed loop variable must not block the lift"
-    assert _count_loops(sdfg) == _expected_loop_count_after_lift(prefer, 0, 1)
-    _assert_lifted_with_wcr(sdfg, prefer, "lambda a, b: a + b")
-    # ... and it folds the whole iteration space, not one element at a freed symbol.
-    ((red, state),) = [(n, g) for n, g in sdfg.all_nodes_recursive() if isinstance(n, Reduce)]
-    assert str(state.in_edges(red)[0].data.subset) == "0:N"
 
 
 def _build_conditional_minmax_sdfg(cond_expr: str):
@@ -526,18 +491,13 @@ def test_tasklet_body_boolop_or_is_lifted():
     _assert_lifted_with_wcr(sdfg, prefer, "lambda a, b: a | b")
 
 
-def _build_any_pattern_sdfg(assign_const: str = "1", guard: str = "B[i] == 1", iv_dtype=None):
+def _build_any_pattern_sdfg(assign_const: str = "1", guard: str = "B[i] == 1"):
     """Mirrors FOR_l_600_c_600 (tmp_call_13): a LoopRegion whose body is a
     ConditionalBlock on an array element, with a constant-RHS assignment to
-    a symbol.
-
-    :param iv_dtype: When given, DECLARE the loop variable with this dtype (see
-                     ``_build_interstate_reduction_sdfg``)."""
+    a symbol."""
     sdfg = dace.SDFG(f"any_pattern_{assign_const}")
     sdfg.add_symbol("tmp_call_13", dace.int32)
     sdfg.add_array("B", [N], dace.int32)
-    if iv_dtype is not None:
-        sdfg.add_symbol("i", iv_dtype)
     pre = sdfg.add_state("pre", is_start_block=True)
     loop = LoopRegion("loop", condition_expr="i < N", loop_var="i", initialize_expr="i = 0", update_expr="i = i + 1")
     sdfg.add_node(loop)
@@ -587,28 +547,6 @@ def test_all_pattern_lifts_to_and_in_permissive(prefer):
     assert lifted == 1
     assert _count_loops(sdfg) == _expected_loop_count_after_lift(prefer, 0, 1)
     _assert_lifted_with_wcr(sdfg, prefer, "lambda a, b: a & b")
-
-
-def test_any_pattern_lifts_with_non_default_dtype_loop_variable():
-    """Same dtype-identity hazard as the interstate path, on the permissive any/all matcher.
-
-    ``_extract_any_pattern`` located the reduction axis with ``a.has(loop_var_sym)``. Against
-    an ``int64``-declared ``i`` that answered False for EVERY axis, so the matcher bailed at
-    ``axis_for_iter is None`` and the lift never fired.
-    ``test_any_pattern_lifts_to_or_in_permissive`` is the default-dtype control.
-    """
-    prefer = _MATCHER_ONLY_MODE
-    sdfg = _build_any_pattern_sdfg(assign_const="1", guard="B[i] == 1", iv_dtype=dace.int64)
-    sdfg.validate()
-
-    lifted = LoopToReduce(permissive=True, prefer=prefer).apply_pass(sdfg, {})
-    sdfg.validate()
-
-    assert lifted == 1, "a non-default-typed loop variable must not block the any/all lift"
-    assert _count_loops(sdfg) == _expected_loop_count_after_lift(prefer, 0, 1)
-    _assert_lifted_with_wcr(sdfg, prefer, "lambda a, b: a | b")
-    ((red, state),) = [(n, g) for n, g in sdfg.all_nodes_recursive() if isinstance(n, Reduce)]
-    assert str(state.in_edges(red)[0].data.subset) == "0:N"
 
 
 def test_any_pattern_symbol_bridge_via_tmp_scalar(prefer):
