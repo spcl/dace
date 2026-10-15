@@ -42,6 +42,11 @@ def vendor_solve(a: dace.float64[N, N], b: dace.float64[N], x: dace.float64[N]):
 
 
 @dace.program
+def integer_gemv(a: dace.int64[N, N], x: dace.int64[N], y: dace.int64[N]):
+    y[:] = a @ x
+
+
+@dace.program
 def vendor_fft(a: dace.complex128[N], b: dace.complex128[N]):
     b[:] = np.fft.fft(a)
 
@@ -131,8 +136,23 @@ def test_the_openblas_unit_keeps_a_pthreads_build_off_the_openmp_team():
     assert "dace_openblas.h" not in code and "dace_blas.h" not in code
 
 
+@pytest.mark.parametrize("language", ["c++", "c"])
+def test_a_product_that_falls_back_to_the_pure_expansion_names_no_vendor_library(language):
+    """CBLAS has no int64 GEMV, so the expansion falls back to loops; the node still names OpenBLAS as its
+    environment. The unit calls nothing of it, so it includes none of its headers and links nothing."""
+    with pytest.warns(UserWarning, match="Falling back to pure expansion"):
+        rendering = render(integer_gemv.to_sdfg(simplify=True), language=language)
+    assert "cblas_" not in rendering.code
+    for header in ("<cblas.h>", "<lapacke.h>"):
+        assert f"#include {header}" not in rendering.code, rendering.code
+    assert "cpf_defer_openblas_threads" not in rendering.code
+    assert rendering.link == () and rendering.libraries == ()
+
+
 if __name__ == "__main__":
     for case in sorted(CASES):
         for lang in ("c++", "c"):
             test_a_library_node_renders_as_the_vendor_call_and_computes_what_numpy_does(case, lang)
     test_the_openblas_unit_keeps_a_pthreads_build_off_the_openmp_team()
+    for lang in ("c++", "c"):
+        test_a_product_that_falls_back_to_the_pure_expansion_names_no_vendor_library(lang)

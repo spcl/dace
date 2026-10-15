@@ -56,9 +56,11 @@ from dace.libraries.fft.environments import fftw3
 from dace.libraries.tileops.dispatch import FUNCTION_ISAS, ISA, isa_implementation, widest_function_isa
 from dace.libraries.tileops.nodes.tile_op import TileOp
 from dace.library import get_environment
+from dace.memlet import Memlet
 from dace.optionals import required
 from dace.ordered import OrderedSet
 from dace.sdfg import SDFG, SDFGState, nodes
+from dace.sdfg.replace import replace_properties_dict
 from dace.sdfg.scope import is_devicelevel_gpu
 from dace.transformation.passes.canonicalize.annotate_loop_kinds import AnnotateLoopKinds
 from dace.transformation.passes.canonicalize.finalize import explicit_accumulating_copies
@@ -737,10 +739,111 @@ def prepare(sdfg: SDFG, provenance: dict[str, tuple[str, str]] | None = None) ->
     refuse_by_value_returns(sdfg)
     # Canonicalize labelled the loops it left; specialization and the expansions above made more.
     AnnotateLoopKinds().apply_pass(sdfg, {})
+    # Before the demotion: a buffer every thread of a team shares must reach the entry first.
+    lift_team_shared_transients(sdfg)
     for _, _, desc in sdfg.arrays_recursive():
         demoted = LIFETIME_DEMOTIONS.get(desc.lifetime)
         if demoted is not None:
             desc.lifetime = demoted
+
+
+def team_called(node: nodes.NestedSDFG, state: SDFGState) -> bool:
+    """Whether every thread of a persistent team calls ``node``'s function: a ``CPU_Persistent`` map scope (the
+    ``#pragma omp parallel`` a hoisted loop runs in) encloses it, in its own state or around the nested SDFG that
+    holds it.
+
+    :param node: the nested SDFG node.
+    :param state: the state holding ``node``.
+    :returns: ``True`` if a team calls it.
+    """
+    scope = state.entry_node(node)
+    while scope is not None:
+        if isinstance(scope, nodes.MapEntry) and scope.map.schedule == dtypes.ScheduleType.CPU_Persistent:
+            return True
+        scope = state.entry_node(scope)
+    outer = state.sdfg
+    caller = (
+        next(
+            (
+                (candidate, holder)
+                for candidate, holder in outer.parent_sdfg.all_nodes_recursive()
+                if isinstance(candidate, nodes.NestedSDFG) and candidate.sdfg is outer
+            ),
+            None,
+        )
+        if outer.parent_sdfg is not None
+        else None
+    )
+    return caller is not None and team_called(*caller)
+
+
+def lift_team_shared_transients(sdfg: SDFG) -> int:
+    """Move every ``Persistent`` and ``Global`` transient of a nested SDFG a team calls into the SDFG that calls
+    it, wired through the nested node's connectors, innermost first so a buffer climbs to the entry.
+
+    The ordinary generators allocate such a buffer ONCE, in the state struct, shared by every thread of the
+    team. :data:`LIFETIME_DEMOTIONS` turns it into an allocation on entry of the function that declares it,
+    which is right for the entry and wrong for a nested function every thread of an ``omp parallel`` region
+    calls: each thread then allocated a private copy, filled only its own ``omp for`` share of it, and read
+    the rest uninitialized (bfs's ``frontier``). A buffer whose extent names a symbol the enclosing scopes
+    define per iteration stays where it is.
+
+    :param sdfg: the SDFG to rewrite in place.
+    :returns: how many buffers were lifted, counting each level of a climb.
+    """
+    lifted = 0
+    # Walked, not read off ``parent_nsdfg_node``: an outlining re-homes nested SDFGs without refreshing every
+    # back pointer. Pre-order lists a caller before its callees; reversed, a callee is lifted first.
+    calls = [(node, state) for node, state in sdfg.all_nodes_recursive() if isinstance(node, nodes.NestedSDFG)]
+    for node, state in reversed(calls):
+        inner = node.sdfg
+        if inner is None or not team_called(node, state):
+            continue
+        outer = state.sdfg
+        scopes = []
+        scope = state.entry_node(node)
+        while scope is not None:
+            scopes.append(scope)
+            scope = state.entry_node(scope)
+        per_iteration = {param for entry in scopes for param in entry.map.params}
+        symrepl = {
+            symbolic.symbol(name): symbolic.pystr_to_symbolic(value)
+            for name, value in node.symbol_mapping.items()
+            if name != str(value)
+        }
+        for name, desc in list(inner.arrays.items()):
+            if (
+                not desc.transient
+                or desc.lifetime not in LIFETIME_DEMOTIONS
+                or type(desc) is not dt.Array
+                or name in node.in_connectors
+                or name in node.out_connectors
+            ):
+                continue
+            outer_desc = copy.deepcopy(desc)
+            if symrepl:
+                replace_properties_dict(outer_desc, {}, symrepl)
+            if {str(s) for s in outer_desc.free_symbols} & per_iteration:
+                continue
+            accesses = [(st, n) for st in inner.states() for n in st.data_nodes() if n.data == name]
+            read = any(st.out_degree(n) > 0 for st, n in accesses)
+            written = any(st.in_degree(n) > 0 for st, n in accesses)
+            outer_name = outer.add_datadesc(name, outer_desc, find_new_name=True)
+            desc.transient = False
+            memlet = Memlet.from_array(outer_name, outer_desc)
+            if read:
+                node.add_in_connector(name)
+                state.add_memlet_path(
+                    state.add_read(outer_name), *reversed(scopes), node, dst_conn=name, memlet=copy.deepcopy(memlet)
+                )
+            if written:
+                node.add_out_connector(name, force=True)
+                exits = [state.exit_node(entry) for entry in scopes]
+                state.add_memlet_path(
+                    node, *exits, state.add_write(outer_name), src_conn=name, memlet=copy.deepcopy(memlet)
+                )
+            lifted += 1
+    return lifted
 
 
 #: Source languages a GPU target emits its own translation unit in. CUDA emits ``cu``; HIP emits
@@ -1035,7 +1138,7 @@ def preamble(
     used = cpf_lowering.helpers_used(code, dialect)
     definitions = cpf_lowering.definitions_for(used, dialect)
     headers = cpf_lowering.headers_for(used, dialect)
-    vendors = cpf_lowering.vendor_libraries(environments)
+    vendors = cpf_lowering.vendor_libraries(environments, code)
     lines = ["// Rendered by DaCe CPF (canonical parallel form): self-contained, no DaCe runtime."] + CONTRACT_LINES
     lines += [f"#include {header}" for header in headers]
     vendor_headers = [
@@ -1441,7 +1544,7 @@ def link_libraries(frame: CodeObject, dialect: cpf_lowering.Dialect, code: str =
     """The libraries of the frame's environments, by environment name, without those CPF supplies itself. Only
     link-only environments carry any here: the standalone footer refuses every other kind."""
     libraries: list[str] = []
-    for vendor in cpf_lowering.vendor_libraries(frame.environments):
+    for vendor in cpf_lowering.vendor_libraries(frame.environments, code):
         libraries += vendor.link_tokens(code)
     for name in sorted(frame.environments):
         env = get_environment(name)

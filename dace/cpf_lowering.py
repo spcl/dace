@@ -1717,7 +1717,7 @@ def rewrite_native_code(code: str, dialect: Dialect | None = None, site: NativeS
     code = _QUALIFIED_NAME.sub(replace, code)
     if c_dialect:
         # Last, so the predicate the search function takes is C already.
-        code = c_find_first(c_cast_native_code(code), site)
+        code = c_find_first(c_cast_native_code(c_native_ipow(code, site)), site)
     return code
 
 
@@ -3433,6 +3433,8 @@ class VendorLibrary(NamedTuple):
     #: DaCe's own wrapper header for the library (the handle classes the expansions call through), relative to
     #: the ``dace`` package. CPF carries it inline, its namespace respelled (:func:`vendor_wrapper`).
     wrapper: str = ""
+    #: The :data:`VENDOR_FAMILIES` whose calls say a unit uses this library.
+    families: tuple[str, ...] = ()
 
     def link_tokens(self, code: str) -> tuple[str, ...]:
         """The link-line tokens of a unit whose text is ``code``."""
@@ -3468,15 +3470,28 @@ def fftw3_link(code: str) -> tuple[str, ...]:
 #: DaCe environment name -> how a standalone unit calls that library. One family per architecture: OpenBLAS (CBLAS
 #: and LAPACKE) and FFTW3 on the host, the toolkit's own libraries on CUDA and ROCm.
 VENDOR_LIBRARIES: dict[str, VendorLibrary] = {
-    "OpenBLAS": VendorLibrary(("<cblas.h>", "<lapacke.h>"), ("-lopenblas",), OPENBLAS_THREADS_DEFINITION),
+    "OpenBLAS": VendorLibrary(
+        ("<cblas.h>", "<lapacke.h>"), ("-lopenblas",), OPENBLAS_THREADS_DEFINITION, families=("blas", "lapack")
+    ),
     # The expansion refuses an unplannable layout by throwing.
-    "FFTW3": VendorLibrary(("<fftw3.h>",), fftw3_link, cxx_headers=("<stdexcept>",)),
-    "cuBLAS": VendorLibrary((), ("-lcublas",), wrapper="libraries/blas/include/dace_cublas.h"),
-    "cuSolverDn": VendorLibrary((), ("-lcusolver",), wrapper="libraries/lapack/include/dace_cusolverdn.h"),
-    "cuFFT": VendorLibrary(("<cufft.h>", "<cufftXt.h>", "<stdexcept>", "<string>"), ("-lcufft",)),
-    "rocBLAS": VendorLibrary((), ("-lrocblas",), wrapper="libraries/blas/include/dace_rocblas.h"),
-    "rocSOLVER": VendorLibrary((), ("-lrocsolver", "-lrocblas"), wrapper="libraries/lapack/include/dace_rocsolver.h"),
-    "hipFFT": VendorLibrary(("<hipfft/hipfft.h>", "<hipfft/hipfftXt.h>", "<stdexcept>", "<string>"), ("-lhipfft",)),
+    "FFTW3": VendorLibrary(("<fftw3.h>",), fftw3_link, cxx_headers=("<stdexcept>",), families=("fftw",)),
+    "cuBLAS": VendorLibrary((), ("-lcublas",), wrapper="libraries/blas/include/dace_cublas.h", families=("cublas",)),
+    "cuSolverDn": VendorLibrary(
+        (), ("-lcusolver",), wrapper="libraries/lapack/include/dace_cusolverdn.h", families=("cusolver",)
+    ),
+    "cuFFT": VendorLibrary(("<cufft.h>", "<cufftXt.h>", "<stdexcept>", "<string>"), ("-lcufft",), families=("cufft",)),
+    "rocBLAS": VendorLibrary(
+        (), ("-lrocblas",), wrapper="libraries/blas/include/dace_rocblas.h", families=("rocblas",)
+    ),
+    "rocSOLVER": VendorLibrary(
+        (),
+        ("-lrocsolver", "-lrocblas"),
+        wrapper="libraries/lapack/include/dace_rocsolver.h",
+        families=("rocsolver",),
+    ),
+    "hipFFT": VendorLibrary(
+        ("<hipfft/hipfft.h>", "<hipfft/hipfftXt.h>", "<stdexcept>", "<string>"), ("-lhipfft",), families=("hipfft",)
+    ),
 }
 
 #: The namespace a unit's inlined vendor wrappers live in, in place of ``dace``.
@@ -3542,6 +3557,22 @@ VENDOR_FAMILIES: tuple[tuple[str, "re.Pattern"], ...] = (
 )
 
 
+#: A vendor library family's name, and the identifiers -- calls, types, enumerators -- that say a unit names it.
+#: Wider than :data:`VENDOR_FAMILIES`: a device unit repeats the host's state struct, whose ``hipfftHandle``
+#: field needs the header although that unit calls nothing of the library.
+VENDOR_NAMES: dict[str, "re.Pattern"] = {
+    "blas": re.compile(r"\b(?:cblas_|Cblas)\w+"),
+    "lapack": re.compile(r"\b(?:LAPACKE_\w+|LAPACK_(?:ROW|COL)_MAJOR|lapack_(?:int|complex_\w+))\b"),
+    "fftw": re.compile(r"\bfftwf?_\w+"),
+    "cublas": re.compile(r"\b(?:cublas|CUBLAS_)\w+"),
+    "cusolver": re.compile(r"\b(?:cusolver|CUSOLVER_)\w+"),
+    "cufft": re.compile(r"\b(?:cufft|CUFFT_)\w+"),
+    "rocblas": re.compile(r"\brocblas_\w+"),
+    "rocsolver": re.compile(r"\brocsolver_\w+"),
+    "hipfft": re.compile(r"\b(?:hipfft|HIPFFT_)\w+"),
+}
+
+
 def vendor_families(code: str) -> tuple[str, ...]:
     """The vendor library families ``code`` calls into, in :data:`VENDOR_FAMILIES` order."""
     return tuple(family for family, call in VENDOR_FAMILIES if call.search(code))
@@ -3557,9 +3588,19 @@ def vendor_environments(environments) -> list:
     return [found[name] for name in sorted(found)]
 
 
-def vendor_libraries(environments) -> list[VendorLibrary]:
-    """The :data:`VENDOR_LIBRARIES` entries of ``environments`` (code-object names), in key order."""
-    return [VENDOR_LIBRARIES[env.__name__] for env in vendor_environments(environments)]
+def vendor_libraries(environments, code: str) -> list[VendorLibrary]:
+    """The :data:`VENDOR_LIBRARIES` entries of ``environments`` (code-object names) that ``code`` uses, in key
+    order. An environment is listed for the library a node PREFERS, also when its expansion fell back to the pure
+    one (an int64 GEMV has no CBLAS call); such a unit carries none of the library's headers or link tokens. A
+    library is used when ``code`` names one of its :attr:`~VendorLibrary.families` (:data:`VENDOR_NAMES`), or its
+    inlined wrapper's namespace (a state struct's handle field, which the device unit repeats without the call)."""
+    named = {family for family, names in VENDOR_NAMES.items() if names.search(code)}
+    wrapped = VENDOR_QUALIFIED.search(code) is not None or f"{VENDOR_NAMESPACE}::" in code
+    return [
+        library
+        for library in (VENDOR_LIBRARIES[env.__name__] for env in vendor_environments(environments))
+        if named.intersection(library.families) or (library.wrapper and wrapped)
+    ]
 
 
 #: Environments EVERY standalone rendering supplies for itself. ``ParallelSTL`` links TBB for
@@ -4106,6 +4147,50 @@ def c_native_value_dtype(argument: str, site: NativeSite | None, call: str) -> s
         f"CPF cannot type the value {argument!r} that {call} takes in C: it is neither a "
         "typed name nor a value that spells its type"
     )
+
+
+#: An ``ipow`` call in a hand-written body: the runtime's qualified name, or the bare one ``str`` of a dace expression
+#: prints, which an expansion formats into its call (a BLAS GEMV's ``Lb**3`` rows are ``ipow(Lb, 3)``).
+C_NATIVE_IPOW_CALL: "re.Pattern" = re.compile(r"(?<![\w:])(?:(?:::)?dace::math::)?ipow\s*\(")
+#: A typed helper's call as C spells it, ``cpf_<helper>_<dace type>(``: its result has that type.
+C_TYPED_HELPER_CALL: "re.Pattern" = re.compile(r"cpf_[a-z_]+?_(%s)\s*\(" % "|".join(C_SCALAR_SPELLINGS))
+
+
+def c_native_scalar_dtype(argument: str, site: NativeSite | None, call: str) -> str:
+    """The type of a scalar ``argument`` of a hand-written body: an integer or floating literal, a typed helper's
+    call (:data:`C_TYPED_HELPER_CALL`), else what :func:`c_native_value_dtype` reads off the site.
+
+    :raises NotImplementedError: for any other expression.
+    """
+    text = argument.strip()
+    if re.fullmatch(r"[+-]?\d+[lLuU]*", text):
+        return "int64"
+    if re.fullmatch(r"[+-]?(\d+\.\d*|\.\d+|\d+)([eE][+-]?\d+)?[fF]?", text):
+        return "float32" if text[-1] in "fF" else "float64"
+    helper = C_TYPED_HELPER_CALL.match(text)
+    if helper is not None and c_encloses(text, text.index("(", helper.start())):
+        return helper.group(1)
+    return c_native_value_dtype(text, site, call)
+
+
+def c_native_ipow(code: str, site: NativeSite | None) -> str:
+    """Every ``ipow`` call of a hand-written body as the typed C helper for its base's type.
+
+    C has no overloading, so ``ipow`` is one helper per base type (``cpf_ipow_int64``), picked by the type of the
+    base; the C++ dialect's ``ipow`` template is not there. Rewritten innermost first, so an ``ipow`` base is typed
+    by the helper it already became.
+
+    :raises NotImplementedError: if a base is not a value the site types.
+    """
+    for match in reversed(list(C_NATIVE_IPOW_CALL.finditer(code))):
+        open_at = match.end() - 1
+        close = c_closing(code, open_at)
+        arguments = c_call_arguments(code[open_at + 1 : close]) if close is not None else None
+        if arguments is None or len(arguments) != 2:
+            continue
+        base_type = c_native_scalar_dtype(arguments[0], site, "ipow")
+        code = code[: match.start()] + c_helper_call("ipow", arguments, (base_type, "int64")) + code[close + 1 :]
+    return code
 
 
 def c_instance_call(name: str, arguments: tuple[str, ...]) -> str:
