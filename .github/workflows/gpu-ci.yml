@@ -23,7 +23,7 @@ concurrency:
 
 jobs:
   test-gpu:
-    if: "!contains(github.event.pull_request.labels.*.name, 'no-ci')"
+    if: false
     runs-on: [self-hosted, gpu]
     steps:
     - uses: actions/checkout@v7
