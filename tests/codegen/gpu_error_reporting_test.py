@@ -52,7 +52,7 @@ def unchecked_call(csdfg, m):
     the ``gpu_error_check`` toggle off - the check (and thus the record read)
     lives in the compiled binding, gated by that toggle.
     """
-    if hasattr(csdfg, "fast_call"):
+    if isinstance(csdfg, dace.codegen.CtypesCompiledSDFG):
         callargs, initargs = csdfg.construct_arguments(**arguments(m))
         csdfg.fast_call(callargs, initargs, do_gpu_check=False)
     else:
@@ -66,7 +66,7 @@ def unchecked_call(csdfg, m):
 
 def checked_call(csdfg, m):
     """A call that reads the SDFG's error record and raises what it holds."""
-    if hasattr(csdfg, "fast_call"):
+    if isinstance(csdfg, dace.codegen.CtypesCompiledSDFG):
         callargs, initargs = csdfg.construct_arguments(**arguments(m))
         csdfg.fast_call(callargs, initargs, do_gpu_check=True)
     else:

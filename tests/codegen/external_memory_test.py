@@ -43,9 +43,7 @@ def test_external_mem(symbolic):
     # the values passed to initialize() and accepts no arguments here.
     # Test workspace size
     csdfg = sdfg.compile()
-    # Keyed off the compiled object, not the config: under 'auto' the config
-    #  value does not say which interface was selected.
-    ws_args = extra_args if hasattr(csdfg, "_handle") else {}
+    ws_args = extra_args if isinstance(csdfg, dace.codegen.CtypesCompiledSDFG) else {}
     csdfg.initialize(a, **extra_args)
     sizes = csdfg.get_workspace_sizes(**ws_args)
     assert sizes == {dace.StorageType.CPU_Heap: 20 * 8}
