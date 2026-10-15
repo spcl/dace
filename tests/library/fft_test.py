@@ -486,6 +486,52 @@ def test_block_local_fusion_r2c_gpu():
     assert np.allclose(y.get(), expected, rtol=1e-4, atol=1e-4)
 
 
+def _band_pass_program(B: int, H: int, W: int):
+    """
+    A radial band pass, written with a conditional that becomes a nested SDFG in the map.
+    """
+    G = dace.StorageType.GPU_Global
+
+    @dace.program
+    def band_pass(x: dace.complex128[B, H, W] @ G, lo: dace.float64, hi: dace.float64, y: dace.complex128[B, H, W] @ G):
+        X = np.fft.fft2(x)
+        Y = np.empty_like(X)
+        for b, i, j in dace.map[0:B, 0:H, 0:W]:
+            ki = min(i, H - i)
+            kj = min(j, W - j)
+            r = np.sqrt(ki * ki + kj * kj)
+            if r >= lo and r < hi:
+                Y[b, i, j] = X[b, i, j]
+            else:
+                Y[b, i, j] = 0
+        y[:] = np.fft.ifft2(Y)
+
+    return band_pass
+
+
+def test_block_local_fusion_conditional():
+    sdfg = _band_pass_program(5, 16, 32).to_sdfg()
+    assert _fuse_block_local(sdfg) == 1
+    sdfg.validate()
+    sdfg.generate_code()
+
+
+@pytest.mark.gpu
+def test_block_local_fusion_conditional_gpu():
+    import cupy as cp  # CuPy is only installed on GPU machines
+
+    B, H, W = 5, 32, 32
+    sdfg = _band_pass_program(B, H, W).to_sdfg()
+    assert _fuse_block_local(sdfg) == 1
+    x = _random_complex((B, H, W))
+    y = cp.empty((B, H, W), np.complex128)
+    sdfg(x=cp.asarray(x), lo=3.0, hi=9.0, y=y)
+    ki, kj = np.fft.fftfreq(H, 1 / H)[:, None], np.fft.fftfreq(W, 1 / W)[None, :]
+    r = np.sqrt(ki**2 + kj**2)
+    expected = np.fft.ifft2(np.fft.fft2(x) * ((r >= 3) & (r < 9)))
+    assert np.allclose(y.get(), expected, rtol=1e-10, atol=1e-10)
+
+
 if __name__ == "__main__":
     test_fft(False)
     test_fft(True)
@@ -516,3 +562,5 @@ if __name__ == "__main__":
     test_block_local_fusion_gpu(np.complex128, 60)
     test_block_local_fusion_fft2_gpu()
     test_block_local_fusion_r2c_gpu()
+    test_block_local_fusion_conditional()
+    test_block_local_fusion_conditional_gpu()

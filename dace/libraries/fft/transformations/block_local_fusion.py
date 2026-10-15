@@ -133,6 +133,15 @@ class BlockLocalFFTFusion(transformation.SingleStateTransformation):
             ):
                 return None
 
+        # Nested SDFGs in the map (e.g., from conditionals) must access the spectrum and the output in a way that
+        # can be restated on the buffers in shared memory
+        batch_dims = {dim for dim in range(len(shape)) if dim not in axes}
+        for edge, node, conn in _nested_connections(
+            state.scope_subgraph(map_entry).edges(), (spectrum.data, filtered.data)
+        ):
+            if not _restate_nested(node, conn, edge.data.subset, batch_dims, None):
+                return None
+
         return _Match(source, filtered, inverse, result, map_exit, axes, params)
 
     def apply(self, state: SDFGState, sdfg: SDFG) -> nodes.NestedSDFG:
@@ -298,6 +307,9 @@ class BlockLocalFFTFusion(transformation.SingleStateTransformation):
             block.add_datadesc(name, copy.deepcopy(sdfg.arrays[name]))
             if not any(node.data == name for other in sdfg.states() for node in other.data_nodes()):
                 sdfg.remove_data(name, validate=False)
+        for edge, node, conn in _nested_connections(scope_edges, (spectrum, filtered)):
+            buffer = src if edge.data.data == spectrum else dst
+            _restate_nested(node, conn, edge.data.subset, batch_dims, block.arrays[buffer])
         for edge in scope_edges:
             comp_state.add_edge(edge.src, edge.src_conn, edge.dst, edge.dst_conn, localize(edge.data))
 
@@ -344,6 +356,88 @@ class BlockLocalFFTFusion(transformation.SingleStateTransformation):
             memlet=Memlet.from_array(dst, comp_state.sdfg.arrays[dst]),
             propagate=False,
         )
+
+
+def _nested_connections(edges, names: tuple[str, ...]) -> list[tuple]:
+    """
+    Returns the edges that connect one of the given arrays to a nested SDFG, as ``(edge, nested SDFG node,
+    connector)`` tuples.
+    """
+    result = []
+    for edge in edges:
+        if edge.data.data not in names:
+            continue
+        for node, conn in ((edge.dst, edge.dst_conn), (edge.src, edge.src_conn)):
+            if isinstance(node, nodes.NestedSDFG) and conn is not None:
+                result.append((edge, node, conn))
+    return result
+
+
+def _restate_nested(
+    nsdfg: nodes.NestedSDFG,
+    name: str,
+    outer_subset: subsets.Range,
+    batch_dims: set[int],
+    desc: data.Data | None,
+) -> bool:
+    """
+    Checks whether the array of a nested SDFG that is connected to the spectrum or the output of a map can be restated
+    as a block-local buffer and, if ``desc`` is given, restates it with that descriptor. Every access to the array
+    (also in deeper nested SDFGs) must be at the same batch index as the memlet that connects it, given by a symbol
+    that is mapped to that index, and becomes an access at index zero. Accesses in conditions are not supported.
+
+    :param nsdfg: The nested SDFG node.
+    :param name: The connector, i.e., the name of the array in the nested SDFG.
+    :param outer_subset: The subset of the memlet that connects the array, in the symbols of the parent.
+    :param batch_dims: The dimensions that are not transformed.
+    :param desc: The descriptor of the buffer to restate the array as, or None to only check.
+    :return: True if the array can be (and, with ``desc``, was) restated.
+    """
+    inner = nsdfg.sdfg
+    if any(name in edge.data.free_symbols for edge in inner.all_interstate_edges()):
+        return False
+    for region in inner.all_control_flow_regions():
+        if any(memlet.data == name for memlet in region.get_meta_read_memlets()):
+            return False
+
+    outer_index = {dim: str(outer_subset[dim][0]) for dim in batch_dims}
+    memlets, nested = [], []
+    for state in inner.states():
+        for edge in state.edges():
+            if edge.data.data != name:
+                if not edge.data.is_empty() and any(
+                    isinstance(node, nodes.AccessNode) and node.data == name for node in (edge.src, edge.dst)
+                ):
+                    return False  # A copy described from the side of the other array
+                continue
+            for dim in batch_dims:
+                begin, end, _ = edge.data.subset[dim]
+                if begin != end or str(nsdfg.symbol_mapping.get(str(begin), begin)) != outer_index[dim]:
+                    return False
+            memlets.append(edge.data)
+            for node, conn in ((edge.dst, edge.dst_conn), (edge.src, edge.src_conn)):
+                if isinstance(node, nodes.NestedSDFG) and conn is not None:
+                    nested.append((node, conn, copy.deepcopy(edge.data.subset)))
+
+    for node, conn, subset in nested:
+        if not _restate_nested(node, conn, subset, batch_dims, desc):
+            return False
+    if desc is not None:
+        for memlet in memlets:
+            memlet.subset = subsets.Range(
+                [(0, 0, 1) if dim in batch_dims else rng for dim, rng in enumerate(memlet.subset.ndrange())]
+            )
+        restated = copy.deepcopy(desc)
+        restated.transient = False
+        restated.lifetime = dtypes.AllocationLifetime.Scope
+        inner.remove_data(name, validate=False)
+        inner.add_datadesc(name, restated)
+        # The batch index may no longer be used
+        for symbol in set(nsdfg.symbol_mapping) - set(map(str, inner.used_symbols(False))):
+            del nsdfg.symbol_mapping[symbol]
+            if symbol in inner.symbols:
+                inner.remove_symbol(symbol)
+    return True
 
 
 def _single_edge(edges, connector: str):
