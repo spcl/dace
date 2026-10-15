@@ -1964,10 +1964,23 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
             except ValueError:
                 # Cannot determine starting block (possibly some inter-state edges do not yet exist)
                 edges = graph.edges()
+            edges = list(edges)
             for e in edges:
                 update = e.data.new_symbols(sdfg, symbols)
                 symbols.update(update)
                 updates.append(update)
+            # The walk runs from the block backwards, so an assignment that reads a symbol an earlier edge
+            # defines (``cjind = start`` after ``start = A[i]``) was inferred before that symbol had a type.
+            # Infer the ones left untyped again, in program order, now that every edge has been seen.
+            if any(v is None for update in updates for v in update.values()):
+                for e in reversed(edges):
+                    retyped = {
+                        k: v
+                        for k, v in e.data.new_symbols(sdfg, symbols).items()
+                        if v is not None and symbols.get(k) is None
+                    }
+                    symbols.update(retyped)
+                    updates.append(retyped)
             if region_updates is not None and block is not self:
                 region_updates[(graph, block)] = updates
 

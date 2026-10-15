@@ -231,8 +231,8 @@ class ExpandGemvGPUBLAS(ExpandTransformation):
             beta = constants[node.beta]
 
         call = f"""
-{cls.dialect.check_error}({cls.dialect.routine(func)}({cls.dialect.handle}, {trans}, {m}, {n}, {alpha}, ({ctype} *)_A, {lda},
-             ({ctype} *)_x, {strides_x[0]}, {beta}, ({ctype} *)_y, {strides_y[0]}));
+{cls.dialect.check_error}({cls.dialect.routine(func)}({cls.dialect.handle}, {trans}, {symbolic.symstr(m)}, {symbolic.symstr(n)}, {alpha}, ({ctype} *)_A, {symbolic.symstr(lda)},
+             ({ctype} *)_x, {symbolic.symstr(strides_x[0])}, {beta}, ({ctype} *)_y, {symbolic.symstr(strides_y[0])}));
                 """
         # Same empty-contraction hazard as the cblas path, scaled on the device: cuBLAS also
         # returns early for a zero dimension and leaves ``_y`` unwritten. ``scal`` applies the
@@ -240,9 +240,9 @@ class ExpandGemvGPUBLAS(ExpandTransformation):
         y_len, contracted = (n, m) if trans == cls.dialect.op("T") else (m, n)
         if zero_extent_may_occur(contracted):
             scal = f"""
-{cls.dialect.check_error}({cls.dialect.routine(scal_func)}({cls.dialect.handle}, {y_len}, {beta}, ({ctype} *)_y, {strides_y[0]}));
+{cls.dialect.check_error}({cls.dialect.routine(scal_func)}({cls.dialect.handle}, {symbolic.symstr(y_len)}, {beta}, ({ctype} *)_y, {symbolic.symstr(strides_y[0])}));
                 """
-            call = f"if (({contracted}) <= 0) {{{scal}}} else {{{call}}}"
+            call = f"if (({symbolic.symstr(contracted)}) <= 0) {{{scal}}} else {{{call}}}"
         code = call_prefix + call + call_suffix
 
         tasklet = dace.sdfg.nodes.Tasklet(
@@ -319,8 +319,10 @@ class ExpandGemvOpenBLAS(ExpandTransformation):
             alpha = "&__alpha"
             beta = "&__beta"
 
-        call = f"""cblas_{func}({layout}, {trans}, {m}, {n}, {alpha}, _A, {lda},
-                                _x, {strides_x[0]}, {beta}, _y, {strides_y[0]});"""
+        # Sizes through the C printer: ``str`` of a power is ``N**2`` (or ``ipow(N, 2)``), which no C compiler reads.
+        call = f"""cblas_{func}({layout}, {trans}, {symbolic.symstr(m)}, {symbolic.symstr(n)}, {alpha}, _A,
+                                {symbolic.symstr(lda)}, _x, {symbolic.symstr(strides_x[0])}, {beta}, _y,
+                                {symbolic.symstr(strides_y[0])});"""
         # ``_y`` is indexed by the dimension BLAS does not contract over; the other one is the
         # contraction, and an empty contraction is what makes the call return without touching
         # ``_y``. Measured on cholesky: at ``j == 0`` the contraction is empty and the freshly
@@ -328,9 +330,10 @@ class ExpandGemvOpenBLAS(ExpandTransformation):
         y_len, contracted = (n, m) if trans == "CblasTrans" else (m, n)
         if zero_extent_may_occur(contracted):
             beta_value = "__beta" if dtype in (dace.complex64, dace.complex128) else beta
-            code += f"""if (({contracted}) <= 0) {{
-                for (long long __i = 0; __i < ({y_len}); ++__i) {{
-                    _y[__i * ({strides_y[0]})] = ({beta_value}) * _y[__i * ({strides_y[0]})];
+            stride_y = symbolic.symstr(strides_y[0])
+            code += f"""if (({symbolic.symstr(contracted)}) <= 0) {{
+                for (long long __i = 0; __i < ({symbolic.symstr(y_len)}); ++__i) {{
+                    _y[__i * ({stride_y})] = ({beta_value}) * _y[__i * ({stride_y})];
                 }}
             }} else {{
                 {call}
