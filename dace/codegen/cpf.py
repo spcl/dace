@@ -1138,7 +1138,7 @@ def preamble(
     used = cpf_lowering.helpers_used(code, dialect)
     definitions = cpf_lowering.definitions_for(used, dialect)
     headers = cpf_lowering.headers_for(used, dialect)
-    vendors = cpf_lowering.vendor_libraries(environments)
+    vendors = cpf_lowering.vendor_libraries(environments, code)
     lines = ["// Rendered by DaCe CPF (canonical parallel form): self-contained, no DaCe runtime."] + CONTRACT_LINES
     lines += [f"#include {header}" for header in headers]
     vendor_headers = [
@@ -1544,7 +1544,7 @@ def link_libraries(frame: CodeObject, dialect: cpf_lowering.Dialect, code: str =
     """The libraries of the frame's environments, by environment name, without those CPF supplies itself. Only
     link-only environments carry any here: the standalone footer refuses every other kind."""
     libraries: list[str] = []
-    for vendor in cpf_lowering.vendor_libraries(frame.environments):
+    for vendor in cpf_lowering.vendor_libraries(frame.environments, code):
         libraries += vendor.link_tokens(code)
     for name in sorted(frame.environments):
         env = get_environment(name)

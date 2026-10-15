@@ -3433,6 +3433,8 @@ class VendorLibrary(NamedTuple):
     #: DaCe's own wrapper header for the library (the handle classes the expansions call through), relative to
     #: the ``dace`` package. CPF carries it inline, its namespace respelled (:func:`vendor_wrapper`).
     wrapper: str = ""
+    #: The :data:`VENDOR_FAMILIES` whose calls say a unit uses this library.
+    families: tuple[str, ...] = ()
 
     def link_tokens(self, code: str) -> tuple[str, ...]:
         """The link-line tokens of a unit whose text is ``code``."""
@@ -3468,15 +3470,28 @@ def fftw3_link(code: str) -> tuple[str, ...]:
 #: DaCe environment name -> how a standalone unit calls that library. One family per architecture: OpenBLAS (CBLAS
 #: and LAPACKE) and FFTW3 on the host, the toolkit's own libraries on CUDA and ROCm.
 VENDOR_LIBRARIES: dict[str, VendorLibrary] = {
-    "OpenBLAS": VendorLibrary(("<cblas.h>", "<lapacke.h>"), ("-lopenblas",), OPENBLAS_THREADS_DEFINITION),
+    "OpenBLAS": VendorLibrary(
+        ("<cblas.h>", "<lapacke.h>"), ("-lopenblas",), OPENBLAS_THREADS_DEFINITION, families=("blas", "lapack")
+    ),
     # The expansion refuses an unplannable layout by throwing.
-    "FFTW3": VendorLibrary(("<fftw3.h>",), fftw3_link, cxx_headers=("<stdexcept>",)),
-    "cuBLAS": VendorLibrary((), ("-lcublas",), wrapper="libraries/blas/include/dace_cublas.h"),
-    "cuSolverDn": VendorLibrary((), ("-lcusolver",), wrapper="libraries/lapack/include/dace_cusolverdn.h"),
-    "cuFFT": VendorLibrary(("<cufft.h>", "<cufftXt.h>", "<stdexcept>", "<string>"), ("-lcufft",)),
-    "rocBLAS": VendorLibrary((), ("-lrocblas",), wrapper="libraries/blas/include/dace_rocblas.h"),
-    "rocSOLVER": VendorLibrary((), ("-lrocsolver", "-lrocblas"), wrapper="libraries/lapack/include/dace_rocsolver.h"),
-    "hipFFT": VendorLibrary(("<hipfft/hipfft.h>", "<hipfft/hipfftXt.h>", "<stdexcept>", "<string>"), ("-lhipfft",)),
+    "FFTW3": VendorLibrary(("<fftw3.h>",), fftw3_link, cxx_headers=("<stdexcept>",), families=("fftw",)),
+    "cuBLAS": VendorLibrary((), ("-lcublas",), wrapper="libraries/blas/include/dace_cublas.h", families=("cublas",)),
+    "cuSolverDn": VendorLibrary(
+        (), ("-lcusolver",), wrapper="libraries/lapack/include/dace_cusolverdn.h", families=("cusolver",)
+    ),
+    "cuFFT": VendorLibrary(("<cufft.h>", "<cufftXt.h>", "<stdexcept>", "<string>"), ("-lcufft",), families=("cufft",)),
+    "rocBLAS": VendorLibrary(
+        (), ("-lrocblas",), wrapper="libraries/blas/include/dace_rocblas.h", families=("rocblas",)
+    ),
+    "rocSOLVER": VendorLibrary(
+        (),
+        ("-lrocsolver", "-lrocblas"),
+        wrapper="libraries/lapack/include/dace_rocsolver.h",
+        families=("rocsolver",),
+    ),
+    "hipFFT": VendorLibrary(
+        ("<hipfft/hipfft.h>", "<hipfft/hipfftXt.h>", "<stdexcept>", "<string>"), ("-lhipfft",), families=("hipfft",)
+    ),
 }
 
 #: The namespace a unit's inlined vendor wrappers live in, in place of ``dace``.
@@ -3542,6 +3557,22 @@ VENDOR_FAMILIES: tuple[tuple[str, "re.Pattern"], ...] = (
 )
 
 
+#: A vendor library family's name, and the identifiers -- calls, types, enumerators -- that say a unit names it.
+#: Wider than :data:`VENDOR_FAMILIES`: a device unit repeats the host's state struct, whose ``hipfftHandle``
+#: field needs the header although that unit calls nothing of the library.
+VENDOR_NAMES: dict[str, "re.Pattern"] = {
+    "blas": re.compile(r"\b(?:cblas_|Cblas)\w+"),
+    "lapack": re.compile(r"\b(?:LAPACKE_\w+|LAPACK_(?:ROW|COL)_MAJOR|lapack_(?:int|complex_\w+))\b"),
+    "fftw": re.compile(r"\bfftwf?_\w+"),
+    "cublas": re.compile(r"\b(?:cublas|CUBLAS_)\w+"),
+    "cusolver": re.compile(r"\b(?:cusolver|CUSOLVER_)\w+"),
+    "cufft": re.compile(r"\b(?:cufft|CUFFT_)\w+"),
+    "rocblas": re.compile(r"\brocblas_\w+"),
+    "rocsolver": re.compile(r"\brocsolver_\w+"),
+    "hipfft": re.compile(r"\b(?:hipfft|HIPFFT_)\w+"),
+}
+
+
 def vendor_families(code: str) -> tuple[str, ...]:
     """The vendor library families ``code`` calls into, in :data:`VENDOR_FAMILIES` order."""
     return tuple(family for family, call in VENDOR_FAMILIES if call.search(code))
@@ -3557,9 +3588,19 @@ def vendor_environments(environments) -> list:
     return [found[name] for name in sorted(found)]
 
 
-def vendor_libraries(environments) -> list[VendorLibrary]:
-    """The :data:`VENDOR_LIBRARIES` entries of ``environments`` (code-object names), in key order."""
-    return [VENDOR_LIBRARIES[env.__name__] for env in vendor_environments(environments)]
+def vendor_libraries(environments, code: str) -> list[VendorLibrary]:
+    """The :data:`VENDOR_LIBRARIES` entries of ``environments`` (code-object names) that ``code`` uses, in key
+    order. An environment is listed for the library a node PREFERS, also when its expansion fell back to the pure
+    one (an int64 GEMV has no CBLAS call); such a unit carries none of the library's headers or link tokens. A
+    library is used when ``code`` names one of its :attr:`~VendorLibrary.families` (:data:`VENDOR_NAMES`), or its
+    inlined wrapper's namespace (a state struct's handle field, which the device unit repeats without the call)."""
+    named = {family for family, names in VENDOR_NAMES.items() if names.search(code)}
+    wrapped = VENDOR_QUALIFIED.search(code) is not None or f"{VENDOR_NAMESPACE}::" in code
+    return [
+        library
+        for library in (VENDOR_LIBRARIES[env.__name__] for env in vendor_environments(environments))
+        if named.intersection(library.families) or (library.wrapper and wrapped)
+    ]
 
 
 #: Environments EVERY standalone rendering supplies for itself. ``ParallelSTL`` links TBB for
