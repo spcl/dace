@@ -7,6 +7,7 @@ before the first tasklet that uses the scalar. The knob is experimental_readable
 is byte-identical for every value, and the default reproduces today's readable output byte-for-byte.
 """
 
+import re
 import numpy as np
 import pytest
 
@@ -195,6 +196,11 @@ def test_compiles_and_runs_bit_identical(require_experimental, placement):
 N = dace.symbol("N")
 
 
+#: The counter ``k`` declared on its own line, hoisted ahead of its loop, and declared in the for-init clause.
+HOISTED_COUNTER = re.compile(r"\b(int|int64_t|long long) k;")
+IN_FOR_INIT = re.compile(r"for \((int|int64_t|long long) k = 0;")
+
+
 @dace.program
 def accumulate(A: dace.float64[N, 8], B: dace.float64[N]):
     """A carried-dependency accumulator: the shape every hand-built fixture in this file misses. ``s``
@@ -228,10 +234,11 @@ def test_late_declares_loop_counter_in_for_init(require_experimental):
     sdfg = accumulate.to_sdfg(simplify=True)
     eager, late = readable_code(sdfg, "eager"), readable_code(sdfg, "late")
 
-    assert "int k;" not in eager, eager
-    assert "for (int k = 0;" in eager, eager
-    assert "int k;" not in late, late
-    assert "for (int k = 0;" in late, late
+    # The counter's integer width is its dtype's (``int`` or ``int64_t``); the placement is what is tested
+    assert not HOISTED_COUNTER.search(eager), eager
+    assert IN_FOR_INIT.search(eager), eager
+    assert not HOISTED_COUNTER.search(late), late
+    assert IN_FOR_INIT.search(late), late
 
 
 def test_counter_used_after_loop_stays_hoisted(require_experimental):
@@ -290,8 +297,8 @@ def test_legacy_loop_counter_honors_late():
         ):
             return generated_code(accumulate.to_sdfg(simplify=True))
 
-    assert "int k;" in legacy("eager")
-    assert "for (int k = 0;" in legacy("late")
+    assert HOISTED_COUNTER.search(legacy("eager"))
+    assert IN_FOR_INIT.search(legacy("late"))
 
 
 if __name__ == "__main__":

@@ -462,13 +462,15 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
             assignments[e.dst_conn] = (
                 e.src.data if isinstance(desc, dace.data.Scalar) else f"{e.src.data}[{e.data.subset}]"
             )
-            if e.dst_conn not in sdfg.symbols:
-                sdfg.add_symbol(e.dst_conn, desc.dtype)
         state.parent_graph.add_state_before(state, assignments=assignments)
         for e in dynamic_edges:
             state.remove_edge(e)
             if e.dst_conn in map_entry.in_connectors:
                 map_entry.remove_in_connector(e.dst_conn)
+        # Declared once the map no longer binds them as connectors
+        for e in dynamic_edges:
+            if e.dst_conn not in sdfg.symbols:
+                sdfg.add_symbol(e.dst_conn, sdfg.arrays[e.src.data].dtype)
         return True
 
     @staticmethod

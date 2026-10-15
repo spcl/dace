@@ -655,8 +655,9 @@ def _get_nested_memcpy_with_dimension_change_and_fortran_strides(
     inner_sdfg = dace.SDFG(name="inner_sdfg")
 
     for sd in [sdfg, inner_sdfg]:
-        sd.add_symbol("_for_it_0", dace.int64)
         sd.add_symbol("D", dace.int64)
+    # The outer loop binds the iterator; only the nested SDFG declares it
+    inner_sdfg.add_symbol("_for_it_0", dace.int64)
 
     scl_names = ["kfdia", "kidia"]
 
@@ -701,7 +702,6 @@ def _get_nested_memcpy_with_dimension_change_and_fortran_strides(
         name="inner_sdfg_node",
     )
     assert "_for_it_0" in inner_sdfg.symbols
-    assert "_for_it_0" in sdfg.symbols
     assert "_for_it_0" not in sdfg.free_symbols
     assert "_for_it_0" in inner_sdfg.free_symbols
 

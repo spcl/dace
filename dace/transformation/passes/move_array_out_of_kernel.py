@@ -367,6 +367,9 @@ class MoveArrayOutOfKernel(ppl.Pass):
                     self.prefix_tasklet(node, state, name, plan.levels)
         new_shape, new_strides, new_total_size, new_offsets = plan.shape_info
         plan.desc.set_shape(new_shape=new_shape, strides=new_strides, total_size=new_total_size, offset=new_offsets)
+        # The kernel's params reach the owner first: a nest below it types them from what the owner defines
+        if len(plan.hierarchy) > 1:
+            bind_symbols(plan.hierarchy, plan.needed)
         self.reshape_descendants(plan.owner, name, plan.desc, lambda state, node: lift_prefix(plan.levels, state, node))
 
         if len(plan.hierarchy) == 1:
@@ -378,7 +381,6 @@ class MoveArrayOutOfKernel(ppl.Pass):
             node, state = plan.accesses[0]
             point = [symbolic.symstr(begin) for begin, _, _ in lift_prefix(plan.levels, state, node)]
         self.prefix_control_flow(plan.owner, name, point)
-        bind_symbols(plan.hierarchy, plan.needed)
         plan.desc.transient = False
         self.lift_array_through_nested_sdfgs(name, kernel, plan.hierarchy)
 

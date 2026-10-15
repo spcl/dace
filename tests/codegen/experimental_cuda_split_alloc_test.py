@@ -17,7 +17,6 @@ def _build_split_scope_transient_sdfg():
 
     sdfg = dace.SDFG("split_scope_lifetime_transient")
     sdfg.add_symbol("L", dace.int64)
-    sdfg.add_symbol("length", dace.int64)
     sdfg.add_array("Z", (L,), dace.float64, storage=GPU)
     sdfg.add_array("C", (L,), dace.float64, storage=GPU)
     sdfg.add_array("out", (L,), dace.float64, storage=GPU)
