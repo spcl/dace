@@ -93,7 +93,8 @@ def run_sdfg(
         inner.add_datadesc(name, argument(outer, name) if name in node.in_connectors else copy.deepcopy(desc))
     used = f"{seed} {bounds[0]} {bounds[1]} {index}"
     for name, dtype in [*step.symbols.items(), ("__c", dtypes.int64), ("__j", dtypes.int64)]:
-        if name not in inner.symbols and (name in step.symbols or name in used):
+        bound = name == node.iterate
+        if not bound and name not in inner.symbols and (name in step.symbols or name in used):
             inner.add_symbol(name, dtype)
     for name in [name for name in outer.arrays if name in seed]:
         inner.add_datadesc(name, argument(outer, name))
@@ -132,8 +133,6 @@ def finite_compose_sdfg(node: "StateScan", outer: SDFG) -> SDFG:
     inner = SDFG("compose")
     for name in ("table", "starts", INIT_CONNECTOR, OUT_CONNECTOR):
         inner.add_datadesc(name, argument(outer, name))
-    if "__c" not in inner.symbols:
-        inner.add_symbol("__c", dtypes.int64)
     seed = dace.SDFGState("seed", sdfg=inner)
     copy_in = seed.add_tasklet("seed", {"init": None}, {"first": None}, "first = init")
     seed.add_edge(seed.add_read(INIT_CONNECTOR), None, copy_in, "init", Memlet(f"{INIT_CONNECTOR}[0]"))
