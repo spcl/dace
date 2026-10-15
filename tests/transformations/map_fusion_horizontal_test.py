@@ -273,7 +273,7 @@ def test_deterministic_label_in_horizontal_map_fusion(first_order: bool):
 
 @pytest.mark.parametrize("binding", ["same_node", "same_data", "other_data", "written_data"])
 def test_horizontal_fusion_of_maps_sharing_a_dynamic_map_range(binding: str):
-    """Both Maps are bounded by a dynamic map range ``lim``; they fuse only if both read the same value."""
+    """Both Maps are bounded by a dynamic map range ``lim``; they fuse only if both read it from the same node."""
     sdfg = dace.SDFG(unique_name(f"shared_dynamic_map_range_{binding}"))
     for name in ("bound", "other_bound"):
         sdfg.add_array(name, [1], dace.int64)
@@ -299,16 +299,16 @@ def test_horizontal_fusion_of_maps_sharing_a_dynamic_map_range(binding: str):
         entry.add_in_connector("lim")
         state.add_edge(source, None, entry, "lim", dace.Memlet(f"{source.data}[0]"))
 
-    fuses = binding in ("same_node", "same_data")
+    fuses = binding == "same_node"
     assert sdfg.apply_transformations_repeated(dftrans.MapFusionHorizontal(), validate_all=True) == int(fuses)
     sdfg.validate()
 
 
 @pytest.mark.parametrize("binding", ["same_view", "two_views", "written_through_view"])
 def test_horizontal_fusion_of_maps_sharing_a_dynamic_map_range_through_views(binding: str):
-    """The bindings are resolved through Views: two Maps reading ``lim`` through the same View node fuse; two View
-    nodes reading the same subset of ``bound_view`` do not, as they view different elements of ``bound``; and two
-    access nodes of ``bound`` do not once something writes ``bound`` through a View of it."""
+    """Two Maps reading ``lim`` through the same View node fuse; two View nodes reading the same subset of
+    ``bound_view`` do not, as they view different elements of ``bound``; and neither do two access nodes of ``bound``
+    that something writes through a View of it."""
     sdfg = dace.SDFG(unique_name(f"shared_dynamic_map_range_{binding}"))
     sdfg.add_array("bound", [2], dace.int64)
     sdfg.add_view("bound_view", [1], dace.int64)
