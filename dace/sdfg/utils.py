@@ -2268,7 +2268,7 @@ def make_dynamic_map_inputs_unique(sdfg: SDFG):
                     for e in state.in_edges(node):
                         if not e.dst_conn.startswith("IN_"):
                             if e.dst_conn in dynamic_map_inputs:
-                                new_name = dt.find_new_name(e.dst_conn, dynamic_map_inputs)
+                                new_name = dace.utils.find_new_name(e.dst_conn, dynamic_map_inputs)
                                 dynamic_map_inputs.add(new_name)
                                 repl_dict[e.dst_conn] = new_name
                                 e._dst_conn = new_name

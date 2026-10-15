@@ -7,7 +7,7 @@ from enum import Enum, auto
 from types import TracebackType
 from typing import Final
 
-from dace import data, subsets, symbolic
+from dace import data, subsets, symbolic, utils
 from dace.memlet import Memlet
 from dace.sdfg import memlet_utils as mmu
 from dace.sdfg import nodes, propagation
@@ -740,7 +740,7 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         while root_sdfg.parent is not None:
             root_sdfg = root_sdfg.parent.sdfg
         containers = self._ctx.root.containers
-        element = data.find_new_name(f"__{stream}_element", set(containers.keys()) | set(root_sdfg.arrays.keys()))
+        element = utils.find_new_name(f"__{stream}_element", set(containers.keys()) | set(root_sdfg.arrays.keys()))
         containers[element] = data.Scalar(containers[stream].dtype, transient=True)
         root_sdfg.add_datadesc(element, containers[element].clone())
 

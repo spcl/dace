@@ -24,7 +24,7 @@ import sympy
 import dace
 import dace.serialize
 from dace import data as dt
-from dace import dtypes, serialize, symbolic
+from dace import dtypes, serialize, symbolic, utils
 from dace import memlet as mm
 from dace import subsets as sbs
 from dace.frontend.python import astutils
@@ -3124,7 +3124,7 @@ class AbstractControlFlowRegion(
         # Ledger of issued names, refreshed every call: in-place renames keep the node count, so a
         # count guard rots.
         self._labels = (self._labels or set()) | {s.label for s in self.nodes()}
-        return dt.find_new_name(proposed or "block", self._labels)
+        return utils.find_new_name(proposed or "block", self._labels)
 
     def add_node(
         self,

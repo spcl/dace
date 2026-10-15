@@ -17,7 +17,7 @@ import numpy
 import sympy
 
 import dace
-from dace import data, dtypes, subsets, symbolic
+from dace import data, dtypes, subsets, symbolic, utils
 from dace import sdfg as sd
 from dace.config import Config
 from dace.frontend.common import op_repository as oprepo
@@ -2726,7 +2726,7 @@ class ProgramVisitor(ExtNodeVisitor):
             loop_region.sdfg._labels = {s.label for s in loop_region.sdfg.all_control_flow_blocks()}
             for block in test_region_copy.all_control_flow_blocks():
                 block.sdfg = loop_region.sdfg
-                block.label = data.find_new_name(block.label, loop_region.sdfg._labels)
+                block.label = utils.find_new_name(block.label, loop_region.sdfg._labels)
 
             for block in iter_end_blocks:
                 loop_region.add_edge(block, test_region_copy, dace.InterstateEdge())
@@ -5532,7 +5532,7 @@ class ProgramVisitor(ExtNodeVisitor):
                         # A name that already means something else here would shadow it
                         symname = f"__sym_{scalar}"
                         if symname in self.sdfg.symbols:
-                            symname = data.find_new_name(
+                            symname = utils.find_new_name(
                                 symname, set(self.sdfg.symbols.keys()) | set(self.sdfg.arrays.keys())
                             )
                         sym = dace.symbol(symname, dtype=desc.dtype)

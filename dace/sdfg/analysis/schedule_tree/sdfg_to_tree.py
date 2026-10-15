@@ -8,7 +8,7 @@ from collections import defaultdict
 import networkx as nx
 
 import dace
-from dace import data, symbolic
+from dace import data, symbolic, utils
 from dace.frontend.python import astutils
 from dace.frontend.python.astutils import negate_expr
 from dace.memlet import Memlet
@@ -227,7 +227,7 @@ def _remove_name_collisions(sdfg: SDFG) -> None:
             if block is nsdfg:
                 continue
             if block.label in state_names_seen:
-                block.label = data.find_new_name(block.label, state_names_seen)
+                block.label = utils.find_new_name(block.label, state_names_seen)
             state_names_seen.add(block.label)
 
         replacements: dict[str, str] = {}
@@ -245,7 +245,7 @@ def _remove_name_collisions(sdfg: SDFG) -> None:
         taken_names |= set(nsdfg.constants_prop.keys())
 
         def _mint(name: str) -> str:
-            new_name = data.find_new_name(name, taken_names)
+            new_name = utils.find_new_name(name, taken_names)
             taken_names.add(new_name)
             replacements[name] = new_name
             return new_name
@@ -546,7 +546,7 @@ def _nested_sdfg_return_label(state: SDFGState, node: nd.NestedSDFG) -> str:
     :return: A label name that does not clash with any control flow block label in the SDFG tree.
     """
     existing = {block.label for block in state.sdfg.root_sdfg.all_control_flow_blocks(recursive=True)}
-    return data.find_new_name(f"__return_{state.label}_{state.node_id(node)}", existing)
+    return utils.find_new_name(f"__return_{state.label}_{state.node_id(node)}", existing)
 
 
 def _bind_exits_to_label(scope: tn.ScheduleTreeScope, state: SDFGState, node: nd.NestedSDFG) -> None:
