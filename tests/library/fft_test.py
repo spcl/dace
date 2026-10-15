@@ -4,6 +4,7 @@ import pytest
 
 import dace
 import dace.libraries.fft as fftlib
+from dace.libraries.fft import BlockLocalFFTFusion
 from dace.libraries.fft.algorithms import stockham
 from dace.transformation.dataflow import OTFMapFusion
 
@@ -288,7 +289,7 @@ def test_cufft_partial_axes():
 @pytest.mark.gpu
 @pytest.mark.parametrize("dtype", (np.complex64, np.complex128))
 def test_stockham_gpu(dtype):
-    import cupy as cp
+    import cupy as cp  # CuPy is only installed on GPU machines
 
     dtype_dace = dace.dtypes.dtype_to_typeclass(dtype)
 
@@ -313,6 +314,178 @@ def test_stockham_gpu(dtype):
     assert np.allclose(z.get(), np.fft.fft2(m.get()), rtol=tolerance, atol=100 * tolerance)
 
 
+def _fuse_block_local(sdfg: dace.SDFG) -> int:
+    sdfg.apply_gpu_transformations()
+    sdfg.simplify()
+    return sdfg.apply_transformations_repeated(BlockLocalFFTFusion)
+
+
+def test_block_local_fusion_structure():
+    """
+    FFT -> pointwise map -> IFFT becomes one kernel with one state per stage and synchronization between states.
+    """
+    B, N = 8, 64
+    G = dace.StorageType.GPU_Global
+
+    @dace.program
+    def tester(x: dace.complex128[B, N] @ G, w: dace.complex128[N] @ G, y: dace.complex128[B, N] @ G):
+        y[:] = np.fft.ifft(np.fft.fft(x) * w)
+
+    sdfg = tester.to_sdfg()
+    assert _fuse_block_local(sdfg) == 1
+    sdfg.validate()
+    assert not any(isinstance(node, dace.nodes.LibraryNode) for node, _ in sdfg.all_nodes_recursive())
+    blocks = [
+        node
+        for node, _ in sdfg.all_nodes_recursive()
+        if isinstance(node, dace.nodes.NestedSDFG) and node.sdfg.name == "fft_block_local"
+    ]
+    assert len(blocks) == 1
+    num_states = len(list(blocks[0].sdfg.states()))
+    assert num_states == 2 * len(stockham.plan_stages((N,), [0], {})) + 1
+    shared = [desc for desc in blocks[0].sdfg.arrays.values() if desc.storage == dace.StorageType.GPU_Shared]
+    assert len(shared) == 2
+
+    cuda_code = next(code for code in sdfg.generate_code() if code.language == "cu").clean_code
+    assert cuda_code.count("__syncthreads();") == num_states - 1
+
+
+@pytest.mark.parametrize(
+    "case", ("other_transform", "too_large", "spectrum_reused", "different_axes", "symbolic", "in_place")
+)
+def test_block_local_fusion_not_applicable(case):
+    B, N = 8, (4096 if case == "too_large" else 32)
+    if case == "symbolic":
+        N = dace.symbol("N")
+    G = dace.StorageType.GPU_Global
+    ctype = dace.complex64
+
+    if case == "other_transform":
+
+        @dace.program
+        def tester(x: ctype[B, N] @ G, y: ctype[B, N] @ G):
+            X = np.fft.fft(x)
+            Y = np.empty_like(X)
+            for i, f in dace.map[0:B, 0:N]:
+                Y[i, f] = X[i, f] + X[(i + 1) % B, f]
+            y[:] = np.fft.ifft(Y)
+
+    elif case == "spectrum_reused":
+
+        @dace.program
+        def tester(x: ctype[B, N] @ G, y: ctype[B, N] @ G, z: ctype[B, N] @ G):
+            X = np.fft.fft(x)
+            z[:] = X
+            y[:] = np.fft.ifft(X * 2)
+
+    elif case == "different_axes":
+
+        @dace.program
+        def tester(x: ctype[N, N] @ G, y: ctype[N, N] @ G):
+            y[:] = np.fft.ifft(np.fft.fft(x, axis=1) * 2, axis=0)
+
+    elif case == "in_place":
+
+        @dace.program
+        def tester(x: ctype[B, N] @ G):
+            x[:] = np.fft.ifft(np.fft.fft(x) * 2)
+
+    else:
+
+        @dace.program
+        def tester(x: ctype[B, N] @ G, y: ctype[B, N] @ G):
+            y[:] = np.fft.ifft(np.fft.fft(x) * 2)
+
+    assert _fuse_block_local(tester.to_sdfg()) == 0
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize("dtype,n", ((np.complex64, 2048), (np.complex128, 1024), (np.complex128, 60)))
+def test_block_local_fusion_gpu(dtype, n):
+    """
+    A frequency-domain filter with a stencil along the transformed axis and orthonormal transforms.
+    """
+    import cupy as cp  # CuPy is only installed on GPU machines
+
+    B, N = 33, n
+    G = dace.StorageType.GPU_Global
+    ctype = dace.dtypes.dtype_to_typeclass(dtype)
+
+    @dace.program
+    def tester(x: ctype[B, N] @ G, w: ctype[N] @ G, y: ctype[B, N] @ G):
+        X = np.fft.fft(x, norm="ortho")
+        Y = np.empty_like(X)
+        for i, f in dace.map[0:B, 0:N]:
+            Y[i, f] = X[i, f] * w[f] + 0.5 * X[i, (f + 1) % N]
+        y[:] = np.fft.ifft(Y, norm="ortho")
+
+    sdfg = tester.to_sdfg()
+    assert _fuse_block_local(sdfg) == 1
+    x, w = _random_complex((B, N), dtype), _random_complex(N, dtype)
+    y = cp.empty((B, N), dtype)
+    sdfg(x=cp.asarray(x), w=cp.asarray(w), y=y)
+
+    X = np.fft.fft(x, norm="ortho")
+    expected = np.fft.ifft(X * w + 0.5 * np.roll(X, -1, axis=1), norm="ortho")
+    tolerance = 1e-4 if dtype == np.complex64 else 1e-10
+    assert np.allclose(y.get(), expected, rtol=tolerance, atol=tolerance)
+
+
+@pytest.mark.gpu
+def test_block_local_fusion_fft2_gpu():
+    """
+    Two-dimensional transforms of the trailing axes, with a filter that depends on the batch index.
+    """
+    import cupy as cp  # CuPy is only installed on GPU machines
+
+    B, H, W = 6, 16, 32
+    G = dace.StorageType.GPU_Global
+
+    @dace.program
+    def tester(
+        x: dace.complex128[B, H, W] @ G,
+        w: dace.complex128[H, W] @ G,
+        s: dace.float64[B] @ G,
+        y: dace.complex128[B, H, W] @ G,
+    ):
+        X = np.fft.fft2(x)
+        Y = np.empty_like(X)
+        for b, i, j in dace.map[0:B, 0:H, 0:W]:
+            Y[b, i, j] = X[b, i, j] * w[i, j] * s[b]
+        y[:] = np.fft.ifft2(Y)
+
+    sdfg = tester.to_sdfg()
+    assert _fuse_block_local(sdfg) == 1
+    x, w, s = _random_complex((B, H, W)), _random_complex((H, W)), np.random.rand(B)
+    y = cp.empty((B, H, W), np.complex128)
+    sdfg(x=cp.asarray(x), w=cp.asarray(w), s=cp.asarray(s), y=y)
+    expected = np.fft.ifft2(np.fft.fft2(x) * w * s[:, None, None])
+    assert np.allclose(y.get(), expected, rtol=1e-10, atol=1e-10)
+
+
+@pytest.mark.gpu
+def test_block_local_fusion_r2c_gpu():
+    """
+    A real input, transformed along the first axis.
+    """
+    import cupy as cp  # CuPy is only installed on GPU machines
+
+    N, B = 256, 40
+    G = dace.StorageType.GPU_Global
+
+    @dace.program
+    def tester(x: dace.float32[N, B] @ G, w: dace.complex64[N, B] @ G, y: dace.complex64[N, B] @ G):
+        y[:] = np.fft.ifft(np.fft.fft(x, axis=0) * w, axis=0)
+
+    sdfg = tester.to_sdfg()
+    assert _fuse_block_local(sdfg) == 1
+    x, w = np.random.rand(N, B).astype(np.float32), _random_complex((N, B), np.complex64)
+    y = cp.empty((N, B), np.complex64)
+    sdfg(x=cp.asarray(x), w=cp.asarray(w), y=y)
+    expected = np.fft.ifft(np.fft.fft(x, axis=0) * w, axis=0)
+    assert np.allclose(y.get(), expected, rtol=1e-4, atol=1e-4)
+
+
 if __name__ == "__main__":
     test_fft(False)
     test_fft(True)
@@ -335,3 +508,11 @@ if __name__ == "__main__":
     test_cufft_partial_axes()
     test_stockham_gpu(np.complex64)
     test_stockham_gpu(np.complex128)
+    test_block_local_fusion_structure()
+    for case in ("other_transform", "too_large", "spectrum_reused", "different_axes", "symbolic", "in_place"):
+        test_block_local_fusion_not_applicable(case)
+    test_block_local_fusion_gpu(np.complex64, 2048)
+    test_block_local_fusion_gpu(np.complex128, 1024)
+    test_block_local_fusion_gpu(np.complex128, 60)
+    test_block_local_fusion_fft2_gpu()
+    test_block_local_fusion_r2c_gpu()

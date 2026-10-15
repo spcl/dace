@@ -1,0 +1,427 @@
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+"""
+Fuses a forward FFT, a computation in the frequency domain, and an inverse FFT into a single GPU kernel in which each
+thread block computes one transform in shared memory.
+"""
+
+import copy
+import dataclasses
+import math
+
+from dace import SDFG, Memlet, SDFGState, data, dtypes, nodes, properties, subsets, symbolic
+from dace.libraries.fft.algorithms import stockham
+from dace.libraries.fft.nodes import fft as fft_nodes
+from dace.sdfg import propagation
+from dace.sdfg import utils as sdutil
+from dace.transformation import transformation
+
+
+@dataclasses.dataclass
+class _Match:
+    """
+    The nodes of a matched ``source -> FFT -> spectrum -> map -> filtered -> IFFT -> result`` pattern.
+    """
+
+    source: nodes.AccessNode
+    filtered: nodes.AccessNode
+    inverse: fft_nodes.IFFT
+    result: nodes.AccessNode
+    map_exit: nodes.MapExit
+    axes: list[int]
+    #: The map parameter that indexes each dimension of the arrays.
+    params: list[str]
+
+
+@properties.make_properties
+@transformation.explicit_cf_compatible
+class BlockLocalFFTFusion(transformation.SingleStateTransformation):
+    """
+    Fuses an FFT, a map, and an inverse FFT (``ifft(f(fft(x)))``) into one GPU kernel with one thread block per
+    transform. The block computes the Stockham stages of the FFT, the map, and the stages of the inverse FFT in shared
+    memory, synchronizing between them, so that only the input and the output of the inverse FFT are in global memory.
+
+    The map must compute each element of its output from the spectrum of the same transform, e.g., a pointwise product
+    with a filter or a stencil along the transformed axes. It may read arbitrary other arrays. Both transforms must be
+    over the same axes of arrays in GPU global memory, have fixed axis lengths (see ``stockham.can_expand``), and a
+    transform must fit twice into the shared memory of a thread block (``stockham.BLOCK_LOCAL_SHARED_BYTES``).
+    """
+
+    forward = transformation.PatternNode(fft_nodes.FFT)
+    spectrum = transformation.PatternNode(nodes.AccessNode)
+    map_entry = transformation.PatternNode(nodes.MapEntry)
+
+    @classmethod
+    def expressions(cls):
+        return [sdutil.node_path_graph(cls.forward, cls.spectrum, cls.map_entry)]
+
+    def can_be_applied(self, graph: SDFGState, expr_index: int, sdfg: SDFG, permissive: bool = False) -> bool:
+        return self._match(graph, sdfg) is not None
+
+    def _match(self, state: SDFGState, sdfg: SDFG) -> _Match | None:
+        forward, spectrum, map_entry = self.forward, self.spectrum, self.map_entry
+        if state.entry_node(forward) is not None or map_entry.map.schedule != dtypes.ScheduleType.GPU_Device:
+            return None
+
+        # Linear chain: source -> FFT -> spectrum -> map -> filtered -> IFFT -> result, with full-array memlets
+        source_edge = _single_edge(state.in_edges(forward), "_inp")
+        if source_edge is None or state.out_degree(forward) != 1:
+            return None
+        map_exit = state.exit_node(map_entry)
+        if state.out_degree(map_exit) != 1:
+            return None
+        filtered = state.out_edges(map_exit)[0].dst
+        if not isinstance(filtered, nodes.AccessNode) or state.out_degree(filtered) != 1:
+            return None
+        inverse = state.out_edges(filtered)[0].dst
+        if not isinstance(inverse, fft_nodes.IFFT) or state.in_degree(inverse) != 1 or state.out_degree(inverse) != 1:
+            return None
+        result_edge = state.out_edges(inverse)[0]
+        source, result = source_edge.src, result_edge.dst
+        if not isinstance(source, nodes.AccessNode) or not isinstance(result, nodes.AccessNode):
+            return None
+        if source.data == result.data:
+            return None
+        chain_edges = [source_edge, state.out_edges(forward)[0], state.out_edges(filtered)[0], result_edge]
+        if any(not _is_full(sdfg, edge.data) for edge in chain_edges):
+            return None
+        if state.in_degree(spectrum) != 1 or state.out_degree(spectrum) != 1:
+            return None
+        if not _is_local_transient(sdfg, state, spectrum) or not _is_local_transient(sdfg, state, filtered):
+            return None
+
+        # Same shape, complex type, and transformed axes; the input may also be real
+        descs = [sdfg.arrays[node.data] for node in (source, spectrum, filtered, result)]
+        if any(not isinstance(desc, data.Array) for desc in descs):
+            return None
+        if any(desc.storage != dtypes.StorageType.GPU_Global for desc in (descs[0], descs[3])):
+            return None
+        shape = tuple(descs[0].shape)
+        if any(tuple(desc.shape) != shape for desc in descs[1:]):
+            return None
+        dtype = descs[1].dtype
+        if dtype not in (dtypes.complex64, dtypes.complex128) or any(desc.dtype != dtype for desc in descs[2:]):
+            return None
+        axes = fft_nodes.transformed_axes(forward, len(shape))
+        if fft_nodes.transformed_axes(inverse, len(shape)) != axes or not stockham.can_expand(
+            shape, axes, sdfg.constants
+        ):
+            return None
+        elements = math.prod(stockham.fixed_length(shape[axis], sdfg.constants) for axis in axes)
+        if 2 * elements * dtype.bytes > stockham.BLOCK_LOCAL_SHARED_BYTES:
+            return None
+
+        params = _map_dimensions(sdfg, state, map_entry, filtered.data, shape)
+        if params is None or not _reads_one_transform(state, map_entry, spectrum.data, axes, params):
+            return None
+
+        # Other inputs of the map are read-only arrays, and its contents can run in device code
+        for edge in state.in_edges(map_entry):
+            if edge.data.is_empty():
+                continue
+            if not edge.dst_conn or not edge.dst_conn.startswith("IN_") or not isinstance(edge.src, nodes.AccessNode):
+                return None
+            if edge.src is not spectrum and edge.data.data in (filtered.data, result.data):
+                return None
+        for node in state.scope_subgraph(map_entry, include_entry=False, include_exit=False).nodes():
+            if isinstance(node, nodes.LibraryNode):
+                return None
+            if isinstance(node, nodes.AccessNode) and node.data in (spectrum.data, filtered.data, result.data):
+                return None
+            if isinstance(node, nodes.MapEntry) and node.map.schedule not in (
+                dtypes.ScheduleType.Default,
+                dtypes.ScheduleType.Sequential,
+            ):
+                return None
+
+        return _Match(source, filtered, inverse, result, map_exit, axes, params)
+
+    def apply(self, state: SDFGState, sdfg: SDFG) -> nodes.NestedSDFG:
+        match = self._match(state, sdfg)
+        forward, spectrum, map_entry = self.forward, self.spectrum, self.map_entry
+        source, result = match.source, match.result
+        shape = tuple(sdfg.arrays[source.data].shape)
+        dtype = sdfg.arrays[spectrum.data].dtype
+        ndim, axes = len(shape), match.axes
+        batch_dims = [dim for dim in range(ndim) if dim not in axes]
+        block_shape = [stockham.fixed_length(shape[dim], sdfg.constants) if dim in axes else 1 for dim in range(ndim)]
+        stages = stockham.plan_stages(block_shape, axes, {})
+        threads = stockham.block_local_threads(stages, block_shape)
+
+        # Twiddle factor tables, allocated once and computed by maps in this state before the kernel reads them
+        persistent = dtypes.AllocationLifetime.Persistent
+        gpu_global, gpu_device = dtypes.StorageType.GPU_Global, dtypes.ScheduleType.GPU_Device
+        forward_tables = stockham.add_twiddle_tables(
+            sdfg, state, stages, -1, dtype, gpu_global, persistent, gpu_device, "__fft_block_tw"
+        )
+        inverse_tables = stockham.add_twiddle_tables(
+            sdfg, state, stages, 1, dtype, gpu_global, persistent, gpu_device, "__ifft_block_tw"
+        )
+
+        # The nested SDFG of one thread block: one state per stage and one for the map
+        block = SDFG("fft_block_local")
+        batch_symbols = {dim: f"__fft_batch{dim}" for dim in batch_dims}
+        for symbol in batch_symbols.values():
+            block.add_symbol(symbol, dtypes.int64)
+        other_inputs = {}
+        for edge in state.in_edges(map_entry):
+            if not edge.data.is_empty() and edge.src is not spectrum:
+                other_inputs.setdefault(edge.data.data, edge.src)
+        table_nodes = list(forward_tables.values()) + list(inverse_tables.values())
+        outer_names = {source.data, result.data, *other_inputs, *(node.data for node in table_nodes)}
+        for name in sorted(outer_names):
+            desc = copy.deepcopy(sdfg.arrays[name])
+            desc.transient = False
+            desc.lifetime = dtypes.AllocationLifetime.Scope
+            block.add_datadesc(name, desc)
+        buffers = [
+            block.add_transient(
+                f"__fft_block_buf{i}", block_shape, dtype, dtypes.StorageType.GPU_Shared, find_new_name=True
+            )[0]
+            for i in range(2)
+        ]
+
+        global_index = [batch_symbols.get(dim) for dim in range(ndim)]
+        shared_index = ["0" if dim in batch_symbols else None for dim in range(ndim)]
+        batch_index = {source.data: global_index, result.data: global_index}
+        batch_index.update(dict.fromkeys(buffers, shared_index))
+
+        steps = [(stage, -1, forward) for stage in stages] + [None] + [(stage, 1, match.inverse) for stage in stages]
+        locations = [source.data] + [buffers[i % 2] for i in range(len(steps) - 1)] + [result.data]
+        prev_state = None
+        for i, step in enumerate(steps):
+            block_state = (
+                block.add_state(f"step_{i}", is_start_block=True)
+                if prev_state is None
+                else block.add_state_after(prev_state, f"step_{i}")
+            )
+            prev_state = block_state
+            src, dst = locations[i], locations[i + 1]
+            if step is None:
+                comp_state, comp_src, comp_dst = block_state, src, dst
+                continue
+            stage, sign, libnode = step
+            last = i + 1 == len(steps) or steps[i + 1] is None
+            tables = {key: node.data for key, node in (forward_tables if sign < 0 else inverse_tables).items()}
+            factor = stockham.factor_code(libnode.factor, dtype) if last else None
+            stockham.add_block_local_stage(
+                block_state, stage, sign, src, dst, block_shape, batch_index, tables, threads, factor
+            )
+
+        dependencies = [edge.src for edge in state.in_edges(map_entry) if edge.data.is_empty()]
+        self._move_map(sdfg, state, comp_state, match, comp_src, comp_dst, block_shape, batch_symbols, threads)
+
+        # Remove the transforms and their intermediate arrays
+        state.remove_nodes_from([forward, spectrum, match.filtered, match.inverse])
+        for name in (spectrum.data, match.filtered.data):
+            sdfg.remove_data(name, validate=False)
+
+        # The kernel: one thread block per transform
+        kernel_ranges = {batch_symbols[dim]: f"0:{symbolic.symstr(shape[dim])}" for dim in batch_dims}
+        kernel_entry, kernel_exit = state.add_map(
+            "fft_block_local", kernel_ranges or {"__fft_block": "0:1"}, gpu_device
+        )
+        inputs = dict.fromkeys(sorted(outer_names - {result.data}))
+        free_symbols = block.free_symbols - set(batch_symbols.values())
+        for symbol in sorted(free_symbols):
+            block.add_symbol(symbol, sdfg.symbols.get(symbol, dtypes.int64))
+        nsdfg = state.add_nested_sdfg(
+            block,
+            inputs,
+            dict.fromkeys([result.data]),
+            {symbol: symbol for symbol in block.symbols},
+            name="fft_block_local",
+        )
+        input_nodes = {source.data: source, **other_inputs, **{node.data: node for node in table_nodes}}
+        for name, node in input_nodes.items():
+            state.add_memlet_path(
+                node, kernel_entry, nsdfg, dst_conn=name, memlet=Memlet.from_array(name, sdfg.arrays[name])
+            )
+        state.add_memlet_path(
+            nsdfg,
+            kernel_exit,
+            result,
+            src_conn=result.data,
+            memlet=Memlet.from_array(result.data, sdfg.arrays[result.data]),
+        )
+        for node in dependencies:
+            state.add_nedge(node, kernel_entry, Memlet())
+
+        propagation.propagate_memlets_sdfg(block)
+        propagation.propagate_memlets_state(sdfg, state)
+        return nsdfg
+
+    def _move_map(
+        self,
+        sdfg: SDFG,
+        state: SDFGState,
+        comp_state: SDFGState,
+        match: _Match,
+        src: str,
+        dst: str,
+        block_shape: list[int],
+        batch_symbols: dict[int, str],
+        threads: int,
+    ) -> None:
+        """
+        Moves the map from the parent state into the state of the nested SDFG that computes it, reading the spectrum
+        from shared memory buffer ``src`` and writing to ``dst``. The threads of the block stride over the transformed
+        elements, and each iteration runs the original map for a single point.
+        """
+        map_entry, map_exit = self.map_entry, match.map_exit
+        spectrum, filtered = self.spectrum.data, match.filtered.data
+        scope = state.scope_subgraph(map_entry)
+        scope_nodes = list(scope.nodes())
+        scope_edges = list(scope.edges())
+        in_edges = list(state.in_edges(map_entry))
+        out_conn = state.out_edges(map_exit)[0].src_conn
+        state.remove_nodes_from(scope_nodes)
+
+        batch_dims = set(batch_symbols)
+
+        def localize(memlet: Memlet) -> Memlet:
+            memlet = copy.deepcopy(memlet)
+            if memlet.data in (spectrum, filtered):
+                memlet.data = src if memlet.data == spectrum else dst
+                memlet.subset = subsets.Range(
+                    [(0, 0, 1) if dim in batch_dims else rng for dim, rng in enumerate(memlet.subset.ndrange())]
+                )
+            return memlet
+
+        for node in scope_nodes:
+            comp_state.add_node(node)
+
+        # Arrays that are local to the map body move with it
+        block = comp_state.sdfg
+        for name in {node.data for node in scope_nodes if isinstance(node, nodes.AccessNode)}:
+            if name in block.arrays:
+                continue
+            block.add_datadesc(name, copy.deepcopy(sdfg.arrays[name]))
+            if not any(node.data == name for other in sdfg.states() for node in other.data_nodes()):
+                sdfg.remove_data(name, validate=False)
+        for edge in scope_edges:
+            comp_state.add_edge(edge.src, edge.src_conn, edge.dst, edge.dst_conn, localize(edge.data))
+
+        # Each iteration of the map computes one point: its batch index is the block's, and its transformed index is
+        # delinearized from the iteration of the thread-block loop
+        loop_dims = [dim for dim in range(len(block_shape)) if block_shape[dim] > 1]
+        loop_index = dict(zip(loop_dims, stockham.delinearize("__u", [block_shape[dim] for dim in loop_dims])))
+        param_dim = {param: dim for dim, param in enumerate(match.params)}
+        ranges = []
+        for param in map_entry.map.params:
+            dim = param_dim[param]
+            index = symbolic.pystr_to_symbolic(batch_symbols.get(dim) or loop_index.get(dim, "0"))
+            ranges.append((index, index, 1))
+        map_entry.map.range = subsets.Range(ranges)
+        map_entry.map.schedule = dtypes.ScheduleType.Sequential
+        map_entry.map.gpu_block_size = None
+
+        tb_entry, tb_exit, seq_entry, seq_exit = stockham.block_local_loop(
+            comp_state, "fft_block_map", math.prod(block_shape), threads
+        )
+        reads = {}
+        for edge in in_edges:
+            if edge.data.is_empty():
+                continue
+            name = src if edge.data.data == spectrum else edge.data.data
+            if name not in reads:
+                reads[name] = comp_state.add_read(name)
+            desc = comp_state.sdfg.arrays[name]
+            comp_state.add_memlet_path(
+                reads[name],
+                tb_entry,
+                seq_entry,
+                map_entry,
+                dst_conn=edge.dst_conn,
+                memlet=Memlet.from_array(name, desc),
+                propagate=False,
+            )
+        comp_state.add_memlet_path(
+            map_exit,
+            seq_exit,
+            tb_exit,
+            comp_state.add_write(dst),
+            src_conn=out_conn,
+            memlet=Memlet.from_array(dst, comp_state.sdfg.arrays[dst]),
+            propagate=False,
+        )
+
+
+def _single_edge(edges, connector: str):
+    """
+    Returns the only edge to the given connector, or None.
+    """
+    matching = [edge for edge in edges if edge.dst_conn == connector]
+    return matching[0] if len(matching) == 1 and len(edges) == 1 else None
+
+
+def _is_full(sdfg: SDFG, memlet: Memlet) -> bool:
+    """
+    Returns True if a memlet accesses its whole array without write-conflict resolution.
+    """
+    if memlet.is_empty() or memlet.wcr is not None or memlet.other_subset is not None:
+        return False
+    return memlet.subset == subsets.Range.from_array(sdfg.arrays[memlet.data])
+
+
+def _is_local_transient(sdfg: SDFG, state: SDFGState, node: nodes.AccessNode) -> bool:
+    """
+    Returns True if an access node is the only use of a transient in the SDFG.
+    """
+    if not sdfg.arrays[node.data].transient:
+        return False
+    for other_state in sdfg.states():
+        for other in other_state.data_nodes():
+            if other.data == node.data and other is not node:
+                return False
+    return all(node.data not in edge.data.free_symbols for edge in sdfg.all_interstate_edges())
+
+
+def _map_dimensions(
+    sdfg: SDFG, state: SDFGState, map_entry: nodes.MapEntry, output: str, shape: tuple
+) -> list[str] | None:
+    """
+    Returns the map parameter that indexes each dimension of the output of a map, if the map writes each element of
+    the output exactly once, at the values of its parameters (e.g., ``out[i, j] = ...`` over ``i, j`` in the shape).
+    """
+    map_exit = state.exit_node(map_entry)
+    params = None
+    for edge in state.in_edges(map_exit):
+        if edge.data.is_empty():
+            continue
+        if edge.data.data != output or edge.data.wcr is not None:
+            return None
+        if edge.data.subset.num_elements() != 1:
+            return None
+        indices = [str(begin) for begin, _, _ in edge.data.subset.ndrange()]
+        if params is None:
+            params = indices
+        elif indices != params:
+            return None
+    if params is None or sorted(params) != sorted(map_entry.map.params):
+        return None
+    for dim, param in enumerate(params):
+        begin, end, step = map_entry.map.range[map_entry.map.params.index(param)]
+        if begin != 0 or step != 1 or symbolic.simplify(end + 1 - shape[dim]) != 0:
+            return None
+    return params
+
+
+def _reads_one_transform(
+    state: SDFGState, map_entry: nodes.MapEntry, spectrum: str, axes: list[int], params: list[str]
+) -> bool:
+    """
+    Returns True if every read of the spectrum in a map is in the transform of the point the map computes, i.e., is
+    at the map parameter in every dimension that is not transformed.
+    """
+    spectrum_connectors = {
+        "OUT_" + edge.dst_conn[3:] for edge in state.in_edges(map_entry) if edge.data.data == spectrum
+    }
+    for edge in state.scope_subgraph(map_entry, include_entry=True, include_exit=False).edges():
+        if edge.src is map_entry and edge.src_conn in spectrum_connectors and edge.data.data != spectrum:
+            return False  # A copy described from the side of its destination
+        if edge.data.data != spectrum:
+            continue
+        for dim, (begin, end, step) in enumerate(edge.data.subset.ndrange()):
+            if dim not in axes and (str(begin) != params[dim] or str(end) != params[dim]):
+                return False
+    return True
