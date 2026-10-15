@@ -929,6 +929,23 @@ def scan_state_accesses(
     return True
 
 
+def names_read_outside(loops: list[LoopRegion], sdfg: SDFG) -> set[str]:
+    """The symbol names anything of ``sdfg`` outside ``loops`` reads: its other states and interstate edges."""
+    inside_blocks = {block for lp in loops for block in lp.all_control_flow_blocks()}
+    inside_edges = {id(e) for lp in loops for e in lp.all_interstate_edges()}
+    names: set[str] = set()
+    for state in sdfg.states():
+        if state not in inside_blocks:
+            names |= {str(s) for s in state.free_symbols}
+    for edge in sdfg.all_interstate_edges():
+        if id(edge) not in inside_edges:
+            names |= {str(s) for s in edge.data.free_symbols}
+    for region in sdfg.all_control_flow_regions():
+        if region not in inside_blocks and region not in loops:
+            names |= {str(s) for code in region.get_meta_codeblocks() for s in code.get_free_symbols()}
+    return names
+
+
 def collect_carrier(
     inners: list[tuple[LoopRegion, str, list[sympy.Expr]]],
     sdfg: SDFG,
@@ -960,7 +977,11 @@ def collect_carrier(
     written = {n.data for st in nest for n in st.data_nodes() if st.in_degree(n) > 0}
     others = {w for w in written if len(sdfg.arrays[w].shape) != 2}
     cf_reads = set().union(*(control_flow_reads(lp) for lp in loops))
-    assigns = any(e.data.assignments for lp in loops for e in lp.all_interstate_edges())
+    # A symbol assigned inside the nest is per-iteration state: harmless while the nest alone reads it (its
+    # right-hand side reads no data the nest writes -- ``cf_reads`` -- and the skew rewrites the iterators in it),
+    # a carried value once anything after the nest reads it.
+    assigned = {name for lp in loops for e in lp.all_interstate_edges() for name in e.data.assignments}
+    assigns = bool(assigned & names_read_outside(loops, sdfg))
     outside = {n.data for st in sdfg.states() if st not in nest for n in st.data_nodes()}
     if written & cf_reads or assigns or others & outside or any(not sdfg.arrays[w].transient for w in others):
         return None

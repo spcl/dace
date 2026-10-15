@@ -390,9 +390,11 @@ class NormalizeWCR(ppl.Pass):
             return
         for st in sdfg.states():
             for e in st.edges():
+                # A copy into the accumulator seeds it too, though its memlet may name the source
+                # (``table -> _priv_table``, a privatized reduction seeded from the array it updates).
                 if (
                     e.data is not None
-                    and e.data.data == acc
+                    and not e.data.is_empty()
                     and e.data.wcr is None
                     and isinstance(e.dst, nodes.AccessNode)
                     and e.dst.data == acc
