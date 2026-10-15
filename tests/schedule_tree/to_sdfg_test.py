@@ -608,7 +608,7 @@ def test_state_boundary_empty_memlet(name: str) -> None:
 def test_state_boundary_empty_memlet_order() -> None:
     # The write after the boundary is ordered after the first write through an empty memlet edge
     sdfg = _boundary_tree_waw().as_sdfg(simplify=False, state_boundary_behavior=t2s.StateBoundaryBehavior.EMPTY_MEMLET)
-    state = sdfg.states()[0]
+    (state,) = sdfg.states()
     writes = [n for n in state.data_nodes() if n.data == "A"]
     assert len(writes) == 2
     first, second = sorted(writes, key=lambda n: state.in_edges(n)[0].src.code.as_string)
