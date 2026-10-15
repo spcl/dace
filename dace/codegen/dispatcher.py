@@ -8,7 +8,7 @@ functionality to registered code generators based on user-defined predicates.
 from collections.abc import Callable
 from enum import auto
 
-from dace import attr_enum, config, dtypes, nodes
+from dace import attr_enum, config, dtypes, nodes, symbolic
 from dace import data as dt
 from dace.codegen import exceptions as cgx
 from dace.codegen import prettycode, target
@@ -483,7 +483,8 @@ class TargetDispatcher:
         state = cfg.state(state_id)
         disp = self.get_node_dispatcher(sdfg, state, node)
         self._used_targets.add(disp)
-        disp.generate_node(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream)
+        with symbolic.printing_facts(lambda: self.frame._symbol_resolver.facts_at(state, node)):
+            disp.generate_node(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream)
 
     def get_scope_dispatcher(self, schedule: dtypes.ScheduleType) -> target.TargetCodeGenerator:
         return self._map_dispatchers[schedule]
@@ -504,9 +505,11 @@ class TargetDispatcher:
         entry_node = sub_dfg.source_nodes()[0]
         self.defined_vars.enter_scope(entry_node)
         self._used_targets.add(self._map_dispatchers[map_schedule])
-        self._map_dispatchers[map_schedule].generate_scope(
-            sdfg, cfg, sub_dfg, state_id, function_stream, callsite_stream
-        )
+        state = cfg.state(state_id)
+        with symbolic.printing_facts(lambda: self.frame._symbol_resolver.facts_in_scope(state, entry_node)):
+            self._map_dispatchers[map_schedule].generate_scope(
+                sdfg, cfg, sub_dfg, state_id, function_stream, callsite_stream
+            )
         self.defined_vars.exit_scope(entry_node)
 
     def get_array_dispatcher(self, storage: dtypes.StorageType) -> target.TargetCodeGenerator:

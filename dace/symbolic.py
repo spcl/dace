@@ -1,6 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
 import contextlib
+import contextvars
 import math
 import pickle
 import re
@@ -4071,14 +4072,45 @@ def guard_crossing(expr: SymbolicType | str, var: str, bound: SymbolicType | str
     return None
 
 
+#: The facts at the code being printed, for the C++ printer to prove what SymPy's assumptions cannot (a registry symbol
+#: is a bare name). The code generator sets it around each node it generates; see :func:`printing_facts`.
+_printing_facts: "contextvars.ContextVar[Callable[[], Facts] | None]" = contextvars.ContextVar(
+    "printing_facts", default=None
+)
+
+
+@contextlib.contextmanager
+def printing_facts(provider: Callable[[], Facts]):
+    """Print C++ within the facts ``provider`` returns. It is called at most once, when a proof first needs it."""
+    token = _printing_facts.set(cache(provider))
+    try:
+        yield
+    finally:
+        _printing_facts.reset(token)
+
+
 def nonnegative_integers(dividend, divisor) -> bool:
     """Whether C's ``%`` and ``/`` agree with the floored ones: on a nonnegative integer dividend and a positive integer
-    divisor. A zero divisor is excluded, where the floored helpers give 0 and C traps."""
-    return bool(
+    divisor. A zero divisor is excluded, where the floored helpers give 0 and C traps. Without SymPy assumptions, the
+    proof uses the facts set by :func:`printing_facts`."""
+    if (
         dividend.is_integer
         and divisor.is_integer
         and divisor.is_positive
         and (dividend.is_nonnegative or (has_rounding(dividend) and provably_nonnegative(dividend, Facts.none())))
+    ):
+        return True
+    provider = _printing_facts.get()
+    if provider is None:
+        return False
+    facts = provider()
+    names = {str(free) for operand in (dividend, divisor) for free in sympy.sympify(operand).free_symbols}
+    return (
+        names <= facts.integers
+        and _integral(dividend)
+        and _integral(divisor)
+        and provably_nonnegative(dividend, facts)
+        and provably_nonnegative(divisor - 1, facts)
     )
 
 
@@ -4436,8 +4468,10 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
         return self._print(sympy.Function(name)(*expr.args))
 
     def _print_Mod(self, expr):
-        # ``%`` has C++ semantics (truncation); Python's floored modulo is the separate user function ``py_mod``
-        return "((%s) %% (%s))" % (self._print(expr.args[0]), self._print(expr.args[1]))
+        # In Python, ``%`` is floored. In C++ it is C's, which agrees only on nonnegative integers
+        if not self.cpp_mode or nonnegative_integers(*expr.args):
+            return "((%s) %% (%s))" % (self._print(expr.args[0]), self._print(expr.args[1]))
+        return self._print_binary_call("py_mod", expr)
 
     def _print_CMod(self, expr):
         if not self.cpp_mode:
