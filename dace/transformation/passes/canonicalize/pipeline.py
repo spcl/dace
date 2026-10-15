@@ -52,6 +52,7 @@ from dace.transformation.passes.canonicalize.fuse_chained_scalar_reductions impo
 from dace.transformation.passes.canonicalize.fuse_consecutive_loops import FuseConsecutiveLoops
 from dace.transformation.passes.canonicalize.fuse_loops import FuseLoops
 from dace.transformation.passes.canonicalize.hoist_iv_updates import HoistInductionVariableUpdates
+from dace.transformation.passes.canonicalize.hold_sibling_chains import ParallelizeLoopsHoldingSiblingChains
 from dace.transformation.passes.canonicalize.induction_variable_substitution import (
     InductionVariableSubstitution,
     LoopCarriedRotationSubstitution,
@@ -716,13 +717,17 @@ def dead_dataflow_units() -> list[ppl.Pass]:
     ]
 
 
-def loop_to_map_units() -> list[ppl.Pass]:
-    """LoopToMap on every loop it accepts, the scope summaries it reads rebuilt first."""
+def loop_to_map_units(hold_sibling_chains: bool = False) -> list[ppl.Pass]:
+    """LoopToMap on every loop it accepts, the scope summaries it reads rebuilt first.
+
+    :param hold_sibling_chains: Leave a sibling-loop chain with a refused sibling whole, for ``WavefrontSkew``.
+    """
+    parallelize = ParallelizeLoopsHoldingSiblingChains if hold_sibling_chains else ParallelizeLoops
     return [
         PropagateMemlets(),
         # A scalar argument promoted to a symbol since ingestion is under the contract too (its step orients a map)
         SetSymbolNonnegativeAssumptions(),
-        ParallelizeLoops(propagate=False),
+        parallelize(propagate=False),
         PatternApplyOnceEverywhere([PruneConnectors()]),
     ]
 
@@ -879,7 +884,7 @@ def derive_parallelism(
         s += [(label, BreakAntiDependence(forward_reads=True)), (label, BreakAntiDependence())]
     s += [(label, DemoteNonStructuralSymbols()), (label, ppl.Pipeline([ScalarFission()]))]
     s += [(label, DeadCarriedStoreElimination())]
-    s += [(label, unit) for unit in loop_to_map_units()]
+    s += [(label, unit) for unit in loop_to_map_units(hold_sibling_chains=True)]
     # Rescue: each rewrite acts only on a loop LoopToMap refuses.
     if peel_limit > 0:
         s += [(label, LoopCarriedRotationSubstitution(peel_limit)), (label, BestEffortLoopPeeling(peel_limit))]
@@ -889,7 +894,7 @@ def derive_parallelism(
     # Peeling copies a loop with the symbols its body assigns; SSA names each copy's apart, or the lifted copy's
     # inner symbols shadow the other's and memlet propagation carries them out of the nested SDFG.
     s += [(label, CascadeInterstateEdgeAssignmentsUp()), (label, unique_iterators()), (label, SymbolSSA())]
-    s += [(label, unit) for unit in loop_to_map_units()]
+    s += [(label, unit) for unit in loop_to_map_units(hold_sibling_chains=True)]
     # Out of phase: the fill map LoopToScan's stride specialization emits is lifted only before a cleanup fuses a
     # second writer into its state (tsvc_2_5 scan_strided_sym).
     if lift_copy:
@@ -906,7 +911,7 @@ def derive_parallelism(
         (label, RetargetWCRAccumulator()),
         (label, PropagateMemlets()),
         (label, SetSymbolNonnegativeAssumptions()),
-        (label, ParallelizeLoops(propagate=False)),
+        (label, ParallelizeLoopsHoldingSiblingChains(propagate=False)),
         (label, _PrivatizeScalarsStage()),
         (label, _PrivatizeArraysStage()),
     ]

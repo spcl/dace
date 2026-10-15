@@ -697,10 +697,6 @@ def test_cloudsc_fixture_deserializes_to_real_sdfg_despite_stale_version_stamp()
         assert not isinstance(node, dace.serialize.SerializableObject)
 
 
-def test_symbol_dtype_is_part_of_symbol_identity():
-    assert symbolic.symbol("i", dace.int64) != symbolic.symbol("i", dace.int32)
-
-
 def test_typed_symbol_survives_a_poisoned_sympy_cache():
     """A same-name symbol of another dtype must not be handed back by SymPy's global ``@cacheit`` LRUs."""
     sympy.Mod(symbolic.symbol("cached_i", dace.int64), symbolic.TypedConstant(np.int16(3)))

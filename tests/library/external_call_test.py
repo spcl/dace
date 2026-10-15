@@ -243,7 +243,7 @@ def test_a_kernel_inside_a_loop_takes_the_loop_iterator_by_value(tmp_path):
     sdfg.name = "extcall_in_loop"
     loop = next(r for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion))
     # canonical loops name their iterator only on the loop, never in sdfg.symbols
-    sdfg.remove_symbol(loop.loop_variable)
+    assert loop.loop_variable not in sdfg.symbols
     state = next(b for b in loop.nodes() if isinstance(b, dace.SDFGState))
     entry = next(n for n in state.nodes() if isinstance(n, nodes.MapEntry))
     nsdfg = helpers.nest_state_subgraph(sdfg, state, state.scope_subgraph(entry))
@@ -301,7 +301,7 @@ def test_the_thread_count_stays_out_of_the_abi_and_the_region_defines_it():
     sdfg = dace.SDFG("extcall_num_threads")
     sdfg.add_array("a", [N], dace.float64)
     sdfg.add_array("b", [N], dace.float64)
-    sdfg.symbols[symbolic.NUM_THREADS_SYMBOL] = dace.int64
+    sdfg.add_symbol(symbolic.NUM_THREADS_SYMBOL, dace.int64)
     state = sdfg.add_state()
     state.add_mapped_tasklet(
         "per_thread",

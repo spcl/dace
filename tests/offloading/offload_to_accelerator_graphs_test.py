@@ -142,7 +142,6 @@ def scalar_to_gpu_within_loopregion_sdfg(num_iters: int = 4):
     sdfg = dace.SDFG("scalar_to_gpu_loopregion")
     sdfg.using_explicit_control_flow = True
 
-    sdfg.add_symbol("i", dace.int32)
     sdfg.add_array("in", [1], dace.float64)
     sdfg.add_array("A", [1], dace.float64)
     sdfg.add_array("out", [1], dace.float64)

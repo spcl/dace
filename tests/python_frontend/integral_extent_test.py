@@ -133,7 +133,8 @@ def test_an_extent_divided_by_an_integer_allocates_by_integer_division():
 
     assert sdfg.arrays["t"].shape == (N / 4,)
     assert "{ return py_floor(N, 4); }" in code, code  # the allocation's size helper
-    assert "i < py_floor(N, 4);" in code, code
+    # the map's facts prove ``N`` nonnegative, where C's truncating division is the floored one
+    assert "i < (N / 4);" in code, code
 
 
 def test_a_float_symbol_divided_by_an_integer_is_still_refused():

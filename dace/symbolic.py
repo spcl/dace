@@ -187,6 +187,13 @@ def declared_symbol_dtype(name: str) -> Optional["dtypes.typeclass"]:
     return _SERIALIZATION_SYMBOL_DTYPES.get().get(name)
 
 
+def symbol_dtype(atom: "symbol") -> "dtypes.typeclass":
+    """The dtype of the symbol ``atom`` names: the enclosing scope's (the SDFG being generated or serialized) when it
+    declares the name, else the one ``atom`` was declared with. A symbol is its name, so SymPy's cache can hand back a
+    same-named object declared at another dtype; only the scope knows the name's type."""
+    return declared_symbol_dtype(atom.name) or atom.dtype
+
+
 def prepare_serialization_symbol_dtypes(authority: dict[str, "dtypes.typeclass"]):
     """``authority`` prepared once for repeated :func:`serialization_symbol_dtypes` scopes (``prepared=``)."""
     return _SERIALIZATION_SYMBOL_DTYPES.prepare(authority)
@@ -4321,7 +4328,7 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
         # keeps its integer type. Neither C++ spelling works here: libm ``ceil`` widens
         # to ``double``, and the runtime's ``ceiling`` (math.h) has only ``int``, ``float``
         # and ``double`` overloads, so any wider integer type makes the call ambiguous.
-        if expr.args[0].is_integer:
+        if exact_integer(expr.args[0]):
             return self._print(expr.args[0])
         lowered = self._mpr_call("ceiling", [self._print(expr.args[0])], self.c_argument_types(expr.args))
         if lowered is not None:
@@ -4401,7 +4408,7 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
                   a symbol taken as :func:`~dace.cpf_lowering.c_symbol_type` says, or ``None``.
         """
         if isinstance(expr, symbol):
-            return cpf_lowering.c_symbol_type(expr.dtype.to_string())
+            return cpf_lowering.c_symbol_type(symbol_dtype(expr).to_string())
         if isinstance(expr, TypedConstant):
             return expr.dtype.to_string()
         if isinstance(expr, sympy.logic.boolalg.Boolean):
@@ -4510,7 +4517,7 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
         # The counterpart of the ceiling short-circuit: libm ``floor`` returns a double just as
         # ``ceil`` does, so a known-integer argument must stand on its own here too. #2550 gave this
         # to ceilings only, which left ``floor(int_floor(N, 2) + 1)`` emitting a floating call.
-        if expr.args[0].is_integer:
+        if exact_integer(expr.args[0]):
             return self._print(expr.args[0])
         arg = expr.args[0]
         # Try to combine to a single ``Rational(num, den)``: when arg is
@@ -4631,6 +4638,7 @@ INTEGRAL_INDEX_OPS = (
     sympy.Add,
     sympy.Mul,
     sympy.Pow,
+    ipow,
     sympy.Min,
     sympy.Max,
     sympy.Mod,
@@ -4670,7 +4678,7 @@ def integral_index_expression(expr, rational_is_integer_division: bool = False) 
             traversal.skip()  # an integer-valued call such as ``int64(x)``: its argument need not be integral
             continue
         if isinstance(node, (symbol, TypedConstant)):
-            if node.dtype not in dtypes.INTEGER_TYPES:
+            if (symbol_dtype(node) if isinstance(node, symbol) else node.dtype) not in dtypes.INTEGER_TYPES:
                 return False
         elif isinstance(node, sympy.Integer):
             continue
@@ -4682,6 +4690,12 @@ def integral_index_expression(expr, rational_is_integer_division: bool = False) 
         elif not isinstance(node, INTEGRAL_INDEX_OPS):
             return False
     return True
+
+
+def exact_integer(expr) -> bool:
+    """Whether ``expr`` is an integer value: integer arithmetic (:func:`integral_index_expression`) with no ``Pow``,
+    whose exponent may be negative. ``ipow(R, K)`` is one; ``R**(K - 1)`` is a fraction for ``K = 0``."""
+    return expr.is_integer is True or (integral_index_expression(expr) and not expr.has(sympy.Pow))
 
 
 def infer_fp_ctype(expr) -> str | None:
@@ -4708,7 +4722,9 @@ def infer_fp_ctype(expr) -> str | None:
         return None
     found: list[dtypes.typeclass] = []
     for atom in expr.atoms():
-        if isinstance(atom, (symbol, TypedConstant)):
+        if isinstance(atom, symbol):
+            found.append(symbol_dtype(atom))
+        elif isinstance(atom, TypedConstant):
             found.append(atom.dtype)
         elif isinstance(atom, sympy.Float):
             found.append(dtypes.float64)
@@ -4720,6 +4736,11 @@ def infer_fp_ctype(expr) -> str | None:
     return result.ctype
 
 
+def printing_context() -> tuple:
+    """A cache key for what printing reads from its surroundings: the scope's symbol types and the printing facts."""
+    return (_SERIALIZATION_SYMBOL_DTYPES.cache_key(), _printing_facts.get())
+
+
 @lru_cache(maxsize=16384, typed=True)
 def _symstr(
     sym,
@@ -4728,9 +4749,12 @@ def _symstr(
     dialect: cpf_lowering.Dialect | None = None,
     fp_ctype: str | None = None,
     reparsed: bool = False,
+    context: tuple = (),
 ) -> str:
     """The memoized body of :func:`symstr`. Every argument reaches the cache key, ``dialect``
-    included, so nothing here may read an ambient value."""
+    included, so nothing here may read an ambient value. What the printer does read ambiently -- the symbol types and
+    the printing facts -- is keyed by ``context`` (:func:`printing_context`, unused here): a modulo printed as C's
+    ``%`` where the facts proved it must not be served where they do not."""
 
     # Inferred, not required from the caller: every consumer of a symbolic expression would
     # otherwise have to thread a dtype down, and the one that forgot would silently emit a
@@ -4820,7 +4844,15 @@ def symstr(
     """
     if dialect is None:
         dialect = cpf_lowering.active_dialect() if cpp_mode else cpf_lowering.Dialect.RUNTIME
-    return _symstr(sym, arrayexprs, cpp_mode, dialect, fp_ctype, reparsed)
+    return _symstr(
+        sym,
+        arrayexprs,
+        cpp_mode,
+        dialect,
+        fp_ctype,
+        reparsed,
+        printing_context(),
+    )
 
 
 #: The wrapper is what callers hold, so the cache controls have to live on it too -- clearing

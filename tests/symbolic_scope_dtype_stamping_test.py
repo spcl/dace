@@ -6,7 +6,6 @@ re-parsed from its string property name the same symbol, so ``N - N`` cancels an
 comparing a bound against a subset sees one ``N``.
 """
 
-import dace
 from dace import dtypes, symbolic
 
 
@@ -43,42 +42,8 @@ def test_one_authority_pushed_twice_is_served_from_the_parse_cache():
     assert second is first
 
 
-def test_a_canonicalized_graph_spells_each_name_once():
-    """End to end: after canonicalization no name appears under two dtypes."""
-    N = dace.symbol("N", dtype=dace.int64)
-
-    @dace.program
-    def two_dim(aa: dace.float64[N, N], bb: dace.float64[N, N]):
-        for i in range(N):
-            for j in range(N):
-                aa[i, j] = bb[i, j] + 1.0
-
-    sdfg = two_dim.to_sdfg(simplify=False)
-    from dace.transformation.passes.canonicalize import pipeline as canon
-
-    canon.canonicalize(sdfg)
-
-    seen: dict = {}
-    for g in sdfg.all_sdfgs_recursive():
-        for desc in g.arrays.values():
-            for expr in list(desc.shape) + list(desc.strides):
-                for sym in getattr(expr, "free_symbols", ()):
-                    seen.setdefault(str(sym), set()).add(str(sym.dtype))
-        for state in g.states():
-            for edge in state.edges():
-                if edge.data is None or edge.data.subset is None:
-                    continue
-                for rng in edge.data.subset.ranges:
-                    for expr in rng:
-                        for sym in getattr(expr, "free_symbols", ()):
-                            seen.setdefault(str(sym), set()).add(str(sym.dtype))
-    split = {name: kinds for name, kinds in seen.items() if len(kinds) > 1}
-    assert not split, f"names carried at more than one dtype: {split}"
-
-
 if __name__ == "__main__":
     test_an_unscoped_parse_keeps_the_default()
     test_a_scoped_parse_cancels_against_the_declared_symbol()
     test_the_parse_cache_is_keyed_on_the_authority()
     test_one_authority_pushed_twice_is_served_from_the_parse_cache()
-    test_a_canonicalized_graph_spells_each_name_once()

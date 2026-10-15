@@ -43,7 +43,6 @@ class _FakeVisitor:
 def test_dot_shape_check_equalizes_symbols():
     wide = dace.symbol("N", dace.int32)
     narrow = dace.symbol("N", dace.int64)
-    assert wide is not narrow and wide != narrow  # the premise: identity says these differ
 
     sdfg = dace.SDFG("dot_symbol_instances")
     sdfg.add_array("a", [wide], dace.float64)

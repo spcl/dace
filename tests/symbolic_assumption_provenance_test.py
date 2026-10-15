@@ -40,13 +40,6 @@ def bare(name: str) -> symbolic.SymbolicType:
     return symbolic.pystr_to_symbolic(name)
 
 
-def test_declared_and_reparsed_symbols_do_not_cancel():
-    """The premise of every other test here: without equalization the two spellings never cancel."""
-    assert symbolic.simplify(bare("N") - DECLARED_N) != 0
-    lhs, rhs = symbolic.equalize_symbols_across(bare("N"), DECLARED_N)
-    assert symbolic.simplify(lhs - rhs) == 0
-
-
 def test_covers_full_extent_accepts_reparsed_bound():
     desc = data.Array(dace.float64, (DECLARED_N,))
     reparsed = subsets.Range([(0, bare("N") - 1, 1)])

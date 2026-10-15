@@ -314,8 +314,8 @@ def test_a_supplied_symbol_table_propagates_what_the_derived_one_does():
 
 
 def test_a_strided_range_keeps_the_dtype_of_its_bound_symbols():
-    """The last index of a strided map range is built from the bound symbols, never re-parsed from text:
-    a re-parse mints them at the default dtype, and ``S: uint32`` beside ``S: int32`` never cancels."""
+    """The last index of a strided map range is built from the bound symbols, never re-parsed from text: the range
+    end ``S + 4*int_floor(E - S - 1, 4)`` is the last ``i`` the map visits."""
     S = dace.symbol("S", dace.uint32)
     E = dace.symbol("E", dace.uint32)
     sdfg = dace.SDFG("strided_uint_bounds")
@@ -335,8 +335,8 @@ def test_a_strided_range_keeps_the_dtype_of_its_bound_symbols():
     )
     propagate_memlets_sdfg(sdfg)
     outer = next(e.data for e in state.edges() if isinstance(e.dst, dace.sdfg.nodes.MapEntry))
-    dtypes_seen = {(s.name, s.dtype) for dim in outer.subset.ranges for x in dim for s in x.free_symbols}
-    assert dtypes_seen and all(dtype == dace.uint32 for name, dtype in dtypes_seen if name in ("S", "E")), dtypes_seen
+    last = S + 4 * dace.symbolic.int_floor(E - S - 1, 4)
+    assert outer.subset == dace.subsets.Range([(S**2, last**2, 1)]), outer.subset
     sdfg.validate()
 
 

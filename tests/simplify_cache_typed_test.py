@@ -10,8 +10,8 @@ import dace
 
 
 def _fresh_cache() -> None:
-    """Clear the ``simplify`` cache so each test is order independent."""
-    dace.symbolic.simplify.cache_clear()
+    """Clear the cache behind ``simplify`` (``simplify_under``'s) so each test is order independent."""
+    dace.symbolic.simplify_under.cache_clear()
 
 
 def test_simplify_bool_does_not_poison_integer_one():
@@ -63,9 +63,9 @@ def test_simplify_symbolic_expressions_still_cache():
     n = sympy.Symbol("N")
     assert dace.symbolic.simplify(n + 1 - n, dace.symbolic.Facts.none()) == 1
     assert dace.symbolic.simplify((n**2 - 1) / (n - 1), dace.symbolic.Facts.none()) == n + 1
-    # Same expression again: served from the cache with the same result.
-    assert dace.symbolic.simplify(n + 1 - n, dace.symbolic.Facts.none()) == 1
-    assert dace.symbolic.simplify.cache_info().hits >= 1
+    # Same expressions again: the one sympy simplifies is served from the cache with the same result.
+    assert dace.symbolic.simplify((n**2 - 1) / (n - 1), dace.symbolic.Facts.none()) == n + 1
+    assert dace.symbolic.simplify_under.cache_info().hits >= 1
 
 
 def test_volume_propagation_after_bool_simplify():

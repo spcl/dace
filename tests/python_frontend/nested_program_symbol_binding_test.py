@@ -8,7 +8,7 @@ import dace
 
 M = dace.symbol("M", dtype=dace.int64, positive=True)
 N = dace.symbol("N", dtype=dace.int64, positive=True)
-K = dace.symbol("K", dtype=dace.int64, positive=True)
+K = dace.symbol("K", dtype=dace.int64, nonnegative=True)  # a call site passes N - 1
 
 
 @dace.program

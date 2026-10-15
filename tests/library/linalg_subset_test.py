@@ -104,8 +104,6 @@ def test_extents_are_compared_by_name_not_by_structure():
     against a consumer's re-minted int32 -- and the check must not reject shapes that match."""
     h32 = dace.symbol("H", dtype=dace.int32)
     w32 = dace.symbol("W", dtype=dace.int32)
-    # Non-vacuity: without a spelling difference this test proves nothing about the comparator.
-    assert [H, W] != [h32, w32], "the two spellings must be structurally unequal for this to bite"
 
     sdfg = dace.SDFG("respelled_transpose")
     sdfg.add_array("x", (B, H, W, 32), dace.float64)
@@ -155,7 +153,6 @@ def test_contraction_extents_are_compared_by_name_not_by_structure():
     by name, so an extent respelled on one side does not reject a contraction that agrees."""
     p32 = dace.symbol("P", dtype=dace.int32)
     n32 = dace.symbol("N", dtype=dace.int32)
-    assert [P, N] != [p32, n32], "the two spellings must be structurally unequal for this to bite"
 
     sdfg = dace.SDFG("respelled_dot")
     sdfg.add_array("a", (B, K, P), dace.float64)

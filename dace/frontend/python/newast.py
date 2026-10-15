@@ -132,7 +132,8 @@ def spell_extent_as_source(sdfg: SDFG, target: Any, source: Any, mapping: dict[s
         return
     # ``replace_dict`` looks the key up by name; a typed ``target`` hashes apart from that lookup.
     sdfg.replace_dict({name: str(source)}, symrepl={pystr_to_symbolic(name): source})
-    sdfg.symbol_repo.remove(name)
+    if name in sdfg.symbols:  # replacing a declared name with an expression may already have dropped it
+        sdfg.symbol_repo.remove(name)
     parent = sdfg.parent_nsdfg_node
     owner = parent.symbol_mapping if parent is not None else mapping
     owner.pop(name, None)
@@ -2814,7 +2815,7 @@ class ProgramVisitor(ExtNodeVisitor):
                             raise DaceSyntaxError(self, node, 'Undefined variable "%s"' % atom)
                         # Add to global SDFG symbols if not a scalar
                         if isinstance(atom, symbolic.symbol) and not (
-                            astr in self.variables or astr in self.sdfg.arrays
+                            astr in self.variables or astr in self.sdfg.arrays or astr in self.sdfg.symbols
                         ):
                             declare_read_symbol(self.sdfg, astr, defined_type(self.defined[astr]))
 

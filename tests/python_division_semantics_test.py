@@ -12,8 +12,8 @@ from dace import symbolic
 
 N = dace.symbol("N", dtype=dace.int64)
 I = dace.symbol("I", dtype=dace.int64)
-K = dace.symbol("K", nonnegative=True)
-M = dace.symbol("M", positive=True)
+K = dace.symbol("K")  # nonnegative in the printing facts
+M = dace.symbol("M")  # positive in the printing facts
 
 VALUES = (-32, -7, -3, -1, 1, 3, 7, 32)
 
@@ -393,26 +393,28 @@ def test_the_sympy_mod_is_floored_and_prints_as_such():
     assert symbolic.deserialize_symbolic(symbolic.serialize_symbolic(mod)) == mod
 
 
+def signs(nonnegative: tuple[str, ...] = (), positive: tuple[str, ...] = ()) -> symbolic.Facts:
+    """Integer facts for the printer: symbols carry no sign of their own, the facts at the code being generated do."""
+    from dace.symbolic import Facts, Predicate, predicate_relation
+
+    relations = tuple(predicate_relation(Predicate.NONNEGATIVE, dace.symbol(n)) for n in nonnegative) + tuple(
+        predicate_relation(Predicate.POSITIVE, dace.symbol(n)) for n in positive
+    )
+    return Facts(relations, frozenset((*nonnegative, *positive, "m")))
+
+
 def test_a_provably_nonnegative_pair_prints_as_the_c_operator():
-    k = dace.symbol("k", dtype=dace.uint32)
-    m = dace.symbol("m", dtype=dace.int64)
-    p = dace.symbol("p", dtype=dace.int64, positive=True)
+    k, m, p = dace.symbol("k"), dace.symbol("m"), dace.symbol("p")
 
-    assert "(p) % (4)" in symbolic.symstr(symbolic.PyMod(p, 4), cpp_mode=True)
-    assert "(p) / (4)" in symbolic.symstr(symbolic.PyFloor(p, 4), cpp_mode=True)
+    with symbolic.printing_facts(lambda: signs(nonnegative=("k",), positive=("p",))):
+        assert "(p) % (4)" in symbolic.symstr(symbolic.PyMod(p, 4), cpp_mode=True)
+        assert "(p) / (4)" in symbolic.symstr(symbolic.PyFloor(p, 4), cpp_mode=True)
 
-    assert "(k) % (4)" in symbolic.symstr(symbolic.PyMod(k, 4), cpp_mode=True)
-    assert "(k) / (4)" in symbolic.symstr(symbolic.PyFloor(k, 4), cpp_mode=True)
-    assert "py_mod(m, 4)" in symbolic.symstr(symbolic.PyMod(m, 4), cpp_mode=True)
-    assert "py_floor(m, 4)" in symbolic.symstr(symbolic.PyFloor(m, 4), cpp_mode=True)
-    assert "py_floor(m, 4)" in symbolic.symstr(symbolic.pystr_to_symbolic("m // 4"), cpp_mode=True)
-
-
-def test_the_c_modulo_of_a_nonnegative_dividend_and_a_positive_divisor_is_the_floored_one():
-    k = dace.symbol("k", nonnegative=True, integer=True)
-    m = dace.symbol("m", positive=True, integer=True)
-
-    assert symbolic.CMod(k, m) == symbolic.PyMod(k, m)
+        assert "(k) % (4)" in symbolic.symstr(symbolic.PyMod(k, 4), cpp_mode=True)
+        assert "(k) / (4)" in symbolic.symstr(symbolic.PyFloor(k, 4), cpp_mode=True)
+        assert "py_mod(m, 4)" in symbolic.symstr(symbolic.PyMod(m, 4), cpp_mode=True)
+        assert "py_floor(m, 4)" in symbolic.symstr(symbolic.PyFloor(m, 4), cpp_mode=True)
+        assert "py_floor(m, 4)" in symbolic.symstr(symbolic.pystr_to_symbolic("m // 4"), cpp_mode=True)
 
 
 @dace.program
@@ -508,7 +510,8 @@ def test_a_negative_modulo_in_a_subscript_is_floored(n, target):
 def test_sympy_mod_prints_the_c_operator_only_where_no_sign_can_differ(dividend, divisor, infix):
     """Floored and truncated remainders agree exactly on a nonnegative dividend and a positive
     divisor; anywhere else the infix ``%`` is a different operation."""
-    printed = dace.symbolic.symstr(sympy.Mod(dividend, divisor, evaluate=False), cpp_mode=True)
+    with symbolic.printing_facts(lambda: signs(nonnegative=("K",), positive=("M",))):
+        printed = dace.symbolic.symstr(sympy.Mod(dividend, divisor, evaluate=False), cpp_mode=True)
     assert ("%" in printed and "py_mod" not in printed) == infix, printed
     assert ("py_mod(" in printed) == (not infix), printed
 
@@ -550,7 +553,6 @@ if __name__ == "__main__":
         test_a_symbolic_expression_reads_back_from_its_string_with_its_own_rounding(text)
     test_the_sympy_mod_is_floored_and_prints_as_such()
     test_a_provably_nonnegative_pair_prints_as_the_c_operator()
-    test_the_c_modulo_of_a_nonnegative_dividend_and_a_positive_divisor_is_the_floored_one()
     test_the_modulo_functions_have_one_implementation_per_rounding()
     test_a_periodic_read_in_a_map_wraps_like_numpy()
     test_a_symbol_that_is_not_known_nonnegative_prints_the_floored_helper()

@@ -17,18 +17,21 @@ import dace
 from dace import symbolic
 from dace.frontend.python.replacements.utils import sym_type
 
+#: The SDFG's symbol types, which ``sym_type`` reads by name
+SYMBOLS = {"N": dace.int64}
+
 
 def test_a_float_over_a_symbolic_sum_infers_a_float():
-    N = symbolic.symbol("N", dtype=dace.int64, positive=True)
-    assert sym_type(1.0 / (N - 1)) == dace.float64
-    assert sym_type(1.0 / ((N - 1) * (N - 1))) == dace.float64
+    N = symbolic.symbol("N")
+    assert sym_type(1.0 / (N - 1), SYMBOLS) == dace.float64
+    assert sym_type(1.0 / ((N - 1) * (N - 1)), SYMBOLS) == dace.float64
 
 
 def test_an_integer_expression_stays_integral_at_the_degenerate_point():
     """``N // (N - 1)`` divides by zero at the first representative point; the answer is still int."""
-    N = symbolic.symbol("N", dtype=dace.int64, positive=True)
-    assert sym_type(symbolic.int_floor(N, N - 1)) == dace.int64
-    assert sym_type(N - 1) == dace.int64
+    N = symbolic.symbol("N")
+    assert sym_type(symbolic.int_floor(N, N - 1), SYMBOLS) == dace.int64
+    assert sym_type(N - 1, SYMBOLS) == dace.int64
 
 
 def test_the_frontend_parses_a_grid_spacing():

@@ -48,7 +48,11 @@ def test_a_rational_prints_as_a_floating_quotient(expr, python, cpp):
     ],
 )
 def test_only_an_integer_quotient_becomes_a_floor_division(expr, python):
-    assert symstr(expr) == python
+    # A symbol is its name: an integer ``x`` built anywhere else may be the object SymPy hands back, so the type
+    # comes from the scope that declares the names, as the code generator's SDFG does
+    symbolic.symbol("x", dace.int64) / 2
+    with symbolic.serialization_symbol_dtypes({"x": dace.float64, "N": dace.int64}):
+        assert symstr(expr) == python
 
 
 def test_bdf_norms_survive_a_save_and_load(tmp_path):

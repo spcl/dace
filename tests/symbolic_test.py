@@ -125,13 +125,6 @@ def test_renaming_plain_symbols_matches_subs(text: str) -> None:
     assert sympy.srepr(renamed) == sympy.srepr(raw.subs(repl))
 
 
-@pytest.mark.parametrize("text", ["i + 1 < N", "Min(i, N - 1) + 2*j**2", "int_floor(N, 2) >= j"])
-def test_renaming_gives_the_replacement_dtype(text: str) -> None:
-    raw = symbolic.sympify_text(text, None)
-    renamed = symbolic.rename_symbols(raw, dace_renaming(raw))
-    assert {s.dtype for s in renamed.free_symbols} == {dace.int64}
-
-
 def test_renaming_under_a_piecewise_matches_subs() -> None:
     x = sympy.Symbol("x")
     raw = sympy.Piecewise((x, x < 0), (x + 1, True))

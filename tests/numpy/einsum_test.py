@@ -528,8 +528,7 @@ def test_einsum_shape_check_equalizes_symbols():
     rows, cols = 4, 6
     wide = dace.symbol("ESN", dace.int32)
     narrow = dace.symbol("ESN", dace.int64)
-    # the premise: identity says these differ, the name says they do not
-    assert wide is not narrow and wide != narrow
+    # a symbol is its name: the two spellings are one symbol
     assert not symbolic.inequal_symbols(wide, narrow)
 
     sdfg = dace.SDFG("einsum_symbol_instances")

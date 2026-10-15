@@ -41,7 +41,8 @@ def find_outgoing_edges(node, dfg):
 
 
 @lru_cache(maxsize=16384, typed=True)
-def _sym2cpp(s, arrayexprs, dialect, fp_ctype):
+def _sym2cpp(s, arrayexprs, dialect, fp_ctype, context):
+    # ``context`` (:func:`~dace.symbolic.printing_context`) only keys the cache: ``symstr`` reads it ambiently
     # ``pyexpr2cpp`` parses this text again with the PYTHON parser, which ``static_cast<T>(x)``
     # does not survive: it comes back as ``(static_cast < T) > (x)``. ``reparsed`` says so.
     text = symbolic.symstr(s, arrayexprs, cpp_mode=True, dialect=dialect, fp_ctype=fp_ctype, reparsed=True)
@@ -97,7 +98,9 @@ def sym2cpp(
         if dialect is cpf_lowering.Dialect.STANDALONE:
             ctype = cpf_lowering.ctype_for(ctype, dialect)
         return f"{ctype}({s.real}, {s.imag})"
-    return _sym2cpp(s, None if arrayexprs is None else frozenset(arrayexprs), dialect, fp_ctype)
+    return _sym2cpp(
+        s, None if arrayexprs is None else frozenset(arrayexprs), dialect, fp_ctype, symbolic.printing_context()
+    )
 
 
 def codeblock_to_cpp(cb: CodeBlock):

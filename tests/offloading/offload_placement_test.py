@@ -431,7 +431,6 @@ def indirect_read_only_sdfg() -> dace.SDFG:
     sdfg.add_array("data", [16], dace.float64, transient=False, storage=dace.StorageType.GPU_Global)
     sdfg.add_array("out", [16], dace.float64, transient=False, storage=dace.StorageType.GPU_Global)
     sdfg.add_scalar("cursor", dace.int64, transient=True)
-    sdfg.add_symbol("k", dace.int64)
 
     parallel = sdfg.add_state("parallel", is_start_block=True)
     entry, exit_ = parallel.add_map("gather", {"i": "0:16"}, schedule=dace.ScheduleType.GPU_Device)

@@ -1452,7 +1452,13 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
         #######################################################################
         # Generate actual program body
 
-        states_generated = self.generate_states(sdfg, global_stream, callsite_stream)
+        # Printed expressions type each symbol by this SDFG's declaration, not by the object found in the expression. A
+        # complex interstate scalar is no symbol (symbols are real), so it is left out.
+        symbol_types = {
+            k: v for k, v in global_symbols.items() if v is not None and v not in (dtypes.complex64, dtypes.complex128)
+        }
+        with symbolic.serialization_symbol_dtypes(symbol_types, inherit=True):
+            states_generated = self.generate_states(sdfg, global_stream, callsite_stream)
 
         #######################################################################
 
