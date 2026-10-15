@@ -1336,6 +1336,8 @@ def from_schedule_tree(
     stree: tn.ScheduleTreeRoot,
     state_boundary_behavior: StateBoundaryBehavior = StateBoundaryBehavior.STATE_TRANSITION,
     max_nested_sdfgs: int = 1000,
+    *,
+    in_place: bool = True,
 ) -> SDFG:
     """
     Converts a schedule tree into an SDFG.
@@ -1343,8 +1345,13 @@ def from_schedule_tree(
     :param stree: The schedule tree root to convert.
     :param state_boundary_behavior: Sets the behavior upon encountering a state boundary (e.g., write-after-write).
                                     See the ``StateBoundaryBehavior`` enumeration for more details.
+    :param in_place: If True, the schedule tree is modified in-place. Otherwise, a copy is made. Note that the
+                     schedule tree might not be usable after the conversion if ``in_place`` is True!
     :return: An SDFG representing the schedule tree.
     """
+    if not in_place:
+        stree = copy.deepcopy(stree)
+
     # Setup SDFG descriptor repository
     result = SDFG(stree.name, propagate=False)
     result.arg_names = copy.deepcopy(stree.arg_names)

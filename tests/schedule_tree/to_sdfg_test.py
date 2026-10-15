@@ -2119,6 +2119,31 @@ def test_trailing_assignment_in_body(scope: str) -> None:
         assert a[0] == (30 if scope == "loop" else expected)
 
 
+@pytest.mark.parametrize("in_place", (False, True))
+def test_from_schedule_tree_in_place(in_place: bool) -> None:
+    # A write-after-write makes the conversion insert a state boundary into the tree
+    stree = tn.ScheduleTreeRoot(
+        name="tester",
+        containers={"A": data.Array(dace.float64, [20])},
+        children=[
+            tn.TaskletNode(nodes.Tasklet("bla", {}, {"out"}, "out = 1"), {}, {"out": dace.Memlet("A[1]")}),
+            tn.TaskletNode(nodes.Tasklet("bla2", {}, {"out"}, "out = 2"), {}, {"out": dace.Memlet("A[1]")}),
+        ],
+    )
+    before = stree.as_string()
+    children = list(stree.children)
+
+    sdfg = stree.as_sdfg(simplify=False, in_place=in_place)
+    sdfg.validate()
+
+    if in_place:
+        assert any(isinstance(n, tn.StateBoundaryNode) for n in stree.children)
+    else:
+        assert stree.as_string() == before
+        assert len(stree.children) == len(children)
+        assert all(a is b for a, b in zip(stree.children, children))
+
+
 if __name__ == "__main__":
     test_state_boundaries_none()
     test_state_boundaries_waw()
@@ -2196,3 +2221,5 @@ if __name__ == "__main__":
     test_state_boundaries_read_modify_write()
     for scope in ("if", "elif", "else", "loop"):
         test_trailing_assignment_in_body(scope)
+    test_from_schedule_tree_in_place(False)
+    test_from_schedule_tree_in_place(True)
