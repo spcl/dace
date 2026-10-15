@@ -141,7 +141,7 @@ class RocblasHandle {
 
   rocblas_handle& Get() {
     if (!handle_) {
-      auto handle = CreateRocblasHandle();
+      rocblas_handle handle = CreateRocblasHandle();
       rocblas_set_pointer_mode(handle, rocblas_pointer_mode_device);
       handle_ = handle;
     }

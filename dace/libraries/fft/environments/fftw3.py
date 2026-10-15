@@ -7,6 +7,7 @@ the ``ldconfig`` cache. A spack or module install keeps both under its own prefi
 :data:`FFTW_ENV_VARS`, the ``CPATH`` / ``LIBRARY_PATH`` / ``LD_LIBRARY_PATH`` search paths, or spack.
 """
 
+import contextlib
 import ctypes.util
 import functools
 import glob
@@ -52,8 +53,32 @@ def prefix_libraries(prefix: str) -> list[str]:
     return found
 
 
+#: Set while :func:`single_threaded_planner` is active.
+_SINGLE_THREADED_PLANNER = False
+
+
+@contextlib.contextmanager
+def single_threaded_planner():
+    """Expand FFT nodes for the single-threaded planner whatever this machine's install carries.
+
+    For a unit built on another machine (DaCe's CPF): the threaded planner lives in a companion library
+    (``libfftw3_omp`` or ``libfftw3_threads``) an install may or may not have, so code that calls it links only
+    where the rendering machine's choice happens to be available. ``libfftw3`` and ``libfftw3f`` alone are what
+    every FFTW3 install provides.
+    """
+    global _SINGLE_THREADED_PLANNER
+    previous, _SINGLE_THREADED_PLANNER = _SINGLE_THREADED_PLANNER, True
+    try:
+        yield
+    finally:
+        _SINGLE_THREADED_PLANNER = previous
+
+
 def threaded() -> bool:
-    """Whether the FFTW3 the build uses carries its threaded planner (``fftw_plan_with_nthreads``)."""
+    """Whether the FFTW3 the build uses carries its threaded planner (``fftw_plan_with_nthreads``), outside a
+    :func:`single_threaded_planner`."""
+    if _SINGLE_THREADED_PLANNER:
+        return False
     return any(
         any(f"fftw3{suffix}" in os.path.basename(lib) for suffix in THREADED_SUFFIXES) for lib in fftw_install()[1]
     )

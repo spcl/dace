@@ -317,25 +317,17 @@ def test_single_precision_and_integer_types_survive():
     assert y.dtype == np.float32
 
 
-def test_matrix_multiply_renders_as_loops():
-    """A matmul: the one place a library node would otherwise reach for BLAS.
-
-    CPF has no BLAS to call, so the rendering must be loops. The reference is numpy's, so a wrong
-    accumulation order would still pass the fp64 tolerance -- the structural assertion is what
-    states that no library call survived.
-    """
+def test_matrix_multiply_renders_as_one_blas_call():
+    """A matmul is one ``cblas_dgemm``: CPF lowers BLAS nodes to OpenBLAS, which the environment provides, and
+    names it on the link line."""
 
     @dace.program
     def matmul(a: dace.float64[M, N], b: dace.float64[N, M], c: dace.float64[M, M]):
         c[:] = a @ b
 
     sdfg, code = render(matmul, "cpf_matmul")
-    # Comments are stripped first: CPF NAMES the library node it rendered away ("// BLAS gemm"),
-    # and that line is the opposite of a leaked BLAS call.
-    executable = "\n".join(line for line in code.splitlines() if not line.strip().startswith("//"))
-    for banned in ("cblas", "dgemm", "MKL", "BLAS"):
-        assert banned not in executable, f"CPF rendered a BLAS call ({banned}); it must render the loop nest instead"
-    assert "// BLAS gemm" in code, "the rendering must still say what the loop nest used to be"
+    assert "cblas_dgemm(" in code, "a matmul must render as the OpenBLAS call"
+    assert "// BLAS gemm" in code, "the rendering must still say what the call computes"
 
     m, n = 24, 16
     a = np.random.rand(m, n)
@@ -645,12 +637,10 @@ def test_a_complex_matrix_vector_product_renders_its_coefficient_in_the_element_
 
 
 @pytest.mark.parametrize("language", ("c++", "c"))
-def test_cholesky_renders_as_loops_with_no_library(language):
-    """``np.linalg.cholesky`` reaches a library node that only vendor BLAS implements.
+def test_cholesky_renders_as_one_lapack_call(language):
+    """``np.linalg.cholesky`` is one ``LAPACKE_dpotrf``, which OpenBLAS provides; the unit names ``lapack``.
 
-    CPF renders it through the pure expansion instead, so the output links against nothing. The
-    provenance comment is asserted too: a factorization rendered as anonymous loops is exactly what
-    the comment exists to prevent.
+    The provenance comment is asserted too: it says what the call computes.
     """
 
     @dace.program
@@ -661,6 +651,7 @@ def test_cholesky_renders_as_loops_with_no_library(language):
     sdfg.name = "cpf_cholesky_" + ("cpp" if language == "c++" else "c")
     rendering = render_sdfg(sdfg, language=language)
     assert_standalone(rendering.code, sdfg.name, language=language)
+    assert "LAPACKE_dpotrf(" in rendering.code and rendering.libraries == ("lapack",), rendering.libraries
     assert "// Cholesky factorization" in rendering.code, "the expansion rendered without its provenance comment"
 
     matrix = np.random.rand(8, 8)
@@ -673,8 +664,8 @@ def test_cholesky_renders_as_loops_with_no_library(language):
 
 
 @pytest.mark.parametrize("language", ("c++", "c"))
-def test_linear_solve_renders_as_loops_with_no_library(language):
-    """``np.linalg.solve`` is the other corpus call whose node only vendor BLAS implemented."""
+def test_linear_solve_renders_as_one_lapack_call(language):
+    """``np.linalg.solve`` is an LU factorization and a solve: ``LAPACKE_dgetrf`` then ``LAPACKE_dgetrs``."""
 
     @dace.program
     def solve(A: dace.float64[6, 6], B: dace.float64[6, 3], X: dace.float64[6, 3]):
@@ -684,7 +675,8 @@ def test_linear_solve_renders_as_loops_with_no_library(language):
     sdfg.name = "cpf_solve_" + ("cpp" if language == "c++" else "c")
     rendering = render_sdfg(sdfg, language=language)
     assert_standalone(rendering.code, sdfg.name, language=language)
-    assert "// solve the linear system" in rendering.code, "the expansion rendered without its provenance comment"
+    assert "LAPACKE_dgetrf(" in rendering.code and "LAPACKE_dgetrs(" in rendering.code
+    assert "// LAPACK getrs: solve" in rendering.code, "the expansion rendered without its provenance comment"
 
     a = np.random.rand(6, 6) + 6 * np.eye(6)
     b = np.random.rand(6, 3)
@@ -698,8 +690,8 @@ def test_linear_solve_renders_as_loops_with_no_library(language):
 
 
 @pytest.mark.parametrize("language", ("c++", "c"))
-def test_matrix_inverse_renders_as_loops_with_no_library(language):
-    """``np.linalg.inv`` is the third corpus call whose node only vendor BLAS implemented."""
+def test_matrix_inverse_renders_as_lapack_calls(language):
+    """``np.linalg.inv`` is an LU factorization and its inverse through LAPACKE."""
 
     @dace.program
     def invert(A: dace.float64[6, 6], B: dace.float64[6, 6]):
@@ -709,6 +701,7 @@ def test_matrix_inverse_renders_as_loops_with_no_library(language):
     sdfg.name = "cpf_inv_" + ("cpp" if language == "c++" else "c")
     rendering = render_sdfg(sdfg, language=language)
     assert_standalone(rendering.code, sdfg.name, language=language)
+    assert "LAPACKE_dgetrf(" in rendering.code and rendering.libraries == ("lapack",), rendering.libraries
 
     a = np.random.rand(6, 6) + 6 * np.eye(6)
     result = np.zeros((6, 6))
@@ -989,7 +982,7 @@ if __name__ == "__main__":
     test_maths_functions_reach_the_standard_library()
     test_integer_index_arithmetic_stays_integer()
     test_single_precision_and_integer_types_survive()
-    test_matrix_multiply_renders_as_loops()
+    test_matrix_multiply_renders_as_one_blas_call()
     test_strided_copy_renders_as_a_loop_not_a_runtime_call()
     test_scan_is_inlined_rather_than_called()
     for language in ("c++", "c"):
@@ -1007,11 +1000,11 @@ if __name__ == "__main__":
     for language in ("c++", "c"):
         test_a_complex_matrix_vector_product_renders_its_coefficient_in_the_element_type(language)
     for language in ("c++", "c"):
-        test_cholesky_renders_as_loops_with_no_library(language)
+        test_cholesky_renders_as_one_lapack_call(language)
     for language in ("c++", "c"):
-        test_linear_solve_renders_as_loops_with_no_library(language)
+        test_linear_solve_renders_as_one_lapack_call(language)
     for language in ("c++", "c"):
-        test_matrix_inverse_renders_as_loops_with_no_library(language)
+        test_matrix_inverse_renders_as_lapack_calls(language)
     for language in ("c++", "c"):
         test_conditional_expression_renders_as_a_ternary(language)
     for implementation in ["Auto", "CPU"]:

@@ -228,8 +228,9 @@ def assert_standalone_units(rendering: Rendering, label: str = "cpf") -> None:
         assert_standalone_device(unit, label)
     assert rendering.code.count('extern "C" void') == 1, f"{label}: the host unit holds the one entry"
     assert "__global__" not in rendering.code, f"{label}: the host unit only launches"
-    assert "__global__" in rendering.device_code, f"{label}: the kernels live in the device unit"
     launchers = set(re.findall(r"\b(__cpf_runkernel_\w+)\(", rendering.code))
+    # A unit whose device work is all vendor library calls (rocBLAS, rocSOLVER, hipFFT) launches no kernel.
+    assert "__global__" in rendering.device_code or not launchers, f"{label}: the kernels live in the device unit"
     defined = set(re.findall(r"^\S.*\b(__cpf_runkernel_\w+)\([^;]*\)\s*$", rendering.device_code, re.MULTILINE))
     assert launchers <= defined, (
         f"{label}: launchers the host unit calls and the device unit does not define: {launchers - defined}"
@@ -395,7 +396,34 @@ def _context(code: str, offset: int, radius: int = 160) -> str:
     return code[start : end if end != -1 else len(code)]
 
 
-def compile_standalone(code: str, name: str = "cpf_kernel", extra_flags: Any = (), language: str = "c++") -> str:
+#: Vendor family -> the DaCe environment that finds its install on this machine.
+VENDOR_FAMILY_ENVIRONMENTS = {"blas": "OpenBLAS", "lapack": "OpenBLAS", "fftw": "FFTW3"}
+
+
+def vendor_build_flags(code: str) -> tuple[list[str], list[str]]:
+    """The flags a unit calling vendor libraries builds with HERE: the ``-I`` of an install off the default paths
+    (spack, conda) and the link line the rendering names, with ``-L`` and rpath to the same install. The unit
+    itself names only system headers -- providing the library is the environment's job, which this models.
+    """
+    from dace.cpf_lowering import VENDOR_LIBRARIES, vendor_families
+
+    names = dict.fromkeys(
+        VENDOR_FAMILY_ENVIRONMENTS[f] for f in vendor_families(code) if f in VENDOR_FAMILY_ENVIRONMENTS
+    )
+    includes: list[str] = []
+    link: list[str] = []
+    for name in names:
+        environment = next(e for k, e in dace.library._DACE_REGISTERED_ENVIRONMENTS.items() if k.endswith("." + name))
+        includes += [f"-I{path}" for path in environment.cmake_includes()]
+        for directory in dict.fromkeys(os.path.dirname(p) for p in environment.cmake_libraries() if os.sep in p):
+            link += [f"-L{directory}", f"-Wl,-rpath,{directory}"]
+        link += list(VENDOR_LIBRARIES[name].link_tokens(code))
+    return includes, link
+
+
+def compile_standalone(
+    code: str, name: str = "cpf_kernel", extra_flags: Any = (), language: str = "c++", link: Any = ()
+) -> str:
     """Build ``code`` into a shared object and return its path.
 
     The translation unit is written into a FRESH temporary directory and compiled from there with
@@ -406,16 +434,19 @@ def compile_standalone(code: str, name: str = "cpf_kernel", extra_flags: Any = (
     :param name: basename for the source/``.so`` pair.
     :param extra_flags: additional compiler flags (e.g. :data:`WARNING_FLAGS`).
     :param language: ``'c++'`` or ``'c'``, choosing the driver and the ``-std=`` flag.
+    :param link: link-line tokens placed after the source (``Rendering.link``, and the ``-L`` a test adds).
     :returns: absolute path of the built shared object.
     :raises AssertionError: if the compile fails; the message carries the compiler's own diagnostics.
     """
     standard, suffix, _, _ = TOOLCHAINS[language]
+    vendor_compile, vendor_link = vendor_build_flags(code)
+    extra_flags, link = (*vendor_compile, *extra_flags), (*link, *vendor_link)
     workdir = tempfile.mkdtemp(prefix=f"cpf_{name}_")
     source = os.path.join(workdir, name + suffix)
     library = os.path.join(workdir, f"lib{name}.so")
     with open(source, "w") as handle:
         handle.write(code)
-    command = [host_compiler(language), "-std=" + standard, *BASE_FLAGS, *extra_flags, source, "-o", library]
+    command = [host_compiler(language), "-std=" + standard, *BASE_FLAGS, *extra_flags, source, "-o", library, *link]
     proc = subprocess.run(command, cwd=workdir, capture_output=True, text=True)
     assert proc.returncode == 0, (
         f"{name}: CPF output does not build with a bare host compiler\ncommand: {' '.join(command)}\n{proc.stderr}"
@@ -449,9 +480,11 @@ def compile_diagnostics(code: str, name: str = "cpf_kernel", language: str = "c+
     return proc.stderr
 
 
-def build_standalone(code: str, name: str = "cpf_kernel", language: str = "c++") -> ctypes.CDLL:
+def build_standalone(
+    code: str, name: str = "cpf_kernel", language: str = "c++", extra_flags: Any = (), link: Any = ()
+) -> ctypes.CDLL:
     """Compile ``code`` and load the result. See :func:`compile_standalone` for the build rules."""
-    return ctypes.CDLL(compile_standalone(code, name, language=language))
+    return ctypes.CDLL(compile_standalone(code, name, extra_flags=extra_flags, language=language, link=link))
 
 
 def entry_argtypes(sdfg: dace.SDFG, order: Sequence[str] | None = None) -> list[Any]:

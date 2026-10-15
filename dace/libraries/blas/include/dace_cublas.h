@@ -141,7 +141,7 @@ class CublasHandle {
 
   cublasHandle_t& Get() {
     if (!handle_) {
-      auto handle = CreateCublasHandle();
+      cublasHandle_t handle = CreateCublasHandle();
       cublasSetPointerMode(handle, CUBLAS_POINTER_MODE_DEVICE);
       handle_ = handle;
     }

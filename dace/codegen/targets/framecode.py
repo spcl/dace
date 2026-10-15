@@ -601,7 +601,8 @@ DACE_EXPORTED int __dace_exit_{sdfg.name}({mangle_dace_state_struct_name(sdfg)} 
         something up.
         """
         refused = []
-        if self._initcode.getvalue().strip() or self._exitcode.getvalue().strip():
+        # A device unit runs the state's setup and teardown inside its entry (``device_entry_prologue``).
+        if not cpf_lowering.device() and (self._initcode.getvalue().strip() or self._exitcode.getvalue().strip()):
             refused.append("generated init/exit code")
         for sd in sdfg.all_sdfgs_recursive():
             if any(block.as_string.strip() for block in sd.init_code.values()):
@@ -618,6 +619,10 @@ DACE_EXPORTED int __dace_exit_{sdfg.name}({mangle_dace_state_struct_name(sdfg)} 
             # :data:`~dace.cpf_lowering.DEVICE_PROVIDED_ENVIRONMENTS` for what each one is and what
             # replaces it.
             if env.__name__ in cpf_lowering.PROVIDED_ENVIRONMENTS:
+                continue
+            # A vendor library is called through its own headers and linked by the caller
+            # (:data:`~dace.cpf_lowering.VENDOR_LIBRARIES`); what its DaCe environment would set up, the unit defines.
+            if env.__name__ in cpf_lowering.VENDOR_LIBRARIES:
                 continue
             if cpf_lowering.device() and env.__name__ in cpf_lowering.DEVICE_PROVIDED_ENVIRONMENTS:
                 continue
@@ -1487,7 +1492,9 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                     # which a single entry point has nowhere to put but here. The generated body
                     # then reads ``__state->gpu_context->streams`` exactly as it always did, so
                     # nothing downstream of this line knows the state is a local.
-                    function_signature += "\n" + cpf_lowering.device_entry_prologue(mangle_dace_state_struct_name(sdfg))
+                    function_signature += "\n" + cpf_lowering.device_entry_prologue(
+                        mangle_dace_state_struct_name(sdfg), self._initcode.getvalue(), self._exitcode.getvalue()
+                    )
             else:
                 if params:
                     params = ", " + params

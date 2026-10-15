@@ -236,6 +236,23 @@ def declared_ctype(name: str, sdfg: Optional["dace.SDFG"]) -> str | None:
     return None
 
 
+def inferred_ctype(expression: Any, sdfg: Optional["dace.SDFG"]) -> str | None:
+    """C type of ``expression`` from the types ``sdfg`` declares for the names in it; ``None`` when one of them
+    is undeclared (a map parameter) or the expression has no inferable type."""
+    if sdfg is None:
+        return None
+    from dace.sdfg.type_inference import infer_expr_type  # dace.sdfg.type_inference imports dace.sdfg
+
+    expr = symbolic.pystr_to_symbolic(expression) if isinstance(expression, str) else expression
+    if not all(str(free) in sdfg.symbols for free in getattr(expr, "free_symbols", ())):
+        return None
+    try:
+        dtype = infer_expr_type(str(expression), sdfg.symbols)
+    except (SyntaxError, TypeError, ValueError, KeyError):
+        return None
+    return dtype.ctype if isinstance(dtype, dtypes.typeclass) else None
+
+
 def replace_in_codeblock(
     codeblock: properties.CodeBlock,
     repl: dict[str, str],
@@ -260,9 +277,11 @@ def replace_in_codeblock(
                     # initialized from ITSELF, i.e. an uninitialized read.
                     continue
                 # Shadow with the declared type: ``auto`` deduces from the replacement expression,
-                # so ``i = 2`` would narrow an int64 symbol to int. A map parameter has no declared
-                # type here, and ``auto`` then copies the index variable's own.
-                ctype = declared_ctype(name, sdfg) or "auto"
+                # so ``i = 2`` would narrow an int64 symbol to int. A name the SDFG does not declare
+                # (a nested SDFG's symbol, replaced by its mapping as it is inlined: einsum's ``M``
+                # by ``NQ * NR``) takes the type of the expression it becomes, spelled. A map
+                # parameter has no declared type here, and ``auto`` then copies the index variable's own.
+                ctype = declared_ctype(name, sdfg) or inferred_ctype(new_name, sdfg) or "auto"
                 replacement = f"{ctype} {name} = {new_text};\n"
                 prefix = replacement + prefix
                 active_replacements.add(name)

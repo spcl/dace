@@ -44,7 +44,7 @@ import shutil
 import subprocess
 import tempfile
 from collections import Counter
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from typing import NamedTuple
 
 from dace import cpf_lowering, dtypes, symbolic, tile_functions
@@ -52,6 +52,7 @@ from dace import data as dt
 from dace.codegen import codegen
 from dace.codegen.codeobject import CodeObject
 from dace.config import Config, set_temporary
+from dace.libraries.fft.environments import fftw3
 from dace.libraries.tileops.dispatch import FUNCTION_ISAS, ISA, isa_implementation, widest_function_isa
 from dace.libraries.tileops.nodes.tile_op import TileOp
 from dace.library import get_environment
@@ -293,6 +294,22 @@ RENDERABLE_BY_NODE: dict[str, tuple[str, ...]] = {
 #: for the host.
 RENDERABLE_BY_NODE_DEVICE: dict[str, tuple[str, ...]] = {"FindFirst": ("CUDA",), "Reduce": ("pure",), "Scan": ("CUDA",)}
 
+#: The one vendor library family each architecture renders through, best first. A BLAS, LAPACK, linear-algebra or
+#: FFT node with one of these implementations becomes that library call rather than CPF loops: the libraries ship
+#: with the toolkit (CUDA, ROCm) or are the one CPU BLAS the environment provides (OpenBLAS with its CBLAS and
+#: LAPACKE interfaces, FFTW3 for transforms), so the unit only adds them to its link line (:attr:`Rendering.link`).
+#: One variant per architecture: MKL, cuTENSOR/hipTENSOR, TBLIS and HPTT are not offered. A host-level node over
+#: device memory takes its device dialect's family; every other node, the host one.
+VENDOR_IMPLEMENTATIONS_HOST: tuple[str, ...] = ("OpenBLAS", "FFTW3")
+#: Library nodes that move data rather than compute, kept as CPF loops although a vendor offers them: a transpose
+#: is a copy the rest of the unit can fuse with, where ``cblas_domatcopy`` would be an opaque OpenBLAS extension.
+VENDOR_EXCLUDED_NODES: frozenset[str] = frozenset({"Transpose"})
+VENDOR_IMPLEMENTATIONS_DEVICE: dict[cpf_lowering.Dialect, tuple[str, ...]] = {
+    cpf_lowering.Dialect.STANDALONE_CUDA: ("cuBLAS", "cuSolverDn", "cuFFT"),
+    cpf_lowering.Dialect.STANDALONE_HIP: ("rocBLAS", "rocSOLVER", "hipFFT"),
+}
+
+
 #: Consecutive rounds of :func:`force_renderable_expansions` that may leave the library-node census
 #: unchanged before it refuses. NOT a bound on total rounds: a state needs one round per node.
 MAX_EXPANSION_STALLED_ROUNDS = 16
@@ -406,8 +423,12 @@ def renderable_implementations(node: nodes.LibraryNode, state: SDFGState) -> tup
         # Its tile functions are inline definitions of the unit, as :func:`target_tile_functions` chose them.
         return (node.implementation,)
     preferred = RENDERABLE_BY_NODE.get(type(node).__name__, ())
+    vendored = type(node).__name__ not in VENDOR_EXCLUDED_NODES
     if cpf_lowering.device() and on_device_at_host_level(node, state):
-        preferred = RENDERABLE_BY_NODE_DEVICE.get(type(node).__name__, ()) + preferred
+        vendor = VENDOR_IMPLEMENTATIONS_DEVICE[cpf_lowering.active_dialect()] if vendored else ()
+        preferred = vendor + RENDERABLE_BY_NODE_DEVICE.get(type(node).__name__, ()) + preferred
+    elif vendored and not is_devicelevel_gpu(state.sdfg, state, node):
+        preferred = VENDOR_IMPLEMENTATIONS_HOST + preferred
     return preferred + RENDERABLE_IMPLEMENTATIONS
 
 
@@ -996,7 +1017,9 @@ def dialect_for(language: str) -> cpf_lowering.Dialect:
         raise ValueError(f"CPF renders {sorted(LANGUAGES)}, not {language!r}") from None
 
 
-def preamble(code: str, dialect: cpf_lowering.Dialect = cpf_lowering.Dialect.STANDALONE) -> str:
+def preamble(
+    code: str, dialect: cpf_lowering.Dialect = cpf_lowering.Dialect.STANDALONE, environments: Iterable[str] = ()
+) -> str:
     """The include block and inline definitions ``code`` needs, in the order they must appear.
 
     Derived from the finished text (:func:`~dace.cpf_lowering.helpers_used`) rather than from the
@@ -1005,13 +1028,29 @@ def preamble(code: str, dialect: cpf_lowering.Dialect = cpf_lowering.Dialect.STA
 
     :param code: the emitted translation unit, without its preamble.
     :param dialect: which standalone dialect emitted it.
+    :param environments: the DaCe environments the unit's code generator used; a vendor library among them
+                         (:data:`~dace.cpf_lowering.VENDOR_LIBRARIES`) adds its headers and definitions.
     :returns: the preamble, ending in a blank line.
     """
     used = cpf_lowering.helpers_used(code, dialect)
     definitions = cpf_lowering.definitions_for(used, dialect)
     headers = cpf_lowering.headers_for(used, dialect)
+    vendors = cpf_lowering.vendor_libraries(environments)
     lines = ["// Rendered by DaCe CPF (canonical parallel form): self-contained, no DaCe runtime."] + CONTRACT_LINES
     lines += [f"#include {header}" for header in headers]
+    vendor_headers = [
+        header
+        for vendor in vendors
+        for header in vendor.headers + (vendor.cxx_headers if dialect is not cpf_lowering.Dialect.STANDALONE_C else ())
+    ]
+    seen_wrappers: set[str] = set()
+    wrappers: list[str] = []
+    for vendor in vendors:
+        if vendor.wrapper:
+            wrapper_headers, wrapper = cpf_lowering.vendor_wrapper(vendor.wrapper, seen_wrappers)
+            vendor_headers += wrapper_headers
+            wrappers.append(wrapper)
+    lines += [f"#include {header}" for header in dict.fromkeys(vendor_headers) if header not in headers]
     if dialect is cpf_lowering.Dialect.STANDALONE_C:
         lines.append(cpf_lowering.C_UNDEF_LINE)
     if dialect in cpf_lowering.DEVICE_DIALECTS:
@@ -1025,6 +1064,14 @@ def preamble(code: str, dialect: cpf_lowering.Dialect = cpf_lowering.Dialect.STA
         lines.append("")
         lines.append("// Functions the DaCe runtime headers would otherwise provide.")
         lines.extend(definitions)
+    for vendor in vendors:
+        if vendor.definitions:
+            lines.append("")
+            lines.append(vendor.definitions.rstrip("\n"))
+    for wrapper in filter(None, wrappers):
+        lines.append("")
+        lines.append("// DaCe's wrapper of the vendor library, which the library calls below go through.")
+        lines.append(wrapper)
     lines.append("")
     return "\n".join(lines)
 
@@ -1161,7 +1208,18 @@ def compile_check_compiler(dialect: cpf_lowering.Dialect) -> str | None:
     return resolved
 
 
-def compile_check(code: str, name: str, dialect: cpf_lowering.Dialect) -> None:
+def vendor_include_flags(environments: Iterable[str]) -> tuple[str, ...]:
+    """``-I`` flags for the headers of the vendor libraries among ``environments``, where the environment finds
+    them off the default search path (a spack or conda OpenBLAS, FFTW3). Only for :func:`compile_check`: the
+    rendered unit names system headers, and the machine that builds it provides the library."""
+    flags: list[str] = []
+    for env in cpf_lowering.vendor_environments(environments):
+        includes = getattr(env, "cmake_includes", None)
+        flags += [f"-I{path}" for path in (includes() if callable(includes) else includes or ())]
+    return tuple(dict.fromkeys(flags))
+
+
+def compile_check(code: str, name: str, dialect: cpf_lowering.Dialect, extra_flags: Sequence[str] = ()) -> None:
     """Assert the rendered unit is one a bare host compiler accepts, or raise with its first error.
 
     :func:`verify` answers "does this text name anything CPF may not name", which is a different
@@ -1175,6 +1233,7 @@ def compile_check(code: str, name: str, dialect: cpf_lowering.Dialect) -> None:
     :param code: the rendered translation unit.
     :param name: the SDFG's name, for the message.
     :param dialect: which standalone dialect rendered it, choosing the compiler and the standard.
+    :param extra_flags: further compiler flags, the include paths of the vendor libraries it calls.
     :raises RuntimeError: if the unit does not compile, or if its compiler is not installed --
                           "could not be checked" must not read the same as "was checked".
     """
@@ -1194,7 +1253,7 @@ def compile_check(code: str, name: str, dialect: cpf_lowering.Dialect) -> None:
         source = os.path.join(workdir, name + suffix)
         with open(source, "w") as handle:
             handle.write(code)
-        command = [compiler, "-std=" + standard, *COMPILE_CHECK_FLAGS, source]
+        command = [compiler, "-std=" + standard, *COMPILE_CHECK_FLAGS, *extra_flags, source]
         proc = subprocess.run(command, cwd=workdir, capture_output=True, text=True)
         if proc.returncode == 0:
             return
@@ -1247,8 +1306,13 @@ class Rendering(NamedTuple):
     #: kernels and the launchers ``code`` calls. Empty under a host dialect.
     device_code: str = ""
     #: What the caller links the units against, in order: the libraries of every environment that only links
-    #: (an ``ExternCall``'s archive and its link flags). Empty when the units need nothing beyond the system's.
+    #: (an ``ExternCall``'s archive and its link flags) and of every vendor library the units call
+    #: (:data:`~dace.cpf_lowering.VENDOR_LIBRARIES`). Empty when the units need nothing beyond the system's.
     link: tuple[str, ...] = ()
+    #: The vendor libraries the units call, by family name (``blas``, ``lapack``, ``fftw``, ``cublas``,
+    #: ``cusolver``, ``cufft``, ``rocblas``, ``rocsolver``, ``hipfft``): what a caller that loads libraries by
+    #: name has to load for :attr:`link` to resolve (:func:`~dace.cpf_lowering.vendor_families`).
+    libraries: tuple[str, ...] = ()
 
 
 def render(
@@ -1302,7 +1366,12 @@ def render(
         # ``prepare`` expands library nodes into loops and tasklets on this throwaway copy; nothing
         # CPF emits reads node.debuginfo, so the inspect.stack() walk behind it is pure overhead. No
         # history either: the first recorded expansion deep-copies the whole copy into ``orig_sdfg``.
-        with set_temporary("compiler", "lineinfo", value="none"), set_temporary("store_history", value=False):
+        # A unit is built where the rendering machine's FFTW3 companion libraries may not be: plan single-threaded.
+        with (
+            set_temporary("compiler", "lineinfo", value="none"),
+            set_temporary("store_history", value=False),
+            fftw3.single_threaded_planner(),
+        ):
             prepare(prepared, provenance)
     # DACE_* environment variables outrank set_temporary, so a shell that pins the CPU generator to
     # ``legacy`` would silently render through the wrong one -- and the legacy generator emits
@@ -1319,7 +1388,7 @@ def render(
             with cpf_lowering.provenance_scope(provenance):
                 # Same reasoning as the prepare() call above: codegen's own lowering passes (copy
                 # lifting, library expansion) add nodes whose debuginfo nothing here reads.
-                with set_temporary("compiler", "lineinfo", value="none"):
+                with set_temporary("compiler", "lineinfo", value="none"), fftw3.single_threaded_planner():
                     objects = codegen.generate_code(prepared, validate=validate)
                 frame, device = split_units(objects, sdfg.name)
                 body = frame.clean_code
@@ -1345,24 +1414,39 @@ def render(
                     body = re.sub(r"\b__restrict__\b", "restrict", body)
                 if dialect in cpf_lowering.DEVICE_DIALECTS:
                     # Last, because the passes above match the DaCe spellings the generator wrote.
-                    body = cpf_lowering.device_spell_out(body, dialect)
-                    device_body = cpf_lowering.device_spell_out(device_body, dialect)
-    code = preamble(body, dialect) + body
-    device_code = preamble(device_body, dialect) + device_body if device_body else ""
+                    body = cpf_lowering.respell_vendor_namespaces(cpf_lowering.device_spell_out(body, dialect))
+                    device_body = cpf_lowering.respell_vendor_namespaces(
+                        cpf_lowering.device_spell_out(device_body, dialect)
+                    )
+    code = preamble(body, dialect, frame.environments) + body
+    # The device unit repeats the frame's state struct, whose vendor handles and plans need their declarations.
+    device_environments = (set(device.environments) | set(frame.environments)) if device is not None else set()
+    device_code = preamble(device_body, dialect, device_environments) + device_body if device_body else ""
     for unit in filter(None, (code, device_code)):
         verify(unit, sdfg.name, dialect)
         if check_compiles:
-            compile_check(unit, sdfg.name, dialect)
+            compile_check(unit, sdfg.name, dialect, vendor_include_flags(set(frame.environments) | device_environments))
     arguments = tuple(signature.order) if signature is not None else tuple(entry_arglist)
-    return Rendering(code, prepared, arguments, device_code, link_libraries(frame, dialect))
+    return Rendering(
+        code,
+        prepared,
+        arguments,
+        device_code,
+        link_libraries(frame, dialect, code + device_code),
+        cpf_lowering.vendor_families(code + device_code),
+    )
 
 
-def link_libraries(frame: CodeObject, dialect: cpf_lowering.Dialect) -> tuple[str, ...]:
+def link_libraries(frame: CodeObject, dialect: cpf_lowering.Dialect, code: str = "") -> tuple[str, ...]:
     """The libraries of the frame's environments, by environment name, without those CPF supplies itself. Only
     link-only environments carry any here: the standalone footer refuses every other kind."""
     libraries: list[str] = []
+    for vendor in cpf_lowering.vendor_libraries(frame.environments):
+        libraries += vendor.link_tokens(code)
     for name in sorted(frame.environments):
         env = get_environment(name)
+        if env.__name__ in cpf_lowering.VENDOR_LIBRARIES:
+            continue
         provided = cpf_lowering.PROVIDED_ENVIRONMENTS
         if dialect in cpf_lowering.DEVICE_DIALECTS:
             provided = provided | cpf_lowering.DEVICE_PROVIDED_ENVIRONMENTS

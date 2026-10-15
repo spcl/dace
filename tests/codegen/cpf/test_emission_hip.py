@@ -226,20 +226,16 @@ def host_level_gemm_sdfg(name: str) -> dace.SDFG:
     return sdfg
 
 
-def test_a_host_level_node_over_device_memory_expands_into_a_kernel():
-    """A ``Gemm`` / ``Dot`` / ``Reduce`` at host level over ``GPU_Global`` operands has no
-    renderable DEVICE expansion -- cuBLAS and CUB are library calls a standalone unit cannot make --
-    so CPF re-points it at ``pure``, whose expansion is maps. Those maps inherit ``node.schedule``,
-    which a GPU-finalized graph left ``Sequential`` because the node was going to be a library call.
-
-    Left there the expansion is a HOST map indexing device pointers, and validation refuses the
-    whole render: ``Data container "_c" is stored as StorageType.GPU_Global but accessed on host``.
-    Every scientific_computing kernel carrying a host-level matmul or dot product failed exactly
-    this way (lulesh, cholesky, minife, quatrex_rgf, channel_flow, ls3df_scf,
-    warpx_esirkepov_deposition), so the schedule is corrected where the implementation is chosen."""
+def test_a_host_level_node_over_device_memory_is_one_rocblas_call():
+    """A ``Gemm`` at host level over ``GPU_Global`` operands is one ``rocblas_dgemm`` on the unit's stream: CPF
+    lowers BLAS nodes to the ROCm library, carrying DaCe's handle wrapper inline, and names it on the link line.
+    No host map indexes the device operands (the failure the ``pure`` lowering had to correct the schedule for:
+    lulesh, cholesky, minife, quatrex_rgf, channel_flow, ls3df_scf, warpx_esirkepov_deposition)."""
     sdfg = host_level_gemm_sdfg("cpf_hip_host_gemm")
     rendering = cpf.render(sdfg, language="hip")
     assert_standalone_units(rendering, "cpf_hip_host_gemm")
+    assert "rocblas_dgemm(" in rendering.code, rendering.code
+    assert rendering.libraries == ("rocblas",) and rendering.link == ("-lrocblas",), rendering.libraries
 
 
 def test_a_host_level_reduce_over_device_memory_expands_into_a_kernel():
@@ -398,9 +394,11 @@ def gramschmidt(A: dace.float64[N, N], Q: dace.float64[N, N], R: dace.float64[N,
         A[:, k + 1 :] = A[:, k + 1 :] - Q[:, k][:, None] * R[k, k + 1 :][None, :]
 
 
-def test_a_nested_function_passes_the_state_to_its_launchers():
+def test_a_nested_function_passes_the_state_to_its_launchers(monkeypatch):
     """A library node's expansion renders as a function of its own whose launches take ``__state``, so the
-    function takes it too (gramschmidt's Dot: ``use of undeclared identifier '__state'``)."""
+    function takes it too (gramschmidt's Dot: ``use of undeclared identifier '__state'``). The Dot is a rocBLAS
+    call by default; the loop lowering it falls back to without a vendor implementation is what is under test."""
+    monkeypatch.setitem(cpf.VENDOR_IMPLEMENTATIONS_DEVICE, cpf_lowering.Dialect.STANDALONE_HIP, ())
     rendering = render_gpu(gramschmidt, "cpf_hip_nested_state")
     assert_standalone_units(rendering, "cpf_hip_nested_state")
     assert re.search(
@@ -439,10 +437,12 @@ def doitgen(A: dace.float64[NR, NQ, NP], C4: dace.float64[NP, NP]):
     A[:] = out
 
 
-def test_a_matmul_an_offloaded_contraction_expands_to_is_a_kernel():
+def test_a_matmul_an_offloaded_contraction_expands_to_is_a_rocblas_call():
     """doitgen: the contraction's expansion leaves its matmul at host level carrying the thread-block
-    schedule of the device scope it came from; its loops must still launch as a kernel."""
-    assert_standalone_units(render_gpu(doitgen, "cpf_hip_doitgen"), "cpf_hip_doitgen")
+    schedule of the device scope it came from; it renders as the rocBLAS call all the same."""
+    rendering = render_gpu(doitgen, "cpf_hip_doitgen")
+    assert_standalone_units(rendering, "cpf_hip_doitgen")
+    assert "rocblas" in rendering.libraries, rendering.libraries
 
 
 @pytest.mark.gpu
@@ -469,7 +469,7 @@ def test_the_host_dialects_do_not_see_the_device_selection(language):
     with cpf_lowering.dialect_scope(cpf.LANGUAGES[language]):
         assert not cpf.on_device_at_host_level(node, state)
         assert cpf.renderable_implementations(node, state) == (
-            cpf.RENDERABLE_BY_NODE["FindFirst"] + cpf.RENDERABLE_IMPLEMENTATIONS
+            cpf.VENDOR_IMPLEMENTATIONS_HOST + cpf.RENDERABLE_BY_NODE["FindFirst"] + cpf.RENDERABLE_IMPLEMENTATIONS
         )
 
 
@@ -537,7 +537,7 @@ if __name__ == "__main__":
     test_conflicting_device_wcr_is_an_atomic_and_never_an_omp_pragma()
     test_a_library_node_over_device_memory_takes_its_device_implementation()
     test_the_host_implementation_still_wins_over_host_memory()
-    test_a_host_level_node_over_device_memory_expands_into_a_kernel()
+    test_a_host_level_node_over_device_memory_is_one_rocblas_call()
     test_a_host_level_reduce_over_device_memory_expands_into_a_kernel()
     test_the_schedule_correction_is_confined_to_host_level_device_memory()
     test_a_device_library_node_inside_a_kernel_keeps_the_device_code_implementation()
@@ -547,9 +547,10 @@ if __name__ == "__main__":
     test_a_device_product_scan_multiplies_through_a_typed_functor()
     test_a_device_product_scan_unit_builds_with_hipcc(pathlib.Path(tempfile.mkdtemp()))
     test_a_read_only_operand_behind_an_ordering_edge_is_const_in_both_units()
-    test_a_nested_function_passes_the_state_to_its_launchers()
+    with pytest.MonkeyPatch.context() as patch:
+        test_a_nested_function_passes_the_state_to_its_launchers(patch)
     test_a_sequential_factorization_over_device_memory_touches_it_only_in_kernels()
-    test_a_matmul_an_offloaded_contraction_expands_to_is_a_kernel()
+    test_a_matmul_an_offloaded_contraction_expands_to_is_a_rocblas_call()
     test_the_units_build_with_hipcc(s255, "cpf_hip_s255_build", pathlib.Path(tempfile.mkdtemp()))
     test_the_units_build_with_hipcc(gramschmidt, "cpf_hip_nested_build", pathlib.Path(tempfile.mkdtemp()))
     test_the_units_build_with_hipcc(cholesky_plus_upper, "cpf_hip_chol_build", pathlib.Path(tempfile.mkdtemp()))

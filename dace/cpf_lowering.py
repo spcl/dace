@@ -38,6 +38,7 @@ Names absent from all three tables are NOT silently passed through: see :func:`l
 import contextlib
 import enum
 import functools
+import os
 import re
 from collections.abc import Callable
 from typing import NamedTuple
@@ -1258,7 +1259,7 @@ def device_preamble(code: str, dialect: Dialect) -> str:
     )
 
 
-def device_entry_prologue(state_struct: str) -> str:
+def device_entry_prologue(state_struct: str, init_code: str = "", exit_code: str = "") -> str:
     """The device setup CPF's single entry function opens with.
 
     An ordinary build does this in ``__dace_init_<name>`` and undoes it in ``__dace_exit_<name>``,
@@ -1270,16 +1271,35 @@ def device_entry_prologue(state_struct: str) -> str:
     (``compiler.cuda.max_concurrent_streams = -1``), so there is nothing to create and nothing to
     destroy -- only the device to select and the work to drain.
 
+    The state's own setup and teardown -- a vendor FFT plan the state caches, which a tasklet declares as
+    ``code_init`` / ``code_exit`` -- runs here too, since the state lives exactly as long as the call: the setup
+    after the state is built, the teardown on the way out AFTER the drain, so nothing the device still runs loses
+    its plan. (Guards are destroyed in reverse order, so the teardown's guard is declared first.)
+
     :param state_struct: the mangled state struct name the generated body dereferences.
+    :param init_code: the state's setup, the code ``__dace_init`` would run.
+    :param exit_code: the state's teardown, the code ``__dace_exit`` would run.
     :returns: the prologue lines, indented one level.
     """
+    teardown = ""
+    if exit_code.strip():
+        teardown = f"""\
+    auto __cpf_teardown = [&]() {{
+{exit_code}
+    }};
+    struct __cpf_exit {{
+        decltype(__cpf_teardown) &run;
+        ~__cpf_exit() {{ run(); }}
+    }} __cpf_exit_guard{{__cpf_teardown}};
+"""
     return f"""\
     // The device handshake, which a single entry point has nowhere else to put.
     cpf_gpu_context __cpf_context{{}};
     __cpf_context.streams[0] = nullptr;
     {state_struct} __cpf_state{{&__cpf_context}};
     {state_struct} *__state = &__cpf_state;
-    struct __cpf_drain {{
+{init_code}
+{teardown}    struct __cpf_drain {{
         ~__cpf_drain() {{ cpf_gpu_check(gpuDeviceSynchronize()); }}
     }} __cpf_drain_guard;
 """
@@ -1617,6 +1637,34 @@ def respell_copy_impl(code: str) -> str:
     return c_rewrite_calls(code, COPY_IMPL_CALL, copy)
 
 
+#: A body's ``throw std::runtime_error("...");`` (FFTW3's unplannable layout), message and all.
+C_THROW: "re.Pattern" = re.compile(r'\bthrow\s+(?:::)?std::runtime_error\s*\(\s*("(?:[^"\\\n]|\\.)*")\s*\)\s*;')
+
+
+def c_throws(code: str) -> str:
+    """A C body's ``throw std::runtime_error("msg");`` as ``abort()``, the message kept as a comment: C has no
+    exceptions, and an error a library reports this way ends the program in C++ too unless the caller catches it.
+    """
+    return C_THROW.sub(lambda match: "{ /* %s */ abort(); }" % match.group(1).replace("*/", "* /"), code)
+
+
+#: A function-scope static initialized by a call (FFTW3's ``static const int __threads_ready = fftw_init_threads();``).
+C_STATIC_CALL: "re.Pattern" = re.compile(r"\bstatic\s+const\s+(int|long|bool)\s+(\w+)\s*=\s*(\w+\s*\([^;()]*\))\s*;")
+
+
+def c_static_calls(code: str) -> str:
+    """A C body's static initialized by a call, as a zero static assigned on first pass: C requires a constant
+    initializer. A call that may return zero runs again on the next pass, which for FFTW's ``init_threads`` (and
+    any idempotent setup) is harmless; the expansion makes the call inside a ``critical`` section."""
+    return C_STATIC_CALL.sub(
+        lambda match: (
+            "static %s %s = 0; if (!%s) %s = %s;"
+            % (match.group(1), match.group(2), match.group(2), match.group(2), match.group(3))
+        ),
+        code,
+    )
+
+
 def rewrite_native_code(code: str, dialect: Dialect | None = None, site: NativeSite | None = None) -> str:
     """Rewrite the ``dace::`` names in a hand-written C++ body to their standalone spellings.
 
@@ -1654,7 +1702,7 @@ def rewrite_native_code(code: str, dialect: Dialect | None = None, site: NativeS
         code = C_CXX_INCLUDE.sub("", code)
         # The scan reads its seed's type from the identity call, so it runs before the identities.
         code = c_sort(c_detect_collision(c_reduce(c_scan(c_arg_pairs(code), site), site), site), site)
-        code = c_native_renames(c_copy(c_numeric_limits(c_scan_identities(code))))
+        code = c_native_renames(c_copy(c_numeric_limits(c_scan_identities(c_static_calls(c_throws(code))))))
 
     def replace(match: "re.Match") -> str:
         name = match.group(1)
@@ -3363,6 +3411,157 @@ HIP_CTYPE_RENAMES: dict[str, str] = {
 #: static destruction, so both halves of that handshake are inside the unit.
 DEVICE_PROVIDED_ENVIRONMENTS: frozenset[str] = frozenset({"CUDA", "ScanScratch", "DetectScratch"})
 
+
+class VendorLibrary(NamedTuple):
+    """What a unit that calls one vendor library carries in place of the DaCe environment that wraps it.
+
+    The DaCe environment reaches the library through DaCe's own headers (``dace_blas.h``, the handle
+    wrappers), an initializer and its CMake discovery; a standalone unit has none of those. It includes the
+    library's own system headers, defines at file scope what the DaCe wrapper would have provided, and names
+    the library on the caller's link line (:attr:`dace.codegen.cpf.Rendering.link`). The library itself is
+    the environment's to provide -- the judge image installs it like any other system library.
+    """
+
+    #: System headers, in include order, angle brackets included.
+    headers: tuple[str, ...]
+    #: The caller's link-line tokens, or a function of the finished unit's text that names them.
+    link: "tuple[str, ...] | Callable[[str], tuple[str, ...]]"
+    #: File-scope definitions the expansion's calls rely on, after the headers.
+    definitions: str = ""
+    #: Further headers only a C++ unit includes.
+    cxx_headers: tuple[str, ...] = ()
+    #: DaCe's own wrapper header for the library (the handle classes the expansions call through), relative to
+    #: the ``dace`` package. CPF carries it inline, its namespace respelled (:func:`vendor_wrapper`).
+    wrapper: str = ""
+
+    def link_tokens(self, code: str) -> tuple[str, ...]:
+        """The link-line tokens of a unit whose text is ``code``."""
+        return self.link(code) if callable(self.link) else self.link
+
+
+#: OpenBLAS's own pthreads pool would compete with the unit's OpenMP team for the cores (DaCe's
+#: ``DeferOpenBlasThreadsToOpenMP``: contour_integral's LU solves ran 12x slower that way), so a pthreads build is
+#: kept on one thread when the unit is loaded. Weak, so a BLAS without the OpenBLAS extensions still links.
+OPENBLAS_THREADS_DEFINITION = """\
+#pragma weak openblas_get_parallel
+#pragma weak openblas_set_num_threads
+// A pthreads OpenBLAS runs its own pool beside the OpenMP team; keep it on one thread, as DaCe does.
+__attribute__((constructor)) static void cpf_defer_openblas_threads(void) {
+    if (openblas_get_parallel && openblas_set_num_threads && openblas_get_parallel() == 1) {
+        openblas_set_num_threads(1);
+    }
+}
+"""
+
+
+def fftw3_link(code: str) -> tuple[str, ...]:
+    """The FFTW3 libraries ``code`` calls: ``libfftw3`` for double precision, ``libfftw3f`` for single. Never a
+    threaded companion: CPF expands for the single-threaded planner
+    (:func:`~dace.libraries.fft.environments.fftw3.single_threaded_planner`)."""
+    return tuple(
+        f"-l{library}"
+        for prefix, library in (("fftw_", "fftw3"), ("fftwf_", "fftw3f"))
+        if re.search(r"\b%s\w+\s*\(" % prefix, code)
+    )
+
+
+#: DaCe environment name -> how a standalone unit calls that library. One family per architecture: OpenBLAS (CBLAS
+#: and LAPACKE) and FFTW3 on the host, the toolkit's own libraries on CUDA and ROCm.
+VENDOR_LIBRARIES: dict[str, VendorLibrary] = {
+    "OpenBLAS": VendorLibrary(("<cblas.h>", "<lapacke.h>"), ("-lopenblas",), OPENBLAS_THREADS_DEFINITION),
+    # The expansion refuses an unplannable layout by throwing.
+    "FFTW3": VendorLibrary(("<fftw3.h>",), fftw3_link, cxx_headers=("<stdexcept>",)),
+    "cuBLAS": VendorLibrary((), ("-lcublas",), wrapper="libraries/blas/include/dace_cublas.h"),
+    "cuSolverDn": VendorLibrary((), ("-lcusolver",), wrapper="libraries/lapack/include/dace_cusolverdn.h"),
+    "cuFFT": VendorLibrary(("<cufft.h>", "<cufftXt.h>", "<stdexcept>", "<string>"), ("-lcufft",)),
+    "rocBLAS": VendorLibrary((), ("-lrocblas",), wrapper="libraries/blas/include/dace_rocblas.h"),
+    "rocSOLVER": VendorLibrary((), ("-lrocsolver", "-lrocblas"), wrapper="libraries/lapack/include/dace_rocsolver.h"),
+    "hipFFT": VendorLibrary(("<hipfft/hipfft.h>", "<hipfft/hipfftXt.h>", "<stdexcept>", "<string>"), ("-lhipfft",)),
+}
+
+#: The namespace a unit's inlined vendor wrappers live in, in place of ``dace``.
+VENDOR_NAMESPACE = "cpf_vendor"
+
+#: A qualified name into one of the wrappers' namespaces, as an expansion or a state field spells it.
+VENDOR_QUALIFIED: "re.Pattern" = re.compile(r"(?<![\w:])(?:::)?dace::(blas|lapack)::")
+
+
+def respell_vendor_namespaces(code: str) -> str:
+    """``dace::blas::`` / ``dace::lapack::`` as the inlined wrappers spell them (:data:`VENDOR_NAMESPACE`)."""
+    return VENDOR_QUALIFIED.sub(lambda match: f"{VENDOR_NAMESPACE}::{match.group(1)}::", code)
+
+
+def vendor_wrapper(path: str, seen: set[str]) -> tuple[list[str], str]:
+    """DaCe's wrapper header at ``path`` (relative to the ``dace`` package) as inline text: its system includes,
+    and its body with ``namespace dace`` respelled to :data:`VENDOR_NAMESPACE`. A wrapper it includes by quoted
+    path comes first, once per unit (``seen``); ``#pragma once`` and comments-only lines are dropped.
+
+    :returns: ``(system headers, definitions)``.
+    """
+    import dace  # the package directory; dace is fully imported by the time a unit renders
+
+    full = os.path.normpath(os.path.join(os.path.dirname(dace.__file__), path))
+    if full in seen:
+        return [], ""
+    seen.add(full)
+    headers: list[str] = []
+    body: list[str] = []
+    with open(full) as handle:
+        for line in handle:
+            include = re.match(r'\s*#\s*include\s*([<"])([^>"]+)[>"]', line)
+            if include and include.group(1) == "<":
+                headers.append(f"<{include.group(2)}>")
+            elif include:
+                nested = os.path.relpath(
+                    os.path.normpath(os.path.join(os.path.dirname(full), include.group(2))),
+                    os.path.dirname(dace.__file__),
+                )
+                nested_headers, nested_body = vendor_wrapper(nested, seen)
+                headers += nested_headers
+                body.append(nested_body)
+            elif not re.match(r"\s*#\s*pragma\s+once", line):
+                body.append(line.rstrip("\n"))
+    text = "\n".join(body).strip("\n")
+    text = re.sub(r"\bnamespace\s+dace\b", f"namespace {VENDOR_NAMESPACE}", text)
+    text = re.sub(r"//\s*namespace dace\b", f"// namespace {VENDOR_NAMESPACE}", text)
+    return headers, respell_vendor_namespaces(text)
+
+
+#: A vendor library's family name, and the call prefix that says a unit calls into it. Family names are the ones
+#: a library catalog keys these libraries by (HPCAgent-Bench's ``envs/libraries.yaml``).
+VENDOR_FAMILIES: tuple[tuple[str, "re.Pattern"], ...] = (
+    ("blas", re.compile(r"\bcblas_\w+\s*\(")),
+    ("lapack", re.compile(r"\bLAPACKE_\w+\s*\(")),
+    ("fftw", re.compile(r"\bfftwf?_\w+\s*\(")),
+    ("cublas", re.compile(r"\bcublas\w+\s*\(")),
+    ("cusolver", re.compile(r"\bcusolverDn\w+\s*\(")),
+    ("cufft", re.compile(r"\bcufft\w+\s*\(")),
+    ("rocblas", re.compile(r"\brocblas_\w+\s*\(")),
+    ("rocsolver", re.compile(r"\brocsolver_\w+\s*\(")),
+    ("hipfft", re.compile(r"\bhipfft\w+\s*\(")),
+)
+
+
+def vendor_families(code: str) -> tuple[str, ...]:
+    """The vendor library families ``code`` calls into, in :data:`VENDOR_FAMILIES` order."""
+    return tuple(family for family, call in VENDOR_FAMILIES if call.search(code))
+
+
+def vendor_environments(environments) -> list:
+    """The environment classes among ``environments`` that :data:`VENDOR_LIBRARIES` covers, in key order. A
+    code object names its environments by their registration path
+    (``dace.libraries.blas.environments.openblas.OpenBLAS``); the table, by class name."""
+    from dace.library import get_environment  # dace.library imports the code generators, which import this
+
+    found = {env.__name__: env for env in map(get_environment, environments) if env.__name__ in VENDOR_LIBRARIES}
+    return [found[name] for name in sorted(found)]
+
+
+def vendor_libraries(environments) -> list[VendorLibrary]:
+    """The :data:`VENDOR_LIBRARIES` entries of ``environments`` (code-object names), in key order."""
+    return [VENDOR_LIBRARIES[env.__name__] for env in vendor_environments(environments)]
+
+
 #: Environments EVERY standalone rendering supplies for itself. ``ParallelSTL`` links TBB for
 #: libstdc++'s ``std::execution`` backend; CPF drops the policy (:data:`POLICY_SORT_CALL`), so the
 #: unit needs no library.
@@ -3462,6 +3661,11 @@ def tables_for(dialect: Dialect | None = None) -> Tables:
 #: ordinary cast expressions. Anchored on a closed list of type names rather than on "identifier
 #: followed by ``(``", which would rewrite every call in the body.
 C_CAST_TYPES: tuple[str, ...] = (
+    # A BLAS expansion's complex ``alpha`` / ``beta`` (``dace::complex128(1)``), before or after the type rename.
+    "dace::complex128",
+    "dace::complex64",
+    "double _Complex",
+    "float _Complex",
     "long double",
     "unsigned long long",
     "unsigned long",

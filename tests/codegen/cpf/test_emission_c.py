@@ -276,13 +276,11 @@ def test_numeric_typecast_is_a_cast_expression():
     assert y.dtype == np.float32
 
 
-def test_matrix_multiply_renders_as_loops():
-    """A matmul: the one place a library node would otherwise reach for BLAS."""
+def test_matrix_multiply_renders_as_one_blas_call():
+    """A matmul is one ``cblas_dgemm``: CPF lowers BLAS nodes to OpenBLAS, which the environment provides."""
     sdfg, code = render_c(c_matmul, "mprc_matmul")
-    executable = "\n".join(line for line in code.splitlines() if not line.strip().startswith("//"))
-    for banned in ("cblas", "dgemm", "MKL", "BLAS"):
-        assert banned not in executable, f"CPF rendered a BLAS call ({banned})"
-    assert "// BLAS gemm" in code, "the rendering must still say what the loop nest used to be"
+    assert "cblas_dgemm(" in code, "a matmul must render as the OpenBLAS call"
+    assert "// BLAS gemm" in code, "the rendering must still say what the call computes"
 
     m, n = 24, 16
     a = np.random.rand(m, n)
@@ -1292,7 +1290,7 @@ if __name__ == "__main__":
     test_maths_calls_the_math_h_function_for_the_argument_type()
     test_a_nested_sdfg_function_takes_no_reference_and_agrees_with_cpp()
     test_numeric_typecast_is_a_cast_expression()
-    test_matrix_multiply_renders_as_loops()
+    test_matrix_multiply_renders_as_one_blas_call()
     test_strided_copy_renders_as_a_loop()
     test_scan_keeps_its_parallel_inscan_form()
     test_output_builds_without_warnings()
