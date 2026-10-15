@@ -997,6 +997,53 @@ def test_a_loop_nested_inside_another_region_is_hoisted_in_its_own_graph():
     )
 
 
+def test_the_outlined_loop_maps_only_the_symbols_it_reads():
+    """The nest is built with every symbol of the SDFG declared, so its ``free_symbols`` hold them all and kept
+    every mapping. A symbol assigned only AFTER the loop -- or on another branch, warpx's per-geometry
+    ``dil_index_3`` -- was then mapped into the loop that runs first, a read with no reaching definition: it
+    became free in the parent and codegen sized the arrays it shapes before it had a value. Only what the nest
+    reads crosses."""
+    sdfg = loop_over_map_sdfg("outline_reads_only")
+    sdfg.add_array("idx", [1], dace.int64)
+    sdfg.add_array("b", [1], dace.int64)
+    sdfg.add_symbol("m", dace.int64)
+    after = sdfg.add_state("after")
+    sdfg.add_edge(next(iter(sdfg.nodes())), after, dace.InterstateEdge(assignments={"m": "idx[0]"}))
+    tasklet = after.add_tasklet("use", {}, {"out"}, "out = m")
+    after.add_edge(tasklet, "out", after.add_write("b"), None, dace.Memlet("b[0]"))
+    sdfg.validate()
+    assert "m" not in sdfg.free_symbols
+    assert HoistParallelRegion().apply_pass(sdfg, {}) == 1
+    nested = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nd.NestedSDFG)]
+    assert nested and all("m" not in n.symbol_mapping for n in nested), [n.symbol_mapping for n in nested]
+    assert "m" not in sdfg.free_symbols, sdfg.free_symbols
+    sdfg.validate()
+
+
+def test_strip_mine_declines_an_extent_the_loop_assigns():
+    """A CSR row loop: the map's extent ``lo:hi`` is read from ``rp`` on every trip. The tile count is the team
+    map's range, evaluated before the loop runs, where ``lo`` and ``hi`` have no value -- tiling it left them
+    free in the parent (minife's ``row_offsets_index_2``). The cut is declined and the loop stays correct."""
+    sdfg = dace.SDFG("tile_row_extent")
+    sdfg.add_array("rp", [N + 1], dace.int64)
+    sdfg.add_array("a", [N * N], dace.float64)
+    sdfg.add_symbol("lo", dace.int64)
+    sdfg.add_symbol("hi", dace.int64)
+    outer = loop_region(sdfg, "outer", "N")
+    bounds = outer.add_state("bounds", is_start_block=True)
+    body = sweep_state(outer, "row", "a[j]", "out = 2.0 * in0", {"j": "lo:hi"}, ["a[j]"])
+    outer.add_edge(bounds, body, dace.InterstateEdge(assignments={"lo": "rp[it]", "hi": "rp[it + 1]"}))
+    sdfg.validate()
+    assert not tiled(sdfg)
+    assert not {"lo", "hi"} & {str(s) for s in sdfg.free_symbols}, sdfg.free_symbols
+    sdfg.validate()
+    rp = np.array([0, 2, 5, 5, 9], dtype=np.int64)
+    a = np.random.default_rng(3).random(16)
+    ref = a.copy()
+    ref[: rp[-1]] *= 2.0
+    matches_at_every_team_size(sdfg, {"a": ref}, rp=rp, a=a, N=4)
+
+
 if __name__ == "__main__":
     for kernel_name in HOISTED_KERNELS:
         test_one_team_replaces_the_per_trip_region(kernel_name)
@@ -1039,27 +1086,5 @@ if __name__ == "__main__":
     for kernel_name in TSVC_KERNELS:
         test_the_canonical_form_keeps_every_barrier(kernel_name)
     test_a_loop_nested_inside_another_region_is_hoisted_in_its_own_graph()
-
-
-def test_strip_mine_declines_an_extent_the_loop_assigns():
-    """A CSR row loop: the map's extent ``lo:hi`` is read from ``rp`` on every trip. The tile count is the team
-    map's range, evaluated before the loop runs, where ``lo`` and ``hi`` have no value -- tiling it left them
-    free in the parent (minife's ``row_offsets_index_2``). The cut is declined and the loop stays correct."""
-    sdfg = dace.SDFG("tile_row_extent")
-    sdfg.add_array("rp", [N + 1], dace.int64)
-    sdfg.add_array("a", [N * N], dace.float64)
-    sdfg.add_symbol("lo", dace.int64)
-    sdfg.add_symbol("hi", dace.int64)
-    outer = loop_region(sdfg, "outer", "N")
-    bounds = outer.add_state("bounds", is_start_block=True)
-    body = sweep_state(outer, "row", "a[j]", "out = 2.0 * in0", {"j": "lo:hi"}, ["a[j]"])
-    outer.add_edge(bounds, body, dace.InterstateEdge(assignments={"lo": "rp[it]", "hi": "rp[it + 1]"}))
-    sdfg.validate()
-    assert not tiled(sdfg)
-    assert not {"lo", "hi"} & {str(s) for s in sdfg.free_symbols}, sdfg.free_symbols
-    sdfg.validate()
-    rp = np.array([0, 2, 5, 5, 9], dtype=np.int64)
-    a = np.random.default_rng(3).random(16)
-    ref = a.copy()
-    ref[: rp[-1]] *= 2.0
-    matches_at_every_team_size(sdfg, {"a": ref}, rp=rp, a=a, N=4)
+    test_strip_mine_declines_an_extent_the_loop_assigns()
+    test_the_outlined_loop_maps_only_the_symbols_it_reads()

@@ -657,9 +657,20 @@ def outline(loop: LoopRegion, sdfg: SDFG, keep_outside: set[str]) -> None:
     # The outlining maps every symbol of ``sdfg`` into the nest. One that a LATER loop assigns then reads
     # as used before that loop runs -- a free symbol of ``sdfg`` -- and outlining that loop in turn
     # exports it back out through a ``symbolic_output`` state. Only what the nest reads crosses.
-    read_inside = nsdfg.sdfg.free_symbols
+    # ``used_symbols(all_symbols=False)``, not ``free_symbols``: the nest DECLARES every symbol of ``sdfg``, and
+    # ``free_symbols`` counts a declared symbol as read, so it kept every mapping -- including a symbol assigned
+    # only after the loop or on another branch (warpx's per-geometry ``dil_index_3``), which the parent then read
+    # where it has no value.
+    read_inside = {str(name) for name in nsdfg.sdfg.used_symbols(all_symbols=False)}
+    # A connector's descriptor is checked against the outside one through the mapping, accessed inside or not.
+    read_inside |= {
+        str(name) for desc in nsdfg.sdfg.arrays.values() if not desc.transient for name in desc.free_symbols
+    }
+    assigned_inside = {name for edge in nsdfg.sdfg.all_interstate_edges() for name in edge.data.assignments}
     for name in [name for name in nsdfg.symbol_mapping if name not in read_inside]:
         del nsdfg.symbol_mapping[name]
+        if name not in assigned_inside and name in nsdfg.sdfg.symbols:
+            nsdfg.sdfg.remove_symbol(name)
     xfh.wrap_code_node_in_unit_map(state, nsdfg, dtypes.ScheduleType.CPU_Persistent, "_team")
 
 
