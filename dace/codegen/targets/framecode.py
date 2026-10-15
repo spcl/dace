@@ -588,7 +588,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
     def generate_states(self, sdfg: SDFG, global_stream: CodeIOStream, callsite_stream: CodeIOStream) -> set[SDFGState]:
         states_generated = set()
 
-        opbar = progress.OptionalProgressBar(len(sdfg.states()), title=f"Generating code (SDFG {sdfg.cfg_id})")
+        opbar = progress.OptionalProgressBar(sdfg.num_states(), title=f"Generating code (SDFG {sdfg.cfg_id})")
 
         # Create closure + function for state dispatcher
         def dispatch_state(state: SDFGState) -> str:
@@ -1121,7 +1121,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
         #######################################################################
 
         # Sanity check
-        if len(states_generated) != len(sdfg.states()):
+        if len(states_generated) != sdfg.num_states():
             raise RuntimeError(
                 f"Not all states were generated in SDFG {sdfg.label}!\n  Generated: {[s.label for s in states_generated]}\n  Missing: {[s.label for s in (set(sdfg.states()) - states_generated)]}"
             )
@@ -1221,7 +1221,7 @@ def allocation_block(state: SDFGState, desc: data.Data, access_states: set[SDFGS
     def accesses(block: ControlFlowBlock) -> bool:
         if isinstance(block, SDFGState):
             return block in access_states
-        return any(inner in access_states for inner in block.all_states())
+        return any(inner in access_states for inner in block.states())
 
     def assigns_inside(block: ControlFlowBlock) -> bool:
         return isinstance(block, AbstractControlFlowRegion) and any(
