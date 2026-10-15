@@ -329,6 +329,52 @@ def test_int64_power_compiles_as_an_integer():
     assert np.allclose(a, 1.0)
 
 
+def test_interstate_assignment_keeps_array_access_and_evaluation_order():
+    """An interstate assignment reading an array is rewritten only at its ``**``: the array access stays a
+    subscript (not a SymPy ``Subscript(...)`` call) and the floating-point operations keep their written order."""
+    sdfg = dace.SDFG("assign")
+    sdfg.add_array("rho", [4], dace.float64)
+    sdfg.add_symbol("lam", dace.float64)
+    first = sdfg.add_state("first", is_start_block=True)
+    second = sdfg.add_state("second")
+    edge = sdfg.add_edge(
+        first, second, dace.InterstateEdge(assignments={"v": "((4.0 * lam) / rho[1]) * (lam ** 2.0) + lam ** (- 0.75)"})
+    )
+
+    assert RelaxIntegerPowers().apply_pass(sdfg, {}) == 1
+    assert edge.data.assignments["v"] == "4.0 * lam / rho[1] * ipow(lam, 2) + lam ** (-0.75)"
+
+
+def test_a_nested_argument_with_no_access_node_is_relaxed_like_its_outer_descriptor():
+    """A nested SDFG that only passes ``y`` on (its access is one level deeper) has no access node of ``y``;
+    its descriptor must still be relaxed, or it no longer matches the parent's and validation refuses the
+    connection (QE addusxx_g's ``ijtoh[ntyp, nhm, nhm]``)."""
+    N = dace.symbol("N", dtype=dace.int64, integer=True, positive=True)
+
+    def holder(name: str) -> dace.SDFG:
+        sdfg = dace.SDFG(name)
+        sdfg.add_symbol("N", dace.int64)
+        sdfg.add_array("y", [N, N, N], dace.float64)
+        return sdfg
+
+    leaf = holder("leaf")
+    leaf.add_state().add_access("y")
+    middle = holder("middle")  # only a nested SDFG uses y here: no access node of y at this level
+    mid_state = middle.add_state()
+    inner_node = mid_state.add_nested_sdfg(leaf, {"y"}, {}, symbol_mapping={"N": "N"})
+    mid_state.add_edge(mid_state.add_read("y"), None, inner_node, "y", dace.Memlet("y[0:N, 0:N, 0:N]"))
+    mid_state.remove_node(next(n for n in mid_state.data_nodes() if n.data == "y"))
+    outer = holder("outer")
+    state = outer.add_state()
+    nsdfg = state.add_nested_sdfg(middle, {"y"}, {}, symbol_mapping={"N": "N"})
+    state.add_edge(state.add_read("y"), None, nsdfg, "y", dace.Memlet("y[0:N, 0:N, 0:N]"))
+    assert not any(n.data == "y" for n in mid_state.data_nodes())
+
+    RelaxIntegerPowers().apply_pass(outer, {})
+    assert symstr(middle.arrays["y"].strides[0]) == symstr(outer.arrays["y"].strides[0])
+    assert symstr(middle.arrays["y"].total_size) == symstr(outer.arrays["y"].total_size)
+
+
 if __name__ == "__main__":
     test_ipow_lowers_to_cpp_ipow()
     test_ipow_roundtrips_through_serialization()
@@ -353,3 +399,5 @@ if __name__ == "__main__":
     test_descending_loop_still_relaxes()
     test_loop_condition_off_by_one_not_relaxed()
     test_int64_power_compiles_as_an_integer()
+    test_interstate_assignment_keeps_array_access_and_evaluation_order()
+    test_a_nested_argument_with_no_access_node_is_relaxed_like_its_outer_descriptor()

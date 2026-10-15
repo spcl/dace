@@ -3404,6 +3404,42 @@ def test_map_fusion_refuses_a_nested_producer_updating_the_whole_intermediate_in
     assert np.allclose(Y, 2 * X)
 
 
+def test_ordering_edge_beside_an_inout_read():
+    """An empty Memlet orders ``a`` against the first Map beside its real read; it accesses nothing."""
+    sdfg = SDFG(unique_name("ordering_edge_beside_inout_read"))
+    sdfg.add_array("a", [10], dace.float64)
+    sdfg.add_array("t", [10], dace.float64, transient=True)
+    state = sdfg.add_state(is_start_block=True)
+    a_read, t, a_write = state.add_access("a"), state.add_access("t"), state.add_access("a")
+    _, first_entry, _ = state.add_mapped_tasklet(
+        "produce",
+        {"__i": "0:10"},
+        {"__in": dace.Memlet("a[__i]")},
+        "__out = __in + 10.0",
+        {"__out": dace.Memlet("t[__i]")},
+        input_nodes={a_read},
+        output_nodes={t},
+        external_edges=True,
+    )
+    state.add_mapped_tasklet(
+        "consume",
+        {"__i": "0:10"},
+        {"__in": dace.Memlet("t[__i]")},
+        "__out = __in * 2.0",
+        {"__out": dace.Memlet("a[__i]")},
+        input_nodes={t},
+        output_nodes={a_write},
+        external_edges=True,
+    )
+    state.add_nedge(a_read, first_entry, dace.Memlet())
+
+    a = np.random.rand(10)
+    ref = (a + 10.0) * 2.0
+    apply_fusion(sdfg, removed_maps=1)
+    sdfg(a=a)
+    assert np.allclose(a, ref)
+
+
 if __name__ == "__main__":
     test_fusion_intrinsic_memlet_direction()
     test_fusion_dynamic_producer()
@@ -3455,3 +3491,4 @@ if __name__ == "__main__":
     test_map_fusion_symbolic_intermediate(allow_intermediates_with_symbolic_size=True)
     test_map_fusion_symbolic_intermediate(allow_intermediates_with_symbolic_size=False)
     test_map_fusion_refuses_a_nested_producer_updating_the_whole_intermediate_in_place()
+    test_ordering_edge_beside_an_inout_read()
