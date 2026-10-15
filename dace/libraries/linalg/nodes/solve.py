@@ -150,7 +150,7 @@ class ExpandSolveCuPy(ExpandTransformation):
         :param parent_sdfg: SDFG that owns ``parent_state``.
         :returns: The nested SDFG implementing the node.
         """
-        from dace.libraries.blas.blas_helpers import cupy_in_wrap, cupy_out_wrap
+        from dace.libraries.blas.blas_helpers import add_cupy_sync_state, cupy_in_wrap, cupy_out_wrap
 
         (ain_shape, ain_dtype, ain_strides, bin_shape, bin_dtype, bin_strides, out_shape, out_dtype, out_strides, _n,
          _rhs, _storage) = node.validate(parent_sdfg, parent_state)
@@ -190,6 +190,7 @@ class ExpandSolveCuPy(ExpandTransformation):
         nstate.add_edge(a_read, None, tasklet, '__a', Memlet.from_array('_ain', nsdfg.arrays['_ain']))
         nstate.add_edge(b_read, None, tasklet, '__b', Memlet.from_array('_bin', nsdfg.arrays['_bin']))
         nstate.add_edge(tasklet, '__bout_out', out_write, None, Memlet.from_array('_bout', nsdfg.arrays['_bout']))
+        add_cupy_sync_state(nsdfg, nstate, storage_out)
         return nsdfg
 
 

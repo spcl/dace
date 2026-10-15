@@ -176,6 +176,31 @@ class TestCuPyGemmStructural:
         lib_nodes = [n for n in state.nodes() if isinstance(n, dace.sdfg.nodes.LibraryNode)]
         assert len(lib_nodes) == 0, "Library nodes should be expanded"
 
+    def test_gemm_device_output_syncs_after_writeback(self):
+        """GPU-resident GEMM synchronizes after its output memlet write."""
+        sdfg = _make_gemm_sdfg(dace.float64, [10, 15], [15, 8], [10, 8], False, False, 1.0, 0.0,
+                               'gemm_cupy_device_sync_test')
+        for desc in sdfg.arrays.values():
+            desc.storage = dtypes.StorageType.GPU_Global
+
+        sdfg.expand_library_nodes()
+        code = sdfg.generate_code()[0].code
+
+        matmul_pos = code.index('cupy.matmul')
+        writeback_pos = code.index('_c[0:10, 0:8] = __c_out')
+        sync_pos = code.index('cupy.cuda.get_current_stream().synchronize()')
+        assert matmul_pos < writeback_pos < sync_pos
+
+    def test_gemm_host_output_has_no_explicit_sync(self):
+        """Host GEMM relies on cupy.asnumpy instead of adding a sync state."""
+        sdfg = _make_gemm_sdfg(dace.float64, [10, 15], [15, 8], [10, 8], False, False, 1.0, 0.0,
+                               'gemm_cupy_host_sync_test')
+        sdfg.expand_library_nodes()
+        code = sdfg.generate_code()[0].code
+
+        assert 'cupy.asnumpy' in code
+        assert 'get_current_stream().synchronize()' not in code
+
     def test_gemm_expansion_with_beta(self):
         """Expanding Gemm with CuPy and beta!=0 should produce a nested SDFG."""
         sdfg = _make_gemm_sdfg(dace.float64, [10, 15], [15, 8], [10, 8], False, False, 1.0, 1.0,

@@ -135,7 +135,7 @@ class ExpandCholeskyCuPy(ExpandTransformation):
         :param parent_sdfg: SDFG that owns ``parent_state``.
         :returns: The nested SDFG implementing the node.
         """
-        from dace.libraries.blas.blas_helpers import cupy_in_wrap, cupy_out_wrap
+        from dace.libraries.blas.blas_helpers import add_cupy_sync_state, cupy_in_wrap, cupy_out_wrap
 
         inp_desc, inp_shape, out_desc, out_shape = node.validate(parent_sdfg, parent_state)
 
@@ -168,6 +168,7 @@ class ExpandCholeskyCuPy(ExpandTransformation):
         b_write = nstate.add_write('_b')
         nstate.add_edge(a_read, None, tasklet, '__a', Memlet.from_array('_a', nsdfg.arrays['_a']))
         nstate.add_edge(tasklet, '__b_out', b_write, None, Memlet.from_array('_b', nsdfg.arrays['_b']))
+        add_cupy_sync_state(nsdfg, nstate, out_desc.storage)
         return nsdfg
 
 

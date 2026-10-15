@@ -503,6 +503,7 @@ class ExpandGemvCuPy(ExpandTransformation):
             y_read = nstate.add_read('_y')
             nstate.add_edge(y_read, None, tasklet, '__yin', dace.Memlet.from_array('_y', nsdfg.arrays['_y']))
 
+        blas_helpers.add_cupy_sync_state(nsdfg, nstate, ydesc.storage)
         return nsdfg
 
 

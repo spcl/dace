@@ -1,7 +1,10 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import numpy as np
 from dace import dtypes, data
-from typing import Any, Dict, Tuple
+from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple
+
+if TYPE_CHECKING:
+    from dace.sdfg import SDFG, SDFGState
 
 
 def is_device_resident(storage: dtypes.StorageType) -> bool:
@@ -46,6 +49,37 @@ def cupy_out_wrap(expr: str, storage: dtypes.StorageType) -> str:
     :returns: A Python expression string matching the output storage kind.
     """
     return expr if is_device_resident(storage) else f'cupy.asnumpy({expr})'
+
+
+def add_cupy_sync_state(sdfg: "SDFG", after_state: "SDFGState", storage: dtypes.StorageType) -> Optional["SDFGState"]:
+    """Append a stream-synchronization state for a device-resident CuPy output.
+
+    CuPy operations and assignments to CuPy arrays are asynchronous. The
+    assignment generated for a tasklet's outgoing memlet runs *after* the
+    tasklet body, so synchronizing inside the tasklet would not wait for that
+    final write. A successor state places the synchronization after both the
+    CuPy operation and its output-memlet writeback.
+
+    Host outputs need no additional state because :func:`cupy_out_wrap` emits
+    ``cupy.asnumpy``, which already waits for the device result.
+
+    :param sdfg: Nested SDFG produced by a CuPy library expansion.
+    :param after_state: State containing the CuPy tasklet and output writeback.
+    :param storage: Storage of the expansion's output array.
+    :returns: The added synchronization state, or ``None`` for host output.
+    """
+    if not is_device_resident(storage):
+        return None
+
+    sync_state = sdfg.add_state_after(after_state, 'cupy_sync')
+    sync_state.add_tasklet(
+        'cupy_sync',
+        {},
+        {},
+        'import cupy\ncupy.cuda.get_current_stream().synchronize()',
+        language=dtypes.Language.Python,
+    )
+    return sync_state
 
 
 def to_blastype(dtype):

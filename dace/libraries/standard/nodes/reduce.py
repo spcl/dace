@@ -1537,7 +1537,7 @@ class ExpandReduceCuPy(pm.ExpandTransformation):
         #   array into a cupy output view fails with "non-scalar
         #   numpy.ndarray cannot be used for fill".  Host operands keep the
         #   asarray/asnumpy conversions.
-        from dace.libraries.blas.blas_helpers import cupy_in_wrap, cupy_out_wrap
+        from dace.libraries.blas.blas_helpers import add_cupy_sync_state, cupy_in_wrap, cupy_out_wrap
         tasklet_code = ('import cupy\n'
                         f"__inp_cp = {cupy_in_wrap('__in', input_data.storage)}\n"
                         f"__out = {cupy_out_wrap(cupy_call, output_data.storage)}")
@@ -1550,6 +1550,7 @@ class ExpandReduceCuPy(pm.ExpandTransformation):
         nstate.add_edge(r, None, tasklet, '__in', dace.Memlet.from_array('_in', nsdfg.arrays['_in']))
         nstate.add_edge(tasklet, '__out', w, None, dace.Memlet.from_array('_out', nsdfg.arrays['_out']))
 
+        add_cupy_sync_state(nsdfg, nstate, output_data.storage)
         return nsdfg
 
 
