@@ -109,6 +109,7 @@ from dace.transformation.passes.canonicalize.supply_num_threads import DTYPE as 
 from dace.transformation.passes.cpu_specialization.hoist_parallel_region import (
     WORKSHARED,
     HoistParallelRegion,
+    loop_defined_symbols,
     loop_local_transients,
     outline,
     top_level_loop_locals,
@@ -921,7 +922,12 @@ def tileable_maps(loop: LoopRegion, sdfg: SDFG) -> Cut | None:
             map_exit = next(n for n in children[node] if isinstance(n, nodes.MapExit))
             nest = map_nest(node, children)
             shapes.append(Shape(block, node, map_exit, nest, nest_axes(nest), inner_nests(block, node)))
+    defined = loop_defined_symbols(loop)
     for size, innermost in axis_choices(shapes):
+        # The tile count is the team map's range, evaluated before the loop runs: an extent naming a symbol the
+        # loop assigns (a CSR row's bounds, read per trip) has no value there.
+        if {str(name) for name in symbolic.free_symbols_and_functions(size)} & defined:
+            continue
         cut = cut_along(shapes, size, innermost, reads, sdfg)
         if cut is not None:
             return cut

@@ -1039,3 +1039,27 @@ if __name__ == "__main__":
     for kernel_name in TSVC_KERNELS:
         test_the_canonical_form_keeps_every_barrier(kernel_name)
     test_a_loop_nested_inside_another_region_is_hoisted_in_its_own_graph()
+
+
+def test_strip_mine_declines_an_extent_the_loop_assigns():
+    """A CSR row loop: the map's extent ``lo:hi`` is read from ``rp`` on every trip. The tile count is the team
+    map's range, evaluated before the loop runs, where ``lo`` and ``hi`` have no value -- tiling it left them
+    free in the parent (minife's ``row_offsets_index_2``). The cut is declined and the loop stays correct."""
+    sdfg = dace.SDFG("tile_row_extent")
+    sdfg.add_array("rp", [N + 1], dace.int64)
+    sdfg.add_array("a", [N * N], dace.float64)
+    sdfg.add_symbol("lo", dace.int64)
+    sdfg.add_symbol("hi", dace.int64)
+    outer = loop_region(sdfg, "outer", "N")
+    bounds = outer.add_state("bounds", is_start_block=True)
+    body = sweep_state(outer, "row", "a[j]", "out = 2.0 * in0", {"j": "lo:hi"}, ["a[j]"])
+    outer.add_edge(bounds, body, dace.InterstateEdge(assignments={"lo": "rp[it]", "hi": "rp[it + 1]"}))
+    sdfg.validate()
+    assert not tiled(sdfg)
+    assert not {"lo", "hi"} & {str(s) for s in sdfg.free_symbols}, sdfg.free_symbols
+    sdfg.validate()
+    rp = np.array([0, 2, 5, 5, 9], dtype=np.int64)
+    a = np.random.default_rng(3).random(16)
+    ref = a.copy()
+    ref[: rp[-1]] *= 2.0
+    matches_at_every_team_size(sdfg, {"a": ref}, rp=rp, a=a, N=4)
