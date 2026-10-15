@@ -11,6 +11,7 @@ from dace import memlet as mm
 from dace.graphlib import NetworkXError, NodeNotFound
 from dace.sdfg import SDFG, SDFGState, dealias, graph, nodes
 from dace.sdfg import utils as sdutil
+from dace.sdfg.state import SymbolResolver
 from dace.transformation import helpers
 from dace.transformation import transformation as pm
 
@@ -432,6 +433,7 @@ class RedundantArray(pm.SingleStateTransformation):
     def can_be_applied(self, graph: SDFGState, expr_index, sdfg, permissive=False):
         in_array = self.in_array
         out_array = self.out_array
+        facts = SymbolResolver().facts_at(graph, in_array)
 
         in_desc = in_array.desc(sdfg)
         out_desc = out_array.desc(sdfg)
@@ -581,8 +583,7 @@ class RedundantArray(pm.SingleStateTransformation):
                             warnings.warn(f"validate_subsets failed: {ex}")
                             return False
                         for oset in true_out_subsets:
-                            res = subsets.intersects(oset, subset)
-                            if res == True or res is None:
+                            if subsets.intersects(oset, subset, facts) is not symbolic.Truth.FALSE:
                                 subsets_intersect = True
                                 break
                         if subsets_intersect:
@@ -690,7 +691,7 @@ class RedundantArray(pm.SingleStateTransformation):
                 warnings.warn(f"validate_subsets failed: {ex}")
                 return False
             # 2-b. Check whether a2_subset covers a1_subset
-            if not a2_subset.covers(a1_subset):
+            if not a2_subset.covers(a1_subset, facts):
                 return False
             # 2-c. Validate subsets in memlet tree
             # (should not be needed for valid SDGs)
@@ -1079,6 +1080,7 @@ class RedundantSecondArray(pm.SingleStateTransformation):
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
         in_array = self.in_array
         out_array = self.out_array
+        facts = SymbolResolver().facts_at(graph, out_array)
 
         in_desc = in_array.desc(sdfg)
         out_desc = out_array.desc(sdfg)
@@ -1217,8 +1219,7 @@ class RedundantSecondArray(pm.SingleStateTransformation):
                                 warnings.warn(f"validate_subsets failed: {ex}")
                                 return False
                             for iset in true_in_subsets:
-                                res = subsets.intersects(iset, subset)
-                                if res == True or res is None:
+                                if subsets.intersects(iset, subset, facts) is not symbolic.Truth.FALSE:
                                     subsets_intersect = True
                                     break
                             if subsets_intersect:
@@ -1305,7 +1306,7 @@ class RedundantSecondArray(pm.SingleStateTransformation):
                 warnings.warn(f"validate_subsets failed: {ex}")
                 return False
             # 2-b. Check where b1_subset covers b2_subset
-            if not b1_subset.covers(b2_subset):
+            if not b1_subset.covers(b2_subset, facts):
                 return False
             # 2-c. Validate subsets in memlet tree
             # (should not be needed for valid SDGs)

@@ -11,8 +11,10 @@ import random
 import re
 import shutil
 import sys
+import types
 import warnings
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Set as AbstractSet
 from functools import lru_cache
 from hashlib import md5, sha256
 from numbers import Integral
@@ -60,6 +62,7 @@ from dace.sdfg.graph import (
 )
 from dace.sdfg.replace import replace_properties_dict, symbolic_replacements
 from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState
+from dace.sdfg.symbol_repo import SymbolRepo
 from dace.sdfg.type_inference import infer_expr_type
 from dace.sdfg.validation import InvalidSDFGError, validate_sdfg
 
@@ -193,6 +196,33 @@ def _frontend_metadata_to_json(meta):
 
 def _frontend_metadata_from_json(obj, context=None):
     return copy.deepcopy(obj) if obj else {}
+class NameCollisionError(NameError):
+    """Raised when a new symbol or data descriptor takes a name the SDFG already uses for the other kind."""
+
+
+def scope_bound_names(sdfg: "SDFG") -> set[str]:
+    """The names a scope of ``sdfg`` binds (not those of its nested SDFGs): the variables of loops that initialize
+    them, map and consume parameters, and the dynamic connectors of scope entries. Such a name is never an SDFG
+    symbol. A loop without an initializer iterates a variable defined outside it."""
+    names = {
+        region.loop_variable
+        for region in sdfg.all_control_flow_regions()
+        if isinstance(region, LoopRegion) and region.loop_variable and region.init_statement is not None
+    }
+    for state in sdfg.states():
+        for node in state.nodes():
+            if isinstance(node, nd.MapEntry):
+                names.update(node.map.params)
+            elif isinstance(node, nd.ConsumeEntry):
+                names.add(node.consume.pe_index)
+            if isinstance(node, nd.EntryNode):
+                names.update(conn for conn in node.in_connectors if not conn.startswith("IN_"))
+    return names
+
+
+def interstate_bound_names(sdfg: "SDFG") -> set[str]:
+    """The names the interstate edges of ``sdfg`` (not of its nested SDFGs) assign; an edge types them by inference."""
+    return {name for edge in sdfg.all_interstate_edges() for name in edge.data.assignments}
 
 
 def _replace_dict_keys(d, old, new):
@@ -647,7 +677,9 @@ class _UsedNames:
     :func:`dace.utils.find_new_name` only ever asks whether a candidate is taken, so this
     answers ``in`` from :meth:`SDFG.is_name_used` rather than materializing the union of
     arrays, constants and symbols on every mint. Not a container in any other sense --
-    it is deliberately not iterable, because there is no cheap order to iterate in.
+    it is deliberately not iterable, because there is no cheap order to iterate in. The names
+    scopes and interstate edges bind take a walk of the graph, made once per view, at the first
+    probe the declarations do not answer.
 
     ``include_connectors`` additionally rejects names in use as a tasklet connector, because a
     connector may not share its name with a data descriptor, constant or symbol -- see
@@ -659,15 +691,20 @@ class _UsedNames:
     control flow regions but not into NestedSDFG nodes, which have namespaces of their own.
     """
 
-    __slots__ = ("sdfg", "include_connectors", "connectors")
+    __slots__ = ("sdfg", "bound", "include_connectors", "connectors")
 
     def __init__(self, sdfg: "SDFG", include_connectors: bool = False) -> None:
         self.sdfg = sdfg
+        self.bound: set[str] | None = None
         self.include_connectors = include_connectors
         self.connectors: set[str] | None = None
 
     def __contains__(self, name: str) -> bool:
-        if self.sdfg.is_name_used(name):
+        if self.sdfg.is_name_declared(name):
+            return True
+        if self.bound is None:
+            self.bound = scope_bound_names(self.sdfg) | interstate_bound_names(self.sdfg)
+        if name in self.bound:
             return True
         if not self.include_connectors:
             return False
@@ -716,7 +753,6 @@ class SDFG(ControlFlowRegion):
         to_json=_arrays_to_json,
         from_json=_nested_arrays_from_json,
     )
-    symbols = DictProperty(str, dtypes.typeclass, category="General", desc="Global symbols for this SDFG")
 
     instrument = EnumProperty(
         dtype=dtypes.InstrumentationType,
@@ -833,7 +869,8 @@ class SDFG(ControlFlowRegion):
 
         self._propagate = propagate
         self._parent = parent
-        self.symbols = {}
+        self._symbol_repo = SymbolRepo()
+        # Symbols ``add_datadesc`` declared because a shape names them; a scope that binds one later takes it over
         self._parent_sdfg = None
         self._parent_nsdfg_node = None
         self._arrays = NestedDict()  # type: Dict[str, dt.Array]
@@ -876,6 +913,7 @@ class SDFG(ControlFlowRegion):
                 "_cfg_list",
                 "_transformation_hist",
                 "guid",
+                "_symbol_repo",
             ):
                 continue
             setattr(result, k, copy_graph_field(self, k, v, memo))
@@ -884,6 +922,8 @@ class SDFG(ControlFlowRegion):
         result._nodes = copy_node_index(self._nodes, memo)
         # Both name a block, so they are copied with the nodes to land on the copies rather than the originals.
         result._start_block = copy.deepcopy(self._start_block, memo)
+        # After the graph, so that the repository is keyed by the copied scope owners, each copied in its own graph
+        result._symbol_repo = copy.deepcopy(self._symbol_repo, memo)
         result._cached_start_block = copy.deepcopy(self._cached_start_block, memo)
         # Copy parent attributes
         result._parent = memo.get(id(self._parent))
@@ -984,6 +1024,7 @@ class SDFG(ControlFlowRegion):
         # restored on exit.
         with symbolic.serialization_symbol_dtypes(self.symbols), frozen_node_ids():
             tmp = super().to_json()
+        tmp["attributes"]["symbol_repo"] = self._symbol_repo.to_json(self)
         if is_root:
             tmp["source_files"] = source_files
 
@@ -1027,6 +1068,7 @@ class SDFG(ControlFlowRegion):
             raise TypeError("Class type mismatch")
 
         attrs = dict(json_obj["attributes"])
+        repo_json = attrs.pop("symbol_repo")
         json_obj = dict(json_obj)
         json_obj["attributes"] = attrs
         nodes = json_obj["nodes"]
@@ -1061,6 +1103,9 @@ class SDFG(ControlFlowRegion):
             # resolves through ``self.node()``. Storing the block here instead makes every read of
             # a pinned entry raise on a deserialized SDFG.
             ret._start_block = int(json_obj["start_block"])
+
+        ret._symbol_repo = SymbolRepo.from_json(repo_json, ret, context)
+        ret.reset_cfg_list()
 
         if "source_files" in json_obj:  # This will only happen on the root SDFG, once deserialization is complete
             ret.rematerialize_debuginfo_files(json_obj["source_files"])
@@ -1162,7 +1207,6 @@ class SDFG(ControlFlowRegion):
 
         :param name: Name to find.
         :param new_name: Name to replace.
-        :raise FileExistsError: If name and new_name already exist as data descriptors or symbols.
         """
         if name == new_name:
             return
@@ -1201,23 +1245,27 @@ class SDFG(ControlFlowRegion):
         if replace_keys:
             # Filter out nested data names, as we cannot and do not want to replace names in nested data descriptors
             repldict_filtered = {k: v for k, v in repldict.items() if "." not in k}
+            # Only an expression declares names, and never those of data or of a scope
+            reserved = (
+                self.arrays.keys() | scope_bound_names(self) | interstate_bound_names(self)
+                if not all(validate_name(new_name) for new_name in repldict_filtered.values())
+                else set()
+            )
+            self._symbol_repo.replace(
+                repldict_filtered,
+                {name: symrepl[symbolic.pystr_to_symbolic(name)] for name in repldict_filtered},
+                reserved,
+            )
             for name, new_name in repldict_filtered.items():
                 new_key = str(new_name)
                 if validate_name(new_key):
                     if new_key != str(name):
                         _replace_dict_keys(self._arrays, name, new_key)
-                        _replace_dict_keys(self.symbols, name, new_key)
                         _replace_dict_keys(self.constants_prop, name, new_key)
                         _replace_dict_keys(self.callback_mapping, name, new_key)
                         _replace_dict_values(self.callback_mapping, name, new_key)
                 else:
                     _remove_dict_keys(self._arrays, name)
-                    if name in self.symbols:
-                        old_sym = self.symbols[name]
-                        del self.symbols[name]
-                        new_syms = symrepl[symbolic.pystr_to_symbolic(name)].free_symbols
-                        self.symbols.update({str(s): old_sym for s in new_syms})
-
                     _remove_dict_keys(self.constants_prop, name)
                     _remove_dict_keys(self.callback_mapping, name)
 
@@ -1227,37 +1275,132 @@ class SDFG(ControlFlowRegion):
 
         super().replace_dict(repldict, symrepl, replace_in_graph, replace_keys)
 
-    def add_symbol(self, name, stype, find_new_name: bool = False):
-        """Adds a symbol to the SDFG.
+    def add_symbol(
+        self,
+        name,
+        stype=None,
+        find_new_name: bool = False,
+        predicates: frozenset[symbolic.Predicate] = frozenset(),
+        scale: symbolic.Scale = symbolic.Scale.DEFAULT,
+    ):
+        """Adds a symbol to the SDFG. Adding a symbol again with the same type and predicates does nothing.
 
-        :param name: Symbol name.
+        :param name: Symbol name, or a symbol, whose declaration is taken.
         :param stype: Symbol type.
         :param find_new_name: Find a new name.
+        :param predicates: Sign predicates assumed for the symbol.
+        :param scale: ``Scale.SMALL`` makes the symbol much smaller than every default one; see ``set_symbol_scale``.
+        :raise NameCollisionError: If the name is used by a data descriptor.
+        :raise InconsistentAssumptionsError: If the symbol exists with another type or other predicates, or the
+                                             predicates contradict the SDFG's facts.
         """
+        if isinstance(name, symbolic.symbol):
+            name, stype, predicates, scale = (
+                name.name,
+                name.declaration.dtype,
+                name.declaration.predicates,
+                name.declaration.scale,
+            )
+        dtype = stype if isinstance(stype, dtypes.typeclass) else dtypes.dtype_to_typeclass(stype)
+        if not isinstance(dtype, dtypes.typeclass):
+            raise TypeError(f'Invalid type {stype} for symbol "{name}"')
         if find_new_name:
             name = self._find_new_name(name)
-        else:
-            # We do not check for data constant, because there is a link between the constants and
-            #  the data descriptors.
-            if name in self.symbols:
-                raise FileExistsError(f'Symbol "{name}" already exists in SDFG')
-            if name in self.arrays:
-                raise FileExistsError(f'Cannot create symbol "{name}", the name is used by a data descriptor.')
-        if not isinstance(stype, dtypes.typeclass):
-            stype = dtypes.dtype_to_typeclass(stype)
-        self.symbols[name] = stype
+        elif name in self.arrays:
+            # Data constants are not checked, as they are linked to the data descriptors.
+            raise NameCollisionError(f'Cannot create symbol "{name}", the name is used by a data descriptor.')
+        elif name not in self.symbols and name in scope_bound_names(self):
+            raise NameCollisionError(
+                f'Cannot create symbol "{name}", a loop or map scope binds it; its facts come from the scope.'
+            )
+        self._symbol_repo.add(name, dtype, predicates)
+        if scale is symbolic.Scale.SMALL:
+            self._symbol_repo.set_scale(name, scale)
         return name
+
+    def set_symbol_scale(self, name: str, scale: symbolic.Scale) -> None:
+        """Sets the scale of a declared symbol. Proofs may take every ``SMALL`` symbol to be much smaller than every
+        default one (``<<``, which implies ``<``); each order proven so is checked when the program is called.
+
+        :raise KeyError: If the symbol is not declared.
+        """
+        self._symbol_repo.set_scale(name, scale)
+
+    def set_symbol_assumptions(self, name: str, predicates: frozenset[symbolic.Predicate]) -> None:
+        """Replaces the sign predicates assumed for a declared symbol.
+
+        :raise KeyError: If the symbol is not declared.
+        :raise InconsistentAssumptionsError: If the predicates contradict the SDFG's facts.
+        """
+        self._symbol_repo.set_predicates(name, predicates)
+
+    def add_symbol_relation(self, relation: symbolic.Relation) -> None:
+        """Assumes a relation between declared symbols; adding a known relation again does nothing.
+
+        :raise KeyError: If the relation names an undeclared symbol.
+        :raise InconsistentAssumptionsError: If the relation contradicts the SDFG's facts.
+        """
+        self._symbol_repo.add_relation(relation)
+
+    def facts(self) -> symbolic.Facts:
+        """The facts assumed about this SDFG's symbols, and that a symbol a data descriptor's dimension is equal to is
+        nonnegative, for explicit use in proofs. What is assumed of a symbol holds for its value on entry only, so
+        nothing is assumed of one an interstate edge assigns."""
+        own = self._symbol_repo.facts()
+        assigned = interstate_bound_names(self)
+        if assigned:
+            own = symbolic.Facts(
+                [relation for relation in own.relations if not symbolic.relation_names(relation) & assigned],
+                own.integers,
+                own.small - assigned,
+                own.parameters - assigned,
+                own.assumed,
+            )
+        extents = sorted(
+            {
+                dim.name
+                for desc in self._arrays.values()
+                for dim in getattr(desc, "shape", ())
+                # An undefined symbol is a placeholder with no facts
+                if isinstance(dim, symbolic.symbol)
+                and not isinstance(dim, symbolic.UndefinedSymbol)
+                and dim.name in self.symbols
+                and dim.name not in assigned
+            }
+        )
+        if not extents:
+            return own
+        nonnegative = [symbolic.predicate_relation(symbolic.Predicate.NONNEGATIVE, symbolic.symbol(n)) for n in extents]
+        return own.with_relations(nonnegative)
+
+    @property
+    def symbol_repo(self) -> SymbolRepo:
+        """The dtypes and facts of this SDFG's symbols and of the names its scopes open."""
+        return self._symbol_repo
+
+    @property
+    def symbols(self) -> Mapping[str, dtypes.typeclass]:
+        """The symbols passed into this SDFG, by name: a read-only view of the parameters of its symbol repository,
+        which every change goes through."""
+        return types.MappingProxyType(self._symbol_repo.params.types)
 
     def remove_symbol(self, name):
         """Removes a symbol from the SDFG.
 
         :param name: Symbol name.
+        :raise ValueError: If an assumed relation still names the symbol.
         """
-        del self.symbols[name]
+        self._symbol_repo.remove(name)
         # Clean up from symbol mapping if this SDFG is nested
         nsdfg = self.parent_nsdfg_node
         if nsdfg is not None and name in nsdfg.symbol_mapping:
             del nsdfg.symbol_mapping[name]
+
+    def release_scope_bound_symbols(self, names: Iterable[str]) -> None:
+        """Removes the symbols a shape declared that a scope now binds: a loop or map iterator is never an SDFG
+        symbol. A symbol declared explicitly stays, so validation reports the collision."""
+        for name in sorted(self._symbol_repo.shape_declared.intersection(names)):
+            self.remove_symbol(name)
 
     @property
     def start_state(self):
@@ -1757,10 +1900,14 @@ class SDFG(ControlFlowRegion):
         defined_syms |= set(self.constants_prop.keys())
 
         # Add used symbols from init and exit code
+        declared = set(self.symbols)
         for code in self.init_code.values():
-            free_syms |= symbolic.symbols_in_code(code.as_string, self.symbols.keys())
+            free_syms |= symbolic.symbols_in_code(code.as_string, declared)
         for code in self.exit_code.values():
-            free_syms |= symbolic.symbols_in_code(code.as_string, self.symbols.keys())
+            free_syms |= symbolic.symbols_in_code(code.as_string, declared)
+        # The program checks the orders it was optimized under, so it takes their symbols
+        for relation in self._symbol_repo.runtime_assumptions:
+            free_syms |= symbolic.relation_names(relation)
 
         # Snapshot the set so super() can filter array names out of
         # ``free_syms``; we re-extract them from internal references below.
@@ -1810,7 +1957,8 @@ class SDFG(ControlFlowRegion):
                         if isinstance(node, nd.EntryNode):
                             scope_syms |= node.new_symbol_names(self, state)
                 res_free |= extents - scope_syms
-            res_free -= res_defined  # drop symbols defined inside (e.g. loop vars)
+            # Drop symbols defined inside (e.g. loop variables) and those a scope binds (e.g. map parameters)
+            res_free -= res_defined | scope_bound_names(self)
         return res_free, res_defined, res_before
 
     def get_all_toplevel_symbols(self) -> set[str]:
@@ -2243,16 +2391,15 @@ class SDFG(ControlFlowRegion):
         rather than folded into it -- the ordinary one runs thousands of times in a single parse.
         """
         return dt.find_new_name(name, _UsedNames(self, include_connectors=True))
+    def is_name_declared(self, name: str) -> bool:
+        """Checks if `name` is a data descriptor, symbol or constant of the SDFG."""
+        return name in self._arrays or name in self.symbols or name in self.constants_prop
 
     def is_name_used(self, name: str) -> bool:
         """Checks if `name` is already used inside the SDFG."""
-        if name in self._arrays:
-            return True
-        if name in self.symbols:
-            return True
-        if name in self.constants_prop:
-            return True
-        return False
+        # Loop variables, map parameters, dynamic connectors and interstate assignments bind their names without
+        # declaring them
+        return name in _UsedNames(self)
 
     def is_name_free(self, name: str) -> bool:
         """Test if `name` is free, i.e. is not used by anything else."""
@@ -2581,7 +2728,9 @@ class SDFG(ControlFlowRegion):
             return self.add_datadesc(name, newdesc, find_new_name=True), newdesc
         return self.add_datadesc(self.temp_data_name(), newdesc), newdesc
 
-    def add_datadesc(self, name: str, datadesc: dt.Data, find_new_name=False) -> str:
+    def add_datadesc(
+        self, name: str, datadesc: dt.Data, find_new_name=False, bound_names: AbstractSet[str] = frozenset()
+    ) -> str:
         """Adds an existing data descriptor to the SDFG array store.
 
         :param name: Name to use.
@@ -2603,25 +2752,37 @@ class SDFG(ControlFlowRegion):
             #   to create names that are formally invalid. The above code reproduces the exact
             #   same behavior and is maintained for compatibility. This behavior is
             #   triggered by tests/python_frontend/structures/structure_python_test.py::test_rgf`.
-            name = self._find_new_name(name)
-            name = name.replace(".", "_")
-            if self.is_name_used(name):
-                name = self._find_new_name(name)
+            used = _UsedNames(self)
+            name = dt.find_new_name(name, used).replace(".", "_")
+            if name in used:
+                name = dt.find_new_name(name, used)
         else:
             # We do not check for data constant, because there is a link between the constants and
             #  the data descriptors.
             if name in self.arrays:
                 raise FileExistsError(f'Data descriptor "{name}" already exists in SDFG')
             if name in self.symbols:
-                raise FileExistsError(f'Can not create data descriptor "{name}", the name is used by a symbol.')
+                raise NameCollisionError(f'Can not create data descriptor "{name}", the name is used by a symbol.')
 
         def _add_symbols(sdfg: SDFG, desc: dt.Data):
             if isinstance(desc, dt.Structure):
                 for v in desc.members.values():
                     if isinstance(v, dt.Data):
                         _add_symbols(sdfg, v)
-            for sym in desc.free_symbols:
-                if sym.name in sdfg.symbols or sym.name in sdfg.arg_names:
+            new = [
+                sym
+                for sym in sorted(desc.free_symbols, key=str)
+                if isinstance(sym, symbolic.symbol) and sym.name not in sdfg.symbols and sym.name not in sdfg.arg_names
+            ]
+            if not new:
+                return
+            # A shape may name a scoped symbol (e.g. a transient sized by a map parameter) or one an interstate edge
+            # assigns, which are not SDFG symbols
+            scoped = scope_bound_names(sdfg) | interstate_bound_names(sdfg) | bound_names
+            # The dtype comes with the symbol object. SymPy may build an expression from another object of the same name,
+            # so a symbol name has one dtype in a process.
+            for sym in new:
+                if sym.name in scoped:
                     continue
                 if sym.name in sdfg.arrays:
                     # The bare "name is used by a data descriptor" from ``add_symbol`` says nothing
@@ -2634,7 +2795,8 @@ class SDFG(ControlFlowRegion):
                         f'declare "{sym.name}" as a dace.symbol instead of passing it as a scalar '
                         f"argument."
                     )
-                sdfg.add_symbol(sym.name, sym.dtype)
+                sdfg.add_symbol(sym.name, sym.declaration.dtype)
+                sdfg.symbol_repo.shape_declared.add(sym.name)
 
         # Add the data descriptor to the SDFG and all symbols that are not yet known.
         self._arrays[name] = datadesc

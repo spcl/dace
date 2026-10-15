@@ -7,7 +7,7 @@ from dace import nodes, symbolic
 from dace import sdfg as sd
 from dace.sdfg import utils as sdutil
 from dace.sdfg.sdfg import InterstateEdge
-from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState, SymbolResolver
 from dace.subsets import intersects
 from dace.transformation import helpers, transformation
 from dace.transformation.passes.analysis import loop_analysis
@@ -128,7 +128,10 @@ class LoopOverwriteElimination(transformation.MultiStateTransformation):
                     if e.data.dynamic or e.data.wcr is not None:
                         return False
                     write_subsets.add(e.data.get_dst_subset(e, state))
-                if any(not intersects(rs, ws) for rs in read_subsets for ws in write_subsets):
+                facts = SymbolResolver().facts_at(state, dn)
+                if any(
+                    intersects(rs, ws, facts) is not symbolic.Truth.TRUE for rs in read_subsets for ws in write_subsets
+                ):
                     return False
 
         # Every write needs to be independent of the loop index.
@@ -170,14 +173,13 @@ class LoopOverwriteElimination(transformation.MultiStateTransformation):
                     # Pin the read to the iterate ``apply`` will actually keep, NOT to ``end`` -- see
                     # ``_last_iteration``. Testing ``end`` examined an index the loop may never reach.
                     src_subset.replace({self.loop.loop_variable: last_iteration})
-                    # None of write_subsets should lie within the new subset. ``intersects`` is
-                    # three-valued: True / False / None, where None means IT COULD NOT DECIDE (e.g. a
-                    # non-unit stride or tile, or an undecidable symbolic relation -- the module-level
-                    # wrapper turns that TypeError into None). None is falsy, so testing it directly let
-                    # an undecidable overlap fall through and ACCEPT, dropping a real loop-carried
-                    # dependency. Refuse unless the answer is a definite False, which is the sound
-                    # direction and matches the ``not intersects(...)`` guard on the unique-data check.
-                    if any(intersects(ws_ss, src_subset) is not False for ws_ss in write_subsets[dn.data]):
+                    # None of write_subsets may lie within the new subset: refuse unless the facts prove they are disjoint,
+                    # since an undecided overlap may be a real loop-carried dependency.
+                    facts = SymbolResolver().facts_at(state, dn)
+                    if any(
+                        intersects(ws_ss, src_subset, facts) is not symbolic.Truth.FALSE
+                        for ws_ss in write_subsets[dn.data]
+                    ):
                         return False
 
         # No conditional edge may depend on the loop variable.

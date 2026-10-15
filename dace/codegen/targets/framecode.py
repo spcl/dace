@@ -1,6 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import collections
-import copy
 import pathlib
 import re
 from collections.abc import Set as AbstractSet
@@ -17,6 +16,7 @@ from dace.codegen.target import TargetCodeGenerator
 from dace.ordered import OrderedSet
 from dace.sdfg import SDFG, SDFGState, nodes, utils
 from dace.sdfg import scope as sdscope
+from dace.sdfg.analysis import cfg as cfg_analysis
 from dace.sdfg.state import (
     AbstractControlFlowRegion,
     ConditionalBlock,
@@ -25,6 +25,7 @@ from dace.sdfg.state import (
     LoopRegion,
     SymbolResolver,
 )
+from dace.sdfg.symbol_repo import assumption_check, program_assumptions
 from dace.sdfg.type_inference import infer_expr_type
 from dace.transformation.passes.analysis import StateReachability, loop_analysis
 from dace.transformation.passes.analysis.scopes import AccessInstances, AllocationScopes, CodegenAnalysisPipeline
@@ -459,12 +460,22 @@ struct {mangle_dace_state_struct_name(sdfg)} {{
                     sdfg,
                 )
 
+        # The orders proofs took from symbol scales; init refuses symbol values that break one
+        assumptions = program_assumptions(sdfg)
+        if assumptions:
+            readable = {name for name in self.free_symbols(sdfg) if not name.startswith("__dace")}
+            callsite_stream.write(assumption_check(sdfg.name, initparams, assumptions, readable), sdfg)
+
         callsite_stream.write(
             f"""
 DACE_EXPORTED {mangle_dace_state_struct_name(sdfg)} *__dace_init_{sdfg.name}({initparams})
 {{""",
             sdfg,
         )
+        if assumptions:
+            callsite_stream.write(
+                f"    if (__dace_check_assumptions_{sdfg.name}({initparamnames}) != 0) return nullptr;\n", sdfg
+            )
 
         # Invoke all instrumentation providers
         for instr in self._dispatcher.instrumentation.values():
@@ -870,7 +881,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             states_generated.add(state)  # For sanity check
             return stream.getvalue()
 
-        callsite_stream.write(cflow.control_flow_region_to_code(sdfg, dispatch_state, self, sdfg.symbols), sdfg)
+        callsite_stream.write(cflow.control_flow_region_to_code(sdfg, dispatch_state, self, dict(sdfg.symbols)), sdfg)
 
         opbar.done()
 
@@ -1384,7 +1395,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                 self.dispatcher.defined_vars.add(cname, disp.DefinedType.Scalar, ctype.dtype.ctype)
 
         # Allocate inter-state variables
-        global_symbols = copy.deepcopy(sdfg.symbols)
+        global_symbols = dict(sdfg.symbols)
         global_symbols.update({aname: arr.dtype for aname, arr in sdfg.arrays.items()})
         interstate_symbols = {}
         for cfr in sdfg.all_control_flow_regions():

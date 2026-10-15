@@ -124,7 +124,7 @@ def infer_symbols_from_datadescriptor(
             if hasattr(arg_val, "strides"):
                 # NumPy arrays use bytes in strides
                 factor = getattr(arg_val, "itemsize", 1)
-                given_strides = [s // factor for s in arg_val.strides]
+                given_strides = [symbolic.int_floor(s, factor) for s in arg_val.strides]
             given_offset = list(arg_val.offset) if hasattr(arg_val, "offset") else []
 
             # On a rank mismatch (e.g. a rank-4 view with a length-1 axis passed to a rank-3 nested

@@ -500,7 +500,7 @@ class SymbolPropagation(ppl.Pass):
             still_bound = {k for ie in sd.all_interstate_edges() for k in ie.data.assignments.keys()}
             for name in sd_eliminated:
                 if name in sd.symbols and name not in still_bound:
-                    del sd.symbols[name]
+                    sd.symbol_repo.remove(name)
         return sd_eliminated
 
     # Given a cfg_blk, builds the incoming set of symbols

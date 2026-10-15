@@ -4,7 +4,7 @@ Contains operator replacements (e.g., NumPy Mathematical Functions) for supporte
 """
 
 import warnings
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from numbers import Number
 from typing import Any
 
@@ -32,7 +32,7 @@ def _unop(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, opcode: st
     """Implements a general element-wise array unary operator."""
     arr1 = sdfg.arrays[op1]
 
-    restype, cast = result_type([arr1], opname)
+    restype, cast = result_type([arr1], opname, symbols=pv.symbol_types())
     tasklet_code = f"__out = {opcode} __in1"
     if cast:
         tasklet_code = tasklet_code.replace("__in1", f"{cast}(__in1)")
@@ -68,7 +68,7 @@ def _makeunop(op, opcode):
     @oprepo.replaces_operator("Scalar", op)
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2=None):
         scalar1 = sdfg.arrays[op1]
-        restype, _ = result_type([scalar1], op)
+        restype, _ = result_type([scalar1], op, symbols=visitor.symbol_types())
         op2 = visitor.get_target_name()
         op2, scalar2 = sdfg.add_scalar(op2, restype, transient=True, find_new_name=True)
         tasklet = state.add_tasklet(f"_{op}_", {"__in"}, {"__out"}, f"__out = {opcode} __in")
@@ -141,8 +141,12 @@ def _is_op_boolean(op: str):
 
 
 def result_type(
-    arguments: Sequence[str | Number | symbolic.symbol | sp.Basic], operator: str = None
+    arguments: Sequence[str | Number | symbolic.symbol | sp.Basic],
+    operator: str = None,
+    *,
+    symbols: Mapping[str, dtypes.typeclass],
 ) -> tuple[list[dtypes.typeclass] | dtypes.typeclass | str, ...]:
+    """:param symbols: The type of every symbol name a symbolic argument may read (``ProgramVisitor.symbol_types``)."""
 
     datatypes = []
     dtypes_for_result = []
@@ -164,8 +168,9 @@ def result_type(
             dtypes_for_result.append(arg)
             dtypes_for_result_np2.append(arg)
         elif symbolic.issymbolic(arg):
-            datatypes.append(sym_type(arg))
-            dtypes_for_result.append(representative_num(sym_type(arg)))
+            arg_type = sym_type(arg, symbols)
+            datatypes.append(arg_type)
+            dtypes_for_result.append(representative_num(arg_type))
             # NEP 50: an INTEGER symbol is a *weak* operand -- a scalar index / size,
             # like a Python ``int`` -- so combined with a float it must take the
             # FLOAT's type (``float32 * i -> float32``), NOT width-promote it (a
@@ -177,7 +182,7 @@ def result_type(
             # promotion, matching the NumPy reference (where ``i`` is a Python int).
             # Non-integer symbols keep their strong type, and so does an integer symbol among integers only
             # (restored below): weakening it there narrows ``j * N`` to a narrower integer operand's type.
-            sym_dtype = sym_type(arg)
+            sym_dtype = arg_type
             if np.issubdtype(sym_dtype.type, np.integer):
                 weak_integer_symbols[len(dtypes_for_result_np2)] = sym_dtype.type
                 dtypes_for_result_np2.append(1)
@@ -434,7 +439,7 @@ def _array_array_binop(
     # Implicit Python coversion implemented as casting
     arguments = [left_arr, right_arr]
     tasklet_args = ["__in1", "__in2"]
-    restype, casting = result_type(arguments, operator)
+    restype, casting = result_type(arguments, operator, symbols=visitor.symbol_types())
     left_cast = casting[0]
     right_cast = casting[1]
 
@@ -516,7 +521,7 @@ def _array_const_binop(
         arguments = [left_operand, right_arr]
         tasklet_args = [f"({str(left_operand)})", "__in2"]
 
-    restype, casting = result_type(arguments, operator)
+    restype, casting = result_type(arguments, operator, symbols=visitor.symbol_types())
     left_cast = casting[0]
     right_cast = casting[1]
 
@@ -584,13 +589,13 @@ def _array_sym_binop(
         left_shape = left_arr.shape
         storage = left_arr.storage
         right_arr = None
-        right_type = sym_type(right_operand)
+        right_type = sym_type(right_operand, visitor.symbol_types())
         right_shape = [1]
         arguments = [left_arr, right_operand]
         tasklet_args = ["__in1", f"({astutils.unparse(right_operand)})"]
     else:
         left_arr = None
-        left_type = sym_type(left_operand)
+        left_type = sym_type(left_operand, visitor.symbol_types())
         left_shape = [1]
         right_arr = sdfg.arrays[right_operand]
         right_type = right_arr.dtype
@@ -599,7 +604,7 @@ def _array_sym_binop(
         arguments = [left_operand, right_arr]
         tasklet_args = [f"({astutils.unparse(left_operand)})", "__in2"]
 
-    restype, casting = result_type(arguments, operator)
+    restype, casting = result_type(arguments, operator, symbols=visitor.symbol_types())
     left_cast = casting[0]
     right_cast = casting[1]
 
@@ -670,7 +675,7 @@ def _scalar_scalar_binop(
     # Implicit Python coversion implemented as casting
     arguments = [left_scal, right_scal]
     tasklet_args = ["__in1", "__in2"]
-    restype, casting = result_type(arguments, operator)
+    restype, casting = result_type(arguments, operator, symbols=visitor.symbol_types())
     left_cast = casting[0]
     right_cast = casting[1]
 
@@ -726,7 +731,7 @@ def _scalar_const_binop(
         arguments = [left_operand, right_scal]
         tasklet_args = [f"({str(left_operand)})", "__in2"]
 
-    restype, casting = result_type(arguments, operator)
+    restype, casting = result_type(arguments, operator, symbols=visitor.symbol_types())
     left_cast = casting[0]
     right_cast = casting[1]
 
@@ -778,19 +783,19 @@ def _scalar_sym_binop(
         left_type = left_scal.dtype
         storage = left_scal.storage
         right_scal = None
-        right_type = sym_type(right_operand)
+        right_type = sym_type(right_operand, visitor.symbol_types())
         arguments = [left_scal, right_operand]
         tasklet_args = ["__in1", f"({astutils.unparse(right_operand)})"]
     else:
         left_scal = None
-        left_type = sym_type(left_operand)
+        left_type = sym_type(left_operand, visitor.symbol_types())
         right_scal = sdfg.arrays[right_operand]
         right_type = right_scal.dtype
         storage = right_scal.storage
         arguments = [left_operand, right_scal]
         tasklet_args = [f"({astutils.unparse(left_operand)})", "__in2"]
 
-    restype, casting = result_type(arguments, operator)
+    restype, casting = result_type(arguments, operator, symbols=visitor.symbol_types())
     left_cast = casting[0]
     right_cast = casting[1]
 
@@ -929,7 +934,7 @@ def _const_const_binop(
     Both operands are Constants or Symbols
     """
 
-    _, casting = result_type([left_operand, right_operand], operator)
+    _, casting = result_type([left_operand, right_operand], operator, symbols=visitor.symbol_types())
     left_cast = casting[0]
     right_cast = casting[1]
 

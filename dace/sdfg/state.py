@@ -867,12 +867,6 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
             update = {k: v for k, v in update.items() if v is not None}
             dic.update(update)
 
-        # Add data-descriptor free symbols; a declared symbol keeps its declared dtype
-        for desc in sdfg.arrays.values():
-            for sym in desc.free_symbols:
-                if sym.dtype is not None:
-                    defined_syms.setdefault(str(sym), sym.dtype)
-
         # Add inter-state symbols
         try:
             start_block = sdfg.start_block
@@ -1160,7 +1154,7 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
         for arg in data_args.values():
             scalar_args.update(
                 {
-                    str(k): dt.Scalar(k.dtype)
+                    str(k): dt.Scalar(defined_syms[str(k)])
                     for k in arg.used_symbols(all_symbols=False)
                     if not str(k).startswith("__dace") and str(k) not in sdfg.constants
                 }
@@ -1722,6 +1716,11 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
             nested.parent = self
             nested.parent_sdfg = self.sdfg
             nested.parent_nsdfg_node = node
+        if self.sdfg is not None:
+            if isinstance(node, nd.MapEntry):
+                self.sdfg.release_scope_bound_symbols(node.map.params)
+            elif isinstance(node, nd.ConsumeEntry):
+                self.sdfg.release_scope_bound_symbols([node.consume.pe_index])
         self._clear_scopedict_cache()
         result = super().add_node(node)
         if nested is not None:
@@ -1799,77 +1798,16 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         for edge in self.edges():
             edge.data.try_initialize(self.sdfg, self, edge)
 
-        # Resolve the authoritative dtype of every symbol an element may reference, so
-        # serialization emits a deterministic dtype that depends only on the enclosing
-        # scopes -- never on a symbol instance's own (cache-stale) dtype. The authority
-        # is rebuilt fresh on every serialization (never stored): opening a scope (entry
-        # node) augments the running map with that scope's ``new_symbols`` (its map
-        # iterators and dynamic-input connector symbols), and the parent level is
-        # restored when the recursion returns.
-        authority_by_node: dict[nd.Node, dict[str, dtypes.typeclass]] = {}
-        try:
-            scope_children = self.scope_children()
-
-            def _open_scope(scope_entry: nd.Node | None, authority: dict[str, dtypes.typeclass]):
-                for child in scope_children.get(scope_entry, []):
-                    if isinstance(child, nd.EntryNode):
-                        inner = {**authority, **child.new_symbols(self.sdfg, self, authority)}
-                        authority_by_node[child] = inner
-                        _open_scope(child, inner)
-                    else:
-                        authority_by_node[child] = authority
-
-            _open_scope(None, self.sdfg.symbols)  # read-only: a copy per state is quadratic in large SDFGs
-        except (RuntimeError, ValueError, KeyError):
-            authority_by_node = {}
-
-        # Nodes share a handful of authorities and every element asks for its own and its edges' node ids: prepare
-        # each authority once and index the nodes once, or a large state serializes in O(nodes * symbols + edges *
-        # nodes).
-        prepared: dict[tuple[int, ...], Any] = {}
-
-        def prepare(key: tuple[int, ...], authority) -> Any:
-            if key not in prepared:
-                prepared[key] = symbolic.prepare_serialization_symbol_dtypes(authority)
-            return prepared[key]
-
-        self._frozen_node_ids = {n: i for i, n in enumerate(self.nodes())}
-        try:
-            return self.state_json(parent, scope_dict, authority_by_node, prepare)
-        finally:
-            self._frozen_node_ids = None
-
-    def state_json(self, parent, scope_dict, authority_by_node, prepare) -> dict[str, Any]:
-        """The body of :meth:`to_json` once its scope authorities are resolved and its node order is frozen."""
-        nodes_json = []
-        for n in self.nodes():
-            authority = authority_by_node.get(n, self.sdfg.symbols)
-            with symbolic.serialization_symbol_dtypes(authority, prepared=prepare((id(authority),), authority)):
-                nodes_json.append(n.to_json(self))
-
-        # An edge's memlet sees the symbols of both endpoints' scopes (the richer
-        # one is sometimes the source, e.g. MapExit -> AccessNode), so merge them.
-        edges_json = []
-        for e in sorted(self.edges(), key=lambda e: (e.src_conn or "", e.dst_conn or "")):
-            src_authority = authority_by_node.get(e.src, {})
-            dst_authority = authority_by_node.get(e.dst, {})
-            if src_authority is dst_authority:
-                authority = src_authority
-            else:
-                # Looks names up as ``{**src_authority, **dst_authority}`` would, without copying
-                authority = collections.ChainMap(dst_authority, src_authority)
-            key = (id(src_authority), id(dst_authority))
-            with symbolic.serialization_symbol_dtypes(authority, prepared=prepare(key, authority)):
-                edges_json.append(e.to_json(self))
-
         ret = {
             "type": type(self).__name__,
             "label": self.name,
             "id": parent.node_id(self) if parent is not None else None,
             "collapsed": self.is_collapsed,
             "scope_dict": scope_dict,
-            "nodes": nodes_json,
-            "edges": edges_json,
+            "nodes": [n.to_json(self) for n in self.nodes()],
+            "edges": [
+                e.to_json(self) for e in sorted(self.edges(), key=lambda e: (e.src_conn or "", e.dst_conn or ""))
+            ],
             "attributes": serialize.all_properties_to_json(self),
         }
 
@@ -2181,6 +2119,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         location: dict[str, symbolic.SymbolicType] | None = None,
         debuginfo: dtypes.DebugInfo | None = None,
         external_path: str | None = None,
+        bound_inside: AbstractSet[str] = frozenset(),
     ):
         """
         Adds a nested SDFG to the SDFG state.
@@ -2199,6 +2138,8 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         :param location: Execution location descriptor for the nested SDFG.
         :param debuginfo: Debug information for the nested SDFG node.
         :param external_path: Path to an external SDFG file. Used when ``sdfg`` parameter is None.
+        :param bound_inside: Free symbols of the nested SDFG that the caller binds inside it next (e.g., by moving
+                             a loop in); they are neither mapped nor declared.
         :return: The created NestedSDFG node.
         :raises ValueError: If neither sdfg nor external_path is provided.
         :note: Once the node's edges are connected, call ``NestedSDFG.integrate_into_parent()`` on the returned
@@ -2242,7 +2183,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
             # Free symbols without an entry are the parent's symbols of the same name; NoneSymbol is an
             # optional-array marker, not a runtime symbol.
             symbol_mapping = dict(symbol_mapping or {})
-            for fs in sdfg.free_symbols - {"NoneSymbol"}:
+            for fs in sdfg.free_symbols - bound_inside - {"NoneSymbol"}:
                 symbol_mapping.setdefault(fs, fs)
             s.symbol_mapping = symbol_mapping
 
@@ -3069,6 +3010,7 @@ class SymbolResolver:
         self._region_updates: dict[
             tuple[ControlFlowBlock, ControlFlowBlock | None], list[dict[str, dtypes.typeclass]]
         ] = {}
+        self._facts: dict[tuple[ControlFlowBlock, nd.EntryNode | None], symbolic.Facts] = {}
 
     def defined_at(self, state: "SDFGState", node: nd.Node) -> dict[str, dtypes.typeclass]:
         last = self._per_state.get(state.sdfg)
@@ -3084,11 +3026,127 @@ class SymbolResolver:
             self._per_state[state.sdfg] = (state, state_symbols)
         return state.symbols_defined_at(node, state_symbols=state_symbols)
 
+    def facts_at(self, block: "ControlFlowBlock", node: nd.Node | None = None) -> symbolic.Facts:
+        """The facts that hold inside ``block`` (inside the body, for a loop), or at ``node`` of the state ``block``: the
+        SDFG's own facts, the ranges of the enclosing loops and maps whose step has a known sign, and the facts of an
+        enclosing SDFG, translated through the nested SDFG node's symbol mapping."""
+        return self.facts_in_scope(block, block.scope_dict()[node] if node is not None else None)
+
+    def facts_in_scope(self, block: "ControlFlowBlock", entry: nd.EntryNode | None) -> symbolic.Facts:
+        """The facts that hold inside the scope ``entry`` opens in the state ``block``, or inside ``block`` when it is
+        None; see ``facts_at``."""
+        key = (block, entry)
+        if key not in self._facts:
+            self._facts[key] = self.derive_facts(block, entry)
+        return self._facts[key]
+
+    def derive_facts(self, block: "ControlFlowBlock", entry: nd.EntryNode | None) -> symbolic.Facts:
+        # Avoid cyclic imports
+        from dace.sdfg.symbol_repo import scope_facts
+        from dace.transformation.passes.analysis import loop_analysis
+
+        sdfg = block.sdfg
+        own = sdfg.facts()
+        relations, integers, small, unreadable = self.outer_facts(sdfg)
+        relations.extend(own.relations)
+        integers |= own.integers
+        small |= own.small
+        parameters = own.parameters - unreadable
+        scopes: list[tuple[Any, dict[str, dtypes.typeclass], list[tuple[str, Any, Any, Any]]]] = []
+        region = block
+        while region is not None and region is not sdfg:
+            if isinstance(region, LoopRegion) and region.loop_variable:
+                bounds = (
+                    loop_analysis.get_init_assignment(region),
+                    loop_analysis.get_loop_end(region),
+                    loop_analysis.get_loop_stride(region),
+                )
+                scopes.append(
+                    (
+                        region,
+                        region.new_symbols(sdfg.symbols),
+                        # The body of an inverted loop runs once before its condition is checked
+                        [(region.loop_variable, *bounds)] if None not in bounds and not region.inverted else [],
+                    )
+                )
+            region = region.parent_graph
+        scopes.reverse()
+        maps = []
+        while entry is not None:
+            maps.append(entry)
+            entry = block.scope_dict()[entry]
+        for map_entry in reversed(maps):
+            bound = map_entry.new_symbols(sdfg, block, self.defined_at(block, map_entry))
+            # A bound with an approximation holds as its exact expression
+            ranges = [
+                (param, *(b.expr if isinstance(b, symbolic.SymExpr) else b for b in rng[:3]))
+                for param, rng in zip(map_entry.map.params, map_entry.map.range.ranges)
+            ]
+            scopes.append((map_entry, bound, ranges if isinstance(map_entry, nd.MapEntry) else []))
+        for owner, bound, ranges in scopes:
+            # A scope rebinds its names: what held for an outer symbol of the same name no longer does
+            relations = [relation for relation in relations if not symbolic.relation_names(relation) & bound.keys()]
+            small -= bound.keys()
+            parameters -= bound.keys()
+            integers = (integers - bound.keys()) | {
+                name for name, stype in bound.items() if stype in dtypes.INTEGER_TYPES
+            }
+            for name, low, high, step in ranges:
+                sign = sympy.sympify(step)
+                low, high = (low, high) if sign.is_positive else (high, low) if sign.is_negative else (None, None)
+                # The body of a provably empty range never runs, so its bounds, which contradict, are not facts
+                if low is not None and not (sympy.sympify(high) - sympy.sympify(low)).is_negative:
+                    relations += [
+                        symbolic.Relation(symbolic.RelationKind.LE, sympy.sympify(low), symbolic.symbol(name)),
+                        symbolic.Relation(symbolic.RelationKind.LE, symbolic.symbol(name), sympy.sympify(high)),
+                    ]
+            # What the scope declares for its names
+            if owner in sdfg.symbol_repo.scopes:
+                declared = scope_facts(sdfg.symbol_repo.scopes[owner])
+                relations.extend(declared.relations)
+                integers |= declared.integers
+        return symbolic.Facts(
+            tuple(relations), frozenset(integers), frozenset(small), frozenset(parameters), own.assumed
+        )
+
+    def outer_facts(self, sdfg: "SDFG") -> tuple[list[symbolic.Relation], set[str], set[str], frozenset[str]]:
+        """The facts at the node nesting ``sdfg``, over renamed outer symbols, with each mapped symbol equal to its
+        renamed expression; and the mapped symbols that are ``SMALL`` there, and those a check at program entry cannot
+        read (their values come from more than the outer parameters)."""
+        nsdfg = sdfg.parent_nsdfg_node
+        if nsdfg is None:
+            return [], set(), set(), frozenset()
+        outer = self.facts_at(sdfg.parent, nsdfg)
+        mapped = {name: symbolic.pystr_to_symbolic(value) for name, value in nsdfg.symbol_mapping.items()}
+        small = {name for name, value in mapped.items() if symbolic.is_small(value, outer)}
+        unreadable = frozenset(
+            name for name, value in mapped.items() if not {str(f) for f in value.free_symbols} <= outer.parameters
+        )
+        names = {name for relation in outer.relations for name in symbolic.relation_names(relation)}
+        names |= {str(free) for value in mapped.values() for free in value.free_symbols}
+        # ':' cannot appear in a DaCe name, so a renamed outer symbol never meets an inner one
+        renamed = {name: sympy.Symbol(f"outer:{name}") for name in names}
+        relations = [
+            symbolic.Relation(
+                relation.kind,
+                symbolic.replace_symbols(relation.lhs, renamed),
+                symbolic.replace_symbols(relation.rhs, renamed),
+            )
+            for relation in outer.relations
+        ]
+        relations += [
+            symbolic.Relation(symbolic.RelationKind.EQ, symbolic.symbol(name), symbolic.replace_symbols(value, renamed))
+            for name, value in mapped.items()
+        ]
+        return relations, {f"outer:{name}" for name in outer.integers}, small, unreadable
+
     def forget(self, sdfg: "SDFG") -> None:
         """Drops what was resolved for the states of an SDFG, after its symbols or data descriptors changed.
 
         :param sdfg: The SDFG that changed. The SDFGs nested in it are resolved separately and kept.
         """
+        # Nested SDFGs derive their facts from the enclosing ones, so none of them is kept
+        self._facts.clear()
         if self._per_sdfg.pop(sdfg, None) is None:
             return
         self._per_state.pop(sdfg, None)
@@ -3395,7 +3453,33 @@ class AbstractControlFlowRegion(
         # Position of this CFG in ``_cfg_list`` when last computed (see ``cfg_id``)
         self._cfg_id_cache: int | None = None
 
-    def propagate_memlets(self, border_memlets: dict[str, dict[str, mm.Memlet | None]]) -> None:
+    def get_meta_codeblocks(self) -> list[CodeBlock]:
+        """
+        Get a list of codeblocks used by the control flow region.
+        This may include things such as loop control statements or conditions for branching etc.
+        """
+        return []
+
+    def get_meta_read_memlets(self) -> list[mm.Memlet]:
+        """
+        Get read memlets used by the control flow region itself, such as in condition checks for conditional blocks, or
+        in loop conditions for loops etc.
+        """
+        return []
+
+    def replace_meta_accesses(self, replacements: dict[str, str]) -> None:
+        """
+        Replace accesses to specific data containers in reads or writes performed by the control flow region itself in
+        meta accesses, such as in condition checks for conditional blocks or in loop conditions for loops, etc.
+
+        :param replacements: A dictionary mapping the current data container names to the names of data containers with
+                             which accesses to them should be replaced.
+        """
+        pass
+
+    def propagate_memlets(
+        self, border_memlets: dict[str, dict[str, mm.Memlet | None]], symbols: "SymbolResolver"
+    ) -> None:
         """
         Propagate child-block memlets to this region boundary.
 
@@ -3407,6 +3491,7 @@ class AbstractControlFlowRegion(
         :param border_memlets: A mapping from connector direction and name to
                                the accumulated border memlet. The mapping is
                                updated in-place.
+        :param symbols: The ``SymbolResolver`` of the ongoing propagation.
         :note: ``border_memlets`` mapping is updated in-place.
         """
         from dace.sdfg import propagation as sdprop
@@ -3419,20 +3504,23 @@ class AbstractControlFlowRegion(
                 sdprop._collect_state_border_memlet_candidates(block, candidates)
             elif isinstance(block, AbstractControlFlowRegion):
                 nested_memlets = sdprop._make_border_memlets(border_memlets)
-                block.propagate_memlets(nested_memlets)
+                block.propagate_memlets(nested_memlets, symbols)
                 sdprop._append_border_memlet_candidates(candidates, nested_memlets)
 
+        # A loop's range holds for the candidates in its body, not for the border memlets around it
+        inside = symbols.facts_at(self)
+        facts = symbols.facts_at(self.parent_graph) if isinstance(self, LoopRegion) else inside
         for direction in border_memlets:
             for connector in border_memlets[direction]:
                 propagated = sdprop._propagate_border_memlet_candidates(
-                    candidates, self.sdfg.arrays, direction, connector
+                    candidates, self.sdfg.arrays, direction, connector, inside
                 )
                 if propagated is None:
                     continue
 
                 array_name = propagated.data if propagated.data is not None else connector
                 border_memlets[direction][connector] = sdprop._merge_border_memlet(
-                    border_memlets[direction][connector], propagated, self.sdfg.arrays[array_name]
+                    border_memlets[direction][connector], propagated, self.sdfg.arrays[array_name], facts
                 )
 
     @property
@@ -3627,6 +3715,13 @@ class AbstractControlFlowRegion(
         # Claims ``node`` itself as well as everything below it, so a bare ``SDFGState`` carrying a
         # nested SDFG -- a cloned body state, say -- is re-homed like a region is.
         rehome_claimed_block(node, sdfg)
+        # A loop the block brings binds its variable, which is then no SDFG symbol.
+        if isinstance(node, AbstractControlFlowRegion) and sdfg is not None:
+            sdfg.release_scope_bound_symbols(
+                region.loop_variable
+                for region in node.all_control_flow_regions()
+                if isinstance(region, LoopRegion) and region.loop_variable and region.init_statement is not None
+            )
         # ``cfg_id`` is a position in ``cfg_list``: the block's regions go where a reset would put them.
         register_regions(self, node, contributed_regions(node))
         start_block = is_start_block
@@ -4475,7 +4570,9 @@ class LoopRegion(ControlFlowRegion):
         if self.update_statement:
             replace_in_codeblock(self.update_statement, replacements)
 
-    def propagate_memlets(self, border_memlets: dict[str, dict[str, mm.Memlet | None]]) -> None:
+    def propagate_memlets(
+        self, border_memlets: dict[str, dict[str, mm.Memlet | None]], symbols: "SymbolResolver"
+    ) -> None:
         """
         Propagate memlets across a loop region boundary.
 
@@ -4488,20 +4585,24 @@ class LoopRegion(ControlFlowRegion):
         :param border_memlets: A mapping from connector direction and name to
                                the accumulated border memlet. The mapping is
                                updated in-place.
+        :param symbols: The ``SymbolResolver`` of the ongoing propagation.
         :note: ``border_memlets`` mapping is updated in-place.
         """
+        # The range holds for the candidates in the body, not for the border memlets around the loop
+        body_facts = symbols.facts_at(self)
+        facts = symbols.facts_at(self.parent_graph)
         # Avoid cyclic import
         from dace.transformation.passes.analysis import loop_analysis
 
         if self.has_break:
-            super().propagate_memlets(border_memlets)
+            super().propagate_memlets(border_memlets, symbols)
             return
 
         init = loop_analysis.get_init_assignment(self)
         end = loop_analysis.get_loop_end(self)
         stride = loop_analysis.get_loop_stride(self)
         if not self.loop_variable or init is None or end is None or stride in (None, 0):
-            super().propagate_memlets(border_memlets)
+            super().propagate_memlets(border_memlets, symbols)
             return
 
         candidates = sdprop._make_border_memlets(border_memlets, as_lists=True)
@@ -4512,14 +4613,14 @@ class LoopRegion(ControlFlowRegion):
                 sdprop._collect_state_border_memlet_candidates(block, candidates)
             elif isinstance(block, AbstractControlFlowRegion):
                 nested_memlets = sdprop._make_border_memlets(border_memlets)
-                block.propagate_memlets(nested_memlets)
+                block.propagate_memlets(nested_memlets, symbols)
                 sdprop._append_border_memlet_candidates(candidates, nested_memlets)
 
         def _range_is_definitely_empty(start, stop) -> bool:
             """Returns True only when the remaining inverted-loop range is provably empty."""
-            simplified_start = symbolic.simplify(start)
-            simplified_stop = symbolic.simplify(stop)
-            simplified_stride = symbolic.simplify(stride)
+            simplified_start = symbolic.simplify(start, facts)
+            simplified_stop = symbolic.simplify(stop, facts)
+            simplified_stride = symbolic.simplify(stride, facts)
             if any(
                 getattr(expr, "free_symbols", set()) for expr in (simplified_start, simplified_stop, simplified_stride)
             ):
@@ -4543,6 +4644,7 @@ class LoopRegion(ControlFlowRegion):
                         self.sdfg.arrays,
                         direction,
                         connector,
+                        body_facts,
                         params=[self.loop_variable],
                         rng=loop_range,
                         scale_by_range=True,
@@ -4552,7 +4654,7 @@ class LoopRegion(ControlFlowRegion):
 
                     array_name = propagated.data if propagated.data is not None else connector
                     target_memlets[direction][connector] = sdprop._merge_border_memlet(
-                        target_memlets[direction][connector], propagated, self.sdfg.arrays[array_name]
+                        target_memlets[direction][connector], propagated, self.sdfg.arrays[array_name], facts
                     )
 
         if not self.inverted:
@@ -4563,11 +4665,11 @@ class LoopRegion(ControlFlowRegion):
         _propagate_range(init, init, first_iteration_memlets)
 
         remaining_iterations_memlets = sdprop._make_border_memlets(border_memlets)
-        remaining_start = symbolic.simplify(init + stride)
+        remaining_start = symbolic.simplify(init + stride, facts)
         # For inverted loops with update-before-condition disabled, the body can
         # execute once at ``end + stride`` before the termination condition is
         # observed, so the propagated range must include that final iteration.
-        remaining_end = end if self.update_before_condition else symbolic.simplify(end + stride)
+        remaining_end = end if self.update_before_condition else symbolic.simplify(end + stride, facts)
         if not _range_is_definitely_empty(remaining_start, remaining_end):
             _propagate_range(remaining_start, remaining_end, remaining_iterations_memlets)
 
@@ -4582,7 +4684,7 @@ class LoopRegion(ControlFlowRegion):
 
                     array_name = propagated.data if propagated.data is not None else connector
                     border_memlets[direction][connector] = sdprop._merge_border_memlet(
-                        border_memlets[direction][connector], propagated, self.sdfg.arrays[array_name]
+                        border_memlets[direction][connector], propagated, self.sdfg.arrays[array_name], facts
                     )
 
     def _used_symbols_internal(
@@ -4815,7 +4917,9 @@ class ConditionalBlock(AbstractControlFlowRegion):
                 read_set |= code.get_free_symbols() & arrays
         return read_set, write_set
 
-    def propagate_memlets(self, border_memlets: dict[str, dict[str, mm.Memlet | None]]) -> None:
+    def propagate_memlets(
+        self, border_memlets: dict[str, dict[str, mm.Memlet | None]], symbols: "SymbolResolver"
+    ) -> None:
         """
         Propagate memlets across a conditional region boundary.
 
@@ -4827,19 +4931,21 @@ class ConditionalBlock(AbstractControlFlowRegion):
         :param border_memlets: A mapping from connector direction and name to
                                the accumulated border memlet. The mapping is
                                updated in place.
+        :param symbols: The ``SymbolResolver`` of the ongoing propagation.
         :note: ``border_memlets`` mapping is updated in-place.
         """
         from dace.sdfg import propagation as sdprop
 
         # Branch conditions are evaluated regardless of which branch is taken.
-        sdprop._merge_meta_read_candidates(self, border_memlets, self.sdfg.arrays)
+        sdprop._merge_meta_read_candidates(self, border_memlets, self.sdfg.arrays, symbols)
 
         has_condition = False
+        facts = symbols.facts_at(self)
 
         for condition, region in self._branches:
             has_condition = has_condition or condition is not None
             branch_memlets = sdprop._make_border_memlets(border_memlets)
-            region.propagate_memlets(branch_memlets)
+            region.propagate_memlets(branch_memlets, symbols)
 
             for direction in border_memlets:
                 for connector in border_memlets[direction]:
@@ -4853,7 +4959,7 @@ class ConditionalBlock(AbstractControlFlowRegion):
 
                     array_name = propagated.data if propagated.data is not None else connector
                     border_memlets[direction][connector] = sdprop._merge_border_memlet_upper_bound(
-                        border_memlets[direction][connector], propagated, self.sdfg.arrays[array_name]
+                        border_memlets[direction][connector], propagated, self.sdfg.arrays[array_name], facts
                     )
 
     def _used_symbols_internal(

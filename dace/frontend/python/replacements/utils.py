@@ -5,7 +5,7 @@ Contains utility functions and types for replacements in the DaCe Python fronten
 
 import itertools
 import math
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from numbers import Integral, Number
 from typing import TYPE_CHECKING
 
@@ -51,7 +51,7 @@ def simple_call(
         sdfg.add_constant(inpname, cst, inparr)
         sdfg.add_datadesc(inpname, inparr)
     elif symbolic.issymbolic(inpname):
-        dtype = symbolic.symtype(inpname)
+        dtype = symbolic.symtype(inpname, pv.symbol_types())
         inparr = data.Scalar(dtype)
         create_input = False
     else:
@@ -249,7 +249,7 @@ def np_result_type(nptypes):
 SYM_TYPE_NAMESPACE = {"math": math, "np": np, "numpy": np, "nan": math.nan, "inf": math.inf}
 
 
-def representative_value(expr: sp.Basic):
+def representative_value(expr: sp.Basic, symbols: Mapping[str, dtypes.typeclass]):
     """``expr`` evaluated at one representative point, for the sole purpose of reading its TYPE.
 
     TWO points are tried, because the first is degenerate for an ordinary expression: the integer
@@ -263,7 +263,7 @@ def representative_value(expr: sp.Basic):
     """
     points = (0, 1)
     for offset in points:
-        substitutions = [(s, representative_num(s.dtype) + offset) for s in expr.free_symbols]
+        substitutions = [(s, representative_num(symbols[s.name]) + offset) for s in expr.free_symbols]
         try:
             value = eval(astutils.unparse(expr.subs(substitutions)), dict(SYM_TYPE_NAMESPACE))
         except ZeroDivisionError:
@@ -275,10 +275,14 @@ def representative_value(expr: sp.Basic):
     return value
 
 
-def sym_type(expr: symbolic.symbol | sp.Basic) -> dtypes.typeclass:
+def sym_type(expr: symbolic.symbol | sp.Basic, symbols: Mapping[str, dtypes.typeclass]) -> dtypes.typeclass:
+    """The type of a symbolic expression whose symbols have the types ``symbols`` gives by name.
+
+    :raise KeyError: If ``symbols`` does not type a symbol of the expression.
+    """
     if isinstance(expr, symbolic.symbol):
-        return expr.dtype
-    pyval = representative_value(expr)
+        return symbols[expr.name]
+    pyval = representative_value(expr, symbols)
     # Overflow check
     if isinstance(pyval, int) and (pyval > np.iinfo(np.int64).max or pyval < np.iinfo(np.int64).min):
         nptype = np.int64

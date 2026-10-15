@@ -19,8 +19,8 @@ from dace.sdfg import graph as gr
 from dace.sdfg import propagation
 from dace.sdfg import utils as sdutil
 from dace.sdfg.scope import ScopeTree
-from dace.sdfg.state import AbstractControlFlowRegion, ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
-from dace.transformation import transformation
+from dace.sdfg.state import AbstractControlFlowRegion, ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState, SymbolResolver
+from dace.transformation import helpers, transformation
 from dace.transformation.passes.analysis import loop_analysis
 
 
@@ -732,6 +732,8 @@ class MoveLoopIntoMap(transformation.MultiStateTransformation):
             if str(itervar) in n.free_symbols:
                 return False
 
+        facts = SymbolResolver().facts_at(body)
+
         def test_subset_dependency(subset: sbs.Subset, mparams: set[int]) -> tuple[bool, list[int]]:
             dims = []
             for i, r in enumerate(subset):
@@ -750,23 +752,13 @@ class MoveLoopIntoMap(transformation.MultiStateTransformation):
                             # Only indices allowed
                             if len(r) > 1 and r[0] != r[1]:
                                 return (False, [])
-                            # Injective IN THE LOOP ITERATOR, so differentiate by it explicitly.
-                            # Omitting the variable only works while the index happens to hold a
-                            # single free symbol; a two-symbol index (``_loop_it_0 + _loop_it_2``,
-                            # which polybench ``lu`` produces once loop origins are rebased) makes
-                            # sympy refuse to guess and raise instead of answering the question.
-                            # Injective IN THE LOOP ITERATOR, so differentiate by it explicitly.
-                            # Letting sympy infer the variable only works while the index holds a
-                            # single free symbol; a two-symbol index (``_loop_it_0 + _loop_it_2``,
-                            # which polybench ``lu`` produces once loop origins are rebased) makes
-                            # it refuse to guess and raise instead of answering the question.
-                            # Take the symbol INSTANCE out of the expression rather than building a
-                            # fresh one -- a reconstructed symbol carries different assumptions, so
-                            # ``diff`` would not match it and would answer 0 for every index.
-                            ivsym = next((s for s in r[0].free_symbols if str(s) == str(itervar)), None)
-                            derivative = diff(r[0], ivsym) if ivsym is not None else 0
+                            derivative = diff(r[0], symbol(itervar))
                             # Index function must be injective
-                            if not (((derivative > 0) == True) or ((derivative < 0) == True)):
+                            if not any(
+                                symbolic.ask(symbolic.Relation(symbolic.RelationKind.LT, lhs, rhs), facts)
+                                is symbolic.Truth.TRUE
+                                for lhs, rhs in ((0, derivative), (derivative, 0))
+                            ):
                                 return (False, [])
                         dims.append(i)
             return (True, dims)
@@ -848,7 +840,8 @@ class MoveLoopIntoMap(transformation.MultiStateTransformation):
 
         # nest map's content in sdfg
         map_subgraph = body.scope_subgraph(map_entry, include_entry=False, include_exit=False)
-        nsdfg = helpers.nest_state_subgraph(sdfg, body, map_subgraph)
+        # The loop moves into the nested SDFG, which binds its iterator there
+        nsdfg = helpers.nest_state_subgraph(sdfg, body, map_subgraph, bound_inside={itervar})
         nested_state: SDFGState = nsdfg.sdfg.nodes()[0]
 
         # replicate loop in nested sdfg
@@ -882,10 +875,8 @@ class MoveLoopIntoMap(transformation.MultiStateTransformation):
             graph.add_edge(body, oe.dst, oe.data)
         graph.remove_node(self.loop)
 
-        if itervar in nsdfg.symbol_mapping:
-            del nsdfg.symbol_mapping[itervar]
         if itervar in sdfg.symbols:
-            del sdfg.symbols[itervar]
+            sdfg.symbol_repo.remove(itervar)
 
         # Add missing data/symbols
         for s in nsdfg.sdfg.free_symbols:

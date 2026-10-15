@@ -9,7 +9,8 @@ from dace import graphlib as nx
 from dace.config import Config
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
-from dace.sdfg.state import SDFGState
+from dace.sdfg.state import SDFGState, SymbolResolver
+from dace.symbolic import Truth
 from dace.transformation import transformation
 
 
@@ -242,17 +243,16 @@ class StateFusion(transformation.MultiStateTransformation):
             edges_b = [e for n in group_b for e in graph_b.in_edges(n)]
             subset_b = dst_subset
 
-        # Simple all-pairs check
+        # Simple all-pairs check. The states are consecutive, so what holds in the first holds in the second.
+        facts = SymbolResolver().facts_at(graph_a)
         for ea in edges_a:
             for eb in edges_b:
                 sa, sb = subset_a(ea), subset_b(eb)
-                # ``subsets.intersects`` only knows Range, but a SubsetUnion is a legal
-                # ``Memlet.subset`` (properties.py) and would raise AttributeError. Indeterminate
-                # is the conservative answer, and it is what this function already returns True on.
+                # A SubsetUnion is a legal ``Memlet.subset`` (properties.py) whose overlap with a Range is not
+                # decided here; indeterminate is the conservative answer, and this function returns True on it.
                 if isinstance(sa, subsets.SubsetUnion) or isinstance(sb, subsets.SubsetUnion):
                     return True
-                result = subsets.intersects(sa, sb)
-                if result is True or result is None:
+                if subsets.intersects(sa, sb, facts) is not Truth.FALSE:
                     return True
         return False
 

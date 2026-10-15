@@ -555,8 +555,14 @@ def result_type_of(lhs, *rhs):
     from dace.data import Data
     from dace.symbolic import is_symbol_leaf
 
-    lhs = lhs.dtype if (is_symbol_leaf(lhs) or isinstance(lhs, Data)) else lhs
-    rhs = rhs.dtype if (is_symbol_leaf(rhs) or isinstance(rhs, Data)) else rhs
+    def type_of(operand: Any) -> Any:
+        if type(operand).__name__ == "symbol":
+            return operand.declaration.dtype  # A user's symbol object: the type it was declared with
+        if is_symbol_leaf(operand) or isinstance(operand, Data):
+            return operand.dtype  # A native backend's symbol carries its type
+        return operand
+
+    lhs, rhs = type_of(lhs), type_of(rhs)
 
     if lhs == rhs:
         return lhs  # Types are the same, return either

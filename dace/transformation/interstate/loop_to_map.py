@@ -29,11 +29,14 @@ from dace.sdfg.state import (
     ControlFlowRegion,
     LoopRegion,
     ReturnBlock,
+    SymbolResolver,
 )
 from dace.sdfg.type_inference import infer_expr_type
 from dace.transformation import helpers
 from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis, smt_dependence
+
+IndexExpr = str | int | symbolic.SymbolicType
 
 
 def _align_itersym(expr, itersym):
@@ -193,32 +196,13 @@ def _sanitize_by_index(indices: set[int], subset: subsets.Subset) -> subsets.Ran
     return subsets.Range([t for i, t in enumerate(subset.ndrange()) if i in indices])
 
 
-def _affine_coeffs(expr, itersym):
-    """Return ``(a, b)`` with ``expr == a*itersym + b``, or ``None`` if
-    ``expr`` is not affine in ``itersym``.
-
-    Derived, not searched for. ``expand`` + ``coeff`` + ``simplify`` is the obvious spelling
-    but it is superlinear in the size of the index expression: on a deeply tiled nest (the
-    two-level tiled Jacobi stencil, whose indices carry every enclosing tile origin) the
-    expansion blows up and ``coeff``'s ``as_independent`` walk over the resulting sum does not
-    come back -- ``LoopToMap.can_be_applied`` never returned, so the pipeline hung.
-
-    For an expression polynomial in ``itersym`` the coefficients are exact by construction:
-    the derivative IS ``a`` when the degree is at most one (and still mentions ``itersym``
-    when it is higher, which is the degree test), and evaluating at zero IS ``b``. Both are
-    structural, and neither expands the expression. Non-polynomial in ``itersym`` (an
-    ``int_floor`` of it, say) is not affine and is refused, as before.
-
-    SOUNDNESS: the expression is re-pointed at ``itersym`` first. A DaCe symbol folds its
-    dtype into its identity, so a subset built by the frontend can carry ``j:int64`` while
-    ``itersym`` is the reparsed ``j:int32``. ``diff`` then sees no occurrence of ``itersym``
-    and reports ``a == 0`` -- the index reads as a loop-INVARIANT constant. Two such
-    "constants" ``j+1`` and ``j`` differ by a nonzero number, so
-    :func:`_dim_provably_disjoint` declares a genuine loop-carried recurrence provably
-    disjoint and LoopToMap parallelizes it (adi/deriche's ``u[1:N-1, j] = ... u[1:N-1, j+1]``
-    silently miscompiled). Aligning first makes the derivative see the real coefficient.
-    """
-    e = _align_itersym(symbolic.pystr_to_symbolic(expr), itersym)
+def _affine_coeffs(
+    expr: IndexExpr, itersym: symbolic.symbol
+) -> tuple[symbolic.SymbolicType, symbolic.SymbolicType] | None:
+    """``(a, b)`` with ``expr == a*itersym + b``, or ``None`` if not affine. Derivative and
+    value at zero, since ``expand`` + ``coeff`` hung on tiled indices; a derivative still naming
+    ``itersym`` is the degree test."""
+    e = symbolic.pystr_to_symbolic(expr)
     if not e.is_polynomial(itersym):
         return None
     a = sp.diff(e, itersym)
@@ -227,27 +211,11 @@ def _affine_coeffs(expr, itersym):
     return a, e.subs(itersym, 0)
 
 
-def _same_injective_index(idx1, idx2, itersym) -> bool:
-    """True iff ``idx1`` and ``idx2`` are the SAME injective affine function ``a*i+b``
-    (``a != 0``) of the iteration variable.
-
-    When two accesses index a dimension by such a function, a collision on that dimension
-    (``a*p+b == a*q+b``) forces the two iterations to coincide (``p == q``). Any overlap between
-    them is therefore confined to a single iteration -- where program order in the map body is
-    preserved -- and never becomes a cross-iteration dependency. Used both for write/write
-    overlap (:func:`_writes_may_overlap`) and read/write RAW (:func:`_read_write_same_iteration`).
-
-    Both indices and the iteration symbol are re-parsed through the symbol registry (via their
-    string form) before the comparison: a read subset and a write subset can carry copies of the
-    iteration variable that share the NAME ``i`` but different sympy assumptions, so ``idx1 -
-    idx2`` would not simplify to zero and ``coeff`` would not see them as the same symbol.
-    Canonicalizing drops the assumption metadata and makes both refer to one registry symbol.
-    """
-    sym = symbolic.pystr_to_symbolic(str(itersym))
-    e1 = symbolic.pystr_to_symbolic(str(idx1))
-    e2 = symbolic.pystr_to_symbolic(str(idx2))
-    coeffs = _affine_coeffs(e1, sym)
-    return coeffs is not None and coeffs[0] != 0 and symbolic.simplify(e1 - e2) == 0
+def _same_injective_index(idx1: IndexExpr, idx2: IndexExpr, itersym: symbolic.symbol) -> bool:
+    """True iff ``idx1`` and ``idx2`` are the same injective affine ``a*i+b`` (``a != 0``) of ``itersym``."""
+    e1, e2 = symbolic.pystr_to_symbolic(idx1), symbolic.pystr_to_symbolic(idx2)
+    coeffs = _affine_coeffs(e1, itersym)
+    return coeffs is not None and coeffs[0] != 0 and sp.simplify(e1 - e2) == 0
 
 
 def _dim_provably_disjoint(idx1, idx2, itersym, step=1, start=0) -> bool:
@@ -1393,6 +1361,12 @@ class LoopToMap(xf.MultiStateTransformation):
 
     loop = xf.PatternNode(LoopRegion)
 
+    keep_small_loops_sequential = properties.Property(
+        dtype=bool,
+        default=True,
+        desc="Leave a loop whose iteration range spans only SMALL symbols (e.g. ``range(n1 + n2)``) sequential",
+    )
+
     @classmethod
     def expressions(cls):
         return [sdutil.node_path_graph(cls.loop)]
@@ -1442,6 +1416,18 @@ class LoopToMap(xf.MultiStateTransformation):
         # Bounds must be integer-derived: non-sequential map schedules are otherwise invalid.
         if not t in dtypes.INTEGER_TYPES:
             return refuse(f"loop bounds are not integer types - result_type={t}")
+
+        facts = SymbolResolver().facts_at(self.loop)
+        if self.keep_small_loops_sequential and symbolic.is_small(end - start, facts):
+            return False
+
+        # A map runs its range upwards: a loop is mapped only when the sign of its step is known
+        zero = sp.Integer(0)
+        if all(
+            symbolic.ask(symbolic.Relation(symbolic.RelationKind.LT, *sides), facts) is not symbolic.Truth.TRUE
+            for sides in ((zero, sp.sympify(step)), (sp.sympify(step), zero))
+        ):
+            return False
 
         # Loops containing break, continue, or returns may not be turned into a map.
         for blk in self.loop.all_control_flow_blocks():
@@ -1913,6 +1899,8 @@ class LoopToMap(xf.MultiStateTransformation):
         a = sp.Wild("a", exclude=[itersym])
         b = sp.Wild("b", exclude=[itersym])
         data = mmlt.data
+        # Inside the body (an inter-state edge read has no state): a dependence only exists if the loop runs
+        facts = SymbolResolver().facts_at(state if state is not None else self.loop)
 
         if mmlt.dynamic and mmlt.src_subset.num_elements() != 1:
             # If pointers are involved, give up
@@ -1931,7 +1919,7 @@ class LoopToMap(xf.MultiStateTransformation):
             mmlt = align_memlet(state, edge, dst=False)
             data = mmlt.data
 
-        pread = propagate_subset([mmlt], sdfg.arrays[data], [itervar], subsets.Range([(start, end, step)]))
+        pread = propagate_subset([mmlt], sdfg.arrays[data], [itervar], subsets.Range([(start, end, step)]), facts)
         for candidate in write_memlets[data]:
             # Simple case: read and write are in the same subset
             read = src_subset
@@ -2008,11 +1996,11 @@ class LoopToMap(xf.MultiStateTransformation):
                 continue
             # Propagated read does not overlap with propagated write
             pwrite = propagate_subset(
-                [candidate], sdfg.arrays[data], [itervar], subsets.Range([(start, end, step)]), use_dst=True
+                [candidate], sdfg.arrays[data], [itervar], subsets.Range([(start, end, step)]), facts, use_dst=True
             )
             t_pread = _sanitize_by_index(indices, pread.src_subset if pread.src_subset is not None else pread.subset)
             pwrite = _sanitize_by_index(indices, pwrite.dst_subset if pwrite.dst_subset is not None else pwrite.subset)
-            if subsets.intersects(t_pread, pwrite) is False:
+            if subsets.intersects(t_pread, pwrite, facts) is symbolic.Truth.FALSE:
                 continue
             return False
 
@@ -2069,6 +2057,10 @@ class LoopToMap(xf.MultiStateTransformation):
         start = loop_analysis.get_init_assignment(self.loop)
         end = loop_analysis.get_loop_end(self.loop)
         step = loop_analysis.get_loop_stride(self.loop)
+        negative_step = symbolic.ask(
+            symbolic.Relation(symbolic.RelationKind.LT, sp.sympify(step), sp.Integer(0)),
+            SymbolResolver().facts_at(self.loop),
+        )
 
         nsdfg = None
 
@@ -2221,12 +2213,14 @@ class LoopToMap(xf.MultiStateTransformation):
         # Add NestedSDFG node
         declare_lifted_symbols(nsdfg, sdfg, self.loop, lift_ctx)
         cnode = body.add_nested_sdfg(nsdfg, read_set, write_set)
+        passed_on: dict[str, dtypes.typeclass] = {}
         if sdfg.parent:
             for s in sdfg.parent_nsdfg_node.symbol_mapping.keys():
                 if s not in cnode.symbol_mapping:
                     cnode.symbol_mapping[s] = symbolic.pystr_to_symbolic(s)
-                    # Other passes map symbols without declaring them; type it off the symbol.
-                    nsdfg.symbols[s] = sdfg.symbols.get(s, symbolic.symbol(s).dtype)
+                    # Other passes map symbols without declaring them; those get the default symbol type
+                    passed_on[s] = sdfg.symbols.get(s, symbolic.DEFAULT_SYMBOL_TYPE)
+                    nsdfg.symbol_repo.add(s, passed_on[s])
         for name in read_set:
             r = body.add_read(name)
             body.add_edge(r, None, cnode, name, memlet.Memlet.from_array(name, sdfg.arrays[name]))
@@ -2241,7 +2235,11 @@ class LoopToMap(xf.MultiStateTransformation):
                 if sym in sdfg.symbols:
                     sdfg.remove_symbol(sym)
         for sym, dtype in nsymbols.items():
-            nsdfg.symbols[sym] = dtype
+            nsdfg.symbol_repo.add(sym, dtype)
+        # This SDFG now passes on what its parent maps in, so it declares it too
+        for sym, dtype in passed_on.items():
+            if sym not in sdfg.symbols:
+                sdfg.add_symbol(sym, dtype)
 
         # Symbols the nested SDFG assigns on its own interstate edges are internal → keep off the
         # node's ``symbol_mapping``. Surfacing them makes the outer SDFG appear to need them as
@@ -2260,12 +2258,12 @@ class LoopToMap(xf.MultiStateTransformation):
                     continue
                 if sym_name in sdfg.symbols:
                     if sym_name not in nsdfg.symbols:
-                        nsdfg.symbols[sym_name] = sdfg.symbols[sym_name]
+                        nsdfg.symbol_repo.add(sym_name, sdfg.symbols[sym_name])
                     if sym_name not in cnode.symbol_mapping:
                         cnode.symbol_mapping[sym_name] = symbolic.pystr_to_symbolic(sym_name)
 
         # Propagate symbols, where types cannot be inferred
-        alltypes = copy.deepcopy(nsdfg.symbols)
+        alltypes = dict(nsdfg.symbols)
         alltypes.update({k: v.dtype for k, v in nsdfg.arrays.items()})
         for e in self.loop.all_interstate_edges():
             for k, v in e.data.assignments.items():
@@ -2287,7 +2285,7 @@ class LoopToMap(xf.MultiStateTransformation):
 
                 # Only add explicit type, if it cannot be inferred
                 if vtype is None:
-                    nsdfg.symbols[k] = ktype
+                    nsdfg.symbol_repo.add(k, ktype)
 
         # The registrations above can free a symbol after ``add_nested_sdfg`` fixed the mapping;
         # a free symbol missing from the node's mapping fails validation, so self-map leftovers.
@@ -2297,9 +2295,9 @@ class LoopToMap(xf.MultiStateTransformation):
                 continue
             cnode.symbol_mapping[sym] = symbolic.pystr_to_symbolic(sym)
             if sym not in nsdfg.symbols and sym in sdfg.symbols:
-                nsdfg.symbols[sym] = sdfg.symbols[sym]
+                nsdfg.symbol_repo.add(sym, sdfg.symbols[sym])
 
-        if (step < 0) == True:
+        if negative_step is symbolic.Truth.TRUE:
             # If step is negative, we have to flip start and end to produce a correct map with a positive increment.
             start, end, step = end, start, -step
 

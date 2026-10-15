@@ -8,12 +8,14 @@ import threading
 import types
 import weakref
 from collections import Counter
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from functools import cache, lru_cache
 from typing import (
     TYPE_CHECKING,
     Any,
+    NamedTuple,
     Optional,
+    TypeAlias,
     TypeVar,
     Union,
 )
@@ -39,6 +41,25 @@ from dace.symbolic_engine import native_parse, to_sympy
 #: not enter the ABI -- ``SDFG.arglist`` drops every ``__dace``-prefixed name, so this is usable in
 #: a shape without appearing in any signature. Always defined, so a pass may use it unconditionally.
 NUM_THREADS_SYMBOL = "__dace_num_threads"
+
+# Re-exported so callers reach the facts API as ``symbolic.ask``, ``symbolic.Facts``, ...
+from dace.symbolic_facts import (  # noqa: F401
+    Facts,
+    InconsistentAssumptionsError,
+    Predicate,
+    Relation,
+    RelationKind,
+    Scale,
+    Truth,
+    ask,
+    cached_proof,
+    comparison_relation,
+    is_small,
+    predicate_relation,
+    provably_le,
+    provably_nonnegative,
+    relation_names,
+)
 
 DEFAULT_SYMBOL_TYPE = dtypes.int32
 
@@ -258,8 +279,10 @@ else:
     equal_valued = sympy.core.numbers.equal_valued
 
 
-def _symbol_spec(name, dtype, assumptions) -> tuple[str, "dtypes.typeclass", dict[str, Any]]:
-    """Shared, so the backend factory and the sympy class cannot disagree on what a legal symbol is."""
+def _symbol_spec(name, dtype) -> tuple[str, "dtypes.typeclass"]:
+    """The validated name and dtype of a symbol, shared so the backend factory and the sympy class cannot disagree on
+    what a legal symbol is. Assumptions are not part of it: a symbol is its name, and what holds of it are the facts
+    of the SDFG it is used in."""
     if dtype is None:
         dtype = DEFAULT_SYMBOL_TYPE
     if name is None:
@@ -273,18 +296,9 @@ def _symbol_spec(name, dtype, assumptions) -> tuple[str, "dtypes.typeclass", dic
 
     if not isinstance(dtype, dtypes.typeclass):
         raise TypeError("dtype must be a DaCe type, got %s" % str(dtype))
-
-    dkeys = [k for k, v in dtypes.dtype_to_typeclass().items() if v == dtype]
-    is_integer = [issubclass(k, int) or issubclass(k, numpy.integer) for k in dkeys]
-
-    # Don't pass `commutative` explicitly (SymPy defaults it to True anyway): keeping it out
-    # of `_assumptions_orig` avoids srepr/serialization order mismatches across build paths.
-    assumptions = {k: v for k, v in assumptions.items() if k != "commutative"}
-    if "integer" not in assumptions and numpy.any(is_integer):
-        assumptions["integer"] = True
-    if "nonnegative" not in assumptions and any(issubclass(k, numpy.unsignedinteger) for k in dkeys):
-        assumptions["nonnegative"] = True
-    return name, dtype, assumptions
+    if dtype in (dtypes.complex64, dtypes.complex128):
+        raise TypeError(f'Symbol "{name}" cannot be complex: symbols are real scalars')
+    return name, dtype
 
 
 class SymbolMeta(type(sympy.Symbol)):
@@ -307,31 +321,45 @@ class SymbolMeta(type(sympy.Symbol)):
 _SYMBOL_META = SymbolMeta if symbolic_engine.NATIVE_EXPR is not None else type(sympy.Symbol)
 
 
+class SymbolDeclaration(NamedTuple):
+    """What ``dace.symbol(name, dtype, **assumptions)`` declares. Only the creator of the object reads it (the
+    frontend, from the program's own symbols): an object found inside an expression may be any symbol of its name,
+    so the type of a name comes from the SDFG's symbols."""
+
+    dtype: dtypes.typeclass
+    predicates: frozenset[Predicate]
+    scale: Scale
+
+
 class symbol(sympy.Symbol, metaclass=_SYMBOL_META):
     """Defines a symbolic variable. Extends SymPy symbols with DaCe-related
     information."""
 
     s_currentsymbol = 0
+    declaration: SymbolDeclaration
 
     def __new__(cls, name=None, dtype=None, **assumptions):
-        name, dtype, assumptions = _symbol_spec(name, dtype, assumptions)
-        # Using __xnew__ as the regular __new__ is cached, which leads
-        # to modifying different references of symbols with the same name.
-        self = sympy.Symbol.__xnew__(cls, name, **assumptions)
-
-        self.dtype = dtype
+        name, dtype = _symbol_spec(name, dtype)
+        # A symbol is its name: SymPy sees the same assumption on every symbol (a scalar, so real), so equal names are
+        # equal symbols everywhere. The declaration travels with this object only to ``SDFG.add_symbol``; integrality
+        # and signs come from the facts where an expression is simplified.
+        self = sympy.Symbol.__xnew__(cls, name, real=True)
+        self.declaration = SymbolDeclaration(
+            dtype,
+            frozenset(predicate for predicate in Predicate if assumptions.get(predicate.name.lower())),
+            Scale.SMALL if assumptions.get("small") else Scale.DEFAULT,
+        )
         self._constraints = []
         return self
 
     def __getstate__(self):
-        return dict(self.assumptions0, **{"dtype": self.dtype, "_constraints": self._constraints})
+        return {"declaration": self.declaration, "_constraints": self._constraints}
 
-    def _hashable_content(self):
-        # SymPy's equality, hashing and global ``@cacheit`` constructor caches all key on this. Without the dtype,
-        # same-name symbols of different dtypes alias, and a cached expression built around one is handed back for
-        # the other (cf. ``TypedConstant``). ``ctype`` rather than the typeclass itself: SymPy orders expressions by
-        # comparing these tuples element-wise, and typeclasses define equality but no ordering.
-        return super()._hashable_content() + (self.dtype.ctype,)
+    @property
+    def dtype(self) -> dtypes.typeclass:
+        """The dtype this object was DECLARED with. Transitional: the type of a name is the SDFG's
+        (``sdfg.symbols``); code reading it off an object found inside an expression is being moved there."""
+        return self.declaration.dtype
 
     def _eval_subs(self, old, new):
         """
@@ -529,7 +557,7 @@ class UndefinedSymbol(symbol):
             dtype = DEFAULT_SYMBOL_TYPE
         # Bypass the name validation
         self = sympy.Symbol.__xnew__(cls, "?", **assumptions)
-        self.dtype = dtype
+        self.declaration = SymbolDeclaration(dtype, frozenset(), Scale.DEFAULT)
         self._constraints = []
         return self
 
@@ -542,37 +570,37 @@ class UndefinedSymbol(symbol):
         return super()._eval_subs(old, new)
 
     def __abs__(self):
-        return UndefinedSymbol(self.dtype)
+        return UndefinedSymbol(self.declaration.dtype)
 
     def __add__(self, other):
-        return UndefinedSymbol(self.dtype)
+        return UndefinedSymbol(self.declaration.dtype)
 
     def __radd__(self, other):
-        return UndefinedSymbol(self.dtype)
+        return UndefinedSymbol(self.declaration.dtype)
 
     def __sub__(self, other):
-        return UndefinedSymbol(self.dtype)
+        return UndefinedSymbol(self.declaration.dtype)
 
     def __rsub__(self, other):
-        return UndefinedSymbol(self.dtype)
+        return UndefinedSymbol(self.declaration.dtype)
 
     def __mul__(self, other):
-        return UndefinedSymbol(self.dtype)
+        return UndefinedSymbol(self.declaration.dtype)
 
     def __rmul__(self, other):
-        return UndefinedSymbol(self.dtype)
+        return UndefinedSymbol(self.declaration.dtype)
 
     def __truediv__(self, other):
-        return UndefinedSymbol(self.dtype)
+        return UndefinedSymbol(self.declaration.dtype)
 
     def __rtruediv__(self, other):
-        return UndefinedSymbol(self.dtype)
+        return UndefinedSymbol(self.declaration.dtype)
 
     def __pow__(self, other):
-        return UndefinedSymbol(self.dtype)
+        return UndefinedSymbol(self.declaration.dtype)
 
     def __rpow__(self, other):
-        return UndefinedSymbol(self.dtype)
+        return UndefinedSymbol(self.declaration.dtype)
 
     # Comparisons always return False to indicate indeterminate equality
     def __eq__(self, other):
@@ -891,41 +919,8 @@ def _typed_constant_to_string(expr: TypedConstant) -> str:
     return f"dace.{expr.dtype.to_string()}({value})"
 
 
-@lru_cache(maxsize=None, typed=True)
-def _default_assumptions_for_dtype(dtype: "dtypes.typeclass") -> types.MappingProxyType:
-    """The assumption closure a dtype implies, for the serializer to diff against.
-
-    Name-independent: sympy derives these from the assumption kwargs alone, so ONE probe answers for
-    every symbol of that dtype. Two fresh `symbol` objects were built per printed symbol instead,
-    which measured 55% of `save()` on the largest CloudSC SDFG.
-
-    `sympy_symbol`, so the probe is sympy's own derived-fact closure rather than another engine's
-    reconstruction from a typed range -- otherwise the emitted kwargs would differ per backend.
-    """
-    return types.MappingProxyType(sympy_symbol("__assumption_probe", dtype=dtype).assumptions0)
-
-
-@lru_cache(maxsize=16384, typed=True)
-def _symbol_serializer_kwargs(expr: symbol, dtype: "dtypes.typeclass") -> dict[str, Any]:
-    # Cached: the result only depends on the assumptions of the symbol (part of its equality) and on ``dtype``.
-    # The returned dictionary must not be modified.
-    kwargs = {}
-    if dtype != DEFAULT_SYMBOL_TYPE:
-        kwargs["dtype"] = f"dace.{dtype.to_string()}"
-
-    # The INSTANCE's dtype: when it disagrees with the declared one, emitting the closure it already
-    # implies makes the round trip lossy.
-    default_assumptions = _default_assumptions_for_dtype(expr.dtype)
-    for key, value in sorted(expr.assumptions0.items()):
-        if key == "commutative" or key.startswith("extended_"):
-            continue
-        if value is True and default_assumptions.get(key) != value:
-            kwargs[key] = value
-    return kwargs
-
-
 # Type hint for symbolic expressions
-SymbolicType = sympy.Expr | SymExpr
+SymbolicType: TypeAlias = sympy.Basic | SymExpr
 
 #: A sympy object that keeps its own type through an operation that only renames symbols.
 SympyT = TypeVar("SympyT", bound=sympy.Basic)
@@ -936,18 +931,21 @@ def _checkEqualIvo(lst):
     return not lst or lst.count(lst[0]) == len(lst)
 
 
-def symtype(expr):
-    """Returns the inferred symbol type from a symbolic expression."""
-    stypes = [s.dtype for s in symlist(expr).values()]
+def symtype(expr, symbols: Mapping[str, dtypes.typeclass]) -> dtypes.typeclass:
+    """The type shared by the symbols of a symbolic expression, typed by name in ``symbols``.
+
+    :raise KeyError: If ``symbols`` does not type a symbol of the expression.
+    :raise TypeError: If the symbols have different types.
+    """
+    stypes = {name: symbols[name] for name in symlist(expr)}
     if len(stypes) == 0:
         return DEFAULT_SYMBOL_TYPE
-    elif _checkEqualIvo(stypes):
-        return stypes[0]
+    elif _checkEqualIvo(list(stypes.values())):
+        return next(iter(stypes.values()))
     else:
         raise TypeError(
-            'Cannot infer symbolic type from expression "{}" with symbols [{}]'.format(
-                str(expr), ", ".join([str(s) + ": " + str(s.dtype) for s in symlist(expr)])
-            )
+            'Cannot infer symbolic type from expression "%s" with symbols [%s]'
+            % (str(expr), ", ".join(f"{name}: {stype}" for name, stype in stypes.items()))
         )
 
 
@@ -1206,7 +1204,8 @@ def is_multiple(value: SymbolicType | int, alignment: SymbolicType | int) -> boo
     if isinstance(alignment, SymExpr):
         alignment = alignment.expr
     if issymbolic(value) or issymbolic(alignment):
-        return sympy.Mod(value, alignment) == 0
+        # Multiples are of integers, so the symbols are integers here
+        return sympy.Mod(_as_integers(sympy.sympify(value)), _as_integers(sympy.sympify(alignment))) == 0
     return int(value) % int(alignment) == 0
 
 
@@ -1964,6 +1963,29 @@ class DaceFunction(sympy.Function, metaclass=_HEAD_META):
             ...
 
 
+def _as_integers(expr: sympy.Expr) -> sympy.Expr:
+    """``expr`` over integer symbols of the same names, for operands that are integers by definition."""
+    return expr.xreplace(
+        {s: sympy.Symbol(s.name, integer=True) for s in expr.free_symbols if isinstance(s, sympy.Symbol)}
+    )
+
+
+def _integral(quotient: sympy.Expr) -> bool:
+    """Whether a quotient of integer division operands is an integer: the operands are integers by definition."""
+    return _as_integers(quotient).is_integer is True
+
+
+def ceiling_div(numerator: sympy.Expr, step: sympy.Expr) -> sympy.Expr:
+    """``ceil(numerator / step)`` for an integer numerator and step, such as the element count of a range."""
+    if step == 1:
+        return numerator
+    quotient = numerator / step
+    # Over integer operands the ceiling folds an exact quotient and an integer part (``ceil(N - 1/2) = N``)
+    names = {s.name: s for s in quotient.free_symbols if isinstance(s, sympy.Symbol)}
+    folded = sympy.ceiling(_as_integers(quotient))
+    return folded.xreplace({s: names[s.name] for s in folded.free_symbols if isinstance(s, sympy.Symbol)})
+
+
 def split_divisible_terms(x, y) -> tuple[sympy.Basic, sympy.Basic] | None:
     """Split ``x`` into ``(quotient, remainder)`` with ``x == quotient * y + remainder``, ``quotient``
     a provable integer and ``remainder`` everything that did not divide, or None if no term divides.
@@ -1979,7 +2001,7 @@ def split_divisible_terms(x, y) -> tuple[sympy.Basic, sympy.Basic] | None:
     quotient, remainder = sympy.S.Zero, sympy.S.Zero
     for term in sympy.Add.make_args(x):
         candidate = term / y
-        if candidate.is_integer:
+        if _integral(candidate):
             quotient += candidate
         else:
             remainder += term
@@ -2019,7 +2041,7 @@ class int_floor(DaceFunction):
             # Exact division is not a rounding operation at all -- return the quotient itself, so the
             # expression stays comparable and simplifiable instead of hiding behind an int_floor node.
             quotient = x / y
-            if quotient.is_integer:
+            if _integral(quotient):
                 return quotient
         # A divisor that may be zero divides nothing: folding ``int_floor(i, i)`` to 1 asserts
         # ``i != 0``, which no assumption established, and it costs the expression its only symbol.
@@ -2134,7 +2156,7 @@ class int_ceil(DaceFunction):
                 return x
             # Exact division has nothing to round up, so it is just the quotient.
             quotient = x / y
-            if quotient.is_integer:
+            if _integral(quotient):
                 return quotient
         if y.is_nonzero is not True:
             return None
@@ -3308,14 +3330,6 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
     """
 
     @staticmethod
-    def _python_bool(value):
-        if value is sympy.true:
-            return True
-        if value is sympy.false:
-            return False
-        return value
-
-    @staticmethod
     def _flatten_args(expr_type, *args):
         result = []
         for arg in args:
@@ -3658,8 +3672,6 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
 def _cast_symbolic_value(value, dtype: dtypes.typeclass):
     if isinstance(value, SymExpr):
         return SymExpr(_cast_symbolic_value(value.expr, dtype), _cast_symbolic_value(value.approx, dtype))
-    if isinstance(value, symbol):
-        return sympy_symbol(value.name, dtype=dtype, **value.assumptions0)
     if isinstance(value, TypedConstant):
         return TypedConstant(value.value, dtype=dtype)
     if isinstance(value, (sympy.Integer, sympy.Float, int, float, numpy.generic)):
@@ -3675,16 +3687,6 @@ class DaceSympySerializer(sympy.printing.str.StrPrinter):
             return "$?"
         if expr.name == "NoneSymbol":
             return "None"
-        if isinstance(expr, symbol):
-            # Prefer the dtype the enclosing scope declares for this name over the
-            # instance's own (possibly default-minted) dtype; a name the scope does not
-            # declare keeps the instance dtype (the authority only overrides).
-            dtype = _SERIALIZATION_SYMBOL_DTYPES.get().get(expr.name, expr.dtype)
-            kwargs = _symbol_serializer_kwargs(expr, dtype)
-            if not kwargs:
-                return f"${expr.name}"
-            kwlist = ", ".join(f"{key}={value}" for key, value in kwargs.items())
-            return f"symbol(${expr.name}, {kwlist})"
         return f"${expr.name}"
 
     def _print_TypedConstant(self, expr):
@@ -3804,19 +3806,13 @@ def _serialize_symbolic_uncached(expr: SymbolicType | int | float | numpy.number
             return str(expr.p)
         if expr_type is symbol or expr_type is sympy.Symbol:
             return DaceSympySerializer()._print_Symbol(expr)
-        # SymPy equality ignores the dtypes of DaCe symbols, which are printed, so they are part of the key
-        scope_dtypes = _SERIALIZATION_SYMBOL_DTYPES.get()
-        symbol_dtypes = frozenset((s.name, scope_dtypes.get(s.name, s.dtype)) for s in expr.atoms(symbol))
-        return _serialize_sympy_expression(expr, symbol_dtypes)
+        return _serialize_sympy_expression(expr)
     return str(expr)
 
 
-@lru_cache(maxsize=16384)
-def _serialize_sympy_expression(expr: sympy.Basic, symbol_dtypes: frozenset[tuple[str, "dtypes.typeclass"]]) -> str:
-    """
-    Serializes a SymPy expression. The result only depends on the expression and on the dtypes its DaCe symbols are
-    serialized with (``symbol_dtypes``, which the caller computes from the current scope), so it is cached.
-    """
+@lru_cache(maxsize=16384, typed=True)
+def _serialize_sympy_expression(expr: sympy.Basic) -> str:
+    """Serializes a SymPy expression; a symbol prints as its bare name, so the text depends on the expression only."""
     return DaceSympySerializer().doprint(expr)
 
 
@@ -3993,7 +3989,7 @@ def symbol_replacements(
     return result or None
 
 
-def replace_symbols(expr: Any, replacements: dict[str, sympy.Basic] | None) -> Any:
+def replace_symbols(expr: Any, replacements: Mapping[str, Any] | None) -> Any:
     """
     Replaces the symbols of an expression named in ``replacements`` (see ``symbol_replacements``), all at once and
     whatever their types.
@@ -4091,8 +4087,54 @@ def _pystr_to_symbolic_uncached(expr, symbol_map=None, simplify=None) -> sympy.B
     return sympy_to_dace(result, symbol_map)
 
 
+@cached_proof
+def fold_extrema(expr: sympy.Expr, facts: Facts) -> sympy.Expr:
+    """``expr`` with every argument of a ``Min``/``Max`` that the facts prove is not the extremum dropped."""
+
+    def fold(extremum: sympy.Expr) -> sympy.Expr:
+        # For a Max, an argument is dominated by one at least as large; for a Min, by one at most as large
+        def dominated(arg: sympy.Expr, by: sympy.Expr) -> bool:
+            return provably_le(arg, by, facts) if isinstance(extremum, sympy.Max) else provably_le(by, arg, facts)
+
+        kept: list[sympy.Expr] = []
+        for arg in extremum.args:
+            if not any(dominated(arg, other) for other in kept):
+                kept = [other for other in kept if not dominated(other, arg)] + [arg]
+        return extremum.func(*kept)
+
+    return expr.replace(lambda node: isinstance(node, (sympy.Min, sympy.Max)), fold)
+
+
+@cached_proof
+def simplify_under(expr: SymbolicType, facts: Facts) -> SymbolicType:
+    """Simplifies ``expr`` under ``facts``. Each symbol a relation solves for is rewritten in nonnegative slacks
+    (``N = s + 5`` for ``N > 4``), every other symbol carries the integrality and sign the facts prove, and the result
+    is written back in the original symbols (``s = N - 5``)."""
+    expr = fold_extrema(sympy.sympify(expr), facts)
+    names = {s.name: s for s in expr.free_symbols if isinstance(s, sympy.Symbol) and not isinstance(s, sympy.Dummy)}
+    solved = {str(target): value for target, value in facts.substitution.items()}
+    rewritten = expr.xreplace({s: solved.get(name, s) for name, s in names.items()})
+    plain = {s for s in rewritten.free_symbols if isinstance(s, sympy.Symbol) and not isinstance(s, sympy.Dummy)}
+    assumed = {s: sympy.Symbol(s.name, **facts.assumptions(s.name)) for s in plain}
+    result = sympy.simplify(rewritten.xreplace(assumed)).xreplace(facts.slacks)
+    # A renamed outer symbol (its name holds ':') or a variable of the facts has no name inside the scope: keep the
+    # expression as it was
+    if any(":" in s.name or isinstance(s, sympy.Dummy) for s in result.free_symbols if isinstance(s, sympy.Symbol)):
+        return expr
+    return result.xreplace(
+        {
+            s: names[s.name] if s.name in names else symbol(s.name)
+            for s in result.free_symbols
+            if isinstance(s, sympy.Symbol)
+        }
+    )
+
+
 @lru_cache(maxsize=2048, typed=True)
-def simplify(expr: SymbolicType) -> SymbolicType:
+def simplify(expr: SymbolicType, facts: Facts | None = None) -> SymbolicType:
+    """Simplifies ``expr`` under ``facts`` (:func:`simplify_under`). ``None`` is :meth:`Facts.none`, for a caller not
+    yet handed the facts of its scope: symbols are names only, so it proves nothing about their signs or integrality.
+    """
     # Exact fast paths: sympy.simplify returns numbers, plain symbols, integer linear forms and integer monomials
     # unchanged, and a Python int as its Integer. A zero or infinite symbol folds (1/oo -> 0) and unevaluated
     # input can be rewritten, so both still reach sympy.
@@ -4128,7 +4170,7 @@ def simplify(expr: SymbolicType) -> SymbolicType:
         return sympy.Integer(expr)
     if isinstance(expr, sympy.Number) or is_plain_symbol(expr) or is_fixed_point(expr):
         return expr
-    return sympy.simplify(expr)
+    return simplify_under(expr, facts if facts is not None else Facts.none())
 
 
 #: Rounding nodes a bound proof can relax: DaCe's integer division / ceiling division, and sympy's

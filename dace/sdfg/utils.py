@@ -933,6 +933,10 @@ def consolidate_edges_scope(state: SDFGState, scope_node: nd.EntryNode | nd.Exit
     # have coarsened it -- track the precise per-write subsets instead.
     merged_write_subsets: dict[str, list[sbs.Subset]] = collections.defaultdict(list)
 
+    # The outer side of the scope
+    facts = SymbolResolver().facts_at(
+        state, scope_node if isinstance(scope_node, nd.EntryNode) else state.entry_node(scope_node)
+    )
     for conn in connectors_to_remove:
         e = edges_by_connector[conn][0]
         odata = get_outer_data(e)
@@ -953,14 +957,12 @@ def consolidate_edges_scope(state: SDFGState, scope_node: nd.EntryNode | nd.Exit
         if isinstance(scope_node, nd.ExitNode):
             # These are two write paths merging into one outer edge. Consolidation drops
             # one of the writes' individual position in program order, so it is only safe
-            # when the subsets provably cannot overlap. ``Range.intersects`` both returns
-            # None *and* raises on a bound sympy won't decide; the module-level helper
-            # folds both into None, so anything but a hard False means "may overlap".
+            # when the subsets provably cannot overlap: anything but a proven FALSE means "may overlap".
             incoming = get_outer_subset(edge_to_remove)
             history = merged_write_subsets[target_conn]
             if not history:
                 history.append(get_outer_subset(out_edge))
-            if any(sbs.intersects(incoming, prior) is not False for prior in history):
+            if any(sbs.intersects(incoming, prior, facts) is not dace.symbolic.Truth.FALSE for prior in history):
                 continue
             # The dropped write's node may order a later scope that itself writes the kept node;
             # moving that ordering onto the kept node would close a cycle, and dropping it would
@@ -983,7 +985,7 @@ def consolidate_edges_scope(state: SDFGState, scope_node: nd.EntryNode | nd.Exit
                 continue
 
         remove_outer_connector(conn_to_remove)
-        set_outer_subset(out_edge, sbs.union(get_outer_subset(out_edge), get_outer_subset(edge_to_remove)))
+        set_outer_subset(out_edge, sbs.union(get_outer_subset(out_edge), get_outer_subset(edge_to_remove), facts))
 
         # The disjointness test above reasons about DATA. The dropped edge is also a program point:
         # whatever it wrote to is where some later scope's happens-before may be anchored, and once
@@ -2158,10 +2160,8 @@ def traverse_sdfg_with_defined_symbols(
     :return: A generator that yields tuples of (state, node in state, currently-defined symbols)
     """
     # Start with global symbols and scalar constants
-    symbols = copy.copy(sdfg.symbols)
+    symbols = dict(sdfg.symbols)
     symbols.update({k: desc.dtype for k, (desc, _) in sdfg.constants_prop.items() if isinstance(desc, dt.Scalar)})
-    for desc in sdfg.arrays.values():
-        symbols.update({str(s): s.dtype for s in desc.free_symbols})
 
     yield from _tswds_cf_region(sdfg, sdfg, symbols, recursive)
 
@@ -2414,7 +2414,7 @@ def prune_symbols(sdfg: SDFG):
                 free_symbols = node.sdfg.free_symbols
                 defined_symbols = declared_symbols - free_symbols
                 for s in defined_symbols:
-                    del node.sdfg.symbols[s]
+                    node.sdfg.symbol_repo.remove(s)
                     if s in node.symbol_mapping:
                         del node.symbol_mapping[s]
 

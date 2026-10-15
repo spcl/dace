@@ -2640,10 +2640,7 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
 
                 device_map_range = subsets.Range(scope_map.range[::-1])
                 device_map_dims = device_map_range.size()
-                dsym = [
-                    symbolic.symbol("__DAPB%d" % i, nonnegative=True, integer=True)
-                    for i in range(len(device_map_range))
-                ]
+                dsym = [symbolic.symbol("__DAPB%d" % i) for i in range(len(device_map_range))]
                 bidx = device_map_range.coord_at(dsym)
 
                 # handle dynamic map inputs
@@ -2717,7 +2714,7 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                     condition = ""
 
                     # Optimize conditions if they are always true
-                    if i >= 3 or (dsym[i] >= minel) != True:
+                    if i >= 3 or not _index_starts_at(dsym[i], minel):
                         condition += f"{v} >= {_topy(minel)}"
                     if (
                         i >= 3
@@ -2770,7 +2767,7 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                 brange = subsets.Range(scope_map.range[::-1])
                 kdims = brange.size()
                 dsym = [
-                    symbolic.symbol("__DAPT%d" % i, nonnegative=True, integer=True) - off
+                    symbolic.symbol("__DAPT%d" % i) - off
                     for i, off in zip(range(len(brange)), extra_gdim_offsets[scope_map])
                 ]
                 gdims = len(self._kernel_map.params)
@@ -2807,7 +2804,7 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                     #############################################
 
                     # Block range start
-                    if i >= 3 or (dsym[i] >= minel) != True:
+                    if i >= 3 or not _index_starts_at(dsym[i], minel):
                         condition += f"{v} >= {_topy(minel)}"
 
                     # Special case: block size is exactly the range of the map (0:b)
@@ -2844,7 +2841,7 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
 
             brange = subsets.Range(scope_map.range[::-1])
             kdims = brange.size()
-            dsym = [symbolic.symbol("__DAPT%d" % i, nonnegative=True, integer=True) for i in range(len(brange))]
+            dsym = [symbolic.symbol("__DAPT%d" % i) for i in range(len(brange))]
             dsym_end = [d + (bs * rng[2]) - 1 for d, bs, rng in zip(dsym, self._block_dims, brange)]
             tidx = brange.coord_at(dsym)
 
@@ -2906,7 +2903,7 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                 #############################################
 
                 # Block range start
-                if i >= 3 or (dsym[i] >= minel) != True:
+                if i >= 3 or not _index_starts_at(dsym[i], minel):
                     condition += f"{v} >= {_topy(minel)}"
 
                 # Special case: block size is exactly the range of the map (0:b)
@@ -3191,6 +3188,14 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
 ########################################################################
 ########################################################################
 # Helper functions and classes
+
+
+def _index_starts_at(index: sympy.Expr, begin: sympy.Expr) -> bool:
+    """Whether a grid index (of ``__DAPB*`` block and ``__DAPT*`` thread index symbols, which count up from zero)
+    provably never falls below ``begin``."""
+    names = frozenset(s.name for s in index.free_symbols if s.name.startswith(("__DAPB", "__DAPT")))
+    from_zero = [symbolic.Relation(symbolic.RelationKind.LE, sympy.Integer(0), symbolic.symbol(name)) for name in names]
+    return symbolic.provably_le(begin, index, symbolic.Facts(from_zero, names))
 
 
 def _topy(arr):
@@ -3924,7 +3929,7 @@ def kernel_index_definitions(
     """
     krange = subsets.Range(kernel_map.range[::-1])
     kdims = krange.size()
-    dsym = [symbolic.symbol("__DAPB%d" % i, nonnegative=True, integer=True) for i in range(len(krange))]
+    dsym = [symbolic.symbol("__DAPB%d" % i) for i in range(len(krange))]
     bidx = krange.coord_at(dsym)
     result = []
     # First three dimensions are evaluated directly
@@ -3954,13 +3959,13 @@ def kernel_grid_conditions(kernel_map: nodes.Map, block_dims: list, chiplets: in
     """One condition per parameter (empty if always true) that masks the out-of-range threads of the trailing
     blocks of a kernel without a thread-block map, e.g. ``i >= 0 && i < N``."""
     krange = subsets.Range(kernel_map.range[::-1])
-    dsym = [symbolic.symbol("__DAPB%d" % i, nonnegative=True, integer=True) for i in range(len(krange))]
+    dsym = [symbolic.symbol("__DAPB%d" % i) for i in range(len(krange))]
     dsym_end = [d + bs - 1 for d, bs in zip(dsym, block_dims)]
     conditions = []
     for i, (v, minel, maxel) in enumerate(zip(kernel_map.params[::-1], krange.min_element(), krange.max_element())):
         terms = []
         # Optimize conditions if they are always true
-        if i >= 3 or (dsym[i] >= minel) != True:
+        if i >= 3 or not _index_starts_at(dsym[i], minel):
             terms.append("%s >= %s" % (v, _topy(minel)))
         # The grid of the distributed dimension is padded to a multiple of the number of chiplets, so its
         # trailing blocks always have to be masked out

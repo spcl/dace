@@ -8,7 +8,7 @@ from dace import properties, symbolic
 from dace import sdfg as sd
 from dace.data import Scalar
 from dace.ordered import OrderedSet
-from dace.sdfg.state import LoopRegion
+from dace.sdfg.state import LoopRegion, SymbolResolver
 from dace.subsets import Range
 from dace.symbolic import issymbolic, pystr_to_symbolic
 from dace.transformation import pass_pipeline as ppl
@@ -126,13 +126,6 @@ class LoopLocalMemoryReduction(ppl.Pass):
         default=True,
         category="Memory",
         desc="Whether or not to round up the reduced memory size to the next power of two (enables bitmasking instead of modulo).",
-    )
-
-    assume_positive_symbols = properties.Property(
-        dtype=bool,
-        default=False,
-        category="Applicability",
-        desc="Assume symbols are positive when checking for applicability.",
     )
 
     skip_arrays = properties.SetProperty(
@@ -314,6 +307,7 @@ class LoopLocalMemoryReduction(ppl.Pass):
     ) -> list[int | None]:
         k_values = []
         max_indices = self._get_max_indices_before_loop(array_name, sdfg, loop)
+        facts = SymbolResolver().facts_at(loop)
 
         # For each dimension
         for dim in range(len(read_indices[0])):
@@ -360,15 +354,14 @@ class LoopLocalMemoryReduction(ppl.Pass):
             if cond_is_concrete_false:
                 cond = self._writes_precede_reads_in_loop(array_name, sdfg, loop)
 
-            # Add positive symbol assumption
-            if self.assume_positive_symbols and issymbolic(cond):
-                pos_syms = {s: symbolic.symbol(s.name, positive=True) for s in cond.free_symbols}
-                cond = cond.xreplace(pos_syms)
+            # A symbolic condition holds only where the facts prove it
+            if issymbolic(cond):
+                relation = symbolic.comparison_relation(cond)
+                cond = relation is not None and symbolic.ask(relation, facts) is symbolic.Truth.TRUE
 
             # Take maximum from previous accesses into account
             try:
                 k = symbolic.sympy.Max(span, max_indices[dim])
-                not cond  # XXX: This ensures the condition can be evaluated. Do not remove.
             except TypeError:
                 k_values.append(None)
                 continue
@@ -658,7 +651,10 @@ class LoopLocalMemoryReduction(ppl.Pass):
         step = symbolic.resolve_symbol_to_constant(loop_analysis.get_loop_stride(loop), sdfg)
         a = a_values.pop() * step
         if a != 0 and any(
-            i[1] % a != 0 for il in collapsed_read_indices + collapsed_all_write_indices for i in il if i[0] != 0
+            not symbolic.is_multiple(i[1], a)
+            for il in collapsed_read_indices + collapsed_all_write_indices
+            for i in il
+            if i[0] != 0
         ):
             return
 

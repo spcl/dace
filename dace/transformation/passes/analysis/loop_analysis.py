@@ -201,26 +201,9 @@ def get_loop_stride(loop: LoopRegion) -> symbolic.SymbolicType | None:
     return None
 
 
-def _provably_le(a: symbolic.SymbolicType, b: symbolic.SymbolicType) -> bool:
-    """Prove ``a <= b`` SOUNDLY, returning ``False`` when it cannot be decided (never a guess).
-
-    Beyond a concrete numeric verdict and sympy's own non-positivity engine (which respects the
-    codebase's non-negative symbols), this proves the ``Min`` / ``Max`` clamp shape a range split
-    leaves behind: ``Min(..., t) <= t`` for any of its own args ``t``, ``t <= Max(..., t)``, and the
-    combined ``Min(..., t) <= t <= Max(..., t)`` sharing a term ``t``.
-    """
-    diff = symbolic.simplify(a - b)
-    if diff.is_number:
-        return bool(diff <= 0)
-    if diff.is_nonpositive:  # sympy assumption engine; None (undecided) is falsy -> not proven
-        return True
-    a_min = a.args if isinstance(a, sympy.Min) else ()
-    b_max = b.args if isinstance(b, sympy.Max) else ()
-    if b in a_min:  # a = Min(..., b, ...) <= b
-        return True
-    if a in b_max:  # a <= Max(..., a, ...) = b
-        return True
-    return bool(a_min and b_max and (set(a_min) & set(b_max)))  # a <= shared t <= b
+def _provably_le(a: symbolic.SymbolicType, b: symbolic.SymbolicType, facts: symbolic.Facts) -> bool:
+    """Prove ``a <= b`` under ``facts`` soundly, returning ``False`` when it cannot be decided (never a guess)."""
+    return symbolic.provably_le(sympy.sympify(a), sympy.sympify(b), facts)
 
 
 def loop_provably_at_most_one_iteration(loop: LoopRegion) -> bool:
@@ -234,9 +217,10 @@ def loop_provably_at_most_one_iteration(loop: LoopRegion) -> bool:
     start = get_init_assignment(loop)
     end = get_loop_end(loop)  # inclusive
     step = get_loop_stride(loop)
-    if start is None or end is None or step is None or symbolic.simplify(step) != 1:
+    facts = loop.sdfg.facts()
+    if start is None or end is None or step is None or symbolic.simplify(step, facts) != 1:
         return False
-    return _provably_le(symbolic.simplify(end), symbolic.simplify(start))
+    return _provably_le(symbolic.simplify(end, facts), symbolic.simplify(start, facts), facts)
 
 
 def loop_provably_at_least_one_iteration(loop: LoopRegion) -> bool:
@@ -247,7 +231,7 @@ def loop_provably_at_least_one_iteration(loop: LoopRegion) -> bool:
     :func:`loop_provably_at_most_one_iteration`, and conservative in the same direction --
     ``False`` whenever the entry test cannot be decided.
 
-    Note the codebase-wide "symbols are NONNEGATIVE" assumption gives ``N >= 0``, not ``N >= 1``,
+    Decided under the facts of the loop's SDFG: an extent known nonnegative gives ``N >= 0``, not ``N >= 1``,
     so the ubiquitous ``for i in range(N)`` is correctly REFUSED; only a concrete (or otherwise
     provably nonempty) bound is accepted.
 
@@ -263,14 +247,15 @@ def loop_provably_at_least_one_iteration(loop: LoopRegion) -> bool:
     step = get_loop_stride(loop)
     if start is None or end is None or step is None:
         return False
-    step = symbolic.simplify(step)
+    facts = loop.sdfg.facts()
+    step = symbolic.simplify(step, facts)
     # The direction of the entry test follows the sign of the stride, so an unknown or zero stride
     # decides nothing.
     if not step.is_number or step == 0:
         return False
-    start = symbolic.simplify(start)
-    end = symbolic.simplify(end)
-    return _provably_le(start, end) if step > 0 else _provably_le(end, start)
+    start = symbolic.simplify(start, facts)
+    end = symbolic.simplify(end, facts)
+    return _provably_le(start, end, facts) if step > 0 else _provably_le(end, start, facts)
 
 
 @dataclass(frozen=True)

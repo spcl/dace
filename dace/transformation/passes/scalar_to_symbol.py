@@ -20,7 +20,6 @@ from dace.ordered import OrderedSet
 from dace.sdfg import SDFG
 from dace.sdfg import graph as gr
 from dace.sdfg import utils as sdutils
-from dace.sdfg.replace import replace_properties_dict
 from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.state import enclosing_region_symbols
 from dace.transformation import helpers as xfh
@@ -337,9 +336,9 @@ def find_promotable_scalars(sdfg: sd.SDFG, transients_only: bool = True, integer
                         # an "attribute" call, e.g., "dace.int64". These calls
                         # are not supported currently by the SymPy-based
                         # symbolic module.
-                        # The enclosing loops' iterators are scope symbols, absent from ``sdfg.symbols``.
+                        # The symbols the state sees, loop variables included
                         tasklet_types = {
-                            **enclosing_region_symbols(state, sdfg.symbols),
+                            **state.defined_symbols(),
                             **{e.dst_conn: sdfg.arrays[e.data.data].dtype for e in state.in_edges(edge.src)},
                         }
                         detector = AttributedCallDetector(tasklet_types)
@@ -834,13 +833,13 @@ def remove_scalar_reads(sdfg: sd.SDFG, array_names: dict[str, str]):
                         # Set symbol mapping
                         dst.sdfg.remove_data(e.dst_conn, validate=False)
                         dst.remove_in_connector(e.dst_conn)
-                        dst.sdfg.symbols[tmp_symname] = sdfg.arrays[node.data].dtype
+                        dst.sdfg.symbol_repo.add(tmp_symname, sdfg.arrays[node.data].dtype)
                         # A symbol, not its name: ConstantPropagation keeps a non-symbolic mapping value as a
                         # constant and substitutes it into the body, leaving the parent's name unmapped there.
                         dst.symbol_mapping[tmp_symname] = symbolic.pystr_to_symbolic(symname)
                     elif isinstance(dst, nodes.EntryNode) and e.dst_conn and not e.dst_conn.startswith("IN_"):
-                        # Dynamic scope input, replace in node
-                        replace_properties_dict(dst, {e.dst_conn: symname})
+                        # Dynamic scope input: the scope reads the symbol instead, in its entry and everything inside
+                        state.scope_subgraph(dst).replace_dict({e.dst_conn: symname})
                     elif isinstance(dst, (nodes.EntryNode, nodes.ExitNode)):
                         # Skip
                         continue

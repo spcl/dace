@@ -430,22 +430,6 @@ class Scalar(Data):
     def sizes(self):
         return None
 
-    def covers_range(self, rng):
-        if len(rng) != 1:
-            return False
-
-        rng = rng[0]
-
-        try:
-            if (rng[1] - rng[0]) > rng[2]:
-                return False
-        except TypeError:  # cannot determine truth value of Relational
-            pass
-            # print('WARNING: Cannot evaluate relational expression %s, assuming true.' % ((rng[1] - rng[0]) > rng[2]),
-            #      'If this expression is false, please refine symbol definitions in the program.')
-
-        return True
-
 
 def packed_c_strides(shape: Sequence[Any]) -> tuple[Any, ...]:
     """Row-major strides for ``shape``, with the trailing dimension contiguous.
@@ -848,44 +832,6 @@ class Array(Data):
         if (self.total_size < 0) == True:
             raise TypeError(f"The total size of an array must be positive but it was negative {self.total_size}")
 
-    def covers_range(self, rng):
-        if len(rng) != len(self.shape):
-            return False
-
-        for s, (rb, re, rs) in zip(self.shape, rng):
-            # Shape has to be positive. Stays on sympy deliberately: re-minting the symbol with a
-            # `positive` assumption has no analogue in an engine that carries the range in the type,
-            # where re-declaring a symbol with a different range is a conflict, not a refinement.
-            if isinstance(s, sp.Basic):
-                olds = s
-                if "positive" in s.assumptions0:
-                    s = sp.Symbol(str(s), **s.assumptions0)
-                else:
-                    s = sp.Symbol(str(s), positive=True, **s.assumptions0)
-                if isinstance(rb, sp.Basic):
-                    rb = rb.subs({olds: s})
-                if isinstance(re, sp.Basic):
-                    re = re.subs({olds: s})
-                if isinstance(rs, sp.Basic):
-                    rs = rs.subs({olds: s})
-
-            try:
-                if rb < 0:  # Negative offset
-                    return False
-            except TypeError:  # cannot determine truth value of Relational
-                pass
-                # print('WARNING: Cannot evaluate relational expression %s, assuming true.' % (rb > 0),
-                #      'If this expression is false, please refine symbol definitions in the program.')
-            try:
-                if re > s:  # Beyond shape
-                    return False
-            except TypeError:  # cannot determine truth value of Relational
-                pass
-                # print('WARNING: Cannot evaluate relational expression %s, assuming true.' % (re < s),
-                #      'If this expression is false, please refine symbol definitions in the program.')
-
-        return True
-
     # Checks for equivalent shape and type
     def is_equivalent(self, other: Data, symbol_mapping: SymbolMapping | None = None) -> bool:
         replacements = symbolic.symbol_replacements(symbol_mapping)
@@ -1241,44 +1187,6 @@ class Stream(Data):
     def is_stream_array(self):
         return _prod(self.shape) != 1
 
-    def covers_range(self, rng):
-        if len(rng) != len(self.shape):
-            return False
-
-        for s, (rb, re, rs) in zip(self.shape, rng):
-            # Shape has to be positive. Stays on sympy deliberately: re-minting the symbol with a
-            # `positive` assumption has no analogue in an engine that carries the range in the type,
-            # where re-declaring a symbol with a different range is a conflict, not a refinement.
-            if isinstance(s, sp.Basic):
-                olds = s
-                if "positive" in s.assumptions0:
-                    s = sp.Symbol(str(s), **s.assumptions0)
-                else:
-                    s = sp.Symbol(str(s), positive=True, **s.assumptions0)
-                if isinstance(rb, sp.Basic):
-                    rb = rb.subs({olds: s})
-                if isinstance(re, sp.Basic):
-                    re = re.subs({olds: s})
-                if isinstance(rs, sp.Basic):
-                    rs = rs.subs({olds: s})
-
-            try:
-                if rb < 0:  # Negative offset
-                    return False
-            except TypeError:  # cannot determine truth value of Relational
-                pass
-                # print('WARNING: Cannot evaluate relational expression %s, assuming true.' % (rb > 0),
-                #      'If this expression is false, please refine symbol definitions in the program.')
-            try:
-                if re > s:  # Beyond shape
-                    return False
-            except TypeError:  # cannot determine truth value of Relational
-                pass
-                # print('WARNING: Cannot evaluate relational expression %s, assuming true.' % (re < s),
-                #      'If this expression is false, please refine symbol definitions in the program.')
-
-        return True
-
     def used_symbols(self, all_symbols: bool) -> set[symbolic.SymbolicType]:
         result = super().used_symbols(all_symbols)
         if (self.transient or all_symbols) and isinstance(self.buffer_size, symbolic.SymbolicExpr):
@@ -1338,7 +1246,8 @@ class Structure(Data):
                 fields_and_types[k] = v
             elif isinstance(v, (symbolic.SymbolicBasic, symbolic.SymExpr)):
                 symbols |= v.free_symbols
-                fields_and_types[k] = symbolic.symtype(v)
+                # A member given as a symbol object is its creator's; nothing here types the symbols of an expression
+                fields_and_types[k] = v.declaration.dtype if isinstance(v, symbolic.symbol) else symbolic.symtype(v, {})
             elif isinstance(v, (int, np.integer)):
                 fields_and_types[k] = dtypes.typeclass(type(v))
             else:

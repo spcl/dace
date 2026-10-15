@@ -14,7 +14,7 @@ from dace.sdfg import nodes as nd
 from dace.sdfg import utils as sdutil
 from dace.sdfg.memlet_utils import MemletReplacer
 from dace.sdfg.replace import replace_datadesc_names
-from dace.sdfg.sdfg import SDFG
+from dace.sdfg.sdfg import SDFG, scope_bound_names
 from dace.sdfg.state import SymbolResolver
 from dace.transformation.helpers import unsqueeze_memlet
 
@@ -1138,7 +1138,7 @@ def fold_symbol_mapping(sdfg: SDFG, symbols: SymbolResolver | None = None) -> di
     for outer, replacement in replacements.items():
         parent_node.symbol_mapping[outer] = replacement
         if outer in parent_types and outer in sdfg.symbols:
-            sdfg.symbols[outer] = parent_types[outer]
+            sdfg.symbol_repo.set_type(outer, parent_types[outer])
 
     # The nested SDFGs below are connected to containers whose descriptors were just restated
     integrate_nested_sdfgs_within(sdfg)
@@ -1452,9 +1452,11 @@ def integrate_nested_sdfg(sdfg: SDFG, symbols: SymbolResolver | None = None):
     # Only the ones the nested SDFG reads: a mapping entry is a read, so mapping a symbol the parent assigns further
     # down would make it free in the parent.
     needed = {str(s) for s in sdfg.free_symbols}
+    shadowed = scope_bound_names(sdfg)
     for sym_name, sym_type in symbol_types.items():
-        # Skip parent symbols that are shadowed by unrelated internal data containers or constants
-        if sym_name not in needed or sym_name in sdfg.arrays or sym_name in sdfg.constants_prop:
+        # Skip parent symbols that are shadowed by unrelated internal data containers, constants or the nested SDFG's
+        # own loop and map scopes
+        if sym_name not in needed or sym_name in sdfg.arrays or sym_name in sdfg.constants_prop or sym_name in shadowed:
             continue
         if sym_name not in sdfg.symbols:
             # Add the symbol to the SDFG and the parent node's symbol mapping

@@ -26,7 +26,6 @@ def assert_cfg_list_matches_reset(sdfg: dace.SDFG) -> None:
 def test_lift_regular_for_loop():
     sdfg = SDFG("regular_for")
     N = dace.symbol("N")
-    sdfg.add_symbol("i", dace.int32)
     sdfg.add_symbol("j", dace.int32)
     sdfg.add_symbol("k", dace.int32)
     sdfg.add_array("A", (N,), dace.int32)
@@ -72,7 +71,6 @@ def test_lift_loop_llvm_canonical(increment_before_condition):
     addendum = "_incr_before_cond" if increment_before_condition else ""
     sdfg = dace.SDFG("llvm_canonical" + addendum)
     N = dace.symbol("N")
-    sdfg.add_symbol("i", dace.int32)
     sdfg.add_symbol("j", dace.int32)
     sdfg.add_symbol("k", dace.int32)
     sdfg.add_array("A", (N,), dace.int32)
@@ -185,7 +183,6 @@ def test_lift_loop_llvm_canonical_while():
 def test_do_while():
     sdfg = SDFG("do_while")
     N = dace.symbol("N")
-    sdfg.add_symbol("i", dace.int32)
     sdfg.add_symbol("j", dace.int32)
     sdfg.add_symbol("k", dace.int32)
     sdfg.add_array("A", (N,), dace.int32)

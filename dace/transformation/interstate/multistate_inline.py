@@ -11,6 +11,7 @@ from dace.sdfg import SDFG, InterstateEdge, SDFGState, dealias, nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.replace import replace_datadesc_names, replace_properties_dict
+from dace.sdfg.sdfg import scope_bound_names
 from dace.sdfg.state import AbstractControlFlowRegion, LoopRegion, ReturnBlock, cfg_tree_list
 from dace.sdfg.tasklet_utils import tasklet_replace_code, token_replace_dict
 from dace.transformation import helpers, transformation
@@ -368,7 +369,8 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         # and dropping it from the compiled signature (which left an uninitialized callback pointer -> crash).
         inner_assignments |= set(non_identity_mapping.keys())
 
-        allnames = set(outer_symbols.keys()) | set(sdfg.arrays.keys())
+        # Loop variables bind their names without declaring them as symbols
+        allnames = set(outer_symbols.keys()) | set(sdfg.arrays.keys()) | outer_assignments
         assignments_to_replace = inner_assignments & (outer_assignments | allnames)
         # Inner symbols that received their value from an IDENTITY symbol-mapping entry
         # (outer ``K`` -> inner ``K``, lowered above via ``safe_replace`` as a no-op rename).
@@ -405,7 +407,8 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         transients: dict[str, str] = {}
 
         # All transients become transients of the parent (if data already
-        # exists, find new name)
+        # exists, find new name). Their shapes may name symbols the inlined scopes bind, which are not declared.
+        bound = scope_bound_names(nsdfg)
         for nstate in nsdfg.states():
             for node in nstate.nodes():
                 if isinstance(node, nodes.AccessNode):
@@ -420,7 +423,7 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
                         ):
                             new_name = data.find_new_name(f"{nsdfg.label}_{node.data}", connectors)
 
-                        name = sdfg.add_datadesc(new_name, datadesc, find_new_name=True)
+                        name = sdfg.add_datadesc(new_name, datadesc, find_new_name=True, bound_names=bound)
                         transients[node.data] = name
 
         # All constants (and associated transients) become constants of the parent

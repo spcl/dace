@@ -717,12 +717,12 @@ def loop_iteration_assigned_symbols(loop: LoopRegion) -> set[str]:
     return assigned
 
 
-def _one_elem(subset) -> int | None:
+def _one_elem(subset, facts: symbolic.Facts) -> int | None:
     """Integer number of elements in ``subset``, or ``None`` if non-constant."""
     if subset is None:
         return None
     try:
-        s = symbolic.simplify(subset.num_elements())
+        s = symbolic.simplify(subset.num_elements(), facts)
     except Exception:
         return None
     return int(s) if s.is_Integer else None
@@ -748,7 +748,7 @@ def _scalar_equiv(sdfg: SDFG, a: str, b: str) -> bool:
     return scalar_like(da) and scalar_like(db)
 
 
-def _chase_forward_to_accum(state, sdfg: SDFG, start_node, start_subset):
+def _chase_forward_to_accum(state, sdfg: SDFG, start_node, start_subset, facts: symbolic.Facts):
     """Walk a copy chain forward from ``start_node`` to its non-transient destination.
 
     Hop only across a transient AccessNode with exactly 1 in-edge + 1 out-edge whose
@@ -777,14 +777,14 @@ def _chase_forward_to_accum(state, sdfg: SDFG, start_node, start_subset):
             not isinstance(oe.dst, nodes.AccessNode)
             or oe.data is None
             or oe.data.subset is None
-            or _one_elem(oe.data.subset) != _one_elem(cur_sub)
+            or _one_elem(oe.data.subset, facts) != _one_elem(cur_sub, facts)
         ):
             return cur.data, cur_sub
         cur, cur_sub = oe.dst, oe.data.subset
 
 
 def _expand_over_loop(
-    subset: subsets.Subset, loop_var: sympy.Symbol, start, end, loop_stride=1
+    subset: subsets.Subset, loop_var: sympy.Symbol, start, end, facts: symbolic.Facts, loop_stride=1
 ) -> subsets.Range | None:
     """Widen ``subset`` dims that use ``loop_var`` linearly over ``[start, end]`` (inclusive)
     stepped by ``loop_stride``. Dims not involving ``loop_var`` (e.g. outer ``jl`` in a
@@ -816,14 +816,14 @@ def _expand_over_loop(
             ranges.append((rb, re_, 1))  # axis independent of reduction
             continue
         # read index = coeff*loop_var + off (affine)
-        coeff = symbolic.simplify(sympy.diff(rb_sym, ivar))
-        off = symbolic.simplify(rb_sym - coeff * ivar)
+        coeff = symbolic.simplify(sympy.diff(rb_sym, ivar), facts)
+        off = symbolic.simplify(rb_sym - coeff * ivar, facts)
         if coeff.has(ivar) or off.has(ivar):
             return None  # non-linear
         if not (coeff.is_integer and coeff.is_positive):
             return None  # only ascending integer read stride
-        step = symbolic.simplify(coeff * loop_stride)
-        ranges.append((symbolic.simplify(coeff * start + off), symbolic.simplify(coeff * end + off), step))
+        step = symbolic.simplify(coeff * loop_stride, facts)
+        ranges.append((symbolic.simplify(coeff * start + off, facts), symbolic.simplify(coeff * end + off, facts), step))
     return subsets.Range(ranges)
 
 
@@ -858,7 +858,7 @@ def _cmp_to_wcr(cond, target: str, array: str) -> str | None:
 
 
 def _extract_any_pattern(
-    cond, const_rhs: int, target: str, sdfg: SDFG, loop_var_sym, start, end, stride
+    cond, const_rhs: int, target: str, sdfg: SDFG, loop_var_sym, start, end, stride, facts: symbolic.Facts
 ) -> Optional["_Reduction"]:
     """Match ``{sym: const}`` conditional-iedge "any"/"all".
 
@@ -921,7 +921,7 @@ def _extract_any_pattern(
                 return None
             axis_for_iter = i
             try:
-                off = symbolic.simplify(a - ivar)
+                off = symbolic.simplify(a - ivar, facts)
             except Exception:
                 return None
             if off.has(ivar):
@@ -933,7 +933,7 @@ def _extract_any_pattern(
     ranges = []
     for i, a in enumerate(sym_args):
         if i == axis_for_iter:
-            ranges.append((symbolic.simplify(start + offset), symbolic.simplify(end + offset), stride))
+            ranges.append((symbolic.simplify(start + offset, facts), symbolic.simplify(end + offset, facts), stride))
         else:
             ranges.append((a, a, 1))
     return _Reduction(
@@ -953,6 +953,7 @@ def _extract(loop: LoopRegion, sdfg: SDFG, permissive: bool = False) -> _Reducti
     stride = loop_analysis.get_loop_stride(loop)
     if start is None or end is None or stride is None:
         return None
+    facts = sdfg.facts()
     # A strided loop (``range(0, N, 2)``) folds its stride into the reduce subset
     # (see ``_expand_over_loop``); only an ascending integer loop stride is handled.
     if stride != 1:
@@ -1026,7 +1027,7 @@ def _extract(loop: LoopRegion, sdfg: SDFG, permissive: bool = False) -> _Reducti
         if accum not in sdfg.arrays:
             return None
         write_subset = write_edge.data.subset
-        if _one_elem(write_subset) != 1 or _uses(write_subset, loop_var_sym):
+        if _one_elem(write_subset, facts) != 1 or _uses(write_subset, loop_var_sym):
             return None
         # Refuse when the write subset uses a symbol REASSIGNED on a loop iedge
         # (e.g. ``k = k + j + 1``): value changes each iteration -> N independent
@@ -1041,7 +1042,7 @@ def _extract(loop: LoopRegion, sdfg: SDFG, permissive: bool = False) -> _Reducti
         # Chase forward through the copy chain (``compute -> tmp -> assign-copy -> accumulator``)
         # so the carry-input check can match an accumulator whose descriptor is not
         # scalar-like (``sum_out: float64[N]`` written at ``[0]``) but whose access is.
-        final_accum, final_subset = _chase_forward_to_accum(state, sdfg, write_edge.dst, write_subset)
+        final_accum, final_subset = _chase_forward_to_accum(state, sdfg, write_edge.dst, write_subset, facts)
 
         # Resolve each tasklet input.
         resolved = []
@@ -1058,7 +1059,7 @@ def _extract(loop: LoopRegion, sdfg: SDFG, permissive: bool = False) -> _Reducti
                     not isinstance(pred.src, nodes.AccessNode)
                     or pred.data is None
                     or pred.data.subset is None
-                    or _one_elem(e.data.subset) != _one_elem(pred.data.subset)
+                    or _one_elem(e.data.subset, facts) != _one_elem(pred.data.subset, facts)
                 ):
                     return None
                 resolved.append((pred.src.data, copy.deepcopy(pred.data.subset)))
@@ -1081,7 +1082,7 @@ def _extract(loop: LoopRegion, sdfg: SDFG, permissive: bool = False) -> _Reducti
                     return None
                 array, arr_subset = name, sub
             elif (
-                _one_elem(sub) == 1
+                _one_elem(sub, facts) == 1
                 and name in carried
                 and (
                     (name == accum and sub == write_subset)
@@ -1144,7 +1145,7 @@ def _extract(loop: LoopRegion, sdfg: SDFG, permissive: bool = False) -> _Reducti
                     ):
                         return None
 
-        expanded = _expand_over_loop(arr_subset, loop_var_sym, start, end, stride)
+        expanded = _expand_over_loop(arr_subset, loop_var_sym, start, end, facts, stride)
         if expanded is None:
             return None
         return _Reduction(wcr, accum, write_subset, array, expanded)
@@ -1217,7 +1218,7 @@ def _extract(loop: LoopRegion, sdfg: SDFG, permissive: bool = False) -> _Reducti
             # (0/1-valued) guard array. Gated on ``permissive``: only sound if the guard
             # array holds only 0/1, which the pass can't verify statically.
             if permissive and isinstance(expr, sympy.Integer) and int(expr) in (0, 1):
-                return _extract_any_pattern(cond, int(expr), target, sdfg, loop_var_sym, start, end, stride)
+                return _extract_any_pattern(cond, int(expr), target, sdfg, loop_var_sym, start, end, stride, facts)
             # Pure copy ``sym = arr[f(i)]`` gated by a max/min comparison.
             if not (isinstance(expr, Subscript) and symbolic.arrays(expr) & sdfg.arrays.keys()):
                 return None
@@ -1237,7 +1238,7 @@ def _extract(loop: LoopRegion, sdfg: SDFG, permissive: bool = False) -> _Reducti
         ivar = next((s for s in index.free_symbols if str(s) == str(loop_var_sym)), None)
         if ivar is None:
             return None
-        offset = symbolic.simplify(index - ivar)
+        offset = symbolic.simplify(index - ivar, facts)
         if offset.has(ivar):
             return None
 
@@ -1246,7 +1247,7 @@ def _extract(loop: LoopRegion, sdfg: SDFG, permissive: bool = False) -> _Reducti
             accum=target,
             accum_subset=subsets.Range([(0, 0, 1)]),
             array=array,
-            array_subset=subsets.Range([(symbolic.simplify(start + offset), symbolic.simplify(end + offset), stride)]),
+            array_subset=subsets.Range([(symbolic.simplify(start + offset, facts), symbolic.simplify(end + offset, facts), stride)]),
         )
 
     # Branched min/max pattern (TSVC s314, s316): ``for i: if a[i] > x: x = a[i]``.
@@ -1280,6 +1281,7 @@ def _extract_branched_minmax(
     Returns ``_Reduction`` (``wcr`` = ``max`` for ``>``/``>=``, ``min`` for ``<``/``<=``),
     or ``None`` on any structural/semantic failure.
     """
+    facts = sdfg.facts()
     blocks = loop.nodes()
     cond_blocks = [b for b in blocks if isinstance(b, ConditionalBlock)]
     if len(cond_blocks) != 1:
@@ -1378,7 +1380,7 @@ def _extract_branched_minmax(
     array_subset = array_read_edges[0].data.subset
     if not _uses(array_subset, loop_var_sym):
         return None
-    if _one_elem(array_subset) != 1:
+    if _one_elem(array_subset, facts) != 1:
         return None
 
     # Accumulator slot from the body's write to accum_name.
@@ -1386,7 +1388,7 @@ def _extract_branched_minmax(
     if len(accum_write_edges) != 1:
         return None
     accum_subset = accum_write_edges[0].data.subset
-    if _one_elem(accum_subset) != 1 or _uses(accum_subset, loop_var_sym):
+    if _one_elem(accum_subset, facts) != 1 or _uses(accum_subset, loop_var_sym):
         return None
 
     wcr = _CALL_TO_WCR["max"] if cmp_is_gt else _CALL_TO_WCR["min"]
@@ -1404,6 +1406,7 @@ def _lift(parent: ControlFlowRegion, loop: LoopRegion, info: _Reduction):
     import dace
 
     root = _owner_sdfg(parent)
+    facts = root.facts()
     fsyms = set(root.free_symbols)
 
     was_start = parent.start_block is loop
@@ -1535,13 +1538,13 @@ def _lift_wcr_scalar(parent: ControlFlowRegion, loop: LoopRegion, info: _Reducti
         is_reduction_axis = False
         coeff = None
         if loop_start is not None and loop_end is not None and loop_stride is not None and loop_stride != 0 and st != 0:
-            coeff = symbolic.simplify(st / loop_stride)
-            axis_elems = symbolic.simplify((hi - lo) / st + 1)
-            iters = symbolic.simplify((loop_end - loop_start) / loop_stride + 1)
+            coeff = symbolic.simplify(st / loop_stride, facts)
+            axis_elems = symbolic.simplify((hi - lo) / st + 1, facts)
+            iters = symbolic.simplify((loop_end - loop_start) / loop_stride + 1, facts)
             if coeff.is_integer and coeff.is_positive and not symbolic.inequal_symbols(axis_elems, iters):
                 is_reduction_axis = True
         if is_reduction_axis:
-            idx = symbolic.simplify(coeff * iter_sym + (lo - coeff * loop_start))
+            idx = symbolic.simplify(coeff * iter_sym + (lo - coeff * loop_start), facts)
             per_iter_ranges.append((idx, idx, 1))
         else:
             per_iter_ranges.append((lo, hi, st))
@@ -1605,6 +1608,7 @@ def _extract_wcr_body(loop: LoopRegion, sdfg: SDFG):
 
     :returns: ``(wcr_state, wcr_edge, accum_name, accum_subset)`` or ``None``.
     """
+    facts = sdfg.facts()
     if not loop.loop_variable:
         return None
     loop_var_sym = symbolic.pystr_to_symbolic(loop.loop_variable)
@@ -1627,7 +1631,7 @@ def _extract_wcr_body(loop: LoopRegion, sdfg: SDFG):
                 continue
             if e.data.subset is None or _uses(e.data.subset, loop_var_sym):
                 continue
-            if _one_elem(e.data.subset) != 1:
+            if _one_elem(e.data.subset, facts) != 1:
                 continue
             if any(str(s) in loop_iedge_assignees for s in e.data.subset.free_symbols):
                 continue
@@ -1886,6 +1890,7 @@ def _extract_multi_state_chain(loop: LoopRegion, sdfg: SDFG):
               last_write_edge, accum_source_an, accum_sink_an, wcr_lambda, accum_name,
               accum_subset)`` or ``None``.
     """
+    facts = sdfg.facts()
     if not loop.loop_variable:
         return None
     loop_var_sym = symbolic.pystr_to_symbolic(loop.loop_variable)
@@ -1952,7 +1957,7 @@ def _extract_multi_state_chain(loop: LoopRegion, sdfg: SDFG):
             write_subset = last_write_edge.data.subset if last_write_edge.data is not None else None
             if carry_subset is None or write_subset is None:
                 continue
-            if _one_elem(carry_subset) != 1 or _one_elem(write_subset) != 1:
+            if _one_elem(carry_subset, facts) != 1 or _one_elem(write_subset, facts) != 1:
                 continue
             if _uses(carry_subset, loop_var_sym) or _uses(write_subset, loop_var_sym):
                 continue

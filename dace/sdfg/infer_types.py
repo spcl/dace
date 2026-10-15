@@ -171,8 +171,8 @@ def widen_mapped_symbols(state: SDFGState, node: nodes.NestedSDFG) -> None:
     """
     for name, declared, mapped in mapped_symbol_types(state, node):
         # Across kinds, a float value would make an integer symbol a double and an unsigned one would drop its sign
-        if mapped.bytes > declared.bytes and same_scalar_kind(declared, mapped):
-            node.sdfg.symbols[name] = mapped
+        if mapped is not None and mapped.bytes > declared.bytes and same_scalar_kind(declared, mapped):
+            node.sdfg.symbol_repo.set_type(name, mapped)
 
 
 #############################################################################
