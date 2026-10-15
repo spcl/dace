@@ -7,6 +7,7 @@ from .dead_state_elimination import DeadStateElimination
 from .full_map_fusion import FullMapFusion
 from .fusion_inline import FuseStates, InlineSDFGs
 from .loop_local_memory_reduction import LoopLocalMemoryReduction
+from .memlet_access_policies import AssignLoopCursors, LowerMemletAccessPolicies
 from .optional_arrays import OptionalArrayInference
 from .pattern_matching import PatternMatchAndApply, PatternMatchAndApplyRepeated, PatternApplyOnceEverywhere
 from .prune_symbols import RemoveUnusedSymbols
