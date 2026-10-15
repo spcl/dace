@@ -42,6 +42,7 @@ from dace.transformation.passes.canonicalize.dead_carried_store import DeadCarri
 from dace.transformation.passes.canonicalize.distribute_producer_consumer import DistributeProducerConsumerLoop
 from dace.transformation.passes.canonicalize.eliminate_trivial_tasklets import EliminateTrivialTasklets
 from dace.transformation.passes.canonicalize.empty_state_elimination import EmptyStateElimination
+from dace.transformation.passes.canonicalize.expand_index_remaps import ExpandIndexRemaps
 from dace.transformation.passes.canonicalize.fold_scalar_read_copies import FoldScalarReadCopies
 from dace.transformation.passes.canonicalize.forward_store_to_load import ForwardStoreToLoad
 from dace.transformation.passes.canonicalize.fuse_chained_scalar_reductions import FuseChainedScalarReductions
@@ -964,6 +965,9 @@ def recompose(lift: bool, lift_copy: bool, target: str) -> Stages:
         (label, EmptyLoopElimination()),
         (label, PatternApplyOnceEverywhere([MoveIfIntoMap()])),
     ]
+    # Index remaps (np.roll, broadcast_to) as gather maps, so fusion inlines them instead of keeping a full-size
+    # transient per call (laplacian_stencil_3d's 24 rolls); the inlining below dissolves their nested SDFGs.
+    s += [(label, ExpandIndexRemaps())]
     s += [*_inline_single_state(label), (label, StructuralCleanup())]
 
     s += [(FUSE, maximal_fusion(target))]
