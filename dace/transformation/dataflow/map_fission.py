@@ -364,7 +364,7 @@ class MapFission(transformation.SingleStateTransformation):
                     outer_edge = next(e for e in graph.out_edges(nsdfg_node) if e.src_conn == edge.dst.data)
                     edge_to_outer[edge] = outer_edge
 
-            # Collect all border arrays and code->code edges
+            # Collect all border arrays
             arrays = MapFission._border_arrays(nsdfg_node.sdfg if self.expr_index == 1 else sdfg, state, subgraph)
             scalars = defaultdict(list)
             for _, component_out in components:
@@ -612,7 +612,11 @@ class MapFission(transformation.SingleStateTransformation):
                                 # `test.transformations.mapfission_test.MapFissionTest.test_array_copy_outside_scope`.
                                 if not (scope_dict[e.src] and scope_dict[e.dst]):
                                     outside_border_edges.add(e)
+                                    # Propagate only the subset of `node.data`; the other side of a copy is kept
+                                    other_subset = e.data.other_subset
+                                    e.data.other_subset = None
                                     e.data = propagate_subset([e.data], desc, outer_map.params, outer_map.range, facts)
+                                    e.data.other_subset = other_subset
 
                         # Only after offsetting memlets we can modify the
                         # overall offset. The memlets of an integrated nested SDFG were not offset, and still

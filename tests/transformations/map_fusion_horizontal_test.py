@@ -271,6 +271,30 @@ def test_deterministic_label_in_horizontal_map_fusion(first_order: bool):
     assert expected_final_label == final_me.map.label
 
 
+def test_horizontal_fusion_relocates_a_connector_with_several_edges_once():
+    """Each Map writes three columns of its output through one MapExit connector."""
+    sdfg = dace.SDFG(unique_name("horizontal_multi_edge_connector"))
+    sdfg.add_array("A", [10], dace.float64)
+    state = sdfg.add_state(is_start_block=True)
+    source = state.add_access("A")
+    for name in ("out1", "out2"):
+        sdfg.add_array(name, [10, 3], dace.float64)
+        entry, exit_node = state.add_map(f"map_{name}", {"__i": "0:10"})
+        entry.add_in_connector("IN_1")
+        entry.add_out_connector("OUT_1")
+        exit_node.add_in_connector("IN_1")
+        exit_node.add_out_connector("OUT_1")
+        state.add_edge(source, None, entry, "IN_1", dace.Memlet("A[0:10]"))
+        for column in range(3):
+            tasklet = state.add_tasklet(f"{name}_{column}", {"__in"}, {"__out"}, f"__out = __in + {column}")
+            state.add_edge(entry, "OUT_1", tasklet, "__in", dace.Memlet("A[__i]"))
+            state.add_edge(tasklet, "__out", exit_node, "IN_1", dace.Memlet(f"{name}[__i, {column}]"))
+        state.add_edge(exit_node, "OUT_1", state.add_access(name), None, dace.Memlet(f"{name}[0:10, 0:3]"))
+
+    assert sdfg.apply_transformations_repeated(dftrans.MapFusionHorizontal()) == 1
+    sdfg.validate()
+
+
 if __name__ == "__main__":
     test_vertical_map_fusion_common_ancestor_is_required()
     test_vertical_map_fusion_no_common_ancestor_not_required()
@@ -279,3 +303,4 @@ if __name__ == "__main__":
     test_vertical_maps_are_not_fused_horizontally()
     test_deterministic_label_in_horizontal_map_fusion(first_order=True)
     test_deterministic_label_in_horizontal_map_fusion(first_order=False)
+    test_horizontal_fusion_relocates_a_connector_with_several_edges_once()

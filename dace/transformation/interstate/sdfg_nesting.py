@@ -539,19 +539,6 @@ class InlineSDFG(transformation.SingleStateTransformation):
                     name = sdfg.add_datadesc(new_name, datadesc, find_new_name=True)
                     transients[node.data] = name
 
-        # All transients of edges between code nodes are also added to parent
-        for edge in nstate.edges():
-            if isinstance(edge.src, nodes.CodeNode) and isinstance(edge.dst, nodes.CodeNode):
-                if edge.data.data is not None:
-                    datadesc = nsdfg.arrays[edge.data.data]
-                    if edge.data.data not in transients and datadesc.transient:
-                        new_name = edge.data.data
-                        if new_name in taken:
-                            new_name = f"{nsdfg.label}_{edge.data.data}"
-
-                        name = sdfg.add_datadesc(new_name, datadesc, find_new_name=True)
-                        transients[edge.data.data] = name
-
         # Collect nodes to add to top-level graph
         new_incoming_edges: dict[nodes.Node, MultiConnectorEdge] = {}
         new_outgoing_edges: dict[nodes.Node, MultiConnectorEdge] = {}

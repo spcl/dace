@@ -653,12 +653,15 @@ def add_indirection_subgraph(
         _, storage = sdfg.add_array(
             tmp_name, rng.bounding_box_size(), array.dtype, storage=dtypes.StorageType.Default, transient=True
         )
-        # Force creation of transients for range indirection
-        if output:
-            if src:
-                start_src = src
-                src = None
-        elif dst:
+
+    # Range indirection, and any value exchanged with a code node, moves through the transient's AccessNode
+    is_range = isinstance(storage, data.Array)
+    if output:
+        if src and (is_range or isinstance(src, nodes.CodeNode)):
+            start_src = src
+            src = None
+    else:
+        if dst and (is_range or isinstance(dst, nodes.CodeNode)):
             end_dst = dst
             dst = None
 
@@ -2256,7 +2259,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
                 if isinstance(memlet_or_node, nodes.Tasklet):
                     tasklet: nodes.Tasklet = memlet_or_node
-                    # Create a code->code node
+                    # Route the tasklet's output to the internal node through a transient scalar
                     new_scalar = tasklet.label
                     if isinstance(internal_node, nodes.NestedSDFG):
                         dtype = internal_node.sdfg.arrays[conn].dtype
