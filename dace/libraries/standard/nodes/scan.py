@@ -1348,25 +1348,110 @@ def batched_cuda_tasklet(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG, o
 BLOCK_COLLECTIVE_THREADS = 256
 
 
-def block_refusal(node: "Scan") -> str | None:
+def block_refusal(node: "Scan", state: dace.SDFGState | None = None, sdfg: dace.SDFG | None = None) -> str | None:
     """Why :class:`ExpandCUDABlock` cannot lower ``node``, or ``None`` if it can.
 
-    The affine, multi-chain, exclusive and explicit-init shapes have another lowering rather than an
-    approximation here; ``min``/``max`` have no universal identity for the out-of-range lanes to read.
+    Each refused shape is one no host expansion lowers either, or one the collective has no form for; it
+    falls through to another expansion rather than being approximated here. Given the node's ``state`` (and
+    ``sdfg``), the operands are checked too.
     """
-    if node.op is ScanOp.AFFINE:
-        return "op=AFFINE is not supported."
-    if node.chains != 1:
-        return "multi-chain scans are not supported."
+    strided = not symbolic.equal_valued(1, node.stride)
     if segmented(node):
         return "segmented scans are not supported."
-    if node.exclusive:
-        return "exclusive scans are not supported."
-    if _has_init(node):
-        return "an explicit ``_scan_init`` is not supported."
-    if _OP_TO_IDENTITY_CPP[node.op] is None:
-        return f"op {node.op.value!r} has no identity to pad the final partial chunk with."
+    if node.op is ScanOp.AFFINE and (node.exclusive or node.chains != 1):
+        return "op=AFFINE is inclusive and single-chain."
+    if strided and node.chains != 1:
+        return "a multi-chain scan has unit stride."
+    if strided and node.exclusive:
+        return "an exclusive scan has unit stride."
+    if strided and node.op is not ScanOp.AFFINE and _has_init(node):
+        return "a strided scan of a scalar op takes no ``_scan_init``."
+    if node.exclusive and node.identity is None and _OP_TO_IDENTITY_CPP[node.op] is None:
+        return f"an exclusive {node.op.value!r} scan needs an ``identity``."
+    if state is None:
+        return None
+    sdfg = sdfg if sdfg is not None else state.sdfg
+    in_desc, out_desc, _in_edge, _out_edge = _validate_inputs_and_outputs(node, state, sdfg)
+    if in_desc.dtype != out_desc.dtype:
+        return "a widening scan accumulates in the output's type, which the collective does not."
+    for edge in state.in_edges(node) + state.out_edges(node):
+        ranges = required(edge.data.subset).ranges
+        if edge.dst_conn != init_connector() and sum(1 for begin, end, _step in ranges if begin != end) > 1:
+            return f"operand {edge.data.data} spans more than one dimension."
     return None
+
+
+def block_operands(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG, nsdfg: dace.SDFG) -> dict[str, str]:
+    """Declare every operand of ``node`` in ``nsdfg`` as the connector sees it and return each one's element
+    spacing as C++: the collective walks an operand through one pointer, a column as well as a row."""
+    spacing = {}
+    for edge in state.in_edges(node) + state.out_edges(node):
+        conn = edge.dst_conn if edge.dst is node else edge.src_conn
+        desc = operand_array(nsdfg, conn, edge, sdfg)
+        spacing[conn] = sym2cpp(desc.strides[-1])
+    return spacing
+
+
+def block_chain_call(node: "Scan", chain: int, ctype: str, spacing: dict[str, str], n_expr: str) -> str:
+    """The collective scanning chain ``chain`` of a unit-stride ``node``, seeded as :func:`chain_seed` seeds the
+    ``pure`` loop."""
+    src, dst = in_connector(chain), out_connector(chain)
+    ptr = {conn: f"__b{conn}" for conn in spacing}
+    seed = chain_seed(node, chain)
+    if seed == "init":
+        seed = f"static_cast<{ctype}>({ptr[init_connector(chain)]}[0])"
+    elif seed == "first":
+        # inclusive min / max: the first element folds into itself, so it seeds the chain
+        seed = f"(({n_expr}) > 0 ? {ptr[src]}[0] : {ctype}())"
+    else:
+        seed = f"static_cast<{ctype}>({seed})"
+    if node.op is ScanOp.AFFINE:
+        coef = coef_connector(chain)
+        return (
+            f"::dace::cuda_scan::detail::block_affine_scan<{ctype}, {BLOCK_COLLECTIVE_THREADS}>("
+            f"{ptr[coef]}, {spacing[coef]}, {ptr[src]}, {spacing[src]}, {ptr[dst]}, {spacing[dst]}, "
+            f"(long)({n_expr}), {seed});"
+        )
+    functor = f"::dace::cuda_scan::detail::Scan{node.op.value.capitalize()}<{ctype}>"
+    exclusive = "true" if node.exclusive else "false"
+    return (
+        f"::dace::cuda_scan::detail::block_scan<{ctype}, {functor}, {BLOCK_COLLECTIVE_THREADS}, {exclusive}>("
+        f"{ptr[src]}, {spacing[src]}, {ptr[dst]}, {spacing[dst]}, (long)({n_expr}), {functor}(), {seed});"
+    )
+
+
+def block_residue_classes(node: "Scan", ctype: str, spacing: dict[str, str], n_expr: str) -> str:
+    """The collective over every residue class of a strided ``node``, one after the other. A scalar op seeds a
+    class from its first element as the ``pure`` loop does (through the op's identity where it has one), the
+    affine one from its ``_scan_init`` entry or zero. A non-positive stride has no class and writes nothing,
+    as on the device-wide path."""
+    src, dst, init = in_connector(), out_connector(), init_connector()
+    ptr = {conn: f"__b{conn}" for conn in spacing}
+    s, r = f"(long)({sym2cpp(node.stride)})", "__bs_r"
+    count = f"((long)({n_expr}) - {r} + {s} - 1) / {s}"
+
+    def at(conn: str, index: str = r) -> str:
+        return f"{ptr[conn]} + {index} * {spacing[conn]}"
+
+    def step(conn: str) -> str:
+        return f"{s} * {spacing[conn]}"
+
+    if node.op is ScanOp.AFFINE:
+        coef = coef_connector()
+        seed = f"static_cast<{ctype}>({ptr[init]}[{r} * {spacing[init]}])" if init in spacing else f"{ctype}(0)"
+        call = (
+            f"::dace::cuda_scan::detail::block_affine_scan<{ctype}, {BLOCK_COLLECTIVE_THREADS}>("
+            f"{at(coef)}, {step(coef)}, {at(src)}, {step(src)}, {at(dst)}, {step(dst)}, {count}, {seed});"
+        )
+    else:
+        functor = f"::dace::cuda_scan::detail::Scan{node.op.value.capitalize()}<{ctype}>"
+        identity = _OP_TO_IDENTITY_CPP[node.op]
+        seed = f"static_cast<{ctype}>({identity})" if identity is not None else f"{ptr[src]}[{r} * {spacing[src]}]"
+        call = (
+            f"::dace::cuda_scan::detail::block_scan<{ctype}, {functor}, {BLOCK_COLLECTIVE_THREADS}, false>("
+            f"{at(src)}, {step(src)}, {at(dst)}, {step(dst)}, {count}, {functor}(), {seed});"
+        )
+    return f"for (long {r} = 0; {r} < {s} && {r} < (long)({n_expr}); ++{r}) {{\n    {call}\n}}"
 
 
 @library.expansion
@@ -1381,17 +1466,18 @@ class ExpandCUDABlock(ExpandTransformation):
     (``for i: for j: b[i, j] = b[i, j - 1] + a[i, j]``) becomes one host-issued ``DeviceScan``
     launch per row rather than one kernel. This expansion is what lets that row map be a kernel.
 
-    The emitted subgraph is a ``GPU_ThreadBlock`` map around a single call to
-    ``dace::cuda_scan::detail::block_inclusive_scan_strided`` (:file:`dace/runtime/include/dace/
-    cuda/scan.cuh`), the same collective the residue-class kernel is built from. The map's
+    The emitted subgraph is a ``GPU_ThreadBlock`` map around calls to ``dace::cuda_scan::detail::block_scan``
+    (:file:`dace/runtime/include/dace/cuda/scan.cuh`, the collective the residue-class kernel is built from)
+    or, for ``op=AFFINE``, ``block_affine_scan`` (:file:`dace/runtime/include/dace/cuda/scan_affine.cuh`):
+    one per chain, or one per residue class of a strided scan, each entered with its seed. The map's
     parameter is deliberately unused: the collective indexes threads through ``threadIdx`` the way
     CUB itself does, and the map is here to tell the code generator two things it can learn no
     other way -- that the enclosing device map runs one iteration per BLOCK rather than per thread,
     and that the block is :data:`BLOCK_COLLECTIVE_THREADS` wide (``get_kernel_dimensions`` reads
     the block size off contained thread-block maps).
 
-    Refuses rather than approximates: the exclusive, multi-chain, affine and explicit-init shapes
-    all fall through to another expansion instead of being silently lowered as something else.
+    Refuses rather than approximates (:func:`block_refusal`): a refused shape falls through to another
+    expansion instead of being silently lowered as something else.
     """
 
     environments: list[type] = []
@@ -1402,38 +1488,26 @@ class ExpandCUDABlock(ExpandTransformation):
             from dace.libraries.sort.environments.cub import BlockCollectives
 
             ExpandCUDABlock.environments = [BlockCollectives]
-        in_desc, out_desc, in_edge, _out_edge = _validate_inputs_and_outputs(node, state, sdfg)
-        reason = block_refusal(node)
+        _in_desc, out_desc, _in_edge, _out_edge = _validate_inputs_and_outputs(node, state, sdfg)
+        reason = block_refusal(node, state, sdfg)
         if reason is not None:
             raise NotImplementedError(f"Scan(CUDA (block)): {reason}")
-        # The collective accumulates in ONE type, the array's; a widening scan would accumulate at
-        # the input's width and lose the range the wider output was asked for.
-        refuse_widening(node, in_desc, out_desc, "the CUDA (block) expansion")
 
         n_expr = _resolve_length(node, state, sdfg)
-        stride_expr = sym2cpp(node.stride)
         ctype = out_desc.dtype.base_type.ctype
-        op_functor = f"::dace::cuda_scan::detail::Scan{node.op.value.capitalize()}<{ctype}>"
-        identity = _OP_TO_IDENTITY_CPP[node.op]
-
-        n_sym = required(in_edge.data.subset).num_elements()
         nsdfg = dace.SDFG(node.label + "_block")
-        nsdfg.add_array(INPUT_CONNECTOR_NAME, [n_sym], in_desc.dtype, storage=in_desc.storage)
-        nsdfg.add_array(OUTPUT_CONNECTOR_NAME, [n_sym], out_desc.dtype, storage=out_desc.storage)
+        spacing = block_operands(node, state, sdfg, nsdfg)
+        if symbolic.equal_valued(1, node.stride):
+            code = "\n".join(block_chain_call(node, chain, ctype, spacing, n_expr) for chain in range(node.chains))
+        else:
+            code = block_residue_classes(node, ctype, spacing, n_expr)
+
         nstate = nsdfg.add_state(node.label + "_block_state")
-        read = nstate.add_read(INPUT_CONNECTOR_NAME)
-        write = nstate.add_write(OUTPUT_CONNECTOR_NAME)
-        code = (
-            f"::dace::cuda_scan::detail::block_inclusive_scan_strided"
-            f"<{ctype}, {op_functor}, {BLOCK_COLLECTIVE_THREADS}>("
-            f"__bsin, __bsout, "
-            f"(long)({n_expr}), (long)({stride_expr}), {op_functor}(), "
-            f"static_cast<{ctype}>({identity}));"
-        )
+        outputs = set(node.out_connectors)
         tasklet = nstate.add_tasklet(
             node.label + "_block_scan",
-            inputs={"__bsin": dtypes.pointer(in_desc.dtype.base_type)},
-            outputs={"__bsout": dtypes.pointer(out_desc.dtype.base_type)},
+            inputs={f"__b{c}": dtypes.pointer(nsdfg.arrays[c].dtype.base_type) for c in spacing if c not in outputs},
+            outputs={f"__b{c}": dtypes.pointer(nsdfg.arrays[c].dtype.base_type) for c in spacing if c in outputs},
             code=code,
             language=dace.Language.CPP,
         )
@@ -1444,15 +1518,12 @@ class ExpandCUDABlock(ExpandTransformation):
         )
         # EVERY lane sees the WHOLE range -- the map does not partition the data, it only supplies
         # the threads. Slicing by ``__lane`` here would hand each thread its own scan.
-        whole = dace.Memlet.simple(INPUT_CONNECTOR_NAME, f"0:{sym2cpp(n_sym)}")
-        nstate.add_memlet_path(read, entry, tasklet, dst_conn="__bsin", memlet=whole)
-        nstate.add_memlet_path(
-            tasklet,
-            exit_node,
-            write,
-            src_conn="__bsout",
-            memlet=dace.Memlet.simple(OUTPUT_CONNECTOR_NAME, f"0:{sym2cpp(n_sym)}"),
-        )
+        for conn in spacing:
+            whole = dace.Memlet.from_array(conn, nsdfg.arrays[conn])
+            if conn in outputs:
+                nstate.add_memlet_path(tasklet, exit_node, nstate.add_write(conn), src_conn=f"__b{conn}", memlet=whole)
+            else:
+                nstate.add_memlet_path(nstate.add_read(conn), entry, tasklet, dst_conn=f"__b{conn}", memlet=whole)
         return nsdfg
 
 
