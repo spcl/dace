@@ -1777,6 +1777,22 @@ def rename_locals_shadowing_closure_symbols(src_ast: ast.AST, closure: dict[str,
         node.id = renames.get(node.id, node.id)
 
 
+class ModuloConverter(ast.NodeTransformer):
+    """Rewrites Python's ``a % b`` to ``PyMod(a, b)``, since a bare ``%`` in an SDFG is C's."""
+
+    def visit_BinOp(self, node: ast.BinOp) -> ast.AST:
+        node = self.generic_visit(node)
+        if not isinstance(node.op, ast.Mod):
+            return node
+        # String formatting, not a modulo
+        if isinstance(node.left, ast.JoinedStr) or (
+            isinstance(node.left, ast.Constant) and isinstance(node.left.value, str)
+        ):
+            return node
+        call = ast.Call(func=ast.Name(id="PyMod", ctx=ast.Load()), args=[node.left, node.right], keywords=[])
+        return ast.copy_location(call, node)
+
+
 def preprocess_dace_program(
     f: Callable[..., Any],
     argtypes: dict[str, data.Data],
@@ -1887,6 +1903,8 @@ def preprocess_dace_program(
                 print(f"VERBOSE: Failed to preprocess (pass #{pass_num}) the following program:")
                 print(astutils.unparse(src_ast))
             raise
+
+    src_ast = ModuloConverter().visit(src_ast)
 
     try:
         ctr = CallTreeResolver(closure_resolver.closure, resolved)
