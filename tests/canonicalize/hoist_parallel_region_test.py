@@ -565,6 +565,87 @@ def test_strip_mine_reads_two_maps_by_their_offsets():
     matches_at_every_team_size(sdfg, {"a": ref}, a=a, N=37)
 
 
+def scratch_in_the_body_sdfg(name):
+    """``a[it + 1, i] = 2 * a[it, i] + 1`` through two map-local scratch arrays of extent ``N``: ``t`` at the
+    column, ``s`` at a fixed position. Neither crosses the map boundary."""
+    sdfg = dace.SDFG(name)
+    sdfg.add_array("a", [N, N], dace.float64)
+    for scratch in ("t", "s"):
+        sdfg.add_transient(scratch, [N], dace.float64, lifetime=dtypes.AllocationLifetime.Scope)
+    outer = loop_region(sdfg, "outer", "N - 1")
+    state = outer.add_state("sweep", is_start_block=True)
+    entry, exit_ = state.add_map("sweep", {"i": "0:N"}, schedule=dtypes.ScheduleType.CPU_Multicore)
+    read, write = state.add_read("a"), state.add_write("a")
+    double = state.add_tasklet("double", {"x"}, {"y"}, "y = 2.0 * x")
+    keep = state.add_tasklet("keep", {"x"}, {"y"}, "y = x")
+    add = state.add_tasklet("add", {"x"}, {"y"}, "y = x + 1.0")
+    t, scratch = state.add_access("t"), state.add_access("s")
+    state.add_memlet_path(read, entry, double, dst_conn="x", memlet=dace.Memlet("a[it, i]"))
+    state.add_edge(double, "y", t, None, dace.Memlet("t[i]"))
+    state.add_edge(t, None, keep, "x", dace.Memlet("t[i]"))
+    state.add_edge(keep, "y", scratch, None, dace.Memlet("s[0]"))
+    state.add_edge(scratch, None, add, "x", dace.Memlet("s[0]"))
+    state.add_memlet_path(add, exit_, write, src_conn="y", memlet=dace.Memlet("a[it + 1, i]"))
+    sdfg.validate()
+    return sdfg
+
+
+def test_strip_mine_keeps_a_column_scratch_outside_the_tiles():
+    """A map-local array a tile touches only at its own columns is allocated once, outside the tile loop; one at
+    a fixed position is each tile's own. Outlined, the column scratch was a WHOLE-extent copy per tile call
+    (CLOUDSC at L: one (klon)-wide set per thread, past the memory cap)."""
+    sdfg = scratch_in_the_body_sdfg("tile_column_scratch")
+    assert tiled(sdfg) == 1
+    (nest,) = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nd.NestedSDFG)]
+    assert sdfg.arrays["t"].transient and "t" in nest.in_connectors | nest.out_connectors
+    assert nest.sdfg.arrays["s"].transient, "a scratch at a fixed position stays private to the tile"
+    a = np.random.default_rng(3).random((37, 37))
+    matches_at_every_team_size(sdfg, {"a": sweep_reference(a, lambda prev, _: 2.0 * prev + 1.0)}, a=a, N=37)
+
+
+def nested_scratch_sdfg(name):
+    """``a[it + 1, i] = 2 * a[it, i] + 1`` with the map's body a nested SDFG that passes the value through the
+    loop-local column scratch ``t[i]`` -- CLOUDSC's shape, whose scratch the statements reach only through a nested
+    SDFG's boundary, where the memlet is the whole column."""
+    body = dace.SDFG(f"{name}_body")
+    body.add_array("a", [N, N], dace.float64)
+    body.add_array("t", [N], dace.float64)
+    body.add_symbol("i", dace.int64)
+    body.add_symbol("it", dace.int64)
+    first = body.add_state("double", is_start_block=True)
+    double = first.add_tasklet("double", {"x"}, {"y"}, "y = 2.0 * x")
+    first.add_edge(first.add_read("a"), None, double, "x", dace.Memlet("a[it, i]"))
+    first.add_edge(double, "y", first.add_write("t"), None, dace.Memlet("t[i]"))
+    second = body.add_state_after(first, "add")
+    add = second.add_tasklet("add", {"x"}, {"y"}, "y = x + 1.0")
+    second.add_edge(second.add_read("t"), None, add, "x", dace.Memlet("t[i]"))
+    second.add_edge(add, "y", second.add_write("a"), None, dace.Memlet("a[it + 1, i]"))
+
+    sdfg = dace.SDFG(name)
+    sdfg.add_array("a", [N, N], dace.float64)
+    sdfg.add_transient("t", [N], dace.float64, lifetime=dtypes.AllocationLifetime.Scope)
+    outer = loop_region(sdfg, "outer", "N - 1")
+    state = outer.add_state("sweep", is_start_block=True)
+    entry, exit_ = state.add_map("sweep", {"i": "0:N"}, schedule=dtypes.ScheduleType.CPU_Multicore)
+    node = state.add_nested_sdfg(body, {"a", "t"}, {"a", "t"}, symbol_mapping={"i": "i", "it": "it", "N": "N"})
+    state.add_memlet_path(state.add_read("a"), entry, node, dst_conn="a", memlet=dace.Memlet("a[0:N, 0:N]"))
+    state.add_memlet_path(state.add_read("t"), entry, node, dst_conn="t", memlet=dace.Memlet("t[0:N]"))
+    state.add_memlet_path(node, exit_, state.add_write("a"), src_conn="a", memlet=dace.Memlet("a[0:N, 0:N]"))
+    state.add_memlet_path(node, exit_, state.add_write("t"), src_conn="t", memlet=dace.Memlet("t[0:N]"))
+    sdfg.validate()
+    return sdfg
+
+
+def test_strip_mine_keeps_a_scratch_a_nested_body_slices_outside_the_tiles():
+    """The column scratch of a body the statement runs as a nested SDFG is allocated once too: its element
+    accesses, read inside the nested SDFG, all name the tile's own column."""
+    sdfg = nested_scratch_sdfg("tile_nested_scratch")
+    assert tiled(sdfg) == 1
+    assert sdfg.arrays["t"].transient, "the column scratch stays in the outer SDFG, one buffer for every tile"
+    a = np.random.default_rng(4).random((37, 37))
+    matches_at_every_team_size(sdfg, {"a": sweep_reference(a, lambda prev, _: 2.0 * prev + 1.0)}, a=a, N=37)
+
+
 def test_strip_mine_runs_a_scalar_statement_in_every_tile():
     """A tasklet beside the maps writing a loop-local scalar is run by every tile on its own copy."""
     sdfg = dace.SDFG("tile_scalar_statement")
@@ -1065,6 +1146,8 @@ if __name__ == "__main__":
     test_loop_without_a_parallel_map_is_refused()
     test_break_in_the_loop_is_refused()
     test_strip_mine_reads_two_maps_by_their_offsets()
+    test_strip_mine_keeps_a_column_scratch_outside_the_tiles()
+    test_strip_mine_keeps_a_scratch_a_nested_body_slices_outside_the_tiles()
     test_strip_mine_runs_a_scalar_statement_in_every_tile()
     test_strip_mine_refuses_a_scalar_statement_reading_what_another_tile_writes()
     test_strip_mine_narrows_a_whole_fill_to_what_is_read()
