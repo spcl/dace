@@ -10,6 +10,11 @@ import tempfile
 import numpy as np
 import pytest
 
+try:
+    import cupy
+except ImportError:  # Optional (dace[gpu]); the tests that need it are skipped
+    cupy = None
+
 import dace
 from dace import dtypes, nodes
 from dace.libraries.ai import verify
@@ -87,8 +92,6 @@ def _run(sdfg: dace.SDFG, on_gpu: bool):
         sdfg(A=a, B=b, C=c)
         return a, b, c
 
-    import cupy
-
     ga, gb, gc = cupy.asarray(a), cupy.asarray(b), cupy.zeros((M, M), dtype=np.float32)
     sdfg(A=ga, B=gb, C=gc)
     return a, b, cupy.asnumpy(gc)
@@ -109,6 +112,7 @@ def test_host_cpu_context():
 
 @pytest.mark.gpu
 @pytest.mark.ai
+@pytest.mark.skipif(cupy is None, reason="needs cupy")
 def test_host_slot_over_gpu_arrays():
     sdfg = _matmul_sdfg("ai_ctx_host_gpu", dtypes.StorageType.GPU_Global, inside_kernel=False)
     tasklet = _expand(sdfg)
@@ -124,6 +128,7 @@ def test_host_slot_over_gpu_arrays():
 
 @pytest.mark.gpu
 @pytest.mark.ai
+@pytest.mark.skipif(cupy is None, reason="needs cupy")
 def test_device_slot_inside_a_kernel():
     sdfg = _matmul_sdfg("ai_ctx_device", dtypes.StorageType.GPU_Global, inside_kernel=True)
     tasklet = _expand(sdfg)
