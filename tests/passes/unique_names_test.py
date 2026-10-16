@@ -94,7 +94,7 @@ def test_a_tasklet_connector_that_spells_a_container_is_renamed_with_its_edge():
     assert b[0] == 3.0
 
 
-def test_a_nested_sdfg_container_named_like_its_parent_container_is_renamed():
+def test_a_nested_container_bound_to_its_parents_namesake_keeps_its_name():
     @dace.program
     def nested(A: dace.float64[4, 4]):
         for i in range(4):
@@ -103,15 +103,44 @@ def test_a_nested_sdfg_container_named_like_its_parent_container_is_renamed():
 
     sdfg = nested.to_sdfg(simplify=False)
     inner = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.NestedSDFG))
-    assert "A" in inner.sdfg.arrays
 
     UniqueNames().apply_pass(sdfg, {})
 
-    assert "A" not in inner.sdfg.arrays and "A_1" in inner.sdfg.arrays
-    assert {"A_1"} <= set(inner.in_connectors) | set(inner.out_connectors)
+    assert "A" in inner.sdfg.arrays and "A_1" not in inner.sdfg.arrays
     a = np.ones((4, 4))
     sdfg(A=a)
     assert np.array_equal(a, 1.0 + np.arange(4)[:, None] * np.ones((1, 4)))
+
+
+def swapped_names_sdfg() -> dace.SDFG:
+    """``B[:] = 2 * A``, through a nested SDFG whose connector ``A`` is bound to the parent's ``B``."""
+    inner = dace.SDFG("doubled")
+    inner.add_array("A", [4], dace.float64)
+    inner.add_array("X", [4], dace.float64)
+    state = inner.add_state()
+    state.add_mapped_tasklet(
+        "double", {"k": "0:4"}, {"x": dace.Memlet("X[k]")}, "a = 2 * x", {"a": dace.Memlet("A[k]")}, external_edges=True
+    )
+    outer = dace.SDFG("swapped_names")
+    outer.add_array("A", [4], dace.float64)
+    outer.add_array("B", [4], dace.float64)
+    state = outer.add_state()
+    node = state.add_nested_sdfg(inner, {"X"}, {"A"})
+    state.add_edge(state.add_read("A"), None, node, "X", dace.Memlet("A[0:4]"))
+    state.add_edge(node, "A", state.add_write("B"), None, dace.Memlet("B[0:4]"))
+    return outer
+
+
+def test_a_nested_container_named_like_another_parent_container_is_renamed():
+    sdfg = swapped_names_sdfg()
+    inner = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.NestedSDFG))
+
+    UniqueNames().apply_pass(sdfg, {})
+
+    assert set(inner.sdfg.arrays) == {"A_1", "X"} and set(inner.out_connectors) == {"A_1"}
+    a, b = np.arange(4.0), np.zeros(4)
+    sdfg(A=a, B=b)
+    assert np.array_equal(b, 2 * np.arange(4.0))
 
 
 def test_a_second_application_renames_nothing():

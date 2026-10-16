@@ -11,13 +11,15 @@ renames the inner one to ``<name>_<N>``. Loop iterators are made unique first by
 import ast
 import builtins
 import keyword
+import re
 
 from dace import SDFG, dtypes
+from dace.libraries.tileops.nodes.tile_op import TileOp
 from dace.properties import CodeBlock
 from dace.sdfg import nodes
 from dace.sdfg.replace import replace_dict
 from dace.sdfg.sdfg import interstate_bound_names
-from dace.sdfg.state import LoopRegion, SDFGState
+from dace.sdfg.state import LoopRegion, SDFGState, StateSubgraphView
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.unique_loop_iterators import UniqueLoopIterators
 from dace.transformation.transformation import explicit_cf_compatible
@@ -112,7 +114,11 @@ def rename_scope_params(state: SDFGState, taken: set[str]) -> int:
         for old, new in repl.items():
             if old in entry.in_connectors:
                 rename_connector(state, entry, old, new)
-        replace_dict(state.scope_subgraph(entry, include_entry=True, include_exit=True), repl)
+        subgraph = state.scope_subgraph(entry, include_entry=True, include_exit=True)
+        replace_dict(subgraph, repl)
+        rename_strings(subgraph, repl)
+        for nested in (n for n in subgraph.nodes() if isinstance(n, nodes.NestedSDFG)):
+            rename_strings(nested.sdfg, {old: new for old, new in repl.items() if old in nested.sdfg.free_symbols})
         renamed += len(repl)
     return renamed
 
@@ -133,13 +139,40 @@ def rename_tasklet(state: SDFGState, scope: dict, tasklet: nodes.Tasklet, taken:
     return len(repl)
 
 
+def same_binding(state: SDFGState, node: nodes.NestedSDFG, name: str) -> bool:
+    """Whether the nested name ``name`` binds the parent's ``name`` itself: a symbol mapped to it, or a connector of
+    an edge that moves it. Such a name holds the parent's value, so it shadows nothing."""
+    if name in node.symbol_mapping:
+        return str(node.symbol_mapping[name]) == name
+    edges = [*state.in_edges_by_connector(node, name), *state.out_edges_by_connector(node, name)]
+    return bool(edges) and all(edge.data.data == name for edge in edges)
+
+
+def rename_strings(graph: SDFG | StateSubgraphView, repl: dict[str, str]) -> None:
+    """Rename inside the string properties of the tile nodes of ``graph``: ``replace`` renames a string only when it
+    is the name itself, and a tile node spells expressions (``lane_bounds``, ``expr_a``) as strings."""
+    names = re.compile(rf"\b({'|'.join(map(re.escape, repl))})\b")
+    found = graph.all_nodes_recursive() if isinstance(graph, SDFG) else ((n, None) for n in graph.nodes())
+    for node, _ in found:
+        if not isinstance(node, TileOp):
+            continue
+        for prop in type(node).__properties__:
+            value = getattr(node, prop)
+            if isinstance(value, str):
+                setattr(node, prop, names.sub(lambda m: repl[m.group(1)], value))
+            elif isinstance(value, list) and all(isinstance(item, str) for item in value):
+                setattr(node, prop, [names.sub(lambda m: repl[m.group(1)], item) for item in value])
+
+
 def rename_nested(state: SDFGState, node: nodes.NestedSDFG, taken: set[str]) -> int:
     """Rename the containers and symbols of a nested SDFG its parent already names, then its own body."""
     inner = node.sdfg
     inner_names = sdfg_names(inner)
-    repl = {name: fresh_name(name, taken | inner_names) for name in sorted(inner_names & taken)}
+    clashes = sorted(name for name in inner_names & taken if not same_binding(state, node, name))
+    repl = {name: fresh_name(name, taken | inner_names) for name in clashes}
     if repl:
         inner.replace_dict(repl)
+        rename_strings(inner, repl)
         for old, new in repl.items():
             rename_connector(state, node, old, new)
             if old in node.symbol_mapping:

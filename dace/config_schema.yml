@@ -389,6 +389,20 @@ required:
 
             #############################################
             # CPU compiler
+            python:
+                type: dict
+                title: Python
+                description: Python backend preferences
+                required:
+                    tile_dialect:
+                        type: str
+                        default: triton
+                        title: Tile kernel dialect
+                        enum: [triton, cutile, tilelang]
+                        description: >
+                            The tile DSL a GPU map over BLOCK tile nodes is written in by the
+                            Python backend (``compiler.backend: python``).
+
             cpu:
                 type: dict
                 title: CPU

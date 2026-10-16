@@ -14,6 +14,7 @@ from collections.abc import Iterator
 from dace import SDFG, data, dtypes, subsets, symbolic
 from dace.codegen.exceptions import CodegenError
 from dace.codegen.python import CUPY_STORAGES
+from dace.config import Config
 from dace.memlet import Memlet
 from dace.sdfg import nodes
 from dace.sdfg.graph import MultiConnectorEdge
@@ -53,6 +54,10 @@ def ipow(a, b):
 
 
 Min, Max, Abs = min, max, abs
+
+
+def abort():
+    raise RuntimeError("an assumption of the program does not hold")
 """
 
 
@@ -115,6 +120,19 @@ def allocation(desc: data.Data) -> str:
     return f"{function}({xp}.empty({expr(desc.total_size)}, {dtype}), ({shape},), ({strides},))"
 
 
+def kernel_containers(sdfg: SDFG) -> set[str]:
+    """The containers of ``sdfg`` that only GPU scopes access: the tile kernels hold them, the host never does."""
+    inside, outside = set(), set()
+    for state in sdfg.states():
+        scope = state.scope_dict()
+        for node in state.data_nodes():
+            parent = scope[node]
+            while parent is not None and parent.map.schedule not in dtypes.GPU_SCHEDULES:
+                parent = scope[parent]
+            (inside if parent is not None else outside).add(node.data)
+    return inside - outside
+
+
 def is_view(sdfg: SDFG, node: nodes.Node) -> bool:
     return isinstance(node, nodes.AccessNode) and isinstance(node.desc(sdfg), data.View)
 
@@ -142,7 +160,7 @@ class ScalarReads(ast.NodeTransformer):
 class Emitter:
     """Writes the lines of the function, one block of the SDFG tree at a time."""
 
-    __slots__ = ("sdfg", "lines", "depth", "allocated", "loops", "view_edges")
+    __slots__ = ("sdfg", "lines", "depth", "allocated", "loops", "view_edges", "kernels")
 
     def __init__(self, sdfg: SDFG):
         self.sdfg = sdfg
@@ -153,6 +171,8 @@ class Emitter:
         self.loops: list[list[str]] = []
         #: The edges of the current state that bind a view to the container it views, which move no data.
         self.view_edges: set[MultiConnectorEdge[Memlet]] = set()
+        #: The tile kernels the function launches, each the source of one module-level function.
+        self.kernels: list[str] = []
 
     def line(self, text: str) -> None:
         self.lines.append("    " * self.depth + text)
@@ -181,6 +201,7 @@ class Emitter:
             for name, desc in arglist.items():
                 if isinstance(desc, data.Scalar) and name in sdfg.arrays:
                     self.line(f"{name} = np.asarray({name}, np.{desc.dtype.as_numpy_dtype().name}).reshape(1)")
+            self.allocated |= kernel_containers(sdfg)
             self.allocate_ready(sdfg, set(arglist) | set(sdfg.constants))
             self.region(sdfg, sdfg)
         return "\n".join(self.lines)
@@ -304,15 +325,18 @@ class Emitter:
                 self.access(sdfg, state, node)
             elif isinstance(node, nodes.NestedSDFG):
                 self.nested(sdfg, state, node)
+            elif isinstance(node, nodes.LibraryNode):
+                self.library(sdfg, state, node)
             else:
                 raise CodegenError(f"Python backend: no Python form for {type(node).__name__} {node.label!r}")
 
+    def library(self, sdfg: SDFG, state: SDFGState, node: nodes.LibraryNode) -> None:
+        raise CodegenError(f"Python backend: library node {node.label!r} outside a tile kernel was not expanded")
+
     def map(self, sdfg: SDFG, state: SDFGState, scope: dict, order: list, entry: nodes.MapEntry) -> None:
         if entry.map.schedule in dtypes.GPU_SCHEDULES:
-            raise CodegenError(
-                f"Python backend: GPU map {entry.map.label!r} holds no tile ops; vectorize with "
-                "VectorizeMultiDim(device=GPU, tile_group=BLOCK) first"
-            )
+            self.tile_kernel(sdfg, state, scope, order, entry)
+            return
         for edge in state.in_edges(entry):
             if edge.dst_conn and not edge.dst_conn.startswith("IN_"):
                 self.line(f"{edge.dst_conn} = {self.read(sdfg, state, edge)}")
@@ -322,6 +346,25 @@ class Emitter:
                 stride = "" if step == 1 else f", {expr(step)}"
                 stack.enter_context(self.block(f"for {param} in range({expr(begin)}, {stop}{stride}):"))
             self.scope(sdfg, state, scope, order, entry)
+
+    def tile_kernel(self, sdfg: SDFG, state: SDFGState, scope: dict, order: list, entry: nodes.MapEntry) -> None:
+        """Write the map at ``entry`` as a kernel of the tile dialect and launch it, one program per iteration."""
+        # Avoid import loop
+        from dace.codegen.python.kernel import KernelEmitter, holds_tile_ops
+
+        if not holds_tile_ops(sdfg, state, entry):
+            raise CodegenError(
+                f"Python backend: GPU map {entry.map.label!r} holds no tile ops; vectorize with "
+                "VectorizeMultiDim(device=GPU, tile_group=BLOCK) first"
+            )
+        dialect = tile_dialect()
+        name = f"kernel_{entry.map.label}"
+        kernel = KernelEmitter(sdfg, dialect)
+        arrays, symbols = kernel.kernel(sdfg, state, scope, order, entry)
+        header = f"def {name}({', '.join(arrays + symbols)}):"
+        self.kernels.append("\n".join([dialect.decorator, header, *kernel.lines]))
+        grid = [f"int_ceil({expr(end - begin + 1)}, {expr(step)})" for begin, end, step in reversed(entry.map.range)]
+        self.line(dialect.launch(name, grid, arrays, symbols))
 
     def read(self, sdfg: SDFG, state: SDFGState, edge: MultiConnectorEdge[Memlet]) -> str:
         """The value or view an edge brings into a connector."""
@@ -334,8 +377,11 @@ class Emitter:
             return f"{name}[0]"
         return f"{name}[{slices(desc, subset)}]"
 
+    def body(self, sdfg: SDFG, node: nodes.Tasklet) -> str:
+        return node.code.as_string
+
     def tasklet(self, sdfg: SDFG, state: SDFGState, node: nodes.Tasklet) -> None:
-        body = node.code.as_string
+        body = self.body(sdfg, node)
         used = used_names(body)
         for edge in state.in_edges(node):
             if edge.dst_conn in used and edge.data.data is not None:
@@ -418,10 +464,21 @@ class Emitter:
         self.region(inner, inner)
 
 
+def tile_dialect():
+    """The tile DSL ``compiler.python.tile_dialect`` selects."""
+    # Avoid import loop
+    from dace.codegen.python.dialects import DIALECTS
+
+    return DIALECTS[Config.get("compiler", "python", "tile_dialect")]()
+
+
 def generate(sdfg: SDFG) -> str:
-    """The Python module of a prepared ``sdfg``: the prelude and one function named after it."""
-    function = Emitter(sdfg).function()
-    prelude = (
-        PRELUDE.replace("import numpy as np\n", "import cupy\nimport numpy as np\n") if "cupy." in function else PRELUDE
-    )
-    return f"{prelude}\n\n{function}\n"
+    """The Python module of a prepared ``sdfg``: the prelude, its tile kernels and one function named after it."""
+    emitter = Emitter(sdfg)
+    function = emitter.function()
+    prelude = PRELUDE
+    if "cupy." in function or emitter.kernels:
+        prelude = prelude.replace("import numpy as np\n", "import cupy\nimport numpy as np\n")
+    if emitter.kernels:
+        prelude += f"\n\n{tile_dialect().imports}"
+    return "\n\n\n".join([prelude, *emitter.kernels, function]) + "\n"

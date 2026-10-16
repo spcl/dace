@@ -3,6 +3,7 @@
 
 from dace import SDFG, dtypes
 from dace.codegen.exceptions import CodegenError
+from dace.libraries.tileops.nodes.tile_op import TileOp
 from dace.sdfg import infer_types, nodes
 from dace.sdfg.state import ControlFlowRegion
 from dace.transformation.pass_pipeline import FixedPointPipeline
@@ -30,7 +31,7 @@ def require_python_tasklets(sdfg: SDFG) -> None:
     for node, _ in sdfg.all_nodes_recursive():
         if isinstance(node, nodes.Tasklet) and node.language is not dtypes.Language.Python:
             raise CodegenError(f"Python backend: tasklet {node.label!r} is {node.language.name}, not Python")
-        if isinstance(node, nodes.LibraryNode):
+        if isinstance(node, nodes.LibraryNode) and not isinstance(node, TileOp):
             raise CodegenError(f"Python backend: library node {node.label!r} has no Python expansion")
 
 
@@ -40,7 +41,12 @@ def expand_library_nodes(sdfg: SDFG) -> None:
     from dace.libraries.python_expansions import IMPLEMENTATION
 
     while True:
-        pending = [(n, s) for n, s in sdfg.all_nodes_recursive() if isinstance(n, nodes.LibraryNode)]
+        # A tile node is a statement of its tile kernel, never expanded
+        pending = [
+            (n, s)
+            for n, s in sdfg.all_nodes_recursive()
+            if isinstance(n, nodes.LibraryNode) and not isinstance(n, TileOp)
+        ]
         if not pending:
             return
         for node, state in pending:
