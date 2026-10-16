@@ -456,20 +456,25 @@ def test_between_blocks_iv_post_increment():
     assert symbolic.simplify(_idx(loop) - symbolic.pystr_to_symbolic("k + i + 1")) == 0, f"got {_idx(loop)}"
 
 
-def test_between_blocks_iv_mixed_uses_refused():
-    """Used both before AND after the increment -> the two sides need different
-    offsets, so the pass refuses and leaves the IV iedge intact."""
+def test_between_blocks_iv_mixed_uses_take_their_own_offsets():
+    """Used both before AND after the increment -> each side keeps its own offset.
+
+    The update moves to the bottom of the body and the reads after it see ``k + 1``, so the read before the
+    increment closes to ``a[k + i]`` and the read after it to ``a[k + i + 1]``. This is an unrolled body's
+    counter (``k = k + 1`` before each copy), which used to stay a carried symbol."""
     sdfg, loop = _build_between_blocks_iv("bb_mixed", use_before=True, use_after=True)
     sdfg.validate()
-    InductionVariableSubstitution().apply_pass(sdfg, {})
-    iv_edges = [e for e in loop.edges() if "k" in (e.data.assignments or {})]
-    assert len(iv_edges) == 1, "the IV update must survive a mixed-side refusal"
-    assert (
+    assert InductionVariableSubstitution().apply_pass(sdfg, {}) is not None
+    sdfg.validate()
+    assert not [e for e in loop.edges() if "k" in (e.data.assignments or {})], "the carried update must be gone"
+    reads = [e.data.assignments["g"] for e in loop.edges() if "g" in (e.data.assignments or {})]
+    offsets = sorted(
         symbolic.simplify(
-            symbolic.pystr_to_symbolic(iv_edges[0].data.assignments["k"]) - symbolic.pystr_to_symbolic("k + 1")
+            symbolic.pystr_to_symbolic(r.split("[", 1)[1].rsplit("]", 1)[0]) - symbolic.pystr_to_symbolic("k + i")
         )
-        == 0
-    ), "IV must be untouched on refusal"
+        for r in reads
+    )
+    assert offsets == [0, 1], f"got {reads}"
 
 
 # Derived symbol: defined purely by a loop-var expression (no self-reference) ->

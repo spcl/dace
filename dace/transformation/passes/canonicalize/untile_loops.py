@@ -24,7 +24,7 @@ which downstream canonicalize passes (``LoopToReduce``, ``LoopToScan``,
 ``LoopToMap``) see the body in its natural one-dimensional form.
 
 Pattern
-=======
+-------
 
 The outer loop must be ``for i in range(0, N, K)`` where ``K`` is a positive
 tile size -- a concrete integer literal ``> 1`` **or** a positive symbol (e.g.
@@ -49,7 +49,7 @@ new unit iterator. If any memlet uses ``i`` or ``ii`` outside the recognised
 combination, the rewrite refuses.
 
 Rewrite
-=======
+-------
 
 The outer ``LoopRegion`` is reused: its iterator becomes ``_untile_k_<n>`` and
 its bounds become ``0 <= k < N`` with step ``1``. The inner ``LoopRegion`` is
