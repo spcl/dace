@@ -2051,7 +2051,10 @@ def propagate_subset(
         else:
             subset = md.subset
 
-        for pclass in MemletPattern.extensions():
+        # A symbol undefined outside the scope is opaque there: no pattern may express the image in it, so such a
+        # subset takes the conservative fallback below (#2293).
+        opaque = bool(undefined_names) and not undefined_names.isdisjoint(map(str, subset.free_symbols))
+        for pclass in () if opaque else MemletPattern.extensions():
             pattern = pclass()
             if pattern.can_be_applied([subset], variable_context, rng, [md], facts):
                 tmp_subset = pattern.propagate(arr, [subset], rng, facts)
