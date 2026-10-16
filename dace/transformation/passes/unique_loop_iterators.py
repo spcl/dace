@@ -55,9 +55,11 @@ def rename_iterator(cfg: ControlFlowRegion, old: str, new: str) -> None:
         for node in state.nodes():
             if not isinstance(node, nodes.NestedSDFG):
                 continue
-            # ``replace_dict`` renamed the mapped value; the key is the nested SDFG's own name for it.
-            if old in node.symbol_mapping:
-                node.symbol_mapping[new] = node.symbol_mapping.pop(old)
+            # ``replace_dict`` renamed the mapped value. A nested SDFG that does not import the iterator under its own
+            # name owns any ``old`` it declares (its own loop's iterator), so it is left alone.
+            if str(node.symbol_mapping.get(old)) != new:
+                continue
+            node.symbol_mapping[new] = node.symbol_mapping.pop(old)
             if old in node.sdfg.symbols:
                 rename_iterator(node.sdfg, old, new)
 
@@ -156,27 +158,34 @@ class UniqueLoopIterators(ppl.Pass):
         ]
         # Loop fission copies a loop with its already unique name, so a duplicate is renamed again.
         duplicated = {name for name in iterators if iterators.count(name) > 1}
+        plan: list[tuple[LoopRegion, str, int]] = []
         for loop in sdfg.all_control_flow_regions():
             if not isinstance(loop, LoopRegion) or not loop.loop_variable:
                 continue
             old = loop.loop_variable
             if iterator_id(old) >= 0 and old not in duplicated:
                 continue
-            new = f"{LOOP_ITERATOR_PREFIX}{self.next_id}"
+            plan.append((loop, old, self.next_id))
+            self.next_id += 1
+        # Innermost first: a rename replaces ``old`` in the loop's whole subtree, so an inner loop that rebinds the
+        # same name must already carry its own iterator when the enclosing loop is renamed.
+        for loop, old, ident in reversed(plan):
+            new = f"{LOOP_ITERATOR_PREFIX}{ident}"
             rename_iterator(loop, old, new)
             renamed.add(new)
+        # After every rename, so no rename rewrites an exit-value assignment.
+        for loop, old, ident in plan:
             if self.assign_loop_iterator_post_value:
                 value = exit_value(loop) if exit_value_is_read(loop, old, self.readers, self.reach) else None
                 if value is not None:
                     loop.parent_graph.add_state_after(
                         loop,
-                        f"{POST_VALUE_STATE_PREFIX}_{self.next_id}",
+                        f"{POST_VALUE_STATE_PREFIX}_{ident}",
                         assignments={old: f"({symbolic.symstr(value, arrayexprs=frozenset(sdfg.arrays))})"},
                     )
             elif old in sdfg.symbols and old not in sdfg.used_symbols(all_symbols=False):
                 # Nothing reads the old name any more; its declaration would leak as a free symbol of the SDFG.
                 sdfg.remove_symbol(old)
-            self.next_id += 1
 
         for state in sdfg.states():
             for node in state.nodes():
