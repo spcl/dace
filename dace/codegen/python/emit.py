@@ -390,10 +390,14 @@ class Emitter:
             whole = edge.data.subset.num_elements() != 1 or edge.data.dynamic
             if whole and edge.src_conn not in node.in_connectors:
                 self.line(f"{edge.src_conn} = {self.read(sdfg, state, edge)}")
-        for text in body.splitlines():
-            self.line(text)
+        self.statements(body)
         for edge in writes:
             self.write(sdfg, edge)
+
+    def statements(self, body: str) -> None:
+        """Write the Python statements of a tasklet body."""
+        for text in body.splitlines():
+            self.line(text)
 
     def write(self, sdfg: SDFG, edge: MultiConnectorEdge[Memlet]) -> None:
         name = edge.data.data

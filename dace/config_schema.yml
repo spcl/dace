@@ -1061,6 +1061,25 @@ required:
                         enum: [legacy, experimental]
                         default: experimental
 
+                    tile_backend:
+                        type: str
+                        title: GPU tile kernel backend
+                        enum: [block, cuda_tile]
+                        default: block
+                        description: >
+                            How the experimental CUDA generator writes a GPU kernel over BLOCK tile nodes.
+                            ``block`` spreads each tile over the threads of a block (``ExpandTileBlock``).
+                            ``cuda_tile`` writes it as a CUDA Tile C++ ``__tile_global__`` kernel, one tile
+                            block per map iteration; it needs CUDA 13.3 or newer and sm_80 or newer.
+
+                    tile_args:
+                        type: str
+                        title: CUDA Tile C++ arguments
+                        default: '--enable-tile'
+                        description: >
+                            nvcc arguments added to a build only when it holds a CUDA Tile C++ kernel
+                            (``tile_backend: cuda_tile``), on top of ``compiler.cuda.args``.
+
                     allow_implicit_memlet_to_map:
                         type: bool
                         title: Allow the implicit conversion of Memlets to Maps during code generation.

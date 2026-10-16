@@ -74,7 +74,7 @@ class Triton(Dialect):
             return lanes
         return f"{lanes}[{', '.join(':' if k == dim else 'None' for k in range(len(widths)))}]"
 
-    def load(self, base: str, at: Element, mask: str | None) -> str:
+    def load(self, base: str, at: Element, mask: str | None, dtype: dtypes.typeclass) -> str:
         pointers = f"{base} + {at.flat()}"
         return f"tl.load({pointers})" if mask is None else f"tl.load({pointers}, mask={mask}, other=0)"
 

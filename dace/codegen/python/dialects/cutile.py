@@ -51,7 +51,7 @@ class CuTile(Dialect):
         shape = tuple(width if k == dim else 1 for k, width in enumerate(widths))
         return f"ct.reshape({lanes}, {shape})"
 
-    def load(self, base: str, at: Element, mask: str | None) -> str:
+    def load(self, base: str, at: Element, mask: str | None, dtype: dtypes.typeclass) -> str:
         masked = "" if mask is None else f", mask={mask}, padding_value=0"
         return f"ct.gather({base}, ({', '.join(at.indices)},){masked})"
 

@@ -16,6 +16,7 @@ from dace import SDFG, data, dtypes, symbolic
 from dace.codegen.exceptions import CodegenError
 from dace.codegen.python.emit import Emitter, expr
 from dace.frontend.operations import detect_reduction_type
+from dace.libraries.standard.nodes.copy.node import CopyLibraryNode
 from dace.libraries.tileops import ops
 from dace.libraries.tileops.dispatch import TileGroup
 from dace.libraries.tileops.kinds import SYMBOL, TILE
@@ -52,6 +53,8 @@ class Element(NamedTuple):
 
     indices: list[str]
     strides: list[str]
+    #: Whether a lane tensor spans a dim, so the access moves a tile rather than one element.
+    tile: bool = False
 
     def flat(self) -> str:
         return " + ".join(f"({index}) * {stride}" for index, stride in zip(self.indices, self.strides))
@@ -95,7 +98,8 @@ class Dialect:
         """The index of each lane along ``dim``, broadcast over a tile of ``widths``."""
         raise NotImplementedError
 
-    def load(self, base: str, at: "Element", mask: str | None) -> str:
+    def load(self, base: str, at: "Element", mask: str | None, dtype: dtypes.typeclass) -> str:
+        """The elements ``at`` addresses of ``base``, whose elements are ``dtype``; masked lanes read 0."""
         raise NotImplementedError
 
     def store(self, base: str, at: "Element", value: str, mask: str | None) -> str:
@@ -103,6 +107,10 @@ class Dialect:
 
     def cast(self, value: str, dtype: dtypes.typeclass) -> str:
         raise NotImplementedError
+
+    def select(self, condition: str, value: str, otherwise: str) -> str:
+        """``value`` where ``condition`` holds, else ``otherwise``."""
+        return f"{self['where']}({condition}, {value}, {otherwise})"
 
     def full(self, widths: list[int], value: str, dtype: dtypes.typeclass) -> str:
         """A tile of ``widths`` every lane of which is the scalar ``value``."""
@@ -140,8 +148,12 @@ def holds_tile_ops(sdfg: SDFG, state: SDFGState, entry: nodes.MapEntry) -> bool:
     return False
 
 
+#: The storages of a container a tile kernel holds itself, as a value or a buffer of its own.
+KERNEL_STORAGES = (dtypes.StorageType.Register, dtypes.StorageType.Default, dtypes.StorageType.GPU_Shared)
+
+
 def is_register(desc: data.Data) -> bool:
-    return desc.transient and desc.storage in (dtypes.StorageType.Register, dtypes.StorageType.Default)
+    return desc.transient and desc.storage in KERNEL_STORAGES
 
 
 class KernelEmitter(Emitter):
@@ -183,14 +195,17 @@ class KernelEmitter(Emitter):
         for axis, (param, (begin, _, step)) in enumerate(zip(reversed(params), reversed(entry.map.range))):
             self.line(f"{param} = {expr(begin)} + {self.dialect.program_id(axis)} * {expr(step)}")
         self.scope(sdfg, state, scope, order, entry)
-        tree = ast.parse(textwrap.dedent("\n".join(self.lines)))
+        names, assigned = self.bindings()
         # The grid is the map range, which a dialect may compute in the kernel
-        names = {n.id for n in ast.walk(tree) if isinstance(n, ast.Name)} | {
-            str(s) for s in entry.map.range.free_symbols
-        }
-        assigned = {n.id for n in ast.walk(tree) if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store)}
+        names |= {str(s) for s in entry.map.range.free_symbols}
         symbols = (names & (set(sdfg.symbols) | set(sdfg.arglist()))) - self.arrays - assigned
         return sorted(self.arrays), sorted(symbols)
+
+    def bindings(self) -> tuple[set[str], set[str]]:
+        """The names the kernel body reads or writes, and those it assigns."""
+        tree = ast.parse(textwrap.dedent("\n".join(self.lines)))
+        names = {n.id for n in ast.walk(tree) if isinstance(n, ast.Name)}
+        return names, {n.id for n in ast.walk(tree) if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store)}
 
     def scope(self, sdfg, state, scope, order, entry) -> None:
         for node in order:
@@ -200,6 +215,13 @@ class KernelEmitter(Emitter):
         super().scope(sdfg, state, scope, order, entry)
 
     def library(self, sdfg: SDFG, state: SDFGState, node: nodes.LibraryNode) -> None:
+        if isinstance(node, CopyLibraryNode) and not isinstance(node, TileOp):
+            # A copy the copy lowering inserted between two registers rebinds the value
+            source, target = state.in_edges(node)[0].data.data, state.out_edges(node)[0].data.data
+            if not (is_register(sdfg.arrays[source]) and is_register(sdfg.arrays[target])):
+                raise CodegenError(f"Python backend: a tile kernel copies {node.label!r} through global memory")
+            self.line(f"{target} = {source}")
+            return
         if not isinstance(node, TileOp):
             raise CodegenError(f"Python backend: no tile kernel form for {type(node).__name__} {node.label!r}")
         self.dialect.statement_type(self, sdfg, state, node).emit()
@@ -213,7 +235,7 @@ class KernelEmitter(Emitter):
         name, desc = edge.data.data, sdfg.arrays[edge.data.data]
         if is_register(desc):
             return name
-        return self.dialect.load(name, self.element_offset(desc, edge.data.subset), None)
+        return self.dialect.load(name, self.element_offset(desc, edge.data.subset), None, desc.dtype)
 
     def write(self, sdfg, edge) -> None:
         name, desc = edge.data.data, sdfg.arrays[edge.data.data]
@@ -290,7 +312,7 @@ class KernelAccesses(ast.NodeTransformer):
             if desc.total_size != 1:
                 raise CodegenError(f"Python backend: a kernel tasklet indexes the register tile {name!r}")
             return ast.Name(id=name, ctx=node.ctx)
-        return ast.parse(self.dialect.load(name, self.offset(node, desc), None), mode="eval").body
+        return ast.parse(self.dialect.load(name, self.offset(node, desc), None, desc.dtype), mode="eval").body
 
     def visit_Assign(self, node: ast.Assign) -> ast.AST:
         node.value = self.visit(node.value)
@@ -366,7 +388,7 @@ class TileStatement:
     def masked(self, value: str, zero: str = "0") -> str:
         if not getattr(self.node, "has_mask", False):
             return value
-        return f"{self.dialect['where']}({self.input('_mask')}, {value}, {zero})"
+        return self.dialect.select(self.input("_mask"), value, zero)
 
     def elementwise(self) -> tuple[str, str]:
         node = self.node
@@ -410,7 +432,7 @@ class TileStatement:
                 index = f"{index} + {self.dialect.lane(widths, lane)}" + ("" if step == 1 else f" * {expr(step)}")
                 lane += 1
             indices.append(index)
-        return Element(indices, [expr(stride) for stride in desc.strides])
+        return Element(indices, [expr(stride) for stride in desc.strides], tile=True)
 
     def masked_copy(self) -> None:
         source, target = self.inputs["_cpy_in"], self.outputs["_cpy_out"]
@@ -420,7 +442,9 @@ class TileStatement:
             self.emitter.line(f"{dst} = {self.masked(src)}")
         elif dst_register:
             offsets = self.offsets(src, source.data.subset)
-            self.emitter.line(f"{dst} = {self.dialect.load(src, offsets, self.lane_mask())}")
+            self.emitter.line(
+                f"{dst} = {self.dialect.load(src, offsets, self.lane_mask(), self.sdfg.arrays[src].dtype)}"
+            )
         else:
             subset = target.data.subset if target.data.data == dst else target.data.other_subset
             offsets = self.offsets(dst, subset)

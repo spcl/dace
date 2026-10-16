@@ -142,7 +142,10 @@ class TileLangStatement(TileStatement):
             if is_register(self.sdfg.arrays[src]):
                 self.assign("_cpy_out", self.masked(src))
             else:
-                self.assign("_cpy_out", self.dialect.load(src, self.offsets(src, source.data.subset), mask))
+                self.assign(
+                    "_cpy_out",
+                    self.dialect.load(src, self.offsets(src, source.data.subset), mask, self.sdfg.arrays[src].dtype),
+                )
             return
         subset = target.data.subset if target.data.data == dst else target.data.other_subset
         address = f"{dst}[{self.offsets(dst, subset).flat()}]"
@@ -234,7 +237,7 @@ class TileLang(Dialect):
     def lane(self, widths: list[int], dim: int) -> str:
         return f"lane{dim}"
 
-    def load(self, base: str, at: Element, mask: str | None) -> str:
+    def load(self, base: str, at: Element, mask: str | None, dtype: dtypes.typeclass) -> str:
         element = f"{base}[{at.flat()}]"
         return element if mask is None else f"T.if_then_else({mask}, {element}, 0)"
 
