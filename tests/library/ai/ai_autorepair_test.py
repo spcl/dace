@@ -1,12 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""
-Tests for feeding a failed build back to the tasklets that caused it.
-
-The compile check builds each generated tasklet alone, so it cannot see what only breaks once several
-of them share a program. What makes that usable is attribution: with more than one generated
-tasklet in the SDFG, a diagnostic has to land on the one responsible, and a diagnostic that belongs
-to no generated tasklet must not land on any of them.
-"""
+"""Tests of attributing whole-program build diagnostics to generated tasklets, and repairing them."""
 
 import contextlib
 import pathlib
@@ -46,9 +39,7 @@ def sessions_in(tmp_path):
     with dace.config.set_temporary("ai", "sessions", value=True):
         with dace.config.set_temporary("default_build_folder", value=str(tmp_path)):
             with dace.config.set_temporary("ai", "compile_check", value=False):
-                # With debugprint on, DaCe streams the compiler output live and leaves it out of
-                # the exception, so a test that reads diagnostics from the exception has to turn it
-                # off. ai.build() does the same thing internally, for the same reason.
+                # With debugprint, the compiler output is not in the exception
                 with dace.config.set_temporary("debugprint", value=False):
                     yield
 
@@ -199,11 +190,7 @@ def test_diagnostics_are_parsed_from_both_compiler_dialects():
 
 def test_the_line_index_covers_the_body_and_the_global(tmp_path):
     """
-    Both blocks must be attributable.
-
-    DaCe's own ``map_cpp.json`` keeps only the first contiguous run of lines per node, so for a
-    tasklet with a ``code_global`` it describes the global block and omits the body -- which is
-    where compile errors usually are. The index built here must not have that gap.
+    Both the body and the global code of a tasklet are in the line index (``map_cpp.json`` misses the body).
     """
     with sessions_in(tmp_path):
         sdfg, state = _two_slots(

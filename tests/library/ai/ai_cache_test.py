@@ -1,10 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""
-Tests for the reuse of model answers across runs.
-
-The same library node in the same context produces the same prompt, and asking the same model the
-same question again costs money for an answer already in hand.
-"""
+"""Tests of the answer cache."""
 
 import contextlib
 import os

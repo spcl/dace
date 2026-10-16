@@ -138,10 +138,8 @@ def test_the_compile_check_can_be_disabled():
     assert len(provider.calls) == 1, "the code was checked even though the check is off"
 
 
-#: storage, memlet subset, dynamic, and the C++ types both the prompt and the generated code must
-#: use for the input and the output. A GPU operand is a pointer even for a single element: taking
-#: it by value would compile into a host-side load out of device memory. A dynamic output has no
-#: single destination to write back to and so stays a pointer, while a dynamic input does not.
+#: Storage, memlet subset, dynamic, and the expected C++ types of the input and the output. A single
+#: element of GPU memory is a pointer, and so is a dynamic output.
 CONNECTOR_SHAPES = {
     "cpu_element": (dtypes.StorageType.CPU_Heap, "0, 0", False, "float", "float"),
     "cpu_tile": (dtypes.StorageType.CPU_Heap, "0:4, 0:4", False, "float*", "float*"),

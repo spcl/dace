@@ -1,11 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""
-Tests for the per-slot session record and for the progress printouts.
-
-An expansion is a paid, non-reproducible call whose result is baked into the SDFG, so what the
-model was told and what it answered has to survive the run, and the next round of work on that slot
-resumes this conversation rather than starting a new one.
-"""
+"""Tests of the session record and of the progress output."""
 
 import glob
 import json

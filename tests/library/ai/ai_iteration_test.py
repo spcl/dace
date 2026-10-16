@@ -1,28 +1,11 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """
-Live tests of iterating on a generated tasklet.
+Live tests of refining a generated tasklet. They need an API key, so they are marked ``ai``::
 
-These call a real model provider, so they are marked ``ai`` and excluded from CI. Run them with::
+    ANTHROPIC_API_KEY=... python -m pytest tests/library/ai/ai_iteration_test.py -m ai -v
 
-    ANTHROPIC_API_KEY=... ./py314/bin/python -m pytest tests/library/ai/ai_iteration_test.py -m ai -v
-
-Any configured provider works::
-
-    DACE_ai_provider=openai OPENAI_API_KEY=... ...         # OpenAI
-    DACE_ai_provider=manual ...  -s < /dev/null            # relay the prompt by hand
-
-Add ``DACE_debugprint=verbose`` to watch the prompts, answers and compile checks go by. Each
-test makes **two** paid generations: one to produce the tasklet, one to revise it, and prints the
-directory holding the conversation when it finishes (run with ``-s`` to see it).
-
-Running them a second time costs nothing: answers are cached by prompt, so a re-run replays the
-same conversation offline. Pass ``DACE_ai_cache=false`` to force fresh generations, which is what
-you want when judging whether the prompts reliably produce good code rather than whether the
-plumbing works.
-
-What is asserted is behavior, not text: that the program still computes the right answer after a
-revision, and that the specific thing the feedback asked for is present. The point is that the
-second call *continued the conversation* rather than starting over.
+Each test makes two generations; answers are cached, so a second run is free (``DACE_ai_cache=false``
+forces new ones).
 """
 
 import platform
@@ -149,11 +132,7 @@ def _tasklet(sdfg: dace.SDFG) -> nodes.Tasklet:
 @pytest.mark.ai
 def test_feedback_revises_a_working_tasklet():
     """
-    The core of iteration: revise code that already works, without breaking it.
-
-    Two generations. The first produces a correct kernel; the second is told to restructure it in a
-    specific, checkable way. Both must compute the same thing, and the session must show one
-    conversation of two rounds rather than two unrelated questions.
+    A second round restructures a correct kernel as asked; both rounds are correct and in one session.
     """
     sdfg = _square_sdfg()
     state = sdfg.states()[0]

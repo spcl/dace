@@ -1,10 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """
-Tests that one library node type is expanded differently depending on where it sits.
-
-A ``Gemm`` inside a GPU kernel, a ``Gemm`` on the host over GPU arrays, and a ``Gemm`` on the host
-over CPU arrays all need different code, and the difference is not visible from the node itself.
-The context handed to the model must make it explicit.
+Tests that the same library node type gets a different context on the GPU, on the host over GPU data, and on the CPU.
 """
 
 import pytest
@@ -90,9 +86,7 @@ def test_capabilities_differ_by_context():
         "full",
     ]
 
-    # Reachability depends on where the code runs, not on the storage alone: GPU memory is
-    # unreachable from the host and perfectly reachable from inside a kernel. Reporting it as
-    # off limits inside the kernel would leave the model with nothing it is allowed to do.
+    # GPU memory can be dereferenced in a kernel and not on the host
     assert all(caps["device"].dereferenceable.values())
     assert not any(caps["host_gpu"].dereferenceable.values())
     assert all(caps["host_cpu"].dereferenceable.values())

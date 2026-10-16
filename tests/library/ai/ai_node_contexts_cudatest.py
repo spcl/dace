@@ -1,10 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """
-Live counterpart to ``ai_node_contexts_test.py``: the same computation is generated three times,
-in three different slots, and each result must be correct *and* respect its slot's constraints.
-
-This is the end-to-end evidence that the context actually steers the model, rather than the model
-producing one generic implementation regardless of where the node sits.
+GPU tests of generated code in different places: live tests marked ``ai`` and offline tests of the compile
+check and of early expansion.
 """
 
 import pathlib

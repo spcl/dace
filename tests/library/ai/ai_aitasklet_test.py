@@ -1,12 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""
-Tests that a generated tasklet is a tasklet in every respect that matters.
-
-:class:`~dace.libraries.ai.nodes.ai_tasklet.AITasklet` adds one thing to
-:class:`~dace.sdfg.nodes.Tasklet`: a record of what produced it. Everything else -- code
-generation, execution, serialization -- has to behave identically, and the ways a node subclass can
-quietly fail to do so are specific and worth pinning down.
-"""
+"""Tests that an AITasklet generates, runs and serializes like a Tasklet."""
 
 import os
 import pathlib
@@ -86,12 +79,7 @@ def test_it_round_trips_as_itself(tmp_path):
 @needs_compiler
 def test_a_fresh_process_can_load_it(tmp_path):
     """
-    Loading must work in a process that has only imported ``dace``.
-
-    Nothing imports ``dace.libraries.ai`` at startup -- libraries are loaded on demand -- so the
-    class is not registered with the serializer and the node would come back as an unresolved stub,
-    failing the whole load. The ``classpath`` recorded by ``AITasklet.to_json`` is what lets
-    ``dace.serialize`` import the module and resolve it.
+    Loading in a process that has only imported ``dace`` resolves the class through its ``classpath``.
     """
     sdfg = _build("fresh_load")
     path = str(tmp_path / "fresh.sdfg")

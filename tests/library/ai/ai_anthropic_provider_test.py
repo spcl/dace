@@ -1,12 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """
-Tests for the Anthropic provider, run against a local HTTP server rather than the real API.
-
-These exercise the parts that would otherwise only be reachable with a live API key: that the
-request DaCe builds is accepted by the installed SDK, that it carries the model, system prompt,
-thinking configuration and structured-output schema, and that a streamed response is turned back
-into a :class:`~dace.libraries.ai.backend.TaskletSpec`. They are skipped when the SDK is not
-installed, and never reach the network.
+Tests of the Anthropic provider against a local HTTP server: the request it builds and the parsing of a
+streamed response. Skipped without the SDK.
 """
 
 import json

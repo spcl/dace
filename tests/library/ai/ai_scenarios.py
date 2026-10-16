@@ -1,18 +1,10 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """
-Runnable scenarios for exercising AI expansion by hand.
+Scenarios that expand a library node with the configured provider and check the result::
 
-Each scenario places a library node in a specific slot, expands it with the configured provider,
-and -- where the machine can run the result -- checks it numerically. Together with the ``manual``
-provider this is the loop for evaluating the prompt without an API key::
-
-    # Writes the prompt and stops, because there is no answer yet
     DACE_ai_provider=manual python -m tests.library.ai.ai_scenarios gemm_cpu
 
-    # ... paste the prompt into a chat, save the reply next to it, then run again
-    DACE_ai_provider=manual python -m tests.library.ai.ai_scenarios gemm_cpu
-
-Run without arguments to list the scenarios.
+Without arguments, the scenarios are listed.
 """
 
 import sys

@@ -1,13 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""
-Tests of the ``dace.ai`` handle in the Python frontend.
-
-These are offline: the model is replaced by :func:`ai_test_utils.stub_provider`, so what is checked
-here is the plumbing between a Python call and an :class:`~dace.libraries.ai.nodes.ai_node.AINode`
--- which connectors the node gets, what it reads and writes, and that the description reaches the
-prompt. The tests that compile and run assert that the tasklet ends up in the right place, not that
-a model can write it.
-"""
+"""Tests of ``dace.ai`` in the Python frontend, with a stub provider."""
 
 import numpy as np
 import pytest

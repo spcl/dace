@@ -1,10 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """
-Tests for the context collected before an AI-generated expansion.
-
-The nesting walk is the part most likely to break, so it is exercised against a deliberately deep
-hierarchy: a GPU kernel containing a nested SDFG containing a loop containing another nested SDFG
-containing a sequential map, with a different symbol name at every level.
+Tests of the context collection, on a hierarchy of a GPU kernel, nested SDFGs, a loop and a map, with a
+different symbol name at every level.
 """
 
 import pytest
@@ -178,10 +175,7 @@ def test_connectors_and_descriptors_are_collected():
     assert by_name["_in"].shape == ("k",)
     assert by_name["_in"].num_elements == "1"
 
-    # The SDFG says "Default", which tells the model nothing about whether it may dereference this
-    # pointer. What DaCe's own inference will make of it is reported instead, with the declared
-    # value alongside so the prompt does not appear to contradict the graph. Here the container is
-    # a transient inside a GPU kernel, so it lands in GPU memory.
+    # The resolved storage is reported, with the declared one
     assert by_name["_in"].storage == "GPU_Global"
     assert by_name["_in"].storage_declared == "Default"
     assert by_name["_out"].direction == "out"

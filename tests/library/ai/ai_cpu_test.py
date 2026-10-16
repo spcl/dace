@@ -1,16 +1,8 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """
-Live tests of AI-generated CPU code.
-
-These call a model provider and need an API key, so they are marked ``ai`` and excluded from CI.
-Run them with::
+Live tests of generated CPU code. They need an API key, so they are marked ``ai``::
 
     ANTHROPIC_API_KEY=... pytest tests/library/ai/ai_cpu_test.py -m ai
-
-They assert behavior -- that the compiled program computes the right thing -- rather than the text
-of the generated code, since that varies between runs. The few text assertions that do appear
-check that a specific piece of context reached the model (the ISA extensions, the reserved
-implementation name), not how it chose to use it.
 """
 
 import platform

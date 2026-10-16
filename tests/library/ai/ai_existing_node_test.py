@@ -1,10 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""
-Live test of the reserved ``'ai'`` implementation on a library node that knows nothing about it.
-
-``tests/library/addlib`` is an ordinary external DaCe library with a single ``pure`` expansion. It
-gains ``'ai'`` without being modified, registered, or re-imported.
-"""
+"""Live test of the ``'ai'`` implementation on a library node of an external library (``addlib``)."""
 
 import numpy as np
 import pytest

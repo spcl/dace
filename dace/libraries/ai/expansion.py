@@ -101,9 +101,7 @@ class ExpandAI(ExpandTransformation):
                 entry = record.begin_attempt(attempt + 1, prompt)
                 detail("user prompt" if attempt == 0 else "repair prompt", prompt)
 
-                # Feedback changes the conversation and therefore the key on its own. A round with
-                # no feedback -- "just try again" -- would otherwise hash identically to the round
-                # before it and be handed back the very answer it is trying to replace.
+                # A new round without feedback must not get the previous round's cached answer
                 salt = str(record.number) if not feedback and record.number > 1 else ""
                 cache_key = ai_cache.key(system, messages, salt=salt)
                 spec = None if response is not None else ai_cache.lookup(cache_key)

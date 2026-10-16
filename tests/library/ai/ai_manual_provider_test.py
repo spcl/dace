@@ -1,11 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""
-Tests for the ``manual`` provider, which relays the prompt through the user instead of an API.
-
-Standard input is replaced with the text a user would paste, so the whole expansion path -- prompt
-construction, reply parsing, verification, tasklet construction and code generation -- runs without
-a key or an SDK.
-"""
+"""Tests of the ``manual`` provider, with the reply given on standard input or in a file."""
 
 import io
 import json

@@ -1,10 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""
-Tests for exchanging prompts and responses by hand, one node or a whole SDFG at a time.
-
-No provider is configured that could answer: every response is supplied by the test, which is
-the point of this API.
-"""
+"""Tests of exchanging prompts and responses through files, for one node or a whole SDFG."""
 
 import io
 import json

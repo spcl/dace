@@ -1,11 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """
-Live tests of AI-generated code that calls into an external library.
-
-This is the case where the model has to request a DaCe *environment* -- CMake glue plus headers --
-and use the tasklet's initialization and finalization code to manage a resource whose lifetime
-spans calls. Needs an API key and a local FFTW installation, so it is marked ``ai`` and excluded
-from CI.
+Live test of generated code that requests a DaCe environment for FFTW. Needs an API key and FFTW, and is
+marked ``ai``.
 """
 
 import ctypes.util
