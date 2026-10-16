@@ -32,6 +32,7 @@ from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.passes.canonicalize.cascade_iedge_assignments_up import (
     CascadeInterstateEdgeAssignmentsUp,
+    HoistAssignmentsToLoopBodyHead,
     names_read_by,
 )
 from dace.transformation.passes.scalar_to_symbol import ScalarToSymbolPromotion
@@ -783,6 +784,51 @@ def test_hoisting_keeps_the_cfg_list_of_a_fresh_reset(monkeypatch):
     assert resets == []
     assert not _assignments_inside_loops(sdfg)
     assert_tree_matches_a_reset(sdfg)
+
+
+def per_iteration_copy_between_states(name: str) -> tuple[dace.SDFG, LoopRegion]:
+    """``for i: a[i] = b[i]; k = c[i] (on the edge); d[i] = k``: ``k`` changes every iteration, and the state
+    before its assignment neither reads ``k`` nor writes ``c``."""
+    sdfg = dace.SDFG(name)
+    for array in "abcd":
+        sdfg.add_array(array, [8], dace.float64)
+    sdfg.add_symbol("k", dace.float64)
+    loop = LoopRegion("body", "i < 8", "i", "i = 0", "i = i + 1")
+    sdfg.add_node(loop, is_start_block=True)
+    first = loop.add_state("copy", is_start_block=True)
+    t = first.add_tasklet("copy", {"x"}, {"y"}, "y = x")
+    first.add_edge(first.add_read("b"), None, t, "x", dace.Memlet("b[i]"))
+    first.add_edge(t, "y", first.add_write("a"), None, dace.Memlet("a[i]"))
+    second = loop.add_state("use")
+    t = second.add_tasklet("use", {}, {"y"}, "y = k")
+    second.add_edge(t, "y", second.add_write("d"), None, dace.Memlet("d[i]"))
+    loop.add_edge(first, second, InterstateEdge(assignments={"k": "c[i]"}))
+    return sdfg, loop
+
+
+def test_a_per_iteration_assignment_moves_to_the_body_head():
+    """An assignment between two body states keeps them apart (no state fusion, no map fusion); moved above the first
+    state, which neither reads its symbol nor writes what it reads, the states join (CloudSC's ``iphase`` nest)."""
+    sdfg, loop = per_iteration_copy_between_states("per_iteration_copy_moves")
+    first, second = list(loop.nodes())
+    assert HoistAssignmentsToLoopBodyHead().apply_pass(sdfg, {})
+    assert not loop.edges_between(first, second)[0].data.assignments
+    head_edges = [e for e in loop.in_edges(first)]
+    assert len(head_edges) == 1 and head_edges[0].data.assignments == {"k": "c[i]"}
+    sdfg.validate()
+
+    b, c = np.arange(8.0), np.arange(8.0) * 3
+    a, d = np.zeros(8), np.zeros(8)
+    sdfg(a=a, b=b, c=c, d=d)
+    assert np.array_equal(a, b) and np.array_equal(d, c)
+
+
+def test_a_per_iteration_assignment_whose_input_the_state_before_writes_stays():
+    sdfg, loop = per_iteration_copy_between_states("per_iteration_copy_stays")
+    first = loop.start_block
+    t = first.add_tasklet("clobber", {}, {"y"}, "y = 1.0")
+    first.add_edge(t, "y", first.add_write("c"), None, dace.Memlet("c[i]"))
+    assert HoistAssignmentsToLoopBodyHead().apply_pass(sdfg, {}) is None
 
 
 if __name__ == "__main__":
