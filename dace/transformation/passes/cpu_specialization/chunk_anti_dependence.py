@@ -36,11 +36,12 @@ scheduling decision (one thread per chunk, per-chunk ordering), and it does not 
 It runs in the CPU lowering band and never matches a GPU-scheduled map, which keeps the
 snapshot form.
 
-Restricted to a read-ahead offset of exactly 1 on a 1-D array under unit stride. A wider
-offset ``D`` needs ``2D`` contiguous seam elements per chunk, which is a strided copy of
-a run rather than of a point and is not expressible as one memlet on a 1-D array; those
-loops keep the snapshot. Pure data movement either way -- no arithmetic is reassociated,
-so the result is bit-identical.
+A read-ahead offset ``D >= 1`` generalizes this: the last ``D`` iterations of a chunk read
+the first ``D`` cells of the next one, so the seam holds a ROW of ``D`` cells per chunk,
+gathered by one parallel map, and the chunk size is at least ``D`` so a full chunk's row
+never reaches past its neighbour. Restricted to a constant ``D`` on a 1-D array under unit
+stride. Pure data movement either way -- no arithmetic is reassociated, so the result is
+bit-identical.
 """
 
 import copy
@@ -181,19 +182,19 @@ class ChunkAntiDependence(ppl.Pass):
             lo, hi, step = me.map.range[0]
             if step != 1:
                 continue
-            if not self._offsets_are_unit(state, sdfg, me, snap_node.data, arr):
+            offset = self._read_ahead_offset(state, me, snap_node.data, arr)
+            if offset is None:
                 continue
-            return snap_node, arr, me, lo, hi
+            return snap_node, arr, me, lo, hi, offset
         return None
 
-    def _offsets_are_unit(self, state: SDFGState, sdfg: SDFG, me: nodes.MapEntry, snap: str, arr: str) -> bool:
-        """Every snapshot read is ``[i + 1]`` and every live ``arr`` access is ``[i]``.
+    def _read_ahead_offset(self, state: SDFGState, me: nodes.MapEntry, snap: str, arr: str) -> int | None:
+        """The one constant ``D >= 1`` every snapshot read is ``[i + D]`` at, every live ``arr`` access being ``[i]``.
 
-        A read at a wider offset would need a run of seam elements per chunk; a live read
-        at a nonzero offset would cross a chunk boundary without a seam behind it.
+        A live read at a nonzero offset would cross a chunk boundary without a seam behind it.
         """
         param = me.map.params[0]
-        seen_snap = False
+        offsets: set[int] = set()
         for e in state.edges():
             if e.data is None or e.data.is_empty() or e.data.data not in (snap, arr):
                 continue
@@ -210,14 +211,14 @@ class ChunkAntiDependence(ppl.Pass):
             if param in {str(s) for s in as_basic(off).free_symbols}:
                 continue  # not an affine point access in the iterator: a scope range
             if e.data.data == snap:
-                if off != 1:
-                    return False
-                seen_snap = True
+                if not (as_basic(off).is_Integer and int(off) >= 1):
+                    return None
+                offsets.add(int(off))
             elif off != 0:
-                return False
-        return seen_snap
+                return None
+        return offsets.pop() if len(offsets) == 1 else None
 
-    def _chunk_stride(self, extent):
+    def _chunk_stride(self, extent, offset: int):
         """The per-chunk iteration count, so the chunk COUNT lands on the thread count.
 
         The seam holds one slot per chunk, so whichever of (size, count) is fixed decides how much
@@ -229,26 +230,37 @@ class ChunkAntiDependence(ppl.Pass):
         ``__dace_num_threads`` is defined by frame code and excluded from the ABI, so the stride is
         symbolic but the allocation is a couple of dozen elements. ``int_ceil``, never ``/``: the
         last chunk is short and a floor would drop its iterations.
+
+        A chunk is never shorter than the offset ``D``: the last ``D`` iterations of a full chunk then read the first
+        ``D`` cells of the next chunk and nothing beyond, which is the row the seam keeps for it.
         """
         threads = symbolic.pystr_to_symbolic(symbolic.NUM_THREADS_SYMBOL)
-        return symbolic.int_ceil(symbolic.pystr_to_symbolic(str(extent)), threads)
+        per_thread = symbolic.int_ceil(symbolic.pystr_to_symbolic(str(extent)), threads)
+        return (
+            per_thread if offset == 1 else symbolic.pystr_to_symbolic(f"Max({symbolic.symstr(per_thread)}, {offset})")
+        )
 
-    def _redirect_to_seam(self, state: SDFGState, snap: str, seam: str, slot, outer: tuple | None) -> None:
-        """Repoint every ``snap`` read in ``state`` at seam slot ``slot``.
+    def _redirect_to_seam(
+        self, state: SDFGState, snap: str, seam: str, slot, base, union: subsets.Range, outer_entry
+    ) -> None:
+        """Repoint every ``snap`` read in ``state`` at seam row ``slot``, columns ``(read indices) - base``.
 
-        ``outer`` is ``(entry, union)`` for the state whose reads sit inside a chunk map: the
-        edge entering ``entry`` is outside that scope, so it cannot name the chunk parameter
-        ``slot`` is built from and carries the union of the slots instead.
+        The edges entering a map scope sit outside it, so they cannot name the parameters ``slot`` and the read
+        index are built from, and carry ``union`` instead; the edges inside name one cell.
         """
-        point = subsets.Range([(slot, slot, 1)])
-        outer_entry, union = outer if outer is not None else (None, None)
         for n in state.data_nodes():
             if n.data == snap:
                 n.data = seam
         for e in state.edges():
             if e.data is None or e.data.data != snap:
                 continue
-            sub = union if e.dst is outer_entry else point
+            if isinstance(e.dst, nodes.MapEntry) and (outer_entry is None or e.dst is outer_entry):
+                sub = union
+            elif len(union) == 1:
+                sub = subsets.Range([(slot, slot, 1)])  # offset 1: one cell per row, the row is the slot
+            else:
+                first, last, _ = e.data.subset[0]
+                sub = subsets.Range([(slot, slot, 1), (first - base, last - base, 1)])
             e.data.data = seam
             e.data.subset = copy.deepcopy(sub)
             e.data.volume = required(sub).num_elements()
@@ -302,16 +314,20 @@ class ChunkAntiDependence(ppl.Pass):
         to_loop.apply(state, sdfg)
 
     def _rewrite(self, state: SDFGState, sdfg: SDFG, match: tuple) -> None:
-        snap_node, arr, me, lo, hi = match
+        snap_node, arr, me, lo, hi, offset = match
         snap = snap_node.data
         parent = state.parent_graph
-        chunk = self._chunk_stride(_diff(hi, lo))
+        chunk = self._chunk_stride(_diff(hi, lo + offset - 1), offset)
         # Read the chunk count off the gather range itself rather than spelling the same
         # ceiling a second way: validation compares the two forms syntactically, and DaCe's
         # ``Range.size`` builds a sympy ``ceiling`` that never matches a fresh ``int_ceil``
         # (both print as ``int_ceil`` in C++, so this costs nothing downstream).
-        gather = subsets.Range([(lo + 1, hi, chunk)])
+        gather = subsets.Range([(lo + offset, hi, chunk)])
         nchunks = gather.num_elements()
+        if offset > 1:
+            # The chunk size is a ``Max`` here, and sympy's ``ceiling`` over it reaches C++ as an integer division that
+            # rounds down; ``int_ceil`` is the count the tiled chunk map runs.
+            nchunks = symbolic.int_ceil(as_expr(_diff(hi, lo + offset - 1)), chunk)
         # The seam is sized by the THREAD COUNT, not by the chunk count it happens to produce:
         # ``nchunks`` is ``int_ceil(E, int_ceil(E, T))``, which is never above ``T`` and equals it
         # for any extent worth chunking. Sizing on ``T`` keeps the allocation one slot per thread
@@ -342,31 +358,55 @@ class ChunkAntiDependence(ppl.Pass):
         # seam is a couple of dozen elements, so allocating it per call costs nothing.
         buf, desc = sdfg.add_transient(
             f"{arr}_antidep_seam",
-            [as_expr(threads) + 1],
+            [as_expr(threads) + 1] + ([offset] if offset > 1 else []),
             sdfg.arrays[snap].dtype,
             storage=sdfg.arrays[snap].storage,
             lifetime=dtypes.AllocationLifetime.State,
             find_new_name=True,
         )
-        gathered = (gather, subsets.Range([(0, nchunks - 1, 1)]))
-        trailing = (subsets.Range([(hi + 1, hi + 1, 1)]), subsets.Range([(nchunks, nchunks, 1)]))
-        for src_sub, dst_sub in (gathered, trailing):
+        row = (lambda r: [(r, r, 1)]) if offset == 1 else (lambda r: [(r, r, 1), (0, offset - 1, 1)])
+        if offset == 1:
             seam.add_nedge(
-                seam.add_read(arr), seam.add_write(buf), Memlet(data=arr, subset=src_sub, other_subset=dst_sub)
+                seam.add_read(arr),
+                seam.add_write(buf),
+                Memlet(data=arr, subset=gather, other_subset=subsets.Range([(0, nchunks - 1, 1)])),
             )
+        else:
+            seam.add_mapped_tasklet(
+                f"{arr}_antidep_gather",
+                {"_seam_j": f"0:{symbolic.symstr(nchunks)}", "_seam_m": f"0:{offset}"},
+                {
+                    "_in": Memlet(
+                        f"{arr}[{symbolic.symstr(lo + offset)} + _seam_j * ({symbolic.symstr(chunk)}) + _seam_m]"
+                    )
+                },
+                "_out = _in",
+                {"_out": Memlet(f"{buf}[_seam_j, _seam_m]")},
+                external_edges=True,
+            )
+        trailing = Memlet(
+            data=arr,
+            subset=subsets.Range([(hi + 1, hi + offset, 1)]),
+            other_subset=subsets.Range(row(nchunks)),
+        )
+        seam.add_nedge(seam.add_read(arr), seam.add_write(buf), trailing)
+        every_row = subsets.Range([(0, nchunks, 1)] + row(0)[1:])
 
         # Prologue: the one iteration whose read-ahead has no chunk in front of it, so it
         # reads chunk 0's own first element -- slot 0.
         pro_entry = next(n for n in pro.nodes() if isinstance(n, nodes.MapEntry))
-        pro_entry.map.range = subsets.Range([(lo, _min(lo, hi), 1)])
-        self._redirect_to_seam(pro, snap, buf, symbolic.pystr_to_symbolic("0"), None)
+        pro_entry.map.range = subsets.Range([(lo, _min(lo + offset - 1, hi), 1)])
+        # Row 0 is chunk 0's first cells, or the trailing row when the range is too short for any chunk.
+        self._redirect_to_seam(
+            pro, snap, buf, symbolic.pystr_to_symbolic("0"), _min(lo + offset, hi + 1), every_row, None
+        )
 
         # Chunk body: sequential inside a chunk, so every read-ahead that stays inside the
         # chunk sees the value the sequential loop would have seen -- read the live array.
-        me.map.range = subsets.Range([(lo + 1, hi, 1)])
+        me.map.range = subsets.Range([(lo + offset, hi, 1)])
         self._tile(state, sdfg, me, chunk)
         inner_lo, inner_hi, _ = me.map.range[0]
-        me.map.range = subsets.Range([(_exact(inner_lo), as_expr(_exact(inner_hi)) - 1, 1)])
+        me.map.range = subsets.Range([(_exact(inner_lo), as_expr(_exact(inner_hi)) - offset, 1)])
         for n in state.data_nodes():
             if n.data == snap:
                 n.data = arr
@@ -378,16 +418,26 @@ class ChunkAntiDependence(ppl.Pass):
         # Seam iterations: the last index of every chunk, whose read-ahead crosses into the
         # next chunk and must come from the buffer -- chunk ``k`` reads slot ``k + 1``.
         tail_entry = next(n for n in tail.nodes() if isinstance(n, nodes.MapEntry) and tail.entry_node(n) is None)
-        tail_entry.map.range = subsets.Range([(lo + 1, hi, 1)])
+        tail_entry.map.range = subsets.Range([(lo + offset, hi, 1)])
         tail_outer = self._tile(tail, sdfg, tail_entry, chunk)
         t_lo, t_hi, _ = tail_entry.map.range[0]
-        seam_idx = _exact(t_hi)
-        tail_entry.map.range = subsets.Range([(seam_idx, seam_idx, 1)])
-        # Off the OUTER chunk parameter, whose stride is C, not off the inner index: the inner
-        # map is a single point whose bound is already a Min, which no division would survive.
-        chunk_id = symbolic.int_floor(symbolic.pystr_to_symbolic(tail_outer.map.params[0]) - (lo + 1), chunk)
+        chunk_end = _exact(t_hi)
+        # The last ``D`` iterations of the chunk, never before its own start: a short last chunk is all seam.
+        first = symbolic.pystr_to_symbolic(
+            f"Max({symbolic.symstr(as_expr(chunk_end) - offset + 1)}, {symbolic.symstr(_exact(t_lo))})"
+        )
+        tail_entry.map.range = subsets.Range([(first, chunk_end, 1)])
+        # Off the OUTER chunk parameter, whose stride is C, not off the inner index, whose bounds are a Min and a
+        # Max that no division would survive.
+        chunk_id = symbolic.int_floor(symbolic.pystr_to_symbolic(tail_outer.map.params[0]) - (lo + offset), chunk)
         self._redirect_to_seam(
-            tail, snap, buf, symbolic.simplify(chunk_id + 1), (tail_outer, subsets.Range([(1, nchunks, 1)]))
+            tail,
+            snap,
+            buf,
+            symbolic.simplify(chunk_id + 1),
+            as_expr(chunk_end) + 1,
+            subsets.Range([(1, nchunks, 1)] + row(0)[1:]),
+            tail_outer,
         )
 
         # Nothing reads the whole-window snapshot any more; ``remove_data`` validates that.
