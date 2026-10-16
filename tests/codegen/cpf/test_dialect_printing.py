@@ -181,7 +181,12 @@ def test_a_complex_type_has_no_cpp_spelling_left_in_c():
 @pytest.mark.parametrize("dialect", [Dialect.STANDALONE, Dialect.STANDALONE_C], ids=["c++", "c"])
 @pytest.mark.parametrize("ctype", sorted(cpf_lowering.UNSUPPORTED_CTYPES))
 def test_unsupported_ctypes_refuse_loudly(ctype, dialect):
-    """fp16/bfloat16/fp8 have no portable spelling in either language, so they are refused."""
+    """fp8 has no spelling in either language and C none for the 16-bit floats, so they are refused; C++ spells
+    bfloat16 / float16 as the compiler's own ``__bf16`` / ``_Float16``."""
+    native = cpf_lowering.HOST_LOW_PRECISION_CTYPES.get(ctype) if dialect is Dialect.STANDALONE else None
+    if native is not None:
+        assert cpf_lowering.ctype_for(ctype, dialect) == native
+        return
     with pytest.raises(NotImplementedError, match="cannot emit the type"):
         cpf_lowering.ctype_for(ctype, dialect)
 

@@ -444,6 +444,56 @@ def test_a_device_state_scan_runs_its_steps_in_kernels(program, table):
 
 
 @dace.program
+def bf16_axpy_and_sum(
+    x: dace.bfloat16[N], y: dace.bfloat16[N], a: dace.bfloat16, out: dace.bfloat16[N], total: dace.bfloat16[1]
+):
+    for i in dace.map[0:N]:
+        out[i] = x[i] * a + y[i] / (N * 2)
+    total[0] = 0
+    for i in dace.map[0:N]:
+        total[0] += out[i]
+
+
+@pytest.mark.parametrize(("language", "vendor_type"), [("hip", "__hip_bfloat16"), ("cuda", "__nv_bfloat16")])
+def test_a_bfloat16_kernel_renders_with_the_toolkit_type(language, vendor_type):
+    """HB grades its ML kernels in bf16. ``dace::bfloat16`` IS the toolkit's bfloat16 in a device build, two bytes
+    in the bit layout of HB's ``uint16_t`` storage, so the device dialects spell it so -- the entry included -- and
+    CPF refused the type outright before. An integer reaches it through ``cpf_narrow`` (``__hip_bfloat16(n)`` is
+    ambiguous between its constructors), and the conflicting sum swaps the 32-bit word holding the 2-byte value."""
+    rendering = render_gpu(bf16_axpy_and_sum, f"cpf_{language}_bf16", language=language)
+    code = both(rendering)
+    assert "dace::bfloat16" not in code
+    assert re.search(rf"\b{vendor_type}\s*\*\s*__restrict__\s+x\b", rendering.code), "the entry takes the toolkit type"
+    entry = re.search(r"void \w+\(([^)]*)\)\s*\{", rendering.code).group(1)
+    assert re.search(r"(?:const )?float a\b", entry), "a 16-bit float scalar crosses the ABI as float"
+    assert ("hip/hip_bf16.h" if language == "hip" else "cuda_bf16.h") in code
+    assert "cpf_narrow<" in code, "an integer reaches bf16 through float"
+    assert "sizeof(T) == 2" in rendering.device_code, "the 2-byte accumulation has its own CAS"
+
+
+def test_a_vendor_library_is_not_offered_a_bfloat16_operand():
+    """rocBLAS / cuBLAS / OpenBLAS calls come in single and double precision, so a bf16 GEMM takes the loops: the
+    BLAS expansion raised ``Type bfloat16 not supported in BLAS operations`` (HB gemm_add_relu at bf16)."""
+    sdfg = dace.SDFG("cpf_hip_bf16_gemm")
+    for name in "ABC":
+        sdfg.add_array(name, [N, N], dace.bfloat16, storage=dace.dtypes.StorageType.GPU_Global)
+    state = sdfg.add_state()
+    node = Gemm("gemm")
+    state.add_node(node)
+    state.add_edge(state.add_read("A"), None, node, "_a", dace.Memlet("A[0:N, 0:N]"))
+    state.add_edge(state.add_read("B"), None, node, "_b", dace.Memlet("B[0:N, 0:N]"))
+    state.add_edge(node, "_c", state.add_write("C"), None, dace.Memlet("C[0:N, 0:N]"))
+    with cpf_lowering.dialect_scope(cpf_lowering.Dialect.STANDALONE_HIP):
+        offered = cpf.renderable_implementations(node, state)
+    assert not set(offered) & {"rocBLAS", "cuBLAS", "OpenBLAS"}, offered
+
+
+@pytest.mark.gpu
+def test_a_bfloat16_kernel_builds_with_hipcc(tmp_path):
+    build_units(render_gpu(bf16_axpy_and_sum, "cpf_hip_bf16_build"), tmp_path, "unit")
+
+
+@dace.program
 def s255(a: dace.float64[N], b: dace.float64[N]):
     x = b[N - 1]
     y = b[N - 2]
@@ -625,6 +675,10 @@ if __name__ == "__main__":
     test_a_device_product_scan_unit_builds_with_hipcc(pathlib.Path(tempfile.mkdtemp()))
     test_a_device_state_scan_runs_its_steps_in_kernels(dfa_counts, "symbols")
     test_a_device_state_scan_runs_its_steps_in_kernels(crc16_register, "data")
+    test_a_bfloat16_kernel_renders_with_the_toolkit_type("hip", "__hip_bfloat16")
+    test_a_bfloat16_kernel_renders_with_the_toolkit_type("cuda", "__nv_bfloat16")
+    test_a_vendor_library_is_not_offered_a_bfloat16_operand()
+    test_a_bfloat16_kernel_builds_with_hipcc(pathlib.Path(tempfile.mkdtemp()))
     test_a_read_only_operand_behind_an_ordering_edge_is_const_in_both_units()
     with pytest.MonkeyPatch.context() as patch:
         test_a_nested_function_passes_the_state_to_its_launchers(patch)

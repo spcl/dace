@@ -435,6 +435,22 @@ def on_device_at_host_level(node: nodes.LibraryNode, state: SDFGState) -> bool:
     return touches and not libnode_is_device_code(node, state, owner)
 
 
+#: Floating types no vendor library CPF calls takes: BLAS, LAPACK and the FFTs come in single and double
+#: precision, real and complex, and their bfloat16 / half entry points (``rocblas_gemm_ex``) are not what the
+#: expansions call. A node over one of these takes the loops (HB's bf16 ML kernels).
+VENDOR_UNTYPED_FLOATS: frozenset = frozenset(dtypes.FLOAT_TYPES) - {dtypes.float32, dtypes.float64}
+
+
+def narrow_float_operands(node: nodes.LibraryNode, state: SDFGState) -> bool:
+    """Whether ``node`` reads or writes a floating type no vendor library takes (:data:`VENDOR_UNTYPED_FLOATS`)."""
+    arrays = state.sdfg.arrays
+    return any(
+        arrays[edge.data.data].dtype in VENDOR_UNTYPED_FLOATS
+        for edge in state.all_edges(node)
+        if edge.data is not None and edge.data.data in arrays
+    )
+
+
 def renderable_implementations(node: nodes.LibraryNode, state: SDFGState) -> tuple[str, ...]:
     """The implementations to try for ``node``, best first.
 
@@ -453,8 +469,10 @@ def renderable_implementations(node: nodes.LibraryNode, state: SDFGState) -> tup
     preferred = RENDERABLE_BY_NODE.get(type(node).__name__, ())
     # A GEMM whose operands no leading dimension names (a view strided on both matrix axes) is one finalize already
     # gave the loop expansion; a vendor call in front of it would raise ``sAM or sAK should be 1`` on expansion.
-    vendored = type(node).__name__ not in VENDOR_EXCLUDED_NODES and not (
-        isinstance(node, Gemm) and not blas_addresses(node, state)
+    vendored = (
+        type(node).__name__ not in VENDOR_EXCLUDED_NODES
+        and not (isinstance(node, Gemm) and not blas_addresses(node, state))
+        and not narrow_float_operands(node, state)
     )
     if cpf_lowering.device() and on_device_at_host_level(node, state):
         vendor = VENDOR_IMPLEMENTATIONS_DEVICE[cpf_lowering.active_dialect()] if vendored else ()
@@ -728,6 +746,41 @@ def refuse_runtime_scopes(sdfg: SDFG) -> None:
             )
 
 
+#: The 16-bit floats an entry takes by value as ``float`` (:func:`widen_narrow_scalar_arguments`).
+NARROW_SCALAR_TYPES = frozenset({dtypes.bfloat16, dtypes.float16})
+
+
+def widen_narrow_scalar_arguments(sdfg: SDFG) -> list[str]:
+    """Take every read-only 16-bit float scalar argument (bfloat16, float16) as ``float``, converted on entry.
+
+    Pointers to a 16-bit float cross the C ABI as the caller's ``uint16_t`` storage does, but a VALUE does not:
+    x86-64 passes ``__bf16`` / ``_Float16`` in a vector register and a ``uint16_t`` in an integer one, so a
+    ctypes caller's ``c_uint16`` would arrive as garbage. ``float`` is passed alike everywhere and holds every
+    16-bit float exactly. The argument keeps its name; the narrow value becomes a transient the program reads,
+    filled by a new first state. A written scalar is an output, which no caller passes by value, and is left alone.
+
+    :param sdfg: the SDFG to rewrite in place. Call on a COPY -- :func:`prepare` does.
+    :returns: the arguments taken as ``float``.
+    """
+    written = {node.data for state in sdfg.states() for node in state.data_nodes() if state.in_degree(node) > 0}
+    widened = []
+    for name, desc in list(sdfg.arrays.items()):
+        if desc.transient or not isinstance(desc, dt.Scalar) or desc.dtype not in NARROW_SCALAR_TYPES:
+            continue
+        if name in written:
+            continue
+        narrow = sdfg.find_new_name_avoiding_connectors(f"{name}_narrow")
+        sdfg.replace(name, narrow)
+        sdfg.arrays[narrow].transient = True
+        sdfg.add_scalar(name, dtypes.float32)
+        entry = sdfg.add_state_before(sdfg.start_block, f"narrow_{name}", is_start_block=True)
+        convert = entry.add_tasklet(f"narrow_{name}", {"__wide"}, {"__narrow"}, "__narrow = __wide")
+        entry.add_edge(entry.add_read(name), None, convert, "__wide", Memlet(f"{name}[0]"))
+        entry.add_edge(convert, "__narrow", entry.add_write(narrow), None, Memlet(f"{narrow}[0]"))
+        widened.append(name)
+    return widened
+
+
 def prepare(sdfg: SDFG, provenance: dict[str, tuple[str, str]] | None = None) -> None:
     """Make ``sdfg`` renderable as one host translation unit, in place.
 
@@ -752,6 +805,8 @@ def prepare(sdfg: SDFG, provenance: dict[str, tuple[str, str]] | None = None) ->
                                  scope (:func:`refuse_runtime_scopes`), or carries a return container
                                  the entry signature cannot pass back (:func:`refuse_by_value_returns`).
     """
+    cpf_lowering.refuse_unspellable_containers(sdfg)
+    widen_narrow_scalar_arguments(sdfg)
     device = uses_device_code(sdfg)
     if device:
         raise NotImplementedError(
