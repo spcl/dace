@@ -20,7 +20,6 @@ def check_transformation_option(orig_sdfg: dace.SDFG, N: int, options: dict[str,
     llmr = LoopLocalMemoryReduction()
     llmr.bitmask_indexing = options["bitmask_indexing"]
     llmr.next_power_of_two = options["next_power_of_two"]
-    llmr.assume_positive_symbols = options["assume_positive_symbols"]
     llmr.apply_pass(llmr_sdfg, {})
     apps = llmr.num_applications
 
@@ -72,12 +71,10 @@ def check_transformation_option(orig_sdfg: dace.SDFG, N: int, options: dict[str,
 
 
 # Checks if LoopLocalMemoryReduction applied at least N times and if memory footprint was reduced for all options
-def check_transformation(sdfg: dace.SDFG, N: int, aps: bool = False):
+def check_transformation(sdfg: dace.SDFG, N: int):
     for bitmask in [False, True]:
         for np2 in [False, True]:
-            check_transformation_option(
-                sdfg, N, options={"bitmask_indexing": bitmask, "next_power_of_two": np2, "assume_positive_symbols": aps}
-            )
+            check_transformation_option(sdfg, N, options={"bitmask_indexing": bitmask, "next_power_of_two": np2})
 
 
 def test_simple():
@@ -917,11 +914,12 @@ def test_symbolic_sizes():
 
 
 def test_symbolic_k():
-
+    """The window ``a[i - N]`` lies behind the write ``a[i]`` only for a positive ``N``."""
     N = dace.symbol("N")
+    P = dace.symbol("P", positive=True)
 
     @dace.program
-    def tester(b: dace.float64[64], c: dace.float64[64]):
+    def unknown_sign(b: dace.float64[64], c: dace.float64[64]):
         a = dace.define_local([64], dace.float64)
         for j in range(32):
             a[j] = j
@@ -929,9 +927,17 @@ def test_symbolic_k():
             b[i] = a[i - N] + a[i - N]
             a[i] = c[i] * 2
 
-    sdfg = tester.to_sdfg(simplify=True)
-    check_transformation(sdfg, 0, aps=False)
-    check_transformation(sdfg, 1, aps=True)
+    @dace.program
+    def positive(b: dace.float64[64], c: dace.float64[64]):
+        a = dace.define_local([64], dace.float64)
+        for j in range(32):
+            a[j] = j
+        for i in range(32, 64):
+            b[i] = a[i - P] + a[i - P]
+            a[i] = c[i] * 2
+
+    check_transformation(unknown_sign.to_sdfg(simplify=True), 0)
+    check_transformation(positive.to_sdfg(simplify=True), 1)
 
 
 def test_cloudsc():

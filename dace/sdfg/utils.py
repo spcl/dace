@@ -34,6 +34,7 @@ from dace.sdfg.state import (
     LoopRegion,
     SDFGState,
     StateSubgraphView,
+    SymbolResolver,
 )
 
 
@@ -844,6 +845,10 @@ def consolidate_edges_scope(state: SDFGState, scope_node: nd.EntryNode | nd.Exit
         elif data_to_conn[odata] != conn:  # Need to consolidate
             connectors_to_remove.add(conn)
 
+    # The outer side of the scope
+    facts = SymbolResolver().facts_at(
+        state, scope_node if isinstance(scope_node, nd.EntryNode) else state.entry_node(scope_node)
+    )
     for conn in connectors_to_remove:
         e = edges_by_connector[conn][0]
         odata = get_outer_data(e)
@@ -861,7 +866,7 @@ def consolidate_edges_scope(state: SDFGState, scope_node: nd.EntryNode | nd.Exit
         assert len(edges_to_remove) == 1 and len(out_edges) == 1
         edge_to_remove = edges_to_remove[0]
         out_edge = out_edges[0]
-        set_outer_subset(out_edge, sbs.union(get_outer_subset(out_edge), get_outer_subset(edge_to_remove)))
+        set_outer_subset(out_edge, sbs.union(get_outer_subset(out_edge), get_outer_subset(edge_to_remove), facts))
 
         # Check if dangling connectors have been created and remove them,
         # as well as their parent edges
@@ -1994,10 +1999,8 @@ def traverse_sdfg_with_defined_symbols(
     :return: A generator that yields tuples of (state, node in state, currently-defined symbols)
     """
     # Start with global symbols and scalar constants
-    symbols = copy.copy(sdfg.symbols)
+    symbols = dict(sdfg.symbols)
     symbols.update({k: desc.dtype for k, (desc, _) in sdfg.constants_prop.items() if isinstance(desc, dt.Scalar)})
-    for desc in sdfg.arrays.values():
-        symbols.update({str(s): s.dtype for s in desc.free_symbols})
 
     yield from _tswds_cf_region(sdfg, sdfg, symbols, recursive)
 
@@ -2250,7 +2253,7 @@ def prune_symbols(sdfg: SDFG):
                 free_symbols = node.sdfg.free_symbols
                 defined_symbols = declared_symbols - free_symbols
                 for s in defined_symbols:
-                    del node.sdfg.symbols[s]
+                    node.sdfg.symbol_repo.remove(s)
                     if s in node.symbol_mapping:
                         del node.symbol_mapping[s]
 

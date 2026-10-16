@@ -148,7 +148,7 @@ def widen_mapped_symbols(state: SDFGState, node: nodes.NestedSDFG) -> None:
             and type(declared) is type(mapped) is dtypes.typeclass
             and declared.as_numpy_dtype().kind == mapped.as_numpy_dtype().kind
         ):
-            node.sdfg.symbols[name] = mapped
+            node.sdfg.symbol_repo.set_type(name, mapped)
 
 
 #############################################################################

@@ -7,7 +7,7 @@ from enum import Enum, auto
 from types import TracebackType
 from typing import Final
 
-from dace import subsets, symbolic
+from dace import dtypes, subsets, symbolic
 from dace.memlet import Memlet
 from dace.sdfg import memlet_utils as mmu
 from dace.sdfg import nodes, propagation
@@ -926,7 +926,10 @@ def from_schedule_tree(
     for key, container in stree.containers.items():
         result._arrays[key] = copy.deepcopy(container)
     result.constants_prop = copy.deepcopy(stree.constants)
-    result.symbols = copy.deepcopy(stree.symbols)
+    for name, dtype in stree.symbols.items():
+        if not isinstance(dtype, dtypes.typeclass):
+            raise TypeError(f'Symbol "{name}" of the schedule tree has no type')
+        result.symbol_repo.add(name, dtype)
 
     # Insert artificial state boundaries after WAW, before label, etc.
     stree = _insert_state_boundaries_to_tree(stree)
@@ -1060,8 +1063,8 @@ def _insert_memory_dependency_state_boundaries(scope: tn.ScheduleTreeScope, view
     :param scope: The scope to insert state boundaries in.
     :param views: Views defined before this scope, mapping view names to memlets on the viewed containers.
     """
-    reads: mmu.MemletDict[list[tn.ScheduleTreeNode]] = mmu.MemletDict()
-    writes: mmu.MemletDict[list[tn.ScheduleTreeNode]] = mmu.MemletDict()
+    reads: mmu.MemletDict[list[tn.ScheduleTreeNode]] = mmu.MemletDict(facts=scope.tree_facts())
+    writes: mmu.MemletDict[list[tn.ScheduleTreeNode]] = mmu.MemletDict(facts=scope.tree_facts())
     parents: dict[int, set[int]] = defaultdict(set)
     boundaries_to_insert: list[int] = []
     views = dict(views) if views is not None else {}

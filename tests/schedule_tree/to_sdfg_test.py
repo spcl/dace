@@ -1503,7 +1503,6 @@ def test_create_loop_control_block(control_block: str) -> None:
     stree = tn.ScheduleTreeRoot(
         name="tester",
         containers={"A": data.Array(dace.float64, [10])},
-        symbols={"i": dace.int64},
         children=[
             tn.ForScope(
                 loop=LoopRegion("loop", "i < 10", "i", "i = 0", "i = i + 1"),

@@ -7,13 +7,13 @@ import dace
 from dace import symbolic
 from dace.sdfg import graph, validation
 from dace.sdfg import nodes as nodes
+from dace.sdfg.state import SymbolResolver
 from dace.transformation import helpers
 
 
 def find_parameter_remapping(
     first_map: nodes.Map,
     second_map: nodes.Map,
-    simplify_ranges: bool = False,
 ) -> dict[str, str] | None:
     """Computes the parameter remapping for the parameters of the _second_ map.
 
@@ -29,7 +29,6 @@ def find_parameter_remapping(
 
     :param first_map: The first map (these parameters will be replaced).
     :param second_map: The second map, these parameters acts as source.
-    :param simplify_ranges: Perform simplification on the range expressions.
 
     :note: This function currently fails if the renaming is not unique. Consider the
         case were the first map has the structure `for i, j in map[0:20, 0:20]` and it
@@ -52,16 +51,11 @@ def find_parameter_remapping(
     if len(first_params) != len(second_params):
         return None
 
-    if simplify_ranges:
-        simp = lambda e: symbolic.simplify_ext(symbolic.simplify(e))  # noqa: E731 [lambda-assignment]
-    else:
-        simp = lambda e: e  # noqa: E731 [lambda-assignment]
-
     first_rngs: dict[str, tuple[Any, Any, Any]] = {
-        param: tuple(simp(r) for r in rng) for param, rng in zip(first_params, first_map.range)
+        param: tuple(rng) for param, rng in zip(first_params, first_map.range)
     }
     second_rngs: dict[str, tuple[Any, Any, Any]] = {
-        param: tuple(simp(r) for r in rng) for param, rng in zip(second_params, second_map.range)
+        param: tuple(rng) for param, rng in zip(second_params, second_map.range)
     }
 
     # Parameters of the second map that have not yet been matched to a parameter
@@ -120,7 +114,6 @@ def rename_map_parameters(
     second_map: nodes.Map,
     second_map_entry: nodes.MapEntry,
     state: dace.SDFGState,
-    simplify_ranges: bool = False,
 ) -> None:
     """Replaces the map parameters of the second map with names from the first.
 
@@ -132,13 +125,11 @@ def rename_map_parameters(
     :param second_map: The second map, this map will be replaced.
     :param second_map_entry: The entry node of the second map.
     :param state: The SDFGState on which we operate.
-    :param simplify_ranges: Perform simplification on the range expressions.
     """
     # Compute the replacement dict.
     repl_dict: dict[str, str] = find_parameter_remapping(  # type: ignore[assignment]  # Guaranteed to be not `None`.
         first_map=first_map,
         second_map=second_map,
-        simplify_ranges=simplify_ranges,
     )
 
     if repl_dict is None:
@@ -223,10 +214,12 @@ def get_new_conn_name(
     # NOTE: One could also say that we should only do that if `edge_that_is_already_there`
     #   covers the new one, but since the order, is kind of arbitrary, we test if
     #   either one covers.
+    # Only a top-level Map consolidates (see above), so what holds around it is what holds in the state
+    facts = SymbolResolver().facts_at(state)
     return (
         (edge_that_is_already_present.dst_conn[3:], True)
-        if edge_that_is_already_present_subset.covers(edge_to_move_subset)
-        or edge_to_move_subset.covers(edge_that_is_already_present_subset)
+        if edge_that_is_already_present_subset.covers(edge_to_move_subset, facts)
+        or edge_to_move_subset.covers(edge_that_is_already_present_subset, facts)
         else (to_node.next_connector(old_conn), False)
     )
 
