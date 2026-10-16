@@ -328,6 +328,23 @@ def test_aug_assign_python_reads_another_element():
     assert sdfg.apply_transformations_repeated(AugAssignToWCR) == 0
 
 
+def test_aug_assign_python_reads_another_array():
+    """In a map, ``A[0] = B[0] + A[1]``: ``B[0]`` sits at the written index of another array, so it is no update."""
+    sdfg = dace.SDFG("aug_assign_python_other_array")
+    sdfg.add_array("A", [2], dace.float64)
+    sdfg.add_array("B", [1], dace.float64)
+    state = sdfg.add_state()
+    state.add_mapped_tasklet(
+        "t",
+        {"i": "0:4"},
+        {"b": dace.Memlet("B[0]"), "a": dace.Memlet("A[1]")},
+        "o = b + a",
+        {"o": dace.Memlet("A[0]")},
+        external_edges=True,
+    )
+    assert sdfg.apply_transformations_repeated(AugAssignToWCR) == 0
+
+
 def test_aug_assign_python_after_a_write_fissions_the_state():
     """The accumulator is written earlier in the same state, so the update moves to a state of its own first."""
     sdfg = dace.SDFG("aug_assign_python_isolate")
@@ -366,3 +383,4 @@ if __name__ == "__main__":
     test_aug_assign_python_min_max("min(k, a)", np.minimum)
     test_aug_assign_python_logical_or()
     test_aug_assign_python_reads_another_element()
+    test_aug_assign_python_reads_another_array()
