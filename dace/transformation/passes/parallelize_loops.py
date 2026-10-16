@@ -24,6 +24,7 @@ from dace.transformation.interstate.loop_to_map import (
     build_lift_context,
     build_lift_invariants,
     index_block_symbols,
+    spans_small_symbols,
 )
 from dace.transformation.passes.analysis import loop_analysis
 
@@ -275,7 +276,7 @@ class ParallelizeLoops(ppl.Pass):
         :param loop: the loop to lift, in ``sdfg`` or one of its nested SDFGs.
         :param proven: skip the ``LoopToMap`` probe. Only for a caller holding an independence proof
                        the probe cannot reconstruct: a wavefront legality proof, or a runtime guard
-                       that rules out colliding writes.
+                       that rules out colliding writes. A loop over ``SMALL`` symbols still stays a loop.
         :returns: whether ``loop`` was lifted.
         """
         if not self.lift(LoopToMap(), loop, {}, proven):
@@ -310,6 +311,9 @@ class ParallelizeLoops(ppl.Pass):
         xform.setup_match(sd, -1, -1, {LoopToMap.loop: loop}, 0, override=True)
         xform._pipeline_results = pipeline_results
         if not proven and not xform.can_be_applied(graph, 0, sd, permissive=self.permissive):
+            return False
+        # A proof of independence replaces the dependence test, not the scale rule: a SMALL loop stays sequential.
+        if proven and xform.keep_small_loops_sequential and spans_small_symbols(loop):
             return False
         if before_apply is not None:
             before_apply()

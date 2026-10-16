@@ -2741,7 +2741,8 @@ def stride_guard_is_statically_dischargeable(infos: list["_Scan"], facts: symbol
 
 def _lift_proven_doall_to_map(loop: LoopRegion, sdfg: SDFG) -> bool:
     """Lift a loop already PROVEN DOALL to a bare ``Map``, bypassing ``LoopToMap``'s own
-    ``can_be_applied`` dependency test. :returns: whether the lift happened.
+    ``can_be_applied`` dependency test. :returns: whether the guard is settled: ``True`` when the loop was lifted
+    or stays a loop over ``SMALL`` symbols (sequential, so it needs no guard), ``False`` when the surgery failed.
 
     The caller's proof (:func:`stride_guard_is_statically_dischargeable`) is what makes this
     sound: ``LoopToMap`` refuses this shape because its subset test cannot see that the
@@ -2752,7 +2753,8 @@ def _lift_proven_doall_to_map(loop: LoopRegion, sdfg: SDFG) -> bool:
     Returns ``False`` (rather than raising) if the surgery does not go through, so the caller
     falls back to the sound guarded specialization: this runs on the scan matcher's whole
     shape zoo (nested/composite bodies), which is wider than ``LoopToMap``'s comfort zone, and
-    declining to lift only costs the guard we would have dropped.
+    declining to lift only costs the guard we would have dropped. A loop ``ParallelizeLoops`` keeps sequential for
+    its ``SMALL`` range is no failure: it runs in order, so it needs neither the guard nor the specialization.
     """
     from dace.transformation.passes.parallelize_loops import ParallelizeLoops
 
