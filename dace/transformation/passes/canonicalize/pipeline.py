@@ -62,6 +62,7 @@ from dace.transformation.passes.canonicalize.lift_inv import LiftInv
 from dace.transformation.passes.canonicalize.lift_loop_carried_reduction import LiftLoopCarriedReduction
 from dace.transformation.passes.canonicalize.loop_to_conditional_reduce import LoopToConditionalReduce
 from dace.transformation.passes.canonicalize.loop_to_einsum import LoopToEinsum
+from dace.transformation.passes.canonicalize.loop_to_getrf_nopivot import LoopToGetrfNoPivot
 from dace.transformation.passes.canonicalize.loop_to_rank_k_update import LoopToRankKUpdate
 from dace.transformation.passes.canonicalize.loop_to_stream_compaction import LoopToStreamCompaction
 from dace.transformation.passes.canonicalize.loop_to_symm import LoopToSymm
@@ -842,7 +843,7 @@ def lift_semantics(lift: bool, lift_copy: bool, interchange_carry_with_map: bool
     s: Stages = _fold_scalar_slices(label)
     # Before LoopToEinsum, which would take the inner product out of the nest.
     if lift:
-        s += [(label, LoopToSymm()), (label, LoopToRankKUpdate())]
+        s += [(label, LoopToGetrfNoPivot(target=target)), (label, LoopToSymm()), (label, LoopToRankKUpdate())]
     s += [(label, LoopToSymmetrize())]
     if lift_copy:
         s += [(label, AssignmentAndCopyKernelToMemsetAndMemcpy())]
