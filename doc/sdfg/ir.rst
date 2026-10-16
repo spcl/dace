@@ -306,8 +306,8 @@ dimensions:
 
 .. _division-modulo:
 
-Division and Modulo Semantics
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Modulo Semantics
+^^^^^^^^^^^^^^^^
 
 Languages disagree on the sign of a remainder. C and Fortran's ``MOD`` truncate the quotient toward zero, so the
 remainder takes the sign of the dividend. Python, NumPy and Fortran's ``MODULO`` floor the quotient, so the remainder
@@ -353,10 +353,6 @@ frontend whose source language means something else emits the function for that 
      - floored
      - Fortran frontend for ``MODULO``
      - ``ftn_modulo(a, b)``
-   * - ``a // b``, ``int_floor(a, b)``
-     - floored division
-     - Python frontend for ``//``
-     - ``a / b`` in symbolic expressions, ``py_floor(a, b)`` in tasklets
 
 Tasklet code does not inherit the semantics of the language it is written in. A tasklet created with
 :func:`~dace.sdfg.state.SDFGState.add_tasklet` whose Python code reads ``b = a % 3`` computes C's modulo; code that

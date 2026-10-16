@@ -378,12 +378,6 @@ template<typename T, std::enable_if_t<!std::is_integral<T>::value && std::is_flo
 static DACE_CONSTEXPR DACE_HDFI T py_floor(const T& numerator, const T& denominator) {
     return (T)std::floor(numerator / denominator);
 }
-// Mixed operand types promote to their common type.
-template<typename T1, typename T2, std::enable_if_t<!std::is_same<T1, T2>::value>* = nullptr>
-static DACE_CONSTEXPR DACE_HDFI auto py_floor(const T1& numerator, const T2& denominator) -> decltype(numerator + denominator) {
-    using T = decltype(numerator + denominator);
-    return py_floor<T>((T)numerator, (T)denominator);
-}
 template<typename T>
 static DACE_CONSTEXPR DACE_HDFI std::complex<T> py_floor(const std::complex<T>& numerator, const std::complex<T>& denominator) {
     std::complex<T> quotient = numerator / denominator;

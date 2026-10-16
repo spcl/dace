@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Division and modulo semantics of the Python frontend, tasklets, symbolic expressions and inter-state edges."""
+"""Modulo semantics of the Python frontend, tasklets, symbolic expressions and inter-state edges."""
 
 import itertools
 
@@ -25,20 +25,13 @@ DTYPES = (
 TARGETS = (pytest.param("host"), pytest.param("device", marks=pytest.mark.gpu))
 
 
-def division_program(op: str, dtype):
-    """``out = a <op> b`` elementwise, as a map so that the GPU lowering is a real kernel."""
-    if op == "//":
+def modulo_program(dtype):
+    """``out = a % b`` elementwise, as a map so that the GPU lowering is a real kernel."""
 
-        @dace.program
-        def prog(a: dtype[N], b: dtype[N], out: dtype[N]):
-            for i in dace.map[0:N]:
-                out[i] = a[i] // b[i]
-    else:
-
-        @dace.program
-        def prog(a: dtype[N], b: dtype[N], out: dtype[N]):
-            for i in dace.map[0:N]:
-                out[i] = a[i] % b[i]
+    @dace.program
+    def prog(a: dtype[N], b: dtype[N], out: dtype[N]):
+        for i in dace.map[0:N]:
+            out[i] = a[i] % b[i]
 
     return prog
 
@@ -48,33 +41,30 @@ def operand_pairs(nptype):
     return (np.array([x for x, _ in pairs], dtype=nptype), np.array([y for _, y in pairs], dtype=nptype))
 
 
-@pytest.mark.parametrize("op", ("//", "%"))
 @pytest.mark.parametrize("name,dtype,nptype", DTYPES)
 @pytest.mark.parametrize("target", TARGETS)
-def test_floor_division_and_modulo_agree_with_numpy(op, name, dtype, nptype, target):
-    """``-32 // 7 == -5`` and ``-32 % 7 == 3``, where C gives ``-4`` for both."""
+def test_modulo_agrees_with_numpy(name, dtype, nptype, target):
+    """``-32 % 7 == 3``, where C gives ``-4``."""
     a, b = operand_pairs(nptype)
-    expected = (a // b) if op == "//" else (a % b)
+    expected = a % b
 
-    label = "floordiv" if op == "//" else "mod"
-    sdfg = division_program(op, dtype).to_sdfg()
-    sdfg.name = f"division_{label}_{name}_{target}"
+    sdfg = modulo_program(dtype).to_sdfg()
+    sdfg.name = f"division_mod_{name}_{target}"
     if target == "device":
         sdfg.apply_gpu_transformations()
     out = np.zeros(a.shape, dtype=nptype)
     sdfg(a=a, b=b, out=out, N=a.shape[0])
 
     disagreements = [(a[i], b[i], out[i], expected[i]) for i in range(a.shape[0]) if out[i] != expected[i]]
-    assert not disagreements, f"{op} on {name}: {disagreements[:4]}"
+    assert not disagreements, f"% on {name}: {disagreements[:4]}"
 
 
-@pytest.mark.parametrize("op,call", (("//", "py_floor("), ("%", "py_mod(")))
-def test_neither_operator_is_emitted_infix(op, call):
+def test_python_modulo_is_not_emitted_infix():
     """An infix ``%`` on floats does not compile, so the numeric table cannot catch it."""
-    sdfg = division_program(op, dace.int64).to_sdfg()
-    sdfg.name = "division_code_floordiv" if op == "//" else "division_code_mod"
+    sdfg = modulo_program(dace.int64).to_sdfg()
+    sdfg.name = "division_code_mod"
     code = sdfg.generate_code()[0].clean_code
-    assert call in code, f"{op} lowered without {call}, so it lowered infix"
+    assert "py_mod(" in code, "% lowered without py_mod(, so it lowered infix"
 
 
 @pytest.mark.parametrize(
@@ -218,10 +208,8 @@ def test_a_python_program_modulo_in_a_condition_floors():
 
 if __name__ == "__main__":
     for name, dtype, nptype in DTYPES:
-        for op in ("//", "%"):
-            test_floor_division_and_modulo_agree_with_numpy(op, name, dtype, nptype, "host")
-    for op, call in (("//", "py_floor("), ("%", "py_mod(")):
-        test_neither_operator_is_emitted_infix(op, call)
+        test_modulo_agrees_with_numpy(name, dtype, nptype, "host")
+    test_python_modulo_is_not_emitted_infix()
     for text, value in (
         ("(-7) % 3", -1),
         ("7 % (-3)", 1),

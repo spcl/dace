@@ -83,6 +83,7 @@ import sympy
 import dace
 from dace import dtypes
 from dace.sdfg import type_inference
+from dace.symbolic import TYPECAST_CPP
 
 # Large float and imaginary literals get turned into infinities in the AST.
 # We unparse those infinities to INFSTR.
@@ -851,17 +852,14 @@ class CPPUnparser:
         "Sub": "-",
         "Mult": "*",
         "Div": "/",
+        "Mod": "%",
         "LShift": "<<",
         "RShift": ">>",
         "BitOr": "|",
         "BitXor": "^",
         "BitAnd": "&",
-        "Mod": "%",
     }
-    funcops = {
-        "FloorDiv": (",", "py_floor"),
-        "MatMult": (",", "dace::gemm"),
-    }
+    funcops = {"FloorDiv": (" /", "dace::math::ifloor"), "MatMult": (",", "dace::gemm")}
 
     def _BinOp(self, t):
         # Operations that require a function call
@@ -995,29 +993,12 @@ class CPPUnparser:
         "PyMod": "py_mod",
         "FtnModulo": "ftn_modulo",
     }
-
-    # Numeric casts of the symbolic engine
-    _renamed_funcs = {
-        "int32": "dace::int32",
-        "int64": "dace::int64",
-        "float32": "dace::float32",
-        "float64": "dace::float64",
-    }
+    # Modulo spellings and the numeric casts of the symbolic engine, by their C++ function
+    renamed_calls = {**modulo_calls, **TYPECAST_CPP}
 
     def _Call(self, t: ast.Call):
         # Special cases for sympy functions
         if isinstance(t.func, ast.Name):
-            if t.func.id in self._renamed_funcs:
-                self.write(self._renamed_funcs[t.func.id])
-                self.write("(")
-                comma = False
-                for e in t.args:
-                    if comma:
-                        self.write(", ")
-                    comma = True
-                    self.dispatch(e)
-                self.write(")")
-                return
             if t.func.id in self.callcmps:
                 op = self.callcmps[t.func.id]()
                 self.dispatch(
@@ -1033,8 +1014,8 @@ class CPPUnparser:
                 self.dispatch(ast.BoolOp(op=op, values=t.args))
                 return
 
-        if isinstance(t.func, ast.Name) and t.func.id in self.modulo_calls:
-            self.write(self.modulo_calls[t.func.id])
+        if isinstance(t.func, ast.Name) and t.func.id in self.renamed_calls:
+            self.write(self.renamed_calls[t.func.id])
         else:
             self.dispatch(t.func)
         self.write("(")
