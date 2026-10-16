@@ -1,4 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+import re
+
 import numpy as np
 import pytest
 
@@ -102,10 +104,13 @@ def _set_fft_implementation(sdfg: dace.SDFG, implementation: str) -> None:
 
 
 def _stockham_stage_count(sdfg: dace.SDFG) -> int:
+    """
+    Counts the stage maps, over whole arrays or in the per-row (or per-column-block) kernels of the CPU.
+    """
     return sum(
         1
         for node, _ in sdfg.all_nodes_recursive()
-        if isinstance(node, dace.nodes.MapEntry) and node.map.label.startswith("stockham_stage")
+        if isinstance(node, dace.nodes.MapEntry) and re.fullmatch(r"stockham_(axis_\d+_)?stage_\d+_map", node.map.label)
     )
 
 
@@ -113,7 +118,8 @@ def test_stockham_factorize():
     assert stockham.factorize(1) == []
     assert stockham.factorize(4096) == [16, 16, 16]
     assert stockham.factorize(2**20) == [16] * 5
-    assert stockham.factorize(60) == [4, 3, 5]
+    assert stockham.factorize(60) == [3, 5, 4]
+    assert stockham.factorize(2048) == [8, 16, 16]
     assert stockham.factorize(143) == [11, 13]
     assert stockham.factorize(17) == [17]
     assert stockham.factorize(8001) == [127, 3, 3, 7]
@@ -159,8 +165,13 @@ def test_stockham_r2c():
 
 
 def test_stockham_nd():
+    """
+    Transforms of the inner axes are computed per row and those of the outer axes per block of eight columns, in
+    padded buffers for the length-64 axis.
+    """
+
     @dace.program
-    def tester(x: dace.complex128[12, 16, 10]):
+    def tester(x: dace.complex128[12, 64, 8]):
         return (
             np.fft.fft(x, axis=0),
             np.fft.fft(x, axis=1),
@@ -170,7 +181,7 @@ def test_stockham_nd():
             np.fft.ifftn(x),
         )
 
-    a = _random_complex((12, 16, 10))
+    a = _random_complex((12, 64, 8))
     expected = (
         np.fft.fft(a, axis=0),
         np.fft.fft(a, axis=1),
@@ -255,26 +266,26 @@ def test_stockham_dispatch():
         sdfg.expand_library_nodes()
 
 
-def test_stockham_single_state_fusion():
+def test_stockham_gpu_stage_fusion():
     """
-    The expansion is a single state with one map per stage, which inlines and fuses with elementwise maps.
+    On a GPU, a transform that does not fit into shared memory is a single state with one map per stage, which
+    inlines and fuses with elementwise maps.
     """
     N = 4096
+    G = dace.StorageType.GPU_Global
 
     @dace.program
-    def tester(x: dace.complex128[N], w: dace.complex128[N]):
-        return np.fft.ifft(np.fft.fft(x * 2.0) * w)
+    def tester(x: dace.complex128[N] @ G, w: dace.complex128[N] @ G, y: dace.complex128[N] @ G):
+        y[:] = np.fft.ifft(np.fft.fft(x * 2.0) * w)
 
     sdfg = tester.to_sdfg()
+    sdfg.apply_gpu_transformations()
     sdfg.expand_library_nodes()
     sdfg.simplify()
     assert len(list(sdfg.states())) == 1
     assert not any(isinstance(node, dace.nodes.NestedSDFG) for node, _ in sdfg.all_nodes_recursive())
     assert _stockham_stage_count(sdfg) == 6
     assert sdfg.apply_transformations_repeated(OTFMapFusion) == 2
-
-    a, w = _random_complex(N), _random_complex(N)
-    assert np.allclose(sdfg(x=a, w=w), np.fft.ifft(np.fft.fft(a * 2.0) * w))
 
 
 def test_cufft_partial_axes():
@@ -582,7 +593,7 @@ if __name__ == "__main__":
     test_stockham_symbolic_batch()
     test_stockham_inside_map()
     test_stockham_dispatch()
-    test_stockham_single_state_fusion()
+    test_stockham_gpu_stage_fusion()
     test_cufft_partial_axes()
     test_stockham_gpu_expansion()
     test_stockham_gpu(np.complex64)

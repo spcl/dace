@@ -7,9 +7,15 @@ over the batch dimensions (all other axes), ``b`` in ``[0, L)`` and ``k`` in ``[
 the radices of the previous stages and ``M = N / (L * R_s)``. Each map iteration reads ``R_s`` elements at
 ``(b * R_s + a) * M + k``, multiplies them by the twiddle factors ``exp(+-2 pi i a b / (L * R_s))``, computes a
 radix-``R_s`` DFT in registers, and writes the results to ``(c * L + b) * M + k`` in another buffer. All stages of all
-transformed axes are chained through two ping-pong buffers in one state, so the expansion can be inlined and fused
-with its surroundings. The twiddle factors of each stage are computed once per call into a small ``[L, R - 1]``
-table by a map in the same state.
+transformed axes are chained through two ping-pong buffers in one state, so the expansion can be inlined. The
+twiddle factors of each stage are in a ``[R - 1, L]`` table, which a map in the same state computes in every call, or
+a tasklet in the first call of the program for a persistent table in host memory.
+
+On the CPU, a tasklet computes several consecutive iterations of a stage in a SIMD loop (with interleaved complex AVX
+code for complex128 if the compiler targets AVX and FMA). All stages of an axis whose transforms fit into
+``LOCAL_BYTES`` are one map over the other dimensions instead, in which each iteration transforms a row (or a block of
+columns) in buffers on the stack (see ``add_local_axis_kernel``), so that the array is read and written once rather
+than once per stage. On the GPU, the stage maps compute one butterfly per thread and fuse with elementwise maps.
 
 Prime factors without a generated butterfly (see ``PRIME_RADICES``) use general-radix stages, in which each map
 iteration computes one output ``j = c * L + b`` as the sum over ``a`` of the inputs times ``exp(+-2 pi i a j / (L *
@@ -25,9 +31,11 @@ transformation uses it to fuse an FFT, a computation in the frequency domain, an
 """
 
 import copy
+import dataclasses
+import itertools
 import math
 
-from dace import SDFG, Memlet, SDFGState, data, dtypes, nodes, symbolic
+from dace import SDFG, Memlet, SDFGState, data, dtypes, nodes, properties, symbolic
 from dace.sdfg import propagation
 
 #: Radices that butterflies are generated for. Powers of two are split recursively inside the butterfly and odd
@@ -39,6 +47,15 @@ PRIME_RADICES = (3, 5, 7, 11, 13)
 #: too small to amortize starting a parallel region.
 SEQUENTIAL_SIZE_THRESHOLD = 2048
 
+#: Numbers of consecutive iterations that a CPU tasklet may compute in a SIMD loop, in order of preference.
+VECTOR_LANES = (8, 4, 2)
+
+#: Storage types of host memory, in which persistent twiddle factor tables are computed once.
+HOST_STORAGES = (dtypes.StorageType.Default, dtypes.StorageType.CPU_Heap)
+
+#: Stack memory of the two buffers in which a CPU map iteration may transform an axis (see ``local_lanes``).
+LOCAL_BYTES = 128 * 1024
+
 #: Thread block size of the GPU kernels (64-256 threads perform the same on an RTX 3070).
 GPU_BLOCK_SIZE = [128, 1, 1]
 
@@ -49,13 +66,19 @@ BLOCK_LOCAL_MAX_THREADS = 256
 BLOCK_LOCAL_SHARED_BYTES = 48 * 1024
 
 
+#: Unique identifiers of the flags of twiddle factor tables that are computed once.
+_twiddle_flag_ids = itertools.count()
+
+
 def factorize(n: int) -> list[int] | None:
     """
     Splits a transform length into the radices of the Stockham stages.
 
     :param n: The transform length.
     :return: The list of radices whose product is ``n`` (empty for ``n == 1``), or None if ``n`` is not positive.
-             Prime factors with no generated butterfly come first, where their stages have the smallest tables.
+             Prime factors with no generated butterfly come first, where their stages have the smallest tables,
+             followed by the other odd primes and by powers of two in ascending order, so that the last stage of a
+             power-of-two length has the largest radix (see ``local_padding``).
     """
     if n < 1:
         return None
@@ -73,7 +96,9 @@ def factorize(n: int) -> list[int] | None:
         prime += 2
     if n > 1:
         general.append(n)
-    return general + radices
+    odd = [radix for radix in radices if radix in PRIME_RADICES]
+    powers = sorted(radix for radix in radices if radix in POWER_OF_TWO_RADICES)
+    return general + odd + powers
 
 
 def is_general_radix(radix: int) -> bool:
@@ -216,6 +241,155 @@ class _ButterflyEmitter:
         return result
 
 
+@dataclasses.dataclass(frozen=True)
+class Vector:
+    """
+    Consecutive iterations of a stage that one tasklet computes in a SIMD loop, through pointers to the elements of
+    the first iteration.
+    """
+
+    #: The number of iterations.
+    length: int
+    #: C++ expression of the distance between the inputs of consecutive iterations, in elements of the input array.
+    input_stride: str
+    #: C++ expression of the distance between the outputs of consecutive iterations.
+    output_stride: str
+    #: C++ expression of the distance between the twiddle factors of consecutive iterations, or None if they share
+    #: their twiddle factors.
+    twiddle_stride: str | None
+
+
+class _AVXButterflyEmitter(_ButterflyEmitter):
+    """
+    Generates straight-line C++ code for small DFTs on ``__m256d`` values, each holding two interleaved complex
+    numbers (of two consecutive iterations), with the helpers of ``AVX_HELPERS``.
+    """
+
+    def __init__(self):
+        super().__init__("double")
+
+    def define(self, expr: str) -> str:
+        name = f"__v{self.counter}"
+        self.counter += 1
+        self.lines.append(f"const __m256d {name} = {expr};")
+        return name
+
+    def add(self, x: str, y: str) -> str:
+        return self.define(f"_mm256_add_pd({x}, {y})")
+
+    def sub(self, x: str, y: str) -> str:
+        return self.define(f"_mm256_sub_pd({x}, {y})")
+
+    def rotate(self, x: str, numerator: int, denominator: int, sign: int) -> str:
+        numerator %= denominator
+        if numerator == 0:
+            return x
+        if (4 * numerator) % denominator == 0:
+            quarter = (4 * numerator // denominator * sign) % 4
+            if quarter == 1:
+                return self.define(f"__stockham_mul_i({x})")
+            if quarter == 2:
+                return self.define(f"__stockham_neg({x})")
+            return self.define(f"__stockham_mul_minus_i({x})")
+        angle = sign * 2 * math.pi * numerator / denominator
+        return self.define(f"__stockham_rot({x}, {math.cos(angle)!r}, {math.sin(angle)!r})")
+
+    def _odd_dft(self, values: list[str], sign: int) -> list[str]:
+        # The same pairing as in the scalar code: cos(t) (x[a] + x[n-a]) + sign sin(t) i (x[a] - x[n-a])
+        n = len(values)
+        half = (n - 1) // 2
+        sums = [self.add(values[a], values[n - a]) for a in range(1, half + 1)]
+        rotated = [self.define(f"__stockham_mul_i({self.sub(values[a], values[n - a])})") for a in range(1, half + 1)]
+        total = values[0]
+        for term in sums:
+            total = f"_mm256_add_pd({total}, {term})"
+        result = [self.define(total)]
+        for c in range(1, n):
+            acc = values[0]
+            for a in range(1, half + 1):
+                cos = math.cos(2 * math.pi * c * a / n)
+                sin = sign * math.sin(2 * math.pi * c * a / n)
+                acc = f"_mm256_fmadd_pd(_mm256_set1_pd({cos!r}), {sums[a - 1]}, {acc})"
+                acc = f"_mm256_fmadd_pd(_mm256_set1_pd({sin!r}), {rotated[a - 1]}, {acc})"
+            result.append(self.define(acc))
+        return result
+
+
+#: Helpers of the AVX code of complex128 stages (see ``_AVXButterflyEmitter``), declared once per file.
+AVX_HELPERS = """
+#if defined(__AVX__) && defined(__FMA__)
+#include <immintrin.h>
+#ifndef DACE_STOCKHAM_AVX_HELPERS
+#define DACE_STOCKHAM_AVX_HELPERS
+inline __m256d __stockham_swap(__m256d x) { return _mm256_permute_pd(x, 5); }
+inline __m256d __stockham_neg(__m256d x) { return _mm256_xor_pd(x, _mm256_set1_pd(-0.0)); }
+inline __m256d __stockham_mul_i(__m256d x) { return _mm256_addsub_pd(_mm256_setzero_pd(), __stockham_swap(x)); }
+inline __m256d __stockham_mul_minus_i(__m256d x) {
+    return _mm256_xor_pd(__stockham_swap(x), _mm256_set_pd(-0.0, 0.0, -0.0, 0.0));
+}
+// Multiplication by the constant c + i s
+inline __m256d __stockham_rot(__m256d x, double c, double s) {
+    return _mm256_fmaddsub_pd(x, _mm256_set1_pd(c), _mm256_mul_pd(__stockham_swap(x), _mm256_set1_pd(s)));
+}
+// Complex multiplication of each of the two numbers
+inline __m256d __stockham_mul(__m256d x, __m256d w) {
+    return _mm256_fmaddsub_pd(x, _mm256_movedup_pd(w), _mm256_mul_pd(__stockham_swap(x), _mm256_permute_pd(w, 15)));
+}
+inline __m256d __stockham_load(const void *p) { return _mm256_loadu_pd(static_cast<const double *>(p)); }
+inline __m256d __stockham_load2(const void *lo, const void *hi) {
+    return _mm256_insertf128_pd(_mm256_castpd128_pd256(_mm_loadu_pd(static_cast<const double *>(lo))),
+                                _mm_loadu_pd(static_cast<const double *>(hi)), 1);
+}
+inline __m256d __stockham_broadcast(const void *p) {
+    return _mm256_broadcast_pd(static_cast<const __m128d *>(p));
+}
+inline void __stockham_store(void *p, __m256d x) { _mm256_storeu_pd(static_cast<double *>(p), x); }
+inline void __stockham_store2(void *lo, void *hi, __m256d x) {
+    _mm_storeu_pd(static_cast<double *>(lo), _mm256_castpd256_pd128(x));
+    _mm_storeu_pd(static_cast<double *>(hi), _mm256_extractf128_pd(x, 1));
+}
+#endif
+#endif
+"""
+
+
+def _avx_stage_code(radix: int, sign: int, twiddle: bool, factor: str | None, vector: Vector) -> str:
+    """
+    Generates the AVX loop of a complex128 stage that computes ``vector.length`` (even) iterations, two at a time.
+    """
+
+    def pointer(name: str, stride: str, lane: str) -> str:
+        return f"{name} + ({lane}) * ({stride})"
+
+    def load(name: str, stride: str) -> str:
+        if stride == "1":
+            return f"__stockham_load({name} + __lane)"
+        return f"__stockham_load2({pointer(name, stride, '__lane')}, {pointer(name, stride, '__lane + 1')})"
+
+    emitter = _AVXButterflyEmitter()
+    values = []
+    for a in range(radix):
+        value = emitter.define(load(f"_x{a}", vector.input_stride))
+        if twiddle and a > 0:
+            if vector.twiddle_stride is None:
+                w = f"__stockham_broadcast(&_w{a})"
+            else:
+                w = load(f"_w{a}", vector.twiddle_stride)
+            value = emitter.define(f"__stockham_mul({value}, {w})")
+        values.append(value)
+    for c, y in enumerate(emitter.dft(values, sign)):
+        if factor is not None:
+            y = emitter.define(f"_mm256_mul_pd({y}, _mm256_set1_pd({factor}))")
+        if vector.output_stride == "1":
+            emitter.lines.append(f"__stockham_store(_y{c} + __lane, {y});")
+        else:
+            lo = pointer(f"_y{c}", vector.output_stride, "__lane")
+            hi = pointer(f"_y{c}", vector.output_stride, "__lane + 1")
+            emitter.lines.append(f"__stockham_store2({lo}, {hi}, {y});")
+    body = "\n".join(f"    {line}" for line in emitter.lines)
+    return f"for (int __lane = 0; __lane < {vector.length}; __lane += 2) {{\n{body}\n}}"
+
+
 def stage_code(
     radix: int,
     sign: int,
@@ -223,6 +397,7 @@ def stage_code(
     input_is_complex: bool,
     out_dtype: dtypes.typeclass,
     factor: str | None,
+    vector: Vector | None = None,
 ) -> str:
     """
     Generates the C++ tasklet code of one Stockham stage.
@@ -233,18 +408,28 @@ def stage_code(
     :param input_is_complex: Whether the inputs ``_x<a>`` are complex (real inputs only reach the first stage).
     :param out_dtype: The complex type of the outputs ``_y<c>``.
     :param factor: C++ expression of the factor to multiply outputs by, or None for no multiplication.
+    :param vector: If given, the connectors are pointers and the tasklet computes ``vector.length`` iterations. Where
+                   ``uses_avx``, the code has an AVX variant that is used if the compiler targets AVX and FMA.
     :return: The tasklet code.
     """
+
+    def access(name: str, stride: str | None) -> str:
+        if vector is None or stride is None:
+            return name
+        return f"{name}[__lane * ({stride})]"
+
     real_ctype = "float" if out_dtype == dtypes.complex64 else "double"
     emitter = _ButterflyEmitter(real_ctype)
     values = []
     for a in range(radix):
+        x = access(f"_x{a}", vector and vector.input_stride)
         if input_is_complex:
-            value = (emitter.define(f"_x{a}.real()"), emitter.define(f"_x{a}.imag()"))
+            value = (emitter.define(f"{x}.real()"), emitter.define(f"{x}.imag()"))
         else:
-            value = (emitter.define(f"_x{a}"), emitter.literal(0.0))
+            value = (emitter.define(x), emitter.literal(0.0))
         if twiddle and a > 0:
-            cos, sin = emitter.define(f"_w{a}.real()"), emitter.define(f"_w{a}.imag()")
+            w = access(f"_w{a}", vector and vector.twiddle_stride)
+            cos, sin = emitter.define(f"{w}.real()"), emitter.define(f"{w}.imag()")
             value = (
                 emitter.define(f"{value[0]} * {cos} - {value[1]} * {sin}"),
                 emitter.define(f"{value[0]} * {sin} + {value[1]} * {cos}"),
@@ -255,8 +440,24 @@ def stage_code(
     for c, (real, imag) in enumerate(outputs):
         if factor is not None:
             real, imag = f"{real} * {factor}", f"{imag} * {factor}"
-        emitter.lines.append(f"_y{c} = {out_dtype.ctype}({real}, {imag});")
-    return "\n".join(emitter.lines)
+        y = access(f"_y{c}", vector and vector.output_stride)
+        emitter.lines.append(f"{y} = {out_dtype.ctype}({real}, {imag});")
+    if vector is None:
+        return "\n".join(emitter.lines)
+    body = "\n".join(f"    {line}" for line in emitter.lines)
+    code = f"#pragma omp simd\nfor (int __lane = 0; __lane < {vector.length}; ++__lane) {{\n{body}\n}}"
+    if not uses_avx(input_is_complex, out_dtype, vector):
+        return code
+    avx = _avx_stage_code(radix, sign, twiddle, factor, vector)
+    return f"#if defined(__AVX__) && defined(__FMA__)\n{avx}\n#else\n{code}\n#endif"
+
+
+def uses_avx(input_is_complex: bool, out_dtype: dtypes.typeclass, vector: Vector | None) -> bool:
+    """
+    Returns True if the code of a stage has an AVX variant, which needs ``AVX_HELPERS`` in the global code of the
+    tasklet: for complex128 inputs and outputs, and an even number of iterations.
+    """
+    return vector is not None and input_is_complex and out_dtype == dtypes.complex128 and vector.length % 2 == 0
 
 
 def twiddle_code(radix: int, span: int, sign: int, out_dtype: dtypes.typeclass) -> str:
@@ -278,6 +479,39 @@ def twiddle_code(radix: int, span: int, sign: int, out_dtype: dtypes.typeclass) 
             f"_w{a} = {out_dtype.ctype}(__c, __s);",
         ]
     return "\n".join(lines)
+
+
+def twiddle_table_code(radix: int, span: int, sign: int, dtype: dtypes.typeclass) -> str:
+    """
+    Generates C++ code that computes a whole table of a stage into ``_w``: the twiddle factors of a stage (see
+    ``twiddle_code``) as a ``[R - 1, L]`` table, or the roots of unity of a general-radix stage as a ``[L * R]`` table.
+    """
+    step = repr(sign * 2 * math.pi / (span * radix))
+    if is_general_radix(radix):
+        return "\n".join(
+            [
+                f"for (long long __t = 0; __t < {span * radix}; ++__t) {{",
+                f"    const double __angle = double(__t) * {step};",
+                f"    _w[__t] = {dtype.ctype}(cos(__angle), sin(__angle));",
+                "}",
+            ]
+        )
+    return "\n".join(
+        [
+            f"for (long long __b = 0; __b < {span}; ++__b) {{",
+            f"    const double __angle = double(__b) * {step};",
+            "    const double __c1 = cos(__angle), __s1 = sin(__angle);",
+            "    double __c = __c1, __s = __s1;",
+            f"    _w[__b] = {dtype.ctype}(__c, __s);",
+            f"    for (int __a = 2; __a < {radix}; ++__a) {{",
+            "        const double __cn = __c * __c1 - __s * __s1;",
+            "        __s = __c * __s1 + __s * __c1;",
+            "        __c = __cn;",
+            f"        _w[(__a - 1) * {span} + __b] = {dtype.ctype}(__c, __s);",
+            "    }",
+            "}",
+        ]
+    )
 
 
 def general_stage_code(
@@ -351,9 +585,10 @@ def add_twiddle_tables(
     prefix: str = "__stockham_tw",
 ) -> dict[tuple[int, int], nodes.AccessNode]:
     """
-    Adds a ``[L, R - 1]`` twiddle factor table for every distinct ``(L, R)`` of the stages that need twiddle factors,
+    Adds a ``[R - 1, L]`` twiddle factor table for every distinct ``(L, R)`` of the stages that need twiddle factors,
     and a ``[L * R]`` table of roots of unity for every distinct ``(L, R)`` of the general-radix stages (see
-    ``general_stage_code``), each computed by a map in the given state.
+    ``general_stage_code``), each computed by a map in the given state. Persistent tables in host memory are instead
+    computed once, by a tasklet that only computes them in the first call of the program.
 
     :param sdfg: The SDFG to add the tables to.
     :param state: The state to compute the tables in.
@@ -373,13 +608,29 @@ def add_twiddle_tables(
             continue
         table, _ = sdfg.add_transient(
             f"{prefix}_{span}_{radix}",
-            (span * radix,) if general else (span, radix - 1),
+            (span * radix,) if general else (radix - 1, span),
             dtype,
             storage,
             lifetime=lifetime,
             find_new_name=True,
         )
         table_node = state.add_access(table)
+        if lifetime == dtypes.AllocationLifetime.Persistent and storage in HOST_STORAGES:
+            flag = f"__stockham_twiddles_ready_{next(_twiddle_flag_ids)}"
+            tasklet = state.add_tasklet(
+                f"stockham_twiddles_{span}_{radix}",
+                {},
+                {"_w"},
+                f"if (!__state->{flag}) {{\n{twiddle_table_code(radix, span, sign, dtype)}\n__state->{flag} = true;\n}}",
+                language=dtypes.Language.CPP,
+                state_fields=[f"bool {flag};"],
+                code_init=f"__state->{flag} = false;",
+            )
+            memlet = Memlet.from_array(table, sdfg.arrays[table])
+            memlet.dynamic = True
+            state.add_edge(tasklet, "_w", table_node, None, memlet)
+            tables[span, radix] = table_node
+            continue
         if general:
             step = repr(sign * 2 * math.pi / (span * radix))
             ranges = {"__t": f"0:{span * radix}"}
@@ -388,7 +639,7 @@ def add_twiddle_tables(
         else:
             ranges = {"__b": f"0:{span}"}
             code = twiddle_code(radix, span, sign, dtype)
-            outputs = {f"_w{a}": Memlet(f"{table}[__b, {a - 1}]") for a in range(1, radix)}
+            outputs = {f"_w{a}": Memlet(f"{table}[{a - 1}, __b]") for a in range(1, radix)}
         _, table_entry, _ = state.add_mapped_tasklet(
             f"stockham_twiddles_{span}_{radix}",
             ranges,
@@ -420,6 +671,10 @@ def stockham_sdfg(
     """
     Creates an SDFG that computes the (inverse) FFT of ``_inp`` over the given axes into ``_out``.
 
+    On the CPU, all stages of an axis whose transforms fit into ``LOCAL_BYTES`` (see ``local_lanes``) are computed by
+    one map over the other dimensions, in which each iteration transforms one row (or several adjacent columns) in
+    buffers on the stack. Each other stage is one map over the whole array.
+
     :param indesc: Descriptor of the input array (real or complex).
     :param outdesc: Descriptor of the complex output array, with the same shape as the input.
     :param axes: The (normalized) axes to transform. Their lengths must be fixed (see ``can_expand``).
@@ -431,7 +686,7 @@ def stockham_sdfg(
     :param persistent: Whether the buffers and twiddle tables may be allocated once per program rather than per call.
                        Only valid if the transform is not inside a map, where each iteration needs its own buffers.
     :param name: Name of the generated SDFG.
-    :return: A single-state SDFG with one map per stage.
+    :return: A single-state SDFG.
     """
     if not can_expand(indesc.shape, axes, constants):
         raise ValueError(f"Stockham FFT requires fixed axis lengths, got shape {indesc.shape} and axes {axes}")
@@ -442,127 +697,320 @@ def stockham_sdfg(
 
     sdfg = SDFG(name)
     shape = tuple(outdesc.shape)
+    dtype = outdesc.dtype
     sdfg.add_array("_inp", indesc.shape, indesc.dtype, indesc.storage, strides=indesc.strides)
     sdfg.add_array("_out", outdesc.shape, outdesc.dtype, outdesc.storage, strides=outdesc.strides)
     state = sdfg.add_state("stockham")
 
     stages = plan_stages(shape, axes, constants)
+    gpu = schedule == dtypes.ScheduleType.GPU_Device
 
     storage = dtypes.StorageType.Default
-    if schedule == dtypes.ScheduleType.GPU_Device:
+    if gpu:
         storage = dtypes.StorageType.GPU_Global
     elif persistent:
         storage = dtypes.StorageType.CPU_Heap
+
+    # Small fixed-size transforms on the CPU run sequentially
+    map_schedule = dtypes.ScheduleType.Default
+    total_size = fixed_length(math.prod(shape), constants)
+    if not gpu and total_size is not None and total_size < SEQUENTIAL_SIZE_THRESHOLD:
+        map_schedule = dtypes.ScheduleType.Sequential
+
+    # The steps of the transform: single stages, or on the CPU all stages of an axis computed locally
+    steps = []
+    for stage in stages:
+        lanes = None if gpu else local_lanes(shape, stage[0], dtype, constants)
+        if lanes is not None and steps and steps[-1][0] == "local" and steps[-1][1][0][0] == stage[0]:
+            steps[-1][1].append(stage)
+        elif lanes is not None:
+            steps.append(("local", [stage], lanes))
+        else:
+            steps.append(("global", [stage], None))
 
     # Allocate the buffers once if their size is fixed, as per-call allocations of large buffers dominate the runtime
     table_lifetime = dtypes.AllocationLifetime.Persistent if persistent else dtypes.AllocationLifetime.Scope
     lifetime = dtypes.AllocationLifetime.Scope
     if persistent and not any(symbolic.issymbolic(size, constants) for size in shape):
         lifetime = dtypes.AllocationLifetime.Persistent
-
     buffers = []
-    for i in range(min(len(stages) - 1, 2)):
-        buffer_name, _ = sdfg.add_transient(f"__stockham_buf{i}", shape, outdesc.dtype, storage, lifetime=lifetime)
+    for i in range(min(len(steps) - 1, 2)):
+        buffer_name, _ = sdfg.add_transient(f"__stockham_buf{i}", shape, dtype, storage, lifetime=lifetime)
         buffers.append(buffer_name)
 
-    factor_cpp = factor_code(factor, outdesc.dtype)
-
-    # Small fixed-size transforms on the CPU run sequentially
-    map_schedule = dtypes.ScheduleType.Default
-    total_size = fixed_length(math.prod(shape), constants)
-    if (
-        schedule in (dtypes.ScheduleType.Default, dtypes.ScheduleType.CPU_Multicore)
-        and total_size is not None
-        and total_size < SEQUENTIAL_SIZE_THRESHOLD
-    ):
-        map_schedule = dtypes.ScheduleType.Sequential
-
     sign = 1 if inverse else -1
+    factor_cpp = factor_code(factor, dtype)
+    tables = add_twiddle_tables(sdfg, state, stages, sign, dtype, storage, table_lifetime, map_schedule)
     src_node = state.add_read("_inp")
-
-    twiddle_nodes = add_twiddle_tables(sdfg, state, stages, sign, outdesc.dtype, storage, table_lifetime, map_schedule)
-    for s, (axis, radix, span, stride) in enumerate(stages):
-        last = s == len(stages) - 1
-        dst = "_out" if last else buffers[s % 2]
-        dst_node = state.add_write(dst)
-
-        # Map dimensions, outermost to innermost: batch dimensions before the axis, b in [0, L) (or the output j in
-        # [0, L * R) of a general-radix stage), k in [0, M), and batch dimensions after the axis (contiguous in
-        # row-major arrays, and the GPU thread x dimension)
-        general = is_general_radix(radix)
-        rows = span * radix if general else span
-        index = [f"__i{dim}" for dim in range(len(shape))]
-        map_ranges = {f"__i{dim}": f"0:{symbolic.symstr(shape[dim])}" for dim in range(axis)}
-        if storage == dtypes.StorageType.GPU_Global and rows > 1 and stride > 1:
-            # One linear thread index for (b, k): either range alone may be too short to fill a thread block, and
-            # a long one could exceed the grid limits of the y and z dimensions
-            map_ranges["__t"] = f"0:{rows * stride}"
-            row, k = f"int_floor(__t, {stride})", f"(__t % {stride})"
-        else:
-            if rows > 1:
-                map_ranges["__b"] = f"0:{rows}"
-            if stride > 1:
-                map_ranges["__k"] = f"0:{stride}"
-            row = "__b" if rows > 1 else "0"
-            k = "__k" if stride > 1 else "0"
-        map_ranges.update({f"__i{dim}": f"0:{symbolic.symstr(shape[dim])}" for dim in range(axis + 1, len(shape))})
-        if not map_ranges:
-            map_ranges["__k"] = "0:1"
-
-        def element(dataname: str, axis_index: str) -> Memlet:
-            subset = ", ".join(axis_index if dim == axis else index[dim] for dim in range(len(shape)))
-            return Memlet(f"{dataname}[{subset}]")
-
-        src = src_node.data
-        input_nodes = {src: src_node}
-        input_is_complex = sdfg.arrays[src].dtype in (dtypes.complex64, dtypes.complex128)
-        stage_factor = factor_cpp if last else None
-        if general:
-            table_node = twiddle_nodes[span, radix]
-            input_nodes[table_node.data] = table_node
-            first = f"({row} % {span}) * {radix * stride} + {k}"
-            inputs = {
-                "_x": element(src, f"{first}:{first} + {(radix - 1) * stride + 1}:{stride}"),
-                "_w": Memlet.from_array(table_node.data, sdfg.arrays[table_node.data]),
-            }
-            outputs = {"_y": element(dst, f"{row} * {stride} + {k}")}
-            code = general_stage_code(
-                radix,
-                span,
-                _cpp(row),
-                _cpp(stride * sdfg.arrays[src].strides[axis]),
-                input_is_complex,
-                outdesc.dtype,
-                stage_factor,
+    stage_index = 0
+    for s, (kind, step_stages, lanes) in enumerate(steps):
+        last = s == len(steps) - 1
+        dst_node = state.add_write("_out" if last else buffers[s % 2])
+        if kind == "local":
+            add_local_axis_kernel(
+                state,
+                f"stockham_axis_{s}",
+                step_stages,
+                sign,
+                src_node,
+                dst_node,
+                tables,
+                factor_cpp if last else None,
+                lanes,
+                map_schedule,
+                constants,
             )
         else:
-            b = row
-            inputs = {f"_x{a}": element(src, f"({b} * {radix} + {a}) * {stride} + {k}") for a in range(radix)}
-            outputs = {f"_y{c}": element(dst, f"({c} * {span} + {b}) * {stride} + {k}") for c in range(radix)}
-            if span > 1:
-                table_node = twiddle_nodes[span, radix]
-                inputs.update({f"_w{a}": Memlet(f"{table_node.data}[{b}, {a - 1}]") for a in range(1, radix)})
-                input_nodes[table_node.data] = table_node
-            code = stage_code(radix, sign, span > 1, input_is_complex, outdesc.dtype, stage_factor)
-        _, map_entry, _ = state.add_mapped_tasklet(
-            f"stockham_stage_{s}",
-            map_ranges,
-            inputs,
-            code,
-            outputs,
-            language=dtypes.Language.CPP,
-            external_edges=True,
-            input_nodes=input_nodes,
-            output_nodes={dst: dst_node},
-            schedule=map_schedule,
-        )
-        # Parallelize over all dimensions: L is small in the first stages and M is small in the last ones
-        map_entry.map.collapse = len(map_ranges)
-        if storage == dtypes.StorageType.GPU_Global:
-            map_entry.map.gpu_block_size = GPU_BLOCK_SIZE
+            label = f"stockham_stage_{stage_index}"
+            extents = list(shape)
+            entry = add_stage_map(
+                state,
+                label,
+                step_stages[0],
+                sign,
+                src_node,
+                dst_node,
+                extents,
+                {},
+                tables,
+                factor_cpp if last else None,
+                map_schedule,
+                vectorize=not gpu,
+                linearize=gpu,
+            )
+            if gpu:
+                entry.map.gpu_block_size = GPU_BLOCK_SIZE
+        stage_index += len(step_stages)
         src_node = dst_node
-
     return sdfg
+
+
+def add_stage_map(
+    state: SDFGState,
+    label: str,
+    stage: tuple[int, int, int, int],
+    sign: int,
+    src_node: nodes.AccessNode,
+    dst_node: nodes.AccessNode,
+    extents: list[symbolic.SymbolicType],
+    bases: dict[str, list[str | None]],
+    tables: dict[tuple[int, int], nodes.AccessNode | str],
+    factor: str | None,
+    schedule: dtypes.ScheduleType,
+    vectorize: bool = False,
+    linearize: bool = False,
+    padding: dict[str, int] | None = None,
+) -> nodes.MapEntry:
+    """
+    Adds a map that computes one stage from ``src_node`` to ``dst_node``. Each iteration computes one butterfly (or
+    one output of a general-radix stage), or with ``vectorize``, several consecutive ones in a SIMD loop.
+
+    Map dimensions, outermost to innermost: the dimensions before the axis, b in [0, L) (or the output j in [0, L * R)
+    of a general-radix stage), k in [0, M), and the dimensions after the axis (contiguous in row-major arrays, and the
+    GPU thread x dimension).
+
+    :param state: The state to add the map to.
+    :param label: The label of the map.
+    :param stage: The ``(axis, radix, L, M)`` of the stage, as returned by ``plan_stages``.
+    :param sign: -1 for the forward transform, 1 for the inverse transform.
+    :param src_node: The access node to read from.
+    :param dst_node: The access node to write to.
+    :param extents: For each dimension other than the axis, the number of indices that the map iterates over (one for
+                    no iteration).
+    :param bases: For arrays that are not indexed from zero, the index of each dimension other than the axis at which
+                  the iterations start (or None for zero).
+    :param tables: The twiddle factor tables (see ``add_twiddle_tables``), as access nodes or names, by ``(L, R)``.
+    :param factor: C++ expression of a factor to multiply the outputs by, or None.
+    :param schedule: The schedule of the map.
+    :param vectorize: Whether a tasklet computes several consecutive iterations of the innermost dimension.
+    :param linearize: Whether to iterate over b and k with one index (for GPU kernels).
+    :param padding: For arrays whose axis is split into chunks of padded rows (see ``block_local_sdfg``), the number
+                    of elements of a chunk.
+    :return: The entry node of the map.
+    """
+    padding = padding or {}
+    sdfg = state.sdfg
+    axis, radix, span, stride = stage
+    ndim = len(extents)
+    src, dst = src_node.data, dst_node.data
+    general = is_general_radix(radix)
+    rows = span * radix if general else span
+
+    index, map_ranges = {}, {}
+    for dim in range(axis):
+        if extents[dim] != 1:
+            map_ranges[f"__i{dim}"] = f"0:{symbolic.symstr(extents[dim])}"
+            index[dim] = f"__i{dim}"
+    if linearize and rows > 1 and stride > 1:
+        # One linear thread index for (b, k): either range alone may be too short to fill a thread block, and a long
+        # one could exceed the grid limits of the y and z dimensions
+        map_ranges["__t"] = f"0:{rows * stride}"
+        row, k = f"int_floor(__t, {stride})", f"(__t % {stride})"
+    else:
+        if rows > 1:
+            map_ranges["__b"] = f"0:{rows}"
+        if stride > 1:
+            map_ranges["__k"] = f"0:{stride}"
+        row = "__b" if rows > 1 else "0"
+        k = "__k" if stride > 1 else "0"
+    for dim in range(axis + 1, ndim):
+        if extents[dim] != 1:
+            map_ranges[f"__i{dim}"] = f"0:{symbolic.symstr(extents[dim])}"
+            index[dim] = f"__i{dim}"
+    if not map_ranges:
+        map_ranges["__k"] = "0:1"
+
+    # The innermost dimension, if the tasklet computes several of its iterations
+    vector_dim, lanes = None, 1
+    if vectorize and not general:
+        after = [dim for dim in range(axis + 1, ndim) if extents[dim] != 1]
+        if after:
+            candidates = [(after[-1], extents[after[-1]])]
+        else:
+            candidates = [("k", stride), ("b", rows)]
+        for dim, extent in candidates:
+            lanes = next((n for n in VECTOR_LANES if _divides(n, extent)), 1)
+            if lanes > 1:
+                vector_dim = dim
+                param = {"b": "__b", "k": "__k"}.get(dim, f"__i{dim}")
+                begin, end = map_ranges[param].split(":")
+                map_ranges[param] = f"{begin}:{end}:{lanes}"
+                break
+
+    def element(dataname: str, axis_index: str, axis_step: int = 0) -> Memlet:
+        """
+        The element at ``axis_index`` along the axis, or the elements of the iterations of a tasklet that computes
+        several, which are ``axis_step`` apart along the axis if it vectorizes over b or k.
+        """
+        subset = []
+        chunk = padding.get(dataname)
+        for dim in range(ndim):
+            if dim == axis and chunk is not None:
+                row, column = f"int_floor({axis_index}, {chunk})", f"(({axis_index}) % {chunk})"
+                if axis_step and axis_step % chunk == 0:
+                    row_step = axis_step // chunk
+                    row = f"{row}:{row} + {(lanes - 1) * row_step + 1}:{row_step}"
+                elif axis_step:
+                    column = f"{column}:{column} + {(lanes - 1) * axis_step + 1}:{axis_step}"
+                subset += [row, column]
+                continue
+            if dim == axis:
+                if axis_step:
+                    axis_index = f"{axis_index}:{axis_index} + {(lanes - 1) * axis_step + 1}:{axis_step}"
+                subset.append(axis_index)
+                continue
+            base = bases.get(dataname, [None] * ndim)[dim]
+            parts = [part for part in (base, index.get(dim)) if part is not None]
+            expr = " + ".join(parts) if parts else "0"
+            subset.append(f"{expr}:{expr} + {lanes}" if dim == vector_dim else expr)
+        return Memlet(f"{dataname}[{', '.join(subset)}]")
+
+    def table_name(key: tuple[int, int]) -> str:
+        table = tables[key]
+        return table.data if isinstance(table, nodes.AccessNode) else table
+
+    input_is_complex = sdfg.arrays[src].dtype in (dtypes.complex64, dtypes.complex128)
+    out_dtype = sdfg.arrays[dst].dtype
+    if general:
+        table = table_name((span, radix))
+        first = f"({row} % {span}) * {radix * stride} + {k}"
+        inputs = {
+            "_x": element(src, f"{first}:{first} + {(radix - 1) * stride + 1}:{stride}"),
+            "_w": Memlet.from_array(table, sdfg.arrays[table]),
+        }
+        outputs = {"_y": element(dst, f"{row} * {stride} + {k}")}
+        input_stride = _cpp(stride * sdfg.arrays[src].strides[axis])
+        code = general_stage_code(radix, span, _cpp(row), input_stride, input_is_complex, out_dtype, factor)
+    else:
+        b = row
+        in_step = {"b": radix * stride, "k": 1}.get(vector_dim, 0)
+        out_step = {"b": stride, "k": 1}.get(vector_dim, 0)
+        inputs = {f"_x{a}": element(src, f"({b} * {radix} + {a}) * {stride} + {k}", in_step) for a in range(radix)}
+        outputs = {f"_y{c}": element(dst, f"({c} * {span} + {b}) * {stride} + {k}", out_step) for c in range(radix)}
+        if span > 1:
+            table = table_name((span, radix))
+            twiddle_index = f"{b}:{b} + {lanes}" if vector_dim == "b" else b
+            inputs.update({f"_w{a}": Memlet(f"{table}[{a - 1}, {twiddle_index}]") for a in range(1, radix)})
+        vector = None
+        if vector_dim is not None:
+
+            def distance(dataname: str, step: int) -> symbolic.SymbolicType:
+                """
+                The distance in memory between the elements of consecutive iterations of the tasklet.
+                """
+                strides = sdfg.arrays[dataname].strides
+                chunk = padding.get(dataname)
+                if vector_dim not in ("b", "k"):
+                    return strides[vector_dim + 1 if chunk is not None else vector_dim]
+                if chunk is None:
+                    return step * strides[axis]
+                if step % chunk == 0:
+                    return step // chunk * strides[axis]
+                return step * strides[axis + 1]
+
+            in_stride, out_stride = distance(src, in_step), distance(dst, out_step)
+            vector = Vector(lanes, _cpp(in_stride), _cpp(out_stride), "1" if vector_dim == "b" else None)
+        code = stage_code(radix, sign, span > 1, input_is_complex, out_dtype, factor, vector)
+
+    input_nodes = {src: src_node}
+    for memlet in inputs.values():
+        if memlet.data not in input_nodes:
+            table = tables[next(key for key in tables if table_name(key) == memlet.data)]
+            input_nodes[memlet.data] = table if isinstance(table, nodes.AccessNode) else state.add_read(table)
+    tasklet, map_entry, _ = state.add_mapped_tasklet(
+        label,
+        map_ranges,
+        inputs,
+        code,
+        outputs,
+        language=dtypes.Language.CPP,
+        external_edges=True,
+        input_nodes=input_nodes,
+        output_nodes={dst: dst_node},
+        schedule=schedule,
+    )
+    if not general and uses_avx(input_is_complex, out_dtype, vector):
+        tasklet.code_global = properties.CodeBlock(AVX_HELPERS, dtypes.Language.CPP)
+    # Parallelize over all dimensions: L is small in the first stages and M is small in the last ones
+    map_entry.map.collapse = len(map_ranges)
+    return map_entry
+
+
+def _divides(lanes: int, extent: symbolic.SymbolicType) -> bool:
+    """
+    Returns True if an extent is a known multiple of a number of lanes, and at least that number.
+    """
+    if symbolic.issymbolic(extent):
+        return False
+    return int(extent) >= lanes and int(extent) % lanes == 0
+
+
+def local_lanes(
+    shape: tuple[symbolic.SymbolicType, ...], axis: int, dtype: dtypes.typeclass, constants: dict
+) -> int | None:
+    """
+    Returns how many transforms of an axis one map iteration computes in stack buffers on the CPU (see
+    ``add_local_axis_kernel``), or None if the axis is transformed by one map per stage. If the axis is innermost,
+    an iteration transforms one row. Otherwise, it transforms adjacent columns, so that its accesses to the array are
+    contiguous, and the innermost dimension must be a fixed multiple of their number.
+
+    :param shape: The shape of the array.
+    :param axis: The axis.
+    :param dtype: The complex type of the buffers.
+    :param constants: Constants of the SDFG, used to evaluate symbolic lengths.
+    :return: The number of transforms of an iteration, or None.
+    """
+    length = fixed_length(shape[axis], constants)
+    if length is None or length < 2:
+        return None
+    innermost = len(shape) - 1
+    if axis == innermost:
+        return 1 if 2 * length * dtype.bytes <= LOCAL_BYTES else None
+    extent = fixed_length(shape[innermost], constants)
+    for lanes in VECTOR_LANES[:1]:
+        if extent is not None and _divides(lanes, extent) and 2 * length * lanes * dtype.bytes <= LOCAL_BYTES:
+            return lanes
+    return None
 
 
 def _cpp(expr: str | symbolic.SymbolicType) -> str:
@@ -591,12 +1039,17 @@ def delinearize(index: str, extents: list[int]) -> list[str]:
     return result
 
 
-def block_local_shape(shape: tuple[symbolic.SymbolicType, ...], axes: list[int], constants: dict) -> list[int]:
+def block_local_shape(
+    shape: tuple[symbolic.SymbolicType, ...], axes: list[int], constants: dict, lanes: int = 1
+) -> list[int]:
     """
     Returns the shape of one transform of an array: the lengths of the transformed axes, and one for the other
-    dimensions.
+    dimensions, except for the innermost one with ``lanes`` adjacent transforms.
     """
-    return [fixed_length(shape[dim], constants) if dim in axes else 1 for dim in range(len(shape))]
+    result = [fixed_length(shape[dim], constants) if dim in axes else 1 for dim in range(len(shape))]
+    if lanes > 1:
+        result[-1] = lanes
+    return result
 
 
 def fits_block_local(
@@ -721,7 +1174,7 @@ def add_block_local_stage(
         inputs = {src: {f"_x{a}": element(src, f"({b} * {radix} + {a}) * {stride} + {k}") for a in range(radix)}}
         if span > 1:
             table = tables[span, radix]
-            inputs[table] = {f"_w{a}": Memlet(f"{table}[{b}, {a - 1}]") for a in range(1, radix)}
+            inputs[table] = {f"_w{a}": Memlet(f"{table}[{a - 1}, {b}]") for a in range(1, radix)}
         outputs = {f"_y{c}": element(dst, f"({c} * {span} + {b}) * {stride} + {k}") for c in range(radix)}
         code = stage_code(radix, sign, span > 1, input_is_complex, out_dtype, factor)
 
@@ -764,6 +1217,9 @@ def block_local_sdfg(
     dtype: dtypes.typeclass,
     constants: dict,
     num_buffers: int = 2,
+    storage: dtypes.StorageType = dtypes.StorageType.GPU_Shared,
+    lanes: int = 1,
+    padding: int = 0,
 ) -> tuple[SDFG, dict[int, str], dict[str, list[str | None]], list[str]]:
     """
     Creates the SDFG that each thread block of a block-local kernel runs (see ``add_block_local_kernel``), without
@@ -777,6 +1233,12 @@ def block_local_sdfg(
     :param dtype: The complex type of the buffers.
     :param constants: Constants of the parent SDFG, used to evaluate symbolic axis lengths.
     :param num_buffers: The number of shared memory buffers (at most two are needed).
+    :param storage: The storage of the buffers.
+    :param lanes: The number of adjacent transforms along the innermost dimension (not transformed) that a block
+                  computes. Its symbol is the first of them.
+    :param padding: If nonzero, the axis of the buffers (of a single transformed axis) is split into rows of this
+                    many elements, which are padded by one element, so that accesses with power-of-two strides do
+                    not map to the same cache sets (see ``local_padding``).
     :return: The SDFG, the symbol of each dimension that is not transformed, the batch index of each array (see
              ``add_block_local_stage``), and the names of the buffers.
     """
@@ -790,15 +1252,30 @@ def block_local_sdfg(
         desc.transient = False
         desc.lifetime = dtypes.AllocationLifetime.Scope
         block.add_datadesc(array_name, desc)
-    block_shape = block_local_shape(shape, axes, constants)
+    block_shape = block_local_shape(shape, axes, constants, lanes)
+    buffer_shape, strides, total_size = block_shape, None, None
+    if padding:
+        (axis,) = axes
+        inner = math.prod(block_shape[axis + 1 :])
+        rows = block_shape[axis] // padding
+        buffer_shape = block_shape[:axis] + [rows, padding] + block_shape[axis + 1 :]
+        total_size = rows * (padding * inner + 1)
+        after = [math.prod(block_shape[dim + 1 :]) for dim in range(axis + 1, ndim)]
+        strides = [total_size] * axis + [padding * inner + 1, inner] + after
     buffers = [
         block.add_transient(
-            f"__fft_block_buf{i}", block_shape, dtype, dtypes.StorageType.GPU_Shared, find_new_name=True
+            f"__fft_block_buf{i}",
+            buffer_shape,
+            dtype,
+            storage,
+            strides=strides,
+            total_size=total_size,
+            find_new_name=True,
         )[0]
         for i in range(num_buffers)
     ]
     global_index = [batch_symbols.get(dim) for dim in range(ndim)]
-    shared_index = ["0" if dim in batch_symbols else None for dim in range(ndim)]
+    shared_index = ["0" if dim in batch_symbols and block_shape[dim] == 1 else None for dim in range(ndim)]
     batch_index = dict.fromkeys(arrays, global_index)
     batch_index.update(dict.fromkeys(buffers, shared_index))
     return block, batch_symbols, batch_index, buffers
@@ -854,10 +1331,13 @@ def add_block_local_kernel(
     output: nodes.AccessNode,
     shape: tuple[symbolic.SymbolicType, ...],
     batch_symbols: dict[int, str],
+    schedule: dtypes.ScheduleType = dtypes.ScheduleType.GPU_Device,
+    lanes: int = 1,
 ) -> tuple[nodes.MapEntry, nodes.NestedSDFG]:
     """
     Adds a GPU kernel that runs the SDFG of a thread block (see ``block_local_sdfg``) with one thread block per
-    transform, i.e., a ``GPU_Device`` map over the dimensions that are not transformed.
+    transform, i.e., a ``GPU_Device`` map over the dimensions that are not transformed. With another schedule, it
+    adds a map with that schedule, in which each iteration runs the SDFG.
 
     :param state: The state to add the kernel to.
     :param block: The SDFG of a thread block, with all of its states.
@@ -865,14 +1345,19 @@ def add_block_local_kernel(
     :param output: The access node of the array that the block writes.
     :param shape: The shape of the transformed arrays.
     :param batch_symbols: The symbol of each dimension that is not transformed.
+    :param schedule: The schedule of the map.
+    :param lanes: The number of adjacent transforms along the innermost dimension that an iteration computes.
     :return: The entry node of the kernel map and the nested SDFG node.
     """
     sdfg = state.sdfg
     ranges = {symbol: f"0:{symbolic.symstr(shape[dim])}" for dim, symbol in sorted(batch_symbols.items())}
-    kernel_entry, kernel_exit = state.add_map(
-        block.name, ranges or {"__fft_block": "0:1"}, dtypes.ScheduleType.GPU_Device
-    )
-    for symbol in sorted(block.free_symbols - set(batch_symbols.values())):
+    if lanes > 1:
+        innermost = batch_symbols[len(shape) - 1]
+        ranges[innermost] += f":{lanes}"
+    kernel_entry, kernel_exit = state.add_map(block.name, ranges or {"__fft_block": "0:1"}, schedule)
+    if schedule != dtypes.ScheduleType.GPU_Device:
+        kernel_entry.map.collapse = len(ranges) or 1
+    for symbol in sorted(block.free_symbols - set(batch_symbols.values()) - set(block.symbols)):
         block.add_symbol(symbol, sdfg.symbols.get(symbol, dtypes.int64))
     nsdfg = state.add_nested_sdfg(
         block,
@@ -895,6 +1380,113 @@ def add_block_local_kernel(
     propagation.propagate_memlets_sdfg(block)
     propagation.propagate_memlets_state(sdfg, state)
     return kernel_entry, nsdfg
+
+
+def local_padding(stages: list[tuple[int, int, int, int]]) -> int:
+    """
+    Returns the number of elements after which the stack buffers of a transform of one axis on the CPU (see
+    ``add_local_axis_kernel``) are padded by one element, or 0 if they are not padded. The stages access the buffers
+    with power-of-two strides that would otherwise map to the same cache sets. The rows must keep the iterations of
+    each SIMD tasklet together: those of k (at most ``VECTOR_LANES[0]`` consecutive elements) within a row, and those
+    of b in the last stage (``R`` elements apart) at the same position of rows.
+
+    :param stages: All stages of the axis, in order.
+    :return: The number of elements of a padded row, or 0.
+    """
+    if any(is_general_radix(radix) for _, radix, _, _ in stages):
+        return 0
+    length = math.prod(radix for _, radix, _, _ in stages)
+    for chunk in (16, 8):
+        if chunk >= VECTOR_LANES[0] and length % chunk == 0 and stages[-1][1] % chunk == 0:
+            return chunk
+    return 0
+
+
+def add_local_axis_kernel(
+    state: SDFGState,
+    label: str,
+    stages: list[tuple[int, int, int, int]],
+    sign: int,
+    src_node: nodes.AccessNode,
+    dst_node: nodes.AccessNode,
+    tables: dict[tuple[int, int], nodes.AccessNode],
+    factor: str | None,
+    lanes: int,
+    schedule: dtypes.ScheduleType,
+    constants: dict,
+) -> nodes.MapEntry:
+    """
+    Adds a CPU map over the dimensions other than an axis, in which each iteration computes all stages of the axis
+    for ``lanes`` adjacent transforms (see ``local_lanes``) in buffers on the stack, so that the array is read and
+    written once rather than once per stage. Each iteration runs a nested SDFG with one state per stage, in which the
+    stages are sequential maps (see ``add_stage_map``).
+
+    :param state: The state to add the map to.
+    :param label: The label of the map and of the nested SDFG.
+    :param stages: All stages of the axis, in order.
+    :param sign: -1 for the forward transform, 1 for the inverse transform.
+    :param src_node: The access node to read from.
+    :param dst_node: The access node to write to.
+    :param tables: The twiddle factor tables (see ``add_twiddle_tables``).
+    :param factor: C++ expression of a factor to multiply the outputs of the last stage by, or None.
+    :param lanes: The number of adjacent transforms of an iteration.
+    :param schedule: The schedule of the map.
+    :param constants: Constants of the SDFG, used to evaluate symbolic lengths.
+    :return: The entry node of the map.
+    """
+    sdfg = state.sdfg
+    src, dst = src_node.data, dst_node.data
+    shape = tuple(sdfg.arrays[dst].shape)
+    dtype = sdfg.arrays[dst].dtype
+    axis = stages[0][0]
+    keys = {(span, radix) for _, radix, span, _ in stages}
+    stage_tables = {key: node for key, node in tables.items() if key in keys}
+    table_names = {key: node.data for key, node in stage_tables.items()}
+    arrays = {name: sdfg.arrays[name] for name in (src, dst, *table_names.values())}
+    padding = local_padding(stages)
+    block, batch_symbols, batch_index, buffers = block_local_sdfg(
+        label,
+        arrays,
+        shape,
+        [axis],
+        dtype,
+        constants,
+        min(len(stages) - 1, 2),
+        dtypes.StorageType.Register(force=True),
+        lanes,
+        padding,
+    )
+    block_shape = block_local_shape(shape, [axis], constants, lanes)
+    locations = [src] + [buffers[i % 2] for i in range(len(stages) - 1)] + [dst]
+    prev_state = None
+    for i, stage in enumerate(stages):
+        if prev_state is None:
+            block_state = block.add_state(f"stage_{i}", is_start_block=True)
+        else:
+            block_state = block.add_state_after(prev_state, f"stage_{i}")
+        prev_state = block_state
+        add_stage_map(
+            block_state,
+            f"{label}_stage_{i}",
+            stage,
+            sign,
+            block_state.add_read(locations[i]),
+            block_state.add_write(locations[i + 1]),
+            block_shape,
+            batch_index,
+            table_names,
+            factor if i == len(stages) - 1 else None,
+            dtypes.ScheduleType.Sequential,
+            vectorize=True,
+            padding=dict.fromkeys(buffers, padding) if padding else None,
+        )
+    inputs = {src: src_node, **{node.data: node for node in stage_tables.values()}}
+    # A single iteration does not need a parallel region
+    iterations = fixed_length(math.prod(shape[dim] for dim in batch_symbols) / lanes, constants)
+    if iterations == 1:
+        schedule = dtypes.ScheduleType.Sequential
+    entry, _ = add_block_local_kernel(state, block, inputs, dst_node, shape, batch_symbols, schedule, lanes)
+    return entry
 
 
 def block_local_fft_sdfg(
