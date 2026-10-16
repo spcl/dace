@@ -451,7 +451,9 @@ def _array_array_binop(
     left_shape = left_arr.shape
     right_shape = right_arr.shape
 
-    (out_shape, all_idx_dict, out_idx, left_idx, right_idx) = broadcast_together(left_shape, right_shape)
+    (out_shape, all_idx_dict, out_idx, left_idx, right_idx) = broadcast_together(
+        left_shape, right_shape, facts=sdfg.facts()
+    )
 
     # Fix for Scalars
     if isinstance(left_arr, data.Scalar):
@@ -530,7 +532,9 @@ def _array_const_binop(
     if right_cast is not None:
         tasklet_args[1] = "{c}({o})".format(c=str(right_cast).replace("::", "."), o=tasklet_args[1])
 
-    (out_shape, all_idx_dict, out_idx, left_idx, right_idx) = broadcast_together(left_shape, right_shape)
+    (out_shape, all_idx_dict, out_idx, left_idx, right_idx) = broadcast_together(
+        left_shape, right_shape, facts=sdfg.facts()
+    )
 
     out_operand, out_arr = visitor.add_temp_transient(out_shape, restype, storage)
 
@@ -613,7 +617,9 @@ def _array_sym_binop(
     if right_cast is not None:
         tasklet_args[1] = "{c}({o})".format(c=str(right_cast).replace("::", "."), o=tasklet_args[1])
 
-    (out_shape, all_idx_dict, out_idx, left_idx, right_idx) = broadcast_together(left_shape, right_shape)
+    (out_shape, all_idx_dict, out_idx, left_idx, right_idx) = broadcast_together(
+        left_shape, right_shape, facts=sdfg.facts()
+    )
 
     out_operand, out_arr = visitor.add_temp_transient(out_shape, restype, storage)
 

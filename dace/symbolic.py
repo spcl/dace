@@ -5282,9 +5282,13 @@ def shapes_equal(shape_a: Sequence[Any], shape_b: Sequence[Any]) -> bool:
     return not any(inequal_symbols(a, b) for a, b in zip(shape_a, shape_b))
 
 
-def inequal_symbols(a: sympy.Expr | Any, b: sympy.Expr | Any) -> bool:
+def inequal_symbols(a: sympy.Expr | Any, b: sympy.Expr | Any, facts: Facts | None = None) -> bool:
     """
     Compares 2 symbolic expressions and returns True if they are not equal.
+
+    :param facts: The facts of the scope the expressions belong to. A registry symbol is a bare name, so the
+                  integrality and sign that let ``ceiling((S*hi - S*lo + 1)/S)`` cancel against ``hi - lo + 1``
+                  come from them; without them the comparison knows nothing of either.
     """
     if to_sympy is not None:
         converted_a = to_sympy(a)
@@ -5307,11 +5311,20 @@ def inequal_symbols(a: sympy.Expr | Any, b: sympy.Expr | Any) -> bool:
         return a != b
     else:
         a, b = (relax_int_floor(x) for x in equalize_symbols(a, b))
+        difference = a - b
+        if facts is not None:
+            difference = difference.xreplace(
+                {
+                    free: sympy.Symbol(free.name, **facts.assumptions(free.name))
+                    for free in difference.free_symbols
+                    if isinstance(free, sympy.Symbol) and not isinstance(free, sympy.Dummy)
+                }
+            )
         # NOTE: We simplify in an attempt to remove inconvenient methods, such
         # as `ceiling` and `floor`, if the symbol assumptions allow it.
         # We subtract and compare to zero according to the SymPy documentation
         # (https://docs.sympy.org/latest/tutorial/gotchas.html).
-        return (a - b).simplify() != 0
+        return difference.simplify() != 0
 
 
 def equal(a: SymbolicType, b: SymbolicType, is_length: bool = True) -> bool | None:

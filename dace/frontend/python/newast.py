@@ -3315,7 +3315,9 @@ class ProgramVisitor(ExtNodeVisitor):
                     unproven = []
 
                 if indirect_indices or boolarr or len(ssize) != len(osize) or unproven or op:
-                    _, all_idx_tuples, _, _, inp_idx = broadcast_to(squeezed.size(), op_subset.size())
+                    _, all_idx_tuples, _, _, inp_idx = broadcast_to(
+                        squeezed.size(), op_subset.size(), self.sdfg.facts()
+                    )
 
                     idx = iter(i for i, _ in all_idx_tuples)
                     target_index = ",".join(
@@ -3593,7 +3595,9 @@ class ProgramVisitor(ExtNodeVisitor):
                     op_drop = {i - shift for i in wdropped if 0 <= i - shift < len(op_subset)}
                 sqz_osub = copy.deepcopy(op_subset)
                 osqz = sqz_osub.squeeze([i for i in range(len(op_subset)) if i not in op_drop])
-                _, all_idx_tuples, _, out_idx, inp_idx = broadcast_to(sqz_wsub.size(), sqz_osub.size())
+                _, all_idx_tuples, _, out_idx, inp_idx = broadcast_to(
+                    sqz_wsub.size(), sqz_osub.size(), self.sdfg.facts()
+                )
                 # Re-add squeezed dimensions from original subset so that memlets match original arrays
                 osqueezed = [i for i in range(len(op_subset)) if i not in osqz]
                 wsqueezed = [i for i in range(len(wtarget_subset)) if i not in wsqz]
@@ -6663,7 +6667,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 shape = self._index_literal_to_constant(aname, arrname).shape
 
             if chunk_shape is not None:
-                chunk_shape, *_ = broadcast_together(shape, chunk_shape)
+                chunk_shape, *_ = broadcast_together(shape, chunk_shape, facts=self.sdfg.facts())
             else:
                 chunk_shape = tuple(shape)
 
@@ -6786,7 +6790,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
             # Loop once to get the broadcasted shape
             if advidx_shape is not None:
-                advidx_shape, _, out_idx, *_ = broadcast_together(shape, advidx_shape)
+                advidx_shape, _, out_idx, *_ = broadcast_together(shape, advidx_shape, facts=self.sdfg.facts())
             else:
                 advidx_shape = tuple(shape)
                 out_idx = ",".join([f"__i{i}" for i in range(len(shape))])
@@ -6815,7 +6819,7 @@ class ProgramVisitor(ExtNodeVisitor):
             del index_mapping[f"__i{i}"]
 
             # NOTE: The indices can be multi-dimensional
-            _, _, out_idx, arr_idx, _ = broadcast_together(shape, advidx_shape)
+            _, _, out_idx, arr_idx, _ = broadcast_together(shape, advidx_shape, facts=self.sdfg.facts())
 
             # Create the input memlet for this advanced indexing array based on broadcasting rules
             arr_idx = arr_idx.replace("__i", "__ind").split(",")
