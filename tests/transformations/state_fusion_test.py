@@ -559,6 +559,45 @@ def test_subset_union_memlets_may_intersect():
     assert StateFusion.memlets_intersect(first, [a1], False, second, [a2], False)
 
 
+def test_copy_without_other_subset_is_compared_at_its_destination():
+    # ``A[5:10] -> B`` writes ``B[0:5]``, which the second state writes again
+    sdfg = dace.SDFG("copy_other_subset")
+    sdfg.add_array("A", [10], dace.float64)
+    sdfg.add_array("B", [5], dace.float64)
+    first = sdfg.add_state("first", is_start_block=True)
+    first.add_nedge(first.add_read("A"), first.add_write("B"), dace.Memlet("A[5:10]"))
+    second = sdfg.add_state_after(first, "second")
+    second.add_mapped_tasklet("w", {"i": "0:5"}, {}, "b = 1.0", {"b": dace.Memlet("B[i]")}, external_edges=True)
+    assert not StateFusion.can_be_applied_to(sdfg, first_state=first, second_state=second)
+
+
+def test_one_writer_ordered_through_a_match_does_not_order_its_sibling():
+    # ``B[0]`` reaches the second state through ``C``; its sibling ``B[1]`` writer does not, and the second state
+    # writes ``B[1]``
+    sdfg = dace.SDFG("one_writer_ordered_through_a_match_")
+    sdfg.add_array("A", [1], dace.float64)
+    sdfg.add_array("B", [2], dace.float64)
+    sdfg.add_array("C", [1], dace.float64)
+    first = sdfg.add_state("first", is_start_block=True)
+    a = first.add_read("A")
+    t0 = first.add_tasklet("w0", {"i"}, {"o"}, "o = i")
+    first.add_edge(a, None, t0, "i", dace.Memlet("A[0]"))
+    b0 = first.add_access("B")
+    first.add_edge(t0, "o", b0, None, dace.Memlet("B[0]"))
+    copy = first.add_tasklet("cp", {"i"}, {"o"}, "o = i")
+    first.add_edge(b0, None, copy, "i", dace.Memlet("B[0]"))
+    first.add_edge(copy, "o", first.add_write("C"), None, dace.Memlet("C[0]"))
+    t1 = first.add_tasklet("w1", {"i"}, {"o"}, "o = i + 1")
+    first.add_edge(a, None, t1, "i", dace.Memlet("A[0]"))
+    first.add_edge(t1, "o", first.add_write("B"), None, dace.Memlet("B[1]"))
+    second = sdfg.add_state_after(first, "second")
+    t2 = second.add_tasklet("w2", {"i"}, {"o"}, "o = i")
+    second.add_edge(second.add_read("C"), None, t2, "i", dace.Memlet("C[0]"))
+    second.add_edge(t2, "o", second.add_write("B"), None, dace.Memlet("B[1]"))
+    sdfg.validate()
+    assert not StateFusion.can_be_applied_to(sdfg, first_state=first, second_state=second)
+
+
 if __name__ == "__main__":
     test_fuse_assignments()
     test_fuse_assignments_2()
@@ -580,3 +619,5 @@ if __name__ == "__main__":
     test_one_ordered_writer_does_not_exempt_an_unordered_one()
     test_check_all_paths_checks_every_reader()
     test_subset_union_memlets_may_intersect()
+    test_copy_without_other_subset_is_compared_at_its_destination()
+    test_one_writer_ordered_through_a_match_does_not_order_its_sibling()

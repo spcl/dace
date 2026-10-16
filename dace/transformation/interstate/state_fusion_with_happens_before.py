@@ -4,12 +4,13 @@
 import networkx as nx
 
 from dace import data as dt
-from dace import memlet, sdfg, subsets
+from dace import memlet, sdfg
 from dace.config import Config
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.state import ControlFlowRegion, SDFGState
 from dace.transformation import transformation
+from dace.transformation.interstate.state_fusion import StateFusion
 
 
 # Helper class for finding connected component correspondences
@@ -92,121 +93,11 @@ class StateFusionExtended(transformation.MultiStateTransformation):
 
         return result
 
-    @staticmethod
-    def memlets_intersect(
-        graph_a: SDFGState,
-        group_a: list[nodes.AccessNode],
-        inputs_a: bool,
-        graph_b: SDFGState,
-        group_b: list[nodes.AccessNode],
-        inputs_b: bool,
-    ) -> bool:
-        """
-        Performs an all-pairs check for subset intersection on two
-        groups of nodes. If group intersects or result is indeterminate,
-        returns True as a precaution.
-
-        :param graph_a: The graph in which the first set of nodes reside.
-        :param group_a: The first set of nodes to check.
-        :param inputs_a: If True, checks inputs of the first group.
-        :param graph_b: The graph in which the second set of nodes reside.
-        :param group_b: The second set of nodes to check.
-        :param inputs_b: If True, checks inputs of the second group.
-        :return: True if subsets intersect or result is indeterminate.
-        """
-        # Set traversal functions
-        src_subset = lambda e: e.data.src_subset if e.data.src_subset is not None else e.data.dst_subset
-        dst_subset = lambda e: e.data.dst_subset if e.data.dst_subset is not None else e.data.src_subset
-        if inputs_a:
-            edges_a = [e for n in group_a for e in graph_a.out_edges(n)]
-            subset_a = src_subset
-        else:
-            edges_a = [e for n in group_a for e in graph_a.in_edges(n)]
-            subset_a = dst_subset
-        if inputs_b:
-            edges_b = [e for n in group_b for e in graph_b.out_edges(n)]
-            subset_b = src_subset
-        else:
-            edges_b = [e for n in group_b for e in graph_b.in_edges(n)]
-            subset_b = dst_subset
-
-        # Simple all-pairs check
-        for ea in edges_a:
-            for eb in edges_b:
-                result = subsets.intersects(subset_a(ea), subset_b(eb))
-                if result is True or result is None:
-                    return True
-        return False
-
-    def has_path(
-        self,
-        first_state: SDFGState,
-        second_state: SDFGState,
-        match_nodes: dict[nodes.AccessNode, nodes.AccessNode],
-        node_a: nodes.Node,
-        node_b: nodes.Node,
-    ) -> bool:
-        """Check for paths between the two states if they are fused."""
-        for match_a, match_b in match_nodes.items():
-            if nx.has_path(first_state._nx, node_a, match_a) and nx.has_path(second_state._nx, match_b, node_b):
-                return True
-        return False
-
-    def _check_all_paths(
-        self,
-        first_state: SDFGState,
-        second_state: SDFGState,
-        match_nodes: dict[nodes.AccessNode, nodes.AccessNode],
-        nodes_first: list[nodes.AccessNode],
-        nodes_second: list[nodes.AccessNode],
-        first_read: bool,
-        second_read: bool,
-    ) -> bool:
-        for node_a in nodes_first:
-            succ_a = first_state.successors(node_a)
-            for node_b in nodes_second:
-                if all(self.has_path(first_state, second_state, match_nodes, sa, node_b) for sa in succ_a):
-                    return True
-        # Path not found, check memlets
-        if StateFusionExtended.memlets_intersect(
-            first_state, nodes_first, first_read, second_state, nodes_second, second_read
-        ):
-            return False
-        return True
-
-    def _check_paths(
-        self,
-        first_state: SDFGState,
-        second_state: SDFGState,
-        match_nodes: dict[nodes.AccessNode, nodes.AccessNode],
-        nodes_first: list[nodes.AccessNode],
-        nodes_second: list[nodes.AccessNode],
-        second_input: set[nodes.AccessNode],
-        first_read: bool,
-        second_read: bool,
-    ) -> bool:
-        fail = False
-        path_found = False
-        for match in match_nodes:
-            for node in nodes_first:
-                path_to = nx.has_path(first_state._nx, node, match)
-                if not path_to:
-                    continue
-                path_found = True
-                node2 = next(n for n in second_input if n.data == match.data)
-                if not all(nx.has_path(second_state._nx, node2, n) for n in nodes_second):
-                    fail = True
-                    break
-            if fail or path_found:
-                break
-
-        # Check for intersection (if None, fusion is ok)
-        if fail or not path_found:
-            if StateFusionExtended.memlets_intersect(
-                first_state, nodes_first, first_read, second_state, nodes_second, second_read
-            ):
-                return False
-        return True
+    # The overlap and ordering checks are StateFusion's
+    memlets_intersect = staticmethod(StateFusion.memlets_intersect)
+    has_path = StateFusion.has_path
+    _check_all_paths = StateFusion._check_all_paths
+    _check_paths = StateFusion._check_paths
 
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
         first_state: SDFGState = self.first_state

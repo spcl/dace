@@ -3,8 +3,8 @@
 
 ``pure`` is the separable DFT every other expansion falls back to. ``FFTW3`` is the CPU vendor
 call and ``cuFFT`` / ``hipFFT`` the GPU one, all three wrapped in the same nested SDFG: a staged copy
-for an input of another type or layout, the unnormalized transform with a plan cached in the SDFG
-state, then the ``norm`` scale. Each case pins the numpy semantics that wrapper has to reproduce --
+for an input of another type or layout, the unnormalized transform with a plan from the library's
+plan cache, then the ``norm`` scale. Each case pins the numpy semantics that wrapper has to reproduce --
 the axes, the three norms, both precisions, a real input, a strided (leading-axis) transform and the
 in-place ``x[:] = fft(x)`` -- or the plan and the layout the vendor is given.
 """
@@ -424,17 +424,15 @@ def test_a_threaded_fftw_plans_for_the_team(monkeypatch, threaded):
     assert ("fftw_plan_with_nthreads(__threads)" in code) == threaded
 
 
-def test_an_fftw3_plan_lives_in_the_sdfg_state():
-    """Tal's point on the PR: a plan made and destroyed on every call costs more than a small transform. The plan is
-    a state field, made on the first call and kept while its key -- layout, aliasing, threads, alignment -- holds."""
+def test_an_fftw3_plan_is_cached_by_the_library():
+    """Tal's point on the PR: a plan made and destroyed on every call costs more than a small transform. The plan
+    comes from the library's plan cache, keyed by layout, aliasing, threads and alignment; the SDFG state holds
+    none."""
     desc = dace.data.Array(dace.complex128, [64])
     tasklet = fftw3_call(Transform(desc, desc, [0], inverse=False, half_spectrum=False))
-    plan = tasklet.state_fields[0].split()[1].rstrip(";")
-    assert tasklet.state_fields[0] == f"fftw_plan {plan};"
-    assert f"__state->{plan}_made = false;" in tasklet.code_init.as_string
-    assert f"fftw_destroy_plan(__state->{plan})" in tasklet.code_exit.as_string
+    assert not tasklet.state_fields and not tasklet.code_init.as_string and not tasklet.code_exit.as_string
     code = tasklet.code.as_string
-    assert f"__plan = __state->{plan};" in code
+    assert "dace::fft::Plans<fftw_plan>(fftw_destroy_plan).Get(" in code
     assert code.count("fftw_plan_guru64_dft(") == 1
 
 
