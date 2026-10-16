@@ -124,6 +124,37 @@ def test_a_kernel_over_block_axes_only_stays_a_kernel():
     assert offload(sdfg) == {("b",): GPU}
 
 
+def block_map_around(sdfg: dace.SDFG, inner_range: str) -> dace.SDFG:
+    """``B = 2 * A`` in a map over ``b`` around a map over ``i``."""
+    sdfg.add_array("A", ["nblks", "nproma"], dace.float64)
+    sdfg.add_array("B", ["nblks", "nproma"], dace.float64)
+    state = sdfg.add_state("compute")
+    outer_entry, outer_exit = state.add_map("blocks", {"b": "0:nblks"})
+    inner_entry, inner_exit = state.add_map("rows", {"i": inner_range})
+    tasklet = state.add_tasklet("scale", {"x"}, {"y"}, "y = 2.0 * x")
+    state.add_memlet_path(
+        state.add_read("A"), outer_entry, inner_entry, tasklet, dst_conn="x", memlet=dace.Memlet("A[b, i]")
+    )
+    state.add_memlet_path(
+        tasklet, inner_exit, outer_exit, state.add_write("B"), src_conn="y", memlet=dace.Memlet("B[b, i]")
+    )
+    sdfg.validate()
+    return sdfg
+
+
+def test_a_block_map_around_a_row_map_launches_over_the_rows():
+    """Collapsed with the map it holds, the block map leaves the grid like any other block axis."""
+    sdfg = block_map_around(blocked_sdfg("block_around_rows"), "0:nproma")
+    assert offload(sdfg) == {("i",): GPU, ("b",): SEQ}
+    assert map_nest(sdfg) == [["i"], ["b"]]
+
+
+def test_a_row_map_whose_range_reads_the_block_keeps_the_block_kernel():
+    """Rows that depend on the block cannot collapse with it: the block map stays the kernel."""
+    sdfg = block_map_around(blocked_sdfg("block_dependent_rows"), "0:nproma - b")
+    assert offload(sdfg) == {("b",): GPU, ("i",): SEQ}
+
+
 def test_without_small_symbols_the_kernel_keeps_every_axis():
     sdfg = mapped_copy(
         blocked_sdfg("no_small", small=False), ["nblks", "nproma"], {"b": "0:nblks", "i": "0:nproma"}, "b, i"
@@ -176,6 +207,8 @@ if __name__ == "__main__":
     test_two_block_axes_share_one_sequential_map()
     test_a_block_map_inside_a_kernel_stays_sequential()
     test_a_kernel_over_block_axes_only_stays_a_kernel()
+    test_a_block_map_around_a_row_map_launches_over_the_rows()
+    test_a_row_map_whose_range_reads_the_block_keeps_the_block_kernel()
     test_without_small_symbols_the_kernel_keeps_every_axis()
     test_a_constant_axis_is_not_small()
     test_a_block_axis_of_a_nested_kernel_leaves_the_grid()

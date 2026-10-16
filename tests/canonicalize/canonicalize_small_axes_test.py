@@ -14,6 +14,7 @@ from dace import symbolic
 from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion, SymbolResolver
 from dace.symbolic import Scale
+from dace.transformation.passes.canonicalize.finalize import finalize_for_target
 from dace.transformation.passes.canonicalize.hold_sibling_chains import ParallelizeLoopsHoldingSiblingChains
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
 from dace.transformation.passes.canonicalize.wavefront_skew import WavefrontSkew
@@ -196,6 +197,29 @@ def test_canonicalize_never_maps_a_block_axis():
         run_blocked(sdfg, shape, reference)
 
 
+@dace.program
+def blocked_slice(A: dace.float64[nblks, nproma], B: dace.float64[nblks, nproma]):
+    B[:] = 2.0 * A + 1.0
+
+
+def test_the_cpu_target_never_shares_out_a_block_axis():
+    """Canonicalization keeps the map a slice makes over ``(nblks, nproma)``; the CPU specialization then shares out
+    ``nproma`` and runs ``nblks`` sequentially inside."""
+    for program, shape, reference in (
+        (blocked_slice, (NBLKS, NPROMA), lambda A: 2.0 * A + 1.0),
+        (blocked_axpy, (NBLKS, NPROMA), lambda A: 2.0 * A + 1.0),
+        (blocked_columns, (NPROMA, NBLKS), lambda A: A - 3.0 * A[:, :1]),
+    ):
+        sdfg = finalize_for_target(canonicalize(program.to_sdfg(simplify=True)), "cpu")
+        resolver = SymbolResolver()
+        for entry, state in maps(sdfg):
+            if entry.map.schedule == dace.ScheduleType.CPU_Multicore:
+                facts = resolver.facts_at(state, entry)
+                ranges = entry.map.range.ranges
+                assert not any(symbolic.is_small(end - begin, facts) for begin, end, _ in ranges), program.name
+        run_blocked(sdfg, shape, reference)
+
+
 if __name__ == "__main__":
     test_parallelize_loops_keeps_the_block_loop_sequential()
     test_parallelize_loops_keeps_an_inner_block_loop_sequential()
@@ -204,3 +228,4 @@ if __name__ == "__main__":
     test_a_small_sibling_does_not_hold_back_its_large_doall_sibling()
     test_wavefront_skew_refuses_a_nest_with_a_small_axis()
     test_canonicalize_never_maps_a_block_axis()
+    test_the_cpu_target_never_shares_out_a_block_axis()
