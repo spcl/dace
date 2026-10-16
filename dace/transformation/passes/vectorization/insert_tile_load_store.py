@@ -1482,3 +1482,53 @@ class InsertTileLoadStore(ppl.Pass):
             "no scalar stores except to a non-transient program output",
         )
         return total or None
+
+
+@properties.make_properties
+@transformation.explicit_cf_compatible
+class PruneUnreadConstantBridges(ppl.Pass):
+    """Drop a one-element bridge :class:`InsertTileLoadStore` staged a loop-invariant read through, once nothing reads
+    it: the consumer it was staged for may have become a reduction that writes the element instead. A target that
+    holds registers as values (the Python tile dialects, CUDA Tile C++) would otherwise read that element before any
+    program wrote it."""
+
+    CATEGORY: str = "Vectorization"
+
+    def modifies(self) -> ppl.Modifies:
+        return ppl.Modifies.AccessNodes | ppl.Modifies.Descriptors
+
+    def should_reapply(self, modified: ppl.Modifies) -> bool:
+        return False
+
+    def apply_pass(self, sdfg: SDFG, _: dict[str, Any]) -> int | None:
+        removed = 0
+        for nested in sdfg.all_sdfgs_recursive():
+            # An interstate edge or a loop or branch condition reads a container without an access node
+            accesses: dict[str, int] = {
+                name: 1 for edge in nested.all_interstate_edges() for name in edge.data.read_symbols()
+            }
+            for region in nested.all_control_flow_regions():
+                accesses.update(dict.fromkeys(map(str, region.free_symbols), 1))
+            for state in nested.states():
+                for node in state.data_nodes():
+                    accesses[node.data] = accesses.get(node.data, 0) + 1
+            for state in nested.states():
+                for node in list(state.data_nodes()):
+                    desc = nested.arrays[node.data]
+                    in_edges = state.in_edges(node)
+                    if (
+                        not desc.transient
+                        or desc.total_size != 1
+                        or accesses[node.data] != 1
+                        or state.out_degree(node) != 0
+                        or len(in_edges) != 1
+                        or not isinstance(in_edges[0].src, AccessNode)
+                    ):
+                        continue
+                    source = in_edges[0].src
+                    state.remove_node(node)
+                    if state.degree(source) == 0:
+                        state.remove_node(source)
+                    nested.remove_data(node.data, validate=False)
+                    removed += 1
+        return removed or None

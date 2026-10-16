@@ -874,3 +874,42 @@ class WidenAccesses(ppl.Pass):
             "lane-dep transients widened to (W_0,...,W_{K-1}) or kept as Scalar bridge",
         )
         return total or None
+
+
+@properties.make_properties
+@transformation.explicit_cf_compatible
+class PruneUnreadLaneSymbols(ppl.Pass):
+    """Drop the per-lane symbols :func:`emit_per_lane_symbol_fanout` seeds, and the symbols they fan out, where no lowering
+    reads them.
+
+    A gather lowered to an index tile reads its indices with a tile load, so the ``W`` interstate assignments seeded
+    for a scalar form are dead; under a BLOCK tile ``W`` is the whole block, one scalar load per lane.
+    """
+
+    CATEGORY: str = "Vectorization"
+
+    def modifies(self) -> ppl.Modifies:
+        return ppl.Modifies.Symbols
+
+    def should_reapply(self, modified: ppl.Modifies) -> bool:
+        return False
+
+    def apply_pass(self, sdfg: SDFG, _: dict[str, Any]) -> int | None:
+        from dace.transformation.passes.prune_symbols import RemoveUnusedSymbols
+
+        removed = 0
+        for nested in sdfg.all_sdfgs_recursive():
+            edges = list(nested.all_interstate_edges())
+            fanned = {name for edge in edges for name in edge.data.assignments if LaneIdScheme.is_lane_fanned(name)}
+            if not fanned:
+                continue
+            unread = (fanned | {LaneIdScheme.base_of(name) for name in fanned}) - RemoveUnusedSymbols().used_symbols(
+                nested
+            )
+            for edge in edges:
+                for name in unread & edge.data.assignments.keys():
+                    del edge.data.assignments[name]
+                    removed += 1
+            for name in unread & nested.symbols.keys():
+                nested.remove_symbol(name)
+        return removed or None

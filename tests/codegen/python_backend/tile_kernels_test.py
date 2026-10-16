@@ -10,6 +10,8 @@ import pytest
 
 import dace
 from dace.codegen.exceptions import CodegenError
+from dace.libraries.tileops.dispatch import TileGroup
+from dace.libraries.tileops.nodes.tile_op import TileOp
 from dace.transformation.interstate import LoopToMap
 from dace.transformation.passes.canonicalize.finalize import offload_to_gpu
 from dace.transformation.passes.vectorization.config import VectorizeConfig
@@ -45,6 +47,16 @@ SPELLINGS = {
         "triton": ["tl.store(S_gpu + r * 1, sum)"],
         "cutile": ["ct.scatter(S_gpu, (r,), sum)"],
         "tilelang": ["S_gpu[r * 1] = sum"],
+    },
+    "gather": {
+        "triton": ["tl.load(x + (0 + _idx_x_0_load0) * 1, mask="],
+        "cutile": ["ct.gather(x, (0 + _idx_x_0_load0,), mask="],
+        "tilelang": ["x[(0 + _idx_x_0_load0[lane0]) * 1]"],
+    },
+    "scatter": {
+        "triton": ["tl.store(y + (0 + _idx_scatter_y_0_load0) * 1, y_scatter_out, mask="],
+        "cutile": ["ct.scatter(y, (0 + _idx_scatter_y_0_load0,), y_scatter_out, mask="],
+        "tilelang": ["y[(0 + _idx_scatter_y_0_load0[lane0]) * 1] = y_scatter_out[lane0]"],
     },
     "atomic": {
         "triton": ["tl.atomic_add(S_gpu + "],
@@ -242,3 +254,143 @@ def test_two_kernels_of_one_label_stay_two_kernels(dialect: str):
 
     np.testing.assert_allclose(out_a, np.exp(a), rtol=1e-12)
     np.testing.assert_allclose(out_b, np.sqrt(b), rtol=1e-12)
+
+
+@dace.program
+def gather_doubled(x: dace.float64[N], idx: dace.int64[N], y: dace.float64[N]):
+    for i in dace.map[0:N]:
+        y[i] = x[idx[i]] * 2.0
+
+
+@dace.program
+def scatter_incremented(x: dace.float64[N], idx: dace.int64[N], y: dace.float64[N]):
+    for i in dace.map[0:N]:
+        y[idx[i]] = x[i] + 1.0
+
+
+def vectorized_gpu_sdfg(program, tile_programs: bool = False) -> dace.SDFG:
+    sdfg = program.to_sdfg(simplify=True)
+    sdfg.apply_transformations_repeated(LoopToMap)
+    sdfg.simplify()
+    offload_to_gpu(sdfg)
+    VectorizeGPU(VectorizeConfig(widths=(4,), tile_programs=tile_programs)).apply_pass(sdfg, {})
+    return sdfg
+
+
+@pytest.mark.parametrize("dialect", DIALECTS)
+def test_a_load_through_an_index_tile_reads_every_indexed_element(dialect: str):
+    import cupy
+
+    permutation = np.random.default_rng(3).permutation(1000)
+    x, y = cupy.arange(1000, dtype=np.float64), cupy.zeros(1000)
+
+    with tile_backend(dialect):
+        compiled = vectorized_gpu_sdfg(gather_doubled).compile()
+        compiled(x=x, idx=cupy.asarray(permutation), y=y, N=1000)
+
+    assert np.array_equal(y.get(), 2.0 * permutation)
+    assert_spelled(compiled, "gather", dialect)
+
+
+@pytest.mark.parametrize("dialect", DIALECTS)
+def test_a_store_through_an_index_tile_writes_every_indexed_element(dialect: str):
+    import cupy
+
+    permutation = np.random.default_rng(4).permutation(1000)
+    x, y = cupy.arange(1000, dtype=np.float64), cupy.zeros(1000)
+    expected = np.zeros(1000)
+    expected[permutation] = np.arange(1000) + 1.0
+
+    with tile_backend(dialect):
+        compiled = vectorized_gpu_sdfg(scatter_incremented).compile()
+        compiled(x=x, idx=cupy.asarray(permutation), y=y, N=1000)
+
+    assert np.array_equal(y.get(), expected)
+    assert_spelled(compiled, "scatter", dialect)
+
+
+@dace.program
+def row_recurrence(A: dace.float64[M, N]):
+    for r in range(1, M):
+        for j in dace.map[0:N]:
+            A[r, j] = A[r - 1, j] + 1.0
+
+
+@pytest.mark.parametrize("dialect", DIALECTS)
+def test_a_kernel_inside_a_host_loop_reads_the_loop_iterator(dialect: str):
+    import cupy
+
+    a = cupy.zeros((5, 600))
+    sdfg = vectorized_gpu_sdfg(row_recurrence)
+
+    with tile_backend(dialect):
+        compiled = sdfg.compile()
+        compiled(A=a, M=5, N=600)
+
+    assert np.array_equal(a.get(), np.repeat(np.arange(5.0)[:, None], 600, axis=1))
+    signature = next(line for line in kernel_source(compiled).splitlines() if line.startswith("def kernel_"))
+    assert "_loop_it_0" in signature
+
+
+@dace.program
+def shrinking_rows(a: dace.float64[N], A: dace.float64[N, N]):
+    for r in range(N):
+        for j in range(r + 1, N):
+            a[j] = a[j] + A[r, j]
+
+
+@pytest.mark.parametrize("dialect", DIALECTS)
+def test_a_kernel_over_an_empty_map_launches_nothing(dialect: str):
+    import cupy
+
+    a, matrix = cupy.zeros(4), cupy.ones((4, 4))
+    sdfg = vectorized_gpu_sdfg(shrinking_rows)
+
+    with tile_backend(dialect):
+        compiled = sdfg.compile()
+        compiled(a=a, A=matrix, N=4)
+
+    assert np.array_equal(a.get(), np.arange(4.0))
+    assert " > 0:" in kernel_source(compiled)
+
+
+@dace.program
+def shifted_rows(A: dace.float64[M, N]):
+    for r in range(M):
+        for j in dace.map[r + 1 : N]:
+            A[r, j] = A[r, j] + 1.0
+
+
+@pytest.mark.parametrize("dialect", DIALECTS)
+def test_a_map_inside_a_kernel_keeps_block_tiles_when_a_program_runs_each_tile(dialect: str):
+    import cupy
+
+    a = cupy.zeros((5, 700))
+    sdfg = vectorized_gpu_sdfg(shifted_rows, tile_programs=True)
+
+    with tile_backend(dialect):
+        compiled = sdfg.compile()
+        compiled(A=a, M=5, N=700)
+
+    assert np.array_equal(a.get(), np.triu(np.ones((5, 700)), 1))
+    assert all(n.group is TileGroup.BLOCK for n, _ in sdfg.all_nodes_recursive() if isinstance(n, TileOp))
+
+
+@dace.program
+def total_of_squares(x: dace.float64[N], s: dace.float64[1]):
+    for i in dace.map[0:N]:
+        s[0] += x[i] * x[i]
+
+
+@pytest.mark.parametrize("dialect", DIALECTS)
+def test_a_kernel_reduction_keeps_block_tiles_when_a_program_runs_each_tile(dialect: str):
+    import cupy
+
+    x, s = np.random.default_rng(8).random(3000), cupy.zeros(1)
+    sdfg = vectorized_gpu_sdfg(total_of_squares, tile_programs=True)
+
+    with tile_backend(dialect):
+        sdfg.compile()(x=cupy.asarray(x), s=s, N=3000)
+
+    assert np.isclose(s.get()[0], np.dot(x, x))
+    assert all(n.group is TileGroup.BLOCK for n, _ in sdfg.all_nodes_recursive() if isinstance(n, TileOp))

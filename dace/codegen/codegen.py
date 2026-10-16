@@ -433,6 +433,11 @@ def lower_and_generate_code(sdfg: SDFG, validate: bool) -> list[CodeObject]:
     for tile_kernel, _ in kernels:
         tile_kernel.map.gpu_block_size = [1, 1, 1]
     expand_outside_tile_kernels(sdfg)
+    if kernels:
+        from dace.transformation.passes.unique_names import UniqueNames
+
+        # A tile kernel is one C++ function, whose nested SDFGs share its names as the Python backend's do
+        UniqueNames().apply_pass(sdfg, {})
     equalize(sdfg)
 
     # Decide which maps may carry an OpenMP simd clause; the CPU target only renders it.

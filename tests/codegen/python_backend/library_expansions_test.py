@@ -17,6 +17,7 @@ from dace.libraries.linalg.nodes.ttranspose import TensorTranspose
 from dace.libraries.sort.nodes.scatter_conflict_check import ScatterConflictCheck
 from dace.libraries.standard.nodes.copy.node import CopyLibraryNode
 from dace.libraries.standard.nodes.fill.node import FillLibraryNode
+from dace.libraries.standard.nodes.reduce import Reduce
 
 N = dace.symbol("N")
 
@@ -361,3 +362,19 @@ def test_a_conflict_check_of_gpu_indices_leaves_its_flag_on_the_host():
         conflict_check_sdfg(dace.StorageType.GPU_Global)(idx=cupy.array([0, 2, 2, 3, 4, 5]), flag=flag)
 
     assert flag[0] == 1
+
+
+def test_a_reduction_without_identity_into_one_element_folds_in_what_it_holds():
+    node = Reduce("reduce", wcr="lambda a, b: max(a, b)", axes=None, identity=None)
+    sdfg = single_node_sdfg(node, {node.INPUT_CONNECTOR_NAME: ("A", [3, 4])}, {})
+    sdfg.add_array("m", [1], dace.float64)
+    state = next(iter(sdfg.states()))
+    state.add_edge(node, node.OUTPUT_CONNECTOR_NAME, state.add_write("m"), None, dace.Memlet("m[0]"))
+    a = rng_matrix(3, 4)
+    above, below = np.array([a.max() + 1.0]), np.array([a.min() - 1.0])
+
+    with python_backend():
+        sdfg(A=a, m=above)
+        sdfg(A=a, m=below)
+
+    assert above[0] == a.max() + 1.0 and below[0] == a.max()

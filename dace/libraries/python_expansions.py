@@ -191,15 +191,12 @@ def reduce(o: Operands) -> str:
     source, out = node.INPUT_CONNECTOR_NAME, node.OUTPUT_CONNECTOR_NAME
     axes = tuple(range(o.inputs[source].data.subset.dims())) if node.axes is None else tuple(node.axes)
     value = f"{function}({source}, axis={axes})"
-    if o.single(out):
-        if node.identity is None:
-            raise NotImplementedError(f"{node.label}: a reduction into the value one element already holds")
-        return f"{out} = {value}"
-    value = f"{o.xp}.reshape({value}, {out}.shape)"
+    if not o.single(out):
+        value = f"{o.xp}.reshape({value}, {out}.shape)"
     if node.identity is None:
         # Without an identity the reduction folds into what the output holds
-        value = f"{function}({o.xp}.stack(({out}, {value})), axis=0)"
-    return f'{o.xp}.copyto({out}, {value}, casting="unsafe")'
+        value = f"{function}({o.xp}.stack(({o.xp}.asarray({out}), {value})), axis=0)"
+    return f"{out} = {value}" if o.single(out) else f'{o.xp}.copyto({out}, {value}, casting="unsafe")'
 
 
 def copy(o: Operands) -> str:

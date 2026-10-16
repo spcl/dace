@@ -14,6 +14,7 @@ import dace
 from dace.codegen.exceptions import CodegenError
 from dace.transformation.interstate import LoopToMap
 from dace.transformation.passes.canonicalize.finalize import offload_to_gpu
+from dace.transformation.passes.canonicalize.pipeline import canonicalize
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.vectorize_gpu import VectorizeGPU
 
@@ -172,3 +173,126 @@ def test_a_cpp_tasklet_in_a_tile_kernel_is_refused():
 
     with cuda_tile_backend(), pytest.raises(CodegenError, match="tasklet 'cpp_lanes' is CPP"):
         sdfg.generate_code()
+
+
+@dace.program
+def gather_doubled(x: dace.float64[N], idx: dace.int64[N], y: dace.float64[N]):
+    for i in dace.map[0:N]:
+        y[i] = x[idx[i]] * 2.0
+
+
+@dace.program
+def scatter_incremented(x: dace.float64[N], idx: dace.int64[N], y: dace.float64[N]):
+    for i in dace.map[0:N]:
+        y[idx[i]] = x[i] + 1.0
+
+
+def vectorized_gpu_sdfg(program, name: str, tile_programs: bool = False) -> dace.SDFG:
+    sdfg = program.to_sdfg(simplify=True)
+    sdfg.apply_transformations_repeated(LoopToMap)
+    sdfg.simplify()
+    offload_to_gpu(sdfg)
+    VectorizeGPU(VectorizeConfig(widths=(4,), tile_programs=tile_programs)).apply_pass(sdfg, {})
+    sdfg.name = name
+    return sdfg
+
+
+def test_a_load_through_an_index_tile_is_a_load_of_a_pointer_tile():
+    import cupy
+
+    permutation = np.random.default_rng(3).permutation(1000)
+    sdfg = vectorized_gpu_sdfg(gather_doubled, "cuda_tile_gather")
+    x, y = cupy.arange(1000, dtype=np.float64), cupy.zeros(1000)
+
+    with cuda_tile_backend():
+        sdfg(x=x, idx=cupy.asarray(permutation), y=y, N=1000)
+
+    assert np.array_equal(y.get(), 2.0 * permutation)
+    assert "ct::load_masked((x + ((0 + _idx_x_0_load0) * 1))" in device_source(sdfg)
+
+
+def test_a_store_through_an_index_tile_is_a_store_to_a_pointer_tile():
+    import cupy
+
+    permutation = np.random.default_rng(4).permutation(1000)
+    sdfg = vectorized_gpu_sdfg(scatter_incremented, "cuda_tile_scatter")
+    x, y = cupy.arange(1000, dtype=np.float64), cupy.zeros(1000)
+    expected = np.zeros(1000)
+    expected[permutation] = np.arange(1000) + 1.0
+
+    with cuda_tile_backend():
+        sdfg(x=x, idx=cupy.asarray(permutation), y=y, N=1000)
+
+    assert np.array_equal(y.get(), expected)
+    assert "ct::store_masked((y + ((0 + _idx_scatter_y_0_load0) * 1)), y_scatter_out" in device_source(sdfg)
+
+
+@dace.program
+def snapshot_and_stencil(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N], d: dace.float64[N]):
+    for i in range(N - 1):
+        a[i] = b[i] + c[i] * c[i] + b[i] * b[i] + c[i]
+        d[i] = a[i] + a[i + 1]
+
+
+def test_two_kernels_of_one_file_share_one_prelude_and_floor_their_tile_starts():
+    import cupy
+
+    sdfg = snapshot_and_stencil.to_sdfg(simplify=True)
+    canonicalize(sdfg, target="gpu", validate_all=False)
+    offload_to_gpu(sdfg)
+    VectorizeGPU(VectorizeConfig(widths=(4,))).apply_pass(sdfg, {})
+    sdfg.name = "cuda_tile_snapshot_and_stencil"
+    rng = np.random.default_rng(5)
+    initial_a, b, c = rng.random(1000), rng.random(1000), rng.random(1000)
+    a, d = cupy.asarray(initial_a), cupy.zeros(1000)
+    expected_a = initial_a.copy()
+    expected_a[:-1] = b[:-1] + c[:-1] * c[:-1] + b[:-1] * b[:-1] + c[:-1]
+
+    with cuda_tile_backend():
+        sdfg(a=a, b=cupy.asarray(b), c=cupy.asarray(c), d=d, N=1000)
+
+    assert np.allclose(a.get(), expected_a)
+    # Iteration ``i`` reads ``a[i + 1]`` before iteration ``i + 1`` writes it
+    assert np.allclose(d.get()[:-1], expected_a[:-1] + initial_a[1:])
+    source = device_source(sdfg)
+    assert source.count("__tile_global__ void") == 2 and source.count("#define DACE_TILE_PRELUDE") == 2
+    assert "* dace_tile::py_floor(" in source
+
+
+@dace.program
+def shifted_rows(A: dace.float64[M, N]):
+    for r in range(M):
+        for j in dace.map[r + 1 : N]:
+            A[r, j] = A[r, j] + 1.0
+
+
+def test_a_map_inside_a_tile_kernel_loops_over_block_tiles():
+    import cupy
+
+    a = cupy.zeros((5, 700))
+    sdfg = vectorized_gpu_sdfg(shifted_rows, "cuda_tile_shifted_rows", tile_programs=True)
+
+    with cuda_tile_backend():
+        sdfg(A=a, M=5, N=700)
+
+    assert np.array_equal(a.get(), np.triu(np.ones((5, 700)), 1))
+    assert "__tile_global__ void" in device_source(sdfg)
+
+
+@dace.program
+def total_of_squares(x: dace.float64[N], s: dace.float64[1]):
+    for i in dace.map[0:N]:
+        s[0] += x[i] * x[i]
+
+
+def test_a_kernel_reduction_adds_one_block_total_per_tile_atomically():
+    import cupy
+
+    x, s = np.random.default_rng(8).random(3000), cupy.zeros(1)
+    sdfg = vectorized_gpu_sdfg(total_of_squares, "cuda_tile_total_of_squares", tile_programs=True)
+
+    with cuda_tile_backend():
+        sdfg(x=cupy.asarray(x), s=s, N=3000)
+
+    assert np.isclose(s.get()[0], np.dot(x, x))
+    assert "ct::atomic_add" in device_source(sdfg)

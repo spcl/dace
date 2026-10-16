@@ -90,7 +90,10 @@ from dace.transformation.passes.vectorization.fuse_multiply_add import FuseMulti
 from dace.transformation.passes.vectorization.generate_tile_iteration_mask import (
     GenerateTileIterationMask,
 )
-from dace.transformation.passes.vectorization.insert_tile_load_store import InsertTileLoadStore
+from dace.transformation.passes.vectorization.insert_tile_load_store import (
+    InsertTileLoadStore,
+    PruneUnreadConstantBridges,
+)
 from dace.transformation.passes.vectorization.lower_interstate_conditional_assignments_to_tasklets import (
     LowerInterstateConditionalAssignmentsToTasklets,
 )
@@ -141,7 +144,7 @@ from dace.transformation.passes.vectorization.utils.pass_invariants import (
 
 # Unified WidenAccesses pass (replaces InferBodyTransientShapes + WidenScalarsToTiles
 # per user direction 2026-06-10). See the pass docstring for the 5-step algorithm.
-from dace.transformation.passes.vectorization.widen_accesses import WidenAccesses
+from dace.transformation.passes.vectorization.widen_accesses import PruneUnreadLaneSymbols, WidenAccesses
 
 #: Tile lib-node types -- all of them, used by the implementation selector.
 TILE_NODE_TYPES: tuple[type[LibraryNode], ...] = (
@@ -978,6 +981,9 @@ class VectorizeMultiDim(ppl.Pipeline):
             # connectors, so the kernel cannot be emitted -- refuse it instead of shipping a body
             # that would compile against a pointer (or not compile at all).
             _AssertTileOpsLowered(widths=widths_t),
+            # A gather lowered to an index tile leaves the per-lane index symbols ``WidenAccesses`` seeded unread
+            PruneUnreadLaneSymbols(),
+            PruneUnreadConstantBridges(),
             # Type a literal/Symbol ITE arm left in a scalar tasklet (e.g. a branched remainder) so
             # codegen never emits a bare literal (fp16_ite_literal_arm_cudatest, branched_tail_remainder_cudatest).
             CastScalarIteLiteralArms(),
@@ -1432,10 +1438,11 @@ class VectorizeGPUMultiDim(VectorizeMultiDim):
         self._requested = config
 
     def apply_pass(self, sdfg: dace.SDFG, pipeline_results: dict[str, Any]) -> dict[str, Any] | None:
-        # The iteration of a block tile's map is a whole thread block, every thread of which would reduce into the
-        # map's output, and a map inside a kernel runs on threads the kernel's own map already took: an SDFG with
-        # either keeps one thread's register tiles
-        if self._tile_group is TileGroup.BLOCK and (_has_kernel_reduction(sdfg) or _has_map_inside_kernel(sdfg)):
+        # Under the thread-block lowering the iteration of a block tile's map is a whole thread block, every thread
+        # of which would reduce into the map's output, and a map inside a kernel runs on threads the kernel's own map
+        # already took: an SDFG with either keeps one thread's register tiles. One program per tile does neither
+        thread_lowered = self._tile_group is TileGroup.BLOCK and not self._requested.tile_programs
+        if thread_lowered and (_has_kernel_reduction(sdfg) or _has_map_inside_kernel(sdfg)):
             thread_tiles = type(self)(dataclasses.replace(self._requested, tile_group=TileGroup.THREAD))
             return thread_tiles.apply_pass(sdfg, pipeline_results)
         return super().apply_pass(sdfg, pipeline_results)

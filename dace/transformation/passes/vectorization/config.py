@@ -35,6 +35,9 @@ class VectorizeConfig:
         ``widths`` are then the lanes each thread takes, and the tile is ``32 * num_warps`` times wider. ``THREAD``
         is one thread's register tile of ``widths`` lanes. A CPU tile is one core's either way.
     :param num_warps: The warps of the thread block a ``BLOCK`` tile spreads over.
+    :param tile_programs: Whether the kernel runs one program per map iteration over its whole ``BLOCK`` tile, as the
+        Python tile dialects and CUDA Tile C++ do. Such a kernel keeps ``BLOCK`` tiles when it reduces into its output
+        or holds a map, which the thread-block lowering runs per thread and so takes ``THREAD`` tiles for.
     """
 
     widths: tuple[int, ...]
@@ -50,6 +53,7 @@ class VectorizeConfig:
     device: DeviceType = DeviceType.CPU
     tile_group: TileGroup = TileGroup.BLOCK
     num_warps: int = 4
+    tile_programs: bool = False
 
     def __post_init__(self) -> None:
         for name, enum_cls in (

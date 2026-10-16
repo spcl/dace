@@ -46,6 +46,10 @@ with dace.config.set_temporary("compiler", "backend", value="python"), \
     sdfg.compile()(x=x, y=y, N=n)
 ```
 
+Vectorize for these targets with `VectorizeGPU(VectorizeConfig(widths=(4,), tile_programs=True))`: one program owns a
+whole BLOCK tile, so a kernel that reduces into its output or holds a map keeps BLOCK tiles (the thread-block C++
+lowering falls back to THREAD tiles there).
+
 For CUDA Tile C++ (needs CUDA 13.3 or newer, sm_80 or newer, C++20), keep `compiler.backend: cpp` and set
 `compiler.cuda.tile_backend: cuda_tile`. Tests: `tests/codegen/python_backend/`, `tests/codegen/cuda_tile_cpp_test.py`
 (pytest marks `triton`, `cutile`, `tilelang`, `cuda_tile`).

@@ -81,7 +81,7 @@ class TileLangEmitter(KernelEmitter):
     def copy(self, sdfg, state, edge) -> None:
         path = state.memlet_path(edge)
         src, dst = path[0].src.data, path[-1].dst.data
-        super().copy(sdfg, state, edge)  # checks both are registers and writes ``dst = src``
+        super().copy(sdfg, state, edge)  # a register copy writes ``dst = src``
         if sdfg.arrays[dst].total_size != 1:
             self.lines[-1] = self.lines[-1].replace(f"{dst} = {src}", f"T.copy({src}, {dst})")
 
@@ -98,14 +98,16 @@ class TileLangStatement(TileStatement):
             emitter.mma_threads = min(emitter.mma_threads or 32 * warps, 32 * warps)
 
     def indexed(self, value: str, widths: list[int]) -> str:
-        """``value`` read at the lanes: a register tile becomes its element at the lane indices."""
-        tiles = {n for n, d in self.sdfg.arrays.items() if is_register(d) and d.total_size != 1}
+        """``value`` read at the lanes: a register tile becomes its element at the lane indices, lane 0 along a dim
+        of extent 1, which an index tile has on the dims it does not vary over."""
+        tiles = {n: d.shape for n, d in self.sdfg.arrays.items() if is_register(d) and d.total_size != 1}
 
         class Lanes(ast.NodeTransformer):
             def visit_Name(self, node: ast.Name) -> ast.AST:
                 if node.id not in tiles:
                     return node
-                index = ast.parse(", ".join(lanes(widths)), mode="eval").body
+                at = [lane if extent != 1 else "0" for lane, extent in zip(lanes(widths), tiles[node.id])]
+                index = ast.parse(", ".join(at), mode="eval").body
                 return ast.Subscript(value=node, slice=index, ctx=node.ctx)
 
         return ast.unparse(Lanes().visit(ast.parse(value, mode="eval")))
@@ -148,11 +150,14 @@ class TileLangStatement(TileStatement):
                 )
             return
         subset = target.data.subset if target.data.data == dst else target.data.other_subset
-        address = f"{dst}[{self.offsets(dst, subset).flat()}]"
-        value = self.indexed(src, widths)
-        mask = None if mask is None else self.indexed(mask, widths)
-        write = f"T.atomic_add({address}, {value})" if accumulates(target.data) else f"{address} = {value}"
-        body = write if mask is None else f"if {mask}:\n        {write}"
+        self.write(dst, self.offsets(dst, subset), src, accumulates(target.data))
+
+    def write(self, name: str, at: Element, value: str, accumulate: bool) -> None:
+        widths, mask = list(self.node.widths), self.lane_mask()
+        address = self.indexed(f"{name}[{at.flat()}]", widths)
+        value = self.indexed(value, widths)
+        write = f"T.atomic_add({address}, {value})" if accumulate else f"{address} = {value}"
+        body = write if mask is None else f"if {self.indexed(mask, widths)}:\n        {write}"
         self.emitter.line(f"{lane_loop(widths)}\n    {body}")
 
     def reduction(self) -> None:

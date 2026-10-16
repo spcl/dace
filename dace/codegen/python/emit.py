@@ -454,7 +454,9 @@ class Emitter:
         arrays, symbols = kernel.kernel(sdfg, state, scope, order, entry)
         grid = [f"int_ceil({expr(end - begin + 1)}, {expr(step)})" for begin, end, step in reversed(entry.map.range)]
         self.kernels.append(dialect.define(name, kernel, arrays, symbols, grid))
-        self.line(dialect.launch(name, grid, arrays, symbols))
+        # An empty map launches nothing; cuTile refuses a grid of zero programs
+        with self.block(f"if {' and '.join(f'{size} > 0' for size in grid)}:"):
+            self.line(dialect.launch(name, grid, arrays, symbols))
 
     def read(self, sdfg: SDFG, state: SDFGState, edge: MultiConnectorEdge[Memlet]) -> str:
         """The value or view an edge brings into a connector."""

@@ -28,10 +28,13 @@ TEMPLATED = re.compile(r"\b(?:(?:ct|dace_tile)(?:\.\w+)+|static_cast)\[")
 #: A dotted name in the ``ct`` namespace, ``ct.memory_order.relaxed``.
 NAMESPACED = re.compile(r"\b(?:ct|std|dace_tile)(?:\.\w+)+")
 #: The lane of a one-element access, which Tile C++ moves as a one-lane tile.
-ONE_LANE = "ct.iota[ct.tile[int, ct.shape[1]]]()"
-#: Written ahead of the tile kernels of a translation unit: the header, and a cast that takes a scalar (a C++
-#: ``static_cast``) or a tile (``element_cast``).
+ONE_LANE = "ct.iota[ct.tile[std.int64_t, ct.shape[1]]]()"
+#: Written ahead of the tile kernels of a translation unit, once: the header, a cast that takes a scalar (a C++
+#: ``static_cast``) or a tile (``element_cast``), and the floored integer division and modulo of the scalar index
+#: expressions, which tile code cannot take from the host and device ones of the DaCe runtime.
 PRELUDE = """\
+#ifndef DACE_TILE_PRELUDE
+#define DACE_TILE_PRELUDE
 #include "cuda_tile.h"
 #include <type_traits>
 namespace dace_tile {
@@ -43,8 +46,25 @@ __tile__ inline auto cast(X x) {
         return cuda::tiles::element_cast<T>(x);
     }
 }
+template <typename A, typename B>
+__tile__ inline auto py_floor(A a, B b) {
+    auto quotient = a / b;
+    return (a % b != 0 && ((a < 0) != (b < 0))) ? quotient - 1 : quotient;
+}
+template <typename A, typename B>
+__tile__ inline auto py_mod(A a, B b) {
+    auto remainder = a % b;
+    return (remainder != 0 && ((remainder < 0) != (b < 0))) ? remainder + b : remainder;
+}
+template <typename A, typename B>
+__tile__ inline auto int_ceil(A a, B b) {
+    return -py_floor(-a, b);
+}
 }  // namespace dace_tile
+#endif
 """
+#: The integer helpers ``cppunparse`` and SymPy name, which tile code calls from the prelude.
+SCALAR_HELPERS = re.compile(r"(?<![\w:.])(py_floor|py_mod|int_ceil)\(")
 #: The C++ element type of each DaCe type, spelled so a Python parser takes it (``std.int64_t``).
 CPP_TYPES = {
     dtypes.float32: "float",
@@ -81,6 +101,7 @@ def cpp(text: str) -> str:
             inner = inner[len("std::make_tuple(") : -1]
         text = f"{text[: found.end() - 1]}<{inner}>{text[close + 1 :]}"
         found = TEMPLATED.search(text)
+    text = SCALAR_HELPERS.sub(r"dace_tile::\1(", text)
     return NAMESPACED.sub(lambda m: m.group(0).replace(".", "::"), text)
 
 
@@ -191,6 +212,8 @@ class CudaTileCpp(Dialect):
         "Max": "ct.max",
         "Abs": "ct.abs",
         "ipow": "ct.pow",
+        "int_floor": "py_floor",
+        "int_ceil": "int_ceil",
     }
 
     @property
@@ -198,18 +221,31 @@ class CudaTileCpp(Dialect):
         return CppKernelEmitter
 
     def program_id(self, axis: int) -> str:
-        # ``bid`` is unsigned, and an unsigned index would not mix with the signed lane tiles
-        return f"static_cast[int](ct.bid().{'xyz'[axis]})"
+        # ``bid`` is unsigned; indices are the signed 64-bit integers of the symbols and the lane tiles
+        return f"static_cast[std.int64_t](ct.bid().{'xyz'[axis]})"
 
     def tile_type(self, widths: list[int], dtype: dtypes.typeclass) -> str:
         return f"ct.tile[{cpp_type(dtype)}, ct.shape[{', '.join(map(str, widths))}]]"
 
     def lane(self, widths: list[int], dim: int) -> str:
-        lanes = f"ct.iota[ct.tile[int, ct.shape[{widths[dim]}]]]()"
+        lanes = f"ct.iota[ct.tile[std.int64_t, ct.shape[{widths[dim]}]]]()"
         if len(widths) == 1:
             return lanes
         column = ", ".join(str(width) if k == dim else "1" for k, width in enumerate(widths))
         return f"ct.broadcast[ct.shape[{', '.join(map(str, widths))}]](ct.reshape[ct.shape[{column}]]({lanes}))"
+
+    def index_tile(self, name: str, shape: list[int], widths: list[int]) -> str:
+        # Tile C++ broadcasts no shape implicitly; the index tile keeps its 64-bit elements
+        value = name
+        if shape == list(widths):
+            return value
+        if len(shape) != len(widths):
+            value = f"ct.reshape[ct.shape[{', '.join('1' for _ in widths)}]]({value})"
+        return f"ct.broadcast[ct.shape[{', '.join(map(str, widths))}]]({value})"
+
+    def lane_quotient(self, lane: str, factor: str) -> str:
+        # C++ division truncates, which floors the non-negative lanes
+        return f"({lane} / {factor})"
 
     def pointers(self, base: str, at: Element) -> str:
         """The pointer tile of ``at``; one element is a one-lane tile, since a bare pointer is no storeable tile."""

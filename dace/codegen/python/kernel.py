@@ -19,26 +19,32 @@ from dace.frontend.operations import detect_reduction_type
 from dace.libraries.standard.nodes.copy.node import CopyLibraryNode
 from dace.libraries.tileops import ops
 from dace.libraries.tileops.dispatch import TileGroup
-from dace.libraries.tileops.kinds import SYMBOL, TILE
+from dace.libraries.tileops.kinds import SCALAR, SYMBOL, TILE
+from dace.libraries.tileops.lanes import resolve_gather_deps
 from dace.libraries.tileops.nodes import (
     MaskedCopyLibraryNode,
     TileBinop,
     TileFMA,
+    TileGather,
     TileIota,
     TileITE,
     TileMaskGen,
     TileMMA,
     TileReduce,
     TileScan,
+    TileScatter,
     TileUnop,
 )
 from dace.libraries.tileops.nodes.tile_op import TileOp
 from dace.sdfg import nodes
-from dace.sdfg.state import SDFGState
+from dace.sdfg.sdfg import interstate_bound_names
+from dace.sdfg.state import LoopRegion, SDFGState
 
 #: The prelude functions SymPy prints, which a kernel calls under the dialect's own name.
 HELPERS = ("int_floor", "int_ceil", "ipow", "Min", "Max", "Abs")
-HELPER_CALL = re.compile(rf"\b({'|'.join(HELPERS)})\(")
+#: The other spellings of a helper: the C++ runtime's name of the floored division, which vectorizer bounds carry.
+HELPER_ALIASES = {"py_floor": "int_floor"}
+HELPER_CALL = re.compile(rf"\b({'|'.join((*HELPERS, *HELPER_ALIASES))})\(")
 #: The lane index ``__l<k>`` of a per-lane expression of a tile node.
 LANE = re.compile(r"__l(\d+)")
 #: A C++ function-style cast, ``double(x)``: the statement casts its result to the output type anyway.
@@ -115,6 +121,15 @@ class Dialect:
         """``value`` where ``condition`` holds, else ``otherwise``."""
         return f"{self['where']}({condition}, {value}, {otherwise})"
 
+    def index_tile(self, name: str, shape: list[int], widths: list[int]) -> str:
+        """The index tile ``name`` of ``shape``, extent 1 on the dims it does not vary over, added to lanes of
+        ``widths``."""
+        return name
+
+    def lane_quotient(self, lane: str, factor: str) -> str:
+        """The lanes ``lane`` divided by ``factor``, rounded down; lanes are never negative."""
+        return f"({lane} // {factor})"
+
     def full(self, widths: list[int], value: str, dtype: dtypes.typeclass) -> str:
         """A tile of ``widths`` every lane of which is the scalar ``value``."""
         raise NotImplementedError
@@ -160,7 +175,8 @@ KERNEL_STORAGES = (dtypes.StorageType.Register, dtypes.StorageType.Default, dtyp
 
 
 def is_register(desc: data.Data) -> bool:
-    return desc.transient and desc.storage in KERNEL_STORAGES
+    # A non-transient register is the connector of a nested SDFG that a kernel register binds (``nested``)
+    return desc.storage in KERNEL_STORAGES and (desc.transient or desc.storage is dtypes.StorageType.Register)
 
 
 class KernelEmitter(Emitter):
@@ -176,7 +192,7 @@ class KernelEmitter(Emitter):
 
     def line(self, text: str) -> None:
         for part in text.split("\n"):
-            super().line(HELPER_CALL.sub(lambda m: f"{self.dialect[m.group(1)]}(", part))
+            super().line(HELPER_CALL.sub(lambda m: f"{self.dialect[HELPER_ALIASES.get(m[1], m[1])]}(", part))
 
     def code(self, sdfg: SDFG, text: str) -> str:
         return text  # a scalar is a value in a kernel
@@ -205,7 +221,10 @@ class KernelEmitter(Emitter):
         names, assigned = self.bindings()
         # The grid is the map range, which a dialect may compute in the kernel
         names |= {str(s) for s in entry.map.range.free_symbols}
-        symbols = (names & (set(sdfg.symbols) | set(sdfg.arglist()))) - self.arrays - assigned
+        # A loop iterator or an interstate assignment of the host is a scope symbol, not in ``sdfg.symbols``
+        loops = {r.loop_variable for r in sdfg.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion)}
+        host = set(sdfg.symbols) | set(sdfg.arglist()) | interstate_bound_names(sdfg) | loops
+        symbols = (names & host) - self.arrays - assigned
         return sorted(self.arrays), sorted(symbols)
 
     def bindings(self) -> tuple[set[str], set[str]]:
@@ -223,11 +242,9 @@ class KernelEmitter(Emitter):
 
     def library(self, sdfg: SDFG, state: SDFGState, node: nodes.LibraryNode) -> None:
         if isinstance(node, CopyLibraryNode) and not isinstance(node, TileOp):
-            # A copy the copy lowering inserted between two registers rebinds the value
-            source, target = state.in_edges(node)[0].data.data, state.out_edges(node)[0].data.data
-            if not (is_register(sdfg.arrays[source]) and is_register(sdfg.arrays[target])):
-                raise CodegenError(f"Python backend: a tile kernel copies {node.label!r} through global memory")
-            self.line(f"{target} = {source}")
+            # A copy the copy lowering inserted, which moves a register or one global element
+            source, target = state.in_edges(node)[0].data, state.out_edges(node)[0].data
+            self.move(sdfg, source.data, source.subset, target.data, target.subset, target)
             return
         if not isinstance(node, TileOp):
             raise CodegenError(f"Python backend: no tile kernel form for {type(node).__name__} {node.label!r}")
@@ -270,13 +287,43 @@ class KernelEmitter(Emitter):
     def copy(self, sdfg, state, edge) -> None:
         path = state.memlet_path(edge)
         src, dst = path[0].src.data, path[-1].dst.data
-        for name in (src, dst):
-            if not is_register(sdfg.arrays[name]):
-                raise CodegenError(f"Python backend: in a tile kernel only tile nodes touch the global array {name!r}")
-        self.line(f"{dst} = {src}")
+        memlet = edge.data
+        self.move(sdfg, src, memlet.get_src_subset(edge, state), dst, memlet.get_dst_subset(edge, state), memlet)
+
+    def move(self, sdfg, src: str, src_subset, dst: str, dst_subset, memlet) -> None:
+        """Copy ``src`` to ``dst``: a register rebinds, one global element moves by a dialect load or store."""
+        src_desc, dst_desc = sdfg.arrays[src], sdfg.arrays[dst]
+        if is_register(src_desc) and is_register(dst_desc):
+            self.line(f"{dst} = {src}")
+        elif is_register(dst_desc):
+            at = self.element_offset(src_desc, src_subset)
+            self.line(f"{dst} = {self.dialect.load(src, at, None, src_desc.dtype)}")
+        elif is_register(src_desc):
+            store = self.dialect.atomic_add if accumulates(memlet) else self.dialect.store
+            self.line(store(dst, self.element_offset(dst_desc, dst_subset), src, None))
+        else:
+            raise CodegenError(f"Python backend: a tile kernel copies the global array {src!r} into {dst!r}")
 
     def view(self, sdfg, state, node) -> None:
         raise CodegenError(f"Python backend: a tile kernel cannot take the view {node.data!r}")
+
+    def nested(self, sdfg, state, node) -> None:
+        # A register is a value: the connector it binds is one too, read in if the body reads it and written back
+        # after. The connector must match the outer descriptor, which a pass that privatized the register into a
+        # value outside the nested SDFG may have left on the global storage it replaced.
+        outputs = []
+        for edge in (*state.in_edges(node), *state.out_edges(node)):
+            conn = edge.dst_conn if edge.dst is node else edge.src_conn
+            if conn is None or edge.data.is_empty() or not is_register(sdfg.arrays[edge.data.data]):
+                continue
+            node.sdfg.arrays[conn].storage = dtypes.StorageType.Register
+            if edge.src is node and conn != edge.data.data:
+                outputs.append((edge.data.data, conn))
+                if conn not in node.in_connectors:
+                    self.allocated.add(conn)  # written before it is read: nothing to bind in
+        super().nested(sdfg, state, node)
+        for outer, conn in outputs:
+            self.line(f"{outer} = {conn}")
 
 
 def accumulates(memlet) -> bool:
@@ -361,7 +408,12 @@ class TileStatement:
         if isinstance(node, MaskedCopyLibraryNode):
             self.masked_copy()
             return
-        if isinstance(node, (TileBinop, TileUnop, TileFMA, TileITE)):
+        if isinstance(node, TileScatter):
+            self.scatter()
+            return
+        if isinstance(node, TileGather):
+            out, value = "_dst", self.gather()
+        elif isinstance(node, (TileBinop, TileUnop, TileFMA, TileITE)):
             out, value = self.elementwise()
         elif isinstance(node, TileMaskGen):
             out, value = "_o", self.mask_gen()
@@ -456,9 +508,84 @@ class TileStatement:
             )
         else:
             subset = target.data.subset if target.data.data == dst else target.data.other_subset
-            offsets = self.offsets(dst, subset)
-            store = self.dialect.atomic_add if accumulates(target.data) else self.dialect.store
-            self.emitter.line(store(dst, offsets, src, self.lane_mask()))
+            self.write(dst, self.offsets(dst, subset), src, accumulates(target.data))
+
+    def write(self, name: str, at: Element, value: str, accumulate: bool) -> None:
+        """Store the tile ``value`` to the lanes of ``at`` in the global array ``name``, or add it atomically."""
+        store = self.dialect.atomic_add if accumulate else self.dialect.store
+        self.emitter.line(store(name, at, value, self.lane_mask()))
+
+    def index_tile(self, dim: int) -> str:
+        name = self.input(f"_idx_{dim}")
+        shape = [int(extent) for extent in self.sdfg.arrays[name].shape]
+        if resolve_gather_deps(shape, self.node.widths) is None:
+            raise CodegenError(f"Python backend: {self.node.label!r} indexes with a tile of shape {shape}")
+        return self.dialect.index_tile(name, shape, list(self.node.widths))
+
+    def addressed(self, name: str, subset, tile_dims: list[int], replicate: list) -> Element:
+        """The lanes of a gather or scatter in the global array ``name``. From the ``subset`` begin, a gather dim
+        steps by its index tile, a dim a tile dim maps to by the lane times ``dim_strides``, over the replicate
+        factor."""
+        node, desc = self.node, self.sdfg.arrays[name]
+        widths, ndim = list(node.widths), len(desc.shape)
+        tile_of = {dim: d for d, dim in enumerate(tile_dims or range(ndim - len(widths), ndim))}
+        indices = []
+        for dim, ((begin, _, _), offset) in enumerate(zip(subset.ndrange(), desc.offset)):
+            index = expr(begin + offset)
+            if dim in node.gather_dims:
+                index = f"{index} + {self.index_tile(dim)}"
+            elif dim in tile_of:
+                d = tile_of[dim]
+                lane = self.dialect.lane(widths, d)
+                factor = symbolic.pystr_to_symbolic(replicate[d]) if replicate else 1
+                if factor != 1:
+                    if not (factor.is_Integer and widths[d] % int(factor) == 0):
+                        raise CodegenError(f"Python backend: {node.label!r} replicates by {factor}, no divisor")
+                    lane = self.dialect.lane_quotient(lane, str(factor))
+                index = f"{index} + ({expr(node.dim_strides[d])}) * {lane}"
+            indices.append(index)
+        return Element(indices, [expr(stride) for stride in desc.strides], tile=True)
+
+    def broadcast_source(self, name: str, subset, dtype: dtypes.typeclass) -> str:
+        """The one element ``subset`` of ``name`` names, in every lane."""
+        if is_register(self.sdfg.arrays[name]):
+            return self.dialect.full(self.node.widths, name, dtype)
+        at = self.emitter.element_offset(self.sdfg.arrays[name], subset)
+        lanes = " + ".join(f"0 * {self.dialect.lane(self.node.widths, d)}" for d in range(len(self.node.widths)))
+        at = Element([f"{at.indices[0]} + {lanes}", *at.indices[1:]], at.strides, tile=True)
+        return self.dialect.load(name, at, None, self.sdfg.arrays[name].dtype)
+
+    def gather(self) -> str:
+        node = self.node
+        dtype = self.sdfg.arrays[self.outputs["_dst"].data.data].dtype
+        if node.src_kind == SYMBOL:
+            return self.dialect.full(node.widths, scalar(node.src_expr), dtype)
+        source = self.inputs["_src"]
+        name = source.data.data
+        if node.src_kind == SCALAR:
+            return self.broadcast_source(name, source.data.subset, dtype)
+        if is_register(self.sdfg.arrays[name]):
+            raise CodegenError(f"Python backend: {node.label!r} gathers from the register tile {name!r}")
+        at = self.addressed(name, source.data.subset, node.src_dims, node.replicate_factor_per_dim)
+        return self.dialect.load(name, at, self.lane_mask(), self.sdfg.arrays[name].dtype)
+
+    def scatter(self) -> None:
+        node, target = self.node, self.outputs["_dst"]
+        name = target.data.data
+        if is_register(self.sdfg.arrays[name]):
+            raise CodegenError(f"Python backend: {node.label!r} scatters into the register tile {name!r}")
+        dtype = self.sdfg.arrays[name].dtype
+        if node.src_kind == SYMBOL:
+            value = self.dialect.full(node.widths, scalar(node.src_expr), dtype)
+        elif node.src_kind == SCALAR:
+            value = self.broadcast_source(self.inputs["_src"].data.data, self.inputs["_src"].data.subset, dtype)
+        else:
+            value = self.input("_src")
+        if node.wcr is not None and detect_reduction_type(node.wcr) is not dtypes.ReductionType.Sum:
+            raise CodegenError(f"Python backend: {node.label!r} accumulates into global memory by sums only")
+        subset = target.data.subset if target.data.data == name else target.data.other_subset
+        at = self.addressed(name, subset, node.dst_dims, [])
+        self.write(name, at, value, node.wcr is not None or accumulates(target.data))
 
     def mask_gen(self) -> str:
         node, lanes = self.node, []
