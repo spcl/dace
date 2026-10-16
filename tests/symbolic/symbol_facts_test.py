@@ -142,6 +142,13 @@ def test_min_and_max_are_split_into_cases():
     assert ask(Relation(RelationKind.LE, ZERO, sympy.Min(N, K)), only_n) is Truth.UNKNOWN
 
 
+def test_an_extremum_only_inside_a_division_is_asked_without_cases():
+    """``ceil(N / max(ceil(N / M), 2))``, a chunk count: generalizing the outer division takes the ``Max`` with it."""
+    chunks = cast(sympy.Expr, symbolic.int_ceil(N, sympy.Max(symbolic.int_ceil(N, M), 2)))
+    facts = facts_of(predicate_relation(Predicate.POSITIVE, N), predicate_relation(Predicate.POSITIVE, M))
+    assert ask(Relation(RelationKind.LT, chunks, sympy.Integer(768)), facts) is Truth.UNKNOWN
+
+
 def test_tiled_range_bounds_the_index():
     tile = symbolic.symbol("T", dtypes.int64)
     facts = Facts(
