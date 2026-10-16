@@ -13,6 +13,7 @@ from collections.abc import Iterator
 
 from dace import SDFG, data, dtypes, subsets, symbolic
 from dace.codegen.exceptions import CodegenError
+from dace.codegen.python import CUPY_STORAGES
 from dace.memlet import Memlet
 from dace.sdfg import nodes
 from dace.sdfg.graph import MultiConnectorEdge
@@ -79,12 +80,17 @@ def slices(desc: data.Data, subset: subsets.Subset) -> str:
     return ", ".join(parts)
 
 
+def on_gpu(desc: data.Data) -> bool:
+    return desc.storage in CUPY_STORAGES
+
+
 def strided(base: str, base_desc: data.Data, subset: subsets.Subset, desc: data.Data) -> str:
     """``desc`` laid over ``base`` from the first element of ``subset``: a view with ``desc``'s shape and strides."""
     start = ", ".join(f"{index}:" for index in starts(base_desc, subset))
     shape = ", ".join(expr(s) for s in desc.shape)
     strides = ", ".join(f"{expr(s)} * {base}.itemsize" for s in desc.strides)
-    return f"as_strided({base}[{start}], ({shape},), ({strides},))"
+    function = "cupy.lib.stride_tricks.as_strided" if on_gpu(base_desc) else "as_strided"
+    return f"{function}({base}[{start}], ({shape},), ({strides},))"
 
 
 def packed_strides(shape) -> tuple:
@@ -96,15 +102,17 @@ def packed_strides(shape) -> tuple:
 
 
 def allocation(desc: data.Data) -> str:
-    """A new array for ``desc``, with its strides when they are not the packed ones."""
+    """A new array for ``desc`` on its side, with its strides when they are not the packed ones."""
     dtype = f"np.{desc.dtype.as_numpy_dtype().name}"
+    xp = "cupy" if on_gpu(desc) else "np"
     if isinstance(desc, data.Scalar):
-        return f"np.empty(1, {dtype})"
+        return f"{xp}.empty(1, {dtype})"
     shape = ", ".join(expr(s) for s in desc.shape)
     if tuple(desc.strides) == packed_strides(desc.shape):
-        return f"np.empty(({shape},), {dtype})"
+        return f"{xp}.empty(({shape},), {dtype})"
     strides = ", ".join(f"{expr(s)} * {desc.dtype.bytes}" for s in desc.strides)
-    return f"as_strided(np.empty({expr(desc.total_size)}, {dtype}), ({shape},), ({strides},))"
+    function = "cupy.lib.stride_tricks.as_strided" if on_gpu(desc) else "as_strided"
+    return f"{function}({xp}.empty({expr(desc.total_size)}, {dtype}), ({shape},), ({strides},))"
 
 
 def is_view(sdfg: SDFG, node: nodes.Node) -> bool:
@@ -185,8 +193,6 @@ class Emitter:
                     self.allocate(name, desc)
 
     def allocate(self, name: str, desc: data.Data) -> None:
-        if desc.storage in dtypes.GPU_STORAGES:
-            raise CodegenError(f"Python backend: {name} is in {desc.storage}; GPU storage is not supported yet")
         self.allocated.add(name)
         self.line(f"{name} = {allocation(desc)}")
 
@@ -390,6 +396,8 @@ class Emitter:
         src_subset = edge.data.get_src_subset(edge, state) or subsets.Range.from_array(src_desc)
         dst_subset = edge.data.get_dst_subset(edge, state) or subsets.Range.from_array(dst_desc)
         value = f"{src}[{slices(src_desc, src_subset)}]"
+        if on_gpu(src_desc) != on_gpu(dst_desc):
+            value = f"cupy.asarray({value})" if on_gpu(dst_desc) else f"cupy.asnumpy({value})"
         if src_subset.size() != dst_subset.size():
             value = f"np.reshape({value}, ({', '.join(expr(s) for s in dst_subset.size())},))"
         self.line(f"{dst}[{slices(dst_desc, dst_subset)}] = {value}")
@@ -412,4 +420,8 @@ class Emitter:
 
 def generate(sdfg: SDFG) -> str:
     """The Python module of a prepared ``sdfg``: the prelude and one function named after it."""
-    return f"{PRELUDE}\n\n{Emitter(sdfg).function()}\n"
+    function = Emitter(sdfg).function()
+    prelude = (
+        PRELUDE.replace("import numpy as np\n", "import cupy\nimport numpy as np\n") if "cupy." in function else PRELUDE
+    )
+    return f"{prelude}\n\n{function}\n"

@@ -34,12 +34,27 @@ def require_python_tasklets(sdfg: SDFG) -> None:
             raise CodegenError(f"Python backend: library node {node.label!r} has no Python expansion")
 
 
+def expand_library_nodes(sdfg: SDFG) -> None:
+    """Expand every library node, one level at a time, by its ``CuPy`` expansion where it has one."""
+    # Avoid import loop
+    from dace.libraries.python_expansions import IMPLEMENTATION
+
+    while True:
+        pending = [(n, s) for n, s in sdfg.all_nodes_recursive() if isinstance(n, nodes.LibraryNode)]
+        if not pending:
+            return
+        for node, state in pending:
+            if IMPLEMENTATION in node.implementations:
+                node.implementation = IMPLEMENTATION
+            node.expand(state)
+
+
 def prepare(sdfg: SDFG) -> None:
     """Expand, raise, flatten and rename ``sdfg`` in place so every name of it lives in one Python namespace."""
     # Avoid import loop
     from dace.codegen.codegen import inline_host_nested_sdfgs
 
-    sdfg.expand_library_nodes()
+    expand_library_nodes(sdfg)
     FixedPointPipeline([ControlFlowRaising()]).apply_pass(sdfg, {})
     infer_types.infer_connector_types(sdfg)
     infer_types.set_default_schedule_and_storage_types(sdfg, None)
