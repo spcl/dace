@@ -145,7 +145,7 @@ def assigned_in(block: ControlFlowBlock) -> set[str]:
     return {name for edge in block.all_interstate_edges(recursive=True) for name in edge.data.assignments}
 
 
-def _forward_flow_groups(loop: LoopRegion) -> list[list[ControlFlowBlock]] | None:
+def _forward_flow_groups(loop: LoopRegion, allow_assignments: bool = False) -> list[list[ControlFlowBlock]] | None:
     """Partition ``loop``'s linear body into ordered groups split only across aligned forward flow.
 
     ``Bi`` and ``Bj`` (``i < j``) sharing ``X`` merge if ``Bj`` writes ``X`` (backward WAR / WAW /
@@ -153,8 +153,12 @@ def _forward_flow_groups(loop: LoopRegion) -> list[list[ControlFlowBlock]] | Non
     on both sides (scalar accumulators, ``a[i+1]``, offsets like ``b[i-1]``). The aligned case (atax
     ``tmp[i]``, covariance ``cov[i,j]``) splits. ``None`` if not a linear chain of >= 2 blocks or
     nothing splits.
+
+    :param allow_assignments: Also split a body whose edges assign symbols, each such edge kept with the blocks
+                              that read them. Only the expansion fallback asks for it: a plain sequential body split
+                              there loses the fusion its pieces get as one loop (CloudSC's ``iphase`` nest).
     """
-    order = _linear_blocks(loop, allow_assignments=True)
+    order = _linear_blocks(loop, allow_assignments=allow_assignments)
     if order is None or len(order) < 2:
         return None
     lv = loop.loop_variable

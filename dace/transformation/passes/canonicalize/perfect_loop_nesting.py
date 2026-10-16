@@ -304,7 +304,7 @@ def split_after_expansion(loop: LoopRegion) -> list[list[ControlFlowBlock]] | No
     applied = expand_iteration_private(sdfg, loop, shared)
     if applied is None:
         return None
-    groups = _forward_flow_groups(loop)
+    groups = _forward_flow_groups(loop, allow_assignments=True)
     if groups is None:
         for record in applied:
             record.undo()
