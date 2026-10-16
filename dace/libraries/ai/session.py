@@ -1,26 +1,13 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """
-The durable record of one generated slot, across every round it goes through.
+The record of the prompts, answers and compile checks of one library node across its rounds,
+which a later round continues. Controlled by ``ai.sessions``. Layout, one directory per node::
 
-A slot is one library node in one place in one SDFG. Generating code for it is a paid,
-non-reproducible call, and the first answer is rarely the last: it may compile and be slow, or run
-and turn out to need a case nobody stated. So the material is kept -- the prompts, the answers, the
-check sources and diagnostics -- not as a write-only log but as a conversation that the next round
-resumes.
-
-Layout, one directory per slot::
-
-    <session id>/
-        session.json          slot identity, serialized node, and the index of rounds
-        conversation.json     the running message list, replayed on the next round
+    <build folder root>/ai-sessions/<session id>/
+        session.json          node identity, serialized node, and the index of rounds
+        conversation.json     the messages so far, continued by the next round
         round_1/              system_prompt.md prompt.md answer.json tasklet.json check_1/
         round_2/              feedback.md prompt.md answer.json tasklet.json
-
-The session id is derived from the SDFG and node names rather than from a ``guid``, because it has
-to be stable *across program runs*: a guid is freshly generated every time a node is constructed,
-so a guid-keyed session would start empty on every invocation of the user's script.
-
-Writing is controlled by ``ai.sessions``; sessions are stored in ``<build folder root>/ai-sessions``.
 """
 
 import datetime
@@ -33,6 +20,7 @@ from typing import Any
 from dace.config import Config
 from dace.libraries.ai import backend, cache
 from dace.libraries.ai.exceptions import AIExpansionError
+from dace.sdfg import SDFG, SDFGState, nodes
 
 #: Name of the machine-readable index in every session directory.
 INDEX_NAME = "session.json"
@@ -56,12 +44,10 @@ def session_dir(create: bool = False) -> str:
     return cache.storage_dir("sessions", create)
 
 
-def make_id(node: Any, state: Any) -> str:
+def make_id(node: nodes.LibraryNode, state: SDFGState) -> str:
     """
-    Builds the session id of a slot: its path from the root SDFG, as
-    ``<root SDFG>/<state>/[<nested SDFG node>/<state>/...]<node>``.
-
-    Names are percent-encoded, so that different names never map to the same path.
+    Builds the session id of a node from its path, ``<root SDFG>/<state>/[<nested SDFG node>/<state>/...]<node>``.
+    The names are percent-encoded, so that different names never map to the same path.
 
     :param node: The library node.
     :param state: The state containing it.
@@ -77,18 +63,15 @@ def make_id(node: Any, state: Any) -> str:
 
 class Session:
     """
-    One slot's conversation and its rounds.
-
-    A session with writing disabled behaves identically but never touches the disk, so callers need
-    no conditionals. Every mutation rewrites the index, so an interrupted expansion still leaves a
-    usable record behind.
+    The conversation and rounds of one node. With sessions disabled, nothing is written. Every
+    change rewrites the index.
     """
 
     def __init__(
         self, session_id: str, directory: str | None, index: dict[str, Any], conversation: list[dict[str, str]]
     ) -> None:
         """
-        :param session_id: The slot identifier.
+        :param session_id: The session id.
         :param directory: Where to write, or ``None`` when sessions are disabled.
         :param index: Contents of ``session.json``.
         :param conversation: The message list carried over from previous rounds.
@@ -137,10 +120,7 @@ class Session:
 
     def _write(self, filename: str, content: str, in_round: bool = True) -> None:
         """
-        Writes one file into the session or the open round.
-
-        A session is a diagnostic aid: failing to write one must never fail an expansion that was
-        otherwise about to succeed.
+        Writes one file into the session or the open round. A failure to write only warns.
 
         :param filename: Name of the file.
         :param content: What to write.
@@ -158,7 +138,7 @@ class Session:
             warnings.warn(f"Could not write the AI session file {filename}: {e}")
 
     def flush(self) -> None:
-        """Rewrites the index and the conversation so an interrupted round still leaves a record."""
+        """Rewrites the index and the conversation."""
         if self.directory is None:
             return
         self._write(INDEX_NAME, json.dumps(self.index, indent=1, default=str), in_round=False)
@@ -195,9 +175,7 @@ class Session:
 
     def begin_attempt(self, index: int, prompt: str) -> dict[str, Any]:
         """
-        Opens a generation attempt within the round.
-
-        A round can take several attempts, because a compile failure is answered by asking again.
+        Opens a generation attempt within the round. A failed compile check starts another attempt.
 
         :param index: One-based attempt number within the round.
         :param prompt: The user message this attempt sends.
@@ -212,10 +190,7 @@ class Session:
 
     def record_answer(self, attempt: dict[str, Any], spec: Any, cached: bool = False) -> None:
         """
-        Records what the model returned for one attempt.
-
-        Both the provider's raw text and the parsed specification are kept: a response that parses
-        into something unexpected is only explicable from the text that arrived.
+        Records the answer of one attempt, as parsed and as received.
 
         :param attempt: The record returned by :meth:`begin_attempt`.
         :param spec: The generated specification.
@@ -246,10 +221,7 @@ class Session:
         self, outcome: str, detail: str = "", spec: Any = None, environments: list[str] | None = None
     ) -> None:
         """
-        Closes the open round.
-
-        The accepted specification is stored whole, which is what lets :func:`rollback` put an
-        earlier round back without asking the model anything.
+        Closes the open round, storing the accepted specification for :func:`rollback`.
 
         :param outcome: ``'expanded'`` or ``'failed'``.
         :param detail: The error message, when it failed.
@@ -300,7 +272,7 @@ def load(session_id: str) -> Session | None:
     """
     Opens an existing session.
 
-    :param session_id: The slot identifier.
+    :param session_id: The session id.
     :return: The session, or ``None`` if it is not on disk.
     """
     directory = os.path.join(session_dir(), *session_id.split("/"))
@@ -323,17 +295,16 @@ def load(session_id: str) -> Session | None:
     return Session(session_id, directory, index, conversation)
 
 
-def begin(node: Any, state: Any, sdfg: Any, session_id: str | None = None) -> Session:
+def begin(node: nodes.LibraryNode, state: SDFGState, sdfg: SDFG, session_id: str | None = None) -> Session:
     """
-    Opens the session for a slot, resuming it when one already exists.
+    Opens the session of a node, continuing it when it exists.
 
     :param node: The library node being expanded.
     :param state: The state containing it.
     :param sdfg: The SDFG containing the state.
-    :param session_id: An explicit identifier, when continuing a known session. Derived from the
-                       SDFG and node names otherwise.
-    :return: The session. Writing is skipped, transparently, when ``ai.sessions`` is off or the
-             directory cannot be created.
+    :param session_id: The id of a known session, or ``None`` to derive it with :func:`make_id`.
+    :return: The session. Nothing is written when ``ai.sessions`` is off or the directory cannot be
+             created.
     """
     session_id = session_id or make_id(node, state)
     index = {
@@ -352,7 +323,6 @@ def begin(node: Any, state: Any, sdfg: Any, session_id: str | None = None) -> Se
 
     existing = load(session_id)
     if existing is not None:
-        # Keep the identity recorded when the slot was first seen; refresh what may have changed
         existing.index["provider"] = index["provider"]
         existing.index["model"] = index["model"]
         return existing

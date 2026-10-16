@@ -1,11 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """
-Prompt construction for AI-generated library node expansions.
-
-:data:`SYSTEM_PROMPT` documents the exact contract a DaCe tasklet must satisfy -- what variables
-are in scope, where each of the four code blocks is emitted, and which of them are unavailable in
-GPU device code. :func:`build_user_prompt` renders the :class:`~dace.libraries.ai.context.
-ExpansionContext` collected for one specific library node.
+Prompts: :data:`SYSTEM_PROMPT` states the contract of a tasklet, and :func:`build_user_prompt`
+renders the :class:`~dace.libraries.ai.context.ExpansionContext` of one library node.
 """
 
 import textwrap
@@ -377,18 +373,12 @@ def build_rejection_prompt(reason: str) -> str:
 
 def build_feedback_prompt(feedback: str, context: str, standalone: bool = False) -> str:
     """
-    Builds the message that opens a new round on an already-generated tasklet.
+    Builds the message that opens a new round on a generated tasklet, which was accepted.
 
-    The compile-and-repair loop and this are the same mechanism with different critics: one carries
-    a compiler's complaint, the other a person's. What differs is that a compile failure is
-    self-evidently a defect, while this feedback is about code that already works -- so the message
-    has to say that the previous answer was accepted and is being improved, not rejected, or the
-    model is liable to start over and lose what was already right.
-
-    :param feedback: The critique: a performance measurement, a missed requirement, a preference.
-    :param context: The rendered slot context, unchanged since the previous round or not.
-    :param standalone: True when the previous conversation could not be recovered, so the context
-                       has to be restated in full rather than referred back to.
+    :param feedback: The feedback, e.g. a measurement or a missed requirement.
+    :param context: The rendered context of the node.
+    :param standalone: True when the previous conversation is not available, so the context is
+                       included.
     :return: The rendered prompt.
     """
     if standalone:

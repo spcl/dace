@@ -1,19 +1,12 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """
-Exchanging prompts and responses with a language model by hand.
-
-The ``manual`` provider asks for one reply at a time, while the expansion is running. This module
-offers the same exchange as a batch: write out the prompts for every AI-expanded library node in an
-SDFG, answer them at leisure (in a chat interface, or with any other tool), and read the responses
-back in one go::
+Prompts and responses exchanged through files, for every ``'ai'`` node of an SDFG at once::
 
     dace.libraries.ai.generate_prompts(sdfg, 'prompts')
-    # ... save a <name>_<hash>_response.json next to every <name>_<hash>_prompt.md ...
+    # ... save <name>_<hash>_response.json next to each <name>_<hash>_prompt.md ...
     dace.libraries.ai.read_prompt_responses(sdfg, 'prompts')
 
-The node-level equivalents are :meth:`dace.sdfg.nodes.LibraryNode.generate_prompt` and
-:meth:`dace.sdfg.nodes.LibraryNode.read_prompt_response`. Both flows use the same files, so a
-response saved for one is found by the other.
+The ``manual`` provider and :meth:`dace.sdfg.nodes.LibraryNode.generate_prompt` use the same files.
 """
 
 import hashlib
@@ -26,7 +19,7 @@ from dace.libraries.ai.context import collect_context
 from dace.libraries.ai.nodes import AITasklet
 from dace.sdfg import SDFG, SDFGState, nodes
 
-#: Appended to the prompt, since a chat interface has no structured-output mode to enforce it.
+#: Appended to the prompt, since a chat interface does not enforce the response schema.
 JSON_INSTRUCTIONS = """
 # Response format
 
@@ -52,7 +45,7 @@ def prompt_directory(directory: str | None = None) -> str:
 
 def render_prompt(system: str, messages: list[dict[str, str]]) -> str:
     """
-    Renders a conversation as one self-contained text, to be pasted into a chat interface.
+    Renders a conversation as one text, to be pasted into a chat interface.
 
     :param system: The system prompt.
     :param messages: The conversation so far.
@@ -65,11 +58,8 @@ def render_prompt(system: str, messages: list[dict[str, str]]) -> str:
 
 def exchange_paths(directory: str, prompt: str, name: str) -> tuple[str, str]:
     """
-    Returns the prompt and response file paths for one exchange.
-
-    The names are derived from the prompt's content rather than from the process, so that
-    re-running the same program finds the answer given last time. A repair round asks a different
-    question, so it gets its own pair of files.
+    Returns the prompt and response file paths for a prompt, named after its content, so that
+    re-running a program finds the saved answer.
 
     :param directory: The exchange directory.
     :param prompt: The full prompt text.
@@ -120,10 +110,8 @@ def generate_prompt(node: nodes.LibraryNode, state: SDFGState) -> str:
 
 def read_prompt_response(node: nodes.LibraryNode, state: SDFGState, response: str) -> AITasklet:
     """
-    Expands a library node with a model's response to :func:`generate_prompt`.
-
-    The response goes through the same verification as one obtained from a provider, but a
-    response that does not compile is reported rather than sent back for repair.
+    Expands a library node with a model's response to :func:`generate_prompt`. The response is
+    compile-checked; failures raise an error instead of a repair round.
 
     :param node: The library node.
     :param state: The state containing it.
@@ -155,10 +143,8 @@ def _ai_nodes(sdfg: SDFG) -> list[tuple[nodes.LibraryNode, SDFGState]]:
 
 def generate_prompts(sdfg: SDFG, directory: str | None = None) -> list[str]:
     """
-    Writes out the prompt for every library node in an SDFG that expands with ``'ai'``.
-
-    Each prompt is written to ``<node name>_<hash>_prompt.md``. Its answer is expected next to it,
-    as ``<node name>_<hash>_response.json``, for :func:`read_prompt_responses` to pick up.
+    Writes ``<node name>_<hash>_prompt.md`` for every library node in an SDFG that expands with
+    ``'ai'``. :func:`read_prompt_responses` reads the answers from ``<node name>_<hash>_response.json``.
 
     :param sdfg: The SDFG, including nested SDFGs.
     :param directory: Where to write the prompts; ``<build folder root>/ai-prompts`` if not given.
@@ -177,11 +163,9 @@ def generate_prompts(sdfg: SDFG, directory: str | None = None) -> list[str]:
 
 def read_prompt_responses(sdfg: SDFG, directory: str | None = None) -> list[AITasklet]:
     """
-    Expands every library node whose response was saved next to its prompt.
-
-    The prompts are regenerated and matched to their response files by content, so this must run on
-    the SDFG the prompts were generated from, before it is compiled. Nodes without a saved response
-    are left as library nodes, and are listed in a warning.
+    Expands every library node whose response was saved next to its prompt. Responses are matched
+    by prompt content, so this must run on the SDFG the prompts were generated from. Nodes without a
+    response remain library nodes, with a warning.
 
     :param sdfg: The SDFG, including nested SDFGs.
     :param directory: Where the responses are; ``<build folder root>/ai-prompts`` if not given.
@@ -190,8 +174,7 @@ def read_prompt_responses(sdfg: SDFG, directory: str | None = None) -> list[AITa
     """
     directory = prompt_directory(directory)
 
-    # Matched up front: every prompt must be computed against the SDFG as it was generated from,
-    # not one in which some of the nodes have already been expanded
+    # All prompts are computed before any node is expanded
     answered, missing = [], []
     for node, state in _ai_nodes(sdfg):
         prompt_path, response_path = exchange_paths(directory, generate_prompt(node, state), node.name)

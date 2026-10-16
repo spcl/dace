@@ -1737,10 +1737,7 @@ class CPUCodeGen(TargetCodeGenerator):
         self._locals.clear_scope(self._ldepth + 1)
         self._dispatcher.defined_vars.exit_scope(node)
 
-    #: ``generate_node`` dispatches on the exact class name, so a tasklet subclass needs an entry of
-    #: its own. An AI-generated tasklet is a tasklet in every respect the code generator cares
-    #: about; it differs only in recording the library node and conversation it came from, which is
-    #: read back by :mod:`dace.libraries.ai.iterate`.
+    #: ``generate_node`` dispatches on the exact class name; an AI-generated tasklet is generated as a tasklet
     _generate_AITasklet = _generate_Tasklet
 
     def unparse_tasklet(

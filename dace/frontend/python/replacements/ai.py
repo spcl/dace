@@ -1,28 +1,11 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """
-Contains the Python frontend replacement for AI-implemented library nodes.
+Python frontend replacement of ``dace.ai``, which adds an :class:`~dace.libraries.ai.nodes.ai_node.AINode`.
+The connectors, which the description refers to, are named after the call:
 
-``dace.ai`` places an :class:`~dace.libraries.ai.nodes.ai_node.AINode` into the program being
-parsed, so that a part of a data-centric program can be specified in natural language rather than
-written out::
-
-    @dace.program
-    def matmul(A: dace.float32[N, N], B: dace.float32[N, N]):
-        return dace.ai('Write _out[i][j] = sum over k of _a[i][k] * _b[k][j], using AVX2 FMA '
-                       'intrinsics rather than a scalar triple loop.',
-                       a=A, b=B)
-
-The node is expanded like every other library node -- at compile time, through the reserved
-``'ai'`` implementation -- so the model is asked once, and the tasklet it writes becomes part of
-the SDFG.
-
-Because the description *is* the specification, it has to be able to name the variables the
-generated code will see. Those names are the node's connectors, and this replacement assigns them
-so that they are predictable from the call site:
-
-* a keyword input ``a=A`` becomes the connector ``_a``,
-* a positional input becomes ``_in0``, ``_in1``, ... in the order given,
-* the output is ``_out``, or ``_out0``, ``_out1``, ... when several are written through ``out=``.
+* a keyword input ``a=A`` becomes ``_a``,
+* positional inputs become ``_in0``, ``_in1``, ...,
+* the output is ``_out``, or ``_out0``, ``_out1``, ... for several containers in ``out=``.
 """
 
 from collections.abc import Sequence
@@ -41,11 +24,8 @@ from dace.sdfg import nodes
 
 def _description_of(pv: ProgramVisitor, sdfg: SDFG, description: Any) -> str:
     """
-    Returns the natural-language description given at the call site.
-
-    The frontend hands a string literal over as a :class:`~dace.frontend.python.common.StringLiteral`
-    and a data container as its plain name, so a bare ``str`` that names a container of the program
-    is an argument in the wrong position rather than a description.
+    Returns the description given in the call. The frontend passes a string literal as a
+    :class:`~dace.frontend.python.common.StringLiteral` and a data container as its name.
 
     :param pv: The program visitor, for error reporting.
     :param sdfg: The SDFG being built, to tell a description from a container name.
@@ -65,15 +45,12 @@ def _description_of(pv: ProgramVisitor, sdfg: SDFG, description: Any) -> str:
         raise DaceSyntaxError(
             pv,
             None,
-            "The first argument of dace.ai must be a string describing what the node computes, "
-            f"but {given} was given. It has to be a string literal or a compile-time constant string, "
-            "since it is the specification handed to the model.",
+            "The first argument of dace.ai must be a string literal or a compile-time constant string "
+            f"describing what the node computes, but {given} was given.",
         )
     text = str(description).strip()
     if not text:
-        raise DaceSyntaxError(
-            pv, None, "The description given to dace.ai is empty, so there is nothing to generate code from."
-        )
+        raise DaceSyntaxError(pv, None, "The description given to dace.ai is empty.")
     return text
 
 
@@ -96,9 +73,8 @@ def _container_of(pv: ProgramVisitor, sdfg: SDFG, argument: Any, described: str)
         raise DaceSyntaxError(
             pv,
             None,
-            f"{described} of dace.ai is a constant or a symbol, and only data containers can be "
-            "connected to a node. Symbols are already visible to the generated code by name, and a "
-            "constant can simply be stated in the description.",
+            f"{described} of dace.ai is a constant or a symbol, but only data containers can be connected. "
+            "Symbols are visible to the generated code by name, and constants can be stated in the description.",
         )
     raise DaceSyntaxError(pv, None, f"{described} of dace.ai is not a data container of this program.")
 
@@ -176,10 +152,8 @@ def _allocate_output(
     storage: dtypes.StorageType | None,
 ) -> str:
     """
-    Adds the transient the node writes to when the call does not name one.
-
-    What is not given is taken from the first input, which makes the common elementwise case
-    (``dace.ai('...', a=A, b=B)``) work without repeating the shape and type of ``A``.
+    Adds the transient the node writes to when the call does not name one, taking what is not
+    given from the first input.
 
     :param pv: The program visitor, used to name the transient after the assignment target.
     :param sdfg: The SDFG being built.
@@ -207,7 +181,6 @@ def _allocate_output(
     if storage is None:
         storage = prototype.storage if prototype is not None else dtypes.StorageType.Default
     if shape is None:
-        # A scalar input yields a scalar output, rather than an array of one element
         shape = () if isinstance(prototype, data.Scalar) else prototype.shape
 
     if not shape:
@@ -219,13 +192,7 @@ def _allocate_output(
 
 def _node_name(sdfg: SDFG, base: str = "ai") -> str:
     """
-    Returns a name no other library node of this SDFG carries.
-
-    The name is not decoration: :func:`dace.libraries.ai.session.make_id` identifies a slot's
-    conversation by the SDFG and node names, so two nodes sharing a name would share a session, and
-    refining one of them would rewrite the other. The names are handed out in program order rather
-    than derived from the assignment target, which keeps them short, and keeps the description --
-    which is what the model is actually asked about -- out of the node's name.
+    Returns a name no other library node of this SDFG has. The name identifies the node's session.
 
     :param sdfg: The SDFG being built.
     :param base: The name to use if it is free.
@@ -257,10 +224,8 @@ def ai_node(
     **named_inputs: str,
 ) -> str | tuple[str, ...]:
     """
-    Adds a node whose implementation is described in natural language.
-
-    See :func:`dace.frontend.python.interface.ai` for the user-facing documentation of the
-    arguments; this is the replacement that the Python frontend calls in its place.
+    Adds a node whose implementation is described in natural language (see
+    :func:`dace.frontend.python.interface.ai`).
 
     :param pv: The program visitor parsing the program.
     :param sdfg: The SDFG being built.
@@ -282,8 +247,6 @@ def ai_node(
 
     text = _description_of(pv, sdfg, description)
 
-    # "name", like the other keyword arguments above, configures the node rather than naming an
-    # input connector, so passing a container to it is a mistake worth catching here
     # Checks the type first: an unhashable argument would make `in sdfg.arrays` raise
     if name is not None and ((type(name) is str and name in sdfg.arrays) or not isinstance(name, (StringLiteral, str))):
         raise DaceSyntaxError(

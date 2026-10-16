@@ -150,13 +150,9 @@ def to_json(obj):
 
 def _resolve_serializer(typename, obj):
     """
-    Finds the class that can deserialize ``obj``, importing its module if necessary.
-
-    Serializable types register themselves when their module is imported, which leaves anything
-    defined outside the modules ``import dace`` pulls in -- a node type from ``dace.libraries``, or
-    from a downstream project -- unresolvable in a fresh process. Such a type may record its own
-    location in a ``classpath`` field, and this resolves it the way
-    :meth:`dace.sdfg.nodes.LibraryNode.from_json` already resolves library nodes.
+    Finds the class that can deserialize ``obj``. A type that is not registered yet, because its
+    module was not imported, is imported from the ``classpath`` field of ``obj`` if there is one
+    (as for library nodes).
 
     :param typename: The value of the object's ``type`` field.
     :param obj: The serialized object, consulted for a ``classpath`` fallback.
@@ -172,8 +168,7 @@ def _resolve_serializer(typename, obj):
         located = pydoc.locate(classpath)
         if located is None:
             raise
-        # Importing the module registers the type, so look it up again rather than trusting the
-        # located object to be the serializer for this name
+        # Importing the module registered the type
         return get_serializer(typename)
 
 

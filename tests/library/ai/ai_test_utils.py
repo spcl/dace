@@ -26,12 +26,13 @@ class StubProvider:
         self.calls: list[list[dict[str, str]]] = []
         self.system: str | None = None
 
-    def generate(self, system: str, messages: list[dict[str, str]]) -> backend.TaskletSpec:
+    def generate(self, system: str, messages: list[dict[str, str]], node_name: str = "") -> backend.TaskletSpec:
         """
         Records the prompt and returns the canned tasklet.
 
         :param system: The system prompt.
         :param messages: The conversation so far.
+        :param node_name: Name of the library node.
         :return: The tasklet from the factory.
         """
         self.system = system

@@ -1,21 +1,11 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """
-Iterating on a tasklet that has already been generated.
-
-The first answer is rarely the last. Code that compiles and is correct can still be three times
-slower than the library it replaced, and running it can surface a requirement nobody stated up
-front. What is needed then is not a fresh generation -- that throws away everything the model
-already worked out about this slot -- but a next round of the same conversation::
+Revising generated tasklets: a new round of a node's session, with feedback::
 
     ai.refine(sdfg, 'gemm_tile', 'Too slow: 4.2 ms vs 1.1 ms for MKL. Try 8x8 register blocking.')
 
-This works because :class:`~dace.libraries.ai.nodes.ai_tasklet.AITasklet` carries the serialized
-library node it replaced, so the node can be put back and expanded again, and because the
-conversation lives in a session on disk rather than in the process that started it. Both survive
-saving the SDFG and loading it in another session, which is when this is most often wanted.
-
-Refinement is **atomic**: if the new round fails to generate or to verify, the tasklet that was
-working a moment ago is put back exactly as it was.
+:class:`~dace.libraries.ai.nodes.ai_tasklet.AITasklet` stores the library node it replaced, so
+this also works on an SDFG loaded from disk. If the new round fails, the previous tasklet is kept.
 """
 
 import hashlib
@@ -25,6 +15,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import dace.serialize
+from dace import dtypes
 from dace.libraries.ai import session as ai_session
 from dace.libraries.ai.exceptions import AIExpansionError
 from dace.libraries.ai.nodes import AITasklet
@@ -32,14 +23,13 @@ from dace.properties import CodeBlock
 from dace.sdfg import SDFG, SDFGState, nodes
 from dace.sdfg import utils as sdutil
 
-#: What a caller may pass to identify a slot: its name, an ``AITasklet``, or ``None`` for "the only
-#: one". A guid also works, since it is matched against the name.
+#: Selects a generated tasklet: its name, guid or session id, the tasklet, or ``None`` if there is one.
 NodeSelector = str | AITasklet | None
 
 
 @dataclass
 class Round:
-    """One round of generation on a slot."""
+    """One round of generation."""
 
     number: int
     feedback: str
@@ -55,13 +45,13 @@ class Round:
 
 @dataclass
 class SlotInfo:
-    """A refinable slot found in an SDFG."""
+    """A generated tasklet in an SDFG."""
 
     name: str
     session: str
     round: int
     pinned: bool
-    edited: bool  #: True if the code no longer matches what the recorded round produced
+    edited: bool  #: True if the code was changed after its round
     tasklet: AITasklet
     state: SDFGState
     sdfg: SDFG
@@ -73,10 +63,7 @@ class SlotInfo:
 
 def code_fingerprint(tasklet: nodes.Tasklet) -> str:
     """
-    Fingerprints the code a tasklet currently holds.
-
-    Recorded when a round is stamped, and compared on the next one. A mismatch means a person edited
-    the tasklet by hand, which the next round must build on rather than silently discard.
+    Fingerprints the code of a tasklet, to detect changes made after it was generated.
 
     :param tasklet: The tasklet to fingerprint.
     :return: A short hexadecimal digest.
@@ -93,7 +80,7 @@ def stamp(tasklet: AITasklet, session: str, round_number: int, node_json: dict[s
     Records on a tasklet how it was produced.
 
     :param tasklet: The generated tasklet.
-    :param session: Identifier of the conversation that produced it.
+    :param session: The session id.
     :param round_number: Which round of that conversation.
     :param node_json: The library node, as returned by ``node.to_json(state)``.
     """
@@ -126,7 +113,7 @@ def read(tasklet: nodes.Tasklet) -> dict[str, Any] | None:
 
 def _iter_slots(sdfg: SDFG):
     """
-    Yields every refinable slot in an SDFG, including inside nested SDFGs.
+    Yields every generated tasklet with provenance in an SDFG, including nested SDFGs.
 
     :param sdfg: The SDFG to search.
     :return: Generator of ``(tasklet, state, containing sdfg)``.
@@ -141,7 +128,7 @@ def _iter_slots(sdfg: SDFG):
 
 def sessions(sdfg: SDFG) -> list[SlotInfo]:
     """
-    Lists every slot in an SDFG that can be refined.
+    Lists the generated tasklets in an SDFG.
 
     :param sdfg: The SDFG to search.
     :return: One entry per generated tasklet, in graph order.
@@ -166,7 +153,7 @@ def sessions(sdfg: SDFG) -> list[SlotInfo]:
 
 def _select(sdfg: SDFG, node: NodeSelector) -> SlotInfo:
     """
-    Resolves a slot selector against an SDFG.
+    Finds the generated tasklet a selector names.
 
     :param sdfg: The SDFG to search.
     :param node: A name, a guid, an :class:`AITasklet`, or ``None`` when there is exactly one slot.
@@ -175,11 +162,7 @@ def _select(sdfg: SDFG, node: NodeSelector) -> SlotInfo:
     """
     slots = sessions(sdfg)
     if not slots:
-        raise AIExpansionError(
-            f'SDFG "{sdfg.name}" holds no AI-generated tasklets to refine. A tasklet can only be '
-            'refined if it was produced by the "ai" implementation in a version of DaCe that '
-            "records provenance."
-        )
+        raise AIExpansionError(f'SDFG "{sdfg.name}" holds no AI-generated tasklets.')
 
     if isinstance(node, AITasklet):
         matches = [s for s in slots if s.tasklet is node]
@@ -202,7 +185,7 @@ def _restore_node(slot: SlotInfo) -> nodes.LibraryNode:
     """
     Puts the library node back in place of its generated tasklet.
 
-    :param slot: The slot to revert.
+    :param slot: The generated tasklet.
     :return: The restored library node, now in the state and carrying the tasklet's edges.
     :raises AIExpansionError: If the recorded node cannot be deserialized.
     """
@@ -215,9 +198,8 @@ def _restore_node(slot: SlotInfo) -> nodes.LibraryNode:
     restored = dace.serialize.from_json(node_json, context=context)
     if not isinstance(restored, nodes.LibraryNode):
         raise AIExpansionError(
-            f'The library node recorded on tasklet "{slot.name}" did not deserialize into a '
-            f"library node but into {type(restored).__name__}. Its defining class may no longer "
-            "be importable."
+            f'The library node recorded on tasklet "{slot.name}" deserialized into {type(restored).__name__}; '
+            "its class may no longer be importable."
         )
 
     slot.state.add_node(restored)
@@ -229,12 +211,9 @@ def _restore_node(slot: SlotInfo) -> nodes.LibraryNode:
 
 def _reinstate(slot: SlotInfo, library_node: nodes.LibraryNode, tasklet: AITasklet) -> None:
     """
-    Undoes :func:`_restore_node`, putting a tasklet back where the library node is.
+    Undoes :func:`_restore_node` after a failed round.
 
-    Used to recover from a failed round: the user had working code a moment ago, and must still
-    have it afterwards.
-
-    :param slot: The slot being reverted.
+    :param slot: The generated tasklet.
     :param library_node: The library node currently in the graph.
     :param tasklet: The tasklet to put back.
     """
@@ -246,18 +225,14 @@ def _reinstate(slot: SlotInfo, library_node: nodes.LibraryNode, tasklet: AITaskl
 
 def refine(sdfg: SDFG, node: NodeSelector = None, message: str = "", **kwargs) -> AITasklet:
     """
-    Asks for a better version of a tasklet that already exists.
-
-    The model sees the code it wrote and the feedback on it, so this is a revision rather than a
-    fresh generation. Either it succeeds and the new tasklet is in the graph, or it fails and the
-    previous one is exactly where it was.
+    Revises a generated tasklet in a new round of its session. On failure, the previous tasklet is kept.
 
     :param sdfg: The SDFG holding the tasklet.
-    :param node: Which slot: a name, an :class:`AITasklet`, or ``None`` when there is only one.
-    :param message: The feedback. May be empty, which means "try again, differently".
+    :param node: Which tasklet (see :data:`NodeSelector`).
+    :param message: The feedback. If empty, the model is asked for a different version.
     :param kwargs: Forwarded to the expansion.
     :return: The new tasklet.
-    :raises AIExpansionError: If the slot cannot be found, is pinned, or the new round fails.
+    :raises AIExpansionError: If the tasklet cannot be found, is pinned, or the new round fails.
     """
     slot = _select(sdfg, node)
     if slot.pinned:
@@ -267,16 +242,13 @@ def refine(sdfg: SDFG, node: NodeSelector = None, message: str = "", **kwargs) -
         )
 
     if slot.edited:
-        # Someone changed this code by hand. Regenerating from the recorded round would throw that
-        # away silently, so the edit is what the next round builds on.
+        # The model revises the edited code
         message = (f"{message}\n\n" if message else "") + (
             "Note: the code was edited by hand after you wrote it. This is what is in the program "
             f"now, and it is what you should revise:\n\n{slot.tasklet.code.as_string}"
         )
 
     prov = read(slot.tasklet) or {}
-    # The node object itself, not a copy: reinstating it after a failure keeps any reference the
-    # caller is holding valid, and nothing mutates it in the meantime.
     previous = slot.tasklet
     library_node = _restore_node(slot)
     try:
@@ -290,10 +262,8 @@ def refine(sdfg: SDFG, node: NodeSelector = None, message: str = "", **kwargs) -
 
 def history(sdfg: SDFG, node: NodeSelector = None) -> list[Round]:
     """
-    Returns every round a slot has been through.
-
     :param sdfg: The SDFG holding the tasklet.
-    :param node: Which slot.
+    :param node: Which tasklet.
     :return: The rounds, oldest first. Empty if the session is no longer on disk.
     """
     slot = _select(sdfg, node)
@@ -315,13 +285,10 @@ def history(sdfg: SDFG, node: NodeSelector = None) -> list[Round]:
 
 def rollback(sdfg: SDFG, node: NodeSelector = None, *, round: int) -> AITasklet:
     """
-    Puts an earlier round's code back.
-
-    Nothing is asked of the model: the accepted specification of every round is on disk, so this is
-    a local, free operation.
+    Puts the code of an earlier round back, from the session on disk.
 
     :param sdfg: The SDFG holding the tasklet.
-    :param node: Which slot.
+    :param node: Which tasklet.
     :param round: The round to restore, one-based.
     :return: The tasklet now in the graph.
     :raises AIExpansionError: If that round has no code on record.
@@ -334,8 +301,6 @@ def rollback(sdfg: SDFG, node: NodeSelector = None, *, round: int) -> AITasklet:
         raise AIExpansionError(
             f'Round {round} of session "{slot.session}" has no code on record. Rounds available: {available}.'
         )
-
-    from dace import dtypes
 
     language = dtypes.Language.Python if spec.language.upper() == "PYTHON" else dtypes.Language.CPP
     tasklet = slot.tasklet
@@ -355,11 +320,11 @@ def rollback(sdfg: SDFG, node: NodeSelector = None, *, round: int) -> AITasklet:
 
 def show(sdfg: SDFG, node: NodeSelector = None) -> str:
     """
-    Renders what a slot currently holds, for reading at a terminal.
+    Prints the code of a generated tasklet.
 
     :param sdfg: The SDFG holding the tasklet.
-    :param node: Which slot.
-    :return: The rendered description, which is also printed.
+    :param node: Which tasklet.
+    :return: The printed text.
     """
     slot = _select(sdfg, node)
     lines = [str(slot), ""]
@@ -379,33 +344,30 @@ def show(sdfg: SDFG, node: NodeSelector = None) -> str:
 
 def pin(sdfg: SDFG, node: NodeSelector = None) -> None:
     """
-    Protects a slot from being regenerated.
-
-    Use this once a version is good, or once it has been edited by hand, so that a later sweep --
-    a refinement pass, an automatic repair after a build failure -- leaves it alone.
+    Protects a generated tasklet from being regenerated, e.g. by :func:`refine` or a repair.
 
     :param sdfg: The SDFG holding the tasklet.
-    :param node: Which slot.
+    :param node: Which tasklet.
     """
     _set_pinned(sdfg, node, True)
 
 
 def unpin(sdfg: SDFG, node: NodeSelector = None) -> None:
     """
-    Allows a pinned slot to be regenerated again.
+    Allows a pinned tasklet to be regenerated again.
 
     :param sdfg: The SDFG holding the tasklet.
-    :param node: Which slot.
+    :param node: Which tasklet.
     """
     _set_pinned(sdfg, node, False)
 
 
 def _set_pinned(sdfg: SDFG, node: NodeSelector, value: bool) -> None:
     """
-    Sets the pinned flag in a slot's provenance.
+    Sets the pinned flag in a tasklet's provenance.
 
     :param sdfg: The SDFG holding the tasklet.
-    :param node: Which slot.
+    :param node: Which tasklet.
     :param value: The new value.
     """
     slot = _select(sdfg, node)

@@ -1,19 +1,8 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """
-Collection of the context an AI model needs in order to write the body of a tasklet that replaces
-a library node.
-
-The central entry point is :func:`collect_context`, which gathers four kinds of information:
-
-* **Connectors** -- the C++ variables the generated code will see, their types, and the data
-  descriptors behind them (:class:`ConnectorInfo`).
-* **Nesting** -- every map, loop, control flow region and nested SDFG between the library node and
-  the top-level SDFG (:func:`collect_nesting`, :class:`NestingFrame`).
-* **Capabilities** -- what the generated code is allowed to do in this particular slot, e.g.
-  whether ``__state`` exists and whether a pointer may be dereferenced on the host
-  (:class:`Capabilities`).
-* **Target** -- the compiler, its flags, and the local CPU/GPU architecture
-  (:class:`TargetInfo`).
+The context given to the model for a library node (:func:`collect_context`): its connectors and
+the containers behind them, the enclosing scopes, what the code may do there (e.g. use ``__state``
+or dereference a pointer), and the compiler and hardware.
 """
 
 import copy
@@ -36,55 +25,47 @@ from dace.sdfg.state import ConditionalBlock, LoopRegion
 
 @dataclass
 class ConnectorInfo:
-    """Everything known about one connector of the library node being expanded."""
+    """One connector of the library node and the container behind it."""
 
     name: str
     direction: str  #: ``'in'`` or ``'out'``
-    ctype: str  #: The C++ type of the variable that will be in scope
+    ctype: str  #: The C++ type of the connector variable
     is_pointer: bool  #: If False, the connector is a plain scalar value
     element_type: str  #: The C++ type of a single element
-    #: The resolved connector type, which the expansion stamps onto the generated tasklet so that
-    #: what the model was told stays true through code generation. Not rendered into the prompt.
+    #: The connector type, set on the generated tasklet. Not shown in the prompt.
     conntype: dtypes.typeclass | None = None
     data: str | None = None  #: Name of the data container the memlet refers to
-    container_kind: str | None = None  #: ``Array``, ``Scalar``, ``Stream``, ``View``, ...
+    container_kind: str | None = None  #: ``Array``, ``Scalar``, ``ArrayView``, ...
     dtype: str | None = None
-    #: C++ element type of that container. Unlike ``element_type`` this does not depend on the
-    #: connector's own type having been inferable, which is what makes it usable as a fallback.
+    #: C++ element type of the container, also when the connector type is unknown
     data_ctype: str | None = None
     shape: tuple[str, ...] | None = None
     strides: tuple[str, ...] | None = None
     total_size: str | None = None
     storage: str | None = None
-    #: What the SDFG declared, when inference resolved it to something else (i.e. it said
-    #: ``Default``). ``None`` when the two agree.
+    #: The declared storage, if inference resolved it to another one
     storage_declared: str | None = None
     transient: bool | None = None
     subset: str | None = None
     num_elements: str | None = None
     wcr: str | None = None
     dynamic: bool = False
-    #: Whether the generated code may dereference this pointer where it runs (set once the
-    #: execution space is known; see :class:`Capabilities`).
+    #: Whether the generated code may dereference this pointer where it runs (see :class:`Capabilities`)
     dereferenceable: bool = True
-    base_offset: str | None = None  #: What the pointer is offset by, relative to the container
+    base_offset: str | None = None  #: Offset of the pointer in the container
     view_shape: tuple[str, ...] | None = None  #: Extent of the subset this connector covers
     index_formula: str | None = None  #: How to address one element of the view
-    contiguous: bool | None = None  #: False when the view is strided within a larger container
+    contiguous: bool | None = None  #: Whether the subset is one contiguous block of memory
 
 
 @dataclass
 class NestingFrame:
-    """
-    One level of nesting between the library node and the top-level SDFG.
-
-    Frames are produced innermost-first by :func:`collect_nesting`.
-    """
+    """One scope between the library node and the top-level SDFG (see :func:`collect_nesting`)."""
 
     kind: str  #: ``map``, ``consume``, ``scope``, ``loop``, ``conditional``, ``region``,
     #: ``nested_sdfg`` or ``sdfg``
     label: str
-    detail: str = ""  #: Human-readable description of the iteration space or condition
+    detail: str = ""  #: The iteration space or condition
     schedule: str | None = None
     unroll: bool | None = None
     block_size: str | None = None
@@ -93,15 +74,7 @@ class NestingFrame:
 
 @dataclass
 class Capabilities:
-    """
-    What the generated code may and may not do at this particular point in the SDFG.
-
-    The same library node type expands very differently depending on where it sits -- inside a GPU
-    kernel, on the host over GPU arrays, or on the host over CPU arrays -- and getting it wrong
-    fails either at compile time (``__state`` in device code) or, worse, at run time
-    (dereferencing a device pointer on the host). These flags are handed to the model explicitly
-    rather than left to be inferred.
-    """
+    """What the generated code may do where the node is, e.g. in a GPU kernel or on the host."""
 
     device_level: bool
     effective_schedule: str
@@ -110,25 +83,20 @@ class Capabilities:
     current_stream_available: bool = False
     block_size: str | None = None
     environments_allowed: str = "full"  #: ``full`` or ``device-headers-only``
-    #: Per connector, whether the generated code may dereference the pointer *where it runs*. This
-    #: is a match between the code's execution space and the data's storage space, not a property
-    #: of the storage alone: GPU global memory is unreachable from the host and perfectly
-    #: reachable from device code.
+    #: Per connector, whether the code may dereference the pointer where it runs
     dereferenceable: dict[str, bool] = field(default_factory=dict)
 
 
 @dataclass
 class ResolvedDefaults:
     """
-    What DaCe's own inference decides for the ``Default`` schedules and storages of an SDFG.
-
-    Keyed by ``guid``, which a deep copy preserves, so answers computed on a throwaway copy can be
-    read back against the caller's graph. See :func:`infer_defaults`.
+    The schedules and storages DaCe's inference resolves ``Default`` to, computed on a copy of the
+    SDFG and keyed by ``guid``, which the copy preserves. See :func:`infer_defaults`.
     """
 
-    #: Node guid -> the schedule that node will actually run under.
+    #: Node guid -> resolved schedule
     schedules: dict[str, dtypes.ScheduleType] = field(default_factory=dict)
-    #: (SDFG guid, container name) -> the storage that container will actually be allocated in.
+    #: (SDFG guid, container name) -> resolved storage
     storage: dict[tuple[str, str], dtypes.StorageType] = field(default_factory=dict)
     #: Node guid -> the node and its state in the resolved copy.
     nodes: dict[str, tuple[nodes.Node, SDFGState]] = field(default_factory=dict)
@@ -155,7 +123,7 @@ class TargetInfo:
 
 @dataclass
 class ExpansionContext:
-    """The complete context handed to the model for one library node expansion."""
+    """The context given to the model for one library node."""
 
     node_type: str
     node_name: str
@@ -241,12 +209,7 @@ def collect_nesting(
     node: nodes.Node, state: SDFGState, sdfg: SDFG, defaults: ResolvedDefaults | None = None
 ) -> list[NestingFrame]:
     """
-    Walks outward from a node to the top-level SDFG, recording every enclosing scope.
-
-    The walk crosses all three kinds of boundary in turn: dataflow scopes within a state, control
-    flow regions from the state up to its SDFG, and nested SDFG boundaries. It is modeled on
-    :func:`dace.sdfg.scope.get_node_schedule`, which performs the same traversal to resolve a
-    single schedule.
+    Lists the scopes enclosing a node: dataflow scopes, control flow regions and nested SDFGs.
 
     :param node: The node to start from.
     :param state: The state containing ``node``.
@@ -299,12 +262,7 @@ def collect_nesting(
 
 def _describe_view(info: ConnectorInfo, desc: Any, memlet: Any) -> None:
     """
-    Records where a pointer connector points and how to index it.
-
-    A pointer connector is a *view* into its container, positioned at the first
-    element of the memlet subset and strided by the container's strides.
-    Getting it wrong produces code that compiles cleanly and computes the wrong
-    answer, which the compile check cannot catch.
+    Records where a pointer connector points (the first element of the subset) and how to index it.
 
     :param info: The connector being described, updated in place.
     :param desc: The data descriptor behind the connector.
@@ -322,9 +280,7 @@ def _describe_view(info: ConnectorInfo, desc: Any, memlet: Any) -> None:
         ranges = ", ".join(f"i{dim} in 0:{sym2cpp(size)}" for dim, size in enumerate(sizes))
         info.index_formula = f"{info.name}[{' + '.join(terms)}]  with {ranges}"
         info.contiguous = bool(memlet.subset.is_contiguous_subset(desc))
-    except Exception:
-        # A subset this helper cannot render must not stop the expansion; the raw subset and
-        # strides are reported either way.
+    except Exception:  # The subset and strides are reported either way
         pass
 
 
@@ -338,21 +294,8 @@ def _infer_conntype(
     defaults: ResolvedDefaults | None = None,
 ) -> dtypes.typeclass | None:
     """
-    Determines the type a connector will have in the generated code.
-
-    Connector types are normally filled in by :func:`dace.sdfg.infer_types.infer_connector_types`,
-    which runs after expansion. Since whether a connector is a value or a pointer is exactly what
-    the generated code depends on, the same rule is applied here without mutating the SDFG.
-
-    ``infer_types`` refuses to pass GPU global memory to a library node by value, and that guard is
-    applied here too -- otherwise a single-element GPU operand would be handed to the generated
-    code as a ``float``, which DaCe reads with ``float _a = A[0];`` on the host and which therefore
-    faults at run time. The guard is written as ``isinstance(node, nodes.LibraryNode)`` and the
-    library node is gone by the time inference runs, so it does not survive expansion on its own:
-    :meth:`dace.libraries.ai.expansion.ExpandAI._make_tasklet` stamps the types computed here onto
-    the tasklet's connectors, which is what makes this prediction hold rather than merely describe
-    an intent. A prediction that did not hold would be worse than none: the model is told the type,
-    and the compile check uses it.
+    Determines a connector type with :mod:`dace.sdfg.infer_types`, as code generation would for the
+    library node, on the copy with resolved defaults if there is one.
 
     :param node: The library node being expanded.
     :param name: The connector name.
@@ -428,10 +371,6 @@ def _connector_info(
     info.container_kind = type(desc).__name__
     info.dtype = str(desc.dtype)
     info.data_ctype = desc.dtype.ctype
-    # The resolved storage, not the declared one: "Default" says nothing about whether this
-    # pointer may be dereferenced where the code runs, and it is what `dereferenceable` is computed
-    # from. The declared value is reported alongside so the prompt does not appear to contradict
-    # the graph.
     resolved_storage = (defaults.storage if defaults else {}).get((sdfg.guid, data_name), desc.storage)
     info.storage = resolved_storage.name
     info.storage_declared = desc.storage.name if resolved_storage != desc.storage else None
@@ -461,8 +400,7 @@ def collect_connectors(
 
     result = []
     for direction, connectors, edges in (("in", node.in_connectors, in_edges), ("out", node.out_connectors, out_edges)):
-        # Sorted, because connectors are often declared as a set: an unstable order would make the
-        # prompt differ between runs for no reason.
+        # Sorted, so that the prompt is the same in every run
         for name in sorted(connectors):
             edge = edges.get(name)
             ctype = _infer_conntype(node, name, direction, state, sdfg, edge, defaults)
@@ -490,8 +428,6 @@ def collect_capabilities(
     device_level = is_devicelevel_gpu(sdfg, state, node)
     storages = {c.name: dtypes.StorageType[c.storage] for c in connectors if c.storage is not None}
 
-    # Reachability is a match between where the code runs and where the data lives. Device code
-    # can dereference GPU memory and not host memory; host code, the other way round.
     execution_space = dtypes.ScheduleType.GPU_Device if device_level else dtypes.ScheduleType.CPU_Multicore
     for conn in connectors:
         storage = storages.get(conn.name)
@@ -516,8 +452,6 @@ def collect_capabilities(
         except Exception:
             block_size = None
 
-    # Inference resolves the library node's own schedule too, so prefer its answer over the
-    # unresolved one the SDFG carries
     schedule = (defaults.schedules if defaults else {}).get(node.guid) or get_node_schedule(sdfg, state, node)
 
     return Capabilities(
@@ -587,18 +521,13 @@ def collect_target_info(device_level: bool) -> TargetInfo:
 
 def has_unresolved_defaults(node: nodes.LibraryNode, state: SDFGState, sdfg: SDFG) -> bool:
     """
-    Checks whether anything the context reports about this slot still says ``Default``.
-
-    The context only depends on the slot itself: the library node's schedule, the schedules of the
-    scopes enclosing it, and the storage of the containers behind its connectors. On the usual path
-    -- expansion during compilation -- :mod:`dace.codegen.codegen` has already resolved all of
-    them, and they can be read off the graph directly. Only a node expanded by hand, before
-    compilation, still needs :func:`infer_defaults`.
+    Checks whether a schedule or storage relevant to a node is unresolved, which is the case when
+    it is expanded before compilation.
 
     :param node: The library node being expanded.
     :param state: The state containing the node.
     :param sdfg: The SDFG containing the state.
-    :return: True if a schedule or storage relevant to the node is still ``Default``.
+    :return: True if :func:`infer_defaults` is needed.
     """
     for edge in state.all_edges(node):
         name = edge.data.data
@@ -632,46 +561,16 @@ def has_unresolved_defaults(node: nodes.LibraryNode, state: SDFGState, sdfg: SDF
 
 def infer_defaults(sdfg: SDFG) -> ResolvedDefaults:
     """
-    Asks DaCe what every ``Default`` schedule and storage will actually become.
+    Resolves the ``Default`` schedules and storages with
+    :func:`dace.sdfg.infer_types.set_default_schedule_and_storage_types`, on a copy of the root SDFG.
 
-    An SDFG mostly says ``Default`` for both, and reading it back reports that verbatim. Code
-    generation does not run on that: :func:`dace.sdfg.infer_types.set_default_schedule_and_storage_types`
-    resolves the defaults first. A top-level map becomes ``CPU_Multicore`` -- an OpenMP parallel
-    loop -- and a transient with no better answer becomes ``Register``. Both matter to a model
-    writing code for the slot:
-
-    * A body told "Default" that in fact runs on every thread is missing the one fact it needs to
-      avoid writing a race: a function-local ``static``, a shared scratch buffer, or any
-      non-reentrant state would be wrong there.
-    * "Default" storage says nothing about whether a pointer may be dereferenced where the code
-      runs, which is what separates a working tasklet from one that faults at run time.
-
-    That inference is deliberately *reused* rather than reimplemented here. It is not the table
-    lookup it first appears to be: storage types are inferred first and the schedule decision then
-    consults them, so a ``Default`` map over GPU arrays becomes ``GPU_Device`` and not the
-    ``CPU_Multicore`` a plain ``SCOPEDEFAULT_SCHEDULE`` lookup would give. Reimplementing it is how
-    the prompt ends up confidently describing a slot that does not exist -- the same failure mode as
-    predicting connector types independently of ``infer_connector_types``.
-
-    Inference mutates, so it runs on a throwaway copy of the whole SDFG: the caller's graph must
-    not have its storage and schedule decisions frozen early as a side effect of building a prompt.
-
-    :param sdfg: Any SDFG in the tree; inference always runs from the root, since a nested SDFG's
-                 defaults depend on the scopes above it.
-    :return: The resolved decisions. Empty if inference could not run, in which case callers fall
-             back to what the SDFG says.
+    :param sdfg: Any SDFG in the tree.
+    :return: The resolved values, or none if inference fails (e.g. on an ambiguous scope).
     """
     try:
-        root = sdfg.root_sdfg
-    except Exception:
-        root = sdfg
-
-    try:
-        copied = copy.deepcopy(root)
+        copied = copy.deepcopy(sdfg.root_sdfg)
         infer_types.set_default_schedule_and_storage_types(copied, [None])
     except Exception as e:
-        # Inference raises on an ambiguous scope. Building a prompt must never be the thing that
-        # fails an expansion, so fall back to the unresolved schedules.
         if Config.get_bool("debugprint"):
             print(
                 f'[ai] Could not infer defaults for "{sdfg.name}" ({e}); reporting schedules and storage as declared.'
@@ -692,10 +591,7 @@ def infer_defaults(sdfg: SDFG) -> ResolvedDefaults:
 
 def _annotate_resolved(declared: Any, inferred: Any) -> str:
     """
-    Renders a value, noting when inference changed it.
-
-    Reported as resolved rather than silently rewritten: the SDFG really does say ``Default``, and
-    someone comparing the prompt against the graph should not conclude the prompt is lying.
+    Renders a value, noting when inference resolved it.
 
     :param declared: What the SDFG says.
     :param inferred: What inference decided, or ``None``.
@@ -743,14 +639,8 @@ def collect_available_environments() -> tuple[list[str], list[str]]:
 
 def collect_class_docstring(node: nodes.LibraryNode) -> str:
     """
-    Returns the documentation of a library node's class, if it has any of its own.
-
-    For a library node shipped with DaCe this is usually the closest thing to a specification that
-    exists -- ``Gemm``, for instance, documents itself as ``alpha * (A @ B) + beta * C`` -- so it
-    is worth far more to the model than the class name alone. The MRO is walked so that a node
-    which documents its behavior on a shared base class (as the MPI nodes do) is covered too, but
-    it stops at :class:`~dace.sdfg.nodes.LibraryNode`, whose docstring describes the IR rather than
-    any particular computation.
+    Returns the docstring of a library node's class or of a base class below
+    :class:`~dace.sdfg.nodes.LibraryNode`.
 
     :param node: The library node being expanded.
     :return: The documentation, cleaned of indentation, or an empty string.
@@ -775,23 +665,20 @@ def collect_symbols(node: nodes.LibraryNode, state: SDFGState) -> dict[str, str]
 
 def collect_context(node: nodes.LibraryNode, state: SDFGState, sdfg: SDFG) -> ExpansionContext:
     """
-    Gathers everything the model needs in order to write this tasklet.
+    Gathers the context of a library node.
 
     :param node: The library node being expanded.
     :param state: The state containing the node.
     :param sdfg: The SDFG containing the state.
     :return: The complete expansion context.
     """
-    # Computed once and shared, since every part of the context that mentions a schedule or a
-    # storage type has to agree with it. Inference copies the whole SDFG, so it only runs when the
-    # slot itself does not already say what it resolves to.
+    # Inference copies the whole SDFG, so it only runs when needed
     defaults = infer_defaults(sdfg) if has_unresolved_defaults(node, state, sdfg) else ResolvedDefaults()
     connectors = collect_connectors(node, state, sdfg, defaults)
     capabilities = collect_capabilities(node, state, sdfg, connectors, defaults)
     nesting = collect_nesting(node, state, sdfg, defaults)
 
-    # Properties the model does not need: they describe the node's place in the graph rather than
-    # what it computes, and are reported separately.
+    # Properties about the node's place in the graph, which are reported separately
     skipped = (
         "debuginfo",
         "environments",
@@ -818,9 +705,7 @@ def collect_context(node: nodes.LibraryNode, state: SDFGState, sdfg: SDFG) -> Ex
         node_type=type(node).__name__,
         node_name=node.name,
         description=description,
-        # An explicit description is the specification; the class documentation
-        # would only be generic background next to it (and for AINode it merely
-        # describes this mechanism).
+        # A description replaces the class documentation
         class_docstring="" if description else collect_class_docstring(node),
         node_properties=properties,
         connectors=connectors,

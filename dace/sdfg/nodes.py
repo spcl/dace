@@ -42,10 +42,8 @@ from dace.sdfg import tasklet_validation as tval
 from dace.sdfg.type_inference import infer_iteration_symbol_type, infer_types
 from dace.symbolic import issymbolic, pystr_to_symbolic
 
-#: Reserved implementation name available on every library node, which expands it into a tasklet
-#: written by a language model (see :mod:`dace.libraries.ai`). It is deliberately not registered
-#: into any ``implementations`` dictionary, so that library nodes defined outside DaCe -- which
-#: never pass through its decorators -- provide it as well.
+#: Reserved implementation of every library node, including ones defined outside DaCe: a tasklet
+#: written by a language model (see :mod:`dace.libraries.ai`). Not stored in ``implementations``.
 AI_IMPLEMENTATION_NAME = "ai"
 
 # -----------------------------------------------------------------------------
@@ -1767,9 +1765,7 @@ class LibraryNode(CodeNode):
                     if target_implementation is None:
                         raise ValueError("No implementation or default implementation specified.")
         if target_implementation == AI_IMPLEMENTATION_NAME:
-            # 'ai' is reserved rather than registered, so that library nodes defined outside DaCe
-            # gain it as well. Imported here to avoid a cyclic dependency.
-            from dace.libraries.ai.expansion import ExpandAI
+            from dace.libraries.ai.expansion import ExpandAI  # Avoid a cyclic import
 
             transformation_type = ExpandAI.for_node_class(type(self))
         elif target_implementation not in self.implementations.keys():
@@ -1796,15 +1792,13 @@ class LibraryNode(CodeNode):
         """
         Register an implementation to belong to this library node type.
 
-        :param name: Name of the implementation. Must not be ``'ai'``, which every library node
-                     already provides.
+        :param name: Name of the implementation, other than the reserved ``'ai'``.
         :param transformation_type: The ``ExpandTransformation`` subclass implementing it.
         :raises ValueError: If ``name`` is the reserved AI implementation name.
         """
         if name == AI_IMPLEMENTATION_NAME:
             raise ValueError(
-                f'"{AI_IMPLEMENTATION_NAME}" is a reserved implementation name: every DaCe library '
-                f"node can already be expanded with it into an AI-generated tasklet. Register "
+                f'"{AI_IMPLEMENTATION_NAME}" is a reserved implementation name. Register '
                 f"{transformation_type.__name__} for {cls.__name__} under a different name."
             )
         cls.implementations[name] = transformation_type
@@ -1813,24 +1807,17 @@ class LibraryNode(CodeNode):
     @classmethod
     def available_implementations(cls) -> set[str]:
         """
-        Returns every implementation this library node can be expanded with.
-
-        This is the registered implementations plus the reserved ``'ai'`` implementation, which is
-        resolved by :meth:`expand` rather than stored in ``implementations``.
-
-        :return: The names of the available implementations.
+        :return: The registered implementations and the reserved ``'ai'`` implementation.
         """
         return set(cls.implementations.keys()) | {AI_IMPLEMENTATION_NAME}
 
     def generate_prompt(self, state: "dace.sdfg.state.SDFGState") -> str:
         """
-        Returns the prompt the ``'ai'`` implementation would send to a language model for this node.
-
-        Answer it with any model, then pass the reply to :meth:`read_prompt_response`. To do this
-        for every such node of an SDFG at once, see :func:`dace.libraries.ai.generate_prompts`.
+        Returns the prompt of the ``'ai'`` implementation for this node, to be answered with any
+        model and passed to :meth:`read_prompt_response` (see also :func:`dace.libraries.ai.generate_prompts`).
 
         :param state: The state containing this node.
-        :return: The full, self-contained prompt, including the required response format.
+        :return: The prompt, including the response format.
         """
         from dace.libraries.ai import exchange  # Avoid a cyclic import
 
@@ -1838,10 +1825,8 @@ class LibraryNode(CodeNode):
 
     def read_prompt_response(self, state: "dace.sdfg.state.SDFGState", response: str) -> "Tasklet":
         """
-        Expands this node with a language model's reply to :meth:`generate_prompt`.
-
-        The generated code is verified as in any ``'ai'`` expansion. If it does not compile, the
-        error is raised rather than sent back to a model for repair.
+        Expands this node with a reply to :meth:`generate_prompt`. The code is compile-checked, and
+        a failure raises an error.
 
         :param state: The state containing this node.
         :param response: The model's reply, a single JSON object.

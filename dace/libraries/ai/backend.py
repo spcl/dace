@@ -177,12 +177,13 @@ def parse_response(text: str, described: str = "the node") -> TaskletSpec:
 class LLMProvider(Protocol):
     """Minimal interface a language model backend must implement."""
 
-    def generate(self, system: str, messages: list[dict[str, str]]) -> TaskletSpec:
+    def generate(self, system: str, messages: list[dict[str, str]], node_name: str = "") -> TaskletSpec:
         """
         Requests a tasklet from the model.
 
         :param system: The system prompt.
         :param messages: The conversation so far, as ``{'role': ..., 'content': ...}`` dicts.
+        :param node_name: Name of the library node, for providers that show it.
         :return: The tasklet described by the model.
         """
         ...

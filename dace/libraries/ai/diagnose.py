@@ -1,24 +1,11 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """
-Turning a failed build into feedback for the tasklets that caused it.
+Repair of generated tasklets from the diagnostics of a whole-program build, which catches what the
+per-tasklet compile check cannot, e.g. two tasklets defining the same global helper.
 
-The check in :mod:`dace.libraries.ai.verify` compiles each generated tasklet **in isolation**, so
-by construction it cannot see what only breaks when several of them land in one translation unit:
-two tasklets whose ``code_global`` defines the same helper, colliding ``state_fields``, an
-environment header the probe could only report inconclusive. Those diagnostics are exactly the
-feedback the model needs, and the build is where they appear.
-
-The hard part is saying *which* tasklet a diagnostic belongs to when the SDFG holds several.
-DaCe already answers that: :meth:`dace.codegen.prettycode.CodeIOStream.write` appends
-``////__DACE:<cfg>:<state>:<node>`` to every generated line, and both the tasklet body
-(``targets/cpu.py``) and its ``code_global`` (``targets/cpp.py``) are emitted through annotated
-writes. Attribution is therefore exact, and a diagnostic that maps to no generated tasklet is
-reported rather than pinned on whichever one happened to be nearby.
-
-The line index is built by regenerating the annotated code rather than by reading the
-``map_cpp.json`` that :mod:`dace.sourcemap` writes: that file records only the *first contiguous
-run* of lines per node, so for a tasklet with a ``code_global`` it describes the global block and
-omits the body entirely -- which is where compile errors most often are.
+Diagnostics are attributed through the ``////__DACE:<cfg>:<state>:<node>`` annotation on every
+generated line. The line index comes from regenerating the code: ``map_cpp.json`` only records
+the first contiguous run of lines per node, which misses the body of a tasklet with ``code_global``.
 """
 
 import os
@@ -73,7 +60,7 @@ class Attribution:
 
     #: Diagnostics grouped by the tasklet they belong to, keyed by its label.
     by_slot: dict[str, list[Diagnostic]] = field(default_factory=dict)
-    #: Diagnostics that belong to no generated tasklet, and must not be pinned on one.
+    #: Diagnostics that belong to no generated tasklet.
     unattributed: list[Diagnostic] = field(default_factory=list)
 
     def __bool__(self) -> bool:
@@ -82,11 +69,8 @@ class Attribution:
 
 def parse_diagnostics(text: str) -> list[Diagnostic]:
     """
-    Extracts the positioned lines from compiler output.
-
-    ``note:`` lines are kept as well as errors. They are what ties the two halves of a collision
-    together -- a redefinition names the offending line and, separately, the previous definition --
-    so dropping them would lose the second tasklet involved.
+    Extracts the diagnostics that name a file and line from compiler output, including notes,
+    which point at the other half of a redefinition.
 
     :param text: The compiler's output.
     :return: One entry per diagnostic that names a file and a line, in order.
@@ -118,8 +102,7 @@ def build_line_index(sdfg: SDFG) -> dict[tuple[str, int], set[Location]]:
     :raises AIExpansionError: If the code cannot be regenerated.
     """
     try:
-        # Non-destructive: SDFG.generate_code deep-copies before generating, and node ids are
-        # positional, so they match the SDFG in hand.
+        # generate_code works on a copy, with the same node ids
         objects = sdfg.generate_code()
     except Exception as e:
         raise AIExpansionError(
@@ -129,8 +112,7 @@ def build_line_index(sdfg: SDFG) -> dict[tuple[str, int], set[Location]]:
 
     index: dict[tuple[str, int], set[Location]] = {}
     for obj in objects:
-        # The file on disk is `clean_code`, which strips the annotations as trailing comments
-        # without removing any newline, so line numbers agree with the annotated text.
+        # The file on disk has the annotations stripped, with the same line numbers
         name = f"{obj.name}.{obj.language}"
         for number, line in enumerate(obj.code.split("\n"), 1):
             for cfg_id, state_id, node_ids in _ANNOTATION.findall(line):
@@ -227,9 +209,7 @@ def repair(sdfg: SDFG, error: Any, **kwargs) -> list[str]:
     """
     diagnostics = parse_diagnostics(str(error))
     if not diagnostics:
-        # DaCe streams the compiler's output live and omits it from the exception when debugprint
-        # is on (dace/codegen/compiler.py), so there may be nothing here to attribute. Say that,
-        # rather than reporting it as "no generated code is at fault", which is a different claim.
+        # With debugprint, the compiler output is printed instead of included in the exception
         raise AIExpansionError(
             "The build failure carries no compiler diagnostics to attribute, so there is nothing "
             "to feed back. With DACE_debugprint set, DaCe prints the compiler output live and "
@@ -241,7 +221,6 @@ def repair(sdfg: SDFG, error: Any, **kwargs) -> list[str]:
     errors = {name: [d for d in ds if "error" in d.severity] for name, ds in found.by_slot.items()}
     blamed = sorted(name for name, ds in errors.items() if ds)
     if not blamed:
-        # Refining a tasklet because it was the only candidate would be worse than doing nothing
         summary = "\n".join(f"    {d}" for d in found.unattributed[:10]) or "    (no positioned diagnostics)"
         raise AIExpansionError(
             'The build failed, but none of the errors is in code generated by the "ai" '
@@ -263,14 +242,8 @@ def repair(sdfg: SDFG, error: Any, **kwargs) -> list[str]:
 
 def build(sdfg: SDFG, rounds: int = 1, **kwargs):
     """
-    Compiles an SDFG, asking the model to fix generated code that the build rejects.
-
-    This is a function rather than a context manager because it has to be able to *retry*: a
-    context manager cannot re-run its own body, and repairing without rebuilding would only tell
-    the user their program still does not compile.
-
-    Each round is a full rebuild and one model call per implicated tasklet, so it is bounded and
-    never automatic -- an ordinary ``sdfg.compile()`` still fails the way it always has.
+    Compiles an SDFG, and on failure refines the generated tasklets the diagnostics point at and
+    rebuilds, up to ``rounds`` times. ``sdfg.compile()`` itself never repairs.
 
     :param sdfg: The SDFG to build.
     :param rounds: How many times to repair and rebuild before giving up.
@@ -293,8 +266,6 @@ def build(sdfg: SDFG, rounds: int = 1, **kwargs):
             try:
                 refined = repair(sdfg, e, **kwargs)
             except AIExpansionError as repair_error:
-                # The build failure is not something a model can be asked to fix. Report the
-                # original failure, with the reason this could not help attached.
                 raise e from repair_error
             expansion.status(
                 f"build failed; refined {', '.join(refined)} and rebuilding (round {attempt + 1}/{rounds})"

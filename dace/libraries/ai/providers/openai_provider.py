@@ -24,12 +24,13 @@ class OpenAIProvider:
                 raise backend.missing_credentials_error("openai", str(e)) from e
             raise AIExpansionError(f"Could not create the OpenAI client: {e}") from e
 
-    def generate(self, system: str, messages: list[dict[str, str]]) -> backend.TaskletSpec:
+    def generate(self, system: str, messages: list[dict[str, str]], node_name: str = "") -> backend.TaskletSpec:
         """
         Requests a tasklet from the model.
 
         :param system: The system prompt.
         :param messages: The conversation so far.
+        :param node_name: Name of the library node (unused).
         :return: The tasklet described by the model.
         :raises AIExpansionError: If the request fails or the response cannot be interpreted.
         """

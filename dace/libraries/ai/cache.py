@@ -1,20 +1,9 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """
-Reuse of model answers across runs.
+On-disk storage of the AI library under the DaCe build folder root, and the answer cache.
 
-Expanding the same library node in the same context twice produces the same prompt, and asking the
-same model the same question again costs money and time for an answer that is, at best, the one
-already in hand. Answers are therefore stored on disk keyed by everything that determines them --
-the provider, the model, the effort setting, the system prompt and the whole conversation -- and a
-later run with an identical key skips the request entirely. A repair round asks a different
-question, so it gets its own entry; changing the SDFG, the node, or the model changes the prompt or
-the key and misses the cache, which is what makes stale reuse impossible rather than merely
-unlikely.
-
-This is separate from the generated tasklet living in the SDFG: that is what makes one expanded
-SDFG reproducible, while this is what keeps a *re-expansion* from paying twice.
-
-Controlled by ``ai.cache``; stored in ``<build folder root>/ai-cache``.
+Answers are keyed by the request settings, the system prompt and the conversation, so a repeated
+request is answered from disk. Controlled by ``ai.cache``.
 """
 
 import datetime
@@ -41,7 +30,7 @@ def storage_dir(kind: str, create: bool = False) -> str:
 
     A hyphen cannot occur in an SDFG name, so these directories cannot clash with a program's build folder.
 
-    :param kind: ``cache``, ``environments``, ``sessions`` or ``prompts``.
+    :param kind: ``cache``, ``check``, ``environments``, ``sessions`` or ``prompts``.
     :param create: If True, the directory is created when it does not exist.
     :return: ``<build folder root>/ai-<kind>``.
     """
@@ -63,15 +52,10 @@ def key(system: str, messages: list[dict[str, str]], salt: str = "") -> str:
     """
     Computes the cache key of one request.
 
-    Everything that changes the answer is hashed, and nothing that does not: the node's name and
-    the time of day are absent, so two identical questions asked from different SDFGs share an
-    entry, while a different model or a different effort setting does not.
-
     :param system: The system prompt.
     :param messages: The conversation being sent.
-    :param salt: Extra material that deliberately misses the cache. Used when the caller wants a
-                 *different* answer to a question it has already asked -- asking again with no new
-                 feedback would otherwise be handed back the very answer it is trying to replace.
+    :param salt: Added to the key to ask an already asked question again, e.g. for a new round
+                 without feedback.
     :return: A hexadecimal key.
     """
     material = json.dumps(
@@ -91,12 +75,8 @@ def _path(cache_key: str) -> str:
 
 def lookup(cache_key: str) -> backend.TaskletSpec | None:
     """
-    Returns a previously stored answer, if there is one.
-
-    A cache that cannot be read is not an error: the request is simply made again.
-
     :param cache_key: The key returned by :func:`key`.
-    :return: The stored specification, or ``None``.
+    :return: The stored answer, or ``None`` if there is none or it cannot be read.
     """
     if not enabled():
         return None
@@ -113,10 +93,7 @@ def lookup(cache_key: str) -> backend.TaskletSpec | None:
 
 def store(cache_key: str, spec: backend.TaskletSpec, system: str, messages: list[dict[str, str]]) -> None:
     """
-    Stores an answer for later reuse.
-
-    The prompt is written alongside it. Nothing reads it back -- the key already covers it -- but a
-    cache whose entries cannot be read by a person is one nobody can audit or prune by hand.
+    Stores an answer, with the request that produced it.
 
     :param cache_key: The key returned by :func:`key`.
     :param spec: The specification the model returned.

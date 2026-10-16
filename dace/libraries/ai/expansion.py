@@ -1,20 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """
-The ``"ai"`` library node expansion.
-
-``"ai"`` is a *reserved* implementation name rather than an entry registered into every library
-node's ``implementations`` dictionary: :meth:`dace.sdfg.nodes.LibraryNode.expand` recognizes it and
-resolves it here. That way a library node defined outside DaCe -- by a downstream project or a
-plugin loaded at run time -- also expands with ``"ai"``, without anything having had to run when
-its class was defined.
-
-:class:`ExpandTransformation` identifies the node it replaces through the class attribute
-``_match_node``, so a single shared class cannot serve every library node type.
-:meth:`ExpandAI.for_node_class` synthesizes (and caches) one subclass per node type instead.
-
-This module deliberately imports nothing beyond :mod:`dace.library` and the transformation base
-class at load time; context collection, prompting, provider access and verification are all
-imported inside :meth:`ExpandAI.expansion`.
+The ``'ai'`` expansion. The implementation name is reserved: :meth:`dace.sdfg.nodes.LibraryNode.expand`
+resolves it here for every library node class, including ones defined outside DaCe.
 """
 
 import functools
@@ -39,12 +26,8 @@ from dace.transformation.transformation import ExpandTransformation
 
 class ExpandAI(ExpandTransformation):
     """
-    Expands any library node into a tasklet written by a language model.
-
-    The model is given the node's description and properties, the connectors and the data
-    descriptors behind them, every enclosing map, loop and nested SDFG up to the top-level SDFG,
-    what the generated code is allowed to do at that point (GPU device code? is ``__state`` in
-    scope?), and the compiler and architecture the code will be built for.
+    Expands a library node into a tasklet written by a language model, given the node, its
+    connectors and containers, the enclosing scopes, and the target (see :mod:`~dace.libraries.ai.context`).
     """
 
     environments: list[Any] = []
@@ -53,11 +36,8 @@ class ExpandAI(ExpandTransformation):
     @functools.cache
     def for_node_class(node_class: type[nodes.LibraryNode]) -> type["ExpandAI"]:
         """
-        Returns the expansion class bound to a specific library node type.
-
-        Only the synthesized class is cached; the generated code never is. Two nodes of the same
-        type in different parts of an SDFG are therefore generated independently, which is what
-        makes context-sensitive expansion work.
+        Returns the expansion class of a library node type (``ExpandTransformation`` matches nodes
+        through the class attribute ``_match_node``).
 
         :param node_class: The library node class being expanded.
         :return: A subclass of :class:`ExpandAI` whose ``_match_node`` is ``node_class``.
@@ -72,21 +52,15 @@ class ExpandAI(ExpandTransformation):
         """
         Generates a tasklet for a library node.
 
-        :param cls: The per-node-class expansion produced by :meth:`for_node_class`. Any
-                    environments the generated code needs are recorded on it, since
-                    :meth:`dace.transformation.transformation.ExpandTransformation.apply` reads
-                    ``type(self).environments`` once this method returns.
+        :param cls: The expansion class from :meth:`for_node_class`. The environments of the
+                    generated code are set on it, where ``ExpandTransformation.apply`` reads them.
         :param node: The library node to replace.
         :param parent_state: The state containing the node.
         :param parent_sdfg: The SDFG containing the state.
-        :param kwargs: ``feedback`` -- a critique of the code generated for this slot last time,
-                       which turns this expansion into the next round of an existing conversation;
-                       ``session`` -- the identifier of that conversation. Both are supplied by
-                       :func:`dace.libraries.ai.iterate.refine`. ``response`` -- a
-                       :class:`~dace.libraries.ai.backend.TaskletSpec` obtained outside the
-                       expansion, which is used instead of asking a provider; supplied by
-                       :func:`dace.libraries.ai.exchange.read_prompt_response`. Anything else is
-                       ignored.
+        :param kwargs: ``feedback`` and ``session`` start a new round of an existing session
+                       (:func:`dace.libraries.ai.iterate.refine`). ``response`` is a
+                       :class:`~dace.libraries.ai.backend.TaskletSpec` to use instead of asking a
+                       provider (:func:`dace.libraries.ai.exchange.read_prompt_response`).
         :return: The generated tasklet.
         :raises AIExpansionError: If no tasklet could be generated.
         """
@@ -100,15 +74,13 @@ class ExpandAI(ExpandTransformation):
         if record.path:
             status(f"{described}: session {record.id}, round {record.number} ({record.path})")
 
-        # Resolved on first use rather than up front, so that an expansion answered entirely from
-        # the cache needs neither a provider SDK nor an API key
+        # Created on first use, so that cached answers need no SDK or key
         provider = None
         system = prompts.SYSTEM_PROMPT
         record.record_system_prompt(system)
         detail("system prompt", system)
 
-        # A round with feedback continues the conversation: the model sees the code it wrote and
-        # the critique of it, rather than being asked the original question again from scratch.
+        # A round with feedback continues the conversation
         if feedback and record.conversation:
             messages: list[dict[str, str]] = list(record.conversation)
             prompt = prompts.build_feedback_prompt(feedback, prompts.build_user_prompt(ctx))
@@ -151,7 +123,7 @@ class ExpandAI(ExpandTransformation):
                         f"({Config.get('ai', 'model')}), attempt {attempt + 1}/{attempts}"
                     )
                     provider = provider or backend.get_provider()
-                    spec = provider.generate(system, messages)
+                    spec = provider.generate(system, messages, node_name=node.name)
                     ai_cache.store(cache_key, spec, system, messages)
                 record.record_answer(entry, spec, cached=cached)
                 detail("answer", spec.raw_response or spec.model_dump_json(indent=1))
@@ -205,8 +177,6 @@ class ExpandAI(ExpandTransformation):
             record.record_outcome("failed", str(e))
             if record.path is None:
                 raise
-            # Named in the message rather than only logged: the run that produced this cost a model
-            # call, and the session is the only copy of what it said.
             if isinstance(e, AIExpansionError):
                 raise AIExpansionError(f"{e}\n\nThe full prompts and answers are in {record.path}") from e
             warnings.warn(f"AI expansion of {described} failed; the prompts and answers are in {record.path}")
@@ -216,8 +186,6 @@ class ExpandAI(ExpandTransformation):
         env_paths = [env.full_class_path() for env in environments]
         record.record_outcome("expanded", spec=spec, environments=env_paths)
 
-        # Persist the conversation *including* this answer, so the next round resumes from a
-        # complete exchange rather than from a question with no reply
         record.conversation = messages + [{"role": "assistant", "content": spec.model_dump_json(indent=1)}]
         record.flush()
 
@@ -232,19 +200,10 @@ class ExpandAI(ExpandTransformation):
         node: nodes.LibraryNode, spec: Any, ctx: Any, state: SDFGState = None, record: Any = None
     ) -> nodes.Tasklet:
         """
-        Turns a generated specification into a tasklet.
-
-        The connector types resolved during context collection are stamped onto the tasklet rather
-        than left for :func:`dace.sdfg.infer_types.infer_connector_types` to fill in later. They
-        have to be: the model was told those types and the compile check used them, while
-        inference re-derives them from the *tasklet*, and one of its rules -- never pass GPU global
-        memory by value -- only applies while the node is still a library node. Leaving it to
-        inference would turn a GPU operand the model was told to treat as a pointer into a value
-        that the host loads directly out of device memory.
-
-        The library node itself is serialized onto the result. Expansion otherwise destroys it, and
-        with it every trace of what this code was asked to do -- which would leave no way to ask
-        for a better version short of rebuilding the SDFG.
+        Turns a generated specification into a tasklet, with the connector types the model was
+        told. Inference would type a single element of GPU memory by value on a tasklet, since its
+        pointer rule only applies to library nodes. The library node is recorded on the tasklet
+        for :func:`~dace.libraries.ai.iterate.refine`.
 
         :param node: The library node being replaced.
         :param spec: The generated tasklet specification.
@@ -282,12 +241,9 @@ class ExpandAI(ExpandTransformation):
 
 def status(message: str) -> None:
     """
-    Prints one line describing a step of the expansion, when ``debugprint`` is set at all.
+    Prints a step of the expansion when ``debugprint`` is set.
 
-    An expansion makes a paid network request and may compile and re-ask several times, so it is
-    worth being able to watch it happen rather than waiting in silence.
-
-    :param message: The message, without a trailing newline.
+    :param message: The message.
     """
     if Config.get_bool("debugprint"):
         print(f"[ai] {message}", flush=True)
@@ -295,9 +251,7 @@ def status(message: str) -> None:
 
 def detail(label: str, body: str | None) -> None:
     """
-    Prints a block of text that a step acted on, only under ``debugprint=verbose``.
-
-    The same text is written to the transcript regardless; this is for watching a run live.
+    Prints a block of text, e.g. a prompt, when ``debugprint`` is ``verbose``.
 
     :param label: A short heading, e.g. ``'user prompt'``.
     :param body: The text. Nothing is printed when it is empty.
