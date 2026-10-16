@@ -57,7 +57,10 @@ lever for measuring the cost model itself.
 """
 
 import copy
+from collections.abc import Callable
 from typing import Any
+
+import sympy
 
 from dace import SDFG, data, dtypes, properties, symbolic
 from dace.sdfg import nodes
@@ -146,10 +149,16 @@ def min_work_per_region() -> int:
     return config_int("compiler", "cpu", "parallel_min_work_per_region")
 
 
-def at_most_one_trip(count: Any) -> bool:
-    """Whether a map of ``count`` iterations provably runs at most once: no loop at all, but a guard."""
-    upper = symbolic.numeric_bounds(count)[1] if symbolic.issymbolic(count) else count
-    return upper is not None and upper <= 1
+def at_most_one_trip(count: Any, facts_of: Callable[[], symbolic.Facts]) -> bool:
+    """Whether a map of ``count`` iterations provably runs at most once: no loop at all, but a guard. ``facts_of``
+    gives the facts at the map, asked only when the count's numeric bounds do not decide it."""
+    if not symbolic.issymbolic(count):
+        return count <= 1
+    upper = symbolic.numeric_bounds(count)[1]
+    if upper is not None and upper <= 1:
+        return True
+    at_most_one = symbolic.Relation(symbolic.RelationKind.LE, sympy.sympify(count), sympy.Integer(1))
+    return symbolic.ask(at_most_one, facts_of()) is symbolic.Truth.TRUE
 
 
 def privatize_interior_transients(owner: SDFG, state: SDFGState, entry: nodes.MapEntry) -> bool:
@@ -200,12 +209,13 @@ def release_one_trip_maps(sdfg: SDFG) -> int:
     :returns: how many such maps were found.
     """
     found = 0
+    resolver = SymbolResolver()
     for state in sdfg.states():
         children = state.scope_children()
         for wrapper in children[None]:
             if not isinstance(wrapper, nodes.MapEntry) or wrapper.map.schedule != dtypes.ScheduleType.Default:
                 continue
-            if not at_most_one_trip(wrapper.map.range.num_elements()):
+            if not at_most_one_trip(wrapper.map.range.num_elements(), lambda state=state: resolver.facts_at(state)):
                 continue
             note_sequential(wrapper, ONE_TRIP_REASON)
             found += 1
