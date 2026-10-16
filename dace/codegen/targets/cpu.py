@@ -1353,6 +1353,18 @@ class CPUCodeGen(TargetCodeGenerator):
             ", ".join(memlet_params),
         )
 
+    def defined_type(self, sdfg: SDFG, ptr: str, desc: data.Data, is_global: bool) -> tuple[DefinedType, str]:
+        """Defined type and C type of ``ptr``. A View, or an array sized by a non-free symbol, is allocated in a scope
+        that may have ended, so its declaration is asked first."""
+        dependent_shape = (
+            isinstance(desc, data.Array)
+            and not isinstance(desc, data.View)
+            and any(str(s) not in self._frame.symbols_and_constants(sdfg) for s in self._frame.free_symbols(desc))
+        )
+        if (dependent_shape or isinstance(desc, data.View)) and self._dispatcher.declared_arrays.has(ptr):
+            return self._dispatcher.declared_arrays.get(ptr)
+        return self._dispatcher.defined_vars.get(ptr, is_global=is_global)
+
     def memlet_definition(
         self,
         sdfg: SDFG,
@@ -1383,23 +1395,7 @@ class CPUCodeGen(TargetCodeGenerator):
         memlet_type = conntype.dtype.ctype
 
         ptr = codegen.ptr(memlet.data, desc, sdfg)
-        types = None
-        # Non-free symbol dependent Arrays due to their shape
-        dependent_shape = (
-            isinstance(desc, data.Array)
-            and not isinstance(desc, data.View)
-            and any(str(s) not in self._frame.symbols_and_constants(sdfg) for s in self._frame.free_symbols(desc))
-        )
-        try:
-            # NOTE: It is hard to get access to the view-edge here, so always
-            # check the declared-arrays dictionary for Views.
-            if dependent_shape or isinstance(desc, data.View):
-                types = self._dispatcher.declared_arrays.get(ptr)
-        except KeyError:
-            pass
-        if not types:
-            types = self._dispatcher.defined_vars.get(ptr, is_global=True)
-        var_type, ctypedef = types
+        var_type, ctypedef = self.defined_type(sdfg, ptr, desc, is_global=True)
 
         result = ""
         expr = (
@@ -1676,7 +1672,7 @@ class CPUCodeGen(TargetCodeGenerator):
                     dtypes.AllocationLifetime.Persistent,
                     dtypes.AllocationLifetime.External,
                 )
-                defined_type, _ = self._dispatcher.defined_vars.get(ptrname, is_global=is_global)
+                defined_type, _ = self.defined_type(sdfg, ptrname, desc, is_global)
                 base_ptr = cpp.cpp_ptr_expr(sdfg, edge.data, defined_type, codegen=self)
                 callsite_stream.write(f"{cdtype.ctype} {edge.src_conn} = {base_ptr};", cfg, state_id, src_node)
             else:
