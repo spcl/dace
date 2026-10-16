@@ -418,7 +418,7 @@ def _array_array_binop(
             f"_{operator}_",
             {"__in1": None, "__in2": None},
             {"__out"},
-            f"__out = {tasklet_args[0]} {opcode} {tasklet_args[1]}",
+            binop_tasklet_code(tasklet_args[0], opcode, tasklet_args[1]),
         )
         n1 = state.add_read(left_operand)
         n2 = state.add_read(right_operand)
@@ -431,7 +431,7 @@ def _array_array_binop(
             f"_{operator}_",
             all_idx_dict,
             {"__in1": Memlet.simple(left_operand, left_idx), "__in2": Memlet.simple(right_operand, right_idx)},
-            f"__out = {tasklet_args[0]} {opcode} {tasklet_args[1]}",
+            binop_tasklet_code(tasklet_args[0], opcode, tasklet_args[1]),
             {"__out": Memlet.simple(out_operand, out_idx)},
             external_edges=True,
         )
@@ -494,10 +494,7 @@ def _array_const_binop(
             inp_conn = {"__in2"}
             n2 = state.add_read(right_operand)
         tasklet = state.add_tasklet(
-            f"_{operator}_",
-            inp_conn,
-            {"__out"},
-            f"__out = {tasklet_args[0]} {opcode} {tasklet_args[1]}",
+            f"_{operator}_", inp_conn, {"__out"}, binop_tasklet_code(tasklet_args[0], opcode, tasklet_args[1])
         )
         n3 = state.add_write(out_operand)
         if left_arr:
@@ -514,7 +511,7 @@ def _array_const_binop(
             f"_{operator}_",
             all_idx_dict,
             inp_memlets,
-            f"__out = {tasklet_args[0]} {opcode} {tasklet_args[1]}",
+            binop_tasklet_code(tasklet_args[0], opcode, tasklet_args[1]),
             {"__out": Memlet.simple(out_operand, out_idx)},
             external_edges=True,
         )
@@ -577,10 +574,7 @@ def _array_sym_binop(
             inp_conn = {"__in2"}
             n2 = state.add_read(right_operand)
         tasklet = state.add_tasklet(
-            f"_{operator}_",
-            inp_conn,
-            {"__out"},
-            f"__out = {tasklet_args[0]} {opcode} {tasklet_args[1]}",
+            f"_{operator}_", inp_conn, {"__out"}, binop_tasklet_code(tasklet_args[0], opcode, tasklet_args[1])
         )
         n3 = state.add_write(out_operand)
         if left_arr:
@@ -597,7 +591,7 @@ def _array_sym_binop(
             f"_{operator}_",
             all_idx_dict,
             inp_memlets,
-            f"__out = {tasklet_args[0]} {opcode} {tasklet_args[1]}",
+            binop_tasklet_code(tasklet_args[0], opcode, tasklet_args[1]),
             {"__out": Memlet.simple(out_operand, out_idx)},
             external_edges=True,
         )
@@ -645,7 +639,7 @@ def _scalar_scalar_binop(
         f"_{operator}_",
         {"__in1": None, "__in2": None},
         {"__out"},
-        f"__out = {tasklet_args[0]} {opcode} {tasklet_args[1]}",
+        binop_tasklet_code(tasklet_args[0], opcode, tasklet_args[1]),
     )
     n1 = state.add_read(left_operand)
     n2 = state.add_read(right_operand)
@@ -702,10 +696,7 @@ def _scalar_const_binop(
         inp_conn = {"__in2"}
         n2 = state.add_read(right_operand)
     tasklet = state.add_tasklet(
-        f"_{operator}_",
-        inp_conn,
-        {"__out"},
-        f"__out = {tasklet_args[0]} {opcode} {tasklet_args[1]}",
+        f"_{operator}_", inp_conn, {"__out"}, binop_tasklet_code(tasklet_args[0], opcode, tasklet_args[1])
     )
     n3 = state.add_write(out_operand)
     if left_scal:
@@ -766,10 +757,7 @@ def _scalar_sym_binop(
         inp_conn = {"__in2"}
         n2 = state.add_read(right_operand)
     tasklet = state.add_tasklet(
-        f"_{operator}_",
-        inp_conn,
-        {"__out"},
-        f"__out = {tasklet_args[0]} {opcode} {tasklet_args[1]}",
+        f"_{operator}_", inp_conn, {"__out"}, binop_tasklet_code(tasklet_args[0], opcode, tasklet_args[1])
     )
     n3 = state.add_write(out_operand)
     if left_scal:
@@ -779,6 +767,13 @@ def _scalar_sym_binop(
     state.add_edge(tasklet, "__out", n3, None, Memlet.from_array(out_operand, out_scal))
 
     return out_operand
+
+
+def binop_tasklet_code(left: str, opcode: str, right: str) -> str:
+    """Tasklet code for ``left <opcode> right``; Python's ``%`` becomes ``PyMod``."""
+    if opcode == "%":
+        return f"__out = PyMod({left}, {right})"
+    return f"__out = {left} {opcode} {right}"
 
 
 _pyop2symtype = {

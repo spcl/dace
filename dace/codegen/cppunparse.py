@@ -83,6 +83,7 @@ import sympy
 import dace
 from dace import dtypes
 from dace.sdfg import type_inference
+from dace.symbolic import TYPECAST_CPP
 
 # Large float and imaginary literals get turned into infinities in the AST.
 # We unparse those infinities to INFSTR.
@@ -985,6 +986,15 @@ class CPPUnparser:
         "And": ast.And,
         "Or": ast.Or,
     }
+    modulo_calls = {
+        "CMod": "c_mod",
+        "FtnMod": "ftn_mod",
+        "Mod": "py_mod",
+        "PyMod": "py_mod",
+        "FtnModulo": "ftn_modulo",
+    }
+    # Modulo spellings and the numeric casts of the symbolic engine, by their C++ function
+    renamed_calls = {**modulo_calls, **TYPECAST_CPP}
 
     def _Call(self, t: ast.Call):
         # Special cases for sympy functions
@@ -1004,7 +1014,10 @@ class CPPUnparser:
                 self.dispatch(ast.BoolOp(op=op, values=t.args))
                 return
 
-        self.dispatch(t.func)
+        if isinstance(t.func, ast.Name) and t.func.id in self.renamed_calls:
+            self.write(self.renamed_calls[t.func.id])
+        else:
+            self.dispatch(t.func)
         self.write("(")
         comma = False
         for e in t.args:
