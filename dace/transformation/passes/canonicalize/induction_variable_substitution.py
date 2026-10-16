@@ -170,7 +170,15 @@ class InductionVariableSubstitution(ppl.Pass):
                 # (6) an unrolled body's counter bumped once per copy (``k = k + 1`` before each
                 #     read) -> one bottom update ``k := k + 4`` that (3) then closes.
                 region = node.parent_graph
-                if any(rewrite(region, node, sdfg, sdfg_free_symbols) for rewrite in REWRITES):
+                # Spelled out, not a tuple of functions: each name is looked up when the round runs.
+                if (
+                    _try_substitute(region, node, sdfg, sdfg_free_symbols)
+                    or try_substitute_use_site_iv(region, node, sdfg, sdfg_free_symbols)
+                    or _try_substitute_iedge_iv(region, node, sdfg, sdfg_free_symbols)
+                    or _try_substitute_derived_symbol(region, node, sdfg, sdfg_free_symbols)
+                    or _hoist_branch_uniform_iv(region, node, sdfg, sdfg_free_symbols)
+                    or sink_chained_rewrite(region, node, sdfg, sdfg_free_symbols)
+                ):
                     count += 1
                     progressed = True
                     break  # SDFG mutated -> restart the scan on fresh node list
@@ -1936,14 +1944,3 @@ class LoopCarriedRotationSubstitution(ppl.Pass):
             else:
                 break
         return count or None
-
-
-#: The rewrites of one fixpoint round, tried in order; the first that applies restarts the round.
-REWRITES: tuple[Callable[[ControlFlowRegion, LoopRegion, SDFG, set[str]], bool], ...] = (
-    _try_substitute,
-    try_substitute_use_site_iv,
-    _try_substitute_iedge_iv,
-    _try_substitute_derived_symbol,
-    _hoist_branch_uniform_iv,
-    sink_chained_rewrite,
-)
