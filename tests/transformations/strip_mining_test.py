@@ -1,5 +1,6 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import numpy as np
+import sympy
 
 import dace
 from dace.transformation.dataflow.strip_mining import StripMining
@@ -108,6 +109,9 @@ def test_strided_tile_assigns_every_visited_element():
 
 def test_the_tile_and_its_bounds_keep_the_dtypes_the_scope_declares():
     """The tile bounds are parsed from strings, so a loop iterator in the strip-mined range must keep its dtype."""
+    # Symbols of one name compare equal whatever their dtype, so SymPy's global cache can hand back a ``k + 1`` an
+    # earlier test built from an ``int`` ``k``; start from an empty cache so only strip mining's own spelling counts.
+    sympy.core.cache.clear_cache()
 
     @dace.program
     def triangle(A: dace.float64[N, N], B: dace.float64[N]):
