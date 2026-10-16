@@ -916,7 +916,87 @@ INLINE_DEFINITIONS.update(
 )
 
 #: Definitions each definition calls. Emission is dependency-first (see :func:`definitions_for`).
+
+#: The float math the standard library spells, run on a 16-bit float through ``float``. ``std::exp(__bf16)`` is
+#: ambiguous between the ``float`` / ``double`` / ``long double`` overloads -- with Clang 22 in every standard,
+#: with GCC before C++23 -- so a host unit that holds a ``__bf16`` or ``_Float16`` calls these instead
+#: (:func:`rewrite_ctypes`). Any other argument type goes straight to the ``std::`` function.
+LOW_PRECISION_MATH: tuple[str, ...] = (
+    "abs",
+    "acos",
+    "asin",
+    "atan",
+    "atan2",
+    "cbrt",
+    "ceil",
+    "cos",
+    "cosh",
+    "erf",
+    "erfc",
+    "exp",
+    "exp2",
+    "expm1",
+    "fabs",
+    "floor",
+    "fma",
+    "hypot",
+    "isfinite",
+    "isinf",
+    "isnan",
+    "ldexp",
+    "lgamma",
+    "log",
+    "log10",
+    "log1p",
+    "log2",
+    "pow",
+    "round",
+    "signbit",
+    "sin",
+    "sinh",
+    "sqrt",
+    "tan",
+    "tanh",
+    "tgamma",
+    "trunc",
+)
+INLINE_DEFINITIONS["cpf_lowp_base"] = """\
+//: A 16-bit float (``__bf16``, ``_Float16``) computes its math in ``float`` and stores back.
+template <typename T>
+inline constexpr bool cpf_lowp_narrow =
+    std::is_same_v<std::remove_cv_t<T>, __bf16> || std::is_same_v<std::remove_cv_t<T>, _Float16>;
+template <typename T>
+using cpf_lowp_wide_t = std::conditional_t<cpf_lowp_narrow<T>, float, T>;
+template <typename T>
+static inline cpf_lowp_wide_t<T> cpf_lowp_widen(const T &value) {
+    return static_cast<cpf_lowp_wide_t<T>>(value);
+}
+"""
+INLINE_DEFINITIONS.update(
+    {
+        f"cpf_lowp_{name}": f"""\
+//: ``std::{name}`` run in ``float`` on a 16-bit float, its floating result stored back in the operands' type.
+template <typename... A>
+using cpf_lowp_{name}_t = std::conditional_t<
+    (cpf_lowp_narrow<A> || ...) &&
+        std::is_floating_point_v<decltype(std::{name}(std::declval<cpf_lowp_wide_t<A>>()...))>,
+    std::common_type_t<A...>, decltype(std::{name}(std::declval<cpf_lowp_wide_t<A>>()...))>;
+template <typename... A>
+static inline cpf_lowp_{name}_t<A...> cpf_lowp_{name}(const A &...a) {{
+    return static_cast<cpf_lowp_{name}_t<A...>>(std::{name}(cpf_lowp_widen(a)...));
+}}
+"""
+        for name in LOW_PRECISION_MATH
+    }
+)
+
+#: ``std::<math>(`` in a host unit that holds a 16-bit float, respelled through :data:`LOW_PRECISION_MATH`'s wrappers.
+LOW_PRECISION_MATH_CALL: "re.Pattern" = re.compile(
+    r"(?<![\w:.])(?:::)?std::(" + "|".join(LOW_PRECISION_MATH) + r")\s*\("
+)
+
 DEFINITION_DEPENDENCIES: dict[str, tuple[str, ...]] = {
+    **{f"cpf_lowp_{name}": ("cpf_lowp_base",) for name in LOW_PRECISION_MATH},
     "arg_pair_of": ("arg_pair",),
     "arg_max_step": ("arg_pair",),
     "arg_min_step": ("arg_pair",),
@@ -938,9 +1018,12 @@ DEFINITION_DEPENDENCIES: dict[str, tuple[str, ...]] = {
 
 #: System headers each inline definition needs, beyond :data:`BASE_HEADERS`.
 DEFINITION_HEADERS: dict[str, tuple[str, ...]] = {
+    "cpf_lowp_base": ("<type_traits>",),
+    **{f"cpf_lowp_{name}": ("<cmath>", "<type_traits>", "<utility>") for name in LOW_PRECISION_MATH},
     "arg_pair": ("<complex>", "<type_traits>", "<utility>"),
     **{reduce_name(operation, True): ("<complex>",) for operation in COMPLEX_REDUCE_COMBINERS},
     "ifloor": ("<type_traits>",),
+    "cpf_narrow": ("<type_traits>",),
     "min_identity": ("<limits>",),
     "max_identity": ("<limits>",),
     "logical_left_shift": ("<type_traits>",),
@@ -988,10 +1071,10 @@ BASE_HEADERS: tuple[str, ...] = (
 #: includes them needs nothing a caller compiling for an AMD GPU does not already have -- the same
 #: standing OpenMP has on the host side, and the reason they are not what CPF exists to avoid.
 #: hipCUB supplies the device scan, reduce and arg-reduce the library nodes expand into.
-HIP_BASE_HEADERS: tuple[str, ...] = ("<hip/hip_runtime.h>", "<hipcub/hipcub.hpp>")
+HIP_BASE_HEADERS: tuple[str, ...] = ("<hip/hip_runtime.h>", "<hip/hip_bf16.h>", "<hipcub/hipcub.hpp>")
 
 #: What a CUDA unit adds to :data:`BASE_HEADERS`, on the same footing: both ship with the CUDA toolkit.
-CUDA_BASE_HEADERS: tuple[str, ...] = ("<cuda_runtime.h>", "<cub/cub.cuh>")
+CUDA_BASE_HEADERS: tuple[str, ...] = ("<cuda_runtime.h>", "<cuda_bf16.h>", "<cub/cub.cuh>")
 
 #: What ``dace/dace.h`` supplies that a DEVICE unit still needs, written out inline.
 #:
@@ -1068,6 +1151,19 @@ static inline void cpf_kernel_launch_check(gpuError_t err, const char *name, lon
     }
 }
 """,
+    "cpf_narrow": """\
+//: A value of any arithmetic type as a 16-bit vendor float (``__hip_bfloat16`` / ``__nv_bfloat16``). An integer
+//: matches several of their converting constructors at once (int, short, float, double), so it goes through
+//: ``float``, which holds every integer a 16-bit float can tell apart; a floating value converts directly.
+template <typename T, typename V>
+__host__ __device__ inline T cpf_narrow(const V &value) {
+    if constexpr (std::is_integral_v<V>) {
+        return T(static_cast<float>(value));
+    } else {
+        return T(value);
+    }
+}
+""",
     "gpucub": """\
 //: The backend cub, under the name the code generator writes -- what gpucub.cuh aliases. hipCUB
 //: keeps the functor structs CCCL 3 dropped, and a unit built by hipcc is never built against CCCL.
@@ -1097,19 +1193,38 @@ namespace gpucub = hipcub;
 //: reductions over any element type, so one CAS loop covers the set where a table of intrinsics
 //: would leave holes. On a tree-reduced accumulator this runs ONCE PER BLOCK, after
 //: gpucub::BlockReduce has folded the block's partials, so the loop is off the per-element path.
+//:
+//: A two-byte accumulator (bfloat16, half) has no atomic word of its own: the loop swaps the aligned
+//: 32-bit word holding it and leaves the other half as it found it. Its value arrives widened, a
+//: ``long`` or a ``float``, and reaches the 16-bit type through ``float``, the conversion it has.
 template <typename T, typename V, typename Op>
 __device__ inline void cpf_gpu_atomic(T *address, V value, Op op) {
-    using cpf_atomic_word =
-        typename std::conditional<sizeof(T) == sizeof(unsigned int), unsigned int, unsigned long long>::type;
-    static_assert(sizeof(T) == sizeof(cpf_atomic_word), "no atomic word as wide as the accumulator");
-    cpf_atomic_word *word = reinterpret_cast<cpf_atomic_word *>(address);
-    cpf_atomic_word old = *word;
-    cpf_atomic_word assumed;
-    do {
-        assumed = old;
-        T updated = op(__builtin_bit_cast(T, assumed), static_cast<T>(value));
-        old = atomicCAS(word, assumed, __builtin_bit_cast(cpf_atomic_word, updated));
-    } while (assumed != old);
+    if constexpr (sizeof(T) == 2) {
+        const uintptr_t at = reinterpret_cast<uintptr_t>(address);
+        unsigned int *word = reinterpret_cast<unsigned int *>(at & ~uintptr_t(3));
+        const unsigned int shift = (at & 2) ? 16u : 0u;
+        const T operand = static_cast<T>(static_cast<float>(value));
+        unsigned int old = *word;
+        unsigned int assumed;
+        do {
+            assumed = old;
+            const T updated = op(__builtin_bit_cast(T, static_cast<unsigned short>(assumed >> shift)), operand);
+            const unsigned int bits = static_cast<unsigned int>(__builtin_bit_cast(unsigned short, updated)) << shift;
+            old = atomicCAS(word, assumed, (assumed & ~(0xFFFFu << shift)) | bits);
+        } while (assumed != old);
+    } else {
+        using cpf_atomic_word =
+            typename std::conditional<sizeof(T) == sizeof(unsigned int), unsigned int, unsigned long long>::type;
+        static_assert(sizeof(T) == sizeof(cpf_atomic_word), "no atomic word as wide as the accumulator");
+        cpf_atomic_word *word = reinterpret_cast<cpf_atomic_word *>(address);
+        cpf_atomic_word old = *word;
+        cpf_atomic_word assumed;
+        do {
+            assumed = old;
+            T updated = op(__builtin_bit_cast(T, assumed), static_cast<T>(value));
+            old = atomicCAS(word, assumed, __builtin_bit_cast(cpf_atomic_word, updated));
+        } while (assumed != old);
+    }
 }
 """,
     "cpf_gpu_atomic_add_complex": """\
@@ -1356,15 +1471,36 @@ CTYPE_RENAMES: dict[str, str] = {
     "dace::complex128": "std::complex<double>",
 }
 
+#: The 16-bit floats a HOST unit spells natively: the compiler's own ``__bf16`` and ``_Float16`` -- arithmetic,
+#: conversions and OpenMP reductions in C and C++ with GCC 13 and later and Clang 18 and later (checked with GCC
+#: 13 / 14 / 16 and Clang 18 / 22 on x86-64). Each is two bytes in the bit layout of HB's ``__npb_bf16`` /
+#: ``uint16_t`` storage, so an entry taking ``__bf16 *`` takes what the caller hands over as ``uint16_t *``.
+HOST_LOW_PRECISION_CTYPES: dict[str, str] = {"dace::bfloat16": "__bf16", "dace::float16": "_Float16"}
+
 #: Types with no portable standalone spelling. ``float16``/``bfloat16``/fp8 exist in DaCe only as
 #: the CUDA and ROCm vendor types, or as an emulation the runtime headers carry -- neither is
 #: reachable from a translation unit that includes nothing but the standard library.
 UNSUPPORTED_CTYPES: dict[str, str] = {
-    "dace::float16": "no portable C++ half type; use float32 or keep the DaCe runtime",
-    "dace::bfloat16": "no portable C++ bfloat16 type; use float32 or keep the DaCe runtime",
+    "dace::float16": "the C dialect has no half type; render the C++ dialect (_Float16)",
+    "dace::bfloat16": "the C dialect has no bfloat16; render the C++ dialect (__bf16), or a device dialect",
     "dace::float8_e4m3fn": "no portable C++ fp8 type",
     "dace::float8_e5m2": "no portable C++ fp8 type",
 }
+
+
+def refuse_unspellable_containers(sdfg, dialect: Dialect | None = None) -> None:
+    """Refuse an SDFG holding a container whose type ``dialect`` has no spelling for, before anything is printed.
+
+    Left to the printers, the first one to reach such a container reports something else -- the C dialect picks its
+    typed math by type name and says it found none for ``exp`` -- where this names the type and the way out.
+
+    :raises NotImplementedError: naming the type and why (:data:`UNSUPPORTED_CTYPES`).
+    """
+    renames = tables_for(dialect).ctype_renames
+    for _, name, desc in sdfg.arrays_recursive():
+        ctype = desc.dtype.ctype
+        if ctype in UNSUPPORTED_CTYPES and ctype not in renames:
+            raise NotImplementedError(f"CPF cannot emit the type {ctype!r} of {name!r}: {UNSUPPORTED_CTYPES[ctype]}.")
 
 
 def ctype_for(ctype: str, dialect: Dialect | None = None) -> str:
@@ -1375,9 +1511,10 @@ def ctype_for(ctype: str, dialect: Dialect | None = None) -> str:
     :returns: the standalone spelling, or ``ctype`` unchanged when it is already plain.
     :raises NotImplementedError: if the type has no standalone spelling at all.
     """
-    if ctype in UNSUPPORTED_CTYPES:
+    renames = tables_for(dialect).ctype_renames
+    if ctype in UNSUPPORTED_CTYPES and ctype not in renames:
         raise NotImplementedError(f"CPF cannot emit the type {ctype!r}: {UNSUPPORTED_CTYPES[ctype]}.")
-    return tables_for(dialect).ctype_renames.get(ctype, ctype)
+    return renames.get(ctype, ctype)
 
 
 def variadic_minmax(
@@ -1503,9 +1640,21 @@ def rewrite_ctypes(code: str, dialect: Dialect | None = None) -> str:
     if "::" not in code:
         return code
     for qualified, reason in UNSUPPORTED_CTYPES.items():
-        if re.search(r"(?:::)?\b%s\b" % re.escape(qualified), code):
+        if qualified not in tables.ctype_renames and re.search(r"(?:::)?\b%s\b" % re.escape(qualified), code):
             raise NotImplementedError(f"CPF cannot emit the type {qualified!r}: {reason}")
-    return tables.ctype_pattern.sub(lambda match: tables.ctype_renames[match.group(1)], code)
+    code = tables.ctype_pattern.sub(lambda match: tables.ctype_renames[match.group(1)], code)
+    resolved = dialect if dialect is not None else _active_dialect
+    if resolved in DEVICE_DIALECTS:
+        code = VENDOR_FLOAT_CAST.sub(lambda match: f"cpf_narrow<{match.group(1)}>(", code)
+    elif resolved is Dialect.STANDALONE and re.search(r"\b(?:__bf16|_Float16)\b", code):
+        code = LOW_PRECISION_MATH_CALL.sub(lambda match: f"cpf_lowp_{match.group(1)}(", code)
+    return code
+
+
+#: A functional cast to a 16-bit vendor float, ``__hip_bfloat16(n)``: spelled through :data:`HIP_DEVICE_INLINE_DEFINITIONS`'
+#: ``cpf_narrow``, because an integer operand is ambiguous between the type's converting constructors. Not a
+#: default construction (``T()``), and not a template argument or a qualified name.
+VENDOR_FLOAT_CAST: "re.Pattern" = re.compile(r"(?<![\w:.<])(__hip_bfloat16|__nv_bfloat16)\s*\((?!\s*\))")
 
 
 class NativeSite:
@@ -2946,7 +3095,13 @@ C_DEFINITION_DEPENDENCIES: dict[str, tuple[str, ...]] = {
 }
 
 #: What the C dialect refuses, and why. Empty: every construct CPF reaches has a C spelling.
-C_UNSUPPORTED: dict[str, str] = {}
+C_UNSUPPORTED: dict[str, str] = {
+    # A C unit refuses 16-bit floats outright (``refuse_unspellable_containers``), so it never calls these.
+    **dict.fromkeys(
+        ["cpf_lowp_base", *(f"cpf_lowp_{name}" for name in LOW_PRECISION_MATH)],
+        "the C dialect has no 16-bit float; render the C++ dialect",
+    ),
+}
 
 #: Helpers C answers with a REWRITE of the CALL SITE rather than a definition or a refusal -- a
 #: third lane, and the only one, so the anti-rot tests can still insist every C++ helper is
@@ -3398,7 +3553,13 @@ HIP_CTYPE_RENAMES: dict[str, str] = {
     **CTYPE_RENAMES,
     "dace::cub::ScanTag": "ScanTag",
     "dace::cub::DetectFlagTag": "DetectFlagTag",
+    # The toolkit's own bfloat16, which ``dace::bfloat16`` IS in a device build (``dace/types.h``): two bytes, the
+    # bit layout of HB's ``__npb_bf16`` (``uint16_t``) storage, so a pointer to either crosses the C ABI alike.
+    "dace::bfloat16": "__hip_bfloat16",
 }
+
+#: The CUDA unit's spelling of the same types: :data:`HIP_CTYPE_RENAMES` with NVIDIA's bfloat16.
+CUDA_CTYPE_RENAMES: dict[str, str] = {**HIP_CTYPE_RENAMES, "dace::bfloat16": "__nv_bfloat16"}
 
 #: Environments a DEVICE rendering supplies for itself, so that
 #: ``framecode.generate_standalone_footer`` does not refuse them. Everything else with code to run
@@ -3640,7 +3801,7 @@ TABLES: dict[Dialect, Tables] = {
         INLINE_DEFINITIONS,
         VARIADIC_MINMAX,
         UNSUPPORTED,
-        CTYPE_RENAMES,
+        {**CTYPE_RENAMES, **HOST_LOW_PRECISION_CTYPES},
         BASE_HEADERS,
         DEFINITION_DEPENDENCIES,
         DEFINITION_HEADERS,
@@ -3683,7 +3844,7 @@ TABLES: dict[Dialect, Tables] = {
         device_definitions(Dialect.STANDALONE_CUDA),
         VARIADIC_MINMAX,
         UNSUPPORTED,
-        HIP_CTYPE_RENAMES,
+        CUDA_CTYPE_RENAMES,
         BASE_HEADERS + CUDA_BASE_HEADERS,
         HIP_DEFINITION_DEPENDENCIES,
         DEFINITION_HEADERS,

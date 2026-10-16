@@ -194,12 +194,13 @@ def result_type(
             dtypes_for_result_np2.append(arg.type)
         else:
             raise TypeError(f"Type {type(arg)} of argument {arg} is not supported")
-    if not any(np.issubdtype(dtype.type, np.inexact) for dtype in datatypes):
+    # ``ml_dtypes``' floats (bfloat16, fp8) are numpy kind ``V``, not inexact, but they are floats.
+    if not any(np.issubdtype(dtype.type, np.inexact) or dtype in dtypes.FLOAT_TYPES for dtype in datatypes):
         for index, strong_type in weak_integer_symbols.items():
             dtypes_for_result_np2[index] = strong_type
 
     complex_types = {dtypes.complex64, dtypes.complex128, np.complex64, np.complex128}
-    float_types = {dtypes.float16, dtypes.float32, dtypes.float64, np.float16, np.float32, np.float64}
+    float_types = {*dtypes.FLOAT_TYPES, np.float16, np.float32, np.float64}
     signed_types = {dtypes.int8, dtypes.int16, dtypes.int32, dtypes.int64, np.int8, np.int16, np.int32, np.int64}
     # unsigned_types = {np.uint8, np.uint16, np.uint32, np.uint64}
 

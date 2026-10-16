@@ -90,6 +90,30 @@ def test_a_loop_expansion_reads_the_operands_in_their_own_types():
     np.testing.assert_allclose(c, ref, rtol=1e-12, atol=1e-12)
 
 
+def test_a_bfloat16_gemm_expands_to_loops_in_bfloat16():
+    """The loop expansion declared its operands from their numpy types, which ``add_array`` maps only for numpy's
+    own scalars: a bf16 GEMM raised ``Invalid type "type" for property dtype`` (HB gemm_add_relu at bf16)."""
+    sdfg = dace.SDFG("bf16_gemm_pure")
+    for name in "ABC":
+        sdfg.add_array(name, [M, M], dace.bfloat16)
+    state = sdfg.add_state()
+    node = Gemm("gemm")
+    node.implementation = "pure"
+    state.add_node(node)
+    state.add_edge(state.add_read("A"), None, node, "_a", dace.Memlet(f"A[0:{M}, 0:{M}]"))
+    state.add_edge(state.add_read("B"), None, node, "_b", dace.Memlet(f"B[0:{M}, 0:{M}]"))
+    state.add_edge(node, "_c", state.add_write("C"), None, dace.Memlet(f"C[0:{M}, 0:{M}]"))
+    sdfg.expand_library_nodes()
+    inner = {
+        name: desc.dtype
+        for nested in sdfg.all_sdfgs_recursive()
+        if nested is not sdfg
+        for name, desc in nested.arrays.items()
+        if name in ("_a", "_b", "_c")
+    }
+    assert inner == dict.fromkeys(("_a", "_b", "_c"), dace.bfloat16), inner
+
+
 @pytest.mark.gpu
 @pytest.mark.parametrize("a_dtype, b_dtype", MIXED, ids=["real_a", "real_b"])
 def test_a_mixed_device_gemm_matches_numpy(a_dtype, b_dtype):
